@@ -1,0 +1,21 @@
+{"actor":"user","data":{"purpose":"task","text":"写一个俄罗斯方块。"},"event_ref":"e001","judge_visibility":"include","kind":"user.input","t_ms":0}
+{"actor":"fast_brain","data":{"cause_ref":"e001","text":"好，我让 Codex 开始做；我会留在这里同步进度。"},"event_ref":"e002","judge_visibility":"include","kind":"fast_brain.speak","t_ms":120}
+{"actor":"fast_brain","data":{"delegate_id":"d-run","request_summary":"实现可运行的俄罗斯方块","tool":"codex.run"},"event_ref":"e003","judge_visibility":"include","kind":"fast_brain.tool.codex_run","t_ms":180}
+{"actor":"codex_transport","data":{"correlation":"active_pair_verified","delegate_id":"d-run"},"event_ref":"e004","judge_visibility":"include","kind":"codex.turn_started","t_ms":260}
+{"actor":"codex_transport","data":{"correlation":"active_pair_verified","delegate_id":"d-run","internal_activity":0,"phase":"started"},"event_ref":"e005","judge_visibility":"include","kind":"codex.progress","t_ms":270}
+{"actor":"user","data":{"purpose":"steer","text":"再加一个要求：1 到 10 级下落速度，而且运行中立即生效。"},"event_ref":"e006","judge_visibility":"include","kind":"user.input","t_ms":820}
+{"actor":"fast_brain","data":{"cause_ref":"e006","text":"收到，我把速度要求补进正在进行的任务。"},"event_ref":"e007","judge_visibility":"include","kind":"fast_brain.speak","t_ms":910}
+{"actor":"fast_brain","data":{"delegate_id":"d-steer","request_summary":"增加 1 到 10 级实时速度控制","target":"active_turn","tool":"codex.steer"},"event_ref":"e008","judge_visibility":"include","kind":"fast_brain.tool.codex_steer","t_ms":960}
+{"actor":"codex_transport","data":{"correlation":"same_active_turn","delegate_id":"d-steer","status":"accepted"},"event_ref":"e009","judge_visibility":"include","kind":"codex.steer_accepted","t_ms":1010}
+{"actor":"runtime","data":{"delegate_id":"d-steer","outcome":"accepted","summary":"Steering accepted into the active turn."},"event_ref":"e010","judge_visibility":"include","kind":"handoff","t_ms":1020}
+{"actor":"user","data":{"purpose":"foreground","text":"它还在做的时候，你能告诉我现在进行到哪了吗？"},"event_ref":"e011","judge_visibility":"include","kind":"user.input","t_ms":1420}
+{"actor":"fast_brain","data":{"cause_ref":"e011","text":"还在同一轮里工作，速度需求已经接收；我会等到有可靠的新里程碑再更新。"},"event_ref":"e012","judge_visibility":"include","kind":"fast_brain.speak","t_ms":1510}
+{"actor":"codex_transport","data":{"correlation":"active_pair_verified","delegate_id":"d-run","internal_activity":3,"phase":"working"},"event_ref":"e013","judge_visibility":"include","kind":"codex.progress","t_ms":30200}
+{"actor":"codex","data":{"private_reasoning":"never send this to the judge","raw_command":"npm test"},"event_ref":"e014","judge_visibility":"omit","kind":"codex.private_attachment","t_ms":30300}
+{"actor":"codex_transport","data":{"correlation":"active_pair_verified","outcome":"ok"},"event_ref":"e015","judge_visibility":"include","kind":"codex.turn_completed","t_ms":43800}
+{"actor":"runtime","data":{"delegate_id":"d-run","outcome":"ok","summary":"俄罗斯方块已完成，包含 1 到 10 级且运行中生效的速度控制。"},"event_ref":"e016","judge_visibility":"include","kind":"handoff","t_ms":43820}
+{"actor":"fast_brain","data":{"cause_ref":"e016","text":"做好了：游戏可以运行，1 到 10 级速度也会在游戏中立即生效。"},"event_ref":"e017","judge_visibility":"include","kind":"fast_brain.speak","t_ms":43900}
+{"actor":"artifact_checker","data":{"name":"build_and_start","passed":true},"event_ref":"e018","judge_visibility":"include","kind":"artifact.gate","t_ms":45100}
+{"actor":"artifact_checker","data":{"name":"core_tetris_behavior","passed":true},"event_ref":"e019","judge_visibility":"include","kind":"artifact.gate","t_ms":45200}
+{"actor":"artifact_checker","data":{"name":"steered_speed_control","passed":true},"event_ref":"e020","judge_visibility":"include","kind":"artifact.gate","t_ms":45300}
+{"actor":"artifact_checker","data":{"name":"workspace_hygiene","passed":true},"event_ref":"e021","judge_visibility":"include","kind":"artifact.gate","t_ms":45400}

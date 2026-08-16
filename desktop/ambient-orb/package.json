@@ -1,0 +1,17 @@
+{
+  "name": "@nova-audio-agent/ambient-orb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main/main.mjs",
+  "scripts": {
+    "test": "node --test",
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "package:mac": "npm run build && electron-builder --config electron-builder.yml --mac dir"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.7"
+  }
+}

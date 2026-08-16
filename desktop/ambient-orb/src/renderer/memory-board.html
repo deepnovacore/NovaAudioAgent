@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>Nova Audio Agent Memory Board</title>
+    <link rel="stylesheet" href="./memory-board.css">
+  </head>
+  <body>
+    <header>
+      <h1>Memory Board</h1>
+      <button id="refresh" type="button">刷新</button>
+      <button id="export" type="button" disabled>导出</button>
+      <span id="status" aria-live="polite"></span>
+    </header>
+    <main id="channels"></main>
+    <script type="module" src="./memory-board.mjs"></script>
+  </body>
+</html>

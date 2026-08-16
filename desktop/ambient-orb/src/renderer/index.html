@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src ws://127.0.0.1:*; img-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>Nova Audio Agent Ambient Orb</title>
+    <link rel="stylesheet" href="./index.css">
+  </head>
+  <body>
+    <main id="shell" data-state="booting" aria-live="polite">
+      <button id="orb" type="button" aria-label="Nova Audio Agent 正在启动" aria-pressed="false">
+        <span class="halo"></span>
+        <span class="core"></span>
+        <span id="capture-indicator" class="capture-indicator" aria-hidden="true"></span>
+      </button>
+      <p id="state-label">Nova Audio Agent 正在启动</p>
+      <p id="codex-label">Codex 空闲</p>
+      <p id="aec-label">音频初始化中</p>
+      <p id="caption" hidden></p>
+    </main>
+    <script type="module" src="./index.mjs"></script>
+  </body>
+</html>

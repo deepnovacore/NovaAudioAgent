@@ -1,0 +1,43 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+*.egg-info/
+
+# JavaScript and Electron
+node_modules/
+build/
+desktop/ambient-orb/dist/
+
+# Runtime state and local media
+data/
+.data/
+*.sqlite
+*.sqlite3
+resources/raw/
+resources/cut/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# AutoGLM local environment
+.autoglm-venv/

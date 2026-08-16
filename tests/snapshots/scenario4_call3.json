@@ -1,0 +1,169 @@
+{
+  "affordances": [
+    {
+      "conclusive": null,
+      "content": {
+        "evidence_refs": [
+          "ambient:1"
+        ],
+        "kind": "notify",
+        "salience": 0.0,
+        "suggestion": {
+          "text": "冰箱门好像没关"
+        }
+      },
+      "ref": "s-1",
+      "source": "suggestion"
+    },
+    {
+      "conclusive": null,
+      "content": {
+        "channel": "slow_sim",
+        "observation": {
+          "brightness": 30,
+          "op": "set_light",
+          "room": "客厅"
+        },
+        "outcome": "ok",
+        "ts": 5.75
+      },
+      "ref": "slow_sim:1",
+      "source": "channel_update"
+    },
+    {
+      "conclusive": null,
+      "content": {
+        "channel": "ambient",
+        "observation": {
+          "motion": "客厅有人经过"
+        },
+        "outcome": "ok",
+        "ts": 1.0
+      },
+      "ref": "ambient:1",
+      "source": "channel_update"
+    }
+  ],
+  "channels": [
+    {
+      "name": "conversation",
+      "omitted": 0,
+      "recent": [
+        {
+          "channel": "conversation",
+          "content": {
+            "text": "把客厅灯调暗点"
+          },
+          "outcome": null,
+          "priority": 100,
+          "refs": [],
+          "seq": 1,
+          "trust": "trusted_user",
+          "ts": 0.0
+        },
+        {
+          "channel": "conversation",
+          "content": {
+            "text": "好的，这就去调",
+            "utterance_id": "u-1"
+          },
+          "outcome": null,
+          "priority": 100,
+          "refs": [],
+          "seq": 2,
+          "trust": "trusted_system",
+          "ts": 0.75
+        },
+        {
+          "channel": "conversation",
+          "content": {
+            "text": "客厅灯还在调，再等我一下",
+            "utterance_id": "u-2"
+          },
+          "outcome": null,
+          "priority": 100,
+          "refs": [],
+          "seq": 3,
+          "trust": "trusted_system",
+          "ts": 1.55
+        }
+      ],
+      "summary": null
+    },
+    {
+      "name": "fast_sim",
+      "omitted": 0,
+      "recent": [],
+      "summary": null
+    },
+    {
+      "name": "slow_sim",
+      "omitted": 0,
+      "recent": [
+        {
+          "channel": "slow_sim",
+          "content": {
+            "brightness": 30,
+            "op": "set_light",
+            "room": "客厅"
+          },
+          "outcome": "ok",
+          "priority": 50,
+          "refs": [
+            "conversation:1"
+          ],
+          "seq": 1,
+          "trust": "trusted_system",
+          "ts": 5.75
+        }
+      ],
+      "summary": null
+    },
+    {
+      "name": "ambient",
+      "omitted": 0,
+      "recent": [
+        {
+          "channel": "ambient",
+          "content": {
+            "motion": "客厅有人经过"
+          },
+          "outcome": "ok",
+          "priority": 10,
+          "refs": [
+            "conversation:1"
+          ],
+          "seq": 1,
+          "trust": "trusted_system",
+          "ts": 1.0
+        }
+      ],
+      "summary": null
+    }
+  ],
+  "floor": "idle",
+  "in_flight": [],
+  "now": 5.75,
+  "structured": {
+    "authorization": {
+      "allow": [],
+      "deny": [],
+      "evidence_refs": [],
+      "revision": 0
+    },
+    "goal": {
+      "acceptance_criteria": [],
+      "objective": "",
+      "revision": 0,
+      "status": "accepted"
+    },
+    "intent": {
+      "constraints": [],
+      "objective_hypothesis": "",
+      "revision": 0,
+      "uncertainty": 1.0,
+      "unresolved_questions": []
+    }
+  },
+  "trigger_kind": "handoff"
+}

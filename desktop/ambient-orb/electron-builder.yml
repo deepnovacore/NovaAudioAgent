@@ -1,0 +1,29 @@
+appId: ai.deepnovacore.nova-audio-agent.orb
+productName: Nova Audio Agent Ambient Orb
+electronVersion: 43.2.0
+asar: true
+npmRebuild: false
+
+directories:
+  output: dist
+
+files:
+  - src/**/*
+  - package.json
+  - THIRD_PARTY_NOTICES.md
+  - LICENSES/**/*
+
+extraResources:
+  - from: build/macos_voice_io
+    to: native/macos_voice_io
+
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.inherit.plist
+  extendInfo:
+    LSUIElement: true
+    NSMicrophoneUsageDescription: Nova Audio Agent 使用麦克风进行带系统级回声消除的实时语音交互。
+  target:
+    - dir

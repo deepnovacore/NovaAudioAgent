@@ -1,0 +1,129 @@
+{
+  "affordances": [
+    {
+      "conclusive": false,
+      "content": {
+        "executor": "codex",
+        "op": "status",
+        "unknown": {
+          "error": "deadline_exceeded",
+          "op": "run",
+          "request": {
+            "work_order": "[REDACTED]"
+          }
+        }
+      },
+      "ref": "codex:1",
+      "source": "probe"
+    },
+    {
+      "conclusive": null,
+      "content": {
+        "channel": "codex",
+        "observation": {
+          "op": "status",
+          "process": {
+            "exit_code": 0,
+            "exited": true,
+            "running": false
+          },
+          "state": "exited"
+        },
+        "outcome": "ok",
+        "ts": 601.0
+      },
+      "ref": "codex:2",
+      "source": "channel_update"
+    }
+  ],
+  "channels": [
+    {
+      "name": "conversation",
+      "omitted": 0,
+      "recent": [
+        {
+          "channel": "conversation",
+          "content": {
+            "text": "implement the bounded task"
+          },
+          "outcome": null,
+          "priority": 100,
+          "refs": [],
+          "seq": 1,
+          "trust": "trusted_user",
+          "ts": 0.0
+        }
+      ],
+      "summary": null
+    },
+    {
+      "name": "codex",
+      "omitted": 0,
+      "recent": [
+        {
+          "channel": "codex",
+          "content": {
+            "error": "deadline_exceeded",
+            "op": "run",
+            "request": {
+              "work_order": "[REDACTED]"
+            }
+          },
+          "outcome": "unknown",
+          "priority": 50,
+          "refs": [
+            "conversation:1"
+          ],
+          "seq": 1,
+          "trust": "trusted_system",
+          "ts": 600.0
+        },
+        {
+          "channel": "codex",
+          "content": {
+            "op": "status",
+            "process": {
+              "exit_code": 0,
+              "exited": true,
+              "running": false
+            },
+            "state": "exited"
+          },
+          "outcome": "ok",
+          "priority": 50,
+          "refs": [
+            "codex:1"
+          ],
+          "seq": 2,
+          "trust": "trusted_system",
+          "ts": 601.0
+        }
+      ],
+      "summary": null
+    }
+  ],
+  "floor": "idle",
+  "in_flight": [],
+  "now": 601.0,
+  "structured": {
+    "authorization": {
+      "allow": [],
+      "deny": [],
+      "evidence_refs": [],
+      "revision": 0
+    },
+    "goal": {
+      "acceptance_criteria": [],
+      "objective": "",
+      "revision": 0,
+      "status": "accepted"
+    },
+    "intent": {
+      "constraints": [],
+      "objective_hypothesis": "",
+      "revision": 0,
+      "uncertainty": 1.0,
+      "unresolved_questions": []
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "query": "Nova Audio Agent",
+  "request_id": "req-http",
+  "response_time": 0.42,
+  "results": [
+    {
+      "title": "Nova Audio Agent architecture",
+      "url": "https://docs.example.com/nova",
+      "content": "A continuous agent harness.",
+      "score": 0.91
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nova-audio-agent"
+version = "0.1.0"
+description = "Realtime voice agent harness for Nova"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "DeepNovaCore" }]
+keywords = ["voice-agent", "realtime", "multi-agent", "qwen"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "langchain-core>=1.3,<2",
+    "langchain-openai>=1.3,<2",
+    "httpx[http2]>=0.27,<1",
+    "openai>=1.60",
+    "pillow>=11,<13",
+    "pydantic>=2,<3",
+    "python-dotenv>=1",
+    "pydantic-settings>=2,<3",
+    "pygame>=2.6,<3",
+    "rich",
+    "typer",
+    "websockets>=15,<16",
+]
+
+[project.optional-dependencies]
+vision = [
+    "opencv-python>=4.10,<5",
+]
+[project.scripts]
+nova-audio-agent = "nova_audio_agent.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/deepnovacore/NovaAudioAgent"
+Repository = "https://github.com/deepnovacore/NovaAudioAgent.git"
+Issues = "https://github.com/deepnovacore/NovaAudioAgent/issues"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = [
+    "real_time: exercises OS/process integration and is excluded from the deterministic <3.5s budget",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = ["thirdparty"]

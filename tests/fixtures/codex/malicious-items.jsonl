@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"do-not-retain-thread-id"}
+{"type":"turn.started","work_order":"do-not-retain-work-order"}
+{"type":"item.started","item":{"id":"do-not-retain-item-id","type":"mcp_tool_call","server":"do-not-retain-tool-name","arguments":{"token":"do-not-retain-token","path":"/do/not/retain/private/path"}}}
+{"type":"item.updated","item":{"id":"do-not-retain-item-id","type":"reasoning","text":"do-not-retain-reasoning"}}
+{"type":"item.completed","item":{"id":"do-not-retain-item-id","type":"command_execution","command":"do-not-retain-command","output":"do-not-retain-output"}}
+{"type":"turn.completed","final_message":"do-not-retain-final-message"}

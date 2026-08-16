@@ -1,0 +1,3 @@
+[submodule "thirdparty/Open-AutoGLM"]
+	path = thirdparty/Open-AutoGLM
+	url = https://github.com/zai-org/Open-AutoGLM.git

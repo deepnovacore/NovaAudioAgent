@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"thread-secret"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item-1","type":"command_execution","command":"/bin/sh -lc 'echo secret-token'"}}
+{"type":"item.updated","item":{"id":"item-1","type":"command_execution","aggregated_output":"working"}}
+{"type":"item.completed","item":{"id":"item-1","type":"command_execution","exit_code":0}}
+{"type":"turn.completed","usage":{"input_tokens":123,"output_tokens":45}}
