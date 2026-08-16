@@ -1,7 +1,5 @@
 """Scenario definition, recorder, and evaluator for ``qwen-weather-same-turn.v1``.
 
-Authority: ``docs/superpowers/specs/2026-08-06-realtime-weather-live-e2e-design.md``.
-
 One scenario drives two backends through the same normalized records and the same
 gates: the deterministic CI test (``tests/test_e2e_weather_same_turn.py``) and the
 explicitly-invoked live command (``scripts/eval_weather_same_turn.py``). Only Gate 6

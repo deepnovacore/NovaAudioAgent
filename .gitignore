@@ -33,6 +33,11 @@ data/
 resources/raw/
 resources/cut/
 
+# Internal working material (demo video production)
+docs/demos/
+docs/superpowers/
+video/
+
 # Editors and operating systems
 .DS_Store
 .idea/

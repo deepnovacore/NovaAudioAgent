@@ -1,7 +1,5 @@
 """Deterministic CI backend for ``qwen-codex-live-progress-status.v1``.
 
-Authority: ``docs/superpowers/specs/2026-08-06-codex-live-progress-status-e2e-design.md``.
-
 The scenario runs against production components with only the two external
 nondeterminism sources replaced: a scripted App Server peer instead of the Codex
 binary, and a scripted realtime provider instead of Qwen. Everything between them is

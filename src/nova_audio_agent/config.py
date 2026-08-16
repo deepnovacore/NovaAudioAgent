@@ -1,4 +1,4 @@
-"""Environment-only Stage C assembly settings."""
+"""Environment-only assembly settings."""
 
 from __future__ import annotations
 

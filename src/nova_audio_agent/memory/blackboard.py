@@ -38,8 +38,8 @@ class ConversationScope:
 class Memory:
     """A blackboard.
 
-    Channel count = conversation + always-on readonly executors + exactly one active
-    non-readonly executor.
+    Channel count = conversation + always-on readonly executors + the configured
+    active executors (one or more, `NOVA_AUDIO_AGENT_EXECUTORS`).
     """
 
     def __init__(

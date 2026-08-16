@@ -30,7 +30,7 @@ class Clock(Protocol):
     termination: the loop decides whether there's still a task to run using
     "alive task count - clock.waiter_count()". A task suspended anywhere else would
     make this difference permanently positive, so time would never advance
-    (no events lost, but no progress either — see docs/plans/v3-stage-a.md C3 hole 3).
+    (no events lost, but no progress either).
     """
 
     def now(self) -> float: ...
@@ -112,7 +112,7 @@ class VirtualClock:
         Note this only **marks them ready** — those coroutines haven't run yet. The
         runtime's loop must return to the top after advancing and drain all
         runnable tasks first, otherwise same-tick events would land on two
-        different timestamps (docs/plans/v3-stage-a.md C3 hole 2).
+        different timestamps.
         """
         if math.isnan(ts):
             raise ValueError("虚拟时间不能推进到 NaN")

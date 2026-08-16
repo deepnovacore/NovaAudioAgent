@@ -9,7 +9,7 @@ boundary and links to the implementation concepts that enforce it.
 4. [Ports](04-ports.md)
 5. [Executors](05-executors.md)
 6. [Verification](06-verification.md)
-7. [Decision record](07-discussion-log.md)
+7. [Decision record](07-decision-record.md)
 8. [Deferred work](08-deferred.md)
 9. [Roadmap](09-roadmap.md)
 10. [Executor onboarding](10-executor-onboarding.md)
@@ -17,3 +17,18 @@ boundary and links to the implementation concepts that enforce it.
 
 The through-line is simple: background capability is useful only when lifecycle, memory, attention,
 and speech ownership remain explicit.
+
+## Reading the citations in code comments
+
+These volumes are the condensed public edition of a longer internal design series ("v3"; v1 and v2
+were internal predecessors and were never published). Module docstrings and comments cite the
+internal editions and their bookkeeping verbatim, because those citations record why each boundary
+exists:
+
+- `R…` and `D…` are internal decision identifiers (accepted rules and deliberate decisions).
+- `Stage A/C/E`, `Phase A`, and `B1…B4` are internal development-stage and milestone names.
+- Section numbers, quoted wording, and tables attributed to a volume refer to the internal edition,
+  which is more detailed than the public file of the same name.
+
+The identifiers are preserved for traceability; the reasoning they point to survives in the
+docstrings themselves.

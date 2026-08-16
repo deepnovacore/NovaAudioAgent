@@ -1,4 +1,4 @@
-"""Typer entry points for chat, local scorecard, and Stage C demos."""
+"""Typer entry points for chat, local scorecard, and acceptance demos."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from nova_audio_agent.model_gateway import GatewayError
 from nova_audio_agent.speech import CliSpeechSink
 from nova_audio_agent.uploads import UploadError, build_user_input
 
-app = typer.Typer(help="Nova Audio Agent v3 interactive harness")
-demo_app = typer.Typer(help="Run Stage C acceptance scenarios")
+app = typer.Typer(help="Nova Audio Agent interactive harness")
+demo_app = typer.Typer(help="Run deterministic acceptance scenarios")
 app.add_typer(demo_app, name="demo")
 
 
@@ -272,5 +272,5 @@ def demo_proactive_command() -> None:
 
 @demo_app.command("all")
 def demo_all_command() -> None:
-    """Run all four Stage C acceptance scenarios."""
+    """Run all four acceptance scenarios."""
     _demo(("async", "dual-axis", "timeout", "proactive"))

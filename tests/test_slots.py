@@ -121,8 +121,7 @@ def test_wake_raised_by_the_respawn_is_not_lost() -> None:
 
     09-roadmap.md's original wording is "moving step 2 to after step 3 -> missed wake". In practice
     that mutation turns out to be **unobservable** in this implementation's shape: on_done and wake
-    are fully synchronous, so nothing can slip in between steps 2 and 3 (see
-    docs/notes/v3-stage-a-notes.md).
+    are fully synchronous, so nothing can slip in between steps 2 and 3.
 
     The real missed-wake direction is **splitting "take and clear pending" into two halves**: the
     clear action lands after step 4, so a wake raised by the rerun itself gets wiped out by the

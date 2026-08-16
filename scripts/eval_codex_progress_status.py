@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Run the opt-in live ``qwen-codex-live-progress-status.v1`` scenario.
 
-Authority: ``docs/superpowers/specs/2026-08-06-codex-live-progress-status-e2e-design.md``.
-
 This is the live twin of ``tests/test_e2e_codex_progress_status.py``: a real Codex App
 Server process, a real Qwen-Audio realtime session, the contracted Tetris workspace,
 and ``RealClock``. Both backends are judged by the same

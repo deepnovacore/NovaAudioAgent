@@ -16,8 +16,8 @@ def repository_python_files() -> tuple[Path, ...]:
 
 @cache
 def repository_markdown_files() -> tuple[Path, ...]:
-    roots = (Path("assets"), Path("demos"), Path("docs"))
-    files = {Path("README.md"), Path(".superpowers/sdd/progress.md")}
+    roots = (Path("assets"), Path("docs"))
+    files = {Path("README.md")}
     for root in roots:
         files.update(root.rglob("*.md"))
     return tuple(sorted(path for path in files if path.is_file()))

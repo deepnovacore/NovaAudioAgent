@@ -1,7 +1,5 @@
 """Deterministic CI backend for the `qwen-weather-same-turn.v1` scenario.
 
-Authority: docs/superpowers/specs/2026-08-06-realtime-weather-live-e2e-design.md.
-
 Everything below the provider boundary is production code: the real ``Runtime``
 (VirtualClock), the real ``SearchAdapter``, the real ``RealtimeRuntimeBridge``,
 ``RealtimeSession``, and ``RealtimeService``. Only the realtime provider and the

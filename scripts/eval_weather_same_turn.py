@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Run the explicitly-invoked live `qwen-weather-same-turn.v1` scenario.
 
-Authority: docs/superpowers/specs/2026-08-06-realtime-weather-live-e2e-design.md.
-
 This is the live twin of tests/test_e2e_weather_same_turn.py: the same scenario
 records, the same evaluator, Gate 6 enabled. It drives the production Qwen realtime
 adapter and the production Tavily transport through

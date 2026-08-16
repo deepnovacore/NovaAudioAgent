@@ -1,7 +1,5 @@
 """Scenario definition, recorder, and evaluator for ``qwen-codex-live-progress-status.v1``.
 
-Authority: ``docs/superpowers/specs/2026-08-06-codex-live-progress-status-e2e-design.md``.
-
 One scenario drives two backends through the same normalized records and the same
 gates: the deterministic CI test (``tests/test_e2e_codex_progress_status.py``) and the
 explicitly-invoked live command (``scripts/eval_codex_progress_status.py``). Only Gate 6

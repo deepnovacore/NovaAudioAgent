@@ -15,5 +15,5 @@ uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
 uv run pytest -q
 uv build
-(cd desktop/ambient-orb && npm test && npm run build)
+(cd desktop/ambient-orb && npm ci && npm test && npm run build)
 ```
