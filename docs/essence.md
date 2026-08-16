@@ -14,7 +14,8 @@ This produces four practical properties:
 
 - Long work does not freeze the conversation.
 - Progress can be stored without interrupting the user.
-- Later answers and proactive speech derive from the same memory state.
+- Later answers and proactive speech derive from the same memory state — proactivity is
+  push-and-pull, not notify-only.
 - Executors remain replaceable because domain behavior stays behind manifests and handoffs.
 
 Nova (小诺) is the assistant personality presented to the user. `nova-audio-agent` is the software

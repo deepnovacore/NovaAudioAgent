@@ -5,7 +5,7 @@ Nova Audio Agent is an experimental open-source project at version `0.1.0`.
 | Area | Status |
 |---|---|
 | Event-driven runtime, memory, slots, delegates, and floor | Implemented with deterministic tests |
-| Simulator, search, Home Assistant, Codex, camera, Watch, and Guard executors | Implemented |
+| Simulator, search, Home Assistant, Codex, camera, Watch, and Guard adapters | Implemented |
 | Qwen Audio Realtime transport and recovery | Implemented; requires provider credentials for live use |
 | macOS Ambient Orb and native VoiceProcessingIO helper | Implemented and tested on macOS |
 | AutoGLM iOS worker integration | Experimental; upstream submodule and device setup required |

@@ -19,6 +19,14 @@ This is not a chatbot framework and not a workflow engine. It focuses on a diffe
 **how an agent decides when to speak, when to dispatch work, and when to stay silent while several
 things are happening at once.**
 
+Nova Audio Agent adapts the macOS voice-capture helper from
+[qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) (see [NOTICE](NOTICE)) but is not
+a fork: that project is a production voice runtime that returns background results to the
+conversation automatically, while this repository studies the control-plane question upstream of
+that — whether, when, and with what priority to speak, from one structured memory (the comparison
+is developed in the
+[design post](docs/blog/2026-08-proactive-voice-agent-design-space.md#5-related-work)).
+
 > **Principle:** domain-specific capability is replaceable execution capability; the agent core is
 > the part that owns lifecycle, memory, attention, and speech.
 
@@ -28,6 +36,28 @@ an experimental system for development and evaluation rather than a turnkey cons
 
 **New here?** Read [Design essence](docs/essence.md) for the shortest explanation of the design, or
 jump to [Quickstart](#quickstart) to run it.
+
+## Highlights
+
+- **Structured channel-wise memory.** Every capability writes to its own append-only memory
+  channel — `conversation`, `search`, `cam`, `watch`, `guard`, plus one channel per active
+  executor — and every entry carries trust, priority, and outcome. Structured intent, goal, and
+  authorization are updated only by FastBrain, and model calls read a bounded `ContextView`
+  compiled from this state, never raw memory.
+- **Push-and-pull proactivity.** Push: an eligible ambient observation becomes a pooled
+  suggestion, and the Surrogate decides whether it deserves attention right now — `speak=false` is
+  silence, not forgetting, while urgent monitors (Guard) skip the pool and wake FastBrain
+  directly. Pull: the same stored state answers later questions, on the realtime path through the
+  read-only `memory.recall` tool. Publish once. Decide later. Answer from the same state.
+- **Heterogeneous executors under priority-based floor arbitration.** Manifest-declared executors
+  run concurrently as independently spawned tasks, and Floor arbitrates speech with three verdicts —
+  `allow`, `preempt`, `defer` — using priorities bound to the triggering event (user 100 > guard
+  90 > active executors 50 > ambient observation 40). A model cannot escalate its own priority,
+  and a deferred utterance lands in the suggestion pool instead of being dropped.
+- **Codex live steering over the native app-server.** On the realtime path, the Codex executor
+  drives `codex app-server` over JSON-RPC (`turn/start`, `turn/steer`), so a new user constraint
+  joins the in-flight turn instead of restarting it. The ordering contract —
+  `run < turn_start < steer ≤ accept < completion` — is enforced by deterministic evaluations.
 
 ## The problem it models
 
@@ -85,6 +115,9 @@ The diagram encodes several non-negotiable boundaries:
 6. User-awaited results wake FastBrain directly; unsolicited suggestions must pass through
    `Surrogate → Floor → FastBrain`.
 7. Only manifests selected by configuration become model-facing tools.
+8. Floor arbitrates every speech attempt with three verdicts — `allow`, `preempt`, `defer` — and
+   the deciding priority is bound to the triggering event, never chosen by the model. A deferred
+   utterance is not dropped; it lands in the suggestion pool for the next natural seam.
 
 These are implementation constraints, not prompt conventions. Delegate identity, operation,
 deadline, and terminal state are checked at the runtime boundary, while Floor prevents independent
@@ -129,6 +162,14 @@ control plane decides later whether it should interrupt, wait, or remain availab
 
 **Publish once. Decide later. Answer from the same state.**
 
+This is what makes proactivity push-and-pull instead of notify-only. On the push side, an eligible
+ambient observation becomes a pooled suggestion and Surrogate judges whether it deserves attention
+now; a fired suggestion enters cooldown and can only re-arm when new evidence arrives on its
+channel, so the same line is never replayed on a timer. Urgent monitors (Guard) do not pool — they
+wake FastBrain directly. On the pull side, the identical stored state answers later questions, on
+the realtime path through the read-only `memory.recall` tool; executor status queries additionally
+report live task state on demand.
+
 The design separates three judgments that are easy to conflate:
 
 | Question | Owner |
@@ -159,26 +200,26 @@ and the executor does not gain a direct route to the user's speakers.
 The longer rationale is in [Design essence](docs/essence.md) and the
 [v3 design series](docs/archs/v3/00-overview.md).
 
-## Capabilities
+## Integrations
 
 Nova Audio Agent assembles a common control plane around replaceable adapters. Each adapter owns
 its credential checks, transport timeouts, request normalization, output sanitization, and any
 capability-specific verification. Runtime owns the generic delegate lifecycle.
 
-| Capability | What is included |
+| Integration | What is included |
 |---|---|
-| Deterministic simulation | `fast_sim` and `slow_sim` lanes for demos and offline scenarios |
+| Deterministic simulation | `fast_sim` and `slow_sim` executors for demos and offline scenarios |
 | Search | Read-only Tavily-backed search exposed as a bounded tool |
 | Home Assistant | Bounded light operations with explicit endpoint, token, and entity configuration |
-| Codex | Long-running workspace tasks with progress, terminal status, and recovery support |
+| Codex | Long-running workspace tasks with progress, terminal status, and recovery support. Two backends: the default JSONL transport (`run`, `status`) used by the text CLI, and the live app-server transport (`run`, `steer`, `status`) used on the realtime path — same-turn steering exists only on the latter |
 | AutoGLM | Experimental iOS browsing through a pinned public upstream submodule and worker protocol |
 | Vision | Local camera or file-backed snapshots, Watch observations, and Guard conditions |
 | Realtime voice | Qwen Audio Realtime transport, response correlation, playback fencing, recovery, and telemetry |
 | Ambient Orb | Sandboxed Electron UI plus a native macOS VoiceProcessingIO helper |
 
-The selectable active executor lanes are `fast_sim`, `slow_sim`, `ha`, `codex`, and `autoglm`.
-Search, camera, Watch, and Guard are assembled as bounded tools around that selected lane. Multiple
-active lanes can be selected with `NOVA_AUDIO_AGENT_EXECUTORS`.
+The selectable active executors are `fast_sim`, `slow_sim`, `ha`, `codex`, and `autoglm`.
+Search, camera, Watch, and Guard are assembled as bounded tools around the selected executors.
+Multiple active executors can be selected with `NOVA_AUDIO_AGENT_EXECUTORS`.
 
 ## Quickstart
 
@@ -205,11 +246,19 @@ For the text CLI, set `NOVA_AUDIO_AGENT_MODEL_API_KEY` and `TAVILY_API_KEY` in `
 ```bash
 uv run nova-audio-agent --help
 uv run nova-audio-agent demo dual-axis
+uv run nova-audio-agent demo proactive
 uv run nova-audio-agent chat --executor fast_sim
 ```
 
 The dual-axis demo is the shortest illustration of one FastBrain call both speaking and dispatching
-work. The interactive harness continues until `/quit`, `/exit`, end-of-file, or `Ctrl-C`.
+work; the proactive demo exercises Surrogate deciding whether an ambient observation deserves
+speech. `demo async | dual-axis | timeout | proactive | all` covers the four acceptance scenarios,
+and `scorecard` runs a non-gating real-model evaluation. The interactive harness continues until
+`/quit`, `/exit`, end-of-file, or `Ctrl-C`.
+
+Nova is Chinese-first: the persona, production prompts, tool descriptions, CLI error messages, and
+default voice are Chinese. See [Getting started](docs/getting-started.md) for what that means in
+practice.
 
 If you prefer Conda, the bootstrap script creates or updates the `nova-audio-agent` environment and
 syncs locked dependencies:
@@ -240,7 +289,7 @@ uv run nova-audio-agent chat --executor ha
 uv run nova-audio-agent chat --executor codex
 ```
 
-To expose more than one active lane, use a comma-separated environment value such as
+To expose more than one active executor, use a comma-separated environment value such as
 `NOVA_AUDIO_AGENT_EXECUTORS=codex,ha`.
 
 Vision support uses an optional dependency:
@@ -273,7 +322,8 @@ dependencies when they are absent.
 
 The renderer runs with context isolation, sandboxing, and a narrow preload bridge. Provider events
 are correlated with host response and delegate identities, while playback acknowledgements fence
-audio clearing and completion.
+audio clearing and completion. A Memory Board view renders every memory channel's latest items on
+request — the visual counterpart of the channel-wise memory described above.
 
 ## Repository layout
 
@@ -306,27 +356,16 @@ identity and lifecycle, and `context_view.py` for the bounded state FastBrain re
 | [Getting started](docs/getting-started.md) | Credentials, executors, camera sources, AutoGLM, Ambient Orb, and verification |
 | [Project status](docs/status.md) | What is implemented, what remains experimental, and known open work |
 | [v3 design series](docs/archs/v3/00-overview.md) | The detailed argument across spine, memory, context, ports, executors, and vision |
-| [Proactive voice-agent design space](docs/blog/2026-08-proactive-voice-agent-design-space.md) | The broader tradeoffs behind proactive speech |
+| [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | Where the speak decision should live, and what survives a stronger model |
 | [Downstream reimplementation guide](docs/guides/downstream-reimplementation.md) | How to reproduce the architecture without copying repository internals |
 | [Guard cat-sofa example](assets/demos/cat-sofa-guard/README.md) | A file-backed visual observation fixture |
 
 ## Project status
 
-Nova Audio Agent is an experimental open-source project at version `0.1.0`.
-
-| Area | Status |
-|---|---|
-| Event-driven runtime, memory, slots, delegates, and floor | Implemented with deterministic tests |
-| Simulator, search, Home Assistant, Codex, camera, Watch, and Guard adapters | Implemented |
-| Qwen Audio Realtime transport and recovery | Implemented; provider credentials are required for live use |
-| macOS Ambient Orb and native VoiceProcessingIO helper | Implemented and tested on macOS |
-| AutoGLM iOS integration | Experimental; upstream setup and a configured device are required |
-| Packaging and CI | Python build plus Python and Electron test jobs |
-
-The repository intentionally does not contain credentials, runtime traces, personal recordings, or
-live acceptance artifacts. Hardware and provider integrations therefore require local verification.
-Known open work includes broader live-provider soak testing, desktop accessibility and packaging
-polish, and more public examples that preserve the runtime invariants.
+Nova Audio Agent is an experimental open-source project at version `0.1.0`. The control plane,
+adapters, realtime transport, and macOS Ambient Orb are implemented with deterministic tests; the
+AutoGLM iOS integration remains experimental. The per-area table and known open work live in
+[Project status](docs/status.md).
 
 ## Development and verification
 
@@ -363,8 +402,10 @@ Both directories are intentionally ignored by Git.
 - Credentials, local media, runtime data, caches, dependency trees, and build outputs are excluded
   from version control.
 
-If you discover a security issue, avoid including credentials, recordings, or private runtime logs
-in a public issue.
+If you discover a security issue, report it privately as described in [SECURITY.md](SECURITY.md),
+and never include credentials, recordings, or private runtime logs in a public issue.
+Contribution guidelines, including the invariants every change must preserve, are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
