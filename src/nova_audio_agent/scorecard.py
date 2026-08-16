@@ -16,6 +16,11 @@ from nova_audio_agent.model_gateway import (
 from nova_audio_agent.prompting import FASTBRAIN_SYSTEM, SURROGATE_SYSTEM, render_context_snapshot
 from nova_audio_agent.tool_schema import CompiledTools
 
+# Shared with demos.py: the spoken-Chinese oracle for "reported failure" versus
+# "reported uncertainty" when a channel item ends in outcome=unknown.
+FAILURE_WORDS = ("失败", "没能", "未能", "出错", "错误", "不成功", "没有成功")
+UNKNOWN_WORDS = ("不确定", "不清楚", "无法确认", "没收到", "可能")
+
 _FAST_SNAPSHOTS = (
     ("scenario1_call2", False),
     ("scenario2_call1", True),
@@ -267,16 +272,8 @@ def evaluate_fastbrain(sample: FastBrainSample) -> tuple[ScorecardFinding, ...]:
         for item in channel.get("recent", ())
     )
     if has_unknown:
-        failure_words = tuple(
-            word
-            for word in ("失败", "没能", "未能", "出错", "错误", "不成功", "没有成功")
-            if word in sample.text
-        )
-        unknown_words = tuple(
-            word
-            for word in ("不确定", "不清楚", "无法确认", "没收到", "可能")
-            if word in sample.text
-        )
+        failure_words = tuple(word for word in FAILURE_WORDS if word in sample.text)
+        unknown_words = tuple(word for word in UNKNOWN_WORDS if word in sample.text)
         wording_ok = bool(unknown_words) and not failure_words
         findings.append(
             ScorecardFinding(

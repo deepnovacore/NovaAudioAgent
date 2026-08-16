@@ -13,11 +13,9 @@ from nova_audio_agent.executors.codex import STATUS, CodexProcessStatus, CodexTr
 from nova_audio_agent.executors.codex_app_server import SteerTransportResult
 from nova_audio_agent.executors.codex_live import (
     CODEX_LIVE_MANIFEST,
-    LIVE_RUN,
     STEER,
     CodexLiveAdapter,
 )
-from nova_audio_agent.executors.html_opener import HtmlOpenCode, HtmlOpenResult
 from nova_audio_agent.ports import DelegateRequest, DispatchContext, ProgressPayload, bind_delegate
 
 USER_WAKE = WakeReason(kind="user_input", priority=100, routing_class="user_awaited")
@@ -150,24 +148,10 @@ class _Worker:
         return SteerTransportResult(code="accepted", written=True)
 
 
-class _RecordingOpener:
-    def __init__(self, code: HtmlOpenCode = "opened", *, order: list[str] | None = None) -> None:
-        self.code = code
-        self.order = order
-        self.calls = 0
-
-    async def open_index(self) -> HtmlOpenResult:
-        self.calls += 1
-        if self.order is not None:
-            self.order.append("opened")
-        return HtmlOpenResult(self.code)
-
-
 def test_live_manifest_adds_only_sensitive_strict_steer() -> None:
     assert [op.name for op in CODEX_LIVE_MANIFEST.ops] == ["run", "steer", "status"]
-    assert LIVE_RUN.params["required"] == ["work_order"]
-    assert LIVE_RUN.params["additionalProperties"] is False
-    assert LIVE_RUN.params["properties"]["open_html_on_success"] == {"type": "boolean"}
+    assert RUN.params["required"] == ["work_order"]
+    assert RUN.params["additionalProperties"] is False
     assert STEER.sensitive_params == ("instruction",)
     assert STEER.params["additionalProperties"] is False
     assert STEER.params["properties"]["instruction"] == {
@@ -175,112 +159,6 @@ def test_live_manifest_adds_only_sensitive_strict_steer() -> None:
         "minLength": 1,
         "maxLength": 2000,
     }
-
-
-async def test_explicit_html_open_runs_only_after_successful_codex_completion() -> None:
-    order: list[str] = []
-
-    class _OrderedWorker(_Worker):
-        async def run(self, *args, **kwargs):
-            result = await super().run(*args, **kwargs)
-            order.append("run_completed")
-            return result
-
-    worker = _OrderedWorker()
-    opener = _RecordingOpener(order=order)
-    adapter = CodexLiveAdapter(worker, html_opener=opener)
-    run = asyncio.create_task(
-        adapter.dispatch(
-            "run",
-            {"work_order": "build it", "open_html_on_success": True},
-            _ctx(LIVE_RUN, {}),
-        )
-    )
-    await worker.started.wait()
-    worker.release.set()
-
-    handoff = await run
-
-    assert handoff.outcome == "ok"
-    assert handoff.trust == "untrusted_external"
-    assert handoff.content["host_action"] == {"open_html": "opened"}
-    assert opener.calls == 1
-    assert order == ["run_completed", "opened"]
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"work_order": "build it"},
-        {"work_order": "build it", "open_html_on_success": False},
-    ],
-)
-async def test_html_open_requires_explicit_true_authorization(payload: dict[str, Any]) -> None:
-    worker = _Worker()
-    opener = _RecordingOpener()
-    adapter = CodexLiveAdapter(worker, html_opener=opener)
-    run = asyncio.create_task(adapter.dispatch("run", payload, _ctx(LIVE_RUN, {})))
-    await worker.started.wait()
-    worker.release.set()
-
-    handoff = await run
-
-    assert handoff.outcome == "ok"
-    assert "host_action" not in handoff.content
-    assert opener.calls == 0
-
-
-async def test_failed_codex_run_never_opens_html() -> None:
-    worker = _Worker()
-    worker.run_failure = RuntimeError("transport lost")
-    opener = _RecordingOpener()
-
-    handoff = await CodexLiveAdapter(worker, html_opener=opener).dispatch(
-        "run",
-        {"work_order": "build it", "open_html_on_success": True},
-        _ctx(LIVE_RUN, {}),
-    )
-
-    assert handoff.outcome in {"failed", "unknown"}
-    assert "host_action" not in handoff.content
-    assert opener.calls == 0
-
-
-async def test_html_open_failure_does_not_rewrite_codex_completion_truth() -> None:
-    worker = _Worker()
-    opener = _RecordingOpener("open_failed")
-    adapter = CodexLiveAdapter(worker, html_opener=opener)
-    run = asyncio.create_task(
-        adapter.dispatch(
-            "run",
-            {"work_order": "build it", "open_html_on_success": True},
-            _ctx(LIVE_RUN, {}),
-        )
-    )
-    await worker.started.wait()
-    worker.release.set()
-
-    handoff = await run
-
-    assert handoff.outcome == "ok"
-    assert handoff.trust == "untrusted_external"
-    assert handoff.content["host_action"] == {"open_html": "open_failed"}
-
-
-async def test_html_open_flag_requires_an_exact_boolean() -> None:
-    worker = _Worker()
-    opener = _RecordingOpener()
-
-    handoff = await CodexLiveAdapter(worker, html_opener=opener).dispatch(
-        "run",
-        {"work_order": "build it", "open_html_on_success": "yes"},
-        _ctx(LIVE_RUN, {}),
-    )
-
-    assert handoff.outcome == "failed"
-    assert handoff.content == {"error": "invalid_params", "op": "run"}
-    assert worker.run_calls == []
-    assert opener.calls == 0
 
 
 async def test_run_forwards_progress_and_steer_acceptance_without_identity_leak() -> None:

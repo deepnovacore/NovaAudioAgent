@@ -27,7 +27,6 @@ from nova_audio_agent.executors.codex import CodexAdapter
 from nova_audio_agent.executors.codex_app_server import CodexAppServerTransport
 from nova_audio_agent.executors.codex_live import CodexLiveAdapter
 from nova_audio_agent.executors.codex_transport import CodexTransport
-from nova_audio_agent.executors.html_opener import BoundedHtmlOpener
 from nova_audio_agent.executors.home_assistant import (
     HomeAssistantAdapter,
     HomeAssistantTransport,
@@ -392,8 +391,7 @@ def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
                 binary=binary,
                 workspace=workspace,
                 api_key=codex_api_key,
-            ),
-            html_opener=BoundedHtmlOpener(workspace),
+            )
         )
     return CodexAdapter(
         CodexTransport(
@@ -516,8 +514,9 @@ def _build_assembly(
         media_store,
         model=watch_model,
         capture_enabled=capture_enabled,
-        # File replay has one mutable playhead. Guard exclusively resets the demo
-        # timeline; file-backed provider entry points exclude Watch from routing.
+        # File replay has one mutable playhead. Rewinding before each Guard
+        # observation keeps file-backed evaluations deterministic regardless of
+        # when the observation fires.
         prepare_observation=(
             frame_source.restart if isinstance(frame_source, VideoFileFrameSource) else None
         ),

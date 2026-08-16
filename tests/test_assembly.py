@@ -246,13 +246,6 @@ def test_explicit_live_assembly_adds_steer_without_changing_default(
     tmp_path,
 ) -> None:
     monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **_kwargs: object())
-    html_opener = object()
-    opener_workspaces = []
-    monkeypatch.setattr(
-        assembly_module,
-        "BoundedHtmlOpener",
-        lambda workspace: opener_workspaces.append(workspace) or html_opener,
-    )
     settings = Settings(
         model_api_key=SecretStr("model-secret"),
         tavily_api_key=SecretStr("tavily-secret"),
@@ -267,8 +260,6 @@ def test_explicit_live_assembly_adds_steer_without_changing_default(
     default = build_assembly(settings, sink=_Sink())
 
     assert isinstance(live.runtime.executors["codex"], CodexLiveAdapter)
-    assert live.runtime.executors["codex"]._html_opener is html_opener
-    assert opener_workspaces == [tmp_path.resolve()]
     assert isinstance(default.runtime.executors["codex"], CodexAdapter)
     assert "codex.steer" in live.runtime.fastbrain._system
     assert "codex.steer" not in default.runtime.fastbrain._system

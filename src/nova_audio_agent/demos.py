@@ -22,6 +22,7 @@ from nova_audio_agent.model_adapters import GatewayFastBrain, GatewaySurrogate
 from nova_audio_agent.model_gateway import OpenAIModelGateway
 from nova_audio_agent.ports import ExecutorAdapter
 from nova_audio_agent.runtime import Runtime
+from nova_audio_agent.scorecard import FAILURE_WORDS, UNKNOWN_WORDS
 from nova_audio_agent.speech import CliSpeechSink
 from nova_audio_agent.tool_schema import compile_tool_schema
 
@@ -34,8 +35,6 @@ _AMBIENT_POLICY = HandoffPolicy(
     typical_latency=1.0,
     compress_watermark=20,
 )
-_FAILURE_WORDS = ("失败", "没能", "未能", "出错", "错误", "不成功", "没有成功")
-_UNKNOWN_WORDS = ("不确定", "不清楚", "无法确认", "没收到", "可能")
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,8 +240,8 @@ async def demo_timeout(settings: Settings, writer: DemoWriter) -> DemoResult:
             ),
         )
         text = "".join(_spoken(runtime)[spoken_before:])
-        has_unknown = any(word in text for word in _UNKNOWN_WORDS)
-        has_failure = any(word in text for word in _FAILURE_WORDS)
+        has_unknown = any(word in text for word in UNKNOWN_WORDS)
+        has_failure = any(word in text for word in FAILURE_WORDS)
         passed = has_unknown and not has_failure
         return DemoResult(
             "timeout",

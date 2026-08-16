@@ -28,7 +28,6 @@ from nova_audio_agent.realtime.playback import (
 from nova_audio_agent.realtime.service import CodexState
 from nova_audio_agent.realtime.session import CaptionFrame
 from nova_audio_agent.realtime.telemetry import RealtimeTelemetry
-from nova_audio_agent.tool_schema import CompiledTools
 
 if TYPE_CHECKING:
     from nova_audio_agent.clock import Clock
@@ -40,13 +39,6 @@ MAX_DESKTOP_JSON_BYTES = 16 * 1024
 MAX_DESKTOP_PCM_BYTES = MAX_PLAYBACK_FRAME_BYTES
 MAX_AUDIO_HEADER_BYTES = 2048
 _AUDIO_MAGIC = b"NOVA"
-
-
-def _guard_file_provider_tools(tools: CompiledTools) -> CompiledTools:
-    schemas = tuple(
-        schema for schema in tools.schemas if not schema["function"]["name"].startswith("watch__")
-    )
-    return CompiledTools(schemas=schemas, bindings=tools.bindings)
 
 
 class DesktopProtocolError(RuntimeError):
@@ -774,7 +766,6 @@ async def _run_desktop(
             on_delivery=lambda completion: _post_delivery(assembly, completion),
             on_caption=lambda frame: bridge.on_caption(frame) if bridge is not None else None,
             realtime_telemetry=telemetry,
-            provider_tool_view=(_guard_file_provider_tools if camera_file is not None else None),
         )
         bridge = DesktopSocketBridge(
             token=token,

@@ -26,30 +26,12 @@ from nova_audio_agent.executors.codex import (
     _validate_process_status,
 )
 from nova_audio_agent.executors.codex_app_server import SteerTransportResult
-from nova_audio_agent.executors.html_opener import HtmlOpenResult, HtmlOpener
 from nova_audio_agent.ports import (
     DispatchContext,
     ExecutorManifest,
     Handoff,
     OpSpec,
     ProgressPayload,
-)
-
-LIVE_RUN = replace(
-    RUN,
-    params={
-        "type": "object",
-        "properties": {
-            "work_order": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 4000,
-            },
-            "open_html_on_success": {"type": "boolean"},
-        },
-        "required": ["work_order"],
-        "additionalProperties": False,
-    },
 )
 
 STEER = OpSpec(
@@ -74,7 +56,7 @@ STEER = OpSpec(
 
 CODEX_LIVE_MANIFEST = ExecutorManifest(
     name="codex",
-    ops=(LIVE_RUN, STEER, STATUS),
+    ops=(RUN, STEER, STATUS),
     policy=CODEX_POLICY,
 )
 
@@ -109,14 +91,8 @@ class CodexLiveWorker(Protocol):
 class CodexLiveAdapter:
     manifest = CODEX_LIVE_MANIFEST
 
-    def __init__(
-        self,
-        worker: CodexLiveWorker,
-        *,
-        html_opener: HtmlOpener | None = None,
-    ) -> None:
+    def __init__(self, worker: CodexLiveWorker) -> None:
         self._worker = worker
-        self._html_opener = html_opener
         self._run_lock = asyncio.Lock()
         self._status = CodexStatusSnapshot()
         self._prewarm_inflight: asyncio.Task[None] | None = None
@@ -189,37 +165,16 @@ class CodexLiveAdapter:
             return await self._steer(instruction)
         if op != "run":
             return _failure("unknown_op", op)
-        normalized = _normalize_live_run_request(request)
-        if normalized is None:
+        work_order = _normalize_run_request(request)
+        if work_order is None:
             return _failure("invalid_params", op)
-        work_order, open_html_on_success = normalized
         if self._run_lock.locked():
             return _failure("busy", op)
         await self._run_lock.acquire()
         try:
-            handoff = await self._run(work_order, ctx)
-            if handoff.outcome != "ok" or not open_html_on_success:
-                return handoff
-            open_code = await self._open_html()
-            return replace(
-                handoff,
-                content={**handoff.content, "host_action": {"open_html": open_code}},
-            )
+            return await self._run(work_order, ctx)
         finally:
             self._run_lock.release()
-
-    async def _open_html(self) -> str:
-        if self._html_opener is None:
-            return "unavailable"
-        try:
-            result = await self._html_opener.open_index()
-        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
-            raise
-        except Exception:
-            return "open_failed"
-        if type(result) is not HtmlOpenResult:
-            return "open_failed"
-        return result.code
 
     async def _run(self, work_order: str, ctx: DispatchContext) -> Handoff:
         started_at = ctx.clock.now()
@@ -483,15 +438,3 @@ def _normalize_steer_request(request: Mapping[str, Any]) -> str | None:
     if not instruction or len(instruction) > 2000:
         return None
     return instruction
-
-
-def _normalize_live_run_request(request: Mapping[str, Any]) -> tuple[str, bool] | None:
-    if set(request) not in ({"work_order"}, {"work_order", "open_html_on_success"}):
-        return None
-    work_order = _normalize_run_request({"work_order": request.get("work_order")})
-    if work_order is None:
-        return None
-    open_html = request.get("open_html_on_success", False)
-    if type(open_html) is not bool:
-        return None
-    return work_order, open_html

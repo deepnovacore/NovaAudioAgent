@@ -11,7 +11,6 @@ import pytest
 
 from nova_audio_agent.config import ConfigurationError
 from nova_audio_agent.realtime.desktop import _run_desktop
-from nova_audio_agent.tool_schema import CompiledTools
 
 
 @pytest.mark.asyncio
@@ -49,7 +48,6 @@ async def test_desktop_entry_reports_readiness_and_stops_on_parent_eof(
     def build_assembly(_settings: object, **callbacks: Any) -> _Assembly:
         assert callbacks["camera_source"] == "local"
         assert callbacks["camera_file"] is None
-        assert callbacks["provider_tool_view"] is None
         assert set(callbacks) >= {
             "on_audio_frame",
             "on_audio_clear",
@@ -109,25 +107,6 @@ async def test_desktop_entry_selects_file_camera_from_environment(
     def build_assembly(_settings: object, **callbacks: Any) -> None:
         assert callbacks["camera_source"] == "file"
         assert callbacks["camera_file"] == video
-        provider_tool_view = callbacks["provider_tool_view"]
-        assert callable(provider_tool_view)
-        bindings: dict[str, object] = {}
-        tools = CompiledTools(
-            schemas=(
-                {"type": "function", "function": {"name": "watch__start"}},
-                {"type": "function", "function": {"name": "guard__start"}},
-                {"type": "function", "function": {"name": "cam__snapshot"}},
-            ),
-            bindings=bindings,  # type: ignore[arg-type]
-        )
-
-        provider_tools = provider_tool_view(tools)
-
-        assert [schema["function"]["name"] for schema in provider_tools.schemas] == [
-            "guard__start",
-            "cam__snapshot",
-        ]
-        assert provider_tools.bindings is bindings
         raise _StopBeforeStartup
 
     try:

@@ -594,17 +594,6 @@ def test_frontend_instructions_merge_clarification_into_one_work_order() -> None
         assert phrase in FRONTEND_INSTRUCTIONS
 
 
-def test_frontend_instructions_only_authorize_html_open_when_user_asks() -> None:
-    for phrase in (
-        "用户明确要求",
-        "open_html_on_success=true",
-        "未明确要求时省略",
-        "工作区根目录",
-        "不授权其他路径、命令或提前打开",
-    ):
-        assert phrase in FRONTEND_INSTRUCTIONS
-
-
 def test_frontend_instructions_route_progress_questions_to_codex_status() -> None:
     """#54: the status-question doctrine finally reaches the realtime front
     brain — ask codex__status, paraphrase only, never re-query in the turn."""
