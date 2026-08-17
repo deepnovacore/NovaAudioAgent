@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -13,6 +14,57 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class ConfigurationError(RuntimeError):
     """A safe startup error that never contains credential values."""
+
+
+def _secret_value(value: SecretStr | None) -> str:
+    return "" if value is None else value.get_secret_value().strip()
+
+
+def _required_setting(value: str, name: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ConfigurationError(f"{name} 不能为空")
+    return normalized
+
+
+def _secure_endpoint(value: str, *, scheme: str, name: str) -> str:
+    normalized = value.strip().rstrip("/")
+    try:
+        parsed = urlsplit(normalized)
+    except ValueError:
+        parsed = None
+    if (
+        parsed is None
+        or parsed.scheme != scheme
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise ConfigurationError(f"{name} 必须是安全的 {scheme}:// 地址")
+    return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class VolcengineRealtimeConfig:
+    ark_base_url: str
+    ark_model: str
+    ark_api_key: str
+    asr_endpoint: str
+    asr_resource_id: str
+    asr_api_key: str
+    asr_chunk_ms: int
+    tts_endpoint: str
+    tts_resource_id: str
+    tts_voice: str
+    tts_api_key: str
+    tts_output_sample_rate: int
+    vad_threshold: float
+    vad_pre_roll_ms: int
+    vad_min_speech_ms: int
+    vad_silence_end_ms: int
+    vad_speech_pad_ms: int
+    vad_max_utterance_ms: int
 
 
 class Settings(BaseSettings):
@@ -30,6 +82,7 @@ class Settings(BaseSettings):
     watch_model: str | None = None
     surrogate_model: str = "qwen-flash"
     compressor_model: str = "qwen-flash"
+    realtime_provider: Literal["qwen", "volcengine"] = "qwen"
     qwen_realtime_url: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
     qwen_realtime_model: str = "qwen-audio-3.0-realtime-plus"
     qwen_realtime_voice: str = "longanqian"
@@ -40,6 +93,30 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="DASHSCOPE_API_KEY",
     )
+    ark_api_key: SecretStr | None = Field(default=None, validation_alias="ARK_API_KEY")
+    doubao_asr_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="DOUBAO_ASR_API_KEY",
+    )
+    doubao_bigmodel_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="DOUBAO_BIGMODEL_API_KEY",
+    )
+    volcengine_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    volcengine_ark_model: str = "doubao-seed-2-0-pro-260215"
+    doubao_asr_endpoint: str = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
+    doubao_asr_resource_id: str = "volc.seedasr.sauc.duration"
+    doubao_asr_chunk_ms: int = 200
+    doubao_tts_endpoint: str = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+    doubao_tts_resource_id: str = "seed-tts-2.0"
+    doubao_tts_voice: str = "zh_female_vv_uranus_bigtts"
+    doubao_tts_output_sample_rate: int = 24_000
+    volcengine_vad_threshold: float = 0.5
+    volcengine_vad_pre_roll_ms: int = 260
+    volcengine_vad_min_speech_ms: int = 250
+    volcengine_vad_silence_end_ms: int = 560
+    volcengine_vad_speech_pad_ms: int = 30
+    volcengine_vad_max_utterance_ms: int = 15_000
     executor: Literal["fast_sim", "slow_sim", "ha", "codex", "autoglm"] = "fast_sim"
     executors: str = ""
     ha_url: str | None = None
@@ -98,6 +175,73 @@ class Settings(BaseSettings):
         if not api_key:
             raise ConfigurationError("缺少 DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY")
         return url, model, voice, api_key
+
+    def require_volcengine_realtime(self) -> VolcengineRealtimeConfig:
+        ark_key = _secret_value(self.ark_api_key)
+        tts_key = _secret_value(self.doubao_bigmodel_api_key)
+        asr_key = _secret_value(self.doubao_asr_api_key) or tts_key
+        if not ark_key:
+            raise ConfigurationError("缺少 ARK_API_KEY")
+        if not tts_key:
+            raise ConfigurationError("缺少 DOUBAO_BIGMODEL_API_KEY")
+        if not asr_key:
+            raise ConfigurationError("缺少 DOUBAO_ASR_API_KEY 或 DOUBAO_BIGMODEL_API_KEY")
+        if self.doubao_asr_chunk_ms <= 0:
+            raise ConfigurationError("NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS 必须为正整数")
+        if self.doubao_tts_output_sample_rate != 24_000:
+            raise ConfigurationError("NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE 必须为 24000")
+        if not 0 < self.volcengine_vad_threshold <= 1:
+            raise ConfigurationError("NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD 必须在 (0, 1] 内")
+        if self.volcengine_vad_pre_roll_ms < 0 or self.volcengine_vad_speech_pad_ms < 0:
+            raise ConfigurationError("火山 VAD pre-roll 与 speech pad 不能为负数")
+        if self.volcengine_vad_min_speech_ms <= 0 or self.volcengine_vad_silence_end_ms <= 0:
+            raise ConfigurationError("火山 VAD min speech 与 silence end 必须为正整数")
+        if self.volcengine_vad_max_utterance_ms < self.volcengine_vad_min_speech_ms:
+            raise ConfigurationError("火山 VAD max utterance 不能短于 min speech")
+        return VolcengineRealtimeConfig(
+            ark_base_url=_secure_endpoint(
+                self.volcengine_ark_base_url,
+                scheme="https",
+                name="NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL",
+            ),
+            ark_model=_required_setting(
+                self.volcengine_ark_model,
+                "NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL",
+            ),
+            ark_api_key=ark_key,
+            asr_endpoint=_secure_endpoint(
+                self.doubao_asr_endpoint,
+                scheme="wss",
+                name="NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT",
+            ),
+            asr_resource_id=_required_setting(
+                self.doubao_asr_resource_id,
+                "NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID",
+            ),
+            asr_api_key=asr_key,
+            asr_chunk_ms=self.doubao_asr_chunk_ms,
+            tts_endpoint=_secure_endpoint(
+                self.doubao_tts_endpoint,
+                scheme="wss",
+                name="NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT",
+            ),
+            tts_resource_id=_required_setting(
+                self.doubao_tts_resource_id,
+                "NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID",
+            ),
+            tts_voice=_required_setting(
+                self.doubao_tts_voice,
+                "NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE",
+            ),
+            tts_api_key=tts_key,
+            tts_output_sample_rate=self.doubao_tts_output_sample_rate,
+            vad_threshold=self.volcengine_vad_threshold,
+            vad_pre_roll_ms=self.volcengine_vad_pre_roll_ms,
+            vad_min_speech_ms=self.volcengine_vad_min_speech_ms,
+            vad_silence_end_ms=self.volcengine_vad_silence_end_ms,
+            vad_speech_pad_ms=self.volcengine_vad_speech_pad_ms,
+            vad_max_utterance_ms=self.volcengine_vad_max_utterance_ms,
+        )
 
     def require_home_assistant(self) -> tuple[str, str, str]:
         if self.ha_url is None or not self.ha_url.strip():

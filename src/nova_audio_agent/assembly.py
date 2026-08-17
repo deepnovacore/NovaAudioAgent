@@ -49,7 +49,7 @@ from nova_audio_agent.trace import TraceWriter
 
 if TYPE_CHECKING:
     from nova_audio_agent.realtime.playback import PlaybackCompletion, PlaybackFrame
-    from nova_audio_agent.realtime.qwen import QwenAudioRealtimeAdapter
+    from nova_audio_agent.realtime.protocol import RealtimeFrontBrain
     from nova_audio_agent.realtime.service import CodexState, RealtimeService
     from nova_audio_agent.realtime.session import CaptionFrame
     from nova_audio_agent.realtime.telemetry import RealtimeTelemetry
@@ -129,9 +129,9 @@ class Assembly:
 
 
 @dataclass(slots=True)
-class QwenRealtimeAssembly:
+class RealtimeAssembly:
     core: Assembly
-    provider: QwenAudioRealtimeAdapter
+    provider: RealtimeFrontBrain
     service: RealtimeService
     codex_live_adapter: CodexLiveAdapter | None = None
     codex_prewarm: bool = True
@@ -171,6 +171,10 @@ class QwenRealtimeAssembly:
             finally:
                 if self.codex_live_adapter is not None:
                     await self.codex_live_adapter.aclose()
+
+
+# Compatibility for callers that imported the original provider-specific name.
+QwenRealtimeAssembly = RealtimeAssembly
 
 
 def build_assembly(
@@ -250,7 +254,7 @@ def build_qwen_realtime_assembly(
     trace: TraceWriter | None = None,
     metrics: MetricsSink | None = None,
     provider_tool_view: Callable[[CompiledTools], CompiledTools] | None = None,
-) -> QwenRealtimeAssembly:
+) -> RealtimeAssembly:
     """Build the Qwen-first frontend with the configured active executors."""
     from nova_audio_agent.realtime.bridge import RealtimeRuntimeBridge
     from nova_audio_agent.realtime.playback import PlaybackRegistry
@@ -292,15 +296,7 @@ def build_qwen_realtime_assembly(
         on_attention_decision=relay_attention,
     )
     provider_tools = core.tools if provider_tool_view is None else provider_tool_view(core.tools)
-    if provider_tools.bindings is not core.tools.bindings:
-        raise ConfigurationError("provider tool view 必须复用完整 bindings")
-    full_schema_names = {schema["function"]["name"] for schema in core.tools.schemas}
-    try:
-        provider_schema_names = {schema["function"]["name"] for schema in provider_tools.schemas}
-    except (KeyError, TypeError) as exc:
-        raise ConfigurationError("provider tool view 包含无效 schema") from exc
-    if not provider_schema_names <= full_schema_names:
-        raise ConfigurationError("provider tool view 不能引入未知 schema")
+    _validate_provider_tool_view(core.tools, provider_tools)
     provider = QwenAudioRealtimeAdapter(
         url=url,
         api_key=realtime_api_key,
@@ -349,13 +345,238 @@ def build_qwen_realtime_assembly(
     suggestion_outlet = service.on_suggestion_selected
     attention_outlet = service.on_attention_decision
     live_adapter = core.runtime.executors.get("codex")
-    return QwenRealtimeAssembly(
+    return RealtimeAssembly(
         core=core,
         provider=provider,
         service=service,
         codex_live_adapter=(live_adapter if isinstance(live_adapter, CodexLiveAdapter) else None),
         codex_prewarm=settings.codex_prewarm,
     )
+
+
+def build_volcengine_realtime_assembly(
+    settings: Settings,
+    *,
+    sink: SpeechSink,
+    on_audio_frame: Callable[[PlaybackFrame], None],
+    on_audio_clear: Callable[[str, int], None],
+    on_audio_terminal: Callable[[str, int], None],
+    on_delivery: Callable[[PlaybackCompletion], None],
+    on_audio_alert: Callable[[str | None, int | None], None] | None = None,
+    on_codex_state: Callable[[CodexState], None] | None = None,
+    on_spoken: Callable[[str], None] | None = None,
+    on_caption: Callable[[CaptionFrame], None] | None = None,
+    realtime_telemetry: RealtimeTelemetry | None = None,
+    id_factory: Callable[[], str] | None = None,
+    camera_source: CameraSourceName = "auto",
+    camera_enabled: bool = False,
+    camera_index: int = 0,
+    camera_file: Path | None = None,
+    trace: TraceWriter | None = None,
+    metrics: MetricsSink | None = None,
+    provider_tool_view: Callable[[CompiledTools], CompiledTools] | None = None,
+) -> RealtimeAssembly:
+    """Build the native Volcengine VAD → ASR → Ark → TTS frontend."""
+    from nova_audio_agent.realtime.bridge import RealtimeRuntimeBridge
+    from nova_audio_agent.realtime.playback import PlaybackRegistry
+    from nova_audio_agent.realtime.qwen import FRONTEND_INSTRUCTIONS
+    from nova_audio_agent.realtime.service import RealtimeService
+    from nova_audio_agent.realtime.session import RealtimeSession
+    from nova_audio_agent.realtime.volcengine import (
+        ArkResponsesClient,
+        DoubaoAsrClient,
+        DoubaoTtsClient,
+        SileroVadConfig,
+        SileroVadSegmenter,
+        VolcengineCascadedAdapter,
+    )
+
+    _active_executor_names(settings)
+    config = settings.require_volcengine_realtime()
+    configured_model_key = (
+        settings.model_api_key.get_secret_value().strip()
+        if settings.model_api_key is not None
+        else ""
+    )
+    suggestion_outlet: Callable[[Suggestion, WakeReason], None] | None = None
+    attention_outlet: Callable[[AttentionDecision], None] | None = None
+
+    def relay_suggestion(suggestion: Suggestion, reason: WakeReason) -> None:
+        if suggestion_outlet is not None:
+            suggestion_outlet(suggestion, reason)
+
+    def relay_attention(decision: AttentionDecision) -> None:
+        if attention_outlet is not None:
+            attention_outlet(decision)
+
+    core = _build_assembly(
+        settings,
+        sink=sink,
+        camera_source=camera_source,
+        camera_enabled=camera_enabled,
+        camera_index=camera_index,
+        camera_file=camera_file,
+        trace=trace,
+        metrics=metrics,
+        codex_live=True,
+        realtime_frontbrain=True,
+        model_api_key_override=configured_model_key or config.ark_api_key,
+        model_base_url_override=(None if configured_model_key else config.ark_base_url),
+        support_model_override=(None if configured_model_key else config.ark_model),
+        on_suggestion_selected=relay_suggestion,
+        on_attention_decision=relay_attention,
+    )
+    provider_tools = core.tools if provider_tool_view is None else provider_tool_view(core.tools)
+    _validate_provider_tool_view(core.tools, provider_tools)
+    next_id = (lambda: f"nova_{uuid4().hex}") if id_factory is None else id_factory
+    provider = VolcengineCascadedAdapter(
+        vad=SileroVadSegmenter(
+            SileroVadConfig(
+                threshold=config.vad_threshold,
+                pre_roll_ms=config.vad_pre_roll_ms,
+                min_speech_ms=config.vad_min_speech_ms,
+                silence_end_ms=config.vad_silence_end_ms,
+                speech_pad_ms=config.vad_speech_pad_ms,
+                max_utterance_ms=config.vad_max_utterance_ms,
+            )
+        ),
+        asr=DoubaoAsrClient(
+            endpoint=config.asr_endpoint,
+            api_key=config.asr_api_key,
+            resource_id=config.asr_resource_id,
+            chunk_ms=config.asr_chunk_ms,
+        ),
+        ark=ArkResponsesClient(
+            client=AsyncOpenAI(
+                api_key=config.ark_api_key,
+                base_url=config.ark_base_url,
+                timeout=30.0,
+            ),
+            model=config.ark_model,
+            instructions=FRONTEND_INSTRUCTIONS,
+        ),
+        tts=DoubaoTtsClient(
+            endpoint=config.tts_endpoint,
+            api_key=config.tts_api_key,
+            resource_id=config.tts_resource_id,
+            voice=config.tts_voice,
+            output_sample_rate=config.tts_output_sample_rate,
+            id_factory=next_id,
+        ),
+        telemetry=realtime_telemetry,
+        id_factory=next_id,
+    )
+    playback = PlaybackRegistry(
+        id_factory=next_id,
+        on_frame=on_audio_frame,
+        on_clear=on_audio_clear,
+        on_alert=on_audio_alert,
+    )
+    session = RealtimeSession(
+        provider=provider,
+        playback=playback,
+        id_factory=next_id,
+        on_spoken=on_spoken,
+        on_delivery=on_delivery,
+        clock=core.runtime.clock,
+    )
+    bridge = RealtimeRuntimeBridge(
+        runtime=core.runtime,
+        tools=core.tools,
+        id_factory=next_id,
+    )
+    service = RealtimeService(
+        provider=provider,
+        runtime=core.runtime,
+        tools=core.tools,
+        provider_schemas=provider_tools.schemas,
+        session=session,
+        bridge=bridge,
+        id_factory=next_id,
+        on_provider_terminal=lambda generation: on_audio_terminal(
+            generation.utterance_id,
+            generation.generation_epoch,
+        ),
+        on_codex_state=on_codex_state,
+        on_caption=on_caption,
+        telemetry=realtime_telemetry,
+        controlled_guard_reconnect=False,
+        guard_history_recovery="none",
+        guard_history_pairs=settings.qwen_guard_history_pairs,
+    )
+    suggestion_outlet = service.on_suggestion_selected
+    attention_outlet = service.on_attention_decision
+    live_adapter = core.runtime.executors.get("codex")
+    return RealtimeAssembly(
+        core=core,
+        provider=provider,
+        service=service,
+        codex_live_adapter=(live_adapter if isinstance(live_adapter, CodexLiveAdapter) else None),
+        codex_prewarm=settings.codex_prewarm,
+    )
+
+
+def build_realtime_assembly(
+    settings: Settings,
+    *,
+    sink: SpeechSink,
+    on_audio_frame: Callable[[PlaybackFrame], None],
+    on_audio_clear: Callable[[str, int], None],
+    on_audio_terminal: Callable[[str, int], None],
+    on_delivery: Callable[[PlaybackCompletion], None],
+    on_audio_alert: Callable[[str | None, int | None], None] | None = None,
+    on_codex_state: Callable[[CodexState], None] | None = None,
+    on_spoken: Callable[[str], None] | None = None,
+    on_caption: Callable[[CaptionFrame], None] | None = None,
+    realtime_telemetry: RealtimeTelemetry | None = None,
+    id_factory: Callable[[], str] | None = None,
+    camera_source: CameraSourceName = "auto",
+    camera_enabled: bool = False,
+    camera_index: int = 0,
+    camera_file: Path | None = None,
+    trace: TraceWriter | None = None,
+    metrics: MetricsSink | None = None,
+    provider_tool_view: Callable[[CompiledTools], CompiledTools] | None = None,
+) -> RealtimeAssembly:
+    """Select a realtime provider once at startup."""
+    builder = (
+        build_volcengine_realtime_assembly
+        if settings.realtime_provider == "volcengine"
+        else build_qwen_realtime_assembly
+    )
+    return builder(
+        settings,
+        sink=sink,
+        on_audio_frame=on_audio_frame,
+        on_audio_clear=on_audio_clear,
+        on_audio_terminal=on_audio_terminal,
+        on_delivery=on_delivery,
+        on_audio_alert=on_audio_alert,
+        on_codex_state=on_codex_state,
+        on_spoken=on_spoken,
+        on_caption=on_caption,
+        realtime_telemetry=realtime_telemetry,
+        id_factory=id_factory,
+        camera_source=camera_source,
+        camera_enabled=camera_enabled,
+        camera_index=camera_index,
+        camera_file=camera_file,
+        trace=trace,
+        metrics=metrics,
+        provider_tool_view=provider_tool_view,
+    )
+
+
+def _validate_provider_tool_view(full: CompiledTools, provider: CompiledTools) -> None:
+    if provider.bindings is not full.bindings:
+        raise ConfigurationError("provider tool view 必须复用完整 bindings")
+    full_schema_names = {schema["function"]["name"] for schema in full.schemas}
+    try:
+        provider_schema_names = {schema["function"]["name"] for schema in provider.schemas}
+    except (KeyError, TypeError) as exc:
+        raise ConfigurationError("provider tool view 包含无效 schema") from exc
+    if not provider_schema_names <= full_schema_names:
+        raise ConfigurationError("provider tool view 不能引入未知 schema")
 
 
 @dataclass(slots=True)
@@ -458,6 +679,8 @@ def _build_assembly(
     codex_live: bool,
     realtime_frontbrain: bool = False,
     model_api_key_override: str | None = None,
+    model_base_url_override: str | None = None,
+    support_model_override: str | None = None,
     on_suggestion_selected: Callable[[Suggestion, WakeReason], None] | None,
     on_attention_decision: Callable[[AttentionDecision], None] | None,
     camera_file: Path | None = None,
@@ -492,12 +715,30 @@ def _build_assembly(
     else:
         frame_source = DisabledFrameSource()
     gateway = OpenAIModelGateway(
-        AsyncOpenAI(api_key=model_api_key, base_url=settings.model_base_url),
+        AsyncOpenAI(
+            api_key=model_api_key,
+            base_url=model_base_url_override or settings.model_base_url,
+        ),
         clock=clock,
         metrics=metrics,
     )
     camera = CamAdapter(frame_source, media_store)
     watch_model = (settings.watch_model or "").strip() or settings.fast_model
+    if (
+        support_model_override is not None
+        and not {
+            "watch_model",
+            "fast_model",
+        }
+        & settings.model_fields_set
+    ):
+        watch_model = support_model_override
+    surrogate_model = settings.surrogate_model
+    if support_model_override is not None and "surrogate_model" not in settings.model_fields_set:
+        surrogate_model = support_model_override
+    compressor_model = settings.compressor_model
+    if support_model_override is not None and "compressor_model" not in settings.model_fields_set:
+        compressor_model = support_model_override
     capture_enabled = not isinstance(frame_source, DisabledFrameSource)
     watch = WatchAdapter(
         WATCH_MANIFEST,
@@ -541,8 +782,8 @@ def _build_assembly(
         memory=Memory(policies=tuple(adapter.manifest.policy for adapter in adapters)),
         trace=trace,
         fastbrain=fastbrain,
-        surrogate=GatewaySurrogate(gateway, model=settings.surrogate_model),
-        compressor=GatewayCompressor(gateway, model=settings.compressor_model),
+        surrogate=GatewaySurrogate(gateway, model=surrogate_model),
+        compressor=GatewayCompressor(gateway, model=compressor_model),
         executors={adapter.manifest.name: adapter for adapter in adapters},
         expected_active_executors=expected_active,
         sink=sink,

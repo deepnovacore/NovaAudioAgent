@@ -173,7 +173,7 @@ end-of-file, or `Ctrl-C`.
 Nova is Chinese-first: the persona, production prompts, tool descriptions, CLI error messages, and
 default voice are Chinese. Real integrations — deterministic sims, Tavily search, Home Assistant,
 Codex (default JSONL backend, plus the live app-server backend on the realtime path), AutoGLM,
-camera Watch/Guard, and Qwen realtime voice — are configured through environment variables;
+camera Watch/Guard, and selectable Qwen or Volcengine realtime voice — are configured through environment variables;
 per-integration setup, cautions, and the full variable reference are in
 [Getting started](docs/getting-started.md).
 
@@ -191,7 +191,10 @@ Both the local-camera default and `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback
 
 It starts the Python realtime backend, builds the native VoiceProcessingIO helper, and launches
 the Electron renderer (context isolation, sandboxing, and a narrow preload bridge); it requires
-macOS, Node.js, the `codex` executable, microphone permission, and `DASHSCOPE_API_KEY` in `.env`.
+macOS, Node.js, the `codex` executable, microphone permission, and credentials for the selected
+voice provider in `.env`. Qwen remains the default; the alternative native Volcengine path is
+`Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0` and is installed with
+`uv sync --extra vision --extra volcengine --dev`.
 Provider events are correlated with host response and delegate identities, playback
 acknowledgements fence audio clearing and completion, and a Memory Board view renders every memory
 channel's latest items on request — the visual counterpart of the channel-wise memory described
@@ -203,7 +206,7 @@ above.
 src/nova_audio_agent/           Runtime spine, ports, floor, context, model gateway, and CLI
 src/nova_audio_agent/memory/    Canonical channel memory and structured user state
 src/nova_audio_agent/executors/ Simulator and real capability adapters
-src/nova_audio_agent/realtime/  Qwen transport, session bridge, recovery, playback, and telemetry
+src/nova_audio_agent/realtime/  Qwen/Volcengine transports, session bridge, recovery, playback, and telemetry
 desktop/ambient-orb/            Electron UI and native macOS audio helper
 tests/                          Deterministic unit, scenario, protocol, and repository tests
 docs/                           Public architecture, rationale, guides, status, and design series

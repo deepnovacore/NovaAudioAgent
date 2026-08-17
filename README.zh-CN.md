@@ -155,8 +155,8 @@ dual-axis 演示的是"一次 FastBrain 调用同时开口与派活"；proactive
 
 小诺是中文优先的：人设、生产提示词、工具描述、CLI 报错与默认音色均为中文。各真实集成——
 确定性模拟器、Tavily 搜索、Home Assistant、Codex（默认 JSONL 后端，realtime 路径另有 live
-app-server 后端）、AutoGLM、摄像头 Watch/Guard 与 Qwen 实时语音——均通过环境变量配置；
-逐项安装、注意事项与完整变量参考见[上手指南](docs/getting-started.md)。
+app-server 后端）、AutoGLM、摄像头 Watch/Guard，以及可选的 Qwen 或火山引擎实时语音——均通过
+环境变量配置；逐项安装、注意事项与完整变量参考见[中文上手指南](docs/getting-started.zh-CN.md)。
 
 ## 5. macOS Ambient Orb
 
@@ -171,7 +171,9 @@ uv sync --extra vision --dev
 
 它会启动 Python realtime 后端、构建原生 VoiceProcessingIO helper，并拉起 Electron 渲染器
 （上下文隔离、沙箱与窄 preload 桥）；需要 macOS、Node.js、`codex` 可执行文件、麦克风权限，
-以及 `.env` 中的 `DASHSCOPE_API_KEY`。provider 事件与宿主的响应及 delegate 身份逐一关联，
+以及 `.env` 中所选语音 provider 的凭据。Qwen 仍是默认值；原生火山备选链路为
+`Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0`，安装命令是
+`uv sync --extra vision --extra volcengine --dev`。provider 事件与宿主的响应及 delegate 身份逐一关联，
 播放确认为音频清除与完成加上围栏；Memory Board 视图可按请求渲染每条记忆通道的最新条目——
 正是前文按通道记忆的可视化对照。
 
@@ -181,7 +183,7 @@ uv sync --extra vision --dev
 src/nova_audio_agent/           运行时脊柱、端口、Floor、上下文、模型网关与 CLI
 src/nova_audio_agent/memory/    权威通道记忆与结构化用户状态
 src/nova_audio_agent/executors/ 模拟器与真实能力适配器
-src/nova_audio_agent/realtime/  Qwen 传输、会话桥、恢复、播放与遥测
+src/nova_audio_agent/realtime/  Qwen/火山传输、会话桥、恢复、播放与遥测
 desktop/ambient-orb/            Electron UI 与原生 macOS 音频 helper
 tests/                          确定性的单元、场景、协议与仓库测试
 docs/                           公开的架构、论证、指南、状态与设计系列
@@ -191,14 +193,12 @@ resources/                      本地原始与剪辑媒体；有意被 Git 忽�
 
 ## 7. 文档
 
-以下文档均为英文。
-
 | 读这篇 | 为了 |
 |---|---|
 | [设计要义](docs/essence.md) | 立场与非目标 |
 | [架构](docs/architecture.md) | 模块与边界 |
 | [术语与不变量](docs/glossary.md) | 词汇与规则 |
-| [上手指南](docs/getting-started.md) | 安装与集成 |
+| [中文上手指南](docs/getting-started.zh-CN.md) | 安装与集成 |
 | [项目状态](docs/status.md) | 什么可用、什么仍在实验 |
 | [v3 设计系列](docs/archs/v3/00-overview.md) | 详细设计论证 |
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 设计空间随笔 |
