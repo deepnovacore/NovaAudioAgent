@@ -700,6 +700,63 @@ def test_turn_projection_rejects_mismatched_turn_identity() -> None:
         projection.bind_turn_response({"turn": {"id": "response-turn"}})
 
 
+def _persistent_thread_response(workspace: Path, *, thread_id: str = "thread-a") -> dict[str, Any]:
+    return {
+        "thread": {
+            "id": thread_id,
+            "ephemeral": False,
+            "path": "/private/persisted-rollout.jsonl",
+            "cwd": str(workspace),
+        },
+        "cwd": str(workspace),
+        "runtimeWorkspaceRoots": [str(workspace)],
+        "approvalPolicy": "never",
+        "activePermissionProfile": {"id": "nova_audio_agent"},
+    }
+
+
+def test_persistent_projection_accepts_only_the_expected_resumed_thread(tmp_path: Path) -> None:
+    projection = AppServerTurnProjection(clock=VirtualClock(), on_progress=None)
+
+    projection.bind_thread(
+        _persistent_thread_response(tmp_path),
+        workspace=tmp_path,
+        ephemeral=False,
+        expected_thread_id="thread-a",
+    )
+
+    assert projection.thread_id == "thread-a"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value["thread"].__setitem__("id", "thread-b"),
+        lambda value: value["thread"].__setitem__("cwd", "/other"),
+        lambda value: value.__setitem__("cwd", "/other"),
+        lambda value: value.__setitem__("runtimeWorkspaceRoots", ["/other"]),
+        lambda value: value.__setitem__("runtimeWorkspaceRoots", [value["cwd"], "/other"]),
+        lambda value: value.__setitem__("activePermissionProfile", {"id": "danger"}),
+        lambda value: value["thread"].__setitem__("ephemeral", True),
+    ],
+)
+def test_persistent_projection_rejects_identity_or_boundary_mismatch(
+    tmp_path: Path,
+    mutation: Any,
+) -> None:
+    response = _persistent_thread_response(tmp_path)
+    mutation(response)
+    projection = AppServerTurnProjection(clock=VirtualClock(), on_progress=None)
+
+    with pytest.raises(AppServerProtocolError, match="unsupported_protocol"):
+        projection.bind_thread(
+            response,
+            workspace=tmp_path,
+            ephemeral=False,
+            expected_thread_id="thread-a",
+        )
+
+
 def test_turn_projection_uses_only_matching_completed_agent_item_when_items_not_loaded() -> None:
     projection = AppServerTurnProjection(clock=VirtualClock(), on_progress=None)
     projection.bind_thread(

@@ -194,6 +194,8 @@ class _Peer:
         turn_statuses: tuple[str, ...] = (),
         final_texts: tuple[str, ...] = (),
         turn_items: tuple[dict[str, Any], ...] | None = None,
+        response_thread_id: str | None = None,
+        resume_error: int | None = None,
     ) -> None:
         self.workspace = workspace
         self.stdout = asyncio.StreamReader()
@@ -213,6 +215,9 @@ class _Peer:
         self.drop_steer_response = drop_steer_response
         self.stderr = stderr
         self.turn_items = turn_items
+        self.thread_id = "thread-private"
+        self.response_thread_id = response_thread_id
+        self.resume_error = resume_error
         self.closed = False
         self.turn_started = asyncio.Event()
         self.interrupt_received = asyncio.Event()
@@ -232,24 +237,56 @@ class _Peer:
                 self.unexpected_request()
             self._feed({"id": request_id, "result": _config(self.workspace)})
         elif method == "thread/start":
+            persistent = message["params"].get("ephemeral") is False
+            self.thread_id = self.response_thread_id or "thread-private"
+            result = {
+                "thread": {
+                    "id": self.thread_id,
+                    "ephemeral": not persistent,
+                    "path": "/private/persisted-rollout.jsonl" if persistent else None,
+                    "cwd": str(self.workspace),
+                },
+                "cwd": str(self.workspace),
+                "approvalPolicy": "never",
+                "activePermissionProfile": {"id": "nova_audio_agent"},
+            }
+            if persistent:
+                result["runtimeWorkspaceRoots"] = [str(self.workspace)]
+            self._feed(
+                {
+                    "id": request_id,
+                    "result": result,
+                }
+            )
+            if self.unexpected_after_thread:
+                self.unexpected_request()
+        elif method == "thread/resume":
+            if self.resume_error is not None:
+                self._feed(
+                    {
+                        "id": request_id,
+                        "error": {"code": self.resume_error, "message": "missing history"},
+                    }
+                )
+                return
+            self.thread_id = self.response_thread_id or message["params"]["threadId"]
             self._feed(
                 {
                     "id": request_id,
                     "result": {
                         "thread": {
-                            "id": "thread-private",
-                            "ephemeral": True,
-                            "path": None,
+                            "id": self.thread_id,
+                            "ephemeral": False,
+                            "path": "/private/persisted-rollout.jsonl",
                             "cwd": str(self.workspace),
                         },
                         "cwd": str(self.workspace),
+                        "runtimeWorkspaceRoots": [str(self.workspace)],
                         "approvalPolicy": "never",
                         "activePermissionProfile": {"id": "nova_audio_agent"},
                     },
                 }
             )
-            if self.unexpected_after_thread:
-                self.unexpected_request()
         elif method == "turn/start":
             self._turn_request_id = request_id
             self.turn_count += 1
@@ -258,7 +295,7 @@ class _Peer:
                 {
                     "method": "turn/started",
                     "params": {
-                        "threadId": "thread-private",
+                        "threadId": self.thread_id,
                         "turn": {"id": turn_id, "items": []},
                     },
                 }
@@ -274,7 +311,7 @@ class _Peer:
                     {
                         "method": "item/completed",
                         "params": {
-                            "threadId": "thread-private",
+                            "threadId": self.thread_id,
                             "turnId": turn_id,
                             "item": item,
                         },
@@ -321,7 +358,7 @@ class _Peer:
             {
                 "method": "turn/completed",
                 "params": {
-                    "threadId": "thread-private",
+                    "threadId": self.thread_id,
                     "turn": {
                         "id": self._turn_id(),
                         "status": status,
@@ -435,6 +472,140 @@ async def test_run_uses_isolated_app_server_and_projects_bounded_evidence(tmp_pa
         CodexProcessStatus(running=True, exited=False),
         CodexProcessStatus(running=False, exited=True, terminal="completed", exit_code=0),
     ]
+
+
+async def test_persistent_new_session_uses_non_ephemeral_start_and_retains_home(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    codex_home = tmp_path / "state" / "codex-workspaces" / "home-a"
+    peer = _Peer(workspace)
+    factory = _Factory(peer)
+    ready: list[str] = []
+
+    def on_thread_ready(thread_id: str) -> None:
+        assert not any(item.get("method") == "turn/start" for item in peer.messages)
+        ready.append(thread_id)
+
+    transport = CodexAppServerTransport(
+        binary="codex-cli",
+        workspace=workspace,
+        codex_home=codex_home,
+        on_thread_ready=on_thread_ready,
+        preflight=_Preflight(),
+        process_factory=factory,
+        environ={"PATH": "/bin"},
+        clock=VirtualClock(),
+        protocol_probe=_ProtocolProbe(),
+    )
+
+    result = await transport.run("persistent work", on_status=lambda _value: None, on_progress=None)
+
+    request = next(item for item in peer.messages if item.get("method") == "thread/start")
+    assert request["params"] == {
+        "ephemeral": False,
+        "approvalPolicy": "never",
+        "cwd": str(workspace),
+        "runtimeWorkspaceRoots": [str(workspace)],
+        "permissions": "nova_audio_agent",
+        "developerInstructions": codex_app_server.DEFAULT_DEVELOPER_INSTRUCTIONS,
+    }
+    assert ready == ["thread-private"]
+    assert result.classification == "completed"
+    assert codex_home.is_dir()
+    assert codex_home.stat().st_mode & 0o777 == 0o700
+    assert factory.calls[0][1]["env"]["CODEX_HOME"] == str(codex_home)
+    assert codex_home.exists()
+
+
+async def test_persistent_resume_is_validated_before_turn_start(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    peer = _Peer(workspace)
+    factory = _Factory(peer)
+    ready: list[str] = []
+    transport = CodexAppServerTransport(
+        binary="codex-cli",
+        workspace=workspace,
+        codex_home=tmp_path / "state" / "home-a",
+        resume_thread_id="thread-saved",
+        on_thread_ready=ready.append,
+        preflight=_Preflight(),
+        process_factory=factory,
+        environ={"PATH": "/bin"},
+        clock=VirtualClock(),
+        protocol_probe=_ProtocolProbe(),
+    )
+
+    result = await transport.run("continue", on_status=lambda _value: None, on_progress=None)
+
+    methods = [item.get("method") for item in peer.messages]
+    assert methods.index("config/read") < methods.index("thread/resume") < methods.index("turn/start")
+    resume = next(item for item in peer.messages if item.get("method") == "thread/resume")
+    assert resume["params"] == {
+        "threadId": "thread-saved",
+        "excludeTurns": True,
+        "approvalPolicy": "never",
+        "cwd": str(workspace),
+        "runtimeWorkspaceRoots": [str(workspace)],
+        "permissions": "nova_audio_agent",
+        "developerInstructions": codex_app_server.DEFAULT_DEVELOPER_INSTRUCTIONS,
+    }
+    assert ready == ["thread-saved"]
+    assert result.classification == "completed"
+
+
+async def test_resume_mismatch_or_missing_history_refuses_before_turn_write(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    for peer in (
+        _Peer(workspace, response_thread_id="wrong-thread"),
+        _Peer(workspace, resume_error=-32602),
+    ):
+        transport = CodexAppServerTransport(
+            binary="codex-cli",
+            workspace=workspace,
+            codex_home=tmp_path / f"home-{id(peer)}",
+            resume_thread_id="thread-saved",
+            preflight=_Preflight(),
+            process_factory=_Factory(peer),
+            environ={"PATH": "/bin"},
+            clock=VirtualClock(),
+            protocol_probe=_ProtocolProbe(),
+        )
+
+        result = await transport.run("continue", on_status=lambda _value: None, on_progress=None)
+
+        assert result.classification == "refused"
+        assert not any(item.get("method") == "turn/start" for item in peer.messages)
+
+
+async def test_persistent_home_copies_saved_login_once_with_owner_only_mode(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source_home = tmp_path / "source-codex"
+    source_home.mkdir()
+    source_home.joinpath("auth.json").write_text('{"token":"private"}')
+    destination = tmp_path / "state" / "home"
+    peer = _Peer(workspace)
+    transport = CodexAppServerTransport(
+        binary="codex-cli",
+        workspace=workspace,
+        codex_home=destination,
+        preflight=_Preflight(),
+        process_factory=_Factory(peer),
+        environ={"PATH": "/bin", "CODEX_HOME": str(source_home)},
+        clock=VirtualClock(),
+        protocol_probe=_ProtocolProbe(),
+    )
+
+    await transport.run("work", on_status=lambda _value: None, on_progress=None)
+
+    copied = destination / "auth.json"
+    assert copied.read_text() == '{"token":"private"}'
+    assert copied.stat().st_mode & 0o777 == 0o600
 
 
 async def test_clean_stderr_eof_does_not_abort_an_active_turn(tmp_path: Path) -> None:

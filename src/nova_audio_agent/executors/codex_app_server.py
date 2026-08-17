@@ -150,6 +150,7 @@ class _Process(Protocol):
 ProcessFactory = Callable[..., Awaitable[_Process]]
 HomeObserver = Callable[[Path], None]
 NotificationObserver = Callable[[str, tuple[str, ...]], None]
+ThreadReadyObserver = Callable[[str], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +182,9 @@ class CodexAppServerTransport:
         home_observer: HomeObserver | None = None,
         notification_observer: NotificationObserver | None = None,
         protocol_probe: _ProtocolProbe | None = None,
+        codex_home: Path | None = None,
+        resume_thread_id: str | None = None,
+        on_thread_ready: ThreadReadyObserver | None = None,
     ) -> None:
         self._binary = binary
         self._workspace = workspace
@@ -203,6 +207,9 @@ class CodexAppServerTransport:
         self._clock = RealClock() if clock is None else clock
         self._home_observer = home_observer
         self._notification_observer = notification_observer
+        self._codex_home = None if codex_home is None else codex_home.expanduser().absolute()
+        self._resume_thread_id = _bounded_thread_id(resume_thread_id)
+        self._on_thread_ready = on_thread_ready
         self._protocol_probe = (
             CodexAppServerSchemaProbe() if protocol_probe is None else protocol_probe
         )
@@ -225,6 +232,7 @@ class CodexAppServerTransport:
         self._stderr_task: asyncio.Task[None] | None = None
         self._prewarm_lock = asyncio.Lock()
         self._validated_establish = False
+        self._thread_ready_reported = False
 
     async def preflight(
         self,
@@ -264,7 +272,7 @@ class CodexAppServerTransport:
             try:
                 await self._establish(deadline, on_status=None)
                 probe = AppServerTurnProjection(clock=self._clock, on_progress=None)
-                probe.bind_thread(self._thread_response, workspace=self._workspace)
+                self._bind_thread(probe, notify_ready=False)
                 self._thread_id = probe.thread_id
                 self._warm = True
             except BaseException:
@@ -318,13 +326,37 @@ class CodexAppServerTransport:
         )
         validate_effective_config(config, workspace=self._workspace)
         del config
-        thread_params: dict[str, Any] = {
-            "ephemeral": True,
-            "approvalPolicy": "never",
-        }
+        persistent = self._codex_home is not None
+        thread_params: dict[str, Any]
+        method: str
+        if persistent and self._resume_thread_id is not None:
+            method = "thread/resume"
+            thread_params = {
+                "threadId": self._resume_thread_id,
+                "excludeTurns": True,
+                "approvalPolicy": "never",
+                "cwd": str(self._workspace),
+                "runtimeWorkspaceRoots": [str(self._workspace)],
+                "permissions": "nova_audio_agent",
+            }
+        elif persistent:
+            method = "thread/start"
+            thread_params = {
+                "ephemeral": False,
+                "approvalPolicy": "never",
+                "cwd": str(self._workspace),
+                "runtimeWorkspaceRoots": [str(self._workspace)],
+                "permissions": "nova_audio_agent",
+            }
+        else:
+            method = "thread/start"
+            thread_params = {
+                "ephemeral": True,
+                "approvalPolicy": "never",
+            }
         if self._developer_instructions is not None:
             thread_params["developerInstructions"] = self._developer_instructions
-        self._thread_response = await self._request("thread/start", thread_params, deadline)
+        self._thread_response = await self._request(method, thread_params, deadline)
 
     async def run(
         self,
@@ -380,7 +412,7 @@ class CodexAppServerTransport:
                     workspace=self._workspace,
                     api_key=self._api_key,
                     home=self._environ.get("HOME"),
-                    sensitive_inputs=tuple(self._sensitive_inputs),
+                    sensitive_inputs=self._redaction_inputs(),
                 )["text"].strip()[:PROGRESS_SUMMARY_LIMIT]
             except Exception:
                 on_progress(replace(payload, summary=None))
@@ -408,7 +440,7 @@ class CodexAppServerTransport:
             on_progress=None if on_progress is None else self._sanitized_progress(on_progress),
         )
         try:
-            projection.bind_thread(self._thread_response, workspace=self._workspace)
+            self._bind_thread(projection, notify_ready=True)
             self._projection = projection
             on_status(CodexProcessStatus(running=True, exited=False))
             process_wait = self._process_wait
@@ -440,7 +472,7 @@ class CodexAppServerTransport:
                     workspace=self._workspace,
                     api_key=self._api_key,
                     home=self._environ.get("HOME"),
-                    sensitive_inputs=tuple(self._sensitive_inputs),
+                    sensitive_inputs=self._redaction_inputs(),
                 )
                 if completion.final_text is not None
                 else None
@@ -625,7 +657,7 @@ class CodexAppServerTransport:
             process_wait = self._process_wait
             rpc_wait = self._rpc_wait
             stderr_task = self._stderr_task
-            self._projection.bind_thread(self._thread_response, workspace=self._workspace)
+            self._bind_thread(self._projection, notify_ready=True)
             # Let the sole reader drain any server request already queued directly
             # behind the thread response before the side-effecting turn write.
             await _yield_once()
@@ -677,7 +709,7 @@ class CodexAppServerTransport:
                         workspace=self._workspace,
                         api_key=self._api_key,
                         home=self._environ.get("HOME"),
-                        sensitive_inputs=tuple(self._sensitive_inputs),
+                        sensitive_inputs=self._redaction_inputs(),
                     )
                     if completion.final_text is not None
                     else None
@@ -771,6 +803,7 @@ class CodexAppServerTransport:
             self._validated_establish = False
             self._thread_response = None
             self._thread_id = None
+            self._thread_ready_reported = False
             self._turn_in_flight = False
             self._sensitive_inputs.clear()
             self._finish_private_home()
@@ -835,7 +868,7 @@ class CodexAppServerTransport:
         await self.aclose()
 
     async def aclose(self) -> None:
-        """Session-level teardown: interrupt any active turn, reap the process, wipe the home."""
+        """Interrupt any active turn, reap its process, and wipe only temporary homes."""
         await self._interrupt_and_stop()
         await self._teardown_session()
 
@@ -857,6 +890,7 @@ class CodexAppServerTransport:
         self._validated_establish = False
         self._thread_response = None
         self._thread_id = None
+        self._thread_ready_reported = False
         self._sensitive_inputs.clear()
         self._finish_private_home()
         return stop
@@ -875,30 +909,24 @@ class CodexAppServerTransport:
         """Retain the active work order and same-turn steers until final redaction."""
         self._sensitive_inputs.append(text)
 
+    def _redaction_inputs(self) -> tuple[str, ...]:
+        persistent_home = () if self._codex_home is None else (str(self._codex_home),)
+        return (*self._sensitive_inputs, *persistent_home)
+
     async def _spawn(self) -> _Process:
         env = _filtered_environment(self._environ, self._api_key)
-        private_home = tempfile.TemporaryDirectory(prefix="nova-audio-agent-codex-live-")
-        self._private_home = private_home
-        private_home_path = Path(private_home.name)
-        if self._api_key is None:
-            source_home = Path(
-                self._environ.get(
-                    "CODEX_HOME",
-                    str(Path(self._environ.get("HOME", str(Path.home()))) / ".codex"),
-                )
-            )
-            for name in ("auth.json", ".credentials.json"):
-                source = source_home / name
-                if not source.is_file():
-                    continue
-                destination = private_home_path / name
-                try:
-                    shutil.copyfile(source, destination)
-                    destination.chmod(0o600)
-                except OSError:
-                    self._finish_private_home()
-                    raise AppServerProtocolError("credential_missing") from None
-        env["CODEX_HOME"] = str(private_home_path)
+        if self._codex_home is None:
+            private_home = tempfile.TemporaryDirectory(prefix="nova-audio-agent-codex-live-")
+            self._private_home = private_home
+            codex_home = Path(private_home.name)
+        else:
+            codex_home = self._prepare_persistent_home()
+        try:
+            self._copy_saved_login(codex_home)
+        except OSError:
+            self._finish_private_home()
+            raise AppServerProtocolError("credential_missing") from None
+        env["CODEX_HOME"] = str(codex_home)
         env["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"] = "1"
         return await self._process_factory(
             self._binary,
@@ -912,6 +940,76 @@ class CodexAppServerTransport:
             stderr=asyncio.subprocess.PIPE,
             limit=MAX_JSONL_LINE + 1,
         )
+
+    def _prepare_persistent_home(self) -> Path:
+        home = self._codex_home
+        assert home is not None
+        try:
+            if home.is_symlink():
+                raise OSError
+            if not home.exists():
+                home.mkdir(parents=True, mode=0o700)
+                home.chmod(0o700)
+            info = home.stat()
+            if (
+                not home.is_dir()
+                or info.st_uid != _uid()
+                or info.st_mode & 0o777 != 0o700
+                or home.resolve(strict=True) != home
+            ):
+                raise OSError
+        except (OSError, RuntimeError):
+            raise AppServerProtocolError("credential_missing") from None
+        return home
+
+    def _copy_saved_login(self, destination_home: Path) -> None:
+        if self._api_key is not None:
+            return
+        source_home = Path(
+            self._environ.get(
+                "CODEX_HOME",
+                str(Path(self._environ.get("HOME", str(Path.home()))) / ".codex"),
+            )
+        )
+        for name in ("auth.json", ".credentials.json"):
+            destination = destination_home / name
+            if destination.exists():
+                info = destination.stat()
+                if (
+                    destination.is_symlink()
+                    or not destination.is_file()
+                    or info.st_uid != _uid()
+                    or info.st_mode & 0o777 != 0o600
+                ):
+                    raise OSError
+                continue
+            source = source_home / name
+            if not source.is_file() or source_home == destination_home:
+                continue
+            shutil.copyfile(source, destination)
+            destination.chmod(0o600)
+
+    def _bind_thread(
+        self,
+        projection: AppServerTurnProjection,
+        *,
+        notify_ready: bool,
+    ) -> None:
+        persistent = self._codex_home is not None
+        projection.bind_thread(
+            self._thread_response,
+            workspace=self._workspace,
+            ephemeral=not persistent,
+            expected_thread_id=self._resume_thread_id,
+        )
+        thread_id = projection.thread_id
+        if thread_id is None:
+            raise AppServerProtocolError("unsupported_protocol")
+        self._thread_id = thread_id
+        if notify_ready and not self._thread_ready_reported:
+            if self._on_thread_ready is not None:
+                self._on_thread_ready(thread_id)
+            self._thread_ready_reported = True
 
     def _finish_private_home(self) -> None:
         private_home = self._private_home
@@ -1211,6 +1309,26 @@ def _bounded_developer_instructions(value: str | None) -> str | None:
     if not normalized or len(normalized) > 4000:
         raise ValueError("developer_instructions must be 1..4000 characters")
     return normalized
+
+
+def _bounded_thread_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str:
+        raise ValueError("resume_thread_id must be a string")
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > 256
+        or any(unicodedata.category(char).startswith("C") for char in normalized)
+    ):
+        raise ValueError("resume_thread_id must be 1..256 printable characters")
+    return normalized
+
+
+def _uid() -> int:
+    getuid = getattr(os, "getuid", None)
+    return -1 if getuid is None else int(getuid())
 
 
 def _sanitize_final_message(

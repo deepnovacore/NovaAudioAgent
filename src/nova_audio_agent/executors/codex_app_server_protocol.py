@@ -44,8 +44,24 @@ APP_SERVER_SCHEMAS: dict[str, tuple[str, dict[str, str], frozenset[str]]] = {
             "ephemeral": "boolean",
             "approvalPolicy": "string",
             "developerInstructions": "string",
+            "cwd": "string",
+            "permissions": "string",
+            "runtimeWorkspaceRoots": "array",
         },
         frozenset(),
+    ),
+    "thread/resume": (
+        "v2/ThreadResumeParams.json",
+        {
+            "threadId": "string",
+            "excludeTurns": "boolean",
+            "approvalPolicy": "string",
+            "developerInstructions": "string",
+            "cwd": "string",
+            "permissions": "string",
+            "runtimeWorkspaceRoots": "array",
+        },
+        frozenset({"threadId"}),
     ),
     "turn/start": (
         "v2/TurnStartParams.json",
@@ -81,6 +97,17 @@ APP_SERVER_INBOUND_SCHEMAS: tuple[tuple[str, dict[str, str], frozenset[str]], ..
         frozenset({"approvalPolicy", "cwd", "sandbox", "thread"}),
     ),
     (
+        "v2/ThreadResumeResponse.json",
+        {
+            "approvalPolicy": "string",
+            "cwd": "string",
+            "runtimeWorkspaceRoots": "array",
+            "sandbox": "object",
+            "thread": "object",
+        },
+        frozenset({"approvalPolicy", "cwd", "sandbox", "thread"}),
+    ),
+    (
         "v2/TurnStartResponse.json",
         {"turn": "object"},
         frozenset({"turn"}),
@@ -108,11 +135,14 @@ APP_SERVER_INBOUND_SCHEMAS: tuple[tuple[str, dict[str, str], frozenset[str]], ..
 )
 
 APP_SERVER_NESTED_SCHEMAS: tuple[tuple[str, str, dict[str, str], frozenset[str]], ...] = (
-    (
-        "v2/ThreadStartResponse.json",
-        "thread",
-        {"id": "string", "cwd": "string", "ephemeral": "boolean", "path": "string"},
-        frozenset({"id", "cwd", "ephemeral"}),
+    *(
+        (
+            relative,
+            "thread",
+            {"id": "string", "cwd": "string", "ephemeral": "boolean", "path": "string"},
+            frozenset({"id", "cwd", "ephemeral"}),
+        )
+        for relative in ("v2/ThreadStartResponse.json", "v2/ThreadResumeResponse.json")
     ),
     *(
         (
@@ -587,7 +617,14 @@ class AppServerTurnProjection:
     def turn_was_started(self) -> bool:
         return self._notification_turn_id is not None
 
-    def bind_thread(self, response: object, *, workspace: Path) -> None:
+    def bind_thread(
+        self,
+        response: object,
+        *,
+        workspace: Path,
+        ephemeral: bool = True,
+        expected_thread_id: str | None = None,
+    ) -> None:
         try:
             if type(response) is not dict:
                 raise ValueError
@@ -597,12 +634,25 @@ class AppServerTurnProjection:
             thread_id = thread["id"]
             if type(thread_id) is not str or not thread_id:
                 raise ValueError
-            if thread.get("ephemeral") is not True or thread.get("path") is not None:
+            if expected_thread_id is not None and thread_id != expected_thread_id:
+                raise ValueError
+            if thread.get("ephemeral") is not ephemeral:
+                raise ValueError
+            thread_path = thread.get("path")
+            if ephemeral and thread_path is not None:
+                raise ValueError
+            if not ephemeral and (type(thread_path) is not str or not thread_path):
                 raise ValueError
             if Path(thread["cwd"]).resolve() != workspace.resolve():
                 raise ValueError
             if Path(response["cwd"]).resolve() != workspace.resolve():
                 raise ValueError
+            if not ephemeral:
+                roots = response.get("runtimeWorkspaceRoots")
+                if type(roots) is not list or len(roots) != 1:
+                    raise ValueError
+                if type(roots[0]) is not str or Path(roots[0]).resolve() != workspace.resolve():
+                    raise ValueError
             if response.get("approvalPolicy") != "never":
                 raise ValueError
             active = response["activePermissionProfile"]
