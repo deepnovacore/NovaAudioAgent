@@ -246,6 +246,18 @@ def test_ps1_resolves_a_native_codex_binary_instead_of_an_npm_shim() -> None:
     )
     assert ".cmd" in text and ".bat" in text, "the npm batch shims must be recognised as shims"
 
+    # npm lays down `codex`, `codex.cmd` *and* `codex.ps1`; `Get-Command codex` hands back
+    # the `.ps1` first, so a blocklist of the batch extensions lets a shim through that
+    # `create_subprocess_exec` still cannot launch. Only a real image may be exported.
+    resolver = text.split("function Resolve-CodexExe {", 1)[1].split("\n}", 1)[0]
+    assert "-match '\\.(exe|com)$'" in resolver, (
+        "the resolver must allowlist real executable images, not blocklist known shims"
+    )
+    assert "-notmatch" not in resolver, (
+        "a rejection filter cannot enumerate every shim extension npm may add"
+    )
+    assert ".ps1" in text, "the PowerShell shim must be named as a handled case"
+
     refusals = [line for line in text.splitlines() if "无法直接启动" in line]
     assert refusals, "a shim-only codex must fail with an actionable message"
     for line in refusals:

@@ -81,8 +81,9 @@ let nativeAudio = null
 let nativeBinary = null
 let quitDrain = null
 // Sticky: the backend can die in the window between its handshake and the orb's
-// first paint, when there is no renderer to tell. The flag is what lets that
-// notification be replayed instead of lost.
+// first paint, when there is no renderer to tell. The flag is what the bootstrap
+// reply reports and what the post-load push replays, so that death is delivered
+// rather than lost.
 let backendExited = false
 const pendingBoardRequests = new Map()
 
@@ -90,6 +91,14 @@ function pythonExecutable() {
   if (process.env.NOVA_AUDIO_AGENT_PYTHON) return process.env.NOVA_AUDIO_AGENT_PYTHON
   if (process.env.VIRTUAL_ENV) return venvPython(process.env.VIRTUAL_ENV)
   return fallbackPython()
+}
+
+// Every push to the orb goes through here. `mainWindow` is never nulled — the orb has no
+// 'closed' handler because it is not meant to close before the app quits — so a send after
+// the window is gone would throw "Object has been destroyed" out of whatever callback made
+// it, uncaught, in the main process. One guard, one place.
+function sendToOrb(channel, ...args) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
 }
 
 function configureWindowSecurity(window) {
@@ -234,7 +243,7 @@ async function launchBackend() {
       onExit: reason => {
         backendExited = true
         console.error(`[backend-diagnostic] ${reason}`)
-        if (!app.isQuitting) mainWindow?.webContents.send('nova:backend-exit')
+        if (!app.isQuitting) sendToOrb('nova:backend-exit')
       },
     })
     ready = await listener.readiness
@@ -248,7 +257,7 @@ async function launchBackend() {
   const nativeAvailable = process.platform === 'darwin' && existsSync(nativeBinary)
   nativeAudio = nativeAvailable ? createNativeAudioManager({
     binary: nativeBinary,
-    onEvent: event => mainWindow?.webContents.send('nova:native-audio:event', event),
+    onEvent: event => sendToOrb('nova:native-audio:event', event),
   }) : null
   bootstrap = Object.freeze({
     ...validated,
@@ -299,7 +308,7 @@ async function start() {
         resolveRequest({ error: 'timeout' })
       }, 5000)
       pendingBoardRequests.set(requestId, { resolve: resolveRequest, timer })
-      mainWindow.webContents.send('nova:memory-board:fetch', requestId)
+      sendToOrb('nova:memory-board:fetch', requestId)
     })
   })
   ipcMain.on('nova:memory-board:data', (event, payload) => {
@@ -339,7 +348,11 @@ async function start() {
     return { saved: filePath }
   })
   ipcMain.handle('nova:bootstrap', event => {
-    return readBootstrap(event.sender)
+    // The renderer binds its backend-exit listener only after this reply lands, so a push
+    // sent before then has nobody to reach. Riding the verdict on the very payload the
+    // renderer is already awaiting removes the ordering question entirely. Read here, at
+    // invoke time — the frozen startup payload predates every death it would have to report.
+    return { ...readBootstrap(event.sender), backendExited }
   })
   ipcMain.handle('nova:native-audio:capture', async (event, enabled) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
@@ -404,11 +417,11 @@ async function start() {
     rendererRoot,
     fetchFile: file => net.fetch(pathToFileURL(file).href),
   }).then(() => {
-    // A backend that died between its handshake and this window found no
-    // renderer to notify, and the orb would otherwise sit there pointing at an
-    // endpoint nobody is listening on. Replay once the renderer has loaded and
-    // its listener is bound, not merely once the window object exists.
-    if (backendExited) mainWindow?.webContents.send('nova:backend-exit')
+    // Belt-and-braces only. The renderer binds its listener from boot(), after its own
+    // bootstrap round-trip, so this push may still arrive before anything is listening —
+    // which is why the bootstrap reply above carries `backendExited` as the real fix.
+    // This covers the ordinary case where boot() finished long before the load settled.
+    if (backendExited) sendToOrb('nova:backend-exit')
   }).catch(() => {
     console.error('Ambient Orb renderer failed to load')
     app.quit()

@@ -427,6 +427,16 @@ async function handleSocketMessage(event) {
   }
 }
 
+// Named, module-level, and idempotent: both doors onto a dead backend — the pushed
+// 'nova:backend-exit' event and the verdict carried on the bootstrap reply — land here.
+function handleBackendExit() {
+  axes.connected = false
+  axes.error = 'backend-exit'
+  alertTone.stop()
+  playback.stopAll()
+  render()
+}
+
 async function boot() {
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
@@ -434,13 +444,7 @@ async function boot() {
     axes.platform = bootstrap.platform
     if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
-    window.novaAudioAgentDesktop.onBackendExit(() => {
-      axes.connected = false
-      axes.error = 'backend-exit'
-      alertTone.stop()
-      playback.stopAll()
-      render()
-    })
+    window.novaAudioAgentDesktop.onBackendExit(handleBackendExit)
     window.novaAudioAgentDesktop.memoryBoard.onFetch(requestId => {
       send({ type: 'memory.board.request', request_id: requestId })
     })
@@ -498,6 +502,10 @@ async function boot() {
     }
     axes.connected = true
     axes.booting = false
+    // Applied after the optimistic connect, which would otherwise overwrite it: the
+    // backend may have died before this renderer existed, in which case its exit was
+    // never pushed here and only the bootstrap reply above knows about it.
+    if (bootstrap.backendExited === true) handleBackendExit()
   } catch {
     axes.booting = false
     axes.error = 'bootstrap'

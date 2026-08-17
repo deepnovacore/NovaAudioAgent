@@ -911,13 +911,15 @@ def _consume_parent_liveness(
 def _release_parent_reader(loop: asyncio.AbstractEventLoop, parent_fd: int) -> None:
     """Unregister the liveness reader, tolerating a descriptor that no longer has one.
 
-    `remove_reader` merely returns `False` for an fd it is not watching, so the EOF callback
-    and the final cleanup can both call it; a loop already closed underneath us raises
-    instead, and that is equally nothing left to unregister.
+    `remove_reader` returns `False` rather than raising, both for an fd it is not watching
+    and for a loop that has already been closed, so the EOF callback and the final cleanup
+    can both call it. Its one `RuntimeError` comes from the transport check, which fires
+    only for an fd some transport has adopted; this pipe end never is one, so the guard
+    below is defensive rather than a path either caller is expected to take.
     """
     try:
         loop.remove_reader(parent_fd)
-    except RuntimeError:  # pragma: no cover - the loop closed before the final cleanup
+    except RuntimeError:  # pragma: no cover - defensive: no transport ever adopts this fd
         pass
 
 

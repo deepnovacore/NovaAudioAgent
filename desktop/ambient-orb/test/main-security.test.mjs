@@ -89,13 +89,41 @@ test('a backend that died before the window exists replays its exit to the new r
 
   assert.match(source, /let backendExited = false/)
   assert.match(source, /backendExited = true/)
-  // The replay must wait for a renderer to exist and finish loading, or the
-  // notification lands on a webContents with nobody listening yet.
+  // Belt: the push replay still fires once the renderer has loaded.
   const load = source.slice(source.indexOf('loadAppWindow(mainWindow'))
-  assert.match(
-    load.slice(0, 600),
-    /if \(backendExited\) mainWindow\?\.webContents\.send\('nova:backend-exit'\)/,
-  )
+  assert.match(load.slice(0, 600), /if \(backendExited\) sendToOrb\('nova:backend-exit'\)/)
+})
+
+test('the bootstrap answer carries the backend-exit verdict read at invoke time', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  // Braces: the renderer already awaits this reply, so a verdict carried on it cannot
+  // lose the race against its own listener bind the way a push can.
+  const handler = source.slice(source.indexOf("ipcMain.handle('nova:bootstrap'"))
+  assert.match(handler.slice(0, handler.indexOf('})')), /backendExited/)
+  // Read per invoke, never baked into the payload frozen before any backend could die.
+  const frozen = source.slice(source.indexOf('bootstrap = Object.freeze({'))
+  assert.doesNotMatch(frozen.slice(0, frozen.indexOf('})')), /backendExited/)
+})
+
+test('renderer applies a backend that died before its exit listener was bound', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  // One handler, two doors into it: the pushed event and the bootstrap verdict.
+  assert.match(source, /function handleBackendExit\(\)/)
+  assert.match(source, /onBackendExit\(handleBackendExit\)/)
+  assert.match(source, /if \(bootstrap\.backendExited === true\) handleBackendExit\(\)/)
+})
+
+test('every renderer push is guarded against a destroyed orb window', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  // `mainWindow` is never nulled on close, so an unguarded send throws
+  // "Object has been destroyed" into the main process. One guard, one place.
+  assert.match(source, /function sendToOrb\(channel, \.\.\.args\) \{/)
+  assert.match(source, /if \(mainWindow && !mainWindow\.isDestroyed\(\)\)/)
+  const sends = source.match(/webContents\.send\(/g) || []
+  assert.equal(sends.length, 1, 'the only raw send is the guarded one inside sendToOrb')
 })
 
 test('native VoiceProcessingIO starts only after explicit capture activation', async () => {

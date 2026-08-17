@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Mirrors scripts/start_ambient_orb.sh: checks npm on PATH, resolves a native codex.exe
-    (never an npm .cmd shim, which CreateProcess cannot launch) into
+    (never an npm .cmd/.ps1 shim, which CreateProcess cannot launch) into
     NOVA_AUDIO_AGENT_CODEX_BIN, requires a .env file at the repository root, resolves a
     Python interpreter that can import nova_audio_agent (NOVA_AUDIO_AGENT_PYTHON ->
     %CONDA_PREFIX%\python.exe -> .venv\Scripts\python.exe ->
@@ -34,9 +34,11 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 }
 
 # The backend launches codex with CreateProcess (`create_subprocess_exec`), which can only
-# start a real executable image. npm installs codex as a `.cmd`/`.bat` shim that only cmd.exe
-# knows how to run, so a PATH lookup that stops at the shim yields ENOENT at the first turn.
-# Resolve a native `codex.exe` here and hand the backend its absolute path instead.
+# start a real executable image. npm installs codex as a set of shims — `codex.cmd`,
+# `codex.ps1`, and an extension-less `codex` — none of which CreateProcess can run, and
+# `Get-Command codex` hands back the `.ps1` first, so a PATH lookup that stops at the shim
+# yields ENOENT at the first turn. Resolve a native `codex.exe` here and hand the backend
+# its absolute path instead.
 function Resolve-CodexExe {
     # -First 1 throughout: a PATH with several codex entries must still yield one string,
     # never the array that would silently become a garbage command line.
@@ -54,7 +56,10 @@ function Resolve-CodexExe {
     if (-not $source) {
         return $null
     }
-    if ($source -notmatch '\.(cmd|bat)$') {
+    # Allowlist, not blocklist: enumerating the shim extensions npm happens to emit today
+    # lets tomorrow's through. Only a real executable image may be exported; everything
+    # else falls through to the sibling-exe probe below.
+    if ($source -match '\.(exe|com)$') {
         return $source
     }
 
@@ -87,7 +92,7 @@ if ($env:NOVA_AUDIO_AGENT_CODEX_BIN) {
     $CodexBin = Resolve-CodexExe
     if (-not $CodexBin) {
         if (Get-Command codex -ErrorAction SilentlyContinue) {
-            Fail 'PATH 上的 codex 只是 npm 批处理包装（.cmd/.bat），后端无法直接启动它；请安装原生 codex.exe，或将 NOVA_AUDIO_AGENT_CODEX_BIN 设为 codex.exe 的完整路径'
+            Fail 'PATH 上的 codex 只是 npm 包装脚本（.cmd/.bat/.ps1），后端无法直接启动它；请安装原生 codex.exe，或将 NOVA_AUDIO_AGENT_CODEX_BIN 设为 codex.exe 的完整路径'
         }
         Fail '缺少 Codex CLI，请先安装 codex'
     }
