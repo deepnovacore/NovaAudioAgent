@@ -34,6 +34,7 @@ from nova_audio_agent.executors.codex_transport import (
     CodexTransport,
 )
 from nova_audio_agent.ports import DelegateRequest, DispatchContext, bind_delegate
+from nova_audio_agent.process_tree import spawn_supervision_kwargs
 
 
 WORK_ORDER = "create exactly one sentinel file"
@@ -514,7 +515,10 @@ async def test_exact_argv_uses_fixed_root_options_and_private_output(tmp_path: P
     assert kwargs["stdin"] == asyncio.subprocess.PIPE
     assert kwargs["stdout"] == asyncio.subprocess.PIPE
     assert kwargs["stderr"] == asyncio.subprocess.PIPE
-    assert kwargs["start_new_session"] is (os.name == "posix")
+    expected_supervision_kwargs = spawn_supervision_kwargs()
+    for key, value in expected_supervision_kwargs.items():
+        assert kwargs[key] == value
+    assert ("start_new_session" in kwargs) is (os.name == "posix")
     assert "shell" not in kwargs
 
 

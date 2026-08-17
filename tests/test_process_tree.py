@@ -187,6 +187,36 @@ def test_the_default_windows_runner_captures_taskkill_output(
     assert argv == ("taskkill", "/PID", "4321", "/T")
     assert kwargs["capture_output"] is True
     assert kwargs["check"] is False
+    assert kwargs["timeout"] == process_tree.TASKKILL_TIMEOUT_S
+
+
+def test_signal_tree_survives_a_wedged_taskkill_that_blows_the_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hung taskkill must fail the call, not raise `TimeoutExpired` into the caller."""
+    monkeypatch.setattr(process_tree.os, "name", "nt")
+
+    def wedged(argv):  # noqa: ANN001 - mirrors the injected runner protocol
+        raise subprocess.TimeoutExpired(cmd=list(argv), timeout=process_tree.TASKKILL_TIMEOUT_S)
+
+    assert process_tree.signal_tree(4321, process_tree.TERMINATE_SIGNAL, runner=wedged) is False
+
+
+async def test_terminate_tree_survives_a_wedged_taskkill_on_both_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same wedge, reached through terminate_tree's polite-then-forced escalation."""
+    monkeypatch.setattr(process_tree.os, "name", "nt")
+    events: list[tuple[str, object]] = []
+
+    def wedged(argv):  # noqa: ANN001 - mirrors the injected runner protocol
+        raise subprocess.TimeoutExpired(cmd=list(argv), timeout=process_tree.TASKKILL_TIMEOUT_S)
+
+    gone = await process_tree.terminate_tree(
+        4321, grace=0.1, runner=wedged, clock=_RecordingClock(events)
+    )
+
+    assert gone is False
 
 
 async def test_terminate_tree_escalates_taskkill_after_the_grace_on_windows(

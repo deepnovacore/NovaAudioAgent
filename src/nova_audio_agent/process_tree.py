@@ -41,11 +41,16 @@ KILL_SIGNAL: int = getattr(signal, "SIGKILL", 9)
 # subprocess only defines this on Windows; the literal keeps the module importable — and the
 # win32 branch testable — from a POSIX host.
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-# taskkill's "the process is not there" exit code. Its POSIX twin is killpg's ESRCH, and both
-# mean the same thing to a caller: nothing was signalled.
+# taskkill's "the process is not there" exit code. Its POSIX twin is killpg's ESRCH, but the
+# two callers here read it in opposite directions: terminate_tree treats 128 as success —
+# nothing left to kill is exactly the state it wants — while signal_tree treats it as failure,
+# the same as any other undelivered signal, since its contract is "did the request land".
 TASKKILL_NOT_FOUND = 128
 _TASKKILL_FAILED = 1
 _POLL_INTERVAL = 0.01
+# Bound on one taskkill pass. A wedged taskkill would otherwise block the asyncio loop inside
+# the teardown path indefinitely; 5s is generous for a local process-tree walk.
+TASKKILL_TIMEOUT_S = 5.0
 _SUPERVISION_CLOCK = RealClock()
 
 
@@ -112,13 +117,20 @@ async def terminate_tree(
 ) -> bool:
     """Stop the tree led by `pid` politely, then forcibly after `grace`. True when it is gone.
 
-    For callers that only need the tree stopped. Transports that must interleave the
-    escalation with draining pipes and reaping their own leader compose `signal_tree` and
-    `tree_alive` against their own clock instead.
+    For callers that only need the tree stopped. This has no production caller today — every
+    real call site composes `signal_tree` and `tree_alive` itself instead, because it needs to
+    interleave the escalation with draining pipes and reaping its own leader for step-level
+    reporting. Kept here as the tested reference behaviour those call sites are composing.
 
     On POSIX the answer is observed (the group is polled until empty, or `grace` runs out
     twice over). On Windows it is taskkill's own verdict on the forced pass, since there is
     no tree probe to confirm it with.
+
+    `pid` is a bare pid with no handle anchoring it to the tree it named when the caller
+    observed it: nothing here holds a leader handle to detect that the pid was reaped and
+    recycled in between. On Windows in particular, where a handle-based check is not part of
+    this contract, a recycled pid could have this signal an entirely innocent tree. Callers
+    must ensure the pid has not yet been reaped before calling this.
     """
     clock = clock or _SUPERVISION_CLOCK
     if os.name == "nt":
@@ -151,11 +163,13 @@ def _taskkill(pid: int, *, forced: bool, runner: TaskkillRunner | None) -> int:
         argv.append("/F")
     try:
         return (runner or _run_captured)(argv).returncode
-    except OSError:
-        # No taskkill on PATH is a supervision failure, never a crash mid-cleanup.
+    except (OSError, subprocess.TimeoutExpired):
+        # No taskkill on PATH, or one that wedged past TASKKILL_TIMEOUT_S, is a supervision
+        # failure, never a crash mid-cleanup.
         return _TASKKILL_FAILED
 
 
 def _run_captured(argv: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
-    """Default runner: taskkill's chatter is captured so it never lands on the host's stdio."""
-    return subprocess.run(argv, capture_output=True, check=False)
+    """Default runner: taskkill's chatter is captured, and its runtime bounded, so a wedged
+    process can neither land on the host's stdio nor block the event loop indefinitely."""
+    return subprocess.run(argv, capture_output=True, check=False, timeout=TASKKILL_TIMEOUT_S)
