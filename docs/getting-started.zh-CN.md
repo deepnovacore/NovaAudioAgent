@@ -43,6 +43,9 @@ DASHSCOPE_API_KEY=...
 uv sync --extra vision --extra volcengine --dev
 ```
 
+运行时虽选择 Silero ONNX 模型，但上游 `silero-vad==5.1.2` 目前仍会传递安装 PyTorch 与
+torchaudio，因此这个可选 extra 的安装体积较大。
+
 然后在火山控制台开通 Seed ASR 2.0、目标 Ark 模型与 Seed TTS 2.0，并配置：
 
 ```dotenv

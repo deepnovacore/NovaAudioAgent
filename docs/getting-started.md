@@ -145,11 +145,14 @@ The alternative Volcengine backend is a native cascade rather than runtime failo
 16 kHz PCM16 → Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0 → 24 kHz PCM16
 ```
 
-Enable the optional ONNX/Silero dependencies and configure all three services:
+Enable the Volcengine speech dependencies and configure all three services:
 
 ```bash
 uv sync --extra vision --extra volcengine --dev
 ```
+
+Although runtime inference selects the ONNX Silero model, upstream `silero-vad==5.1.2` currently
+pulls in PyTorch and torchaudio transitively, so this optional extra is a large installation.
 
 ```dotenv
 NOVA_AUDIO_AGENT_REALTIME_PROVIDER=volcengine

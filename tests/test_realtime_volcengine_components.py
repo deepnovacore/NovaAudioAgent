@@ -105,15 +105,27 @@ def test_tts_chunker_flushes_first_boundary_then_soft_and_hard_limits() -> None:
     assert chunker.finish() == ("剩余",)
 
 
+def test_tts_chunker_never_lets_a_late_boundary_exceed_the_hard_limit() -> None:
+    chunker = TextChunker(soft_limit=18, hard_limit=48)
+
+    chunks = chunker.push("字" * 55 + "。")
+    remainder = chunker.finish()
+
+    assert chunks == ("字" * 48,)
+    assert remainder == ("字" * 7 + "。",)
+    assert all(len(chunk) <= 48 for chunk in (*chunks, *remainder))
+
+
 class _Iterator:
     def __init__(self, results: Iterator[dict[str, int] | None]) -> None:
         self._results = results
+        self.reset_count = 0
 
     def __call__(self, _frame: object, **_kwargs: object) -> dict[str, int] | None:
         return next(self._results)
 
     def reset_states(self) -> None:
-        return None
+        self.reset_count += 1
 
 
 def test_vad_buffers_arbitrary_pcm_until_a_512_sample_frame() -> None:
@@ -140,6 +152,7 @@ def test_vad_pre_roll_does_not_include_future_frames_from_same_packet() -> None:
     events = segmenter.feed(first + future)
 
     assert events[0].pre_roll_pcm == first
+    assert events[0].speech_pcm == future
 
 
 def test_vad_rejects_misaligned_pcm() -> None:
@@ -175,6 +188,28 @@ def test_vad_forces_an_utterance_end_at_configured_maximum() -> None:
     assert events[-1].kind == "speech_stopped"
     assert events[-1].forced is True
     assert events[-1].commit is True
+
+
+def test_vad_forced_end_resets_iterator_without_dropping_buffered_audio() -> None:
+    iterator = _Iterator(iter([{"start": 0}, None, {"start": 1_024}]))
+    segmenter = SileroVadSegmenter(
+        SileroVadConfig(pre_roll_ms=0, min_speech_ms=0, max_utterance_ms=64),
+        iterator=iterator,
+    )
+
+    events = segmenter.feed(b"\x00\x00" * 1_536)
+    resumed = segmenter.feed(b"\x00\x00")
+
+    assert [event.kind for event in events] == [
+        "speech_started",
+        "speech_stopped",
+    ]
+    assert events[1].forced is True
+    assert events[0].speech_pcm == b"\x00\x00" * 512
+    assert [event.kind for event in resumed] == ["speech_started"]
+    assert resumed[0].pre_roll_pcm == b"\x00\x00" * 512
+    assert resumed[0].speech_pcm == b""
+    assert iterator.reset_count == 1
 
 
 def test_vad_model_dependency_is_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:

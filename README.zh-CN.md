@@ -173,7 +173,8 @@ uv sync --extra vision --dev
 （上下文隔离、沙箱与窄 preload 桥）；需要 macOS、Node.js、`codex` 可执行文件、麦克风权限，
 以及 `.env` 中所选语音 provider 的凭据。Qwen 仍是默认值；原生火山备选链路为
 `Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0`，安装命令是
-`uv sync --extra vision --extra volcengine --dev`。provider 事件与宿主的响应及 delegate 身份逐一关联，
+`uv sync --extra vision --extra volcengine --dev`。上游 `silero-vad==5.1.2` 即使选择 ONNX
+推理仍会传递安装 PyTorch 与 torchaudio，因此这个 extra 的体积较大。provider 事件与宿主的响应及 delegate 身份逐一关联，
 播放确认为音频清除与完成加上围栏；Memory Board 视图可按请求渲染每条记忆通道的最新条目——
 正是前文按通道记忆的可视化对照。
 

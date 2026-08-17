@@ -194,7 +194,8 @@ the Electron renderer (context isolation, sandboxing, and a narrow preload bridg
 macOS, Node.js, the `codex` executable, microphone permission, and credentials for the selected
 voice provider in `.env`. Qwen remains the default; the alternative native Volcengine path is
 `Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0` and is installed with
-`uv sync --extra vision --extra volcengine --dev`.
+`uv sync --extra vision --extra volcengine --dev`. Upstream `silero-vad==5.1.2` currently pulls in
+PyTorch and torchaudio even though this backend selects ONNX inference, so the extra is sizeable.
 Provider events are correlated with host response and delegate identities, playback
 acknowledgements fence audio clearing and completion, and a Memory Board view renders every memory
 channel's latest items on request — the visual counterpart of the channel-wise memory described

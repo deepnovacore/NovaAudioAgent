@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 SAMPLE_RATE = 16_000
@@ -24,6 +24,7 @@ class SileroVadConfig:
 class VadEvent:
     kind: Literal["speech_started", "speech_stopped"]
     pre_roll_pcm: bytes = b""
+    speech_pcm: bytes = b""
     speech_ms: float = 0.0
     commit: bool = True
     forced: bool = False
@@ -32,6 +33,7 @@ class VadEvent:
 class SileroVadSegmenter:
     def __init__(self, config: SileroVadConfig, *, iterator: Any | None = None) -> None:
         self.config = config
+        self._requires_torch = iterator is None
         self._iterator = _load_iterator(config) if iterator is None else iterator
         self._frame_buffer = bytearray()
         self._pre_roll = bytearray()
@@ -48,10 +50,13 @@ class SileroVadSegmenter:
             raise ValueError("audio must be non-empty aligned PCM16 bytes")
         self._frame_buffer.extend(pcm)
         events: list[VadEvent] = []
+        onset_event_index: int | None = None
+        post_onset = bytearray()
         frame_bytes = FRAME_SAMPLES * BYTES_PER_SAMPLE
         while len(self._frame_buffer) >= frame_bytes:
             frame = bytes(self._frame_buffer[:frame_bytes])
             del self._frame_buffer[:frame_bytes]
+            was_in_speech = self._in_speech
             if not self._in_speech:
                 self._remember_pre_roll(frame)
             result = self._process_frame(frame)
@@ -62,10 +67,25 @@ class SileroVadSegmenter:
                 start = result.get("start")
                 self._speech_start_sample = start if type(start) is int else frame_start
                 events.append(VadEvent("speech_started", pre_roll_pcm=bytes(self._pre_roll)))
+                onset_event_index = len(events) - 1
                 self._pre_roll.clear()
+            elif onset_event_index is not None and was_in_speech:
+                post_onset.extend(frame)
             forced = self._forced_stop()
             if (result and "end" in result and self._in_speech) or forced:
+                if onset_event_index is not None and post_onset:
+                    events[onset_event_index] = replace(
+                        events[onset_event_index], speech_pcm=bytes(post_onset)
+                    )
+                onset_event_index = None
+                post_onset.clear()
                 events.append(self._stop_event(result, forced=forced))
+                if forced:
+                    break
+        if onset_event_index is not None and post_onset:
+            events[onset_event_index] = replace(
+                events[onset_event_index], speech_pcm=bytes(post_onset)
+            )
         return tuple(events)
 
     def reset(self) -> None:
@@ -102,13 +122,14 @@ class SileroVadSegmenter:
             integers.frombytes(pcm)
             samples = tuple(value / 32768.0 for value in integers)
         frame: Any = samples
-        try:
-            import torch
+        if self._requires_torch:
+            try:
+                import torch
 
-            if hasattr(samples, "dtype"):
-                frame = torch.from_numpy(samples)
-        except ImportError:
-            pass
+                if hasattr(samples, "dtype"):
+                    frame = torch.from_numpy(samples)
+            except ImportError:
+                pass
         try:
             value = self._iterator(frame, return_seconds=False)
         except TypeError:
@@ -130,6 +151,10 @@ class SileroVadSegmenter:
         speech_ms = max(0.0, (end_sample - start_sample) * 1000 / SAMPLE_RATE)
         self._in_speech = False
         self._speech_start_sample = None
+        if forced:
+            reset = getattr(self._iterator, "reset_states", None)
+            if callable(reset):
+                reset()
         return VadEvent(
             "speech_stopped",
             speech_ms=speech_ms,

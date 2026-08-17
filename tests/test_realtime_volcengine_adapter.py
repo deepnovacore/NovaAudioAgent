@@ -17,9 +17,14 @@ from nova_audio_agent.realtime.protocol import (
     ToolCallReady,
     UserSpeechEnded,
     UserSpeechStarted,
+    UserTranscriptFailed,
     UserTranscriptFinal,
 )
-from nova_audio_agent.realtime.volcengine.adapter import VolcengineCascadedAdapter
+from nova_audio_agent.realtime.qwen import GUARD_ACTIVATION_PREFIX
+from nova_audio_agent.realtime.volcengine.adapter import (
+    VolcengineCascadedAdapter,
+    _host_input,
+)
 from nova_audio_agent.realtime.volcengine.ark import (
     ArkResponseCompleted,
     ArkResponseStarted,
@@ -53,6 +58,29 @@ class _Vad:
         self.in_speech = False
 
 
+class _TwoTurnVad(_Vad):
+    def feed(self, pcm: bytes) -> tuple[VadEvent, ...]:
+        call = self.calls
+        self.calls += 1
+        if call in {0, 2}:
+            self.in_speech = True
+            return (VadEvent("speech_started", pre_roll_pcm=pcm),)
+        self.in_speech = False
+        return (VadEvent("speech_stopped", speech_ms=500, commit=True),)
+
+
+class _OnsetPacketVad(_Vad):
+    def feed(self, pcm: bytes) -> tuple[VadEvent, ...]:
+        self.in_speech = True
+        return (
+            VadEvent(
+                "speech_started",
+                pre_roll_pcm=pcm[: len(pcm) // 2],
+                speech_pcm=pcm[len(pcm) // 2 :],
+            ),
+        )
+
+
 class _AsrSession:
     def __init__(self) -> None:
         self.audio: list[bytes] = []
@@ -79,6 +107,62 @@ class _Asr:
 
     async def open(self) -> _AsrSession:
         return self.session
+
+
+class _EmptyFinalAsrSession(_AsrSession):
+    async def events(self) -> AsyncIterator[AsrTranscript]:
+        await self.finished.wait()
+        yield AsrTranscript("", True)
+
+
+class _EmptyFinalAsr(_Asr):
+    def __init__(self) -> None:
+        self.session = _EmptyFinalAsrSession()
+
+
+class _FailOnceAsr(_Asr):
+    def __init__(self) -> None:
+        super().__init__()
+        self.opens = 0
+
+    async def open(self) -> _AsrSession:
+        self.opens += 1
+        if self.opens == 1:
+            raise ConnectionError("credential-must-not-leak")
+        return self.session
+
+
+class _FailFinishAsrSession(_AsrSession):
+    async def finish(self) -> None:
+        raise ConnectionError("credential-must-not-leak")
+
+
+class _FailFinishAsr(_Asr):
+    def __init__(self) -> None:
+        self.session = _FailFinishAsrSession()
+
+
+class _HangingAsrSession(_AsrSession):
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed = False
+
+    async def events(self) -> AsyncIterator[AsrTranscript]:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _SequencedAsr(_Asr):
+    def __init__(self) -> None:
+        self.first = _HangingAsrSession()
+        self.second = _AsrSession()
+        self.sessions = iter((self.first, self.second))
+
+    async def open(self) -> _AsrSession:
+        return next(self.sessions)
 
 
 class _Ark:
@@ -150,6 +234,13 @@ class _FailAfterAudioSession(_TtsSession):
         raise ConnectionError("credential-must-not-leak")
 
 
+class _ImmediateReceiveFailureSession(_TtsSession):
+    async def events(self) -> AsyncIterator[TtsAudio]:
+        if False:
+            yield TtsAudio(b"")
+        raise ConnectionError("credential-must-not-leak")
+
+
 class _SequencedTts:
     def __init__(self, sessions: list[_TtsSession]) -> None:
         self.sessions = sessions
@@ -170,6 +261,18 @@ async def _collect_until_terminal(adapter: VolcengineCascadedAdapter) -> list[An
     raise AssertionError("adapter event stream ended without terminal")
 
 
+async def _collect_until(
+    adapter: VolcengineCascadedAdapter,
+    expected_type: type[Any],
+) -> list[Any]:
+    events: list[Any] = []
+    async for event in adapter.events():
+        events.append(event)
+        if isinstance(event, expected_type):
+            return events
+    raise AssertionError("adapter event stream ended before expected event")
+
+
 def _tools() -> tuple[dict[str, Any], ...]:
     return (
         {
@@ -181,6 +284,20 @@ def _tools() -> tuple[dict[str, Any], ...]:
             },
         },
     )
+
+
+def test_guard_activation_uses_the_shared_qwen_disclaimer_prefix() -> None:
+    item = HostContextItem.progress(
+        host_item_id="progress-1",
+        event_id="event-1",
+        content="任务仍在运行",
+    )
+
+    payload = _host_input(item, as_user_activation=True)
+
+    assert payload["role"] == "user"
+    assert payload["content"].startswith(GUARD_ACTIVATION_PREFIX)
+    assert "不是用户说的话，也不是新的用户目标" in payload["content"]
 
 
 @pytest.mark.asyncio
@@ -219,6 +336,104 @@ async def test_adapter_runs_vad_asr_ark_tts_and_emits_normalized_events() -> Non
     assert any(isinstance(event, ResponseTranscriptFinal) for event in events)
     assert events[-1] == ResponseTerminal(1, "response-1", "completed", "completed")
     assert tts.sessions[0].texts == ["你好，", "很高兴见到你。"]
+
+
+@pytest.mark.asyncio
+async def test_blank_asr_final_emits_failed_terminal_instead_of_waiting_for_response() -> None:
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(),
+        asr=_EmptyFinalAsr(),
+        ark=_Ark([]),
+        tts=_Tts(),
+        id_factory=lambda: "id",
+    )
+    await adapter.connect(tools=_tools())
+    collector = asyncio.create_task(_collect_until(adapter, UserTranscriptFailed))
+
+    await adapter.send_audio(b"\x00\x00" * 512)
+    await adapter.send_audio(b"\x00\x00" * 512)
+    events = await asyncio.wait_for(collector, timeout=1)
+
+    assert any(isinstance(event, UserTranscriptFailed) for event in events)
+    assert not any(isinstance(event, UserTranscriptFinal) for event in events)
+
+
+@pytest.mark.asyncio
+async def test_asr_start_failure_is_recoverable_on_a_later_utterance() -> None:
+    ark = _Ark(
+        [ArkResponseStarted("recovered"), ArkTextDelta("恢复。"), ArkResponseCompleted("recovered")]
+    )
+    asr = _FailOnceAsr()
+    adapter = VolcengineCascadedAdapter(
+        vad=_TwoTurnVad(), asr=asr, ark=ark, tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+    collector = asyncio.create_task(_collect_until_terminal(adapter))
+
+    await adapter.send_audio(b"\x00\x00" * 512)
+    await adapter.send_audio(b"\x00\x00" * 512)
+    await adapter.send_audio(b"\x00\x00" * 512)
+    await adapter.send_audio(b"\x00\x00" * 512)
+    events = await asyncio.wait_for(collector, timeout=1)
+
+    assert asr.opens == 2
+    assert any(isinstance(event, ProviderErrorEvent) for event in events)
+    assert events[-1].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_asr_finish_failure_emits_a_failed_transcript_without_escaping_send_audio() -> None:
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_FailFinishAsr(), ark=_Ark([]), tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+    collector = asyncio.create_task(_collect_until(adapter, UserTranscriptFailed))
+
+    await adapter.send_audio(b"\x00\x00" * 512)
+    await adapter.send_audio(b"\x00\x00" * 512)
+    events = await asyncio.wait_for(collector, timeout=1)
+
+    assert any(
+        isinstance(event, ProviderErrorEvent) and event.code == "volcengine_asr_finish"
+        for event in events
+    )
+    assert any(isinstance(event, UserTranscriptFailed) for event in events)
+    assert adapter._asr_session is None
+
+
+@pytest.mark.asyncio
+async def test_onset_packet_audio_after_pre_roll_is_forwarded_to_asr() -> None:
+    asr = _Asr()
+    adapter = VolcengineCascadedAdapter(
+        vad=_OnsetPacketVad(), asr=asr, ark=_Ark([]), tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+    pcm = b"\x01\x00" * 1_024
+
+    await adapter.send_audio(pcm)
+
+    assert asr.session.audio == [pcm[: len(pcm) // 2], pcm[len(pcm) // 2 :]]
+
+
+@pytest.mark.asyncio
+async def test_new_onset_replaces_an_asr_session_still_draining_its_final() -> None:
+    ark = _Ark(
+        [ArkResponseStarted("second"), ArkTextDelta("第二轮。"), ArkResponseCompleted("second")]
+    )
+    asr = _SequencedAsr()
+    adapter = VolcengineCascadedAdapter(
+        vad=_TwoTurnVad(), asr=asr, ark=ark, tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+    collector = asyncio.create_task(_collect_until_terminal(adapter))
+
+    for _ in range(4):
+        await adapter.send_audio(b"\x00\x00" * 512)
+    events = await asyncio.wait_for(collector, timeout=1)
+
+    assert asr.first.closed is True
+    assert events[-1].response_id == "second"
+    assert events[-1].status == "completed"
 
 
 @pytest.mark.asyncio
@@ -306,6 +521,100 @@ async def test_tool_output_is_submitted_as_function_call_output_on_continuation(
 
 
 @pytest.mark.asyncio
+async def test_host_responses_consume_only_the_item_named_by_the_intent() -> None:
+    ark = _Ark([ArkResponseStarted("host-response"), ArkResponseCompleted("host-response")])
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_Asr(), ark=ark, tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+    first = HostContextItem.progress(
+        host_item_id="progress-1",
+        event_id="event-1",
+        content="第一项",
+    )
+    second = HostContextItem.progress(
+        host_item_id="progress-2",
+        event_id="event-2",
+        content="第二项",
+    )
+    await adapter.inject_host_item(first)
+    await adapter.inject_host_item(second)
+
+    await adapter.create_response(HostResponseIntent.host_fact(first))
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+    assert adapter._response_task is not None
+    await adapter._response_task
+
+    await adapter.create_response(HostResponseIntent.host_fact(second))
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+
+    assert len(ark.calls) == 2
+    assert [item["content"] for item in ark.calls[0]["input_items"]] == [
+        "Nova Audio Agent 任务进度事实：第一项"
+    ]
+    assert [item["content"] for item in ark.calls[1]["input_items"]] == [
+        "Nova Audio Agent 任务进度事实：第二项"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_user_interrupt_carries_pending_context_and_tool_output_without_duplicate_continuation() -> (
+    None
+):
+    ark = _Ark(
+        [
+            ArkResponseStarted("user-response"),
+            ArkTextDelta("收到。"),
+            ArkResponseCompleted("user-response"),
+        ]
+    )
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_Asr(), ark=ark, tts=_Tts(), id_factory=lambda: "silent-response"
+    )
+    await adapter.connect(tools=_tools())
+    adapter._previous_response_id = "function-response"
+    recovery = HostContextItem.recovery(
+        host_item_id="recovery-1",
+        event_id="event-recovery",
+        content="有界恢复事实",
+    )
+    tool_output = HostContextItem.tool_output(
+        host_item_id="tool-output-1",
+        event_id="event-tool",
+        call_id="call-tool",
+        content='{"condition":"晴"}',
+    )
+    await adapter.inject_host_item(recovery)
+    await adapter.inject_host_item(tool_output)
+
+    await adapter._start_user_response("再补充一个条件")
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+    assert adapter._response_task is not None
+    await adapter._response_task
+
+    await adapter.create_response(HostResponseIntent.tool_result(tool_output))
+    silent_events = await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+
+    assert ark.calls == [
+        {
+            "input_items": [
+                {"role": "system", "content": "Nova Audio Agent 恢复摘要：有界恢复事实"},
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-tool",
+                    "output": '{"condition":"晴"}',
+                },
+                {"role": "user", "content": "再补充一个条件"},
+            ],
+            "tools": adapter._tools,
+            "previous_response_id": "function-response",
+        }
+    ]
+    assert any(isinstance(event, ResponseStarted) for event in silent_events)
+    assert silent_events[-1].status == "completed"
+
+
+@pytest.mark.asyncio
 async def test_tts_reconnects_once_when_current_text_has_not_emitted_audio() -> None:
     ark = _Ark([ArkResponseStarted("retry"), ArkTextDelta("你好。"), ArkResponseCompleted("retry")])
     good = _TtsSession()
@@ -345,6 +654,25 @@ async def test_tts_does_not_retry_after_any_audio_was_emitted() -> None:
     assert tts.open_count == 1
     assert any(isinstance(event, ResponseAudioDelta) for event in events)
     assert events[-1].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_tts_retrieves_an_already_failed_consumer_and_reports_it() -> None:
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_Asr(), ark=_Ark([]), tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+    session = _ImmediateReceiveFailureSession()
+    adapter._tts_session = session
+    adapter._tts_task = asyncio.create_task(adapter._consume_tts("response-1", session))
+    await asyncio.sleep(0)
+    assert adapter._tts_task.done()
+
+    await adapter._cancel_tts()
+    events = await asyncio.wait_for(_collect_until(adapter, ProviderErrorEvent), timeout=1)
+
+    error = next(event for event in events if isinstance(event, ProviderErrorEvent))
+    assert error == ProviderErrorEvent(1, "volcengine_tts_receive", True)
 
 
 @pytest.mark.asyncio

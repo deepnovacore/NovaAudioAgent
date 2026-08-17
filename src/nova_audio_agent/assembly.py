@@ -724,20 +724,13 @@ def _build_assembly(
     )
     camera = CamAdapter(frame_source, media_store)
     watch_model = (settings.watch_model or "").strip() or settings.fast_model
-    if (
-        support_model_override is not None
-        and not {
-            "watch_model",
-            "fast_model",
-        }
-        & settings.model_fields_set
-    ):
+    if support_model_override is not None:
         watch_model = support_model_override
     surrogate_model = settings.surrogate_model
-    if support_model_override is not None and "surrogate_model" not in settings.model_fields_set:
+    if support_model_override is not None:
         surrogate_model = support_model_override
     compressor_model = settings.compressor_model
-    if support_model_override is not None and "compressor_model" not in settings.model_fields_set:
+    if support_model_override is not None:
         compressor_model = support_model_override
     capture_enabled = not isinstance(frame_source, DisabledFrameSource)
     watch = WatchAdapter(

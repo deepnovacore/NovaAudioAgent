@@ -37,7 +37,7 @@ class TextChunker:
             boundary = self._flush_boundary()
             if boundary is None and len(self._pending) < self._hard_limit:
                 break
-            end = self._hard_limit if boundary is None else boundary
+            end = self._hard_limit if boundary is None else min(boundary, self._hard_limit)
             chunks.append(self._pending[:end])
             self._pending = self._pending[end:]
             self._first = False

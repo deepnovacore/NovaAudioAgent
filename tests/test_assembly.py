@@ -124,6 +124,43 @@ def test_volcengine_realtime_assembly_wires_native_provider(
     assert assembly.runtime.surrogate._model == "doubao-seed-2-0-pro-260215"
 
 
+def test_volcengine_ark_fallback_forces_all_support_models_to_an_ark_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeVad:
+        def __init__(self, config: object) -> None:
+            del config
+
+    monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(volcengine_module, "SileroVadSegmenter", FakeVad)
+    settings = Settings(
+        realtime_provider="volcengine",
+        ark_api_key=SecretStr("ark-secret"),
+        doubao_bigmodel_api_key=SecretStr("speech-secret"),
+        tavily_api_key=SecretStr("search-secret"),
+        fast_model="qwen3-vl-plus",
+        surrogate_model="qwen-plus",
+        compressor_model="qwen-flash",
+        codex_prewarm=False,
+        _env_file=None,
+    )
+
+    assembly = assembly_module.build_volcengine_realtime_assembly(
+        settings,
+        sink=_Sink(),
+        on_audio_frame=lambda _frame: None,
+        on_audio_clear=lambda _utterance_id, _epoch: None,
+        on_audio_terminal=lambda _utterance_id, _epoch: None,
+        on_delivery=lambda _completion: None,
+    )
+
+    expected = "doubao-seed-2-0-pro-260215"
+    assert assembly.runtime.executors["watch"]._model == expected
+    assert assembly.runtime.executors["guard"]._model == expected
+    assert assembly.runtime.surrogate._model == expected
+    assert assembly.runtime.compressor._model == expected
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
