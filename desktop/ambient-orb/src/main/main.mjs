@@ -357,12 +357,6 @@ async function start() {
       console.error(`[desktop-diagnostic] window_position_save_failure type=${error.name}`)
     })
   })
-  ipcMain.on('nova:orb-menu:show', event => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) return
-    Menu.buildFromTemplate([
-      { label: '退出 Nova Audio Agent', click: () => app.quit() },
-    ]).popup({ window: mainWindow })
-  })
   void loadAppWindow(mainWindow, {
     rendererRoot,
     fetchFile: file => net.fetch(pathToFileURL(file).href),

@@ -53,6 +53,13 @@ test('main owns the fixed orb menu and validates every menu and board sender', a
   assert.match(renderer, /orbMenu\.show\(\)/)
 })
 
+test('registers the orb context-menu channel exactly once', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  const registrations = source.match(/ipcMain\.on\(\s*'nova:orb-menu:show'/g) || []
+  assert.equal(registrations.length, 1)
+})
+
 test('quitting drains the backend on the stdin sentinel instead of killing it', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const beforeQuit = source.slice(source.indexOf("app.on('before-quit'"))
