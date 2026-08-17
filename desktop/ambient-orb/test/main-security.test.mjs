@@ -116,6 +116,62 @@ test('macOS camera permission is requested on the main thread before backend sta
   assert.ok(source.indexOf('await requestCameraPermission()') < source.indexOf('await launchBackend()'))
 })
 
+test('pins X11/XWayland and transparent visuals on linux before the app is ready', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /process\.platform === 'linux'/)
+  assert.match(source, /appendSwitch\('ozone-platform', 'x11'\)/)
+  assert.match(source, /appendSwitch\('enable-transparent-visuals'\)/)
+
+  const switchSite = source.indexOf("appendSwitch('ozone-platform'")
+  const whenReady = source.indexOf('app.whenReady()')
+  assert.ok(switchSite >= 0 && whenReady > switchSite)
+})
+
+test('delays window creation on linux only, via an injectable wait rather than a bare sleep', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /LINUX_WINDOW_DELAY_MS\s*=\s*300/)
+  const startBody = source.slice(source.indexOf('async function start()'))
+  const platformCheck = startBody.indexOf("process.platform === 'linux'")
+  const createWindowCall = startBody.indexOf('createWindow(launchId')
+  assert.ok(platformCheck >= 0 && createWindowCall > platformCheck)
+  assert.match(startBody.slice(platformCheck, createWindowCall), /LINUX_WINDOW_DELAY_MS/)
+})
+
+test('warns instead of silently failing when the global shortcut cannot register', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  const registration = source.slice(source.indexOf('globalShortcut.register('))
+  assert.match(
+    registration.slice(0, 400),
+    /console\.warn\('\[ambient-orb\] global shortcut unavailable on this session'\)/,
+  )
+})
+
+test('reads the opaque fallback from env and threads it through window creation and bootstrap', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /process\.env\.NOVA_ORB_OPAQUE === '1'/)
+  assert.match(source, /browserWindowOptions\(preload, launchId, \{ opaque \}\)/)
+  const bootstrapAssignment = source.slice(source.indexOf('bootstrap = Object.freeze({'))
+  assert.match(bootstrapAssignment.slice(0, bootstrapAssignment.indexOf('})')), /opaque/)
+})
+
+test('renderer flags an opaque bootstrap on the document body', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /document\.body\.dataset\.opaque = '1'/)
+})
+
+test('opaque mode renders a rounded dark plate behind the orb', async () => {
+  const source = await readFile(new URL('../src/renderer/index.css', import.meta.url), 'utf8')
+
+  assert.match(source, /body\[data-opaque="1"\]/)
+  assert.match(source, /rgba\(20,\s*14,\s*8,\s*\.92\)/)
+  assert.match(source, /border-radius:\s*24px/)
+})
+
 test('drag and orb menu paths stay sender validated and bounded', async () => {
   const mainSource = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const rendererSource = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')

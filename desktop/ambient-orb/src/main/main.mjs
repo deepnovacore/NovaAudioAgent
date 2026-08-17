@@ -52,11 +52,24 @@ protocol.registerSchemesAsPrivileged([{
 // everywhere else, so it is set unconditionally rather than gated by platform.
 app.setAppUserModelId('ai.deepnovacore.nova-audio-agent.orb')
 
+// Wayland has no global window positioning, so the orb is pinned to X11
+// (XWayland handles Wayland sessions transparently). These switches must be
+// appended before the app is ready; Chromium reads them once at startup.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('ozone-platform', 'x11')
+  app.commandLine.appendSwitch('enable-transparent-visuals')
+}
+
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, '../..')
 const rendererRoot = resolve(packageRoot, 'src/renderer')
 const preload = resolve(packageRoot, 'src/preload/preload.cjs')
 const WINDOW_SIZE = Object.freeze({ width: 184, height: 184 })
+// Long-standing Chromium/X11 quirk: the ARGB visual backing a transparent,
+// frameless window isn't reliably available the instant 'ready' fires, so
+// window creation is delayed a beat on linux only.
+const LINUX_WINDOW_DELAY_MS = 300
+const opaque = process.env.NOVA_ORB_OPAQUE === '1'
 
 let backend = null
 let mainWindow = null
@@ -110,8 +123,14 @@ function clampToNearestWorkArea(candidate) {
   return clampWindowPosition(candidate, WINDOW_SIZE, workArea)
 }
 
+// The scheduler is injectable so a future test can drive this without a real
+// 300 ms sleep; production always calls it with the default setTimeout.
+function wait(ms, schedule = setTimeout) {
+  return new Promise(resolve => schedule(resolve, ms))
+}
+
 async function createWindow(launchId) {
-  const window = new BrowserWindow(browserWindowOptions(preload, launchId))
+  const window = new BrowserWindow(browserWindowOptions(preload, launchId, { opaque }))
   const positionFile = windowPositionFile()
   const primary = screen.getPrimaryDisplay().workArea
   const fallback = { x: primary.x + primary.width - 208, y: primary.y + 24 }
@@ -224,6 +243,7 @@ async function launchBackend() {
     audioMode: 'inactive',
     nativeAvailable,
     platform: process.platform,
+    opaque,
   })
 }
 
@@ -240,6 +260,7 @@ async function start() {
   await requestCameraPermission()
   await launchBackend()
   const launchId = randomBytes(8).toString('hex')
+  if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
   const dragController = createDragController({
     getCursor: () => screen.getCursorScreenPoint(),
@@ -375,9 +396,14 @@ async function start() {
     app.quit()
   })
   tray = createTray()
-  globalShortcut.register('CommandOrControl+Shift+Space', () => {
+  const shortcutRegistered = globalShortcut.register('CommandOrControl+Shift+Space', () => {
     mainWindow?.isVisible() ? mainWindow.hide() : mainWindow?.show()
   })
+  // Wayland/XWayland sessions may silently refuse global shortcuts; surface
+  // that instead of leaving the user to wonder why the hotkey never fires.
+  if (!shortcutRegistered) {
+    console.warn('[ambient-orb] global shortcut unavailable on this session')
+  }
 }
 
 if (!app.requestSingleInstanceLock()) {

@@ -55,6 +55,27 @@ test('memory board window shares the orb session with the same isolation walls',
   assert.equal(options.webPreferences.webSecurity, true)
 })
 
+test('browserWindowOptions defaults to the transparent orb backdrop', () => {
+  const options = browserWindowOptions('/app/preload.cjs', 'launch-1')
+
+  assert.equal(options.transparent, true)
+  assert.equal(options.backgroundColor, '#00000000')
+})
+
+test('browserWindowOptions renders an opaque dark plate when the fallback is requested', () => {
+  const options = browserWindowOptions('/app/preload.cjs', 'launch-1', { opaque: true })
+
+  assert.equal(options.transparent, false)
+  assert.equal(options.backgroundColor, '#141005')
+})
+
+test('browserWindowOptions treats opaque: false the same as omitting the option', () => {
+  const options = browserWindowOptions('/app/preload.cjs', 'launch-1', { opaque: false })
+
+  assert.equal(options.transparent, true)
+  assert.equal(options.backgroundColor, '#00000000')
+})
+
 test('bootstrap remains reload-safe for the same renderer and rejects every other caller', () => {
   assert.equal(typeof securityModule.createBootstrapAccess, 'function')
   const renderer = {}

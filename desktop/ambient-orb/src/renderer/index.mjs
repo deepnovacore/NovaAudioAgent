@@ -432,6 +432,7 @@ async function boot() {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
     axes.audioMode = bootstrap.audioMode
     axes.platform = bootstrap.platform
+    if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
     window.novaAudioAgentDesktop.onBackendExit(() => {
       axes.connected = false
