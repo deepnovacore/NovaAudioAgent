@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-import time
 from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
@@ -286,7 +285,7 @@ async def run_attempt(
     case: BenchmarkCase,
     *,
     repeat: int,
-    clock: Callable[[], float] = time.perf_counter,
+    clock: Callable[[], float],
 ) -> AttemptResult:
     """Run one case and retain only timings, booleans, and error class names."""
     started_at = clock()

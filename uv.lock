@@ -794,6 +794,7 @@ volcengine = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -824,6 +825,7 @@ provides-extras = ["vision", "volcengine"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },

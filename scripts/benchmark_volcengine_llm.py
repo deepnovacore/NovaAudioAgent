@@ -9,6 +9,7 @@ from dataclasses import asdict
 import json
 import os
 import random
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -125,7 +126,9 @@ async def run_matrix(
     for model, case, repeat in schedule:
         try:
             async with asyncio.timeout(args.timeout):
-                result = await run_attempt(clients[model], model, case, repeat=repeat)
+                result = await run_attempt(
+                    clients[model], model, case, repeat=repeat, clock=time.perf_counter
+                )
         except TimeoutError:
             failed = CaseScore(
                 passed=False,

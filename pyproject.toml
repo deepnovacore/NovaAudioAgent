@@ -53,6 +53,7 @@ Issues = "https://github.com/deepnovacore/NovaAudioAgent/issues"
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.23,<5",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
