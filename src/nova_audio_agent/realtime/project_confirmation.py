@@ -122,7 +122,7 @@ class ProjectConfirmationController:
 
     @property
     def view(self) -> ProjectConfirmationView:
-        proposal = self._proposal
+        proposal = self._proposal if self.pending else None
         return ProjectConfirmationView(
             pending_confirmation=proposal is not None,
             workspace_display_name=(None if proposal is None else proposal.workspace_display_name),

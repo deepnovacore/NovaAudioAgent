@@ -160,6 +160,27 @@ async def test_reserved_confirmation_response_is_cancelled_before_audio_playback
 
 
 @pytest.mark.asyncio
+async def test_reserved_confirmation_fence_emits_receipt_for_pending_host_event() -> None:
+    actions: list[str] = []
+    session, _provider = make_session(actions)
+    await session.connect(tools=())
+    await session.deliver_host_item(
+        HostContextItem.progress(
+            host_item_id="host-item",
+            event_id="confirmation-pending-event",
+            content="pending",
+        )
+    )
+
+    session.arm_next_response_fence()
+    assert not await session.accept(ResponseStarted(session_epoch=1, response_id="reserved"))
+    receipt = session.take_fence_interruption()
+
+    assert receipt is not None
+    assert receipt.event_ids == ("confirmation-pending-event",)
+
+
+@pytest.mark.asyncio
 async def test_failed_response_request_keeps_confirmed_intent_retryable() -> None:
     """Committing responded state before network success permanently drops acknowledgement."""
     actions: list[str] = []

@@ -532,6 +532,141 @@ async def test_confirmation_asr_is_recorded_but_provider_tool_cannot_authorize()
     assert commits[0][1] == "conversation:1"
     assert "cancel:response-confirm" in provider.actions
     assert any(item.content == "已确认，正在处理。" for item in provider.injected)
+    blocked_outputs = {
+        item.call_id
+        for item in provider.injected
+        if item.kind == "tool_output"
+        and item.content == '{"code":"confirmation_reserved","state":"superseded"}'
+    }
+    assert blocked_outputs == {
+        "call-wrong",
+        "call-late-without-response",
+        "call-late-forged-response",
+    }
+
+
+@pytest.mark.asyncio
+async def test_confirmation_deferred_calls_are_closed_without_touching_unrelated_entries() -> None:
+    service, provider, _runtime, _frames = make_service(
+        id_factory=lambda: f"host-{next(counter)}"
+    )
+    await service.connect()
+    matching = ToolCallReady(
+        session_epoch=1,
+        response_id="response-confirm",
+        call_id="call-matching",
+        item_id="tool-matching",
+        name="codex__run",
+        arguments={"work_order": "matching", "origin_ref": "conversation:1"},
+    )
+    unrelated = ToolCallReady(
+        session_epoch=1,
+        response_id="response-other",
+        call_id="call-unrelated",
+        item_id="tool-unrelated",
+        name="codex__run",
+        arguments={"work_order": "unrelated", "origin_ref": "conversation:1"},
+    )
+    service._origin_deferred_tool_calls.extend(
+        (
+            realtime_service._DeferredOriginToolCall(
+                event=matching,
+                response_id="response-confirm",
+                user_item_id="user-confirm",
+            ),
+            realtime_service._DeferredOriginToolCall(
+                event=unrelated,
+                response_id="response-other",
+                user_item_id="user-other",
+            ),
+        )
+    )
+
+    await service._close_confirmation_deferred_calls("user-confirm")
+
+    assert [item.call_id for item in provider.injected if item.kind == "tool_output"] == [
+        "call-matching"
+    ]
+    assert [call.event.call_id for call in service._origin_deferred_tool_calls] == [
+        "call-unrelated"
+    ]
+    bridge = service._bridge
+    assert isinstance(bridge, FakeBridge)
+    assert bridge.calls == []
+
+
+@pytest.mark.asyncio
+async def test_confirmation_expiry_reconnects_fenced_epoch_before_later_tool_admission() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select",
+        workspace_display_name="alpha",
+        workspace_id="workspace-alpha",
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+    service, provider, _runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+    )
+    await service.connect()
+    await service.handle_event(
+        UserSpeechStarted(
+            session_epoch=1,
+            speech_id="speech-confirm",
+            provider_item_id="user-confirm",
+        )
+    )
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="fenced-confirm"))
+
+    clock.advance_to(90.0)
+    assert controller.expire() is True
+    for _ in range(12):
+        await asyncio.sleep(0)
+
+    assert provider.epoch == service.session.session_epoch == 2
+    expiry_epochs = [
+        epoch
+        for item, epoch in zip(provider.injected, provider.injected_epochs, strict=True)
+        if item.content == "确认已过期，本次操作已取消。"
+    ]
+    assert expiry_epochs == [2]
+    await service.handle_event(ResponseStarted(session_epoch=2, response_id="expiry-ack"))
+    await service.handle_event(
+        ResponseTerminal(
+            session_epoch=2,
+            response_id="expiry-ack",
+            status="completed",
+            reason="completed",
+        )
+    )
+    await service.handle_event(ResponseStarted(session_epoch=2, response_id="later-response"))
+    stale = ToolCallReady(
+        session_epoch=1,
+        response_id=None,
+        call_id="call-stale",
+        item_id="tool-stale",
+        name="codex__run",
+        arguments={"work_order": "stale", "origin_ref": "conversation:1"},
+    )
+    fresh = ToolCallReady(
+        session_epoch=2,
+        response_id="later-response",
+        call_id="call-1",
+        item_id="tool-fresh",
+        name="codex__run",
+        arguments={"work_order": "fresh", "origin_ref": "conversation:1"},
+    )
+    await service.handle_event(stale)
+    await service.handle_event(fresh)
+
+    bridge = service._bridge
+    assert isinstance(bridge, FakeBridge)
+    assert [call.call_id for call in bridge.calls] == ["call-1"]
 
 
 counter = count(1)

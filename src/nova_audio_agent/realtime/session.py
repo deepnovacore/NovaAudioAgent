@@ -249,6 +249,8 @@ class RealtimeSession:
         """
         if self._fence_next_response:
             return
+        if self._pending_responses:
+            self._mark_head_pending_fenced()
         self._fence_next_response = True
         self._advance_snapshot()
 

@@ -186,6 +186,19 @@ def test_expired_proposal_never_confirms() -> None:
     assert controller.view.pending_confirmation is False
 
 
+def test_expired_confirmation_view_suppresses_stale_public_labels_immediately() -> None:
+    clock = VirtualClock(start=1.0)
+    controller = _controller(clock)
+    _prepare_select(controller)
+
+    clock.advance_to(91.0)
+    view = controller.view
+
+    assert view.pending_confirmation is False
+    assert view.workspace_display_name is None
+    assert view.session_title is None
+
+
 def test_newer_proposal_replaces_old_nonce_and_reservation() -> None:
     controller = _controller()
     first = _prepare_select(controller)
