@@ -604,7 +604,7 @@ async def test_resume_mismatch_or_missing_history_refuses_before_turn_write(tmp_
 
         result = await transport.run("continue", on_status=lambda _value: None, on_progress=None)
 
-        assert result.classification == "refused"
+        assert (result.classification, result.code) == ("refused", "resume_unavailable")
         assert not any(item.get("method") == "turn/start" for item in peer.messages)
 
 

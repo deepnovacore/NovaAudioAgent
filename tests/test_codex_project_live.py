@@ -148,6 +148,15 @@ class _NeverReadyWorker(_ProjectWorker):
         raise RuntimeError("missing history")
 
 
+class _ResumeUnavailableWorker(_ProjectWorker):
+    async def run(self, *_args: Any, **_kwargs: Any) -> CodexTransportResult:
+        return CodexTransportResult(
+            classification="refused",
+            code="resume_unavailable",
+            content={},
+        )
+
+
 def test_project_mode_exposes_one_additional_flat_tool() -> None:
     tools = compile_tool_schema((CODEX_PROJECT_LIVE_MANIFEST,))
     names = [
@@ -475,7 +484,7 @@ async def test_dropped_confirmed_delegate_cannot_make_later_run_busy(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_failed_resume_before_thread_validation_marks_session_unavailable(
+async def test_transient_resume_transport_failure_preserves_ready_session(
     tmp_path: Path,
 ) -> None:
     clock = VirtualClock(start=10.0)
@@ -531,4 +540,88 @@ async def test_failed_resume_before_thread_validation_marks_session_unavailable(
     )
 
     assert result.outcome == "failed"
+    assert store.resolve_session(workspace.workspace_id, "Task One").state == "ready"
+
+
+@pytest.mark.asyncio
+async def test_resume_history_rejection_marks_session_unavailable(tmp_path: Path) -> None:
+    clock = VirtualClock(start=10.0)
+    identifiers = iter(f"identifier-{index:03d}" for index in range(100))
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=identifiers.__next__,
+    )
+    workspace = store.create_managed("alpha")
+    confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    factory = _ProjectFactory()
+    adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
+    await adapter.dispatch("run", {"work_order": "first", "session": "Task One"}, _context(clock))
+    saved = store.resolve_session(workspace.workspace_id, "Task One")
+    adapter._worker_factory = (
+        lambda _workspace, _home, resume, on_ready: _ResumeUnavailableWorker(
+            resume or "missing", on_ready
+        )
+    )
+    confirmation.prepare(
+        action="resume",
+        workspace_display_name="alpha",
+        workspace_id=workspace.workspace_id,
+        session_title=saved.display_title,
+        session_id=saved.session_id,
+        work_order="continue",
+        origin_ref="conversation:2",
+    )
+    confirmation.reserve_user_item(epoch=1, item_id="user-confirm")
+    outcome = confirmation.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    assert outcome.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="resume-delegate")
+
+    await adapter.commit_confirmed(
+        outcome.operation,
+        origin_ref="conversation:2",
+        runtime_dispatch=dispatch,
+    )
+    result = await adapter.dispatch(
+        "run",
+        {"work_order": "continue"},
+        _context(
+            clock,
+            origin_ref="conversation:2",
+            delegate_id="resume-delegate",
+            private=dispatched[0][0].private,
+        ),
+    )
+
+    assert result.outcome == "failed"
+    assert result.content["code"] == "resume_unavailable"
     assert store.resolve_session(workspace.workspace_id, "Task One").state == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_failed_new_run_rolls_back_provisional_session(tmp_path: Path) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    workspace = store.create_managed("alpha")
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=lambda _workspace, _home, resume, on_ready: _NeverReadyWorker(
+            resume or "missing", on_ready
+        ),
+    )
+
+    result = await adapter.dispatch("run", {"work_order": "first"}, _context(clock))
+
+    assert result.outcome == "failed"
+    assert store.list_sessions(workspace) == ()

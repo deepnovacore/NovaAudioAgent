@@ -296,31 +296,40 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         session = resumed or self.store.begin_session(workspace.workspace_id, session_title)
         self._publish_project_view()
         ready = False
+        binding_invalid = False
+        result: Handoff | None = None
 
         def on_thread_ready(thread_id: str) -> None:
-            nonlocal ready
+            nonlocal binding_invalid, ready
             if resumed is not None:
                 if thread_id != resumed.codex_thread_id:
+                    binding_invalid = True
                     raise ProjectStateError("session_thread_mismatch")
             else:
                 self.store.mark_session_ready(session.session_id, thread_id)
             ready = True
             self._publish_project_view()
 
-        worker = self._worker_factory(
-            path,
-            self.store.codex_home(workspace),
-            None if resumed is None else resumed.codex_thread_id,
-            on_thread_ready,
-        )
-        self._worker = worker
-        self._mark_prewarm_cold()
         try:
-            return await self._run(work_order, ctx)
+            worker = self._worker_factory(
+                path,
+                self.store.codex_home(workspace),
+                None if resumed is None else resumed.codex_thread_id,
+                on_thread_ready,
+            )
+            self._worker = worker
+            self._mark_prewarm_cold()
+            result = await self._run(work_order, ctx)
+            return result
         finally:
             if not ready:
                 try:
-                    self.store.mark_session_unavailable(session.session_id)
+                    if resumed is None:
+                        self.store.rollback_session_start(session.session_id)
+                    elif binding_invalid or (
+                        result is not None and result.content.get("code") == "resume_unavailable"
+                    ):
+                        self.store.mark_session_unavailable(session.session_id)
                 except ProjectStateError:
                     pass
                 self._publish_project_view()

@@ -27,6 +27,7 @@ from nova_audio_agent.executors.camera import (
 from nova_audio_agent.executors.codex import CODEX_POLICY, CodexAdapter
 from nova_audio_agent.executors.codex_live import CodexLiveAdapter
 from nova_audio_agent.executors.codex_project_live import ProjectCodexAdapter
+from nova_audio_agent.executors.codex_projects import ProjectStateError
 from nova_audio_agent.executors.watcher import WatchAdapter
 from nova_audio_agent.ports import Delegate, SurrogateOutput
 from nova_audio_agent.realtime.protocol import SessionIdentity
@@ -1150,3 +1151,43 @@ def test_project_realtime_assembly_exposes_exact_codex_tool_surface(
     assert names == ["codex__run", "codex__project", "codex__steer", "codex__status"]
     assert realtime.service._project_confirmation is realtime.codex_live_adapter.confirmation
     assert realtime.codex_prewarm is False
+
+
+def test_project_registry_failure_becomes_bounded_configuration_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **_kwargs: object())
+    monkeypatch.setattr(qwen_module, "QwenAudioRealtimeAdapter", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        assembly_module.CodexProjectStore,
+        "ensure_imported",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ProjectStateError("state_corrupt")),
+    )
+    workspace = tmp_path / "private-repo"
+    workspace.mkdir()
+    settings = Settings(
+        model_api_key=SecretStr("model-secret"),
+        tavily_api_key=SecretStr("tavily-secret"),
+        executor="codex",
+        codex_workspace=workspace,
+        codex_projects_enabled=True,
+        codex_managed_root=tmp_path / "managed",
+        codex_project_state_root=tmp_path / "private-state",
+        _env_file=None,
+    )
+
+    with pytest.raises(
+        ConfigurationError,
+        match=r"^Codex project state unavailable: state_corrupt$",
+    ) as raised:
+        build_qwen_realtime_assembly(
+            settings,
+            sink=_Sink(),
+            on_audio_frame=lambda _frame: None,
+            on_audio_clear=lambda _utterance_id, _epoch: None,
+            on_audio_terminal=lambda _utterance_id, _epoch: None,
+            on_delivery=lambda _completion: None,
+        )
+
+    assert str(tmp_path) not in str(raised.value)

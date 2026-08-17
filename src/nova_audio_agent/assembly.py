@@ -27,7 +27,11 @@ from nova_audio_agent.executors.codex import CodexAdapter
 from nova_audio_agent.executors.codex_app_server import CodexAppServerTransport
 from nova_audio_agent.executors.codex_live import CodexLiveAdapter
 from nova_audio_agent.executors.codex_project_live import ProjectCodexAdapter
-from nova_audio_agent.executors.codex_projects import CodexProjectStore, PublicProjectView
+from nova_audio_agent.executors.codex_projects import (
+    CodexProjectStore,
+    ProjectStateError,
+    PublicProjectView,
+)
 from nova_audio_agent.executors.codex_transport import CodexTransport
 from nova_audio_agent.executors.home_assistant import (
     HomeAssistantAdapter,
@@ -420,8 +424,13 @@ def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
     if context.codex_live:
         if context.settings.codex_projects_enabled:
             managed_root, state_root = context.settings.require_codex_projects()
-            store = CodexProjectStore(state_root, managed_root, recover_starting=True)
-            store.ensure_imported(workspace.name or "workspace", workspace)
+            try:
+                store = CodexProjectStore(state_root, managed_root, recover_starting=True)
+                store.ensure_imported(workspace.name or "workspace", workspace)
+            except ProjectStateError as failure:
+                raise ConfigurationError(
+                    f"Codex project state unavailable: {failure.code}"
+                ) from None
             confirmation = ProjectConfirmationController(
                 clock=context.clock,
                 id_factory=lambda: uuid4().hex,

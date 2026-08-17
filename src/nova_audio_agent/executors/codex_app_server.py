@@ -369,7 +369,12 @@ class CodexAppServerTransport:
             }
         if self._developer_instructions is not None:
             thread_params["developerInstructions"] = self._developer_instructions
-        self._thread_response = await self._request(method, thread_params, deadline)
+        try:
+            self._thread_response = await self._request(method, thread_params, deadline)
+        except AppServerRequestRejected:
+            if persistent and self._resume_thread_id is not None:
+                raise AppServerProtocolError("resume_unavailable") from None
+            raise
 
     async def run(
         self,
@@ -1030,12 +1035,17 @@ class CodexAppServerTransport:
         notify_ready: bool,
     ) -> None:
         persistent = self._codex_home is not None
-        projection.bind_thread(
-            self._thread_response,
-            workspace=self._workspace,
-            ephemeral=not persistent,
-            expected_thread_id=self._resume_thread_id,
-        )
+        try:
+            projection.bind_thread(
+                self._thread_response,
+                workspace=self._workspace,
+                ephemeral=not persistent,
+                expected_thread_id=self._resume_thread_id,
+            )
+        except AppServerProtocolError:
+            if persistent and self._resume_thread_id is not None:
+                raise AppServerProtocolError("resume_unavailable") from None
+            raise
         thread_id = projection.thread_id
         if thread_id is None:
             raise AppServerProtocolError("unsupported_protocol")
