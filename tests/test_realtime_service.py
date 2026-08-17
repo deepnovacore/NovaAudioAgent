@@ -56,6 +56,8 @@ from nova_audio_agent.realtime.session import (
     RealtimeDeliveryError,
     RealtimeSession,
 )
+from nova_audio_agent.realtime.project_confirmation import ProjectConfirmationController
+from nova_audio_agent.executors.codex_project_live import ProjectCommitResult
 from nova_audio_agent.memory import CONVERSATION_CHANNEL, USER_PRIORITY, HandoffPolicy, Memory
 from nova_audio_agent.ports import Delegate, ExecutorManifest, OpSpec, SurrogateOutput
 from nova_audio_agent.runtime import Runtime, _wake_handoff
@@ -307,6 +309,8 @@ def make_service(
     provider_schemas: tuple[dict[str, object], ...] | None = None,
     controlled_guard_reconnect: bool = False,
     guard_history_recovery: str = "none",
+    project_confirmation: ProjectConfirmationController | None = None,
+    commit_project_operation: Callable[..., object] | None = None,
 ) -> tuple[RealtimeService, FakeProvider, FakeRuntime | Runtime, list[PlaybackFrame]]:
     provider = FakeProvider()
     effective_clock = (
@@ -405,6 +409,8 @@ def make_service(
         telemetry=telemetry,  # type: ignore[arg-type]
         **({"controlled_guard_reconnect": True} if controlled_guard_reconnect else {}),
         guard_history_recovery=guard_history_recovery,  # type: ignore[arg-type]
+        project_confirmation=project_confirmation,
+        commit_project_operation=commit_project_operation,  # type: ignore[arg-type]
     )
     return service, provider, effective_runtime, frames
 
@@ -439,6 +445,76 @@ def make_policy_enabled_codex_service(
     assert assembled_runtime is runtime
     suggestion_outlet.append(service.on_suggestion_selected)
     return service, runtime, provider
+
+
+@pytest.mark.asyncio
+async def test_confirmation_asr_is_recorded_but_provider_tool_cannot_authorize() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select",
+        workspace_display_name="alpha",
+        workspace_id="workspace-alpha",
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+    commits: list[tuple[object, str]] = []
+
+    async def commit(operation: object, origin_ref: str) -> ProjectCommitResult:
+        commits.append((operation, origin_ref))
+        return ProjectCommitResult(accepted=True, code="committed")
+
+    service, provider, runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+        commit_project_operation=commit,
+    )
+    await service.connect()
+    await service.handle_event(
+        UserSpeechStarted(
+            session_epoch=1,
+            speech_id="speech-confirm",
+            provider_item_id="user-confirm",
+        )
+    )
+    await service.handle_event(UserSpeechEnded(session_epoch=1, speech_id="speech-confirm"))
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="response-confirm"))
+    call = ToolCallReady(
+        session_epoch=1,
+        response_id="response-confirm",
+        call_id="call-wrong",
+        item_id="tool-wrong",
+        name="codex__run",
+        arguments={"work_order": "wrong", "origin_ref": "conversation:1"},
+    )
+    await service.handle_event(call)
+    await service.handle_event(
+        UserTranscriptFinal(session_epoch=1, item_id="user-confirm", text="可以啊")
+    )
+    await service.handle_event(
+        ResponseTerminal(
+            session_epoch=1,
+            response_id="response-confirm",
+            status="cancelled",
+            reason="cancelled",
+        )
+    )
+
+    bridge = service._bridge
+    assert isinstance(bridge, FakeBridge)
+    assert bridge.calls == []
+    assert isinstance(runtime, FakeRuntime)
+    assert [event.text for event in runtime.posted if isinstance(event, UserInput)] == ["可以啊"]
+    assert len(commits) == 1
+    assert commits[0][1] == "conversation:1"
+    assert "cancel:response-confirm" in provider.actions
+    assert any(item.content == "已确认，正在处理。" for item in provider.injected)
+
+
+counter = count(1)
 
 
 def semantic_codex_progress(

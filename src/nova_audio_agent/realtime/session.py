@@ -241,6 +241,17 @@ class RealtimeSession:
         self._fence_interruption = None
         return interruption
 
+    def arm_next_response_fence(self) -> None:
+        """Fence the next provider response before it can own playback.
+
+        Used by host-reserved confirmation turns. Repeated arming is deliberately
+        idempotent so one user speech item cannot consume multiple responses.
+        """
+        if self._fence_next_response:
+            return
+        self._fence_next_response = True
+        self._advance_snapshot()
+
     async def connect(self, *, tools: tuple[dict[str, object], ...]) -> None:
         identity = await self._provider.connect(tools=tools)  # type: ignore[arg-type]
         if identity.epoch <= self._session_epoch:

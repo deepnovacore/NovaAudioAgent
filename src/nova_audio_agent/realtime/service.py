@@ -9,7 +9,7 @@ import json
 import math
 import re
 from collections import OrderedDict, deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from os import environ
@@ -56,6 +56,11 @@ from nova_audio_agent.realtime.protocol import (
 )
 from nova_audio_agent.realtime.playback import PlaybackCompletion, PlaybackGeneration
 from nova_audio_agent.realtime.session import CaptionFrame, RealtimeDeliveryError, RealtimeSession
+from nova_audio_agent.realtime.project_confirmation import (
+    ConfirmedProjectOperation,
+    ProjectConfirmationController,
+    ProjectConfirmationView,
+)
 from nova_audio_agent.realtime.speech_prep import SPEECH_FINAL_LIMIT, prepare_for_speech
 from nova_audio_agent.realtime.telemetry import RealtimeTelemetry
 from nova_audio_agent.runtime import Runtime, observation_delegate
@@ -225,6 +230,12 @@ class RealtimeService:
         controlled_guard_reconnect: bool = False,
         guard_history_recovery: GuardHistoryRecovery = "none",
         guard_history_pairs: int = 4,
+        project_confirmation: ProjectConfirmationController | None = None,
+        commit_project_operation: Callable[
+            [ConfirmedProjectOperation, MemoryRef], Awaitable[object]
+        ]
+        | None = None,
+        on_project_view: Callable[[ProjectConfirmationView], None] | None = None,
     ) -> None:
         if guard_history_recovery not in {"none", "packed"}:
             raise ValueError("unknown Guard history recovery arm")
@@ -293,6 +304,12 @@ class RealtimeService:
         self._pending_sync: dict[str, tuple[int, str]] = {}
         # R105: delegate_id -> call_key for sync waits resolved by a Deadline.
         self._late_sync: OrderedDict[str, tuple[int, str]] = OrderedDict()
+        self._project_confirmation = project_confirmation
+        self._commit_project_operation = commit_project_operation
+        self._on_project_view = on_project_view or (lambda _view: None)
+        self._project_confirmation_items: set[tuple[int, str]] = set()
+        self._project_confirmation_responses: set[tuple[int, str]] = set()
+        self._project_confirmation_blocking = False
 
     @property
     def codex_state(self) -> CodexState:
@@ -427,6 +444,7 @@ class RealtimeService:
 
     async def close(self) -> None:
         self._stop.set()
+        self._invalidate_project_confirmation("service_closed")
         self._provider_epoch_needing_activation = None
         self._provider_reconnect_source_epoch = None
         self._urgent_host_response_owner = None
@@ -778,7 +796,12 @@ class RealtimeService:
             if isinstance(event, ResponseTerminal)
             else None
         )
-        accepted = await self.session.accept(event)
+        if isinstance(event, ToolCallReady) and self._blocks_project_confirmation_tool(event):
+            accepted = False
+        else:
+            accepted = await self.session.accept(event)
+        if isinstance(event, ResponseStarted) and self._project_confirmation_blocking:
+            self._project_confirmation_responses.add((event.session_epoch, event.response_id))
         if isinstance(event, (ResponseStarted, ResponseAudioDelta)):
             preemption = self._guard_preemption
             if (
@@ -828,6 +851,7 @@ class RealtimeService:
             self._user_origin_preexisting_response_id = self.session.active_provider_response_id
             if event.provider_item_id is not None:
                 self._remember_unbound_user_origin(event.provider_item_id)
+            self._reserve_project_confirmation(event)
         if isinstance(event, ResponseTerminal) and accepted:
             self._record_guard_cancel_terminal(event)
             generation = self.session.current_generation
@@ -861,7 +885,10 @@ class RealtimeService:
                 self._awaiting_user_origin = bool(self._unbound_user_origin_items)
                 if not self._awaiting_user_origin:
                     self._user_origin_preexisting_response_id = None
-                await self._release_deferred_origin_calls(event.item_id, origin_ref)
+                if (event.session_epoch, event.item_id) in self._project_confirmation_items:
+                    await self._finish_project_confirmation(event, origin_ref)
+                else:
+                    await self._release_deferred_origin_calls(event.item_id, origin_ref)
         elif isinstance(event, UserTranscriptFailed):
             if accepted:
                 try:
@@ -874,7 +901,10 @@ class RealtimeService:
                 self._awaiting_user_origin = bool(self._unbound_user_origin_items)
                 if not self._awaiting_user_origin:
                     self._user_origin_preexisting_response_id = None
-                await self._release_deferred_origin_calls(event.item_id, None)
+                if (event.session_epoch, event.item_id) in self._project_confirmation_items:
+                    self._fail_project_confirmation(event.session_epoch, event.item_id)
+                else:
+                    await self._release_deferred_origin_calls(event.item_id, None)
         elif isinstance(event, ToolCallReady):
             if not accepted:
                 self._trace_transition(
@@ -930,6 +960,10 @@ class RealtimeService:
                     )
             else:
                 await self._handle_tool_call(event)
+        if isinstance(event, ResponseTerminal):
+            self._project_confirmation_responses.discard(
+                (event.session_epoch, event.response_id)
+            )
         if accepted:
             await self._drive_continuations()
         await self._delivery_pass()
@@ -948,6 +982,126 @@ class RealtimeService:
         self._unbound_user_origin_items.append(item_id)
         while len(self._unbound_user_origin_items) > MAX_PENDING_TOOL_REFUSALS:
             self._unbound_user_origin_items.popleft()
+
+    def _reserve_project_confirmation(self, event: UserSpeechStarted) -> None:
+        controller = self._project_confirmation
+        if controller is None or not controller.pending:
+            return
+        item_id = event.provider_item_id
+        if item_id is None:
+            self._invalidate_project_confirmation("missing_item_correlation")
+            self._queue_project_confirmation_fact("缺少语音确认关联，本次操作已取消。")
+            return
+        if not controller.reserve_user_item(epoch=event.session_epoch, item_id=item_id):
+            return
+        self._project_confirmation_items.add((event.session_epoch, item_id))
+        self._project_confirmation_blocking = True
+        self.session.arm_next_response_fence()
+        self._publish_project_view()
+
+    def _blocks_project_confirmation_tool(self, event: ToolCallReady) -> bool:
+        if event.response_id is not None and (
+            event.session_epoch,
+            event.response_id,
+        ) in self._project_confirmation_responses:
+            return True
+        if self._project_confirmation_blocking:
+            if event.response_id is not None:
+                self._project_confirmation_responses.add(
+                    (event.session_epoch, event.response_id)
+                )
+            return True
+        return False
+
+    async def _finish_project_confirmation(
+        self,
+        event: UserTranscriptFinal,
+        origin_ref: MemoryRef,
+    ) -> None:
+        key = (event.session_epoch, event.item_id)
+        self._project_confirmation_items.discard(key)
+        self._project_confirmation_blocking = False
+        self._discard_confirmation_deferred_calls(event.item_id)
+        controller = self._project_confirmation
+        if controller is None:
+            return
+        outcome = controller.accept_transcript(
+            epoch=event.session_epoch,
+            item_id=event.item_id,
+            text=event.text,
+        )
+        text = outcome.response_text
+        if outcome.kind == "confirmed" and outcome.operation is not None:
+            callback = self._commit_project_operation
+            if callback is None:
+                text = "确认处理不可用，本次操作未执行。"
+            else:
+                try:
+                    result = await callback(outcome.operation, origin_ref)
+                    accepted = getattr(result, "accepted", False) is True
+                    code = getattr(result, "code", "commit_failed")
+                    text = (
+                        "已确认，正在处理。"
+                        if accepted
+                        else f"已确认，但操作未执行：{str(code)[:80]}。"
+                    )
+                except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception:
+                    text = "已确认，但操作未执行。"
+        if text:
+            self._queue_project_confirmation_fact(text)
+        self._publish_project_view()
+
+    def _fail_project_confirmation(self, epoch: int, item_id: str) -> None:
+        self._project_confirmation_items.discard((epoch, item_id))
+        self._project_confirmation_blocking = False
+        self._discard_confirmation_deferred_calls(item_id)
+        controller = self._project_confirmation
+        if controller is None:
+            return
+        outcome = controller.fail_transcript(epoch=epoch, item_id=item_id)
+        if outcome.response_text:
+            self._queue_project_confirmation_fact(outcome.response_text)
+        self._publish_project_view()
+
+    def _discard_confirmation_deferred_calls(self, item_id: str) -> None:
+        self._origin_deferred_tool_calls = deque(
+            call
+            for call in self._origin_deferred_tool_calls
+            if call.user_item_id != item_id
+        )
+
+    def _queue_project_confirmation_fact(self, text: str) -> None:
+        item = HostContextItem.final(
+            host_item_id=self._id_factory(),
+            event_id=f"project-confirmation:{self._id_factory()}",
+            content=text[:MAX_HOST_FACT_CHARS],
+        )
+        self._queue_host_item(
+            HostResponseIntent.host_fact(item),
+            priority=USER_PRIORITY - 1,
+            preemptive=False,
+        )
+        self._delivery_ready.set()
+
+    def _publish_project_view(self) -> None:
+        controller = self._project_confirmation
+        if controller is None:
+            return
+        try:
+            self._on_project_view(controller.view)
+        except Exception:
+            pass
+
+    def _invalidate_project_confirmation(self, reason: str) -> None:
+        controller = self._project_confirmation
+        if controller is not None:
+            controller.invalidate(reason)
+        self._project_confirmation_items.clear()
+        self._project_confirmation_responses.clear()
+        self._project_confirmation_blocking = False
+        self._publish_project_view()
 
     def _bind_response_user_origin(self, response_id: str) -> None:
         if not self._unbound_user_origin_items:
@@ -1267,6 +1421,7 @@ class RealtimeService:
             if self.session.session_epoch != requested_epoch:
                 return False
             old_epoch = self.session.session_epoch
+            self._invalidate_project_confirmation("provider_replaced")
             self._clear_guard_preemption()
             # Arm the source epoch before awaiting so a Guard already waiting on
             # Session's response-request lock can recognize that the provider

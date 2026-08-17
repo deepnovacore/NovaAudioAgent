@@ -147,6 +147,19 @@ def make_session(
 
 
 @pytest.mark.asyncio
+async def test_reserved_confirmation_response_is_cancelled_before_audio_playback() -> None:
+    actions: list[str] = []
+    session, _provider = make_session(actions)
+    await session.connect(tools=())
+
+    session.arm_next_response_fence()
+
+    assert not await session.accept(ResponseStarted(session_epoch=1, response_id="r-confirm"))
+    assert actions[-1] == "cancel:r-confirm"
+    assert session.current_generation is None
+
+
+@pytest.mark.asyncio
 async def test_failed_response_request_keeps_confirmed_intent_retryable() -> None:
     """Committing responded state before network success permanently drops acknowledgement."""
     actions: list[str] = []
