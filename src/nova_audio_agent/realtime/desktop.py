@@ -678,14 +678,33 @@ def _desktop_settings() -> Any:
     return Settings(_env_file=env_file)
 
 
+def _parse_ready_endpoint(raw_endpoint: str) -> tuple[str, int]:
+    """Split ``127.0.0.1:<port>`` into the loopback host and its port."""
+
+    from nova_audio_agent.config import ConfigurationError
+
+    invalid = "NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT 无效"
+    host, separator, raw_port = raw_endpoint.strip().rpartition(":")
+    if not separator or host != "127.0.0.1":
+        raise ConfigurationError(invalid)
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise ConfigurationError(invalid) from exc
+    if not 1 <= port <= 65535:
+        raise ConfigurationError(invalid)
+    return host, port
+
+
 async def _run_desktop(
     *,
     token: str | None = None,
-    ready_fd: int | None = None,
+    ready_endpoint: str | None = None,
     parent_fd: int = 0,
     settings: Any = None,
     build_assembly: Any = None,
     serve_websocket: Any = None,
+    open_ready_connection: Any = None,
     install_signal_handlers: bool = True,
 ) -> None:
     from nova_audio_agent.config import ConfigurationError
@@ -698,19 +717,16 @@ async def _run_desktop(
         from websockets.asyncio.server import serve
 
         serve_websocket = serve
+    if open_ready_connection is None:
+        open_ready_connection = asyncio.open_connection
     if settings is None:
         settings = _desktop_settings()
     token = os.environ.get("NOVA_AUDIO_AGENT_DESKTOP_TOKEN", "") if token is None else token
     if len(token) != 32 or any(character not in "0123456789abcdef" for character in token):
         raise ConfigurationError("NOVA_AUDIO_AGENT_DESKTOP_TOKEN 必须是 128-bit 十六进制值")
-    if ready_fd is None:
-        raw_fd = os.environ.get("NOVA_AUDIO_AGENT_DESKTOP_READY_FD", "")
-        try:
-            ready_fd = int(raw_fd)
-        except ValueError as exc:
-            raise ConfigurationError("NOVA_AUDIO_AGENT_DESKTOP_READY_FD 无效") from exc
-    if ready_fd < 3:
-        raise ConfigurationError("NOVA_AUDIO_AGENT_DESKTOP_READY_FD 无效")
+    if ready_endpoint is None:
+        ready_endpoint = os.environ.get("NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT", "")
+    ready_host, ready_port = _parse_ready_endpoint(ready_endpoint)
     raw_video_file = os.environ.get("NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE", "").strip()
     camera_file = Path(raw_video_file) if raw_video_file else None
     if camera_file is not None and not camera_file.is_absolute():
@@ -790,12 +806,16 @@ async def _run_desktop(
             port = int(sockets[0].getsockname()[1])
             await assembly.start()
             readiness = json.dumps(
-                {"host": "127.0.0.1", "port": port},
+                {"token": token, "host": "127.0.0.1", "port": port},
                 separators=(",", ":"),
             )
-            with os.fdopen(ready_fd, "w", encoding="utf-8") as pipe:
-                pipe.write(f"{readiness}\n")
-                pipe.flush()
+            _, ready_writer = await open_ready_connection(ready_host, ready_port)
+            try:
+                ready_writer.write(f"{readiness}\n".encode())
+                await ready_writer.drain()
+            finally:
+                ready_writer.close()
+                await ready_writer.wait_closed()
             external_stop = asyncio.create_task(stop.wait())
             service_stop = asyncio.create_task(assembly.service.wait_stopped())
             done, pending = await asyncio.wait(
