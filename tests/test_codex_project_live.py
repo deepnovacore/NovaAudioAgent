@@ -63,7 +63,11 @@ def _completed() -> CodexTransportResult:
         classification="completed",
         code="completed",
         content={
-            "events": [{"type": "thread.started"}, {"type": "turn.started"}, {"type": "turn.completed"}],
+            "events": [
+                {"type": "thread.started"},
+                {"type": "turn.started"},
+                {"type": "turn.completed"},
+            ],
             "protocol": {
                 "thread_started": True,
                 "turn_started": True,
@@ -72,12 +76,14 @@ def _completed() -> CodexTransportResult:
                 "unknown_event_count": 0,
             },
             "process": {"started": True, "exit_code": 0, "stop": "none"},
-            "result": {"final_message": {
-                "text": text,
-                "original_chars": len(text),
-                "truncated": False,
-                "sha256": hashlib.sha256(text.encode()).hexdigest(),
-            }},
+            "result": {
+                "final_message": {
+                    "text": text,
+                    "original_chars": len(text),
+                    "truncated": False,
+                    "sha256": hashlib.sha256(text.encode()).hexdigest(),
+                }
+            },
         },
     )
 
@@ -101,7 +107,9 @@ class _ProjectWorker:
     async def prewarm(self, **_kwargs: Any) -> Mapping[str, Any]:
         return await self.preflight()
 
-    async def run(self, _work_order: str, *, on_status: Any, **_kwargs: Any) -> CodexTransportResult:
+    async def run(
+        self, _work_order: str, *, on_status: Any, **_kwargs: Any
+    ) -> CodexTransportResult:
         self.on_ready(self.thread_id)
         on_status(CodexProcessStatus(running=True, exited=False))
         on_status(CodexProcessStatus(running=False, exited=True, terminal="completed", exit_code=0))
@@ -118,7 +126,9 @@ class _ProjectFactory:
     def __init__(self) -> None:
         self.calls: list[tuple[Path, Path, str | None]] = []
 
-    def __call__(self, workspace: Path, codex_home: Path, resume: str | None, on_ready: Any) -> _ProjectWorker:
+    def __call__(
+        self, workspace: Path, codex_home: Path, resume: str | None, on_ready: Any
+    ) -> _ProjectWorker:
         self.calls.append((workspace, codex_home, resume))
         return _ProjectWorker(resume or f"thread-{len(self.calls)}", on_ready)
 
@@ -202,9 +212,7 @@ async def test_lists_are_public_and_exact_names_are_required(tmp_path: Path) -> 
         for private in ("canonical_path", "workspace_id", "codex_home", "nonce")
     )
 
-    missing = await adapter.dispatch(
-        "project", {"action": "select", "workspace": "alp"}, ctx
-    )
+    missing = await adapter.dispatch("project", {"action": "select", "workspace": "alp"}, ctx)
     assert missing.outcome == "failed"
     assert missing.content == {
         "op": "project",
@@ -223,9 +231,7 @@ async def test_plain_runs_create_distinct_sessions_in_one_persistent_home(tmp_pa
     workspace = store.create_managed("alpha")
     confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
     factory = _ProjectFactory()
-    adapter = ProjectCodexAdapter(
-        store=store, confirmation=confirmation, worker_factory=factory
-    )
+    adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
 
     first = await adapter.dispatch("run", {"work_order": "first"}, _context(clock))
     second = await adapter.dispatch("run", {"work_order": "second"}, _context(clock))
@@ -274,12 +280,8 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
     workspace = store.create_managed("alpha")
     confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
     factory = _ProjectFactory()
-    adapter = ProjectCodexAdapter(
-        store=store, confirmation=confirmation, worker_factory=factory
-    )
-    await adapter.dispatch(
-        "run", {"work_order": "first", "session": "Task One"}, _context(clock)
-    )
+    adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
+    await adapter.dispatch("run", {"work_order": "first", "session": "Task One"}, _context(clock))
     saved = store.resolve_session(workspace.workspace_id, "Task One")
     confirmation.prepare(
         action="resume",

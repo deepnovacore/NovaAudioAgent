@@ -17,7 +17,13 @@ from nova_audio_agent.executors.codex_projects import (
     PublicProjectView,
     WorkspaceRecord,
 )
-from nova_audio_agent.ports import DelegateRequest, DispatchContext, ExecutorManifest, Handoff, OpSpec
+from nova_audio_agent.ports import (
+    DelegateRequest,
+    DispatchContext,
+    ExecutorManifest,
+    Handoff,
+    OpSpec,
+)
 from nova_audio_agent.realtime.project_confirmation import (
     ConfirmedProjectOperation,
     ProjectConfirmationController,
@@ -202,7 +208,9 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                     raise ProjectStateError("session_unavailable")
             proposal = self.confirmation.prepare(
                 action=action,
-                workspace_display_name=(workspace_name if workspace is None else workspace.display_name),
+                workspace_display_name=(
+                    workspace_name if workspace is None else workspace.display_name
+                ),
                 workspace_id=None if workspace is None else workspace.workspace_id,
                 session_title=(
                     session_title if resolved_session is None else resolved_session.display_title
@@ -224,7 +232,9 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     def _lookup_failure(self, code: str) -> Handoff:
         content: dict[str, Any] = {"op": "project", "code": code}
         if code == "workspace_not_found":
-            content["candidates"] = [item.display_name for item in self.store.list_workspaces()[:20]]
+            content["candidates"] = [
+                item.display_name for item in self.store.list_workspaces()[:20]
+            ]
         return Handoff(outcome="failed", trust="trusted_system", content=content)
 
     async def _run_new(
@@ -371,14 +381,24 @@ def _normalize_project_run(request: object) -> tuple[str, str | None] | None:
     session = request.get("session")
     if work_order is None:
         return None
-    if session is not None and (type(session) is not str or not session.strip() or len(session) > 120):
+    if session is not None and (
+        type(session) is not str or not session.strip() or len(session) > 120
+    ):
         return None
     return work_order, None if session is None else session.strip()
 
 
 def _parse_project_request(
     request: object,
-) -> tuple[Literal["list", "create", "select", "sessions", "resume"], str | None, str | None, str | None] | None:
+) -> (
+    tuple[
+        Literal["list", "create", "select", "sessions", "resume"],
+        str | None,
+        str | None,
+        str | None,
+    ]
+    | None
+):
     if type(request) is not dict or not set(request).issubset(
         {"action", "workspace", "session", "work_order"}
     ):
@@ -402,7 +422,9 @@ def _parse_project_request(
     if set(request) - allowed or not expected[action].issubset(request):
         return None
     for value, limit in ((workspace, 80), (session, 120), (work_order, 4000)):
-        if value is not None and (type(value) is not str or not value.strip() or len(value) > limit):
+        if value is not None and (
+            type(value) is not str or not value.strip() or len(value) > limit
+        ):
             return None
     return action, workspace, session, work_order
 

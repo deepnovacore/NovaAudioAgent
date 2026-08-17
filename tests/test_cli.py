@@ -71,9 +71,7 @@ def test_project_settings_read_prefixed_environment(
 ) -> None:
     monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED", "true")
     monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT", str(tmp_path / "managed"))
-    monkeypatch.setenv(
-        "NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT", str(tmp_path / "state")
-    )
+    monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT", str(tmp_path / "state"))
 
     settings = Settings(_env_file=None)
 

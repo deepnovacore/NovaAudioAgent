@@ -8,13 +8,14 @@ import math
 import os
 import re
 import stat
-import time
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 from uuid import uuid4
+
+from nova_audio_agent.clock import RealClock
 
 STATE_VERSION = 1
 STATE_FILE = "codex-projects-v1.json"
@@ -90,12 +91,12 @@ class CodexProjectStore:
         state_root: Path,
         managed_root: Path,
         *,
-        now: Callable[[], float] = time.time,
+        now: Callable[[], float] | None = None,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
         self.state_root = state_root.expanduser().absolute()
         self.managed_root = managed_root.expanduser().absolute()
-        self._now = now
+        self._now = RealClock().now if now is None else now
         self._id_factory = (lambda: uuid4().hex) if id_factory is None else id_factory
         # Recovery is a store-startup action. A Session begun by this live store
         # must remain ``starting`` long enough for the following thread callback

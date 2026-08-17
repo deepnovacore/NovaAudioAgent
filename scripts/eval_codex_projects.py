@@ -17,12 +17,17 @@ def main() -> int:
         if type(value) is dict
     }
     report = evaluate_project_routing(predictions)
-    print(json.dumps({
-        "passed": report.passed,
-        "total": report.total,
-        "matched": report.matched,
-        "mismatches": [asdict(item) for item in report.mismatches],
-    }, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "passed": report.passed,
+                "total": report.total,
+                "matched": report.matched,
+                "mismatches": [asdict(item) for item in report.mismatches],
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0 if report.passed else 1
 
 

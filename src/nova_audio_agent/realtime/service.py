@@ -961,9 +961,7 @@ class RealtimeService:
             else:
                 await self._handle_tool_call(event)
         if isinstance(event, ResponseTerminal):
-            self._project_confirmation_responses.discard(
-                (event.session_epoch, event.response_id)
-            )
+            self._project_confirmation_responses.discard((event.session_epoch, event.response_id))
         if accepted:
             await self._drive_continuations()
         await self._delivery_pass()
@@ -1000,16 +998,18 @@ class RealtimeService:
         self._publish_project_view()
 
     def _blocks_project_confirmation_tool(self, event: ToolCallReady) -> bool:
-        if event.response_id is not None and (
-            event.session_epoch,
-            event.response_id,
-        ) in self._project_confirmation_responses:
+        if (
+            event.response_id is not None
+            and (
+                event.session_epoch,
+                event.response_id,
+            )
+            in self._project_confirmation_responses
+        ):
             return True
         if self._project_confirmation_blocking:
             if event.response_id is not None:
-                self._project_confirmation_responses.add(
-                    (event.session_epoch, event.response_id)
-                )
+                self._project_confirmation_responses.add((event.session_epoch, event.response_id))
             return True
         return False
 
@@ -1067,9 +1067,7 @@ class RealtimeService:
 
     def _discard_confirmation_deferred_calls(self, item_id: str) -> None:
         self._origin_deferred_tool_calls = deque(
-            call
-            for call in self._origin_deferred_tool_calls
-            if call.user_item_id != item_id
+            call for call in self._origin_deferred_tool_calls if call.user_item_id != item_id
         )
 
     def _queue_project_confirmation_fact(self, text: str) -> None:

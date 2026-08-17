@@ -18,10 +18,7 @@ def test_project_routing_corpus_covers_the_closed_decision_surface() -> None:
 
 
 def test_project_routing_scorer_reports_per_case_mismatches() -> None:
-    perfect = {
-        case.case_id: (case.expected_tool, case.expected_action)
-        for case in CORPUS
-    }
+    perfect = {case.case_id: (case.expected_tool, case.expected_action) for case in CORPUS}
     assert evaluate_project_routing(perfect).passed is True
 
     wrong = dict(perfect)

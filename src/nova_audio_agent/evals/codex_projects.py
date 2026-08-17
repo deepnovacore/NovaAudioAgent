@@ -35,9 +35,7 @@ CORPUS = (
     ProjectRoutingCase("new-work", "帮我修复当前项目的登录 bug", "codex__run"),
     ProjectRoutingCase("list", "有哪些工作区", "codex__project", "list"),
     ProjectRoutingCase("create", "创建工作区 alpha", "codex__project", "create"),
-    ProjectRoutingCase(
-        "create-work", "创建工作区 beta 并实现首页", "codex__project", "create"
-    ),
+    ProjectRoutingCase("create-work", "创建工作区 beta 并实现首页", "codex__project", "create"),
     ProjectRoutingCase("select", "切换到 alpha", "codex__project", "select"),
     ProjectRoutingCase("sessions", "列出 alpha 的 Session", "codex__project", "sessions"),
     ProjectRoutingCase(

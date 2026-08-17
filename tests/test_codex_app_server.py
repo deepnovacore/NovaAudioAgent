@@ -541,7 +541,9 @@ async def test_persistent_resume_is_validated_before_turn_start(tmp_path: Path) 
     result = await transport.run("continue", on_status=lambda _value: None, on_progress=None)
 
     methods = [item.get("method") for item in peer.messages]
-    assert methods.index("config/read") < methods.index("thread/resume") < methods.index("turn/start")
+    assert (
+        methods.index("config/read") < methods.index("thread/resume") < methods.index("turn/start")
+    )
     resume = next(item for item in peer.messages if item.get("method") == "thread/resume")
     assert resume["params"] == {
         "threadId": "thread-saved",
