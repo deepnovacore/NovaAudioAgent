@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import math
@@ -23,8 +24,12 @@ LOCK_FILE = "codex-projects-v1.lock"
 MAX_STATE_BYTES = 1024 * 1024
 MAX_WORKSPACE_NAME = 80
 MAX_SESSION_TITLE = 120
+MAX_WORKSPACES = 100
+MAX_SESSIONS_PER_WORKSPACE = 200
+MAX_SESSIONS_TOTAL = 1000
 _ID = re.compile(r"[A-Za-z0-9_-]{8,80}\Z")
 _DRIVE = re.compile(r"[A-Za-z]:")
+_DEFAULT_SESSION_TITLE = re.compile(r"任务 ([1-9][0-9]*)\Z")
 _T = TypeVar("_T")
 
 
@@ -128,16 +133,18 @@ class CodexProjectStore:
                         state.active_workspace_id = record.workspace_id
                         return record, True
                     return record, False
-            if state.workspaces:
-                raise ProjectStateError("workspace_import_conflict")
+            self._require_workspace_capacity(state)
+            unique_name = self._unique_workspace_name(state, name)
+            _display, unique_key = _workspace_name(unique_name)
             record = self._new_workspace(
-                display_name=name,
-                normalized_name=key,
+                display_name=unique_name,
+                normalized_name=unique_key,
                 path=canonical,
                 origin="registered",
             )
             state.workspaces[record.workspace_id] = record
-            state.active_workspace_id = record.workspace_id
+            if state.active_workspace_id is None:
+                state.active_workspace_id = record.workspace_id
             return record, True
 
         return self._transaction(update)
@@ -215,6 +222,7 @@ class CodexProjectStore:
         created: Path | None = None
 
         def update(state: _State) -> tuple[WorkspaceRecord, bool]:
+            self._require_workspace_capacity(state)
             nonlocal created
             self._require_unique_workspace_name(state, key)
             workspace_id = self._new_id()
@@ -299,6 +307,7 @@ class CodexProjectStore:
         canonical = _registered_path(path)
 
         def update(state: _State) -> tuple[WorkspaceRecord, bool]:
+            self._require_workspace_capacity(state)
             self._require_unique_workspace_name(state, key)
             if any(item.canonical_path == str(canonical) for item in state.workspaces.values()):
                 raise ProjectStateError("workspace_path_conflict")
@@ -358,11 +367,12 @@ class CodexProjectStore:
             workspace = state.workspaces.get(workspace_id)
             if workspace is None:
                 raise ProjectStateError("workspace_not_found")
+            self._prune_for_session_insert(state, workspace_id)
             stamp = self._stamp()
             base_title = (
                 _session_title(display_title)[0]
                 if display_title is not None
-                else f"Task {int(stamp)}"
+                else self._next_default_session_title(state, workspace_id)
             )
             title = self._unique_session_title(state, workspace_id, base_title)
             _display, key = _session_title(title)
@@ -385,6 +395,35 @@ class CodexProjectStore:
             )
             state.active_workspace_id = workspace_id
             return session, True
+
+        return self._transaction(update)
+
+    def rollback_session_start(self, session_id: str) -> bool:
+        def update(state: _State) -> tuple[bool, bool]:
+            session = state.sessions.get(session_id)
+            if (
+                session is None
+                or session.state != "starting"
+                or session.codex_thread_id is not None
+            ):
+                return False, False
+            workspace = state.workspaces.get(session.workspace_id)
+            del state.sessions[session_id]
+            if workspace is not None and workspace.active_session_id == session_id:
+                replacement = max(
+                    (
+                        item
+                        for item in state.sessions.values()
+                        if item.workspace_id == workspace.workspace_id and item.state == "ready"
+                    ),
+                    key=lambda item: (item.last_used_at, item.created_at, item.session_id),
+                    default=None,
+                )
+                state.workspaces[workspace.workspace_id] = replace(
+                    workspace,
+                    active_session_id=None if replacement is None else replacement.session_id,
+                )
+            return True, True
 
         return self._transaction(update)
 
@@ -525,6 +564,69 @@ class CodexProjectStore:
             raise ProjectStateError("workspace_name_conflict")
 
     @staticmethod
+    def _require_workspace_capacity(state: _State) -> None:
+        if len(state.workspaces) >= MAX_WORKSPACES:
+            raise ProjectStateError("workspace_limit")
+
+    @staticmethod
+    def _unique_workspace_name(state: _State, base: str) -> str:
+        existing = {item.normalized_name for item in state.workspaces.values()}
+        if _workspace_name(base)[1] not in existing:
+            return base
+        suffix = 2
+        while True:
+            clipped = base[: max(1, MAX_WORKSPACE_NAME - len(f" ({suffix})"))].rstrip()
+            candidate = f"{clipped} ({suffix})"
+            if _workspace_name(candidate)[1] not in existing:
+                return candidate
+            suffix += 1
+
+    @staticmethod
+    def _next_default_session_title(state: _State, workspace_id: str) -> str:
+        used = [
+            int(match.group(1))
+            for item in state.sessions.values()
+            if item.workspace_id == workspace_id
+            and (match := _DEFAULT_SESSION_TITLE.fullmatch(item.display_title)) is not None
+        ]
+        return f"任务 {max(used, default=0) + 1}"
+
+    @staticmethod
+    def _prune_for_session_insert(state: _State, workspace_id: str) -> None:
+        def workspace_count() -> int:
+            return sum(item.workspace_id == workspace_id for item in state.sessions.values())
+
+        while (
+            workspace_count() >= MAX_SESSIONS_PER_WORKSPACE
+            or len(state.sessions) >= MAX_SESSIONS_TOTAL
+        ):
+            active_session_ids = {
+                item.active_session_id
+                for item in state.workspaces.values()
+                if item.active_session_id is not None
+            }
+            target_only = workspace_count() >= MAX_SESSIONS_PER_WORKSPACE
+            candidates = [
+                item
+                for item in state.sessions.values()
+                if item.state != "starting"
+                and item.session_id not in active_session_ids
+                and (not target_only or item.workspace_id == workspace_id)
+            ]
+            if not candidates:
+                raise ProjectStateError("session_limit")
+            candidate = min(
+                candidates,
+                key=lambda item: (
+                    0 if item.state == "unavailable" else 1,
+                    item.last_used_at,
+                    item.created_at,
+                    item.session_id,
+                ),
+            )
+            del state.sessions[candidate.session_id]
+
+    @staticmethod
     def _unique_session_title(state: _State, workspace_id: str, base: str) -> str:
         existing = {
             item.normalized_title
@@ -568,8 +670,15 @@ class CodexProjectStore:
     ) -> _T:
         self._ensure_state_root()
         fd = self._open_lock()
+        acquired = False
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except OSError as failure:
+                if failure.errno in {errno.EACCES, errno.EAGAIN}:
+                    raise ProjectStateError("state_busy") from None
+                raise ProjectStateError("state_lock_failed") from None
             should_recover = self._recover_starting and not self._startup_loaded
             state, recovered = self._load_state(recover_starting=should_recover)
             result, changed = operation(state)
@@ -579,7 +688,8 @@ class CodexProjectStore:
             return result
         finally:
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                if acquired:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
             finally:
                 os.close(fd)
 

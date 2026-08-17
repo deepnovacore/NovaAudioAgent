@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
+import threading
 from pathlib import Path
 
 import pytest
 
+import nova_audio_agent.executors.codex_projects as codex_projects
 from nova_audio_agent.executors.codex_projects import (
     CodexProjectStore,
     ProjectStateError,
@@ -65,6 +68,31 @@ def test_first_enable_imports_configured_workspace_once_and_restores_active_stat
     payload = json.loads((tmp_path / "state" / "codex-projects-v1.json").read_text())
     assert payload["version"] == 1
     assert len(payload["workspaces"]) == 1
+
+
+def test_new_configured_checkout_is_registered_without_replacing_active_workspace(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first = store.ensure_imported("project", _workspace(tmp_path, "one"))
+
+    second = store.ensure_imported("project", _workspace(tmp_path, "two"))
+    repeated = store.ensure_imported("ignored", tmp_path / "two")
+
+    assert second.workspace_id != first.workspace_id
+    assert second.display_name == "project (2)"
+    assert repeated.workspace_id == second.workspace_id
+    assert store.snapshot().active_workspace_id == first.workspace_id
+
+
+def test_workspace_limit_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(codex_projects, "MAX_WORKSPACES", 2)
+    store = _store(tmp_path)
+    store.ensure_imported("one", _workspace(tmp_path, "one"))
+    store.ensure_imported("two", _workspace(tmp_path, "two"))
+
+    with pytest.raises(ProjectStateError, match="workspace_limit"):
+        store.ensure_imported("three", _workspace(tmp_path, "three"))
 
 
 def test_two_store_instances_reload_under_lock_instead_of_losing_updates(tmp_path: Path) -> None:
@@ -203,6 +231,105 @@ def test_sessions_transition_starting_ready_and_recover_incomplete_start(tmp_pat
     assert recovered.codex_thread_id is None
 
 
+def test_default_session_titles_are_speakable_workspace_ordinals(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    workspace = store.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    first = store.begin_session(workspace.workspace_id, None)
+    store.mark_session_ready(first.session_id, "thread-one")
+    second = store.begin_session(workspace.workspace_id, None)
+
+    assert (first.display_title, second.display_title) == ("任务 1", "任务 2")
+
+
+def test_session_retention_prunes_unavailable_before_inactive_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path)
+    workspace = store.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    unavailable = store.begin_session(workspace.workspace_id, "unavailable")
+    store.mark_session_unavailable(unavailable.session_id)
+    inactive = store.begin_session(workspace.workspace_id, "inactive")
+    store.mark_session_ready(inactive.session_id, "thread-inactive")
+    active = store.begin_session(workspace.workspace_id, "active")
+    store.mark_session_ready(active.session_id, "thread-active")
+    monkeypatch.setattr(codex_projects, "MAX_SESSIONS_PER_WORKSPACE", 3)
+    monkeypatch.setattr(codex_projects, "MAX_SESSIONS_TOTAL", 3)
+
+    fourth = store.begin_session(workspace.workspace_id, "fourth")
+    after_first_prune = {item.session_id for item in store.list_sessions(workspace)}
+    assert unavailable.session_id not in after_first_prune
+    assert inactive.session_id in after_first_prune
+    assert active.session_id in after_first_prune
+    store.mark_session_ready(fourth.session_id, "thread-fourth")
+
+    fifth = store.begin_session(workspace.workspace_id, "fifth")
+    after_second_prune = {item.session_id for item in store.list_sessions(workspace)}
+    assert inactive.session_id not in after_second_prune
+    assert active.session_id in after_second_prune
+    assert fourth.session_id in after_second_prune
+    assert fifth.session_id in after_second_prune
+
+
+def test_session_retention_never_prunes_starting_or_active_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path)
+    workspace = store.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    starting = store.begin_session(workspace.workspace_id, "starting")
+    active = store.begin_session(workspace.workspace_id, "active")
+    store.mark_session_ready(active.session_id, "thread-active")
+    monkeypatch.setattr(codex_projects, "MAX_SESSIONS_PER_WORKSPACE", 2)
+    monkeypatch.setattr(codex_projects, "MAX_SESSIONS_TOTAL", 2)
+
+    with pytest.raises(ProjectStateError, match="session_limit"):
+        store.begin_session(workspace.workspace_id, "cannot-fit")
+
+    retained = {item.session_id for item in store.list_sessions(workspace)}
+    assert retained == {starting.session_id, active.session_id}
+
+
+def test_rollback_session_start_repairs_active_session_and_is_state_safe(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    workspace = store.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    ready = store.begin_session(workspace.workspace_id, "ready")
+    store.mark_session_ready(ready.session_id, "thread-ready")
+    provisional = store.begin_session(workspace.workspace_id, "provisional")
+
+    assert store.rollback_session_start(provisional.session_id) is True
+    assert store.resolve_session(workspace.workspace_id, None).session_id == ready.session_id
+    assert store.rollback_session_start(provisional.session_id) is False
+    assert store.rollback_session_start(ready.session_id) is False
+
+
+def test_contended_registry_returns_state_busy_without_blocking(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    lock_fd = os.open(store.lock_path, os.O_RDWR)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    failures: list[BaseException] = []
+
+    def read() -> None:
+        try:
+            store.snapshot()
+        except BaseException as failure:
+            failures.append(failure)
+
+    thread = threading.Thread(target=read)
+    thread.start()
+    thread.join(0.1)
+    returned_immediately = not thread.is_alive()
+    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    os.close(lock_fd)
+    thread.join(1.0)
+
+    assert returned_immediately is True
+    assert len(failures) == 1
+    assert isinstance(failures[0], ProjectStateError)
+    assert failures[0].code == "state_busy"
+
+
 def test_ordinary_second_store_does_not_recover_a_live_starting_session(tmp_path: Path) -> None:
     live = _store(tmp_path)
     workspace = live.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
@@ -282,3 +409,51 @@ def test_registry_rejects_oversized_payload_before_json_decode(tmp_path: Path) -
 
     with pytest.raises(ProjectStateError, match="state_too_large"):
         _store(tmp_path).snapshot()
+
+
+def test_maximally_retained_registry_encoding_stays_below_hard_byte_limit() -> None:
+    workspaces: dict[str, codex_projects.WorkspaceRecord] = {}
+    sessions: dict[str, codex_projects.ProjectSessionRecord] = {}
+    for index in range(codex_projects.MAX_WORKSPACES):
+        workspace_id = f"w{index:031d}"
+        session_id = f"s{index:031d}"
+        display_name = f"{index:03d}-" + "w" * (codex_projects.MAX_WORKSPACE_NAME - 4)
+        workspaces[workspace_id] = codex_projects.WorkspaceRecord(
+            workspace_id=workspace_id,
+            display_name=display_name,
+            normalized_name=display_name,
+            canonical_path="/" + "p" * 1023,
+            origin="registered",
+            codex_home_key=f"home-{workspace_id}",
+            active_session_id=session_id,
+            created_at=float(index),
+            last_used_at=float(index),
+        )
+    for index in range(codex_projects.MAX_SESSIONS_TOTAL):
+        workspace_id = f"w{index % codex_projects.MAX_WORKSPACES:031d}"
+        session_id = f"s{index:031d}"
+        display_title = f"{index:04d}-" + "t" * (codex_projects.MAX_SESSION_TITLE - 5)
+        sessions[session_id] = codex_projects.ProjectSessionRecord(
+            session_id=session_id,
+            workspace_id=workspace_id,
+            display_title=display_title,
+            normalized_title=display_title,
+            codex_thread_id="x" * 256,
+            state="ready",
+            created_at=float(index),
+            last_used_at=float(index),
+        )
+    state = codex_projects._State(
+        active_workspace_id="w0000000000000000000000000000000",
+        workspaces=workspaces,
+        sessions=sessions,
+    )
+
+    raw = json.dumps(
+        codex_projects._encode_state(state),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert len(raw) < codex_projects.MAX_STATE_BYTES
