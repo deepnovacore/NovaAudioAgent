@@ -28,9 +28,9 @@ export function deriveOrbState(input) {
     label: LABELS[name],
     codexLabel: input.codex === 'working' ? 'Codex 正在后台工作' : 'Codex 空闲',
     aecLabel: input.audioMode === 'voice_processing_io'
-      ? 'macOS 系统级 AEC'
+      ? '系统级 AEC'
       : input.audioMode === 'browser_aec'
-        ? '浏览器 AEC 回退'
+        ? '浏览器 AEC'
         : 'AEC 未启用',
     shellExpanded: input.shellExpanded === true,
   })

@@ -28,7 +28,13 @@ test('keeps capture playback codex and shell as independent axes', () => {
   assert.match(state.label, /正在聆听/)
   assert.equal(state.codexLabel, 'Codex 正在后台工作')
   assert.equal(state.shellExpanded, true)
-  assert.equal(state.aecLabel, 'macOS 系统级 AEC')
+  assert.equal(state.aecLabel, '系统级 AEC')
+})
+
+test('labels the browser AEC path without implying it is a fallback', () => {
+  const state = deriveOrbState({ ...base, audioMode: 'browser_aec' })
+
+  assert.equal(state.aecLabel, '浏览器 AEC')
 })
 
 test('provides stable accessible labels for permission disconnect and interruption', () => {

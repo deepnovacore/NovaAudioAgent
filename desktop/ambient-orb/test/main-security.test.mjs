@@ -72,6 +72,13 @@ test('native VoiceProcessingIO starts only after explicit capture activation', a
   assert.match(source, /nativeAudio\?\.deactivate\(\)/)
 })
 
+test('desktop bootstrap payload identifies the host platform for the renderer', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  const bootstrapAssignment = source.slice(source.indexOf('bootstrap = Object.freeze({'))
+  assert.match(bootstrapAssignment.slice(0, bootstrapAssignment.indexOf('})')), /platform: process\.platform/)
+})
+
 test('macOS camera permission is requested on the main thread before backend startup', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 

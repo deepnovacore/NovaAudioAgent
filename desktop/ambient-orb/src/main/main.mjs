@@ -212,6 +212,7 @@ async function launchBackend() {
     ...validated,
     audioMode: 'inactive',
     nativeAvailable,
+    platform: process.platform,
   })
 }
 
