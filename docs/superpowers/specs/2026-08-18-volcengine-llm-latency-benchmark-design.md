@@ -33,6 +33,10 @@ second-stage matrix against these additional account-visible models:
 The same gates apply; older or third-party model families receive no relaxed
 scoring or protocol exceptions.
 
+Also test `doubao-seed-2-0-mini-260428` as the final same-generation speed
+candidate. It must pass the identical Pro baseline gate despite its lower-latency
+product positioning.
+
 DeepSeek candidates are not assumed to support the current Ark Responses contract.
 Protocol incompatibility is recorded as a benchmark result, not worked around in
 the evaluator. A separate Chat Completions adapter will be considered only if a
