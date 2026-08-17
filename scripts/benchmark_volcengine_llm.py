@@ -120,7 +120,7 @@ async def run_matrix(
     models = _selected_models(args.models)
     clients: dict[str, Any] = {}
     summaries: list[ModelSummary] | None = None
-    close_failures = 0
+    close_failures: dict[str, int] = {}
     try:
         for model in models:
             clients[model] = client_factory(model)
@@ -168,7 +168,7 @@ async def run_matrix(
         summaries = [summarize_model(model, attempts[model]) for model in models]
     finally:
         closed: set[int] = set()
-        for client in clients.values():
+        for model, client in clients.items():
             if id(client) in closed:
                 continue
             closed.add(id(client))
@@ -180,19 +180,22 @@ async def run_matrix(
                 if inspect.isawaitable(result):
                     await result
             except Exception:
-                close_failures += 1
+                close_failures[model] = close_failures.get(model, 0) + 1
 
     if summaries is None:
         raise RuntimeError("benchmark did not produce summaries")
     if close_failures:
-        first = summaries[0]
-        error_classes = dict(first.error_classes)
-        error_classes["ClientCloseError"] = close_failures
-        summaries[0] = replace(
-            first,
-            provider_failures=first.provider_failures + close_failures,
-            error_classes=error_classes,
-        )
+        for index, summary in enumerate(summaries):
+            failure_count = close_failures.get(summary.model, 0)
+            if not failure_count:
+                continue
+            error_classes = dict(summary.error_classes)
+            error_classes["ClientCloseError"] = failure_count
+            summaries[index] = replace(
+                summary,
+                provider_failures=summary.provider_failures + failure_count,
+                error_classes=error_classes,
+            )
     return summaries
 
 

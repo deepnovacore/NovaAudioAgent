@@ -156,8 +156,8 @@ async def test_run_matrix_attempts_all_client_closes_when_one_fails(
                 raise RuntimeError("secret cleanup detail")
 
     clients = {
-        "doubao-seed-2-0-pro-260215": Client(close_fails=True),
-        "doubao-seed-2-0-mini-260428": Client(close_fails=False),
+        "doubao-seed-2-0-pro-260215": Client(close_fails=False),
+        "doubao-seed-2-0-mini-260428": Client(close_fails=True),
     }
     case = next(case for case in benchmark_cases() if case.case_id == "small_talk_no_call")
     monkeypatch.setattr(benchmark_cli, "benchmark_cases", lambda: (case,))
@@ -166,8 +166,10 @@ async def test_run_matrix_attempts_all_client_closes_when_one_fails(
     summaries = await run_matrix(args, client_factory=clients.__getitem__)
 
     assert all(client.closed for client in clients.values())
-    assert summaries[0].provider_failures == 1
-    assert summaries[0].error_classes == {"ClientCloseError": 1}
+    by_model = {summary.model: summary for summary in summaries}
+    assert by_model["doubao-seed-2-0-pro-260215"].provider_failures == 0
+    assert by_model["doubao-seed-2-0-mini-260428"].provider_failures == 1
+    assert by_model["doubao-seed-2-0-mini-260428"].error_classes == {"ClientCloseError": 1}
 
 
 @pytest.mark.asyncio
