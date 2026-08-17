@@ -517,6 +517,9 @@ orb.addEventListener('pointermove', event => {
   // its own screen.getCursorScreenPoint() poll, so this delta only proves
   // the six-pixel threshold has been crossed and never reaches the drag math.
   const delta = dragGesture.move(event.clientX, event.clientY)
+  // This gate stays open through a live drag only because move() returns a
+  // truthy {dx: 0, dy: 0} once latched, even with unchanged coordinates;
+  // main's cursor-poll ticks depend on that contract, not on dx/dy being nonzero.
   if (delta) window.novaAudioAgentDesktop.windowDrag.move(delta.dx, delta.dy)
 })
 

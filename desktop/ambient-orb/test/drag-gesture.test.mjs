@@ -36,3 +36,12 @@ test('stray move and finish events are inert without an active gesture', () => {
   assert.equal(gesture.move(9, 0), null)
   assert.deepEqual(gesture.finish(), { active: false, dragged: false })
 })
+
+test('keeps returning a truthy zero delta while latched (cursor-poll ticks depend on it)', () => {
+  const gesture = new OrbDragGesture()
+  gesture.start(100, 100)
+  assert.deepEqual(gesture.move(106, 100), { dx: 6, dy: 0 })
+  const delta = gesture.move(106, 100)
+  assert.ok(delta)
+  assert.deepEqual(delta, { dx: 0, dy: 0 })
+})
