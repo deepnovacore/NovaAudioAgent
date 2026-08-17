@@ -70,6 +70,7 @@ from nova_audio_agent.tool_schema import CompiledTools
 MAX_HOST_FACT_CHARS = 3000
 MAX_TRACKED_TOOL_CALLS = 500
 MAX_PENDING_TOOL_REFUSALS = 32
+PROJECT_EXPIRY_STEP_TIMEOUT_S = 5.0
 MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS = 500
 MAX_TRACKED_ORIGIN_DELIVERY_PROOFS = MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS
 MAX_UNCERTAIN_DELIVERY_RETRIES = 256
@@ -181,6 +182,13 @@ class _DeferredOriginToolCall:
     event: ToolCallReady
     response_id: str
     user_item_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectExpiryBatch:
+    item_keys: tuple[tuple[int, str], ...]
+    source_epoch: int
+    reconnect: bool
 
 
 @dataclass(order=True, frozen=True, slots=True)
@@ -324,10 +332,15 @@ class RealtimeService:
         self._commit_project_operation = commit_project_operation
         self._on_project_view = on_project_view or (lambda _view: None)
         self._project_confirmation_items: set[tuple[int, str]] = set()
+        self._project_confirmation_closing_items: set[tuple[int, str]] = set()
         self._project_confirmation_responses: set[tuple[int, str]] = set()
         self._project_confirmation_closed_calls: OrderedDict[tuple[int, str], None] = OrderedDict()
+        self._project_confirmation_closing_calls: set[tuple[int, str]] = set()
         self._project_confirmation_blocking = False
+        self._project_confirmation_fence_pending = False
         self._project_expiry_task: asyncio.Task[None] | None = None
+        self._project_expiry_batches: deque[_ProjectExpiryBatch] = deque()
+        self._project_expiry_operations: set[asyncio.Task[object]] = set()
         self._unsubscribe_project_expiry = (
             project_confirmation.observe_expiry(self._project_confirmation_expired)
             if project_confirmation is not None
@@ -482,6 +495,9 @@ class RealtimeService:
         if wake is not None:
             wake.cancel()
         project_expiry, self._project_expiry_task = self._project_expiry_task, None
+        project_expiry_operations = tuple(self._project_expiry_operations)
+        self._project_expiry_operations.clear()
+        self._project_expiry_batches.clear()
         if project_expiry is not None:
             project_expiry.cancel()
         if self._unsubscribe is not None:
@@ -497,6 +513,7 @@ class RealtimeService:
             tasks += (guard_task,)
         if project_expiry is not None:
             tasks += (project_expiry,)
+        tasks += project_expiry_operations
         tasks += clear_tasks
         for task in tasks:
             if not task.done():
@@ -836,6 +853,10 @@ class RealtimeService:
             accepted = await self.session.accept(event)
         if isinstance(event, ResponseStarted) and self._project_confirmation_blocking:
             self._project_confirmation_responses.add((event.session_epoch, event.response_id))
+            self._project_confirmation_fence_pending = False
+            self._project_confirmation_blocking = bool(
+                self._project_confirmation_items or self._project_confirmation_closing_items
+            )
         if isinstance(event, (ResponseStarted, ResponseAudioDelta)):
             preemption = self._guard_preemption
             if (
@@ -919,7 +940,7 @@ class RealtimeService:
                 self._awaiting_user_origin = bool(self._unbound_user_origin_items)
                 if not self._awaiting_user_origin:
                     self._user_origin_preexisting_response_id = None
-                if (event.session_epoch, event.item_id) in self._project_confirmation_items:
+                if self._is_project_confirmation_item(event.session_epoch, event.item_id):
                     await self._finish_project_confirmation(event, origin_ref)
                 else:
                     await self._release_deferred_origin_calls(event.item_id, origin_ref)
@@ -935,7 +956,7 @@ class RealtimeService:
                 self._awaiting_user_origin = bool(self._unbound_user_origin_items)
                 if not self._awaiting_user_origin:
                     self._user_origin_preexisting_response_id = None
-                if (event.session_epoch, event.item_id) in self._project_confirmation_items:
+                if self._is_project_confirmation_item(event.session_epoch, event.item_id):
                     await self._fail_project_confirmation(event.session_epoch, event.item_id)
                 else:
                     await self._release_deferred_origin_calls(event.item_id, None)
@@ -1030,6 +1051,7 @@ class RealtimeService:
             return
         self._project_confirmation_items.add((event.session_epoch, item_id))
         self._project_confirmation_blocking = True
+        self._project_confirmation_fence_pending = True
         self.session.arm_next_response_fence()
         self._publish_project_view()
 
@@ -1055,15 +1077,39 @@ class RealtimeService:
             return True
         return False
 
+    def _is_project_confirmation_item(self, epoch: int, item_id: str) -> bool:
+        key = (epoch, item_id)
+        return key in self._project_confirmation_items or key in (
+            self._project_confirmation_closing_items
+        )
+
+    def _begin_project_confirmation_close(self, epoch: int, item_id: str) -> None:
+        key = (epoch, item_id)
+        self._project_confirmation_items.discard(key)
+        self._project_confirmation_closing_items.add(key)
+        self._project_confirmation_blocking = True
+
+    def _end_project_confirmation_close(self, epoch: int, item_id: str) -> None:
+        self._project_confirmation_closing_items.discard((epoch, item_id))
+        self._project_confirmation_blocking = (
+            bool(self._project_confirmation_items or self._project_confirmation_closing_items)
+            or self._project_confirmation_fence_pending
+        )
+
     async def _finish_project_confirmation(
         self,
         event: UserTranscriptFinal,
         origin_ref: MemoryRef,
     ) -> None:
         key = (event.session_epoch, event.item_id)
-        self._project_confirmation_items.discard(key)
-        self._project_confirmation_blocking = False
-        await self._close_confirmation_deferred_calls(event.item_id)
+        if key in self._project_confirmation_closing_items:
+            await self._close_confirmation_deferred_calls(event.item_id)
+            return
+        self._begin_project_confirmation_close(event.session_epoch, event.item_id)
+        try:
+            await self._close_confirmation_deferred_calls(event.item_id)
+        finally:
+            self._end_project_confirmation_close(event.session_epoch, event.item_id)
         controller = self._project_confirmation
         if controller is None:
             return
@@ -1092,9 +1138,14 @@ class RealtimeService:
         self._publish_project_view()
 
     async def _fail_project_confirmation(self, epoch: int, item_id: str) -> None:
-        self._project_confirmation_items.discard((epoch, item_id))
-        self._project_confirmation_blocking = False
-        await self._close_confirmation_deferred_calls(item_id)
+        if (epoch, item_id) in self._project_confirmation_closing_items:
+            await self._close_confirmation_deferred_calls(item_id)
+            return
+        self._begin_project_confirmation_close(epoch, item_id)
+        try:
+            await self._close_confirmation_deferred_calls(item_id)
+        finally:
+            self._end_project_confirmation_close(epoch, item_id)
         controller = self._project_confirmation
         if controller is None:
             return
@@ -1105,8 +1156,14 @@ class RealtimeService:
 
     async def _close_project_confirmation_tool(self, event: ToolCallReady) -> None:
         key = (event.session_epoch, event.call_id)
-        if key in self._project_confirmation_closed_calls:
+        if (
+            key in self._project_confirmation_closing_calls
+            or key in self._project_confirmation_closed_calls
+        ):
             return
+        # Reserve before the first await. Expiry cleanup and provider events can
+        # otherwise both inject a terminal output for the same function call.
+        self._project_confirmation_closing_calls.add(key)
         token = self._id_factory()
         item = HostContextItem.tool_output(
             host_item_id=token,
@@ -1114,20 +1171,29 @@ class RealtimeService:
             call_id=event.call_id,
             content='{"code":"confirmation_reserved","state":"superseded"}',
         )
-        await self.session.inject_tool_output(item)
+        try:
+            await self.session.inject_tool_output(item)
+        except BaseException:
+            self._project_confirmation_closing_calls.discard(key)
+            raise
+        self._project_confirmation_closing_calls.discard(key)
         self._project_confirmation_closed_calls[key] = None
         self._project_confirmation_closed_calls.move_to_end(key)
         while len(self._project_confirmation_closed_calls) > MAX_TRACKED_TOOL_CALLS:
             self._project_confirmation_closed_calls.popitem(last=False)
 
     async def _close_confirmation_deferred_calls(self, item_id: str) -> None:
-        deferred_calls = tuple(self._origin_deferred_tool_calls)
-        matching = tuple(call for call in deferred_calls if call.user_item_id == item_id)
+        # Detach the matching entries before awaiting provider I/O. Rebuilding
+        # from an old snapshot after the await would overwrite calls appended by
+        # a concurrent provider event.
+        matching: list[_DeferredOriginToolCall] = []
+        retained: deque[_DeferredOriginToolCall] = deque()
+        while self._origin_deferred_tool_calls:
+            call = self._origin_deferred_tool_calls.popleft()
+            (matching if call.user_item_id == item_id else retained).append(call)
+        self._origin_deferred_tool_calls = retained
         for call in matching:
             await self._close_project_confirmation_tool(call.event)
-        self._origin_deferred_tool_calls = deque(
-            call for call in deferred_calls if call.user_item_id != item_id
-        )
 
     def _queue_project_confirmation_fact(self, text: str) -> None:
         item = HostContextItem.final(
@@ -1143,49 +1209,136 @@ class RealtimeService:
         self._delivery_ready.set()
 
     def _project_confirmation_expired(self) -> None:
-        item_ids = tuple(item_id for _epoch, item_id in self._project_confirmation_items)
+        item_keys = tuple(self._project_confirmation_items)
         source_epoch = self.session.session_epoch
-        reconnect = any(
+        reconnect = self._project_confirmation_fence_pending or any(
             epoch == source_epoch for epoch, _response_id in self._project_confirmation_responses
         )
-        self._project_confirmation_items.clear()
-        self._project_confirmation_blocking = False
+        for epoch, item_id in item_keys:
+            self._begin_project_confirmation_close(epoch, item_id)
+        self._project_expiry_batches.append(
+            _ProjectExpiryBatch(
+                item_keys=item_keys,
+                source_epoch=source_epoch,
+                reconnect=reconnect,
+            )
+        )
         current = self._project_expiry_task
         if current is None or current.done():
-            task = asyncio.create_task(
-                self._finish_project_confirmation_expiry(
-                    item_ids=item_ids,
-                    source_epoch=source_epoch,
-                    reconnect=reconnect,
-                )
-            )
+            task = asyncio.create_task(self._drain_project_confirmation_expiries())
             self._project_expiry_task = task
+            task.add_done_callback(self._project_expiry_finished)
         self._publish_project_view()
+
+    async def _drain_project_confirmation_expiries(self) -> None:
+        try:
+            while self._project_expiry_batches:
+                batch = self._project_expiry_batches.popleft()
+                await self._finish_project_confirmation_expiry(batch)
+        finally:
+            if self._project_expiry_task is asyncio.current_task():
+                self._project_expiry_task = None
 
     async def _finish_project_confirmation_expiry(
         self,
-        *,
-        item_ids: tuple[str, ...],
-        source_epoch: int,
-        reconnect: bool,
+        batch: _ProjectExpiryBatch,
     ) -> None:
         close_failed = False
-        try:
-            for item_id in item_ids:
+        while True:
+            deferred_calls = self._take_confirmation_deferred_calls(batch.source_epoch)
+            if not deferred_calls:
+                break
+            for deferred in deferred_calls:
                 try:
-                    await self._close_confirmation_deferred_calls(item_id)
+                    completed = await self._run_project_expiry_step(
+                        self._close_project_confirmation_tool(deferred.event)
+                    )
+                    close_failed = close_failed or not completed
                 except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                     raise
                 except Exception:
                     close_failed = True
-            if reconnect or close_failed:
-                await self._reconnect_provider_session(expected_epoch=source_epoch)
-            self._queue_project_confirmation_fact("确认已过期，本次操作已取消。")
-            await self._delivery_pass()
-            self._publish_project_view()
-        finally:
-            if self._project_expiry_task is asyncio.current_task():
-                self._project_expiry_task = None
+        if batch.reconnect or close_failed:
+            try:
+                await self._run_project_expiry_step(
+                    self._reconnect_provider_session(expected_epoch=batch.source_epoch)
+                )
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as failure:
+                print(
+                    "[realtime-diagnostic] project_expiry_reconnect_failure "
+                    f"type={type(failure).__name__}",
+                    flush=True,
+                )
+        for epoch, item_id in batch.item_keys:
+            self._end_project_confirmation_close(epoch, item_id)
+        self._queue_project_confirmation_fact("确认已过期，本次操作已取消。")
+        try:
+            await self._run_project_expiry_step(self._delivery_pass())
+        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as failure:
+            print(
+                "[realtime-diagnostic] project_expiry_delivery_failure "
+                f"type={type(failure).__name__}",
+                flush=True,
+            )
+        self._publish_project_view()
+
+    def _take_confirmation_deferred_calls(
+        self, source_epoch: int
+    ) -> tuple[_DeferredOriginToolCall, ...]:
+        matching: list[_DeferredOriginToolCall] = []
+        retained: deque[_DeferredOriginToolCall] = deque()
+        while self._origin_deferred_tool_calls:
+            deferred = self._origin_deferred_tool_calls.popleft()
+            (matching if deferred.event.session_epoch == source_epoch else retained).append(
+                deferred
+            )
+        self._origin_deferred_tool_calls = retained
+        return tuple(matching)
+
+    async def _run_project_expiry_step(self, awaitable: Awaitable[object]) -> bool:
+        operation = asyncio.create_task(awaitable)
+        deadline = asyncio.create_task(self._clock.sleep(PROJECT_EXPIRY_STEP_TIMEOUT_S))
+        self._project_expiry_operations.add(operation)
+        operation.add_done_callback(self._project_expiry_operation_finished)
+        try:
+            done, _pending = await asyncio.wait(
+                (operation, deadline), return_when=asyncio.FIRST_COMPLETED
+            )
+        except BaseException:
+            operation.cancel()
+            deadline.cancel()
+            raise
+        if operation in done:
+            deadline.cancel()
+            await asyncio.gather(deadline, return_exceptions=True)
+            operation.result()
+            return True
+        operation.cancel()
+        return False
+
+    def _project_expiry_operation_finished(self, task: asyncio.Task[object]) -> None:
+        self._project_expiry_operations.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except BaseException:
+            pass
+
+    @staticmethod
+    def _project_expiry_finished(task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        failure = task.exception()
+        if failure is not None:
+            print(
+                f"[realtime-diagnostic] project_expiry_failure type={type(failure).__name__}",
+                flush=True,
+            )
 
     def _publish_project_view(self) -> None:
         controller = self._project_confirmation
@@ -1201,8 +1354,10 @@ class RealtimeService:
         if controller is not None:
             controller.invalidate(reason)
         self._project_confirmation_items.clear()
+        self._project_confirmation_closing_items.clear()
         self._project_confirmation_responses.clear()
         self._project_confirmation_blocking = False
+        self._project_confirmation_fence_pending = False
         self._publish_project_view()
 
     def _bind_response_user_origin(self, response_id: str) -> None:

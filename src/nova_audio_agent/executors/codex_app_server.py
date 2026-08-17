@@ -824,7 +824,7 @@ class CodexAppServerTransport:
             self._thread_ready_reported = False
             self._turn_in_flight = False
             self._sensitive_inputs.clear()
-            self._finish_private_home()
+            await _complete_sync(self._finish_private_home)
             if cleanup_cancelled:
                 raise asyncio.CancelledError
 
@@ -910,7 +910,7 @@ class CodexAppServerTransport:
         self._thread_id = None
         self._thread_ready_reported = False
         self._sensitive_inputs.clear()
-        self._finish_private_home()
+        await _complete_sync(self._finish_private_home)
         return stop
 
     async def _cancel_and_teardown_warm(
@@ -934,15 +934,20 @@ class CodexAppServerTransport:
     async def _spawn(self) -> _Process:
         env = _filtered_environment(self._environ, self._api_key)
         if self._codex_home is None:
-            private_home = tempfile.TemporaryDirectory(prefix="nova-audio-agent-codex-live-")
+            private_home = await _complete_sync(
+                tempfile.TemporaryDirectory,
+                prefix="nova-audio-agent-codex-live-",
+            )
             self._private_home = private_home
             codex_home = Path(private_home.name)
         else:
-            codex_home = self._prepare_persistent_home()
+            codex_home = await _complete_sync(self._prepare_persistent_home)
         try:
-            self._sync_saved_login(codex_home)
+            # Credential reads, hashing, atomic replacement, and fsync can all
+            # stall on a slow filesystem. Keep them off the realtime loop.
+            await _complete_sync(self._sync_saved_login, codex_home)
         except OSError:
-            self._finish_private_home()
+            await _complete_sync(self._finish_private_home)
             raise AppServerProtocolError("credential_missing") from None
         env["CODEX_HOME"] = str(codex_home)
         env["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"] = "1"
@@ -1328,6 +1333,30 @@ async def _yield_once() -> None:
     await future
 
 
+async def _complete_sync(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run sync filesystem work off-loop and finish it before cancellation escapes."""
+
+    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    cancelled: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as failure:
+            if cancelled is None:
+                cancelled = failure
+        except BaseException:
+            break
+    try:
+        result = task.result()
+    except BaseException:
+        if cancelled is not None:
+            raise cancelled from None
+        raise
+    if cancelled is not None:
+        raise cancelled
+    return result
+
+
 async def _bounded_task(task: asyncio.Task[Any], timeout: float) -> Any:
     try:
         async with asyncio.timeout(timeout):
@@ -1392,6 +1421,7 @@ def _read_owned_file(
             not stat.S_ISREG(info.st_mode)
             or info.st_uid != _uid()
             or info.st_size > max_bytes
+            or bool(info.st_mode & 0o022)
             or (required_mode is not None and stat.S_IMODE(info.st_mode) != required_mode)
         ):
             raise OSError

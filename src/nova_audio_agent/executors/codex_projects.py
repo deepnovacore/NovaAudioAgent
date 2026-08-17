@@ -21,6 +21,7 @@ from nova_audio_agent.clock import RealClock
 STATE_VERSION = 1
 STATE_FILE = "codex-projects-v1.json"
 LOCK_FILE = "codex-projects-v1.lock"
+OWNER_LOCK_FILE = "codex-projects-v1.owner.lock"
 MAX_STATE_BYTES = 1024 * 1024
 MAX_WORKSPACE_NAME = 80
 MAX_SESSION_TITLE = 120
@@ -105,10 +106,11 @@ class CodexProjectStore:
         self._now = RealClock().now if now is None else now
         self._id_factory = (lambda: uuid4().hex) if id_factory is None else id_factory
         self._recover_starting = recover_starting
-        # Recovery is a store-startup action. A Session begun by this live store
-        # must remain ``starting`` long enough for the following thread callback
-        # to make it ready.
         self._startup_loaded = False
+        self._owner_fd: int | None = None
+        if recover_starting:
+            self._ensure_state_root()
+            self._owner_fd = self._open_owner_lock()
 
     @property
     def state_path(self) -> Path:
@@ -117,6 +119,25 @@ class CodexProjectStore:
     @property
     def lock_path(self) -> Path:
         return self.state_root / LOCK_FILE
+
+    @property
+    def owner_lock_path(self) -> Path:
+        return self.state_root / OWNER_LOCK_FILE
+
+    def close(self) -> None:
+        fd, self._owner_fd = self._owner_fd, None
+        if fd is None:
+            return
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def codex_home(self, workspace: WorkspaceRecord | str) -> Path:
         record = self._workspace_by_id(workspace) if isinstance(workspace, str) else workspace
@@ -408,7 +429,7 @@ class CodexProjectStore:
 
         return self._transaction(update)
 
-    def rollback_session_start(self, session_id: str) -> bool:
+    def rollback_session_start(self, session_id: str, *, wait: bool = False) -> bool:
         def update(state: _State) -> tuple[bool, bool]:
             session = state.sessions.get(session_id)
             if (
@@ -435,9 +456,11 @@ class CodexProjectStore:
                 )
             return True, True
 
-        return self._transaction(update)
+        return self._transaction(update, wait=wait)
 
-    def mark_session_ready(self, session_id: str, thread_id: str) -> ProjectSessionRecord:
+    def mark_session_ready(
+        self, session_id: str, thread_id: str, *, wait: bool = False
+    ) -> ProjectSessionRecord:
         clean_thread_id = _thread_id(thread_id)
 
         def update(state: _State) -> tuple[ProjectSessionRecord, bool]:
@@ -455,9 +478,11 @@ class CodexProjectStore:
             state.sessions[session_id] = ready
             return ready, True
 
-        return self._transaction(update)
+        return self._transaction(update, wait=wait)
 
-    def mark_session_unavailable(self, session_id: str) -> ProjectSessionRecord:
+    def mark_session_unavailable(
+        self, session_id: str, *, wait: bool = False
+    ) -> ProjectSessionRecord:
         def update(state: _State) -> tuple[ProjectSessionRecord, bool]:
             session = state.sessions.get(session_id)
             if session is None:
@@ -470,7 +495,7 @@ class CodexProjectStore:
             state.sessions[session_id] = unavailable
             return unavailable, unavailable != session
 
-        return self._transaction(update)
+        return self._transaction(update, wait=wait)
 
     def activate_session(
         self,
@@ -484,6 +509,8 @@ class CodexProjectStore:
                 raise ProjectStateError("workspace_not_found")
             if session is None or session.workspace_id != workspace_id:
                 raise ProjectStateError("session_workspace_mismatch")
+            if session.state != "ready" or session.codex_thread_id is None:
+                raise ProjectStateError("session_unavailable")
             stamp = self._stamp()
             state.workspaces[workspace_id] = replace(
                 workspace,
@@ -677,13 +704,16 @@ class CodexProjectStore:
     def _transaction(
         self,
         operation: Callable[[_State], tuple[_T, bool]],
+        *,
+        wait: bool = False,
     ) -> _T:
         self._ensure_state_root()
         fd = self._open_lock()
         acquired = False
         try:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                flags = fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB
+                fcntl.flock(fd, flags)
                 acquired = True
             except OSError as failure:
                 if failure.errno in {errno.EACCES, errno.EAGAIN}:
@@ -728,7 +758,11 @@ class CodexProjectStore:
         try:
             fd = os.open(self.lock_path, flags, 0o600)
             info = os.fstat(fd)
-            if info.st_uid != _uid() or stat.S_IMODE(info.st_mode) != 0o600:
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != _uid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
                 raise OSError
             return fd
         except OSError:
@@ -738,19 +772,61 @@ class CodexProjectStore:
                 pass
             raise ProjectStateError("state_permissions") from None
 
+    def _open_owner_lock(self) -> int:
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(self.owner_lock_path, flags, 0o600)
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != _uid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
+                raise OSError
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as failure:
+                if failure.errno in {errno.EACCES, errno.EAGAIN}:
+                    raise ProjectStateError("state_busy") from None
+                raise
+            return fd
+        except ProjectStateError:
+            try:
+                os.close(fd)
+            except (OSError, UnboundLocalError):
+                pass
+            raise
+        except OSError:
+            try:
+                os.close(fd)
+            except (OSError, UnboundLocalError):
+                pass
+            raise ProjectStateError("state_permissions") from None
+
     def _load_state(self, *, recover_starting: bool) -> tuple[_State, bool]:
         path = self.state_path
-        if not path.exists():
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(path, flags)
+        except FileNotFoundError:
             return _State(active_workspace_id=None, workspaces={}, sessions={}), False
         try:
-            if path.is_symlink():
-                raise OSError
-            info = path.stat()
-            if info.st_uid != _uid() or stat.S_IMODE(info.st_mode) != 0o600:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != _uid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
                 raise ProjectStateError("state_permissions")
             if info.st_size > MAX_STATE_BYTES:
                 raise ProjectStateError("state_too_large")
-            raw = path.read_bytes()
+            with os.fdopen(fd, "rb", closefd=True) as stream:
+                fd = -1
+                raw = stream.read(MAX_STATE_BYTES + 1)
             if len(raw) > MAX_STATE_BYTES:
                 raise ProjectStateError("state_too_large")
             value = json.loads(raw)
@@ -759,6 +835,9 @@ class CodexProjectStore:
             raise
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
             raise ProjectStateError("state_corrupt") from None
+        finally:
+            if fd >= 0:
+                os.close(fd)
         recovered = False
         if recover_starting:
             for session_id, session in tuple(state.sessions.items()):
@@ -941,6 +1020,8 @@ def _decode_state(value: object) -> _State:
     raw_sessions = value["sessions"]
     if type(raw_workspaces) is not dict or type(raw_sessions) is not dict:
         raise ValueError
+    if len(raw_workspaces) > MAX_WORKSPACES or len(raw_sessions) > MAX_SESSIONS_TOTAL:
+        raise ValueError
     workspaces: dict[str, WorkspaceRecord] = {}
     for key, raw in raw_workspaces.items():
         record = _decode_workspace(raw)
@@ -963,6 +1044,11 @@ def _decode_state(value: object) -> _State:
             session = sessions.get(workspace.active_session_id)
             if session is None or session.workspace_id != workspace.workspace_id:
                 raise ValueError
+        if (
+            sum(session.workspace_id == workspace.workspace_id for session in sessions.values())
+            > MAX_SESSIONS_PER_WORKSPACE
+        ):
+            raise ValueError
     seen_titles: set[tuple[str, str]] = set()
     for session in sessions.values():
         title_key = (session.workspace_id, session.normalized_title)

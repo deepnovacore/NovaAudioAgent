@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -118,6 +119,30 @@ class _NullWorker:
         return None
 
 
+async def _complete_sync(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run filesystem work off-loop and join it before propagating cancellation."""
+
+    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    cancelled: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as failure:
+            if cancelled is None:
+                cancelled = failure
+        except BaseException:
+            break
+    try:
+        result = task.result()
+    except BaseException:
+        if cancelled is not None:
+            raise cancelled from None
+        raise
+    if cancelled is not None:
+        raise cancelled
+    return result
+
+
 class ProjectCodexAdapter(CodexLiveAdapter):
     """Keep one global run slot while selecting a worker per immutable project binding."""
 
@@ -136,6 +161,8 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         self.confirmation = confirmation
         self._worker_factory = worker_factory
         self._on_project_view = on_project_view
+        self._public_project_view = store.public_view(pending_confirmation=confirmation.pending)
+        self._project_view_refresh_seq = 0
 
     async def dispatch(
         self,
@@ -144,7 +171,9 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         ctx: DispatchContext,
     ) -> Handoff:
         if op == "project":
-            return self._dispatch_project(request, ctx)
+            result = await self._dispatch_project(request, ctx)
+            await self._refresh_project_view()
+            return result
         if op != "run":
             return await super().dispatch(op, request, ctx)
         normalized = _normalize_project_run(request)
@@ -167,13 +196,13 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         finally:
             self._run_lock.release()
 
-    def _dispatch_project(self, request: dict[str, Any], ctx: DispatchContext) -> Handoff:
+    async def _dispatch_project(self, request: dict[str, Any], ctx: DispatchContext) -> Handoff:
         parsed = _parse_project_request(request)
         if parsed is None:
             return _failure("invalid_params", "project")
         action, workspace_name, session_title, work_order = parsed
         if action == "list":
-            snapshot = self.store.snapshot()
+            snapshot = await _complete_sync(self.store.snapshot)
             return _project_ok(
                 code="listed",
                 workspaces=[
@@ -186,7 +215,8 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             )
         try:
             if action == "sessions":
-                workspace = self.store.resolve_workspace(workspace_name)
+                workspace = await _complete_sync(self.store.resolve_workspace, workspace_name)
+                sessions = await _complete_sync(self.store.list_sessions, workspace)
                 return _project_ok(
                     code="sessions_listed",
                     workspace=workspace.display_name,
@@ -196,18 +226,24 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                             "state": item.state,
                             "active": item.session_id == workspace.active_session_id,
                         }
-                        for item in self.store.list_sessions(workspace)[:20]
+                        for item in sessions[:20]
                     ],
                 )
             if action == "create":
                 assert workspace_name is not None
-                workspace_name = self.store.validate_managed_create(workspace_name)
+                workspace_name = await _complete_sync(
+                    self.store.validate_managed_create, workspace_name
+                )
                 workspace = None
                 resolved_session = None
             else:
-                workspace = self.store.resolve_workspace(workspace_name)
+                workspace = await _complete_sync(self.store.resolve_workspace, workspace_name)
                 resolved_session = (
-                    self.store.resolve_session(workspace.workspace_id, session_title)
+                    await _complete_sync(
+                        self.store.resolve_session,
+                        workspace.workspace_id,
+                        session_title,
+                    )
                     if action == "resume"
                     else None
                 )
@@ -227,7 +263,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                 origin_ref=ctx.delegate.origin_ref,
             )
         except ProjectStateError as failure:
-            return self._lookup_failure(failure.code)
+            return await self._lookup_failure(failure.code)
         return _project_ok(
             code="confirmation_required",
             action=proposal.action,
@@ -236,12 +272,11 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             confirmation_prompt=proposal.confirmation_prompt,
         )
 
-    def _lookup_failure(self, code: str) -> Handoff:
+    async def _lookup_failure(self, code: str) -> Handoff:
         content: dict[str, Any] = {"op": "project", "code": code}
         if code == "workspace_not_found":
-            content["candidates"] = [
-                item.display_name for item in self.store.list_workspaces()[:20]
-            ]
+            workspaces = await _complete_sync(self.store.list_workspaces)
+            content["candidates"] = [item.display_name for item in workspaces[:20]]
         return Handoff(outcome="failed", trust="trusted_system", content=content)
 
     async def _run_new(
@@ -251,7 +286,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         ctx: DispatchContext,
     ) -> Handoff:
         try:
-            workspace = self.store.resolve_workspace(None)
+            workspace = await _complete_sync(self.store.resolve_workspace, None)
             return await self._run_bound(workspace, None, session_title, work_order, ctx)
         except ProjectStateError as failure:
             return _failure(failure.code, "run")
@@ -264,24 +299,36 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     ) -> Handoff:
         try:
             if operation.action == "create":
-                workspace = self.store.create_managed(operation.workspace_display_name)
+                workspace = await _complete_sync(
+                    self.store.create_managed, operation.workspace_display_name
+                )
                 if operation.work_order is None:
+                    await self._refresh_project_view()
                     return _project_ok(code="created", workspace=workspace.display_name)
                 return await self._run_bound(
                     workspace, None, operation.session_title, operation.work_order, ctx
                 )
             assert operation.workspace_id is not None
-            workspace = self.store.resolve_workspace(operation.workspace_display_name)
+            workspace = await _complete_sync(
+                self.store.resolve_workspace, operation.workspace_display_name
+            )
             if workspace.workspace_id != operation.workspace_id:
                 raise ProjectStateError("workspace_boundary_changed")
             if operation.action == "select":
-                selected = self.store.select_workspace(workspace.display_name)
+                selected = await _complete_sync(self.store.select_workspace, workspace.display_name)
+                await self._refresh_project_view()
                 return _project_ok(code="selected", workspace=selected.display_name)
             assert operation.session_id is not None
-            session = self.store.resolve_session(workspace.workspace_id, operation.session_title)
+            session = await _complete_sync(
+                self.store.resolve_session,
+                workspace.workspace_id,
+                operation.session_title,
+            )
             if session.session_id != operation.session_id or session.codex_thread_id is None:
                 raise ProjectStateError("session_workspace_mismatch")
-            self.store.activate_session(workspace.workspace_id, session.session_id)
+            session = await _complete_sync(
+                self.store.activate_session, workspace.workspace_id, session.session_id
+            )
             return await self._run_bound(workspace, session, None, work_order, ctx)
         except ProjectStateError as failure:
             return _failure(failure.code, "run")
@@ -294,23 +341,24 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         work_order: str,
         ctx: DispatchContext,
     ) -> Handoff:
-        path = self.store.revalidate_workspace(workspace.workspace_id)
-        session = resumed or self.store.begin_session(workspace.workspace_id, session_title)
-        self._publish_project_view()
+        path = await _complete_sync(self.store.revalidate_workspace, workspace.workspace_id)
+        session = resumed or await _complete_sync(
+            self.store.begin_session, workspace.workspace_id, session_title
+        )
+        await self._refresh_project_view()
         ready = False
         binding_invalid = False
+        reported_thread_id: str | None = None
         result: Handoff | None = None
 
         def on_thread_ready(thread_id: str) -> None:
-            nonlocal binding_invalid, ready
+            nonlocal binding_invalid, ready, reported_thread_id
             if resumed is not None:
                 if thread_id != resumed.codex_thread_id:
                     binding_invalid = True
                     raise ProjectStateError("session_thread_mismatch")
-            else:
-                self.store.mark_session_ready(session.session_id, thread_id)
-            ready = True
-            self._publish_project_view()
+                ready = True
+            reported_thread_id = thread_id
 
         try:
             worker = self._worker_factory(
@@ -324,17 +372,37 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             result = await self._run(work_order, ctx)
             return result
         finally:
-            if not ready:
+            if resumed is None and reported_thread_id is not None and not binding_invalid:
                 try:
-                    if resumed is None:
-                        self.store.rollback_session_start(session.session_id)
-                    elif binding_invalid or (
-                        result is not None and result.content.get("code") == "resume_unavailable"
-                    ):
-                        self.store.mark_session_unavailable(session.session_id)
+                    await _complete_sync(
+                        self.store.mark_session_ready,
+                        session.session_id,
+                        reported_thread_id,
+                        wait=True,
+                    )
+                    ready = True
                 except ProjectStateError:
-                    pass
-                self._publish_project_view()
+                    ready = False
+            if not ready:
+                if resumed is None:
+                    await _complete_sync(
+                        self.store.rollback_session_start,
+                        session.session_id,
+                        wait=True,
+                    )
+                elif binding_invalid or (
+                    result is not None and result.content.get("code") == "resume_unavailable"
+                ):
+                    await _complete_sync(
+                        self.store.mark_session_unavailable,
+                        session.session_id,
+                        wait=True,
+                    )
+                try:
+                    await self._refresh_project_view()
+                except ProjectStateError as failure:
+                    if failure.code != "state_busy":
+                        raise
 
     async def commit_confirmed(
         self,
@@ -349,14 +417,18 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         if work_order is None:
             try:
                 if operation.action == "create":
-                    self.store.create_managed(operation.workspace_display_name)
+                    await _complete_sync(
+                        self.store.create_managed, operation.workspace_display_name
+                    )
                 elif operation.action == "select":
-                    self.store.select_workspace(operation.workspace_display_name)
+                    await _complete_sync(
+                        self.store.select_workspace, operation.workspace_display_name
+                    )
                 else:
                     return ProjectCommitResult(False, "invalid_operation")
             except ProjectStateError as failure:
                 return ProjectCommitResult(False, failure.code)
-            self._publish_project_view()
+            await self._refresh_project_view()
             return ProjectCommitResult(True, "committed")
         normalized_work_order = _normalize_run_request({"work_order": work_order})
         if normalized_work_order is None or normalized_work_order != work_order:
@@ -377,12 +449,30 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             return ProjectCommitResult(False, "runtime_rejected")
         return ProjectCommitResult(True, "accepted", admission.delegate_id)
 
+    async def _refresh_project_view(self) -> None:
+        self._project_view_refresh_seq += 1
+        refresh_seq = self._project_view_refresh_seq
+        view = await _complete_sync(
+            self.store.public_view,
+            pending_confirmation=self.confirmation.pending,
+        )
+        if refresh_seq != self._project_view_refresh_seq:
+            return
+        self._public_project_view = view
+        self._publish_project_view()
+
+    def public_project_view(self, *, pending_confirmation: bool) -> PublicProjectView:
+        return replace(
+            self._public_project_view,
+            pending_confirmation=pending_confirmation,
+        )
+
     def _publish_project_view(self) -> None:
         if self._on_project_view is None:
             return
         try:
             self._on_project_view(
-                self.store.public_view(pending_confirmation=self.confirmation.pending)
+                self.public_project_view(pending_confirmation=self.confirmation.pending)
             )
         except Exception:
             pass

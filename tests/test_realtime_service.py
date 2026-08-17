@@ -644,6 +644,80 @@ async def test_confirmation_deferred_calls_are_closed_without_touching_unrelated
 
 
 @pytest.mark.asyncio
+async def test_confirmation_tool_close_is_exactly_once_under_concurrent_cleanup() -> None:
+    service, provider, _runtime, _frames = make_service(id_factory=lambda: f"host-{next(counter)}")
+    await service.connect()
+    call = ToolCallReady(
+        session_epoch=1,
+        response_id="response-confirm",
+        call_id="call-once",
+        item_id="tool-once",
+        name="codex__run",
+        arguments={"work_order": "blocked", "origin_ref": "conversation:1"},
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = provider.inject_host_item
+
+    async def delayed(item: HostContextItem) -> ItemIdentity:
+        entered.set()
+        await release.wait()
+        return await original(item)
+
+    provider.inject_host_item = delayed  # type: ignore[method-assign]
+    first = asyncio.create_task(service._close_project_confirmation_tool(call))
+    await entered.wait()
+    second = asyncio.create_task(service._close_project_confirmation_tool(call))
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert [item.call_id for item in provider.injected if item.kind == "tool_output"] == [
+        "call-once"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_confirmation_close_preserves_calls_appended_during_provider_await() -> None:
+    service, provider, _runtime, _frames = make_service(id_factory=lambda: f"host-{next(counter)}")
+    await service.connect()
+
+    def deferred(call_id: str, user_item_id: str) -> realtime_service._DeferredOriginToolCall:
+        event = ToolCallReady(
+            session_epoch=1,
+            response_id=f"response-{call_id}",
+            call_id=call_id,
+            item_id=f"tool-{call_id}",
+            name="codex__run",
+            arguments={"work_order": call_id, "origin_ref": "conversation:1"},
+        )
+        return realtime_service._DeferredOriginToolCall(
+            event=event,
+            response_id=event.response_id or "",
+            user_item_id=user_item_id,
+        )
+
+    service._origin_deferred_tool_calls.append(deferred("matching", "user-confirm"))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = provider.inject_host_item
+
+    async def delayed(item: HostContextItem) -> ItemIdentity:
+        entered.set()
+        await release.wait()
+        return await original(item)
+
+    provider.inject_host_item = delayed  # type: ignore[method-assign]
+    closing = asyncio.create_task(service._close_confirmation_deferred_calls("user-confirm"))
+    await entered.wait()
+    service._origin_deferred_tool_calls.append(deferred("late", "user-later"))
+    release.set()
+    await closing
+
+    assert [call.event.call_id for call in service._origin_deferred_tool_calls] == ["late"]
+
+
+@pytest.mark.asyncio
 async def test_confirmation_expiry_reconnects_fenced_epoch_before_later_tool_admission() -> None:
     clock = VirtualClock()
     controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
@@ -715,6 +789,293 @@ async def test_confirmation_expiry_reconnects_fenced_epoch_before_later_tool_adm
     bridge = service._bridge
     assert isinstance(bridge, FakeBridge)
     assert [call.call_id for call in bridge.calls] == ["call-1"]
+
+
+@pytest.mark.asyncio
+async def test_confirmation_expiry_closes_all_old_epoch_deferred_calls_before_reconnect() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select",
+        workspace_display_name="alpha",
+        workspace_id="workspace-alpha",
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+    service, provider, _runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+    )
+    await service.connect()
+    await service.handle_event(
+        UserSpeechStarted(
+            session_epoch=1,
+            speech_id="speech-confirm",
+            provider_item_id="user-confirm",
+        )
+    )
+    for call_id, user_item_id in (
+        ("call-matching", "user-confirm"),
+        ("call-unrelated", "user-other"),
+    ):
+        event = ToolCallReady(
+            session_epoch=1,
+            response_id=f"response-{call_id}",
+            call_id=call_id,
+            item_id=f"tool-{call_id}",
+            name="codex__run",
+            arguments={"work_order": call_id, "origin_ref": "conversation:1"},
+        )
+        service._origin_deferred_tool_calls.append(
+            realtime_service._DeferredOriginToolCall(
+                event=event,
+                response_id=event.response_id or "",
+                user_item_id=user_item_id,
+            )
+        )
+
+    clock.advance_to(90.0)
+    assert controller.expire() is True
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+    assert provider.epoch == 2
+    assert [item.call_id for item in provider.injected if item.kind == "tool_output"] == [
+        "call-matching",
+        "call-unrelated",
+    ]
+    assert not service._origin_deferred_tool_calls
+
+
+@pytest.mark.asyncio
+async def test_confirmation_expiry_reconnects_when_fence_is_armed_before_response_start() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select",
+        workspace_display_name="alpha",
+        workspace_id="workspace-alpha",
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+    service, provider, _runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+    )
+    await service.connect()
+    await service.handle_event(
+        UserSpeechStarted(
+            session_epoch=1,
+            speech_id="speech-confirm",
+            provider_item_id="user-confirm",
+        )
+    )
+
+    clock.advance_to(90.0)
+    assert controller.expire() is True
+    for _ in range(12):
+        await asyncio.sleep(0)
+
+    assert provider.epoch == service.session.session_epoch == 2
+    assert [
+        epoch
+        for item, epoch in zip(provider.injected, provider.injected_epochs, strict=True)
+        if item.content == "确认已过期，本次操作已取消。"
+    ] == [2]
+
+
+@pytest.mark.asyncio
+async def test_late_expired_transcript_closes_deferred_call_instead_of_dispatching() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select",
+        workspace_display_name="alpha",
+        workspace_id="workspace-alpha",
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+    service, provider, _runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+    )
+    await service.connect()
+    await service.handle_event(
+        UserSpeechStarted(
+            session_epoch=1,
+            speech_id="speech-confirm",
+            provider_item_id="user-confirm",
+        )
+    )
+    deferred = ToolCallReady(
+        session_epoch=1,
+        response_id="response-confirm",
+        call_id="call-expired",
+        item_id="tool-expired",
+        name="codex__run",
+        arguments={"work_order": "must not run", "origin_ref": "conversation:1"},
+    )
+    service._origin_deferred_tool_calls.append(
+        realtime_service._DeferredOriginToolCall(
+            event=deferred,
+            response_id="response-confirm",
+            user_item_id="user-confirm",
+        )
+    )
+
+    clock.advance_to(90.0)
+    assert controller.expire() is True
+    await service.handle_event(
+        UserTranscriptFinal(session_epoch=1, item_id="user-confirm", text="确认")
+    )
+    for _ in range(12):
+        await asyncio.sleep(0)
+
+    bridge = service._bridge
+    assert isinstance(bridge, FakeBridge)
+    assert bridge.calls == []
+    assert [item.call_id for item in provider.injected if item.kind == "tool_output"] == [
+        "call-expired"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_confirmation_expiry_still_queues_fact_when_reconnect_fails() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select",
+        workspace_display_name="alpha",
+        workspace_id="workspace-alpha",
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+    service, provider, _runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+    )
+    await service.connect()
+    await service.handle_event(
+        UserSpeechStarted(
+            session_epoch=1,
+            speech_id="speech-confirm",
+            provider_item_id="user-confirm",
+        )
+    )
+
+    async def fail_reconnect(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("provider unavailable")
+
+    service._reconnect_provider_session = fail_reconnect  # type: ignore[method-assign]
+    clock.advance_to(90.0)
+    assert controller.expire() is True
+    for _ in range(12):
+        await asyncio.sleep(0)
+
+    assert any(item.content == "确认已过期，本次操作已取消。" for item in provider.injected)
+
+
+@pytest.mark.asyncio
+async def test_confirmation_expiry_hung_reconnect_is_bounded_and_still_queues_fact() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select",
+        workspace_display_name="alpha",
+        workspace_id="workspace-alpha",
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+    service, provider, _runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+    )
+    await service.connect()
+    await service.handle_event(
+        UserSpeechStarted(
+            session_epoch=1,
+            speech_id="speech-confirm",
+            provider_item_id="user-confirm",
+        )
+    )
+    never = asyncio.Event()
+
+    async def hung_reconnect(*_args: object, **_kwargs: object) -> bool:
+        await never.wait()
+        return True
+
+    service._reconnect_provider_session = hung_reconnect  # type: ignore[method-assign]
+    clock.advance_to(90.0)
+    assert controller.expire() is True
+    for _ in range(4):
+        await asyncio.sleep(0)
+    clock.advance_to(95.0)
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+    assert service._project_expiry_task is None
+    assert not service._project_confirmation_closing_items
+    assert any(item.content == "确认已过期，本次操作已取消。" for item in provider.injected)
+
+
+@pytest.mark.asyncio
+async def test_overlapping_confirmation_expiries_are_drained_in_order() -> None:
+    clock = VirtualClock()
+    service, provider, _runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+    )
+    await service.connect()
+    never = asyncio.Event()
+
+    async def hung_reconnect(*_args: object, **_kwargs: object) -> bool:
+        await never.wait()
+        return True
+
+    service._reconnect_provider_session = hung_reconnect  # type: ignore[method-assign]
+    service._project_confirmation_items.add((1, "user-one"))
+    service._project_confirmation_blocking = True
+    service._project_confirmation_fence_pending = True
+    service._project_confirmation_expired()
+    for _ in range(4):
+        await asyncio.sleep(0)
+    service._project_confirmation_items.add((1, "user-two"))
+    service._project_confirmation_blocking = True
+    service._project_confirmation_fence_pending = True
+    service._project_confirmation_expired()
+
+    for _ in range(8):
+        for _ in range(8):
+            await asyncio.sleep(0)
+        if service._project_expiry_task is None:
+            break
+        deadline = clock.next_timer_ts()
+        if deadline is not None:
+            clock.advance_to(deadline)
+
+    assert service._project_expiry_task is None
+    assert not service._project_expiry_batches
+    assert not service._project_confirmation_closing_items
+    delivered = sum(item.content == "确认已过期，本次操作已取消。" for item in provider.injected)
+    queued = sum(
+        item.intent.item.content == "确认已过期，本次操作已取消。" for item in service._host_items
+    )
+    assert delivered + queued == 2
 
 
 counter = count(1)

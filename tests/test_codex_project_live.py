@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping
@@ -235,6 +237,33 @@ async def test_invalid_create_is_rejected_before_confirmation(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_project_proposal_schedules_expiry_on_the_event_loop(tmp_path: Path) -> None:
+    clock = VirtualClock()
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    store.create_managed("alpha")
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=lambda *_args, **_kwargs: _UnusedWorker(),
+    )
+
+    result = await adapter.dispatch(
+        "project",
+        {"action": "select", "workspace": "alpha"},
+        _context(clock),
+    )
+    await asyncio.sleep(0)
+
+    assert result.content["code"] == "confirmation_required"
+    assert clock.waiter_count() == 1
+
+
+@pytest.mark.asyncio
 async def test_lists_are_public_and_exact_names_are_required(tmp_path: Path) -> None:
     adapter, store = _adapter(tmp_path)
     ctx = _context(VirtualClock())
@@ -370,6 +399,62 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
     assert resumed.outcome == "ok"
     assert factory.calls[-1][2] == saved.codex_thread_id
     assert len(factory.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_confirmed_resume_revalidates_ready_state_at_execution_time(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    identifiers = iter(f"identifier-{index:03d}" for index in range(100))
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=identifiers.__next__,
+    )
+    workspace = store.create_managed("alpha")
+    confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    factory = _ProjectFactory()
+    adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
+    await adapter.dispatch("run", {"work_order": "first", "session": "Task One"}, _context(clock))
+    saved = store.resolve_session(workspace.workspace_id, "Task One")
+    confirmation.prepare(
+        action="resume",
+        workspace_display_name="alpha",
+        workspace_id=workspace.workspace_id,
+        session_title=saved.display_title,
+        session_id=saved.session_id,
+        work_order="continue it",
+        origin_ref="conversation:1",
+    )
+    assert confirmation.reserve_user_item(epoch=1, item_id="user-2")
+    outcome = confirmation.accept_transcript(epoch=1, item_id="user-2", text="确认")
+    assert outcome.operation is not None
+    store.mark_session_unavailable(saved.session_id)
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="delegate-resume")
+
+    committed = await adapter.commit_confirmed(
+        outcome.operation, origin_ref="conversation:1", runtime_dispatch=dispatch
+    )
+    resumed = await adapter.dispatch(
+        "run",
+        {"work_order": "continue it"},
+        _context(
+            clock,
+            delegate_id="delegate-resume",
+            private=dispatched[0][0].private,
+        ),
+    )
+
+    assert committed.accepted is True
+    assert resumed.outcome == "failed"
+    assert resumed.content["error"] == "session_unavailable"
+    assert len(factory.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -644,3 +729,136 @@ async def test_failed_new_run_rolls_back_provisional_session(tmp_path: Path) -> 
 
     assert result.outcome == "failed"
     assert store.list_sessions(workspace) == ()
+
+
+@pytest.mark.asyncio
+async def test_failed_new_run_waits_for_contended_rollback_off_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    workspace = store.create_managed("alpha")
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=lambda _workspace, _home, resume, on_ready: _NeverReadyWorker(
+            resume or "missing", on_ready
+        ),
+    )
+    original = store.rollback_session_start
+    entered = threading.Event()
+    release = threading.Event()
+    observed_wait: list[bool] = []
+
+    def delayed_rollback(session_id: str, *, wait: bool = False) -> bool:
+        observed_wait.append(wait)
+        entered.set()
+        release.wait(1.0)
+        return original(session_id, wait=wait)
+
+    monkeypatch.setattr(store, "rollback_session_start", delayed_rollback)
+    ticks = 0
+    finished = False
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not finished:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    timer = threading.Timer(0.05, release.set)
+    timer.start()
+    ticker_task = asyncio.create_task(ticker())
+    try:
+        result = await adapter.dispatch("run", {"work_order": "first"}, _context(clock))
+    finally:
+        finished = True
+        await ticker_task
+        timer.cancel()
+
+    assert result.outcome == "failed"
+    assert entered.is_set()
+    assert observed_wait == [True]
+    assert ticks > 1
+    assert store.list_sessions(workspace) == ()
+
+
+@pytest.mark.asyncio
+async def test_project_registry_io_does_not_block_the_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, store = _adapter(tmp_path)
+    original = store.snapshot
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_snapshot() -> Any:
+        entered.set()
+        release.wait(1.0)
+        return original()
+
+    monkeypatch.setattr(store, "snapshot", slow_snapshot)
+    ticks = 0
+    finished = False
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not finished:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    timer = threading.Timer(0.05, release.set)
+    timer.start()
+    ticker_task = asyncio.create_task(ticker())
+    try:
+        result = await adapter.dispatch("project", {"action": "list"}, _context(VirtualClock()))
+    finally:
+        finished = True
+        await ticker_task
+        timer.cancel()
+
+    assert entered.is_set()
+    assert result.outcome == "ok"
+    assert ticks > 1
+
+
+@pytest.mark.asyncio
+async def test_late_public_view_refresh_cannot_overwrite_newer_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, store = _adapter(tmp_path)
+    store.create_managed("beta")
+    store.select_workspace("alpha")
+    original = store.public_view
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    calls = 0
+
+    def delayed_first(*, pending_confirmation: bool) -> Any:
+        nonlocal calls
+        calls += 1
+        view = original(pending_confirmation=pending_confirmation)
+        if calls == 1:
+            first_entered.set()
+            release_first.wait(1.0)
+        return view
+
+    monkeypatch.setattr(store, "public_view", delayed_first)
+    stale = asyncio.create_task(adapter._refresh_project_view())
+    while not first_entered.is_set():
+        await asyncio.sleep(0)
+    store.select_workspace("beta")
+    await adapter._refresh_project_view()
+    release_first.set()
+    await stale
+
+    view = adapter.public_project_view(pending_confirmation=False)
+    assert view.workspace_display_name == "beta"

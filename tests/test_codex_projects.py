@@ -343,6 +343,54 @@ def test_ordinary_second_store_does_not_recover_a_live_starting_session(tmp_path
     assert ready.state == "ready"
 
 
+def test_second_live_owner_cannot_recover_first_owners_starting_session(
+    tmp_path: Path,
+) -> None:
+    first = _store(tmp_path, recover_starting=True)
+    workspace = first.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    starting = first.begin_session(workspace.workspace_id, "Task 1")
+
+    with pytest.raises(ProjectStateError, match="state_busy"):
+        _store(tmp_path, recover_starting=True)
+
+    ready = first.mark_session_ready(starting.session_id, "thread-live")
+    assert ready.state == "ready"
+
+
+def test_next_live_owner_recovers_starting_after_prior_owner_closes(tmp_path: Path) -> None:
+    first = _store(tmp_path, recover_starting=True)
+    workspace = first.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    starting = first.begin_session(workspace.workspace_id, "Task 1")
+    first.close()
+
+    restarted = _store(tmp_path, recover_starting=True)
+    observed = restarted.resolve_session(workspace.workspace_id, starting.display_title)
+
+    assert observed.state == "unavailable"
+
+
+def test_registry_decode_rejects_records_beyond_configured_caps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path)
+    store.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    monkeypatch.setattr(codex_projects, "MAX_WORKSPACES", 0)
+
+    with pytest.raises(ProjectStateError, match="state_corrupt"):
+        _store(tmp_path).snapshot()
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO is POSIX-only")
+def test_registry_rejects_non_regular_state_file_without_blocking(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.state_root.mkdir(mode=0o700)
+    os.mkfifo(store.state_path, mode=0o600)
+
+    with pytest.raises(ProjectStateError, match="state_permissions"):
+        store.snapshot()
+
+
 def test_sessions_are_workspace_scoped_and_titles_receive_deterministic_suffix(
     tmp_path: Path,
 ) -> None:

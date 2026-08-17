@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -719,6 +720,128 @@ async def test_unsafe_source_or_marker_symlink_fails_closed(
     )
 
     assert (result.classification, result.code) == ("refused", "credential_missing")
+
+
+async def test_group_or_world_writable_credential_source_fails_closed(
+    tmp_path: Path,
+) -> None:
+    workspace = _directory(tmp_path, "workspace")
+    source_home = _directory(tmp_path, "source-codex")
+    source = source_home / "auth.json"
+    source.write_text('{"token":"unsafe"}')
+    source.chmod(0o666)
+    destination = tmp_path / "state" / "home"
+
+    result = await _persistent_transport(workspace, source_home, destination).run(
+        "work", on_status=lambda _value: None, on_progress=None
+    )
+
+    assert (result.classification, result.code) == ("refused", "credential_missing")
+    assert not destination.joinpath("auth.json").exists()
+
+
+async def test_credential_sync_does_not_block_the_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _directory(tmp_path, "workspace")
+    source_home = _directory(tmp_path, "source-codex")
+    source_home.joinpath("auth.json").write_text('{"token":"host"}')
+    destination = tmp_path / "state" / "home"
+    transport = _persistent_transport(workspace, source_home, destination)
+    original = transport._sync_saved_login
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_sync(home: Path) -> None:
+        entered.set()
+        release.wait(1.0)
+        original(home)
+
+    monkeypatch.setattr(transport, "_sync_saved_login", slow_sync)
+    ticks = 0
+    finished = False
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not finished:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    timer = threading.Timer(0.05, release.set)
+    timer.start()
+    ticker_task = asyncio.create_task(ticker())
+    try:
+        result = await transport.run("work", on_status=lambda _value: None, on_progress=None)
+    finally:
+        finished = True
+        await ticker_task
+        timer.cancel()
+
+    assert entered.is_set()
+    assert result.classification == "completed"
+    assert ticks > 1
+
+
+async def test_cancelled_spawn_waits_for_credential_sync_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _directory(tmp_path, "workspace")
+    source_home = _directory(tmp_path, "source-codex")
+    source_home.joinpath("auth.json").write_text('{"token":"host"}')
+    transport = _persistent_transport(
+        workspace,
+        source_home,
+        tmp_path / "state" / "home",
+    )
+    original = transport._sync_saved_login
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_sync(home: Path) -> None:
+        entered.set()
+        release.wait(1.0)
+        original(home)
+
+    monkeypatch.setattr(transport, "_sync_saved_login", slow_sync)
+    run = asyncio.create_task(
+        transport.run("work", on_status=lambda _value: None, on_progress=None)
+    )
+    while not entered.is_set():
+        await asyncio.sleep(0)
+    run.cancel()
+    await asyncio.sleep(0)
+
+    assert run.done() is False
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+
+async def test_cancelled_close_waits_for_private_home_cleanup_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport, _factory = _transport(tmp_path, _Peer(tmp_path))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_cleanup() -> None:
+        entered.set()
+        release.wait(1.0)
+
+    monkeypatch.setattr(transport, "_finish_private_home", slow_cleanup)
+    closing = asyncio.create_task(transport.aclose())
+    while not entered.is_set():
+        await asyncio.sleep(0)
+    closing.cancel()
+    await asyncio.sleep(0)
+
+    assert closing.done() is False
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
 
 
 async def test_clean_stderr_eof_does_not_abort_an_active_turn(tmp_path: Path) -> None:

@@ -373,7 +373,7 @@ def build_qwen_realtime_assembly(
         on_project_view=(
             (
                 lambda view: on_codex_project(
-                    live_adapter.store.public_view(pending_confirmation=view.pending_confirmation)
+                    live_adapter.public_project_view(pending_confirmation=view.pending_confirmation)
                 )
             )
             if isinstance(live_adapter, ProjectCodexAdapter) and on_codex_project is not None
@@ -434,15 +434,10 @@ def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
             confirmation = ProjectConfirmationController(
                 clock=context.clock,
                 id_factory=lambda: uuid4().hex,
-                on_change=(
-                    (
-                        lambda view: context.on_codex_project(
-                            store.public_view(pending_confirmation=view.pending_confirmation)
-                        )
-                    )
-                    if context.on_codex_project is not None
-                    else None
-                ),
+                # The realtime service publishes confirmation-only changes from
+                # the adapter's cached public view; never read the registry on
+                # the audio event loop.
+                on_change=None,
             )
 
             def worker_factory(

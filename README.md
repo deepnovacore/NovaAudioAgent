@@ -166,6 +166,10 @@ tool calls cannot confirm them. Each normal task creates a new persistent Sessio
 starts a new app-server process on the saved Codex thread. Workspaces have separate `CODEX_HOME`
 directories, but Codex execution intentionally remains one global task at a time. The Orb displays
 only public workspace and Session labels—never paths, thread IDs, or registry keys.
+Project mode intentionally permits only one live Orb owner for a registry. A second Orb fails
+startup with `state_busy`; after the owner exits, the next Orb recovers any interrupted `starting`
+Session before accepting work. The `workspace` CLI remains available through the short metadata
+lock and never claims live execution ownership.
 
 At startup, the configured `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` is imported if its canonical path is
 new; changing that setting registers another workspace with a deterministic suffix without

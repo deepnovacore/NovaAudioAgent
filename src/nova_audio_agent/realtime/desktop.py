@@ -831,7 +831,7 @@ async def _run_desktop(
         )
         project_adapter = getattr(assembly, "codex_live_adapter", None)
         initial_project_view = (
-            project_adapter.store.public_view(
+            project_adapter.public_project_view(
                 pending_confirmation=project_adapter.confirmation.pending
             )
             if hasattr(project_adapter, "store") and hasattr(project_adapter, "confirmation")
