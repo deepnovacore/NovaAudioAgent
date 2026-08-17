@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import re
 import signal
-import shutil
+import stat
 import tempfile
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
+from uuid import uuid4
 
 from nova_audio_agent.clock import Clock, RealClock
 from nova_audio_agent.executors.codex import (
@@ -55,6 +57,10 @@ INTERRUPT_GRACE = 2.0
 PROCESS_TREE_POLL_INTERVAL = 0.01
 FINAL_TEXT_LIMIT = 4000
 FINAL_INPUT_LIMIT = 65_536
+MAX_CREDENTIAL_BYTES = 1024 * 1024
+MAX_CREDENTIAL_MARKER_BYTES = 4096
+_CREDENTIAL_SOURCE_MARKER = ".nova-credential-source-v1.json"
+_SAVED_LOGIN_FILES = ("auth.json", ".credentials.json")
 DEFAULT_DEVELOPER_INSTRUCTIONS = (
     "First inspect any TASK_CONTRACT.md in the workspace and treat it as acceptance constraints. "
     "Work in named, verifiable increments. Incorporate same-turn user steering promptly. "
@@ -163,6 +169,13 @@ class SteerTransportResult:
         "transport_lost",
     ]
     written: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _CredentialSnapshot:
+    content: bytes
+    digest: str
+    mtime_ns: int
 
 
 class CodexAppServerTransport:
@@ -922,7 +935,7 @@ class CodexAppServerTransport:
         else:
             codex_home = self._prepare_persistent_home()
         try:
-            self._copy_saved_login(codex_home)
+            self._sync_saved_login(codex_home)
         except OSError:
             self._finish_private_home()
             raise AppServerProtocolError("credential_missing") from None
@@ -962,7 +975,7 @@ class CodexAppServerTransport:
             raise AppServerProtocolError("credential_missing") from None
         return home
 
-    def _copy_saved_login(self, destination_home: Path) -> None:
+    def _sync_saved_login(self, destination_home: Path) -> None:
         if self._api_key is not None:
             return
         source_home = Path(
@@ -970,24 +983,45 @@ class CodexAppServerTransport:
                 "CODEX_HOME",
                 str(Path(self._environ.get("HOME", str(Path.home()))) / ".codex"),
             )
-        )
-        for name in ("auth.json", ".credentials.json"):
-            destination = destination_home / name
-            if destination.exists():
-                info = destination.stat()
-                if (
-                    destination.is_symlink()
-                    or not destination.is_file()
-                    or info.st_uid != _uid()
-                    or info.st_mode & 0o777 != 0o600
-                ):
-                    raise OSError
+        ).expanduser().absolute()
+        if source_home == destination_home:
+            return
+        marker_path = destination_home / _CREDENTIAL_SOURCE_MARKER
+        marker = _read_credential_marker(marker_path)
+        marker_changed = False
+        for name in _SAVED_LOGIN_FILES:
+            source = _read_owned_file(
+                source_home / name,
+                max_bytes=MAX_CREDENTIAL_BYTES,
+                required_mode=None,
+            )
+            destination_path = destination_home / name
+            destination = _read_owned_file(
+                destination_path,
+                max_bytes=MAX_CREDENTIAL_BYTES,
+                required_mode=0o600,
+            )
+            if source is None:
                 continue
-            source = source_home / name
-            if not source.is_file() or source_home == destination_home:
-                continue
-            shutil.copyfile(source, destination)
-            destination.chmod(0o600)
+            previous_source_digest = marker.get(name)
+            replace_destination = destination is None
+            if destination is not None and previous_source_digest is None:
+                replace_destination = (
+                    destination.content != source.content
+                    and source.mtime_ns > destination.mtime_ns
+                )
+            elif destination is not None and previous_source_digest != source.digest:
+                replace_destination = True
+            if replace_destination:
+                _atomic_owner_write(destination_path, source.content)
+            if previous_source_digest != source.digest:
+                marker[name] = source.digest
+                marker_changed = True
+        if marker_changed:
+            raw = json.dumps(marker, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            if len(raw) > MAX_CREDENTIAL_MARKER_BYTES:
+                raise OSError
+            _atomic_owner_write(marker_path, raw)
 
     def _bind_thread(
         self,
@@ -1324,6 +1358,103 @@ def _bounded_thread_id(value: str | None) -> str | None:
     ):
         raise ValueError("resume_thread_id must be 1..256 printable characters")
     return normalized
+
+
+def _read_owned_file(
+    path: Path,
+    *,
+    max_bytes: int,
+    required_mode: int | None,
+) -> _CredentialSnapshot | None:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != _uid()
+            or info.st_size > max_bytes
+            or (
+                required_mode is not None
+                and stat.S_IMODE(info.st_mode) != required_mode
+            )
+        ):
+            raise OSError
+        with os.fdopen(fd, "rb", closefd=True) as stream:
+            fd = -1
+            content = stream.read(max_bytes + 1)
+        if len(content) > max_bytes:
+            raise OSError
+        return _CredentialSnapshot(
+            content=content,
+            digest=hashlib.sha256(content).hexdigest(),
+            mtime_ns=info.st_mtime_ns,
+        )
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _read_credential_marker(path: Path) -> dict[str, str]:
+    snapshot = _read_owned_file(
+        path,
+        max_bytes=MAX_CREDENTIAL_MARKER_BYTES,
+        required_mode=0o600,
+    )
+    if snapshot is None:
+        return {}
+    try:
+        value = json.loads(snapshot.content)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise OSError from None
+    if type(value) is not dict or not set(value).issubset(_SAVED_LOGIN_FILES):
+        raise OSError
+    marker: dict[str, str] = {}
+    for name, digest in value.items():
+        if (
+            type(name) is not str
+            or type(digest) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise OSError
+        marker[name] = digest
+    return marker
+
+
+def _atomic_owner_write(path: Path, content: bytes) -> None:
+    temp = path.parent / f".{path.name}.{uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd: int | None = None
+    try:
+        fd = os.open(temp, flags, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb", closefd=True) as stream:
+            fd = None
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
 
 
 def _uid() -> int:

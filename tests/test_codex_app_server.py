@@ -412,6 +412,30 @@ def _transport(tmp_path: Path, peer: _Peer) -> tuple[CodexAppServerTransport, _F
     )
 
 
+def _persistent_transport(
+    workspace: Path,
+    source_home: Path,
+    destination_home: Path,
+) -> CodexAppServerTransport:
+    peer = _Peer(workspace)
+    return CodexAppServerTransport(
+        binary="codex-cli",
+        workspace=workspace,
+        codex_home=destination_home,
+        preflight=_Preflight(),
+        process_factory=_Factory(peer),
+        environ={"PATH": "/bin", "CODEX_HOME": str(source_home)},
+        clock=VirtualClock(),
+        protocol_probe=_ProtocolProbe(),
+    )
+
+
+def _directory(parent: Path, name: str) -> Path:
+    path = parent / name
+    path.mkdir()
+    return path
+
+
 async def test_live_preflight_fails_when_the_configured_schema_is_unsupported(
     tmp_path: Path,
 ) -> None:
@@ -608,6 +632,95 @@ async def test_persistent_home_copies_saved_login_once_with_owner_only_mode(tmp_
     copied = destination / "auth.json"
     assert copied.read_text() == '{"token":"private"}'
     assert copied.stat().st_mode & 0o777 == 0o600
+
+
+async def test_persistent_home_refreshes_when_host_login_changes(tmp_path: Path) -> None:
+    workspace = _directory(tmp_path, "workspace")
+    source_home = _directory(tmp_path, "source-codex")
+    source = source_home / "auth.json"
+    source.write_text('{"token":"first"}')
+    destination = tmp_path / "state" / "home"
+
+    await _persistent_transport(workspace, source_home, destination).run(
+        "first", on_status=lambda _value: None, on_progress=None
+    )
+    source.write_text('{"token":"second"}')
+    await _persistent_transport(workspace, source_home, destination).run(
+        "second", on_status=lambda _value: None, on_progress=None
+    )
+
+    assert destination.joinpath("auth.json").read_text() == '{"token":"second"}'
+
+
+async def test_destination_only_credential_refresh_survives_unchanged_host_login(
+    tmp_path: Path,
+) -> None:
+    workspace = _directory(tmp_path, "workspace")
+    source_home = _directory(tmp_path, "source-codex")
+    source_home.joinpath("auth.json").write_text('{"token":"host"}')
+    destination = tmp_path / "state" / "home"
+
+    await _persistent_transport(workspace, source_home, destination).run(
+        "first", on_status=lambda _value: None, on_progress=None
+    )
+    destination.joinpath("auth.json").write_text('{"token":"destination-refresh"}')
+    await _persistent_transport(workspace, source_home, destination).run(
+        "second", on_status=lambda _value: None, on_progress=None
+    )
+
+    assert destination.joinpath("auth.json").read_text() == (
+        '{"token":"destination-refresh"}'
+    )
+
+
+async def test_credential_refresh_uses_owner_only_atomic_files(tmp_path: Path) -> None:
+    workspace = _directory(tmp_path, "workspace")
+    source_home = _directory(tmp_path, "source-codex")
+    source_home.joinpath("auth.json").write_text('{"token":"auth"}')
+    source_home.joinpath(".credentials.json").write_text('{"token":"credentials"}')
+    destination = tmp_path / "state" / "home"
+
+    await _persistent_transport(workspace, source_home, destination).run(
+        "first", on_status=lambda _value: None, on_progress=None
+    )
+
+    created = [
+        destination / "auth.json",
+        destination / ".credentials.json",
+        destination / codex_app_server._CREDENTIAL_SOURCE_MARKER,
+    ]
+    assert all(path.is_file() and not path.is_symlink() for path in created)
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in created)
+
+
+@pytest.mark.parametrize("unsafe", ["source", "marker"])
+async def test_unsafe_source_or_marker_symlink_fails_closed(
+    tmp_path: Path,
+    unsafe: str,
+) -> None:
+    workspace = _directory(tmp_path, "workspace")
+    source_home = _directory(tmp_path, "source-codex")
+    source = source_home / "auth.json"
+    source.write_text('{"token":"host"}')
+    destination = tmp_path / "state" / "home"
+    if unsafe == "marker":
+        await _persistent_transport(workspace, source_home, destination).run(
+            "first", on_status=lambda _value: None, on_progress=None
+        )
+        marker = destination / codex_app_server._CREDENTIAL_SOURCE_MARKER
+        marker.unlink()
+        marker.symlink_to(source)
+    else:
+        target = tmp_path / "unsafe-auth.json"
+        target.write_text('{"token":"unsafe"}')
+        source.unlink()
+        source.symlink_to(target)
+
+    result = await _persistent_transport(workspace, source_home, destination).run(
+        "second", on_status=lambda _value: None, on_progress=None
+    )
+
+    assert (result.classification, result.code) == ("refused", "credential_missing")
 
 
 async def test_clean_stderr_eof_does_not_abort_an_active_turn(tmp_path: Path) -> None:
