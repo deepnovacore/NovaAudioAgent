@@ -66,7 +66,7 @@ function fakeChild() {
     calls,
     exitCode: null,
     signalCode: null,
-    stdin: { end: () => calls.push('stdin.end') },
+    stdin: { writable: true, destroyed: false, end: () => calls.push('stdin.end') },
     kill: signal => {
       calls.push(`kill:${signal}`)
       return true
@@ -343,6 +343,52 @@ test('concurrent and repeated shutdowns share one drain sequence', async () => {
   const third = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
   assert.equal(await pending(third, 50), 'settled')
   assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+})
+
+test('an exit that fires synchronously from stdin.end never arms a stray SIGKILL', async () => {
+  const child = fakeChild()
+  const calls = child.calls
+  let emitExit
+  // Overrides the base double's stdin: end() here synchronously drives the
+  // 'exit' listener the way a test double (not a real ChildProcess) can, so
+  // finish() runs before `timer = setTimeout(...)` has been assigned.
+  child.stdin = {
+    writable: true,
+    destroyed: false,
+    end: () => {
+      calls.push('stdin.end')
+      emitExit()
+    },
+  }
+  const originalOnce = child.once.bind(child)
+  child.once = (event, listener) => {
+    if (event === 'exit') emitExit = () => listener(0, null)
+    return originalOnce(event, listener)
+  }
+
+  const drained = shutdownBackend(child, { graceMs: 30, platform: 'darwin' })
+  child.exitCode = 0
+
+  await drained
+  await new Promise(resolve => setTimeout(resolve, 60))
+
+  assert.deepEqual(calls, ['stdin.end', 'kill:SIGTERM'])
+  assert.equal(calls.includes('kill:SIGKILL'), false)
+})
+
+test('a destroyed stdin is never ended, but the kill path still runs', async () => {
+  const child = fakeChild()
+  child.stdin = {
+    writable: false,
+    destroyed: true,
+    end: () => { throw new Error('must not be called') },
+  }
+
+  const drained = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+
+  assert.deepEqual(child.calls, ['kill:SIGTERM'])
+  await drained
+  assert.deepEqual(child.calls, ['kill:SIGTERM', 'kill:SIGKILL'])
 })
 
 test('shutting down an already exited backend never waits out the grace', async () => {

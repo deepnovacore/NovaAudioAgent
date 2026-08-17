@@ -212,12 +212,18 @@ export function shutdownBackend(child, { graceMs = 3000, platform = process.plat
     }
     // Listen before signalling so an instant exit cannot be missed.
     child.once('exit', finish)
-    child.stdin?.end()
+    // A destroyed/non-writable stdin throws ERR_STREAM_DESTROYED asynchronously
+    // on end() — outside this promise, so it would surface as an uncaught
+    // exception during quit instead of failing the shutdown gracefully.
+    if (child.stdin && child.stdin.writable && !child.stdin.destroyed) child.stdin.end()
     if (platform !== 'win32') child.kill('SIGTERM')
     timer = setTimeout(() => {
       child.kill('SIGKILL')
       finish()
     }, graceMs)
+    // 'exit' can fire synchronously above (reachable with test doubles), in
+    // which case finish() already resolved before the timer existed to clear.
+    if (settled) clearTimeout(timer)
   })
   drains.set(child, drained)
   return drained
