@@ -100,7 +100,7 @@ ones; the full set (from `src/nova_audio_agent/config.py`):
 | `DOUBAO_ASR_API_KEY` (no prefix) | falls back to `DOUBAO_BIGMODEL_API_KEY` | Seed ASR API key |
 | `DOUBAO_BIGMODEL_API_KEY` (no prefix) | — | Seed TTS 2.0 API key |
 | `VOLCENGINE_ARK_BASE_URL` | Ark API v3 endpoint | HTTPS Ark endpoint |
-| `VOLCENGINE_ARK_MODEL` | `doubao-seed-2-0-pro-260215` | Tool-capable Ark model; thinking is disabled on the voice path |
+| `VOLCENGINE_ARK_MODEL` | `doubao-seed-2-0-mini-260428` | Tool-capable Ark model; thinking is disabled on the voice path |
 | `DOUBAO_ASR_ENDPOINT` | Seed ASR v3 endpoint | Secure ASR websocket endpoint |
 | `DOUBAO_ASR_RESOURCE_ID` | `volc.seedasr.sauc.duration` | ASR 2.0 resource; may be overridden with the legacy resource when required |
 | `DOUBAO_ASR_CHUNK_MS` | `200` | ASR packet duration |
@@ -142,7 +142,7 @@ DASHSCOPE_API_KEY=...
 The alternative Volcengine backend is a native cascade rather than runtime failover:
 
 ```text
-16 kHz PCM16 → Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0 → 24 kHz PCM16
+16 kHz PCM16 → Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Mini → Seed TTS 2.0 → 24 kHz PCM16
 ```
 
 Enable the Volcengine speech dependencies and configure all three services:

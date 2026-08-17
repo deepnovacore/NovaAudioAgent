@@ -103,7 +103,7 @@ class Settings(BaseSettings):
         validation_alias="DOUBAO_BIGMODEL_API_KEY",
     )
     volcengine_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
-    volcengine_ark_model: str = "doubao-seed-2-0-pro-260215"
+    volcengine_ark_model: str = "doubao-seed-2-0-mini-260428"
     doubao_asr_endpoint: str = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
     doubao_asr_resource_id: str = "volc.seedasr.sauc.duration"
     doubao_asr_chunk_ms: int = 200
