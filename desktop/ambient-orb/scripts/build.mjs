@@ -10,6 +10,7 @@ const scripts = [
   'src/main/backend.mjs',
   'src/main/security.mjs',
   'src/main/native-audio.mjs',
+  'src/main/drag-controller.mjs',
   'src/renderer/index.mjs',
   'src/renderer/audio.mjs',
   'src/renderer/state.mjs',

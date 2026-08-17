@@ -504,13 +504,19 @@ async function boot() {
 
 orb.addEventListener('pointerdown', event => {
   if (event.button !== 0) return
-  dragGesture.start(event.screenX, event.screenY)
+  // Client coordinates only ever gate the six-pixel drag threshold below;
+  // once main starts polling the cursor, the window tracks it 1:1 and the
+  // pointer stays put relative to the page, so these never drive movement.
+  dragGesture.start(event.clientX, event.clientY)
   orb.setPointerCapture(event.pointerId)
   window.novaAudioAgentDesktop.windowDrag.start()
 })
 
 orb.addEventListener('pointermove', event => {
-  const delta = dragGesture.move(event.screenX, event.screenY)
+  // A contentless tick: main derives the new window position entirely from
+  // its own screen.getCursorScreenPoint() poll, so this delta only proves
+  // the six-pixel threshold has been crossed and never reaches the drag math.
+  const delta = dragGesture.move(event.clientX, event.clientY)
   if (delta) window.novaAudioAgentDesktop.windowDrag.move(delta.dx, delta.dy)
 })
 

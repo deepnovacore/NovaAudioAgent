@@ -27,6 +27,7 @@ import {
   venvPython,
 } from './backend.mjs'
 import { loadAppWindow } from './app-protocol.mjs'
+import { createDragController } from './drag-controller.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
   clampWindowPosition,
@@ -94,6 +95,17 @@ function windowPositionFile() {
   return resolve(app.getPath('userData'), 'ambient-orb-window-position.json')
 }
 
+// The orb is a single fixed size, so "which display's work area applies"
+// depends only on where the candidate position would put its center.
+function clampToNearestWorkArea(candidate) {
+  const center = {
+    x: candidate.x + Math.floor(WINDOW_SIZE.width / 2),
+    y: candidate.y + Math.floor(WINDOW_SIZE.height / 2),
+  }
+  const workArea = screen.getDisplayNearestPoint(center).workArea
+  return clampWindowPosition(candidate, WINDOW_SIZE, workArea)
+}
+
 async function createWindow(launchId) {
   const window = new BrowserWindow(browserWindowOptions(preload, launchId))
   const positionFile = windowPositionFile()
@@ -101,12 +113,7 @@ async function createWindow(launchId) {
   const fallback = { x: primary.x + primary.width - 208, y: primary.y + 24 }
   const saved = await loadWindowPosition(positionFile)
   const candidate = saved || fallback
-  const center = {
-    x: candidate.x + Math.floor(WINDOW_SIZE.width / 2),
-    y: candidate.y + Math.floor(WINDOW_SIZE.height / 2),
-  }
-  const workArea = screen.getDisplayNearestPoint(center).workArea
-  const position = clampWindowPosition(candidate, WINDOW_SIZE, workArea)
+  const position = clampToNearestWorkArea(candidate)
   window.setPosition(position.x, position.y)
   window.setAlwaysOnTop(true, 'floating')
   configureWindowSecurity(window)
@@ -230,8 +237,15 @@ async function start() {
   await launchBackend()
   const launchId = randomBytes(8).toString('hex')
   mainWindow = await createWindow(launchId)
-  let dragActive = false
-  let dragMoved = false
+  const dragController = createDragController({
+    getCursor: () => screen.getCursorScreenPoint(),
+    getWindowPosition: () => {
+      const [x, y] = mainWindow.getPosition()
+      return { x, y }
+    },
+    setWindowPosition: position => mainWindow.setPosition(position.x, position.y),
+    clamp: clampToNearestWorkArea,
+  })
   const readBootstrap = createBootstrapAccess(bootstrap, mainWindow.webContents)
   ipcMain.on('nova:orb-menu:show', event => {
     if (mainWindow && event.sender === mainWindow.webContents) showOrbMenu(launchId)
@@ -329,31 +343,23 @@ async function start() {
   })
   ipcMain.on('nova:window-drag:start', event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
-    dragActive = true
-    dragMoved = false
+    dragController.start()
   })
   ipcMain.on('nova:window-drag:move', (event, payload) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
-    if (!dragActive || !validDragDelta(payload?.dx, payload?.dy)) return
-    const [x, y] = mainWindow.getPosition()
-    const candidate = { x: x + payload.dx, y: y + payload.dy }
-    const center = {
-      x: candidate.x + Math.floor(WINDOW_SIZE.width / 2),
-      y: candidate.y + Math.floor(WINDOW_SIZE.height / 2),
-    }
-    const workArea = screen.getDisplayNearestPoint(center).workArea
-    const position = clampWindowPosition(candidate, WINDOW_SIZE, workArea)
-    mainWindow.setPosition(position.x, position.y)
-    dragMoved = true
+    // The renderer's pointermove ticks carry a dx/dy shape purely so this
+    // stays a bounded, well-formed IPC message; actual movement is derived
+    // only from the main process's own cursor poll (dragController.tick),
+    // never from renderer-reported coordinates, which drift under mixed-DPI
+    // scaling and don't exist at all on Wayland.
+    if (!validDragDelta(payload?.dx, payload?.dy)) return
+    dragController.tick()
   })
   ipcMain.on('nova:window-drag:end', event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
-    const shouldSave = dragActive && dragMoved
-    dragActive = false
-    dragMoved = false
-    if (!shouldSave) return
-    const [x, y] = mainWindow.getPosition()
-    void saveWindowPosition(windowPositionFile(), { x, y }).catch(error => {
+    const { moved, position } = dragController.end()
+    if (!moved || !position) return
+    void saveWindowPosition(windowPositionFile(), position).catch(error => {
       console.error(`[desktop-diagnostic] window_position_save_failure type=${error.name}`)
     })
   })
