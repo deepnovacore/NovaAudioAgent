@@ -15,6 +15,7 @@ from nova_audio_agent.realtime.desktop import (
     DesktopSocketBridge,
     DesktopProtocolError,
     codex_state_message,
+    codex_project_message,
     decode_audio_frame,
     delivery_to_event,
     encode_audio_frame,
@@ -195,6 +196,17 @@ def test_codex_state_message_is_bounded_to_idle_or_running() -> None:
     }
     with pytest.raises(DesktopProtocolError, match="Codex state"):
         codex_state_message("busy")  # type: ignore[arg-type]
+
+
+def test_codex_project_message_has_closed_public_shape() -> None:
+    from nova_audio_agent.executors.codex_projects import PublicProjectView
+
+    assert json.loads(codex_project_message(PublicProjectView("alpha", "Task 1", True))) == {
+        "type": "codex.project",
+        "workspace_display_name": "alpha",
+        "session_title": "Task 1",
+        "pending_confirmation": True,
+    }
 
 
 def test_delivery_events_exclude_suppressed_speech() -> None:

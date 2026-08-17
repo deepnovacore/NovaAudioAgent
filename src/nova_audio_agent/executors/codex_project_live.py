@@ -14,6 +14,7 @@ from nova_audio_agent.executors.codex_projects import (
     CodexProjectStore,
     ProjectSessionRecord,
     ProjectStateError,
+    PublicProjectView,
     WorkspaceRecord,
 )
 from nova_audio_agent.ports import DelegateRequest, DispatchContext, ExecutorManifest, Handoff, OpSpec
@@ -122,11 +123,13 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         store: CodexProjectStore,
         confirmation: ProjectConfirmationController,
         worker_factory: ProjectWorkerFactory,
+        on_project_view: Callable[[PublicProjectView], None] | None = None,
     ) -> None:
         super().__init__(_NullWorker())
         self.store = store
         self.confirmation = confirmation
         self._worker_factory = worker_factory
+        self._on_project_view = on_project_view
         self._armed: dict[str, ConfirmedProjectOperation] = {}
 
     async def dispatch(
@@ -276,6 +279,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     ) -> Handoff:
         path = self.store.revalidate_workspace(workspace.workspace_id)
         session = resumed or self.store.begin_session(workspace.workspace_id, session_title)
+        self._publish_project_view()
         ready = resumed is not None
 
         def on_thread_ready(thread_id: str) -> None:
@@ -286,6 +290,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             else:
                 self.store.mark_session_ready(session.session_id, thread_id)
             ready = True
+            self._publish_project_view()
 
         worker = self._worker_factory(
             path,
@@ -303,6 +308,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                     self.store.mark_session_unavailable(session.session_id)
                 except ProjectStateError:
                     pass
+                self._publish_project_view()
 
     async def commit_confirmed(
         self,
@@ -330,6 +336,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                 return ProjectCommitResult(False, failure.code)
             finally:
                 self._run_lock.release()
+            self._publish_project_view()
             return ProjectCommitResult(True, "committed")
         self._armed[origin_ref] = operation
         admission = runtime_dispatch(
@@ -345,6 +352,16 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             self._armed.pop(origin_ref, None)
             return ProjectCommitResult(False, "runtime_rejected")
         return ProjectCommitResult(True, "accepted", admission.delegate_id)
+
+    def _publish_project_view(self) -> None:
+        if self._on_project_view is None:
+            return
+        try:
+            self._on_project_view(
+                self.store.public_view(pending_confirmation=self.confirmation.pending)
+            )
+        except Exception:
+            pass
 
 
 def _normalize_project_run(request: object) -> tuple[str, str | None] | None:

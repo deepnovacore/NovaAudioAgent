@@ -25,6 +25,9 @@ const axes = {
   capture: 'idle',
   playback: 'idle',
   codex: 'idle',
+  workspace: '',
+  session: '',
+  pendingConfirmation: false,
   connected: false,
   permission: 'unknown',
   error: '',
@@ -395,6 +398,12 @@ async function handleControl(message) {
     window.novaAudioAgentDesktop.memoryBoard.publish(message)
   } else if (message.type === 'codex.state') {
     axes.codex = message.state === 'running' ? 'working' : 'idle'
+  } else if (message.type === 'codex.project') {
+    axes.workspace = typeof message.workspace_display_name === 'string'
+      ? message.workspace_display_name
+      : ''
+    axes.session = typeof message.session_title === 'string' ? message.session_title : ''
+    axes.pendingConfirmation = message.pending_confirmation === true
   } else if (message.type === 'error') {
     axes.error = 'backend'
   }

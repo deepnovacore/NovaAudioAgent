@@ -14,6 +14,9 @@ const base = {
   error: '',
   shellExpanded: false,
   audioMode: 'voice_processing_io',
+  workspace: '',
+  session: '',
+  pendingConfirmation: false,
 }
 
 test('keeps capture playback codex and shell as independent axes', () => {
@@ -46,4 +49,15 @@ test('does not claim an AEC implementation before microphone activation', () => 
   })
 
   assert.equal(state.aecLabel, 'AEC 未启用')
+})
+
+test('projects only public workspace session and confirmation into the Codex label', () => {
+  const state = deriveOrbState({
+    ...base,
+    workspace: 'alpha',
+    session: 'Task 1',
+    pendingConfirmation: true,
+  })
+
+  assert.equal(state.codexLabel, '工作区 alpha · Session Task 1 · 等待确认 · Codex 空闲')
 })

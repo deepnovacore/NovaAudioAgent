@@ -23,10 +23,16 @@ export function deriveOrbState(input) {
   else if (input.playback === 'interrupted') name = 'interrupted'
   else if (input.playback === 'speaking') name = 'speaking'
   else name = 'idle'
+  const project = [
+    input.workspace ? `工作区 ${input.workspace}` : '',
+    input.session ? `Session ${input.session}` : '',
+    input.pendingConfirmation === true ? '等待确认' : '',
+  ].filter(Boolean)
+  const codexStatus = input.codex === 'working' ? 'Codex 正在后台工作' : 'Codex 空闲'
   return Object.freeze({
     name,
     label: LABELS[name],
-    codexLabel: input.codex === 'working' ? 'Codex 正在后台工作' : 'Codex 空闲',
+    codexLabel: [...project, codexStatus].join(' · '),
     aecLabel: input.audioMode === 'voice_processing_io'
       ? 'macOS 系统级 AEC'
       : input.audioMode === 'browser_aec'

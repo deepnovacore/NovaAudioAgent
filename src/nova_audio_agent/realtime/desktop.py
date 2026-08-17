@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from nova_audio_agent.events import AssistantSpoken
+from nova_audio_agent.executors.codex_projects import PublicProjectView
 from nova_audio_agent.realtime.memory_board import memory_board_message
 from nova_audio_agent.realtime.playback import (
     MAX_PLAYBACK_FRAME_BYTES,
@@ -231,6 +232,26 @@ def codex_state_message(state: CodexState) -> str:
     )
 
 
+def codex_project_message(view: PublicProjectView) -> str:
+    if type(view) is not PublicProjectView:
+        raise DesktopProtocolError("desktop Codex project view is invalid")
+    for value in (view.workspace_display_name, view.session_title):
+        if value is not None and (type(value) is not str or not value or len(value) > 120):
+            raise DesktopProtocolError("desktop Codex project view is invalid")
+    if type(view.pending_confirmation) is not bool:
+        raise DesktopProtocolError("desktop Codex project view is invalid")
+    return json.dumps(
+        {
+            "type": "codex.project",
+            "workspace_display_name": view.workspace_display_name,
+            "session_title": view.session_title,
+            "pending_confirmation": view.pending_confirmation,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 def caption_message(frame: CaptionFrame, sequence: int) -> str:
     payload = {
         "type": "caption",
@@ -255,6 +276,7 @@ class DesktopSocketBridge:
         memory_board: Callable[[str], str] | None = None,
         clock: Clock | None = None,
         telemetry: RealtimeTelemetry | None = None,
+        project_view: PublicProjectView | None = None,
     ) -> None:
         if len(token) != 32 or any(character not in string.hexdigits for character in token):
             raise ValueError("desktop token must be 128-bit hexadecimal")
@@ -264,6 +286,7 @@ class DesktopSocketBridge:
         self._outbound: asyncio.Queue[str | bytes] = asyncio.Queue(max_outbound_frames)
         self._preempt_outbound: asyncio.Queue[str] = asyncio.Queue(max_outbound_frames)
         self._codex_outbound: asyncio.Queue[CodexState] = asyncio.Queue(maxsize=1)
+        self._project_outbound: asyncio.Queue[PublicProjectView] = asyncio.Queue(maxsize=1)
         self._fenced_generation_epoch = 0
         self._caption_sequence = 0
         self._latest_assistant_caption_sequence = 0
@@ -272,6 +295,8 @@ class DesktopSocketBridge:
         self._authenticated = False
         self._codex_state: CodexState = getattr(service, "codex_state", "idle")
         self._last_codex_state_sent: CodexState | None = None
+        self._project_view = project_view
+        self._last_project_view_sent: PublicProjectView | None = None
         self._codex_send_task: asyncio.Task[Any] | None = None
         self._memory_board = memory_board
         self._clock = clock
@@ -342,6 +367,13 @@ class DesktopSocketBridge:
         self._cancel_codex_state_send()
         self._sync_codex_state_delivery()
 
+    def on_codex_project(self, view: PublicProjectView) -> None:
+        codex_project_message(view)
+        if view == self._project_view:
+            return
+        self._project_view = view
+        self._sync_project_delivery()
+
     def on_caption(self, frame: CaptionFrame) -> None:
         self._caption_sequence += 1
         if frame.role == "assistant":
@@ -358,8 +390,10 @@ class DesktopSocketBridge:
         self._claimed = False
         self._authenticated = False
         self._last_codex_state_sent = None
+        self._last_project_view_sent = None
         self._cancel_codex_state_send()
         self._clear_codex_outbound()
+        self._clear_project_outbound()
 
     async def receive(self, raw: str | bytes, *, authenticated: bool) -> bool:
         if not authenticated:
@@ -426,7 +460,12 @@ class DesktopSocketBridge:
             self._authenticated = True
             await websocket.send(codex_state_message(initial_codex_state))
             self._last_codex_state_sent = initial_codex_state
+            initial_project_view = self._project_view
+            if initial_project_view is not None:
+                await websocket.send(codex_project_message(initial_project_view))
+                self._last_project_view_sent = initial_project_view
             self._sync_codex_state_delivery()
+            self._sync_project_delivery()
             self.send_clock_pings()
             sender = asyncio.create_task(self._send_loop(websocket))
             async for raw in websocket:
@@ -446,8 +485,9 @@ class DesktopSocketBridge:
             preempt = asyncio.create_task(self._preempt_outbound.get())
             audio = asyncio.create_task(self._outbound.get())
             codex_state = asyncio.create_task(self._codex_outbound.get())
+            codex_project = asyncio.create_task(self._project_outbound.get())
             done, pending = await asyncio.wait(
-                {preempt, audio, codex_state},
+                {preempt, audio, codex_state, codex_project},
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for task in pending:
@@ -461,6 +501,12 @@ class DesktopSocketBridge:
                 state = codex_state.result()
                 if state != self._last_codex_state_sent:
                     await self._send_codex_state(websocket, state)
+            if codex_project in done:
+                view = codex_project.result()
+                if view != self._last_project_view_sent:
+                    await websocket.send(codex_project_message(view))
+                    self._last_project_view_sent = view
+                    self._sync_project_delivery()
 
     async def _send_codex_state(self, websocket: Any, state: CodexState) -> None:
         task = asyncio.create_task(websocket.send(codex_state_message(state)))
@@ -485,6 +531,19 @@ class DesktopSocketBridge:
     def _clear_codex_outbound(self) -> None:
         while not self._codex_outbound.empty():
             self._codex_outbound.get_nowait()
+
+    def _sync_project_delivery(self) -> None:
+        self._clear_project_outbound()
+        if (
+            self._authenticated
+            and self._project_view is not None
+            and self._project_view != self._last_project_view_sent
+        ):
+            self._project_outbound.put_nowait(self._project_view)
+
+    def _clear_project_outbound(self) -> None:
+        while not self._project_outbound.empty():
+            self._project_outbound.get_nowait()
 
     def _cancel_codex_state_send(self) -> None:
         if self._codex_send_task is not None and not self._codex_send_task.done():
@@ -762,10 +821,21 @@ async def _run_desktop(
             on_codex_state=lambda state: (
                 bridge.on_codex_state(state) if bridge is not None else None
             ),
+            on_codex_project=lambda view: (
+                bridge.on_codex_project(view) if bridge is not None else None
+            ),
             on_spoken=lambda _text: None,
             on_delivery=lambda completion: _post_delivery(assembly, completion),
             on_caption=lambda frame: bridge.on_caption(frame) if bridge is not None else None,
             realtime_telemetry=telemetry,
+        )
+        project_adapter = getattr(assembly, "codex_live_adapter", None)
+        initial_project_view = (
+            project_adapter.store.public_view(
+                pending_confirmation=project_adapter.confirmation.pending
+            )
+            if hasattr(project_adapter, "store") and hasattr(project_adapter, "confirmation")
+            else None
         )
         bridge = DesktopSocketBridge(
             token=token,
@@ -776,6 +846,7 @@ async def _run_desktop(
             ),
             clock=assembly.runtime.clock if telemetry is not None else None,
             telemetry=telemetry,
+            project_view=initial_project_view,
         )
         async with serve_websocket(
             bridge.handle,

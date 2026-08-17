@@ -27,7 +27,7 @@ from nova_audio_agent.executors.codex import CodexAdapter
 from nova_audio_agent.executors.codex_app_server import CodexAppServerTransport
 from nova_audio_agent.executors.codex_live import CodexLiveAdapter
 from nova_audio_agent.executors.codex_project_live import ProjectCodexAdapter
-from nova_audio_agent.executors.codex_projects import CodexProjectStore
+from nova_audio_agent.executors.codex_projects import CodexProjectStore, PublicProjectView
 from nova_audio_agent.executors.codex_transport import CodexTransport
 from nova_audio_agent.executors.home_assistant import (
     HomeAssistantAdapter,
@@ -244,6 +244,7 @@ def build_qwen_realtime_assembly(
     on_codex_state: Callable[[CodexState], None] | None = None,
     on_spoken: Callable[[str], None] | None = None,
     on_caption: Callable[[CaptionFrame], None] | None = None,
+    on_codex_project: Callable[[PublicProjectView], None] | None = None,
     realtime_telemetry: RealtimeTelemetry | None = None,
     id_factory: Callable[[], str] | None = None,
     camera_source: CameraSourceName = "auto",
@@ -293,6 +294,7 @@ def build_qwen_realtime_assembly(
         model_api_key_override=configured_model_key or realtime_api_key,
         on_suggestion_selected=relay_suggestion,
         on_attention_decision=relay_attention,
+        on_codex_project=on_codex_project,
     )
     provider_tools = core.tools if provider_tool_view is None else provider_tool_view(core.tools)
     if provider_tools.bindings is not core.tools.bindings:
@@ -364,6 +366,18 @@ def build_qwen_realtime_assembly(
             if isinstance(live_adapter, ProjectCodexAdapter)
             else None
         ),
+        on_project_view=(
+            (
+                lambda view: on_codex_project(
+                    live_adapter.store.public_view(
+                        pending_confirmation=view.pending_confirmation
+                    )
+                )
+            )
+            if isinstance(live_adapter, ProjectCodexAdapter)
+            and on_codex_project is not None
+            else None
+        ),
     )
     suggestion_outlet = service.on_suggestion_selected
     attention_outlet = service.on_attention_decision
@@ -383,6 +397,7 @@ class _ExecutorBuildContext:
     media_store: MediaStore
     codex_live: bool
     clock: RealClock
+    on_codex_project: Callable[[PublicProjectView], None] | None
 
 
 def _build_fast_sim(context: _ExecutorBuildContext) -> ExecutorAdapter:
@@ -413,6 +428,17 @@ def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
             confirmation = ProjectConfirmationController(
                 clock=context.clock,
                 id_factory=lambda: uuid4().hex,
+                on_change=(
+                    (
+                        lambda view: context.on_codex_project(
+                            store.public_view(
+                                pending_confirmation=view.pending_confirmation
+                            )
+                        )
+                    )
+                    if context.on_codex_project is not None
+                    else None
+                ),
             )
 
             def worker_factory(
@@ -434,6 +460,7 @@ def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
                 store=store,
                 confirmation=confirmation,
                 worker_factory=worker_factory,
+                on_project_view=context.on_codex_project,
             )
         return CodexLiveAdapter(
             CodexAppServerTransport(
@@ -510,6 +537,7 @@ def _build_assembly(
     on_suggestion_selected: Callable[[Suggestion, WakeReason], None] | None,
     on_attention_decision: Callable[[AttentionDecision], None] | None,
     camera_file: Path | None = None,
+    on_codex_project: Callable[[PublicProjectView], None] | None = None,
 ) -> Assembly:
     active_names, expected_active = _active_executor_names(settings)
     model_api_key = model_api_key_override or settings.require_api_key()
@@ -521,6 +549,7 @@ def _build_assembly(
         media_store=media_store,
         codex_live=codex_live,
         clock=clock,
+        on_codex_project=on_codex_project,
     )
     active_adapters = tuple(_EXECUTOR_FACTORIES[name](context) for name in active_names)
     search = SearchAdapter(TavilyTransport(tavily_api_key))
