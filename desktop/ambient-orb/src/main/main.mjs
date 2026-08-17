@@ -19,7 +19,7 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { backendLaunchSpec, readReadiness } from './backend.mjs'
+import { backendLaunchSpec, createReadinessListener } from './backend.mjs'
 import { loadAppWindow } from './app-protocol.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
@@ -154,29 +154,42 @@ function createTray() {
 async function launchBackend() {
   const token = randomBytes(16).toString('hex')
   const workspace = process.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || process.cwd()
-  const spec = backendLaunchSpec({
-    python: pythonExecutable(),
-    workspace,
+  // The listener owns the handshake, so it must be bound before the backend can
+  // dial it; the readiness timeout still kills a backend that never arrives.
+  const listener = createReadinessListener({
     token,
-    parentEnv: process.env,
-  })
-  backend = spawn(spec.command, spec.argv, {
-    cwd: workspace,
-    env: spec.env,
-    stdio: spec.stdio,
-  })
-  backend.stderr.on('data', chunk => {
-    console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
-  })
-  backend.stdout.on('data', chunk => {
-    console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
-  })
-  backend.once('exit', () => {
-    if (!app.isQuitting) mainWindow?.webContents.send('nova:backend-exit')
-  })
-  const ready = await readReadiness(backend.stdio[3], {
     onTimeout: () => backend?.kill('SIGTERM'),
   })
+  let ready
+  try {
+    const spec = backendLaunchSpec({
+      python: pythonExecutable(),
+      workspace,
+      token,
+      readyEndpoint: await listener.endpoint,
+      parentEnv: process.env,
+    })
+    backend = spawn(spec.command, spec.argv, {
+      cwd: workspace,
+      env: spec.env,
+      stdio: spec.stdio,
+    })
+    backend.stderr.on('data', chunk => {
+      console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
+    })
+    backend.stdout.on('data', chunk => {
+      console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
+    })
+    backend.once('exit', () => {
+      // A backend that died before dialing back never will, so fail the
+      // handshake now instead of waiting out the timeout. No-op once ready.
+      listener.close(new Error('desktop backend exited before readiness'))
+      if (!app.isQuitting) mainWindow?.webContents.send('nova:backend-exit')
+    })
+    ready = await listener.readiness
+  } finally {
+    listener.close()
+  }
   const validated = validateBootstrap({ endpoint: ready.endpoint, token })
   nativeBinary = app.isPackaged
     ? resolve(process.resourcesPath, 'native/macos_voice_io')
