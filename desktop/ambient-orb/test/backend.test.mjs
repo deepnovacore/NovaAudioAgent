@@ -146,6 +146,35 @@ test('readiness listener resolves the first authenticated loopback payload', asy
   listener.close()
 })
 
+test('readiness listener assembles a line split across multiple data events', async () => {
+  // A short timeout so a regression here fails fast instead of stalling on
+  // the default 15s readiness timeout.
+  const listener = createReadinessListener({ token: TOKEN, timeoutMs: 1000 })
+  const endpoint = await listener.endpoint
+  const [host, rawPort] = endpoint.split(':')
+
+  const line = readinessLine({ port: 51525 })
+  const mid = Math.floor(line.length / 2)
+  const first = line.slice(0, mid)
+  const second = line.slice(mid)
+
+  const socket = net.connect({ host, port: Number(rawPort) })
+  await once(socket, 'connect')
+  socket.write(first)
+  // A real delay (not just a microtask/setImmediate tick) so the kernel
+  // actually flushes the first write as its own TCP segment instead of
+  // coalescing it with the second write into a single 'data' event.
+  await new Promise(resolve => setTimeout(resolve, 20))
+  socket.end(second)
+
+  assert.deepEqual(await listener.readiness, {
+    host: '127.0.0.1',
+    port: 51525,
+    endpoint: 'ws://127.0.0.1:51525/',
+  })
+  listener.close()
+})
+
 test('readiness listener keeps waiting after a forged token', async () => {
   const listener = createReadinessListener({ token: TOKEN })
   const endpoint = await listener.endpoint
