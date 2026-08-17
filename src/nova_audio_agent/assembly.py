@@ -26,6 +26,8 @@ from nova_audio_agent.executors.camera import (
 from nova_audio_agent.executors.codex import CodexAdapter
 from nova_audio_agent.executors.codex_app_server import CodexAppServerTransport
 from nova_audio_agent.executors.codex_live import CodexLiveAdapter
+from nova_audio_agent.executors.codex_project_live import ProjectCodexAdapter
+from nova_audio_agent.executors.codex_projects import CodexProjectStore
 from nova_audio_agent.executors.codex_transport import CodexTransport
 from nova_audio_agent.executors.home_assistant import (
     HomeAssistantAdapter,
@@ -42,6 +44,7 @@ from nova_audio_agent.model_gateway import MetricsSink, OpenAIModelGateway
 from nova_audio_agent.ports import ExecutorAdapter
 from nova_audio_agent.prompting import FASTBRAIN_LIVE_SYSTEM
 from nova_audio_agent.runtime import Runtime
+from nova_audio_agent.realtime.project_confirmation import ProjectConfirmationController
 from nova_audio_agent.speech import SpeechSink
 from nova_audio_agent.suggestions import Suggestion
 from nova_audio_agent.tool_schema import CompiledTools, compile_tool_schema
@@ -345,6 +348,22 @@ def build_qwen_realtime_assembly(
         controlled_guard_reconnect=settings.qwen_controlled_guard_reconnect,
         guard_history_recovery=settings.qwen_guard_history_recovery,
         guard_history_pairs=settings.qwen_guard_history_pairs,
+        project_confirmation=(
+            live_adapter.confirmation
+            if isinstance(live_adapter := core.runtime.executors.get("codex"), ProjectCodexAdapter)
+            else None
+        ),
+        commit_project_operation=(
+            (
+                lambda operation, origin_ref: live_adapter.commit_confirmed(
+                    operation,
+                    origin_ref=origin_ref,
+                    runtime_dispatch=core.runtime.dispatch_external,
+                )
+            )
+            if isinstance(live_adapter, ProjectCodexAdapter)
+            else None
+        ),
     )
     suggestion_outlet = service.on_suggestion_selected
     attention_outlet = service.on_attention_decision
@@ -354,7 +373,7 @@ def build_qwen_realtime_assembly(
         provider=provider,
         service=service,
         codex_live_adapter=(live_adapter if isinstance(live_adapter, CodexLiveAdapter) else None),
-        codex_prewarm=settings.codex_prewarm,
+        codex_prewarm=settings.codex_prewarm and not isinstance(live_adapter, ProjectCodexAdapter),
     )
 
 
@@ -363,6 +382,7 @@ class _ExecutorBuildContext:
     settings: Settings
     media_store: MediaStore
     codex_live: bool
+    clock: RealClock
 
 
 def _build_fast_sim(context: _ExecutorBuildContext) -> ExecutorAdapter:
@@ -386,6 +406,35 @@ def _build_home_assistant(context: _ExecutorBuildContext) -> ExecutorAdapter:
 def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
     workspace, binary, codex_api_key = context.settings.require_codex()
     if context.codex_live:
+        if context.settings.codex_projects_enabled:
+            managed_root, state_root = context.settings.require_codex_projects()
+            store = CodexProjectStore(state_root, managed_root)
+            store.ensure_imported(workspace.name or "workspace", workspace)
+            confirmation = ProjectConfirmationController(
+                clock=context.clock,
+                id_factory=lambda: uuid4().hex,
+            )
+
+            def worker_factory(
+                selected_workspace: Path,
+                codex_home: Path,
+                resume_thread_id: str | None,
+                on_thread_ready: Callable[[str], None],
+            ) -> CodexAppServerTransport:
+                return CodexAppServerTransport(
+                    binary=binary,
+                    workspace=selected_workspace,
+                    api_key=codex_api_key,
+                    codex_home=codex_home,
+                    resume_thread_id=resume_thread_id,
+                    on_thread_ready=on_thread_ready,
+                )
+
+            return ProjectCodexAdapter(
+                store=store,
+                confirmation=confirmation,
+                worker_factory=worker_factory,
+            )
         return CodexLiveAdapter(
             CodexAppServerTransport(
                 binary=binary,
@@ -471,6 +520,7 @@ def _build_assembly(
         settings=settings,
         media_store=media_store,
         codex_live=codex_live,
+        clock=clock,
     )
     active_adapters = tuple(_EXECUTOR_FACTORIES[name](context) for name in active_names)
     search = SearchAdapter(TavilyTransport(tavily_api_key))

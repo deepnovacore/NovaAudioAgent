@@ -20,13 +20,46 @@ from nova_audio_agent.assembly import (
 )
 from nova_audio_agent.config import ConfigurationError, Settings
 from nova_audio_agent.executors.camera import CameraError
+from nova_audio_agent.executors.codex_projects import CodexProjectStore, ProjectStateError
 from nova_audio_agent.model_gateway import GatewayError
 from nova_audio_agent.speech import CliSpeechSink
 from nova_audio_agent.uploads import UploadError, build_user_input
 
 app = typer.Typer(help="Nova Audio Agent interactive harness")
 demo_app = typer.Typer(help="Run deterministic acceptance scenarios")
+workspace_app = typer.Typer(help="Manage trusted local Codex workspaces")
 app.add_typer(demo_app, name="demo")
+app.add_typer(workspace_app, name="workspace")
+
+
+def _project_store() -> CodexProjectStore:
+    managed_root, state_root = Settings().require_codex_projects()
+    return CodexProjectStore(state_root, managed_root)
+
+
+@workspace_app.command("list")
+def workspace_list_command() -> None:
+    """List registered workspace display names without local paths."""
+    try:
+        store = _project_store()
+        snapshot = store.snapshot()
+    except (ConfigurationError, ProjectStateError) as exc:
+        typer.echo(f"错误：{getattr(exc, 'code', str(exc))}", err=True)
+        raise typer.Exit(1) from exc
+    for workspace in snapshot.workspaces:
+        marker = "*" if workspace.workspace_id == snapshot.active_workspace_id else "-"
+        typer.echo(f"{marker} {workspace.display_name}")
+
+
+@workspace_app.command("register")
+def workspace_register_command(display_name: str, path: Path) -> None:
+    """Register one existing trusted local directory by exact display name."""
+    try:
+        workspace = _project_store().register_workspace(display_name, path)
+    except (ConfigurationError, ProjectStateError) as exc:
+        typer.echo(f"错误：{getattr(exc, 'code', str(exc))}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"已注册：{workspace.display_name}")
 
 
 def _write_stream(text: str) -> None:

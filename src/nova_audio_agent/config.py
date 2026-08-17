@@ -15,6 +15,19 @@ class ConfigurationError(RuntimeError):
     """A safe startup error that never contains credential values."""
 
 
+def _safe_project_root(value: Path, variable: str) -> Path:
+    try:
+        expanded = value.expanduser().absolute()
+        if expanded.is_symlink() or (expanded.exists() and not expanded.is_dir()):
+            raise OSError
+        resolved = expanded.resolve(strict=False)
+        if expanded.exists() and resolved != expanded:
+            raise OSError
+    except (OSError, RuntimeError):
+        raise ConfigurationError(f"{variable} 必须是安全的目录") from None
+    return resolved
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="NOVA_AUDIO_AGENT_",
@@ -49,6 +62,9 @@ class Settings(BaseSettings):
     codex_bin: str = "codex"
     codex_api_key: SecretStr | None = None
     codex_prewarm: bool = True
+    codex_projects_enabled: bool = False
+    codex_managed_root: Path = Path("~/NovaWorkspaces")
+    codex_project_state_root: Path = Path("~/.nova-audio-agent")
     autoglm_repo: Path | None = Path("thirdparty/Open-AutoGLM")
     autoglm_python: str = ".autoglm-venv/bin/python"
     autoglm_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
@@ -133,6 +149,18 @@ class Settings(BaseSettings):
             str(self.codex_api_key.get_secret_value()) if self.codex_api_key is not None else None
         )
         return resolved, binary, api_key or None
+
+    def require_codex_projects(self) -> tuple[Path, Path]:
+        return (
+            _safe_project_root(
+                self.codex_managed_root,
+                "NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT",
+            ),
+            _safe_project_root(
+                self.codex_project_state_root,
+                "NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT",
+            ),
+        )
 
     def require_autoglm(
         self,

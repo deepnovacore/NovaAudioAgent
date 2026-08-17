@@ -66,6 +66,44 @@ def test_settings_have_stage_c_defaults(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.require_tavily_api_key() == "tavily-secret"
 
 
+def test_project_settings_read_prefixed_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED", "true")
+    monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT", str(tmp_path / "managed"))
+    monkeypatch.setenv(
+        "NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT", str(tmp_path / "state")
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.codex_projects_enabled is True
+    assert settings.require_codex_projects() == (
+        (tmp_path / "managed").resolve(),
+        (tmp_path / "state").resolve(),
+    )
+
+
+def test_workspace_register_and_list_hide_local_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    managed = tmp_path / "managed"
+    state = tmp_path / "state"
+    workspace = tmp_path / "private" / "repo"
+    workspace.mkdir(parents=True)
+    monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT", str(managed))
+    monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT", str(state))
+    runner = CliRunner()
+
+    registered = runner.invoke(app, ["workspace", "register", "alpha", str(workspace)])
+    listed = runner.invoke(app, ["workspace", "list"])
+
+    assert registered.exit_code == 0
+    assert listed.exit_code == 0
+    assert "alpha" in listed.stdout
+    assert str(tmp_path) not in registered.stdout + listed.stdout
+
+
 @pytest.mark.real_time
 def test_chat_exits_after_one_sigint_without_waiting_for_more_stdin() -> None:
     env = os.environ.copy()
