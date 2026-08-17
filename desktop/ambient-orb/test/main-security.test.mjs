@@ -71,6 +71,33 @@ test('quitting drains the backend on the stdin sentinel instead of killing it', 
   assert.doesNotMatch(source, /backend\??\.kill\(/)
 })
 
+test('a backend that fails to spawn is handled rather than thrown at the main process', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  const spawnSite = source.indexOf('backend = spawn(')
+  const watchSite = source.indexOf('watchBackendExit(backend')
+  assert.ok(spawnSite >= 0, 'the backend is still spawned here')
+  assert.ok(watchSite > spawnSite, "the death hooks must be registered right after spawn")
+  // ENOENT emits 'error' *instead of* 'exit', so an exit-only hook is the bug:
+  // both paths go through the one helper.
+  assert.doesNotMatch(source, /backend\.once\('exit'/)
+  assert.doesNotMatch(source, /backend\.on\('error'/)
+})
+
+test('a backend that died before the window exists replays its exit to the new renderer', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /let backendExited = false/)
+  assert.match(source, /backendExited = true/)
+  // The replay must wait for a renderer to exist and finish loading, or the
+  // notification lands on a webContents with nobody listening yet.
+  const load = source.slice(source.indexOf('loadAppWindow(mainWindow'))
+  assert.match(
+    load.slice(0, 600),
+    /if \(backendExited\) mainWindow\?\.webContents\.send\('nova:backend-exit'\)/,
+  )
+})
+
 test('native VoiceProcessingIO starts only after explicit capture activation', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 

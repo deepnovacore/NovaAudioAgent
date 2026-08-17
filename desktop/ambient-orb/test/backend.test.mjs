@@ -5,12 +5,15 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 
 import {
+  BACKEND_DRAIN_GRACE_MS,
+  READINESS_SOCKET_AUTH_TIMEOUT_MS,
   backendLaunchSpec,
   createReadinessListener,
   fallbackPython,
   parseReadiness,
   shutdownBackend,
   venvPython,
+  watchBackendExit,
 } from '../src/main/backend.mjs'
 
 const TOKEN = 'b'.repeat(32)
@@ -298,6 +301,119 @@ test('readiness listener rejects an invalid token or timeout up front', () => {
   assert.throws(() => createReadinessListener({ token: 'nope' }), /token/)
   assert.throws(() => createReadinessListener({ token: TOKEN, timeoutMs: 0 }), /timeout/)
   assert.throws(() => createReadinessListener({ token: TOKEN, timeoutMs: Number.NaN }), /timeout/)
+  assert.throws(
+    () => createReadinessListener({ token: TOKEN, socketAuthTimeoutMs: 0 }),
+    /socket/,
+  )
+})
+
+test('an unauthenticated socket is dropped on its own deadline, not the global timeout', async () => {
+  // The two deadlines are deliberately far apart: only the per-socket one can
+  // close a silent client here, and the listener must outlive it and keep waiting.
+  const listener = createReadinessListener({
+    token: TOKEN,
+    timeoutMs: 5000,
+    socketAuthTimeoutMs: 40,
+  })
+  const endpoint = await listener.endpoint
+
+  const silent = await dialOpen(endpoint, '')
+  assert.notEqual(silent.open, true, 'a silent client must be destroyed on its own deadline')
+  assert.equal(await pending(listener.readiness), 'pending')
+
+  await dial(endpoint, readinessLine({ port: 51522 }))
+  assert.equal((await listener.readiness).port, 51522)
+  listener.close()
+})
+
+test('the per-socket authentication deadline is three seconds by default', () => {
+  assert.equal(READINESS_SOCKET_AUTH_TIMEOUT_MS, 3000)
+})
+
+test('a backend that never spawns fails the handshake instead of crashing the process', async () => {
+  const child = fakeChild()
+  const listener = createReadinessListener({ token: TOKEN, timeoutMs: 5000 })
+  await listener.endpoint
+  const notified = []
+
+  watchBackendExit(child, {
+    closeReadiness: listener.close,
+    onExit: reason => notified.push(reason),
+  })
+  // A missing interpreter is reported as 'error' and never reaches 'exit', so an
+  // exit-only hook would leave the handshake waiting out its whole timeout — and
+  // an unlistened 'error' is thrown into the main process instead.
+  child.emit('error', Object.assign(new Error('spawn python3 ENOENT'), { code: 'ENOENT' }))
+
+  await assert.rejects(listener.readiness, /ENOENT/)
+  assert.deepEqual(notified.length, 1)
+  assert.match(notified[0], /ENOENT/)
+})
+
+test('a backend that exits before readiness fails the handshake exactly once', async () => {
+  const child = fakeChild()
+  const listener = createReadinessListener({ token: TOKEN, timeoutMs: 5000 })
+  await listener.endpoint
+  const notified = []
+
+  watchBackendExit(child, {
+    closeReadiness: listener.close,
+    onExit: reason => notified.push(reason),
+  })
+  child.emit('exit', 1, null)
+  // Node may follow an 'exit' with an 'error'; the death is still one death.
+  child.emit('error', new Error('too late'))
+
+  await assert.rejects(listener.readiness, /exited before readiness/)
+  assert.equal(notified.length, 1)
+})
+
+test('a backend that dies after the handshake notifies without disturbing the result', async () => {
+  const child = fakeChild()
+  const listener = createReadinessListener({ token: TOKEN, timeoutMs: 5000 })
+  const endpoint = await listener.endpoint
+  const notified = []
+
+  watchBackendExit(child, {
+    closeReadiness: listener.close,
+    onExit: reason => notified.push(reason),
+  })
+  await dial(endpoint, readinessLine({ port: 51523 }))
+  assert.equal((await listener.readiness).port, 51523)
+
+  child.emit('exit', 0, null)
+
+  assert.equal(notified.length, 1)
+  assert.equal((await listener.readiness).port, 51523)
+})
+
+test('the default drain grace outlasts the backend cleanup it is waiting on', async () => {
+  // The Python side spends up to EXIT_GRACE (5s) plus INTERRUPT_GRACE (2s) tearing
+  // its executor down after stdin EOF; a shorter outer grace would SIGKILL it
+  // mid-cleanup and orphan the codex tree it was still reaping.
+  assert.equal(BACKEND_DRAIN_GRACE_MS, 8000)
+
+  const child = fakeChild()
+  const armed = []
+  const realSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (callback, ms) => {
+    armed.push(ms)
+    return realSetTimeout(callback, ms)
+  }
+  let drained
+  try {
+    drained = shutdownBackend(child, { platform: 'darwin' })
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+  }
+
+  assert.deepEqual(armed, [BACKEND_DRAIN_GRACE_MS])
+  // The longer grace is a ceiling, not a wait: an ordinary quit still resolves
+  // the moment the child is actually gone.
+  child.exitCode = 0
+  child.emit('exit', 0, null)
+  assert.equal(await pending(drained, 50), 'settled')
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM'])
 })
 
 test('shutdown ends stdin first, then signals, and escalates only after the grace', async () => {

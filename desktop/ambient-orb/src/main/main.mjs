@@ -25,6 +25,7 @@ import {
   fallbackPython,
   shutdownBackend,
   venvPython,
+  watchBackendExit,
 } from './backend.mjs'
 import { loadAppWindow } from './app-protocol.mjs'
 import { createDragController } from './drag-controller.mjs'
@@ -79,6 +80,10 @@ let bootstrap = null
 let nativeAudio = null
 let nativeBinary = null
 let quitDrain = null
+// Sticky: the backend can die in the window between its handshake and the orb's
+// first paint, when there is no renderer to tell. The flag is what lets that
+// notification be replayed instead of lost.
+let backendExited = false
 const pendingBoardRequests = new Map()
 
 function pythonExecutable() {
@@ -219,11 +224,18 @@ async function launchBackend() {
     backend.stdout.on('data', chunk => {
       console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
     })
-    backend.once('exit', () => {
-      // A backend that died before dialing back never will, so fail the
-      // handshake now instead of waiting out the timeout. No-op once ready.
-      listener.close(new Error('desktop backend exited before readiness'))
-      if (!app.isQuitting) mainWindow?.webContents.send('nova:backend-exit')
+    // Covers both deaths: the child that exits, and the child that never started
+    // at all (a missing interpreter emits 'error' and no 'exit' — unlistened, it
+    // would be thrown into this process). Either way the handshake is failed now
+    // instead of waiting out the timeout, and `launchBackend` rejects, which the
+    // whenReady().catch() below turns into a quit exactly as a timeout does.
+    watchBackendExit(backend, {
+      closeReadiness: listener.close,
+      onExit: reason => {
+        backendExited = true
+        console.error(`[backend-diagnostic] ${reason}`)
+        if (!app.isQuitting) mainWindow?.webContents.send('nova:backend-exit')
+      },
     })
     ready = await listener.readiness
   } finally {
@@ -391,6 +403,12 @@ async function start() {
   void loadAppWindow(mainWindow, {
     rendererRoot,
     fetchFile: file => net.fetch(pathToFileURL(file).href),
+  }).then(() => {
+    // A backend that died between its handshake and this window found no
+    // renderer to notify, and the orb would otherwise sit there pointing at an
+    // endpoint nobody is listening on. Replay once the renderer has loaded and
+    // its listener is bound, not merely once the window object exists.
+    if (backendExited) mainWindow?.webContents.send('nova:backend-exit')
   }).catch(() => {
     console.error('Ambient Orb renderer failed to load')
     app.quit()

@@ -8,6 +8,28 @@ const READY_ENDPOINT_PATTERN = /^127\.0\.0\.1:([0-9]{1,5})$/
 const NEWLINE = 0x0a
 
 /**
+ * How long one connection may hold a file descriptor without authenticating.
+ *
+ * The readiness handshake is a single line the backend sends the instant it connects, so
+ * three seconds is orders of magnitude more than the real client needs. Without a
+ * per-socket bound, a client that connects and says nothing keeps its descriptor for the
+ * whole global readiness timeout, and enough of them exhaust the table before the real
+ * backend ever gets to dial.
+ */
+export const READINESS_SOCKET_AUTH_TIMEOUT_MS = 3000
+
+/**
+ * How long the backend gets to drain after the stdin-EOF sentinel before it is force killed.
+ *
+ * This has to outlast the teardown it is waiting on, not merely feel generous. The Python
+ * side answers EOF with `assembly.stop()`, which runs the codex app-server shutdown:
+ * INTERRUPT_GRACE (2s) for the in-flight turn plus EXIT_GRACE (5s) for the process tree to
+ * go. Anything shorter SIGKILLs the backend *during* its own cleanup and orphans exactly the
+ * codex tree it was reaping. 5 + 2 + 1s of margin.
+ */
+export const BACKEND_DRAIN_GRACE_MS = 8000
+
+/**
  * Resolve the interpreter inside a virtualenv rooted at `venvDir`, per platform.
  *
  * `platform` is an explicit parameter (not read from `process.platform` inside
@@ -104,11 +126,15 @@ export function parseReadiness(raw, token) {
 export function createReadinessListener({
   token,
   timeoutMs = 15_000,
+  socketAuthTimeoutMs = READINESS_SOCKET_AUTH_TIMEOUT_MS,
   onTimeout = () => {},
 } = {}) {
   if (!TOKEN_PATTERN.test(token)) throw new Error('128-bit token is required')
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error('desktop readiness timeout is invalid')
+  }
+  if (!Number.isFinite(socketAuthTimeoutMs) || socketAuthTimeoutMs <= 0) {
+    throw new Error('desktop readiness socket timeout is invalid')
   }
 
   const sockets = new Set()
@@ -159,8 +185,16 @@ export function createReadinessListener({
   server.on('connection', socket => {
     sockets.add(socket)
     let buffer = Buffer.alloc(0)
+    // Its own deadline, independent of the global one: an unauthenticated socket
+    // is a held descriptor, and the real backend authenticates immediately. No
+    // unref needed — the listener is closed on settle, which destroys the socket
+    // and clears this through the 'close' handler below.
+    const authDeadline = setTimeout(() => socket.destroy(), socketAuthTimeoutMs)
     socket.on('error', () => socket.destroy())
-    socket.on('close', () => sockets.delete(socket))
+    socket.on('close', () => {
+      clearTimeout(authDeadline)
+      sockets.delete(socket)
+    })
     socket.on('data', chunk => {
       buffer = Buffer.concat([buffer, chunk])
       const newline = buffer.indexOf(NEWLINE)
@@ -195,6 +229,34 @@ export function createReadinessListener({
   }
 }
 
+/**
+ * Route both ways a spawned backend can die onto one handler, and fail the handshake now.
+ *
+ * A child that ran and stopped emits 'exit'. A child that never ran at all — a missing or
+ * unusable interpreter, i.e. ENOENT — emits 'error' *instead of* 'exit', and Node throws an
+ * unlistened ChildProcess 'error' into the process, so an exit-only hook does not merely
+ * miss the failure: it takes the Electron main process down with it.
+ *
+ * Either death means the backend will never dial back, so the pending handshake is closed
+ * with the reason rather than left to sit out its full timeout. Closing after the handshake
+ * already succeeded is a no-op, so `onExit` is also the live-backend death notification.
+ * Fires `onExit` exactly once: Node is free to follow an 'error' with an 'exit', and one
+ * death is one notification.
+ */
+export function watchBackendExit(child, { closeReadiness, onExit }) {
+  let dead = false
+  const die = reason => {
+    if (dead) return
+    dead = true
+    closeReadiness(new Error(reason))
+    onExit(reason)
+  }
+  child.once('error', error => die(
+    `desktop backend failed to spawn: ${error?.code || error?.message || 'unknown'}`,
+  ))
+  child.once('exit', () => die('desktop backend exited before readiness'))
+}
+
 // One drain per child, so a quit that re-enters (or a readiness timeout racing
 // the quit) joins the sequence already in flight instead of starting a new one.
 const drains = new WeakMap()
@@ -209,10 +271,16 @@ const drains = new WeakMap()
  * TerminateProcess — precisely the abrupt teardown the sentinel replaces. A
  * backend that has not exited within the grace window is killed outright.
  *
+ * The grace is a ceiling, not a wait: the race resolves on the child's actual
+ * exit, so an ordinary quit is as fast as the backend is.
+ *
  * Resolves once the child is gone or has been force killed; never rejects, so a
  * `before-quit` handler can always reach `app.exit(0)`.
  */
-export function shutdownBackend(child, { graceMs = 3000, platform = process.platform } = {}) {
+export function shutdownBackend(
+  child,
+  { graceMs = BACKEND_DRAIN_GRACE_MS, platform = process.platform } = {},
+) {
   const started = drains.get(child)
   if (started) return started
   const drained = new Promise(resolve => {
