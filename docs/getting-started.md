@@ -147,13 +147,18 @@ optional device ID. Nova Audio Agent invokes the submodule through a bounded wor
 
 ## Ambient Orb
 
-```bash
-./scripts/start_ambient_orb_macos.sh
-```
+| Platform | Launcher | Notes |
+|---|---|---|
+| macOS | `./scripts/start_ambient_orb_macos.sh` | Shim that execs `start_ambient_orb.sh`; also builds the native VoiceProcessingIO helper |
+| Linux | `./scripts/start_ambient_orb.sh` | Same shared script as macOS; a Wayland session runs the Electron app through XWayland |
+| Windows | `.\scripts\start_ambient_orb.ps1` | PowerShell mirror of the shared script; the AutoGLM executor is unsupported on Windows in v1 |
 
-The launcher builds the native VoiceProcessingIO helper and Electron application, then starts the
-local Python backend. The desktop UI uses a sandboxed preload bridge and does not expose Node.js to
-renderer pages.
+All three launchers apply the same checks and contract: npm and the Codex CLI on `PATH`, a
+`.env` file at the repository root, a Python interpreter that can `import nova_audio_agent`
+(`NOVA_AUDIO_AGENT_PYTHON` env override, then an active conda environment, then the repository
+`.venv`, then `conda run`), and the same three exported variables
+(`NOVA_AUDIO_AGENT_PYTHON`/`_CODEX_WORKSPACE`/`_ENV_FILE`) before starting the desktop app. The
+desktop UI uses a sandboxed preload bridge and does not expose Node.js to renderer pages.
 
 ## Verification
 

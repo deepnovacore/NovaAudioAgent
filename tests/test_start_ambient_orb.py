@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 
-SOURCE = Path(__file__).parents[1] / "scripts" / "start_ambient_orb_macos.sh"
+SOURCE = Path(__file__).parents[1] / "scripts" / "start_ambient_orb.sh"
+PS1_SOURCE = Path(__file__).parents[1] / "scripts" / "start_ambient_orb.ps1"
 pytestmark = pytest.mark.real_time
 
 
@@ -79,10 +80,11 @@ def _write_executable(path: Path, content: str) -> None:
 def launcher_fixture(
     tmp_path: Path,
     *,
+    kernel_name: str,
     env_file: bool,
     electron: bool,
 ) -> LauncherFixture:
-    assert SOURCE.is_file(), "launcher script does not exist"
+    assert SOURCE.is_file(), "shared launcher script does not exist"
     root = tmp_path / "checkout"
     scripts = root / "scripts"
     desktop = root / "desktop" / "ambient-orb"
@@ -93,12 +95,6 @@ def launcher_fixture(
     launcher = scripts / SOURCE.name
     shutil.copy2(SOURCE, launcher)
     launcher.chmod(0o755)
-    # The launcher is now a shim that execs its sibling shared script; copy it
-    # alongside so the shim can resolve it inside the fake checkout.
-    shared_script = SOURCE.parent / "start_ambient_orb.sh"
-    shared_copy = scripts / shared_script.name
-    shutil.copy2(shared_script, shared_copy)
-    shared_copy.chmod(0o755)
 
     (root / ".env.example").write_text("DASHSCOPE_API_KEY=\n")
     if env_file:
@@ -106,7 +102,7 @@ def launcher_fixture(
 
     python = root / "test-python"
     _write_executable(python, "#!/bin/sh\nexit 0\n")
-    _write_executable(fake_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+    _write_executable(fake_bin / "uname", f"#!/bin/sh\nprintf '{kernel_name}\\n'\n")
     _write_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     _write_executable(
         fake_bin / "npm",
@@ -134,8 +130,9 @@ fi
     )
 
 
-def test_first_launch_installs_dependencies_then_starts(tmp_path: Path) -> None:
-    fixture = launcher_fixture(tmp_path, env_file=True, electron=False)
+@pytest.mark.parametrize("kernel_name", ["Darwin", "Linux"])
+def test_first_launch_installs_dependencies_then_starts(tmp_path: Path, kernel_name: str) -> None:
+    fixture = launcher_fixture(tmp_path, kernel_name=kernel_name, env_file=True, electron=False)
 
     result = fixture.run()
 
@@ -148,8 +145,9 @@ def test_first_launch_installs_dependencies_then_starts(tmp_path: Path) -> None:
     }
 
 
-def test_later_launch_skips_dependency_install(tmp_path: Path) -> None:
-    fixture = launcher_fixture(tmp_path, env_file=True, electron=True)
+@pytest.mark.parametrize("kernel_name", ["Darwin", "Linux"])
+def test_later_launch_skips_dependency_install(tmp_path: Path, kernel_name: str) -> None:
+    fixture = launcher_fixture(tmp_path, kernel_name=kernel_name, env_file=True, electron=True)
 
     result = fixture.run()
 
@@ -157,8 +155,9 @@ def test_later_launch_skips_dependency_install(tmp_path: Path) -> None:
     assert fixture.npm_actions() == ["start"]
 
 
-def test_existing_workspace_override_is_preserved(tmp_path: Path) -> None:
-    fixture = launcher_fixture(tmp_path, env_file=True, electron=True)
+@pytest.mark.parametrize("kernel_name", ["Darwin", "Linux"])
+def test_existing_workspace_override_is_preserved(tmp_path: Path, kernel_name: str) -> None:
+    fixture = launcher_fixture(tmp_path, kernel_name=kernel_name, env_file=True, electron=True)
     workspace = tmp_path / "other-workspace"
     workspace.mkdir()
 
@@ -170,8 +169,11 @@ def test_existing_workspace_override_is_preserved(tmp_path: Path) -> None:
     assert start_environment["NOVA_AUDIO_AGENT_ENV_FILE"] == str(fixture.root / ".env")
 
 
-def test_unusable_active_conda_falls_back_to_repository_venv(tmp_path: Path) -> None:
-    fixture = launcher_fixture(tmp_path, env_file=True, electron=True)
+@pytest.mark.parametrize("kernel_name", ["Darwin", "Linux"])
+def test_unusable_active_conda_falls_back_to_repository_venv(
+    tmp_path: Path, kernel_name: str
+) -> None:
+    fixture = launcher_fixture(tmp_path, kernel_name=kernel_name, env_file=True, electron=True)
     active_conda = fixture.root / "active-conda"
     _write_executable(active_conda / "bin" / "python", "#!/bin/sh\nexit 1\n")
     repository_python = fixture.root / ".venv" / "bin" / "python"
@@ -186,11 +188,44 @@ def test_unusable_active_conda_falls_back_to_repository_venv(tmp_path: Path) -> 
     assert fixture.start_environment()["NOVA_AUDIO_AGENT_PYTHON"] == str(repository_python)
 
 
-def test_missing_env_stops_before_npm(tmp_path: Path) -> None:
-    fixture = launcher_fixture(tmp_path, env_file=False, electron=False)
+@pytest.mark.parametrize("kernel_name", ["Darwin", "Linux"])
+def test_missing_env_stops_before_npm(tmp_path: Path, kernel_name: str) -> None:
+    fixture = launcher_fixture(tmp_path, kernel_name=kernel_name, env_file=False, electron=False)
 
     result = fixture.run()
 
     assert result.returncode != 0
     assert "cp .env.example .env" in result.stderr
     assert fixture.npm_actions() == []
+
+
+@pytest.mark.parametrize("kernel_name", ["FreeBSD", "Windows_NT", "SunOS"])
+def test_unsupported_kernel_fails_before_npm(tmp_path: Path, kernel_name: str) -> None:
+    fixture = launcher_fixture(tmp_path, kernel_name=kernel_name, env_file=True, electron=True)
+
+    result = fixture.run()
+
+    assert result.returncode != 0
+    assert "macOS" in result.stderr
+    assert "Linux" in result.stderr
+    assert fixture.npm_actions() == []
+
+
+def test_ps1_declares_same_env_contract() -> None:
+    assert PS1_SOURCE.is_file(), "PowerShell launcher script does not exist"
+    text = PS1_SOURCE.read_text(encoding="utf-8")
+
+    for name in (
+        "NOVA_AUDIO_AGENT_PYTHON",
+        "NOVA_AUDIO_AGENT_CODEX_WORKSPACE",
+        "NOVA_AUDIO_AGENT_ENV_FILE",
+    ):
+        assert f"$env:{name}" in text, f"{name} is not set by the PowerShell launcher"
+
+    assert "Scripts\\python.exe" in text
+    assert "CONDA_PREFIX" in text
+    assert "conda run" in text
+    assert "nova-audio-agent" in text
+    assert "nova_audio_agent" in text
+    assert "codex" in text
+    assert "npm" in text
