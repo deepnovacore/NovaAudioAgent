@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "nova-audio-agent"
 version = "0.1.0"
-description = "Realtime voice agent harness for Nova"
+description = "An always-on voice agent with restrained proactivity — always working, speaking only when it's worth the floor"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }

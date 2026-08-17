@@ -2,7 +2,7 @@
 
 ## Requirements
 
-The requirements are listed in the [README Quickstart](../README.md#quickstart): Python 3.11+,
+The requirements are listed in the [README Quickstart](../README.md#4-quickstart): Python 3.11+,
 [uv](https://docs.astral.sh/uv/), Git with submodule support, Node.js 22+ for the optional desktop
 app, and macOS for native Ambient Orb audio capture.
 
@@ -53,6 +53,26 @@ Camera sources are `auto`, `local`, `disabled`, and `file`. A local camera requi
 uv sync --extra vision --dev
 uv run nova-audio-agent chat --camera-source local
 ```
+
+File-backed Watch and Guard are useful without a live camera; the public
+[cat-sofa Guard fixture](../assets/demos/cat-sofa-guard/README.md) includes a reproducible command.
+
+## Integrations
+
+A common control plane around replaceable adapters: each adapter owns its credential checks,
+transport timeouts, request normalization, and output sanitization, while Runtime owns the generic
+delegate lifecycle.
+
+| Integration | What is included |
+|---|---|
+| Deterministic simulation | `fast_sim` and `slow_sim` executors for demos and offline scenarios |
+| Search | Read-only Tavily-backed search exposed as a bounded tool |
+| Home Assistant | Bounded light operations with explicit endpoint, token, and entity configuration |
+| Codex | Long-running workspace tasks with progress, status, and recovery. Two backends: default JSONL (`run`, `status`) on the text CLI; live app-server (`run`, `steer`, `status`) on the realtime path — steering only on the latter |
+| AutoGLM | Experimental iOS browsing through a pinned public upstream submodule and worker protocol |
+| Vision | Local camera or file-backed snapshots, Watch observations, and Guard conditions |
+| Realtime voice | Qwen Audio Realtime transport, response correlation, playback fencing, recovery, and telemetry |
+| Ambient Orb | Sandboxed Electron UI plus a native macOS VoiceProcessingIO helper |
 
 ## Configuration reference
 
@@ -138,7 +158,7 @@ renderer pages.
 ## Verification
 
 The canonical check sequence is in the
-[README](../README.md#development-and-verification):
+[README](../README.md#8-development-and-verification):
 
 ```bash
 uv run ruff check src tests scripts

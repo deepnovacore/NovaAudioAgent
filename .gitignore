@@ -32,6 +32,7 @@ data/
 *.sqlite3
 resources/raw/
 resources/cut/
+resources/cut-final/
 
 # Internal working material (demo video production)
 docs/demos/

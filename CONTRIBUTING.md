@@ -41,6 +41,9 @@ Live provider integrations are credential- and hardware-dependent. They are not 
 deterministic tests; keep their outputs in ignored local artifact directories, and never commit
 credentials, recordings, or runtime traces.
 
+The README ships in two languages — [README.md](README.md) and
+[README.zh-CN.md](README.zh-CN.md). A change to either must be mirrored in the other.
+
 ## What a change must preserve
 
 The runtime invariants in [docs/glossary.md](docs/glossary.md) are the review baseline. In short:
