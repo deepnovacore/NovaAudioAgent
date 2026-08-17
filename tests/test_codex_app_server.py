@@ -992,12 +992,15 @@ async def test_prewarm_establishes_the_thread_before_the_first_run(tmp_path: Pat
     assert _method_count(peer, "initialize") == 1
     assert _method_count(peer, "thread/start") == 1
     assert _method_count(peer, "turn/start") == 1
+    assert factory.processes[0].returncode == 0
+    assert result.content["protocol"]["transport_closed"] is True
     assert transport._preflight.calls == 1  # type: ignore[attr-defined]
 
 
-async def test_completed_turns_reuse_the_warm_process_and_thread(tmp_path: Path) -> None:
+async def test_completed_work_orders_use_distinct_app_server_threads(tmp_path: Path) -> None:
     transport, factory = _warm_transport(
-        tmp_path, lambda: _Peer(tmp_path, multi_turn=True, final_texts=("答复一", "答复二"))
+        tmp_path,
+        lambda: _Peer(tmp_path, multi_turn=True),
     )
     await transport.prewarm()
 
@@ -1006,14 +1009,13 @@ async def test_completed_turns_reuse_the_warm_process_and_thread(tmp_path: Path)
 
     assert first.classification == "completed"
     assert second.classification == "completed"
-    assert second.content["result"]["final_message"]["text"] == "答复二"
-    assert len(factory.processes) == 1
-    peer = factory.peers[0]
-    assert _method_count(peer, "thread/start") == 1
-    assert _method_count(peer, "turn/start") == 2
-    assert factory.processes[0].returncode is None
-    assert second.content["protocol"]["transport_closed"] is False
-    assert second.content["process"]["exit_code"] is None
+    assert len(factory.processes) == 2
+    assert all(process.returncode == 0 for process in factory.processes)
+    assert [_method_count(peer, "thread/start") for peer in factory.peers] == [1, 1]
+    assert [_method_count(peer, "turn/start") for peer in factory.peers] == [1, 1]
+    assert first.content["protocol"]["transport_closed"] is True
+    assert second.content["protocol"]["transport_closed"] is True
+    assert second.content["process"]["exit_code"] == 0
     assert second.content["process"]["stop"] == "none"
 
 
@@ -1069,18 +1071,15 @@ async def test_non_completed_turn_recycles_the_process(tmp_path: Path) -> None:
     assert len(factory.processes) == 2
 
 
-async def test_stale_turn_started_cannot_hijack_the_next_warm_turn(tmp_path: Path) -> None:
-    """A replayed turn/started from a finished turn must be dropped by the lease."""
+async def test_completed_isolated_work_order_cannot_be_steered(tmp_path: Path) -> None:
     transport, factory = _warm_transport(tmp_path, lambda: _Peer(tmp_path, multi_turn=True))
     await transport.prewarm()
-    first = await transport.run("task-1", on_status=lambda _s: None, on_progress=None)
-    assert first.classification == "completed"
+    result = await transport.run("task-1", on_status=lambda _s: None, on_progress=None)
+    stale = await transport.steer("do not send")
 
-    factory.peers[0].replay_stale_turn_started("turn-1")
-    second = await transport.run("task-2", on_status=lambda _s: None, on_progress=None)
-
-    assert second.classification == "completed"
-    assert len(factory.processes) == 1
+    assert result.classification == "completed"
+    assert (stale.code, stale.written) == ("stale_turn", False)
+    assert _method_count(factory.peers[0], "turn/steer") == 0
 
 
 async def test_aclose_reaps_the_warm_process_and_private_home(tmp_path: Path) -> None:
@@ -1109,45 +1108,24 @@ async def test_aclose_reaps_the_warm_process_and_private_home(tmp_path: Path) ->
     assert len(factory.processes) == 2
 
 
-async def test_sensitive_inputs_redact_across_warm_turns(tmp_path: Path) -> None:
-    """An earlier work order surfacing in a later final message must still be redacted."""
+async def test_sensitive_inputs_are_cleared_after_each_completed_work_order(
+    tmp_path: Path,
+) -> None:
     transport, factory = _warm_transport(
         tmp_path,
-        lambda: _Peer(
-            tmp_path,
-            multi_turn=True,
-            final_texts=("好的", "上一单是：机密工单甲"),
-        ),
+        lambda: _Peer(tmp_path, multi_turn=True),
     )
     await transport.prewarm()
-    await transport.run("机密工单甲", on_status=lambda _s: None, on_progress=None)
-
-    second = await transport.run("任务乙", on_status=lambda _s: None, on_progress=None)
-
-    text = second.content["result"]["final_message"]["text"]
-    assert "机密工单甲" not in text
-    assert "[REDACTED]" in text
-
-
-async def test_warm_thread_recycles_at_the_turn_cap(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Bound thread-context growth: reuse stops after MAX_TURNS_PER_THREAD clean turns."""
-    monkeypatch.setattr(codex_app_server, "MAX_TURNS_PER_THREAD", 1)
-    transport, factory = _warm_transport(tmp_path, lambda: _Peer(tmp_path, multi_turn=True))
-    await transport.prewarm()
-
-    first = await transport.run("task-1", on_status=lambda _s: None, on_progress=None)
+    first = await transport.run("机密工单甲", on_status=lambda _s: None, on_progress=None)
 
     assert first.classification == "completed"
-    assert factory.processes[0].returncode is not None
+    assert transport._sensitive_inputs == []  # type: ignore[attr-defined]
 
     second = await transport.run("task-2", on_status=lambda _s: None, on_progress=None)
 
     assert second.classification == "completed"
     assert len(factory.processes) == 2
-    assert transport._preflight.calls == 2  # type: ignore[attr-defined]
-    assert transport._protocol_probe.calls == 2  # type: ignore[attr-defined]
+    assert transport._sensitive_inputs == []  # type: ignore[attr-defined]
 
 
 async def test_redaction_set_survives_a_full_turn_of_steers(tmp_path: Path) -> None:
@@ -1173,20 +1151,3 @@ async def test_redaction_set_survives_a_full_turn_of_steers(tmp_path: Path) -> N
     text = result.content["result"]["final_message"]["text"]
     assert "机密工单甲" not in text
     assert "[REDACTED]" in text
-
-
-async def test_sensitive_input_pressure_recycles_the_warm_thread(tmp_path: Path) -> None:
-    """The redaction set never shrinks while a thread lives; pressure recycles instead."""
-    transport, factory = _warm_transport(tmp_path, lambda: _Peer(tmp_path, multi_turn=True))
-    await transport.prewarm()
-
-    for index in range(8):
-        result = await transport.run(f"工单-{index}", on_status=lambda _s: None, on_progress=None)
-        assert result.classification == "completed"
-
-    assert factory.processes[0].returncode is not None
-
-    ninth = await transport.run("工单-八", on_status=lambda _s: None, on_progress=None)
-
-    assert ninth.classification == "completed"
-    assert len(factory.processes) == 2

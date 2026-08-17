@@ -55,8 +55,6 @@ INTERRUPT_GRACE = 2.0
 PROCESS_TREE_POLL_INTERVAL = 0.01
 FINAL_TEXT_LIMIT = 4000
 FINAL_INPUT_LIMIT = 65_536
-MAX_SENSITIVE_INPUTS = 8
-MAX_TURNS_PER_THREAD = 16
 DEFAULT_DEVELOPER_INSTRUCTIONS = (
     "First inspect any TASK_CONTRACT.md in the workspace and treat it as acceptance constraints. "
     "Work in named, verifiable increments. Incorporate same-turn user steering promptly. "
@@ -227,7 +225,6 @@ class CodexAppServerTransport:
         self._stderr_task: asyncio.Task[None] | None = None
         self._stale_turn_ids: set[str] = set()
         self._stale_turn_dropped = 0
-        self._turns_on_thread = 0
         self._prewarm_lock = asyncio.Lock()
         self._validated_establish = False
 
@@ -330,7 +327,6 @@ class CodexAppServerTransport:
         if self._developer_instructions is not None:
             thread_params["developerInstructions"] = self._developer_instructions
         self._thread_response = await self._request("thread/start", thread_params, deadline)
-        self._turns_on_thread = 0
         self._stale_turn_ids.clear()
 
     async def run(
@@ -433,7 +429,7 @@ class CodexAppServerTransport:
                 on_written=self._mark_turn_request_written,
                 require_no_server_request=True,
             )
-            turn_id = projection.bind_turn_response(turn_response)
+            projection.bind_turn_response(turn_response)
             completion = await self._wait_for_completion(
                 process_wait=process_wait,
                 rpc_wait=rpc_wait,
@@ -460,40 +456,26 @@ class CodexAppServerTransport:
                 and self._process.returncode is None
             )
             if clean:
-                self._stale_turn_ids.add(turn_id)
-                self._turns_on_thread += 1
-                if (
-                    self._turns_on_thread >= MAX_TURNS_PER_THREAD
-                    or len(self._sensitive_inputs) >= MAX_SENSITIVE_INPUTS
-                ):
-                    process = self._process
-                    stop = await self._teardown_session()
-                    exit_code = None if process is None else process.returncode
-                    on_status(
-                        CodexProcessStatus(
-                            running=exit_code is None,
-                            exited=exit_code is not None,
-                            terminal="completed" if exit_code is not None else None,
-                            exit_code=exit_code,
-                        )
+                process = self._process
+                stop = await self._teardown_session()
+                exit_code = None if process is None else process.returncode
+                on_status(
+                    CodexProcessStatus(
+                        running=exit_code is None,
+                        exited=exit_code is not None,
+                        terminal="completed" if exit_code is not None else None,
+                        exit_code=exit_code,
                     )
-                    content = _content(
+                )
+                return CodexTransportResult(
+                    classification="completed",
+                    code="completed",
+                    content=_content(
                         completion=completion,
                         exit_code=exit_code,
                         stop=stop,
                         final_message=final_message,
-                    )
-                else:
-                    on_status(CodexProcessStatus(running=True, exited=False))
-                    content = _content(
-                        completion=completion,
-                        exit_code=None,
-                        stop="none",
-                        final_message=final_message,
-                        transport_closed=False,
-                    )
-                return CodexTransportResult(
-                    classification="completed", code="completed", content=content
+                    ),
                 )
             # Conservative recycle: anything non-clean tears the warm session down.
             process = self._process
@@ -860,16 +842,12 @@ class CodexAppServerTransport:
         self._thread_response = None
         self._thread_id = None
         self._stale_turn_ids.clear()
-        self._turns_on_thread = 0
         self._sensitive_inputs.clear()
         self._finish_private_home()
         return stop
 
     def _append_sensitive(self, text: str) -> None:
-        """Never evict while the thread lives: an early work order can surface in
-        a later final message through the shared thread context. Reaching
-        MAX_SENSITIVE_INPUTS instead recycles the thread after the current turn,
-        so the redaction set and the thread context share one lifetime."""
+        """Retain the active work order and same-turn steers until final redaction."""
         self._sensitive_inputs.append(text)
 
     async def _spawn(self) -> _Process:
