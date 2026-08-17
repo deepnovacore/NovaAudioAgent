@@ -25,11 +25,30 @@ class _ExplicitNotificationSurrogate:
             for item in channel.recent
             if item.trust == "trusted_user"
         ]
-        suggestions = tuple(item for item in view.affordances if item.source == "suggestion")
+        ambient_observations = [
+            str(item.content.get("motion", ""))
+            for channel in view.channels
+            if channel.name == "ambient"
+            for item in channel.recent
+            if item.trust == "trusted_system"
+        ]
+        suggestions = tuple(
+            item
+            for item in view.affordances
+            if (
+                item.source == "suggestion"
+                and "客厅持续有人活动" in str(item.content.get("suggestion", {}).get("text", ""))
+                and "已达到用户要求的提醒条件"
+                in str(item.content.get("suggestion", {}).get("text", ""))
+            )
+        )
         explicitly_requested = any(
             "客厅持续有人活动" in request and "提醒我" in request for request in requests
         )
-        if not explicitly_requested or not suggestions:
+        condition_observed = any(
+            "客厅持续有人活动" in observation for observation in ambient_observations
+        )
+        if not explicitly_requested or not condition_observed or not suggestions:
             return SurrogateOutput(speak=False, reason="没有明确的命中即提醒条件")
         return SurrogateOutput(
             speak=True,
