@@ -18,5 +18,5 @@ fi
 conda run --name "$ENV_NAME" bash -c '
     export UV_PROJECT_ENVIRONMENT="$CONDA_PREFIX"
     cd "$1"
-    uv sync --locked
+    uv sync --locked --extra vision
 ' -- "$ROOT_DIR"

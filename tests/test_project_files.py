@@ -186,6 +186,32 @@ def test_conda_environment_provisions_uv() -> None:
     assert "  - uv>=0.8,<1" in environment
 
 
+@pytest.mark.parametrize(
+    ("readme", "section_heading", "next_heading"),
+    (
+        (Path("README.md"), "## 5. macOS Ambient Orb", "## 6. Repository layout"),
+        (Path("README.zh-CN.md"), "## 5. macOS Ambient Orb", "## 6. 仓库布局"),
+    ),
+)
+def test_ambient_orb_readme_installs_vision_before_launch(
+    readme: Path,
+    section_heading: str,
+    next_heading: str,
+) -> None:
+    document = readme.read_text(encoding="utf-8")
+    section = document.split(section_heading, 1)[1].split(next_heading, 1)[0]
+
+    assert section.index("uv sync --extra vision --dev") < section.index(
+        "./scripts/start_ambient_orb_macos.sh"
+    )
+
+
+def test_conda_backend_bootstrap_installs_vision_extra() -> None:
+    bootstrap = Path("scripts/bootstrap_backend.sh").read_text(encoding="utf-8")
+
+    assert "uv sync --locked --extra vision" in bootstrap
+
+
 def test_persisted_data_and_sqlite_files_are_ignored() -> None:
     ignored = Path(".gitignore").read_text(encoding="utf-8").splitlines()
 

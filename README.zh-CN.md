@@ -163,8 +163,11 @@ app-server 后端）、AutoGLM、摄像头 Watch/Guard 与 Qwen 实时语音—�
 Ambient Orb 是本地语音界面：
 
 ```bash
+uv sync --extra vision --dev
 ./scripts/start_ambient_orb_macos.sh
 ```
+
+默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 视频回放均依赖 `vision` extra。
 
 它会启动 Python realtime 后端、构建原生 VoiceProcessingIO helper，并拉起 Electron 渲染器
 （上下文隔离、沙箱与窄 preload 桥）；需要 macOS、Node.js、`codex` 可执行文件、麦克风权限，

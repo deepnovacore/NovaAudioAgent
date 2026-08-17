@@ -182,8 +182,12 @@ per-integration setup, cautions, and the full variable reference are in
 The Ambient Orb is the local voice interface:
 
 ```bash
+uv sync --extra vision --dev
 ./scripts/start_ambient_orb_macos.sh
 ```
+
+Both the local-camera default and `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback require the
+`vision` extra.
 
 It starts the Python realtime backend, builds the native VoiceProcessingIO helper, and launches
 the Electron renderer (context isolation, sandboxing, and a narrow preload bridge); it requires
