@@ -269,6 +269,16 @@ class CodexProjectStore:
                     pass
             raise
 
+    def validate_managed_create(self, display_name: str) -> str:
+        name, key = _workspace_name(display_name)
+
+        def read(state: _State) -> tuple[str, bool]:
+            self._require_workspace_capacity(state)
+            self._require_unique_workspace_name(state, key)
+            return name, False
+
+        return self._transaction(read)
+
     def rollback_managed_create(self, workspace_id: str) -> bool:
         removed: Path | None = None
 

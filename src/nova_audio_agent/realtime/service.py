@@ -116,6 +116,22 @@ def _suggestion_speech_view(content: object) -> str:
     return prepare_for_speech(text, limit=SPEECH_FINAL_LIMIT)[0]
 
 
+def _project_commit_failure_text(code: object) -> str:
+    messages = {
+        "workspace_name_conflict": "工作区名称已存在，本次操作未执行。",
+        "workspace_limit": "工作区数量已达上限，本次操作未执行。",
+        "session_limit": "Session 数量已达上限，本次操作未执行。",
+        "state_busy": "工作区状态正忙，请稍后再试。",
+        "busy": "Codex 当前正忙，本次操作未执行。",
+        "runtime_rejected": "Codex 当前正忙，本次操作未执行。",
+        "confirmation_invalid": "确认状态已失效，本次操作未执行。",
+        "workspace_not_found": "没有找到指定工作区，本次操作未执行。",
+        "session_not_found": "没有找到指定 Session，本次操作未执行。",
+        "session_unavailable": "指定 Session 当前不可继续，本次操作未执行。",
+    }
+    return messages.get(code, "已确认，但操作未执行。")
+
+
 @dataclass(slots=True)
 class _ToolCallState:
     acceptance: ToolAcceptance
@@ -1071,7 +1087,7 @@ class RealtimeService:
                     text = (
                         "已确认，正在处理。"
                         if accepted
-                        else f"已确认，但操作未执行：{str(code)[:80]}。"
+                        else _project_commit_failure_text(code)
                     )
                 except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                     raise

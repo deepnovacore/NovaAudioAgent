@@ -214,6 +214,27 @@ async def test_project_action_validation_and_proposal_only_dispatch(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_invalid_create_is_rejected_before_confirmation(tmp_path: Path) -> None:
+    adapter, _store = _adapter(tmp_path)
+
+    invalid = await adapter.dispatch(
+        "project",
+        {"action": "create", "workspace": "../etc"},
+        _context(VirtualClock()),
+    )
+    conflict = await adapter.dispatch(
+        "project",
+        {"action": "create", "workspace": "alpha"},
+        _context(VirtualClock()),
+    )
+
+    assert invalid.outcome == conflict.outcome == "failed"
+    assert invalid.content["code"] == "workspace_name_invalid"
+    assert conflict.content["code"] == "workspace_name_conflict"
+    assert adapter.confirmation.pending is False
+
+
+@pytest.mark.asyncio
 async def test_lists_are_public_and_exact_names_are_required(tmp_path: Path) -> None:
     adapter, store = _adapter(tmp_path)
     ctx = _context(VirtualClock())

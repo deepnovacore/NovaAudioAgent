@@ -200,6 +200,8 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                     ],
                 )
             if action == "create":
+                assert workspace_name is not None
+                workspace_name = self.store.validate_managed_create(workspace_name)
                 workspace = None
                 resolved_session = None
             else:

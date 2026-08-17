@@ -546,6 +546,56 @@ async def test_confirmation_asr_is_recorded_but_provider_tool_cannot_authorize()
 
 
 @pytest.mark.asyncio
+async def test_project_commit_failure_uses_bounded_chinese_instead_of_internal_code() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select",
+        workspace_display_name="alpha",
+        workspace_id="workspace-alpha",
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+
+    async def reject(_operation: object, _origin_ref: str) -> ProjectCommitResult:
+        return ProjectCommitResult(accepted=False, code="workspace_name_conflict")
+
+    service, provider, _runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+        commit_project_operation=reject,
+    )
+    await service.connect()
+    await service.handle_event(
+        UserSpeechStarted(
+            session_epoch=1,
+            speech_id="speech-confirm",
+            provider_item_id="user-confirm",
+        )
+    )
+    await service.handle_event(UserSpeechEnded(session_epoch=1, speech_id="speech-confirm"))
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="confirm-response"))
+    await service.handle_event(
+        UserTranscriptFinal(session_epoch=1, item_id="user-confirm", text="确认")
+    )
+    await service.handle_event(
+        ResponseTerminal(
+            session_epoch=1,
+            response_id="confirm-response",
+            status="cancelled",
+            reason="cancelled",
+        )
+    )
+
+    messages = [item.content for item in provider.injected if item.kind == "final"]
+    assert messages == ["工作区名称已存在，本次操作未执行。"]
+    assert "workspace_name_conflict" not in repr(provider.injected)
+
+
+@pytest.mark.asyncio
 async def test_confirmation_deferred_calls_are_closed_without_touching_unrelated_entries() -> None:
     service, provider, _runtime, _frames = make_service(
         id_factory=lambda: f"host-{next(counter)}"

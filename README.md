@@ -147,7 +147,8 @@ Node.js 22+ for the optional desktop application, and macOS for native Ambient O
 
 ### Named Codex workspaces and Sessions
 
-Realtime Codex can opt into isolated named workspaces and persistent Sessions:
+Realtime Codex can opt into isolated named workspaces and persistent Sessions. Project mode is
+off by default:
 
 ```bash
 NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED=true
@@ -165,6 +166,19 @@ tool calls cannot confirm them. Each normal task creates a new persistent Sessio
 starts a new app-server process on the saved Codex thread. Workspaces have separate `CODEX_HOME`
 directories, but Codex execution intentionally remains one global task at a time. The Orb displays
 only public workspace and Session labels—never paths, thread IDs, or registry keys.
+
+At startup, the configured `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` is imported if its canonical path is
+new; changing that setting registers another workspace with a deterministic suffix without
+replacing the current active workspace. Untitled Sessions use speakable `任务 N` labels. Registry
+retention is bounded to 200 Sessions per workspace and 1000 globally: oldest unavailable Sessions
+are pruned first, then inactive ready Sessions, while starting and active Sessions are protected.
+If protected records fill the limit, creation returns `session_limit`; lock contention returns
+`state_busy` immediately.
+
+Each project work order starts a fresh app-server process, so project mode intentionally disables
+Codex prewarm. A persistent workspace home refreshes its saved login when the host credential
+changes, using owner-only atomic files; a destination-only credential refresh is preserved while
+the host source is unchanged.
 
 Clone the repository and its pinned Open-AutoGLM submodule:
 

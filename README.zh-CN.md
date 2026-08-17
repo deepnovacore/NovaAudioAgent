@@ -131,7 +131,7 @@ executor 的完成并不待在一个回合制的 `reason → act → observe` �
 
 ### 命名 Codex 工作区与持久 Session
 
-实时 Codex 可以显式开启相互隔离的命名工作区与可恢复 Session：
+实时 Codex 可以显式开启相互隔离的命名工作区与可恢复 Session；project mode 默认关闭：
 
 ```bash
 NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED=true
@@ -148,6 +148,17 @@ uv run nova-audio-agent workspace list
 新的持久 Session；继续任务会用保存的 Codex thread 启动一个新的 app-server 进程。不同工作区使用
 不同的 `CODEX_HOME`，但 Codex 仍有意保持全局同时只执行一个任务。Orb 只显示公开的工作区名和
 Session 标题，不显示路径、thread ID 或 registry key。
+
+启动时，如果 `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` 的规范路径尚未登记，就会导入为新工作区；
+之后修改这个配置会用确定性的数字后缀登记另一个工作区，不会覆盖当前 active workspace。
+未命名 Session 使用便于朗读的“任务 N”。注册表每个工作区最多保留 200 个 Session、全局最多
+1000 个：先清理最旧的 unavailable Session，再清理非 active 的 ready Session；starting 和 active
+Session 始终受保护。若受保护记录已经占满配额，创建返回 `session_limit`；锁竞争则立即返回
+`state_busy`，不会阻塞实时事件循环。
+
+project mode 下每个工作单都会启动新的 app-server 进程，因此有意禁用 Codex prewarm。持久
+workspace home 会在宿主登录凭据变化时用 owner-only 的原子文件刷新；如果只更新了 workspace
+home 内的凭据，而宿主源没有变化，这次 destination-only 更新会被保留。
 
 克隆仓库及其钉定的 Open-AutoGLM 子模块：
 
