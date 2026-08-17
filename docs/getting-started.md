@@ -197,6 +197,23 @@ uv run python scripts/smoke_volcengine_realtime.py \
   --live --wav /absolute/path/to/utterance.wav --runs 3
 ```
 
+To compare Ark models without sending audio, run the bounded synthetic function-call matrix. It
+requires `--live`, accepts only the repository's reviewed model allowlist, and prints aggregate
+quality/error-class and p50/p95 timing metadata. It does not print prompts, tool arguments, tool
+outputs, response text, request IDs, or credentials. The Seed 2.0 Pro baseline is included even
+when it is omitted from `--models`:
+
+```bash
+uv run --extra volcengine python scripts/benchmark_volcengine_llm.py \
+  --live --runs 2 \
+  --models doubao-seed-2-0-pro-260215 doubao-seed-2-1-turbo-260628 \
+  deepseek-v4-pro-ga-260813 deepseek-v4-flash-ga-260731
+```
+
+A candidate is eligible only when its overall and every-category function-call pass rates match
+or exceed the measured baseline and it has zero severe failures. The benchmark never changes the
+configured production model automatically.
+
 ## Home Assistant
 
 Set `NOVA_AUDIO_AGENT_HA_URL`, `NOVA_AUDIO_AGENT_HA_TOKEN`, and

@@ -121,6 +121,21 @@ uv run python scripts/smoke_volcengine_realtime.py \
   --live --wav /absolute/path/to/utterance.wav --runs 3
 ```
 
+如果要比较 Ark 模型而不发送音频，可以运行有界的合成 function-call 矩阵。脚本必须显式传入
+`--live`，只接受仓库中审核过的模型 allowlist；输出仅包含聚合后的质量、异常类型和 p50/p95
+耗时，不打印 prompt、工具参数、工具结果、回答文本、请求 ID 或凭据。即使 `--models` 没有写
+Seed 2.0 Pro，脚本也会自动加入这个基线：
+
+```bash
+uv run --extra volcengine python scripts/benchmark_volcengine_llm.py \
+  --live --runs 2 \
+  --models doubao-seed-2-0-pro-260215 doubao-seed-2-1-turbo-260628 \
+  deepseek-v4-pro-ga-260813 deepseek-v4-flash-ga-260731
+```
+
+候选模型只有在总体和每个类别的工具调用通过率都不低于实测基线、并且严重失败为零时才有资格
+替换默认模型。这个 benchmark 不会自动修改生产配置。
+
 其余 Home Assistant、Codex、AutoGLM、摄像头与完整公共配置见
 [英文上手指南](getting-started.md)。
 
