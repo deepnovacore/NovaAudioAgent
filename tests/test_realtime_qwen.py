@@ -572,14 +572,16 @@ def test_frontend_instructions_preserve_the_complete_codex_work_order() -> None:
         assert phrase in FRONTEND_INSTRUCTIONS
 
 
-def test_frontend_instructions_clarify_one_material_choice_before_codex() -> None:
+def test_frontend_instructions_clarify_only_one_uninferable_material_choice() -> None:
     for phrase in (
         "最多追问一个",
-        "会实质改变交付物",
+        "验收结果或验证方式",
+        "无法从当前请求和对话安全推断",
         "这一轮不得调用 codex__run",
         "可以合理默认",
     ):
         assert phrase in FRONTEND_INSTRUCTIONS
+    assert "网页还是桌面程序" not in FRONTEND_INSTRUCTIONS
 
 
 def test_frontend_instructions_merge_clarification_into_one_work_order() -> None:
