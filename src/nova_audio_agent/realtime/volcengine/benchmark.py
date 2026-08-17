@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections import Counter
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+import time
 from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
 
 from nova_audio_agent.realtime.volcengine.ark import (
     ArkEvent,
+    ArkResponseCompleted,
     ArkResponseFailed,
+    ArkResponseStarted,
     ArkTextDelta,
     ArkToolCall,
 )
@@ -44,6 +48,32 @@ class CaseScore:
     provider_failed: bool
     continuation_passed: bool | None
     severe_failure: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptResult:
+    model: str
+    case_id: str
+    category: str
+    repeat: int
+    score: CaseScore
+    response_created_ms: float | None
+    first_text_ms: float | None
+    function_call_ms: float | None
+    continuation_first_text_ms: float | None
+    terminal_ms: float | None
+    error_class: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelSummary:
+    model: str
+    attempts: int
+    pass_rate: float
+    category_pass_rates: Mapping[str, float]
+    severe_failures: int
+    error_classes: Mapping[str, int]
+    latency_ms: Mapping[str, Mapping[str, float | int]]
 
 
 _WEATHER_TOOL = {
@@ -250,6 +280,153 @@ def score_events(case: BenchmarkCase, events: Sequence[ArkEvent]) -> CaseScore:
     )
 
 
+async def run_attempt(
+    client: Any,
+    model: str,
+    case: BenchmarkCase,
+    *,
+    repeat: int,
+    clock: Callable[[], float] = time.perf_counter,
+) -> AttemptResult:
+    """Run one case and retain only timings, booleans, and error class names."""
+    started_at = clock()
+    response_created_ms: float | None = None
+    first_text_ms: float | None = None
+    function_call_ms: float | None = None
+    terminal_ms: float | None = None
+    response_id: str | None = None
+    events: list[ArkEvent] = []
+    error_class: str | None = None
+
+    try:
+        async for event in client.stream(
+            input_items=case.input_items,
+            tools=case.tools,
+            previous_response_id=None,
+        ):
+            events.append(event)
+            elapsed = (clock() - started_at) * 1000
+            if isinstance(event, ArkResponseStarted):
+                response_id = event.response_id
+                if response_created_ms is None:
+                    response_created_ms = elapsed
+            elif isinstance(event, ArkTextDelta) and first_text_ms is None:
+                first_text_ms = elapsed
+            elif isinstance(event, ArkToolCall) and function_call_ms is None:
+                function_call_ms = elapsed
+            elif isinstance(event, (ArkResponseCompleted, ArkResponseFailed)):
+                terminal_ms = elapsed
+    except Exception as exc:
+        error_class = type(exc).__name__
+        events.append(ArkResponseFailed(response_id or "benchmark", "failed"))
+
+    score = score_events(case, events)
+    continuation_first_text_ms: float | None = None
+    expectation = case.expectation
+    calls = [event for event in events if isinstance(event, ArkToolCall)]
+    if (
+        expectation.continuation_output is not None
+        and score.passed
+        and response_id is not None
+        and len(calls) == 1
+    ):
+        continuation_started_at = clock()
+        continuation_text: list[str] = []
+        continuation_failed = False
+        try:
+            async for event in client.stream(
+                input_items=[
+                    {
+                        "type": "function_call_output",
+                        "call_id": calls[0].call_id,
+                        "output": expectation.continuation_output,
+                    }
+                ],
+                tools=case.tools,
+                previous_response_id=response_id,
+            ):
+                if isinstance(event, ArkTextDelta):
+                    continuation_text.append(event.text)
+                    if continuation_first_text_ms is None:
+                        continuation_first_text_ms = (clock() - continuation_started_at) * 1000
+                elif isinstance(event, (ArkToolCall, ArkResponseFailed)):
+                    continuation_failed = True
+        except Exception as exc:
+            error_class = type(exc).__name__
+            continuation_failed = True
+        joined_text = "".join(continuation_text)
+        continuation_passed = (
+            not continuation_failed
+            and bool(joined_text)
+            and all(fact in joined_text for fact in expectation.continuation_facts)
+        )
+        score = replace(
+            score,
+            passed=score.passed and continuation_passed,
+            continuation_passed=continuation_passed,
+            severe_failure=score.severe_failure or not continuation_passed,
+        )
+
+    return AttemptResult(
+        model=model,
+        case_id=case.case_id,
+        category=case.category,
+        repeat=repeat,
+        score=score,
+        response_created_ms=response_created_ms,
+        first_text_ms=first_text_ms,
+        function_call_ms=function_call_ms,
+        continuation_first_text_ms=continuation_first_text_ms,
+        terminal_ms=terminal_ms,
+        error_class=error_class,
+    )
+
+
+def summarize_model(model: str, attempts: Sequence[AttemptResult]) -> ModelSummary:
+    """Aggregate a model's content-free correctness and nearest-rank latency metrics."""
+    if not attempts:
+        raise ValueError("cannot summarize an empty benchmark")
+    categories = sorted({attempt.category for attempt in attempts})
+    category_rates = {
+        category: _pass_rate([attempt for attempt in attempts if attempt.category == category])
+        for category in categories
+    }
+    latency_fields = (
+        "response_created_ms",
+        "first_text_ms",
+        "function_call_ms",
+        "continuation_first_text_ms",
+        "terminal_ms",
+    )
+    latency_ms = {
+        field_name: _percentile_summary(
+            [value for attempt in attempts if (value := getattr(attempt, field_name)) is not None]
+        )
+        for field_name in latency_fields
+    }
+    return ModelSummary(
+        model=model,
+        attempts=len(attempts),
+        pass_rate=_pass_rate(attempts),
+        category_pass_rates=category_rates,
+        severe_failures=sum(attempt.score.severe_failure for attempt in attempts),
+        error_classes=dict(
+            sorted(Counter(a.error_class for a in attempts if a.error_class is not None).items())
+        ),
+        latency_ms=latency_ms,
+    )
+
+
+def candidate_passes_gate(baseline: ModelSummary, candidate: ModelSummary) -> bool:
+    """Require non-inferiority overall and in every baseline category."""
+    if candidate.severe_failures or candidate.pass_rate < baseline.pass_rate:
+        return False
+    return all(
+        candidate.category_pass_rates.get(category, -1) >= baseline_rate
+        for category, baseline_rate in baseline.category_pass_rates.items()
+    )
+
+
 def _tool_names(case: BenchmarkCase) -> set[str]:
     return {tool["name"] for tool in case.tools}
 
@@ -261,3 +438,19 @@ def _valid_arguments(case: BenchmarkCase, call: ArkToolCall) -> bool:
     return all(
         call.arguments.get(key) == value for key, value in case.expectation.argument_equals.items()
     )
+
+
+def _pass_rate(attempts: Sequence[AttemptResult]) -> float:
+    return sum(attempt.score.passed for attempt in attempts) / len(attempts)
+
+
+def _percentile_summary(values: Sequence[float]) -> dict[str, float | int]:
+    if not values:
+        return {"count": 0}
+    ordered = sorted(values)
+
+    def nearest_rank(percent: int) -> float:
+        index = max(0, (len(ordered) * percent + 99) // 100 - 1)
+        return round(ordered[index], 3)
+
+    return {"count": len(ordered), "p50": nearest_rank(50), "p95": nearest_rank(95)}
