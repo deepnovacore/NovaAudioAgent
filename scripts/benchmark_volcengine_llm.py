@@ -38,6 +38,7 @@ MODEL_CHOICES = (
     "doubao-seed-1-8-251228",
     "glm-5-2-260617",
     "kimi-k2-250905",
+    "doubao-seed-2-0-mini-260428",
 )
 DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 _SCHEDULE_SEED = 20260818
