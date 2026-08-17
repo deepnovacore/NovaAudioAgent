@@ -48,6 +48,10 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { standard: true, secure: true, supportFetchAPI: true },
 }])
 
+// Windows groups taskbar/notification identity by AppUserModelID; a no-op
+// everywhere else, so it is set unconditionally rather than gated by platform.
+app.setAppUserModelId('ai.deepnovacore.nova-audio-agent.orb')
+
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, '../..')
 const rendererRoot = resolve(packageRoot, 'src/renderer')

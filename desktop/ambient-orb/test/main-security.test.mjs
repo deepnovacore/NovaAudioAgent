@@ -86,6 +86,27 @@ test('desktop bootstrap payload identifies the host platform for the renderer', 
   assert.match(bootstrapAssignment.slice(0, bootstrapAssignment.indexOf('})')), /platform: process\.platform/)
 })
 
+test('sets the Windows AppUserModelID unconditionally before startup', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  assert.match(
+    source,
+    /app\.setAppUserModelId\('ai\.deepnovacore\.nova-audio-agent\.orb'\)/,
+  )
+  const call = source.indexOf("app.setAppUserModelId('ai.deepnovacore.nova-audio-agent.orb')")
+  const whenReady = source.indexOf('app.whenReady()')
+  assert.ok(call >= 0 && whenReady > call)
+  // Unconditional: never gated behind a platform check.
+  const line = source.slice(source.lastIndexOf('\n', call) + 1, source.indexOf('\n', call))
+  assert.doesNotMatch(line, /if\s*\(/)
+})
+
+test('renderer threads the bootstrap platform into the orb state axes', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /axes\.platform = bootstrap\.platform/)
+})
+
 test('macOS camera permission is requested on the main thread before backend startup', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 

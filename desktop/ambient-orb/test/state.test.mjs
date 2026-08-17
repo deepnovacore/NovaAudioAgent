@@ -53,3 +53,21 @@ test('does not claim an AEC implementation before microphone activation', () => 
 
   assert.equal(state.aecLabel, 'AEC 未启用')
 })
+
+test('adds a Windows-specific hint to the permission-denied label', () => {
+  const state = deriveOrbState({ ...base, permission: 'denied', platform: 'win32' })
+
+  assert.equal(state.name, 'permission-denied')
+  assert.equal(
+    state.label,
+    '麦克风权限被拒绝(请在 系统设置 → 隐私 → 麦克风 中允许桌面应用)',
+  )
+})
+
+test('keeps the shorter permission-denied label on non-Windows platforms', () => {
+  const darwin = deriveOrbState({ ...base, permission: 'denied', platform: 'darwin' })
+  const unspecified = deriveOrbState({ ...base, permission: 'denied' })
+
+  assert.equal(darwin.label, '麦克风权限被拒绝')
+  assert.equal(unspecified.label, '麦克风权限被拒绝')
+})

@@ -31,6 +31,7 @@ const axes = {
   shellExpanded: false,
   audioMode: 'inactive',
   activationPending: false,
+  platform: 'unknown',
 }
 
 let socket
@@ -430,6 +431,7 @@ async function boot() {
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
     axes.audioMode = bootstrap.audioMode
+    axes.platform = bootstrap.platform
     nativeAvailable = bootstrap.nativeAvailable === true
     window.novaAudioAgentDesktop.onBackendExit(() => {
       axes.connected = false

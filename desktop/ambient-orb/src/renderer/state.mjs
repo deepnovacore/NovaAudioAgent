@@ -11,6 +11,12 @@ const LABELS = Object.freeze({
   error: 'Nova Audio Agent 发生错误',
 })
 
+// Windows has no systemPreferences prompt to point users at, so the denied
+// label carries its own navigation hint there; other platforms keep the
+// shorter copy above.
+const WINDOWS_PERMISSION_DENIED_LABEL =
+  '麦克风权限被拒绝(请在 系统设置 → 隐私 → 麦克风 中允许桌面应用)'
+
 export function deriveOrbState(input) {
   let name
   if (input.error) name = 'error'
@@ -23,9 +29,12 @@ export function deriveOrbState(input) {
   else if (input.playback === 'interrupted') name = 'interrupted'
   else if (input.playback === 'speaking') name = 'speaking'
   else name = 'idle'
+  const label = name === 'permission-denied' && input.platform === 'win32'
+    ? WINDOWS_PERMISSION_DENIED_LABEL
+    : LABELS[name]
   return Object.freeze({
     name,
-    label: LABELS[name],
+    label,
     codexLabel: input.codex === 'working' ? 'Codex 正在后台工作' : 'Codex 空闲',
     aecLabel: input.audioMode === 'voice_processing_io'
       ? '系统级 AEC'
