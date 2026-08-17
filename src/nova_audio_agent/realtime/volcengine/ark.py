@@ -73,6 +73,9 @@ class ArkResponsesClient:
         self._model = model
         self._instructions = instructions
 
+    async def close(self) -> None:
+        await self._client.close()
+
     async def stream(
         self,
         *,

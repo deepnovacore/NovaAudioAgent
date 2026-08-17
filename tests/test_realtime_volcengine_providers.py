@@ -231,6 +231,23 @@ async def test_ark_client_rejects_invalid_tool_arguments_without_exposing_them()
     assert "must-not-leak" not in str(failure.value)
 
 
+@pytest.mark.asyncio
+async def test_ark_client_close_releases_underlying_http_client() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    raw_client = Client()
+    client = ArkResponsesClient(client=raw_client, model="model", instructions="system")
+
+    await client.close()
+
+    assert raw_client.closed is True
+
+
 def test_volc_message_round_trips_tts_session_and_audio_events() -> None:
     start = VolcMessage(
         message_type=MessageType.FULL_CLIENT_REQUEST,

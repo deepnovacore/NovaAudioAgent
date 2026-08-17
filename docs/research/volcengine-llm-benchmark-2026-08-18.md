@@ -2,14 +2,15 @@
 
 ## Decision
 
-Use `doubao-seed-2-0-mini-260428` as the default Ark model for the Volcengine
-realtime cascade. Keep `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL` as the explicit
-override.
+Retain `doubao-seed-2-0-pro-260215` as the default Ark model. No tested faster
+candidate matched its function-call behavior under the strict scorer, so changing
+the default would violate the non-inferiority requirement.
 
-The selected model matched the Seed 2.0 Pro baseline on every synthetic function
-call category across 45 live attempts, produced zero severe failures, and reduced
-both normal text and function-call latency. It then completed three full
-ASR → LLM → TTS smoke runs.
+`NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL` remains the explicit frontend override.
+Watch, Guard, Surrogate, and Compressor use the separate
+`NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL` setting so future frontend
+experiments cannot silently change their Chat Completions, JSON, or vision
+contracts.
 
 No runtime model router or automatic fallback was added.
 
@@ -25,12 +26,16 @@ The live evaluator used the production Ark Responses request contract:
 
 Scoring covered tool selection, expected no-call behavior, clarification, similar
 tools, nested and unsupported arguments, mixed prose/tool output, continuation,
-and short multi-turn context. Reports retained only aggregate scores, sanitized
-error classes, and timings.
+and short multi-turn context. Every stream had to contain one matching
+`response.created` / `response.completed` lifecycle; clarification and safety
+cases also rejected misleading success claims. Reports retained only aggregate
+scores, sanitized error classes, and timings.
 
-## Initial Matrix
+## Preliminary Screening Matrix
 
-Two repetitions per case, 18 first-turn attempts per model:
+Two repetitions per case, 18 first-turn attempts per model. This screening run
+predated the stricter lifecycle and semantic checks, so it is useful for rejecting
+clearly weak candidates but is not the final selection evidence:
 
 | Model | Pass rate | Severe failures | First text p50 | Function call p50 | Function call p95 |
 |---|---:|---:|---:|---:|---:|
@@ -46,7 +51,7 @@ occasionally emitted prose before an otherwise correct, schema-valid function
 call. Adding an explicit tool-only instruction still produced one mixed response
 in ten attempts, so it did not pass the production contract gate.
 
-## Second-Stage Matrix
+## Preliminary Second-Stage Matrix
 
 Two repetitions per case, 18 attempts per model:
 
@@ -62,25 +67,36 @@ Seed 1.8 and Kimi K2 returned sanitized `ArkResponsesError` for every request un
 the production Responses contract. Faster Seed 1.6 Flash did not meet the quality
 gate.
 
-## Final Pro vs Mini Matrix
+## Strict Pro vs Mini Matrix
 
 Five repetitions per case, 45 attempts per model:
 
-| Metric | Seed 2.0 Pro | Seed 2.0 Mini | Change |
-|---|---:|---:|---:|
-| Overall pass rate | 100% | 100% | equal |
-| Severe failures | 0 | 0 | equal |
-| First text p50 | 1511 ms | 686 ms | -55% |
-| First text p95 | 2416 ms | 1282 ms | -47% |
-| Function call p50 | 2208 ms | 710 ms | -68% |
-| Function call p95 | 3502 ms | 1149 ms | -67% |
-| Continuation first text p50 | 1491 ms | 699 ms | -53% |
-| Continuation first text p95 | 2153 ms | 999 ms | -54% |
+| Metric | Seed 2.0 Pro | Seed 2.0 Mini |
+|---|---:|---:|
+| Overall pass rate | 97.8% | 93.3% |
+| Clarification pass rate | 100% | 40% |
+| Arguments pass rate | 100% | 100% |
+| Selection pass rate | 100% | 100% |
+| First text p50 | 1624 ms | 457 ms |
+| Function call p50 | 2085 ms | 730 ms |
+| Function call p95 | 2922 ms | 1445 ms |
+| Continuation first text p50 | 1376 ms | 795 ms |
 
-Both models passed every category at 100%. Mini was therefore the fastest model
-that satisfied the non-inferiority gate.
+Mini was much faster, but it called the calendar creation tool in three of five
+ambiguous requests whose required date, time, and title were absent. A stronger
+general instruction to ask for missing required fields improved neither model
+enough to change the result: Pro passed 10/10 focused attempts; Mini passed 7/10.
+Mini therefore failed the per-category non-inferiority gate.
 
-## Full Speech Smoke with Mini
+## Strict Pro vs Lite Matrix
+
+Five repetitions per case showed that Lite also failed the gate: clarification
+passed 60% versus Pro's 100%, while first-text p95 reached 4740 ms and function-call
+p95 reached 4416 ms. The run also demonstrated the CLI's operational-failure exit
+contract: one baseline timeout was reported in aggregate and the completed matrix
+exited non-zero.
+
+## Full Speech Smoke with Mini (Latency Evidence Only)
 
 Three live runs using a bounded synthetic mono 16 kHz PCM16 utterance:
 
@@ -92,9 +108,8 @@ Three live runs using a bounded synthetic mono 16 kHz PCM16 utterance:
 | Speech end → TTS first audio | 1431 ms | 1563 ms |
 
 The previous single Pro smoke measured about 2524 ms from ASR final to first text
-and 3312 ms from speech end to first TTS audio. Because that older baseline had one
-run, the model matrix—not this cross-run comparison—is the primary selection
-evidence.
+and 3312 ms from speech end to first TTS audio. Mini's speech latency is attractive,
+but the stricter function-call matrix disqualifies it from becoming the default.
 
 ## Cache Probe
 

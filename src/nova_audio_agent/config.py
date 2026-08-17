@@ -49,6 +49,7 @@ def _secure_endpoint(value: str, *, scheme: str, name: str) -> str:
 class VolcengineRealtimeConfig:
     ark_base_url: str
     ark_model: str
+    ark_support_model: str
     ark_api_key: str
     asr_endpoint: str
     asr_resource_id: str
@@ -103,7 +104,8 @@ class Settings(BaseSettings):
         validation_alias="DOUBAO_BIGMODEL_API_KEY",
     )
     volcengine_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
-    volcengine_ark_model: str = "doubao-seed-2-0-mini-260428"
+    volcengine_ark_model: str = "doubao-seed-2-0-pro-260215"
+    volcengine_ark_support_model: str = "doubao-seed-2-0-pro-260215"
     doubao_asr_endpoint: str = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
     doubao_asr_resource_id: str = "volc.seedasr.sauc.duration"
     doubao_asr_chunk_ms: int = 200
@@ -207,6 +209,10 @@ class Settings(BaseSettings):
             ark_model=_required_setting(
                 self.volcengine_ark_model,
                 "NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL",
+            ),
+            ark_support_model=_required_setting(
+                self.volcengine_ark_support_model,
+                "NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL",
             ),
             ark_api_key=ark_key,
             asr_endpoint=_secure_endpoint(

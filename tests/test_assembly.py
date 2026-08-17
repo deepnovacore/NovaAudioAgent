@@ -118,10 +118,10 @@ def test_volcengine_realtime_assembly_wires_native_provider(
     assert assembly.provider._vad.__class__ is FakeVad
     assert assembly.provider._asr._chunk_bytes == 6_400
     assert captured["vad_config"].silence_end_ms == 560
-    assert assembly.provider._ark._model == "doubao-seed-2-0-mini-260428"
+    assert assembly.provider._ark._model == "doubao-seed-2-0-pro-260215"
     assert assembly.provider._tts._output_sample_rate == 24_000
     assert assembly.core.gateway._client.base_url == "https://ark.cn-beijing.volces.com/api/v3"
-    assert assembly.runtime.surrogate._model == "doubao-seed-2-0-mini-260428"
+    assert assembly.runtime.surrogate._model == "doubao-seed-2-0-pro-260215"
 
 
 def test_volcengine_ark_fallback_forces_all_support_models_to_an_ark_model(
@@ -154,7 +154,7 @@ def test_volcengine_ark_fallback_forces_all_support_models_to_an_ark_model(
         on_delivery=lambda _completion: None,
     )
 
-    expected = "doubao-seed-2-0-mini-260428"
+    expected = "doubao-seed-2-0-pro-260215"
     assert assembly.runtime.executors["watch"]._model == expected
     assert assembly.runtime.executors["guard"]._model == expected
     assert assembly.runtime.surrogate._model == expected

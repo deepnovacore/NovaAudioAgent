@@ -6,7 +6,9 @@ import argparse
 import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
+import inspect
 import json
+import math
 import os
 import random
 import time
@@ -54,7 +56,7 @@ def _bounded_runs(value: str) -> int:
 
 def _positive_timeout(value: str) -> float:
     timeout = float(value)
-    if timeout <= 0:
+    if not math.isfinite(timeout) or timeout <= 0:
         raise argparse.ArgumentTypeError("timeout must be positive")
     return timeout
 
@@ -116,45 +118,63 @@ async def run_matrix(
         client_factory = _live_client_factory(args.timeout)
 
     models = _selected_models(args.models)
-    clients = {model: client_factory(model) for model in models}
-    cases = benchmark_cases()
-    schedule = [
-        (model, case, repeat) for repeat in range(args.runs) for case in cases for model in models
-    ]
-    random.Random(_SCHEDULE_SEED).shuffle(schedule)
-    attempts: dict[str, list[AttemptResult]] = {model: [] for model in models}
-    for model, case, repeat in schedule:
-        try:
-            async with asyncio.timeout(args.timeout):
-                result = await run_attempt(
-                    clients[model], model, case, repeat=repeat, clock=time.perf_counter
+    clients: dict[str, Any] = {}
+    try:
+        for model in models:
+            clients[model] = client_factory(model)
+        cases = benchmark_cases()
+        schedule = [
+            (model, case, repeat)
+            for repeat in range(args.runs)
+            for case in cases
+            for model in models
+        ]
+        random.Random(_SCHEDULE_SEED).shuffle(schedule)
+        attempts: dict[str, list[AttemptResult]] = {model: [] for model in models}
+        for model, case, repeat in schedule:
+            try:
+                async with asyncio.timeout(args.timeout):
+                    result = await run_attempt(
+                        clients[model], model, case, repeat=repeat, clock=time.perf_counter
+                    )
+            except TimeoutError:
+                failed = CaseScore(
+                    passed=False,
+                    correct_tool=False,
+                    valid_arguments=False,
+                    unexpected_tool=False,
+                    mixed_text_and_tool=False,
+                    provider_failed=True,
+                    continuation_passed=None,
+                    severe_failure=True,
                 )
-        except TimeoutError:
-            failed = CaseScore(
-                passed=False,
-                correct_tool=False,
-                valid_arguments=False,
-                unexpected_tool=False,
-                mixed_text_and_tool=False,
-                provider_failed=True,
-                continuation_passed=None,
-                severe_failure=True,
-            )
-            result = AttemptResult(
-                model=model,
-                case_id=case.case_id,
-                category=case.category,
-                repeat=repeat,
-                score=failed,
-                response_created_ms=None,
-                first_text_ms=None,
-                function_call_ms=None,
-                continuation_first_text_ms=None,
-                terminal_ms=None,
-                error_class="TimeoutError",
-            )
-        attempts[model].append(result)
-    return [summarize_model(model, attempts[model]) for model in models]
+                result = AttemptResult(
+                    model=model,
+                    case_id=case.case_id,
+                    category=case.category,
+                    repeat=repeat,
+                    score=failed,
+                    response_created_ms=None,
+                    first_text_ms=None,
+                    function_call_ms=None,
+                    continuation_first_text_ms=None,
+                    terminal_ms=None,
+                    error_class="TimeoutError",
+                )
+            attempts[model].append(result)
+        return [summarize_model(model, attempts[model]) for model in models]
+    finally:
+        closed: set[int] = set()
+        for client in clients.values():
+            if id(client) in closed:
+                continue
+            closed.add(id(client))
+            close = getattr(client, "close", None)
+            if close is None:
+                continue
+            result = close()
+            if inspect.isawaitable(result):
+                await result
 
 
 def public_report(summaries: Sequence[ModelSummary]) -> dict[str, Any]:
@@ -175,7 +195,7 @@ def public_report(summaries: Sequence[ModelSummary]) -> dict[str, Any]:
 async def _main(args: argparse.Namespace) -> int:
     summaries = await run_matrix(args)
     print(json.dumps(public_report(summaries), ensure_ascii=False, indent=2, sort_keys=True))
-    return 0
+    return int(any(summary.provider_failures or summary.error_classes for summary in summaries))
 
 
 def main() -> int:

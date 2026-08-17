@@ -422,7 +422,7 @@ def build_volcengine_realtime_assembly(
         realtime_frontbrain=True,
         model_api_key_override=configured_model_key or config.ark_api_key,
         model_base_url_override=(None if configured_model_key else config.ark_base_url),
-        support_model_override=(None if configured_model_key else config.ark_model),
+        support_model_override=(None if configured_model_key else config.ark_support_model),
         on_suggestion_selected=relay_suggestion,
         on_attention_decision=relay_attention,
     )

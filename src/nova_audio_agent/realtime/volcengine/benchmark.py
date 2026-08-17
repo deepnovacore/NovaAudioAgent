@@ -26,6 +26,9 @@ class CaseExpectation:
     argument_equals: Mapping[str, Any] = field(default_factory=dict)
     continuation_output: str | None = None
     continuation_facts: tuple[str, ...] = ()
+    required_text_any: tuple[str, ...] = ()
+    required_text_all: tuple[str, ...] = ()
+    forbidden_text: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +74,10 @@ class ModelSummary:
     pass_rate: float
     category_pass_rates: Mapping[str, float]
     severe_failures: int
+    provider_failures: int
     error_classes: Mapping[str, int]
     latency_ms: Mapping[str, Mapping[str, float | int]]
+    category_latency_ms: Mapping[str, Mapping[str, Mapping[str, float | int]]]
 
 
 _WEATHER_TOOL = {
@@ -170,7 +175,11 @@ def benchmark_cases() -> tuple[BenchmarkCase, ...]:
             "clarification",
             ({"role": "user", "content": "帮我安排一次项目讨论。"},),
             _TOOLS,
-            CaseExpectation("text"),
+            CaseExpectation(
+                "text",
+                required_text_any=("日期", "时间", "几点", "什么时候", "标题"),
+                forbidden_text=("已创建", "创建成功", "安排好了"),
+            ),
         ),
         BenchmarkCase(
             "calendar_similar",
@@ -200,7 +209,10 @@ def benchmark_cases() -> tuple[BenchmarkCase, ...]:
                 },
             ),
             _TOOLS,
-            CaseExpectation("text"),
+            CaseExpectation(
+                "text",
+                forbidden_text=("已删除", "执行成功", "已经执行"),
+            ),
         ),
         BenchmarkCase(
             "unsupported_argument",
@@ -247,23 +259,39 @@ def benchmark_cases() -> tuple[BenchmarkCase, ...]:
 def score_events(case: BenchmarkCase, events: Sequence[ArkEvent]) -> CaseScore:
     """Score normalized events without retaining provider content."""
     calls = [event for event in events if isinstance(event, ArkToolCall)]
-    has_text = any(isinstance(event, ArkTextDelta) and bool(event.text) for event in events)
+    text = "".join(event.text for event in events if isinstance(event, ArkTextDelta))
+    has_text = bool(text)
     provider_failed = any(isinstance(event, ArkResponseFailed) for event in events)
     mixed = has_text and bool(calls)
+    lifecycle_valid = _valid_lifecycle(events)
     expected = case.expectation
 
     if expected.kind == "text":
         unexpected_tool = bool(calls)
         correct_tool = not calls
         valid_arguments = not calls
-        passed = has_text and not unexpected_tool and not provider_failed
+        valid_text = _valid_text(expected, text)
+        passed = (
+            has_text
+            and valid_text
+            and not unexpected_tool
+            and not provider_failed
+            and lifecycle_valid
+        )
     else:
         unexpected_tool = any(call.name not in _tool_names(case) for call in calls)
         correct_tool = len(calls) == 1 and calls[0].name == expected.tool_name
         valid_arguments = correct_tool and _valid_arguments(case, calls[0])
-        passed = correct_tool and valid_arguments and not mixed and not provider_failed
+        valid_text = not has_text
+        passed = (
+            correct_tool
+            and valid_arguments
+            and valid_text
+            and not provider_failed
+            and lifecycle_valid
+        )
 
-    severe = provider_failed or mixed or unexpected_tool
+    severe = provider_failed or mixed or unexpected_tool or not lifecycle_valid or not valid_text
     if expected.kind == "tool":
         severe = severe or not correct_tool or not valid_arguments or len(calls) != 1
 
@@ -330,8 +358,7 @@ async def run_attempt(
         and len(calls) == 1
     ):
         continuation_started_at = clock()
-        continuation_text: list[str] = []
-        continuation_failed = False
+        continuation_events: list[ArkEvent] = []
         try:
             async for event in client.stream(
                 input_items=[
@@ -344,21 +371,21 @@ async def run_attempt(
                 tools=case.tools,
                 previous_response_id=response_id,
             ):
+                continuation_events.append(event)
                 if isinstance(event, ArkTextDelta):
-                    continuation_text.append(event.text)
                     if continuation_first_text_ms is None:
                         continuation_first_text_ms = (clock() - continuation_started_at) * 1000
-                elif isinstance(event, (ArkToolCall, ArkResponseFailed)):
-                    continuation_failed = True
         except Exception as exc:
             error_class = type(exc).__name__
-            continuation_failed = True
-        joined_text = "".join(continuation_text)
-        continuation_passed = (
-            not continuation_failed
-            and bool(joined_text)
-            and all(fact in joined_text for fact in expectation.continuation_facts)
+            continuation_events.append(ArkResponseFailed("benchmark", "failed"))
+        continuation_case = replace(
+            case,
+            expectation=CaseExpectation(
+                "text",
+                required_text_all=expectation.continuation_facts,
+            ),
         )
+        continuation_passed = score_events(continuation_case, continuation_events).passed
         score = replace(
             score,
             passed=score.passed and continuation_passed,
@@ -403,16 +430,32 @@ def summarize_model(model: str, attempts: Sequence[AttemptResult]) -> ModelSumma
         )
         for field_name in latency_fields
     }
+    category_latency_ms = {
+        category: {
+            field_name: _percentile_summary(
+                [
+                    value
+                    for attempt in attempts
+                    if attempt.category == category
+                    and (value := getattr(attempt, field_name)) is not None
+                ]
+            )
+            for field_name in latency_fields
+        }
+        for category in categories
+    }
     return ModelSummary(
         model=model,
         attempts=len(attempts),
         pass_rate=_pass_rate(attempts),
         category_pass_rates=category_rates,
         severe_failures=sum(attempt.score.severe_failure for attempt in attempts),
+        provider_failures=sum(attempt.score.provider_failed for attempt in attempts),
         error_classes=dict(
             sorted(Counter(a.error_class for a in attempts if a.error_class is not None).items())
         ),
         latency_ms=latency_ms,
+        category_latency_ms=category_latency_ms,
     )
 
 
@@ -428,6 +471,37 @@ def candidate_passes_gate(baseline: ModelSummary, candidate: ModelSummary) -> bo
 
 def _tool_names(case: BenchmarkCase) -> set[str]:
     return {tool["name"] for tool in case.tools}
+
+
+def _valid_lifecycle(events: Sequence[ArkEvent]) -> bool:
+    starts = [
+        (index, event)
+        for index, event in enumerate(events)
+        if isinstance(event, ArkResponseStarted)
+    ]
+    completions = [
+        (index, event)
+        for index, event in enumerate(events)
+        if isinstance(event, ArkResponseCompleted)
+    ]
+    return (
+        len(starts) == 1
+        and len(completions) == 1
+        and starts[0][0] == 0
+        and completions[0][0] == len(events) - 1
+        and starts[0][1].response_id == completions[0][1].response_id
+    )
+
+
+def _valid_text(expectation: CaseExpectation, text: str) -> bool:
+    return (
+        (
+            not expectation.required_text_any
+            or any(term in text for term in expectation.required_text_any)
+        )
+        and all(term in text for term in expectation.required_text_all)
+        and not any(term in text for term in expectation.forbidden_text)
+    )
 
 
 def _valid_arguments(case: BenchmarkCase, call: ArkToolCall) -> bool:

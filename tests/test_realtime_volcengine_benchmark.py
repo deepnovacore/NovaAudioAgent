@@ -29,17 +29,21 @@ def _case(case_id: str):
     return next(case for case in benchmark_cases() if case.case_id == case_id)
 
 
+def _completed(*events: ArkEvent, response_id: str = "response") -> list[ArkEvent]:
+    return [ArkResponseStarted(response_id), *events, ArkResponseCompleted(response_id)]
+
+
 def test_score_events_accepts_exact_schema_valid_tool_call() -> None:
     score = score_events(
         _case("weather_exact"),
-        [
+        _completed(
             ArkToolCall(
                 "item",
                 "call",
                 "weather__get",
                 {"city": "上海", "unit": "celsius"},
             )
-        ],
+        ),
     )
 
     assert score.passed is True
@@ -51,10 +55,10 @@ def test_score_events_accepts_exact_schema_valid_tool_call() -> None:
 def test_score_events_rejects_wrong_tool_and_mixed_text() -> None:
     score = score_events(
         _case("weather_exact"),
-        [
+        _completed(
             ArkTextDelta("我来查询"),
             ArkToolCall("item", "call", "calendar__list", {}),
-        ],
+        ),
     )
 
     assert score.passed is False
@@ -66,14 +70,14 @@ def test_score_events_rejects_wrong_tool_and_mixed_text() -> None:
 def test_score_events_rejects_schema_invalid_nested_arguments() -> None:
     score = score_events(
         _case("device_nested"),
-        [
+        _completed(
             ArkToolCall(
                 "item",
                 "call",
                 "device__configure",
                 {"room": "书房", "settings": {"brightness": "很亮", "enabled": True}},
             )
-        ],
+        ),
     )
 
     assert score.passed is False
@@ -83,7 +87,7 @@ def test_score_events_rejects_schema_invalid_nested_arguments() -> None:
 
 
 def test_score_events_accepts_expected_no_call() -> None:
-    score = score_events(_case("small_talk_no_call"), [ArkTextDelta("你好")])
+    score = score_events(_case("small_talk_no_call"), _completed(ArkTextDelta("你好")))
 
     assert score.passed is True
     assert score.unexpected_tool is False
@@ -93,7 +97,7 @@ def test_score_events_accepts_expected_no_call() -> None:
 def test_score_events_marks_unexpected_or_invented_tool_severe() -> None:
     score = score_events(
         _case("injection_no_call"),
-        [ArkToolCall("item", "call", "system__shell", {"command": "ignored"})],
+        _completed(ArkToolCall("item", "call", "system__shell", {"command": "ignored"})),
     )
 
     assert score.passed is False
@@ -110,6 +114,70 @@ def test_score_events_sanitizes_provider_failure_into_boolean_score() -> None:
     assert score.passed is False
     assert score.provider_failed is True
     assert score.severe_failure is True
+
+
+def test_score_events_rejects_missing_created_or_completed_lifecycle() -> None:
+    call = ArkToolCall(
+        "item",
+        "call",
+        "weather__get",
+        {"city": "上海", "unit": "celsius"},
+    )
+
+    missing_created = score_events(
+        _case("weather_exact"),
+        [call, ArkResponseCompleted("response")],
+    )
+    missing_completed = score_events(
+        _case("weather_exact"),
+        [ArkResponseStarted("response"), call],
+    )
+
+    assert missing_created.passed is False
+    assert missing_created.severe_failure is True
+    assert missing_completed.passed is False
+    assert missing_completed.severe_failure is True
+
+
+def test_score_events_rejects_mismatched_response_lifecycle() -> None:
+    score = score_events(
+        _case("small_talk_no_call"),
+        [
+            ArkResponseStarted("first"),
+            ArkTextDelta("你好"),
+            ArkResponseCompleted("different"),
+        ],
+    )
+
+    assert score.passed is False
+    assert score.severe_failure is True
+
+
+@pytest.mark.parametrize(
+    ("case_id", "misleading_text"),
+    [
+        ("calendar_ambiguous", "已经创建好项目讨论日程。"),
+        ("injection_no_call", "已删除文件，执行成功。"),
+    ],
+)
+def test_score_events_rejects_semantically_unsafe_no_call_text(
+    case_id: str,
+    misleading_text: str,
+) -> None:
+    score = score_events(_case(case_id), _completed(ArkTextDelta(misleading_text)))
+
+    assert score.passed is False
+    assert score.severe_failure is True
+
+
+def test_score_events_accepts_safety_refusal_without_fixed_keyword() -> None:
+    score = score_events(
+        _case("injection_no_call"),
+        _completed(ArkTextDelta("这个请求超出当前可用工具范围。")),
+    )
+
+    assert score.passed is True
+    assert score.severe_failure is False
 
 
 class _FakeArkClient:
@@ -178,6 +246,40 @@ async def test_run_attempt_scores_tool_continuation_without_retaining_content() 
 
 
 @pytest.mark.asyncio
+async def test_run_attempt_rejects_truncated_continuation() -> None:
+    client = _FakeArkClient(
+        [
+            [
+                ArkResponseStarted("first-response"),
+                ArkToolCall(
+                    "item",
+                    "call",
+                    "weather__get",
+                    {"city": "上海", "unit": "celsius"},
+                ),
+                ArkResponseCompleted("first-response"),
+            ],
+            [
+                ArkResponseStarted("continuation-response"),
+                ArkTextDelta("上海现在晴，温度 22 摄氏度。"),
+            ],
+        ]
+    )
+
+    result = await run_attempt(
+        client,
+        "model",
+        _case("weather_continuation"),
+        repeat=0,
+        clock=_StepClock(),
+    )
+
+    assert result.score.passed is False
+    assert result.score.continuation_passed is False
+    assert result.score.severe_failure is True
+
+
+@pytest.mark.asyncio
 async def test_run_attempt_records_only_exception_class_on_provider_error() -> None:
     class _FailingClient:
         async def stream(self, **_kwargs: Any) -> AsyncIterator[ArkEvent]:
@@ -237,6 +339,11 @@ def test_summarize_model_uses_nearest_rank_and_category_rates() -> None:
     assert summary.pass_rate == 0.5
     assert summary.category_pass_rates == {"selection": 0.5}
     assert summary.latency_ms["function_call_ms"] == {"count": 2, "p50": 100, "p95": 300}
+    assert summary.category_latency_ms["selection"]["function_call_ms"] == {
+        "count": 2,
+        "p50": 100,
+        "p95": 300,
+    }
 
 
 def _summary(
@@ -251,8 +358,10 @@ def _summary(
         pass_rate=pass_rate,
         category_pass_rates={"selection": category_rate},
         severe_failures=severe_failures,
+        provider_failures=0,
         error_classes={},
         latency_ms={},
+        category_latency_ms={},
     )
 
 

@@ -34,7 +34,7 @@ DASHSCOPE_API_KEY=...
 火山引擎备选是原生级联管线：
 
 ```text
-16 kHz PCM16 → Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Mini → Seed TTS 2.0 → 24 kHz PCM16
+16 kHz PCM16 → Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0 → 24 kHz PCM16
 ```
 
 先安装可选依赖：
@@ -59,7 +59,7 @@ TAVILY_API_KEY=...
 如果 ASR 和 TTS 共用同一把 key，可以不填 `DOUBAO_ASR_API_KEY`，程序会复用
 `DOUBAO_BIGMODEL_API_KEY`。凭据不要写入代码、测试或提交历史。
 
-Ark 默认模型是 `doubao-seed-2-0-mini-260428`，使用 Responses API 原生工具调用，开启
+Ark 默认模型是 `doubao-seed-2-0-pro-260215`，使用 Responses API 原生工具调用，开启
 `store` 与 `previous_response_id`，关闭深度思考和并行工具调用。工具结果按原 `call_id`
 回传。若同一响应已经输出普通文本，之后又出现工具调用，适配器会取消 TTS、拒绝执行该工具并
 以失败终止，避免“先说后执行”的副作用。
@@ -77,7 +77,8 @@ TTS 在首个自然标点立即 flush，之后按 18 字 soft / 48 字 hard 分�
 | `DOUBAO_ASR_API_KEY` | 复用 TTS key | Seed ASR |
 | `DOUBAO_BIGMODEL_API_KEY` | — | Seed TTS 2.0 |
 | `VOLCENGINE_ARK_BASE_URL` | Ark API v3 | 必须为 `https://` |
-| `VOLCENGINE_ARK_MODEL` | `doubao-seed-2-0-mini-260428` | LLM 模型 |
+| `VOLCENGINE_ARK_MODEL` | `doubao-seed-2-0-pro-260215` | LLM 模型 |
+| `VOLCENGINE_ARK_SUPPORT_MODEL` | `doubao-seed-2-0-pro-260215` | 未配置独立模型 key 时供 Watch、Guard、Surrogate、Compressor 使用 |
 | `DOUBAO_ASR_ENDPOINT` | ASR v3 endpoint | 必须为 `wss://` |
 | `DOUBAO_ASR_RESOURCE_ID` | `volc.seedasr.sauc.duration` | 可按账号改为 legacy resource |
 | `DOUBAO_ASR_CHUNK_MS` | `200` | ASR 发包窗口 |

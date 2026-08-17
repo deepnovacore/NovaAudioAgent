@@ -100,7 +100,8 @@ ones; the full set (from `src/nova_audio_agent/config.py`):
 | `DOUBAO_ASR_API_KEY` (no prefix) | falls back to `DOUBAO_BIGMODEL_API_KEY` | Seed ASR API key |
 | `DOUBAO_BIGMODEL_API_KEY` (no prefix) | — | Seed TTS 2.0 API key |
 | `VOLCENGINE_ARK_BASE_URL` | Ark API v3 endpoint | HTTPS Ark endpoint |
-| `VOLCENGINE_ARK_MODEL` | `doubao-seed-2-0-mini-260428` | Tool-capable Ark model; thinking is disabled on the voice path |
+| `VOLCENGINE_ARK_MODEL` | `doubao-seed-2-0-pro-260215` | Tool-capable Ark model; thinking is disabled on the voice path |
+| `VOLCENGINE_ARK_SUPPORT_MODEL` | `doubao-seed-2-0-pro-260215` | Ark model used by Watch, Guard, Surrogate, and Compressor when no separate model API key is configured |
 | `DOUBAO_ASR_ENDPOINT` | Seed ASR v3 endpoint | Secure ASR websocket endpoint |
 | `DOUBAO_ASR_RESOURCE_ID` | `volc.seedasr.sauc.duration` | ASR 2.0 resource; may be overridden with the legacy resource when required |
 | `DOUBAO_ASR_CHUNK_MS` | `200` | ASR packet duration |
@@ -142,7 +143,7 @@ DASHSCOPE_API_KEY=...
 The alternative Volcengine backend is a native cascade rather than runtime failover:
 
 ```text
-16 kHz PCM16 → Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Mini → Seed TTS 2.0 → 24 kHz PCM16
+16 kHz PCM16 → Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0 → 24 kHz PCM16
 ```
 
 Enable the Volcengine speech dependencies and configure all three services:
@@ -169,6 +170,10 @@ serial native function calls, and thinking disabled. Tool results return through
 without executing that call. TTS flushes the first natural punctuation, then uses 18-character
 soft and 48-character hard chunks; a disconnected TTS chunk is retried once only when no audio
 from it has been emitted.
+
+The realtime Responses model and the support model used by Watch, Guard, Surrogate, and Compressor
+are independently configurable. Both default to Seed 2.0 Pro; keeping separate settings prevents
+a future low-latency frontend experiment from silently changing Chat/JSON/vision consumers.
 
 The Volcengine console must have Seed ASR 2.0, Ark access to the configured Seed model, and Seed
 TTS 2.0 enabled. Missing Silero/ONNX dependencies or credentials fail startup. This backend does
