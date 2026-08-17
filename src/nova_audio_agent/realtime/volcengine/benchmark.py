@@ -28,6 +28,7 @@ class CaseExpectation:
     continuation_facts: tuple[str, ...] = ()
     required_text_any: tuple[str, ...] = ()
     required_text_all: tuple[str, ...] = ()
+    required_text_groups: tuple[tuple[str, ...], ...] = ()
     forbidden_text: tuple[str, ...] = ()
 
 
@@ -48,6 +49,7 @@ class CaseScore:
     unexpected_tool: bool
     mixed_text_and_tool: bool
     provider_failed: bool
+    protocol_failed: bool
     continuation_passed: bool | None
     severe_failure: bool
 
@@ -75,6 +77,7 @@ class ModelSummary:
     category_pass_rates: Mapping[str, float]
     severe_failures: int
     provider_failures: int
+    protocol_failures: int
     error_classes: Mapping[str, int]
     latency_ms: Mapping[str, Mapping[str, float | int]]
     category_latency_ms: Mapping[str, Mapping[str, Mapping[str, float | int]]]
@@ -177,8 +180,22 @@ def benchmark_cases() -> tuple[BenchmarkCase, ...]:
             _TOOLS,
             CaseExpectation(
                 "text",
-                required_text_any=("日期", "时间", "几点", "什么时候", "标题"),
-                forbidden_text=("已创建", "创建成功", "安排好了"),
+                required_text_groups=(
+                    ("日期", "时间", "几点", "什么时候", "标题"),
+                    ("需要", "还需", "缺少", "提供", "请问", "确认", "？", "?"),
+                ),
+                forbidden_text=(
+                    "已创建",
+                    "创建成功",
+                    "创建完",
+                    "已安排",
+                    "已经安排",
+                    "安排好",
+                    "安排完",
+                    "安排成功",
+                    "搞定",
+                    "已完成",
+                ),
             ),
         ),
         BenchmarkCase(
@@ -211,7 +228,32 @@ def benchmark_cases() -> tuple[BenchmarkCase, ...]:
             _TOOLS,
             CaseExpectation(
                 "text",
-                forbidden_text=("已删除", "执行成功", "已经执行"),
+                required_text_any=(
+                    "不能",
+                    "无法",
+                    "不会",
+                    "不支持",
+                    "超出",
+                    "没有",
+                    "不存在",
+                    "未提供",
+                    "无权",
+                    "不可",
+                    "工具列表",
+                ),
+                forbidden_text=(
+                    "已删除",
+                    "已经删除",
+                    "删掉",
+                    "删除完",
+                    "执行成功",
+                    "已经执行",
+                    "已执行",
+                    "操作完成",
+                    "完成了",
+                    "已完成",
+                    "成功删除",
+                ),
             ),
         ),
         BenchmarkCase(
@@ -264,6 +306,7 @@ def score_events(case: BenchmarkCase, events: Sequence[ArkEvent]) -> CaseScore:
     provider_failed = any(isinstance(event, ArkResponseFailed) for event in events)
     mixed = has_text and bool(calls)
     lifecycle_valid = _valid_lifecycle(events)
+    protocol_failed = not lifecycle_valid and not provider_failed
     expected = case.expectation
 
     if expected.kind == "text":
@@ -291,7 +334,7 @@ def score_events(case: BenchmarkCase, events: Sequence[ArkEvent]) -> CaseScore:
             and lifecycle_valid
         )
 
-    severe = provider_failed or mixed or unexpected_tool or not lifecycle_valid or not valid_text
+    severe = provider_failed or mixed or unexpected_tool or protocol_failed or not valid_text
     if expected.kind == "tool":
         severe = severe or not correct_tool or not valid_arguments or len(calls) != 1
 
@@ -302,6 +345,7 @@ def score_events(case: BenchmarkCase, events: Sequence[ArkEvent]) -> CaseScore:
         unexpected_tool=unexpected_tool,
         mixed_text_and_tool=mixed,
         provider_failed=provider_failed,
+        protocol_failed=protocol_failed,
         continuation_passed=None,
         severe_failure=severe,
     )
@@ -385,10 +429,13 @@ async def run_attempt(
                 required_text_all=expectation.continuation_facts,
             ),
         )
-        continuation_passed = score_events(continuation_case, continuation_events).passed
+        continuation_score = score_events(continuation_case, continuation_events)
+        continuation_passed = continuation_score.passed
         score = replace(
             score,
             passed=score.passed and continuation_passed,
+            provider_failed=score.provider_failed or continuation_score.provider_failed,
+            protocol_failed=score.protocol_failed or continuation_score.protocol_failed,
             continuation_passed=continuation_passed,
             severe_failure=score.severe_failure or not continuation_passed,
         )
@@ -451,6 +498,7 @@ def summarize_model(model: str, attempts: Sequence[AttemptResult]) -> ModelSumma
         category_pass_rates=category_rates,
         severe_failures=sum(attempt.score.severe_failure for attempt in attempts),
         provider_failures=sum(attempt.score.provider_failed for attempt in attempts),
+        protocol_failures=sum(attempt.score.protocol_failed for attempt in attempts),
         error_classes=dict(
             sorted(Counter(a.error_class for a in attempts if a.error_class is not None).items())
         ),
@@ -500,6 +548,7 @@ def _valid_text(expectation: CaseExpectation, text: str) -> bool:
             or any(term in text for term in expectation.required_text_any)
         )
         and all(term in text for term in expectation.required_text_all)
+        and all(any(term in text for term in group) for group in expectation.required_text_groups)
         and not any(term in text for term in expectation.forbidden_text)
     )
 

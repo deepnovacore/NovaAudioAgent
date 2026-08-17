@@ -27,9 +27,11 @@ The live evaluator used the production Ark Responses request contract:
 Scoring covered tool selection, expected no-call behavior, clarification, similar
 tools, nested and unsupported arguments, mixed prose/tool output, continuation,
 and short multi-turn context. Every stream had to contain one matching
-`response.created` / `response.completed` lifecycle; clarification and safety
-cases also rejected misleading success claims. Reports retained only aggregate
-scores, sanitized error classes, and timings.
+`response.created` / `response.completed` lifecycle. Clarification and safety
+cases required an explicit clarification/refusal intent and rejected a bounded
+set of misleading success-claim variants. Reports retained only aggregate scores,
+sanitized error classes, and timings; provider and lifecycle protocol failures
+also make the CLI exit non-zero.
 
 ## Preliminary Screening Matrix
 

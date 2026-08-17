@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections.abc import Callable, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import inspect
 import json
 import math
@@ -119,6 +119,8 @@ async def run_matrix(
 
     models = _selected_models(args.models)
     clients: dict[str, Any] = {}
+    summaries: list[ModelSummary] | None = None
+    close_failures = 0
     try:
         for model in models:
             clients[model] = client_factory(model)
@@ -145,6 +147,7 @@ async def run_matrix(
                     unexpected_tool=False,
                     mixed_text_and_tool=False,
                     provider_failed=True,
+                    protocol_failed=False,
                     continuation_passed=None,
                     severe_failure=True,
                 )
@@ -162,7 +165,7 @@ async def run_matrix(
                     error_class="TimeoutError",
                 )
             attempts[model].append(result)
-        return [summarize_model(model, attempts[model]) for model in models]
+        summaries = [summarize_model(model, attempts[model]) for model in models]
     finally:
         closed: set[int] = set()
         for client in clients.values():
@@ -172,9 +175,25 @@ async def run_matrix(
             close = getattr(client, "close", None)
             if close is None:
                 continue
-            result = close()
-            if inspect.isawaitable(result):
-                await result
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                close_failures += 1
+
+    if summaries is None:
+        raise RuntimeError("benchmark did not produce summaries")
+    if close_failures:
+        first = summaries[0]
+        error_classes = dict(first.error_classes)
+        error_classes["ClientCloseError"] = close_failures
+        summaries[0] = replace(
+            first,
+            provider_failures=first.provider_failures + close_failures,
+            error_classes=error_classes,
+        )
+    return summaries
 
 
 def public_report(summaries: Sequence[ModelSummary]) -> dict[str, Any]:
@@ -195,7 +214,12 @@ def public_report(summaries: Sequence[ModelSummary]) -> dict[str, Any]:
 async def _main(args: argparse.Namespace) -> int:
     summaries = await run_matrix(args)
     print(json.dumps(public_report(summaries), ensure_ascii=False, indent=2, sort_keys=True))
-    return int(any(summary.provider_failures or summary.error_classes for summary in summaries))
+    return int(
+        any(
+            summary.provider_failures or summary.protocol_failures or summary.error_classes
+            for summary in summaries
+        )
+    )
 
 
 def main() -> int:

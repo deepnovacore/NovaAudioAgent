@@ -101,6 +101,8 @@ def test_volcengine_realtime_assembly_wires_native_provider(
         ark_api_key=SecretStr("ark-secret"),
         doubao_bigmodel_api_key=SecretStr("speech-secret"),
         tavily_api_key=SecretStr("search-secret"),
+        volcengine_ark_model="doubao-seed-2-0-mini-260428",
+        volcengine_ark_support_model="doubao-seed-2-0-pro-260215",
         codex_prewarm=False,
         _env_file=None,
     )
@@ -118,7 +120,7 @@ def test_volcengine_realtime_assembly_wires_native_provider(
     assert assembly.provider._vad.__class__ is FakeVad
     assert assembly.provider._asr._chunk_bytes == 6_400
     assert captured["vad_config"].silence_end_ms == 560
-    assert assembly.provider._ark._model == "doubao-seed-2-0-pro-260215"
+    assert assembly.provider._ark._model == "doubao-seed-2-0-mini-260428"
     assert assembly.provider._tts._output_sample_rate == 24_000
     assert assembly.core.gateway._client.base_url == "https://ark.cn-beijing.volces.com/api/v3"
     assert assembly.runtime.surrogate._model == "doubao-seed-2-0-pro-260215"

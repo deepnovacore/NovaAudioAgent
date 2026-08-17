@@ -60,6 +60,7 @@ def test_public_report_contains_only_aggregate_metadata() -> None:
         category_pass_rates={"selection": 1.0},
         severe_failures=0,
         provider_failures=0,
+        protocol_failures=0,
         error_classes={},
         latency_ms={"function_call_ms": {"count": 2, "p50": 100.0, "p95": 120.0}},
         category_latency_ms={},
@@ -83,6 +84,7 @@ def test_public_report_compares_candidate_against_baseline() -> None:
         category_pass_rates={"selection": 1.0},
         severe_failures=0,
         provider_failures=0,
+        protocol_failures=0,
         error_classes={},
         latency_ms={},
         category_latency_ms={},
@@ -94,6 +96,7 @@ def test_public_report_compares_candidate_against_baseline() -> None:
         category_pass_rates={"selection": 0.9},
         severe_failures=0,
         provider_failures=0,
+        protocol_failures=0,
         error_classes={},
         latency_ms={},
         category_latency_ms={},
@@ -134,6 +137,40 @@ async def test_run_matrix_closes_injected_clients(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
+async def test_run_matrix_attempts_all_client_closes_when_one_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Client:
+        def __init__(self, *, close_fails: bool) -> None:
+            self.close_fails = close_fails
+            self.closed = False
+
+        async def stream(self, **_kwargs: Any):
+            yield ArkResponseStarted("response")
+            yield ArkTextDelta("你好")
+            yield ArkResponseCompleted("response")
+
+        async def close(self) -> None:
+            self.closed = True
+            if self.close_fails:
+                raise RuntimeError("secret cleanup detail")
+
+    clients = {
+        "doubao-seed-2-0-pro-260215": Client(close_fails=True),
+        "doubao-seed-2-0-mini-260428": Client(close_fails=False),
+    }
+    case = next(case for case in benchmark_cases() if case.case_id == "small_talk_no_call")
+    monkeypatch.setattr(benchmark_cli, "benchmark_cases", lambda: (case,))
+    args = build_parser().parse_args(["--live", "--runs", "1", "--models", *clients])
+
+    summaries = await run_matrix(args, client_factory=clients.__getitem__)
+
+    assert all(client.closed for client in clients.values())
+    assert summaries[0].provider_failures == 1
+    assert summaries[0].error_classes == {"ClientCloseError": 1}
+
+
+@pytest.mark.asyncio
 async def test_main_returns_nonzero_after_reporting_protocol_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -145,6 +182,7 @@ async def test_main_returns_nonzero_after_reporting_protocol_failure(
         category_pass_rates={"selection": 0.0},
         severe_failures=1,
         provider_failures=1,
+        protocol_failures=0,
         error_classes={"ArkResponsesError": 1},
         latency_ms={},
         category_latency_ms={},
@@ -159,3 +197,28 @@ async def test_main_returns_nonzero_after_reporting_protocol_failure(
 
     assert exit_code == 1
     assert '"provider_failures": 1' in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_main_returns_nonzero_for_protocol_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failed = ModelSummary(
+        model="doubao-seed-2-0-pro-260215",
+        attempts=1,
+        pass_rate=0.0,
+        category_pass_rates={"selection": 0.0},
+        severe_failures=1,
+        provider_failures=0,
+        protocol_failures=1,
+        error_classes={},
+        latency_ms={},
+        category_latency_ms={},
+    )
+
+    async def fake_run_matrix(_args: object) -> list[ModelSummary]:
+        return [failed]
+
+    monkeypatch.setattr(benchmark_cli, "run_matrix", fake_run_matrix)
+
+    assert await benchmark_cli._main(SimpleNamespace()) == 1
