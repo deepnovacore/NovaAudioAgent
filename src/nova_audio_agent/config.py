@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Literal
@@ -13,6 +14,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class ConfigurationError(RuntimeError):
     """A safe startup error that never contains credential values."""
+
+
+def _venv_python(root: str) -> str:
+    """Interpreter path inside a virtualenv rooted at `root`, per platform.
+
+    AutoGLM's default venv layout follows the interpreter that created it:
+    `Scripts/python.exe` on Windows (`os.name == "nt"`), `bin/python`
+    elsewhere. `NOVA_AUDIO_AGENT_AUTOGLM_PYTHON` still overrides this default.
+    """
+    return f"{root}/Scripts/python.exe" if os.name == "nt" else f"{root}/bin/python"
 
 
 class Settings(BaseSettings):
@@ -50,7 +61,7 @@ class Settings(BaseSettings):
     codex_api_key: SecretStr | None = None
     codex_prewarm: bool = True
     autoglm_repo: Path | None = Path("thirdparty/Open-AutoGLM")
-    autoglm_python: str = ".autoglm-venv/bin/python"
+    autoglm_python: str = Field(default_factory=lambda: _venv_python(".autoglm-venv"))
     autoglm_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
     autoglm_model: str = "autoglm-phone"
     autoglm_api_key: SecretStr | None = None

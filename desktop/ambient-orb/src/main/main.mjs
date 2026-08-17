@@ -19,7 +19,13 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { backendLaunchSpec, createReadinessListener, shutdownBackend } from './backend.mjs'
+import {
+  backendLaunchSpec,
+  createReadinessListener,
+  fallbackPython,
+  shutdownBackend,
+  venvPython,
+} from './backend.mjs'
 import { loadAppWindow } from './app-protocol.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
@@ -59,8 +65,8 @@ const pendingBoardRequests = new Map()
 
 function pythonExecutable() {
   if (process.env.NOVA_AUDIO_AGENT_PYTHON) return process.env.NOVA_AUDIO_AGENT_PYTHON
-  if (process.env.VIRTUAL_ENV) return resolve(process.env.VIRTUAL_ENV, 'bin/python')
-  return 'python3'
+  if (process.env.VIRTUAL_ENV) return venvPython(process.env.VIRTUAL_ENV)
+  return fallbackPython()
 }
 
 function configureWindowSecurity(window) {

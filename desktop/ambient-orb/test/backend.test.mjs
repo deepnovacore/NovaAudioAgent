@@ -7,8 +7,10 @@ import { once } from 'node:events'
 import {
   backendLaunchSpec,
   createReadinessListener,
+  fallbackPython,
   parseReadiness,
   shutdownBackend,
+  venvPython,
 } from '../src/main/backend.mjs'
 
 const TOKEN = 'b'.repeat(32)
@@ -441,4 +443,29 @@ test('a spawned backend reaches readiness through the launch spec environment', 
     listener.close()
     if (child.exitCode === null) child.kill('SIGKILL')
   }
+})
+
+test('venvPython resolves the venv interpreter per platform', () => {
+  assert.equal(venvPython('/opt/venv', 'darwin'), '/opt/venv/bin/python')
+  assert.equal(venvPython('/opt/venv', 'linux'), '/opt/venv/bin/python')
+  assert.equal(venvPython('C:\\venv', 'win32'), 'C:\\venv\\Scripts\\python.exe')
+})
+
+test('venvPython defaults to the current process platform', () => {
+  assert.equal(venvPython('/opt/venv'), venvPython('/opt/venv', process.platform))
+})
+
+test('venvPython requires a venv directory', () => {
+  assert.throws(() => venvPython(''), /venvDir/)
+  assert.throws(() => venvPython(undefined), /venvDir/)
+})
+
+test('fallbackPython names the bare interpreter per platform', () => {
+  assert.equal(fallbackPython('darwin'), 'python3')
+  assert.equal(fallbackPython('linux'), 'python3')
+  assert.equal(fallbackPython('win32'), 'python')
+})
+
+test('fallbackPython defaults to the current process platform', () => {
+  assert.equal(fallbackPython(), fallbackPython(process.platform))
 })

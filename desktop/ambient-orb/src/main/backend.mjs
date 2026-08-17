@@ -1,10 +1,30 @@
 import { createServer } from 'node:net'
 import { timingSafeEqual } from 'node:crypto'
+import { posix, win32 } from 'node:path'
 
 const MAX_READINESS_BYTES = 4096
 const TOKEN_PATTERN = /^[a-f0-9]{32}$/
 const READY_ENDPOINT_PATTERN = /^127\.0\.0\.1:([0-9]{1,5})$/
 const NEWLINE = 0x0a
+
+/**
+ * Resolve the interpreter inside a virtualenv rooted at `venvDir`, per platform.
+ *
+ * `platform` is an explicit parameter (not read from `process.platform` inside
+ * a shared `path` import) so the Windows branch is testable from any host: the
+ * separators must follow the *target* platform, not the one running the test.
+ */
+export function venvPython(venvDir, platform = process.platform) {
+  if (typeof venvDir !== 'string' || !venvDir) throw new Error('venvDir is required')
+  return platform === 'win32'
+    ? win32.join(venvDir, 'Scripts', 'python.exe')
+    : posix.join(venvDir, 'bin', 'python')
+}
+
+/** Bare interpreter name to fall back on when no venv is configured. */
+export function fallbackPython(platform = process.platform) {
+  return platform === 'win32' ? 'python' : 'python3'
+}
 
 export function backendLaunchSpec({ python, workspace, token, readyEndpoint, parentEnv }) {
   if (typeof python !== 'string' || !python) throw new Error('python is required')
