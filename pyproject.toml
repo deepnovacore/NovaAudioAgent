@@ -38,6 +38,7 @@ vision = [
     "opencv-python>=4.10,<5",
 ]
 volcengine = [
+    "jsonschema>=4.23,<5",
     "numpy>=1.26,<3",
     "onnxruntime>=1.19,<2",
     "silero-vad==5.1.2",
