@@ -512,11 +512,15 @@ class CodexAppServerTransport:
                     final_message=final_message,
                 ),
             )
-        except asyncio.CancelledError:
-            await self._interrupt_and_stop()
-            self._report_stopped(on_status)
-            await self._teardown_session()
-            raise
+        except asyncio.CancelledError as cancelled:
+            cleanup = asyncio.create_task(self._cancel_and_teardown_warm(on_status))
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    pass
+            cleanup.result()
+            raise cancelled
         except (AppServerProtocolError, CodexAdapterDeadlineExceeded) as failure:
             turn_started = projection.turn_was_started
             self._had_turn = self._had_turn or turn_started
@@ -850,6 +854,16 @@ class CodexAppServerTransport:
         self._finish_private_home()
         return stop
 
+    async def _cancel_and_teardown_warm(
+        self,
+        on_status: Callable[[CodexProcessStatus], None],
+    ) -> None:
+        try:
+            await self._interrupt_and_stop()
+            self._report_stopped(on_status)
+        finally:
+            await self._teardown_session()
+
     def _append_sensitive(self, text: str) -> None:
         """Retain the active work order and same-turn steers until final redaction."""
         self._sensitive_inputs.append(text)
@@ -1062,8 +1076,6 @@ class CodexAppServerTransport:
         if process is None:
             return "none"
         await self._close_stdin()
-        if not _process_tree_running(process):
-            return "none"
         try:
             async with asyncio.timeout(EXIT_GRACE):
                 await _wait_process_tree(process)

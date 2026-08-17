@@ -579,9 +579,13 @@ def test_frontend_instructions_clarify_only_one_uninferable_material_choice() ->
         "无法从当前请求和对话安全推断",
         "这一轮不得调用 codex__run",
         "可以合理默认",
+        "明确交付形态只表示无需再追问交付形态",
+        "仍缺少其他会实质改变验收结果或验证方式",
+        "仍按上一规则最多追问一个",
     ):
         assert phrase in FRONTEND_INSTRUCTIONS
     assert "网页还是桌面程序" not in FRONTEND_INSTRUCTIONS
+    assert "已经明确交付形态时也应直接调用 codex__run" not in FRONTEND_INSTRUCTIONS
 
 
 def test_frontend_instructions_merge_clarification_into_one_work_order() -> None:
@@ -590,8 +594,7 @@ def test_frontend_instructions_merge_clarification_into_one_work_order() -> None
         "原始目标",
         "补充要求",
         "一个完整 work_order",
-        "已经明确交付形态",
-        "直接调用 codex__run",
+        "否则直接调用 codex__run",
     ):
         assert phrase in FRONTEND_INSTRUCTIONS
 

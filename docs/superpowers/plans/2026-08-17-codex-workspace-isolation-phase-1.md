@@ -313,6 +313,39 @@ git add tests/test_codex_app_server.py src/nova_audio_agent/executors/codex_app_
 git commit -m "fix: isolate codex work order threads"
 ```
 
+### Implemented correction record
+
+The user-approved teardown correction supersedes the simplified clean-branch
+classification shown in Step 5: a completed warm turn is reported as completed
+only when teardown observes exit code `0` with stop outcome `none`. A required
+`SIGTERM` or `SIGKILL`, a nonzero exit, or missing final exit evidence is
+reported as `uncertain/nonzero_exit`, and the terminal status is failed when an
+exit code is available.
+
+The process-per-work-order lifecycle also made the old warm-thread replay cache
+unreachable. The implementation removes `_stale_turn_ids`,
+`_stale_turn_dropped`, their reset sites, the notification-identity helper, and
+the obsolete replay fixture instead of retaining cross-work-order private
+identity state.
+
+Final review adds focused regressions for:
+
+- a vanished POSIX process group whose leader publishes return code `0` later;
+- repeated cancellation of a prewarmed active turn;
+- repeated cancellation while post-completion warm teardown is waiting for the
+  leader exit;
+- cleanup of the process, RPC, private home, thread state, and sensitive input
+  state before cancellation propagates, followed by a fresh process and
+  `thread/start` on the next work order; and
+- the rule that a known delivery form resolves only that choice while any other
+  material, non-inferable choice still requires the generic one-question flow.
+
+The lifecycle correction always awaits/reaps a leader with an unpublished
+return code inside the existing `EXIT_GRACE`, independently of process-group
+probing, while keeping descendant cleanup bounded. Warm cancellation cleanup
+uses the cold-path shield-and-wait pattern so repeated `Task.cancel()` calls do
+not make a partially torn-down session reusable.
+
 ## Final Verification
 
 - [ ] Run the repository's complete Python verification:
@@ -338,7 +371,11 @@ Expected: both commands exit 0. `npm ci` is unnecessary when the locked dependen
 
 ```bash
 git status --short
-git diff HEAD~2 -- src/nova_audio_agent/realtime/qwen.py src/nova_audio_agent/executors/codex_app_server.py tests/test_realtime_qwen.py tests/test_codex_app_server.py
+git diff --stat 858bb4f..HEAD
+git diff 858bb4f..HEAD -- src/nova_audio_agent/realtime/qwen.py src/nova_audio_agent/executors/codex_app_server.py tests/test_realtime_qwen.py tests/test_codex_app_server.py docs/superpowers/specs/2026-08-17-codex-workspace-isolation-design.md docs/superpowers/plans/2026-08-17-codex-workspace-isolation-phase-1.md
 ```
 
-Expected: only the four planned source/test files changed across the two implementation commits; the pre-existing untracked root frontend files remain unmodified.
+Expected: inspect the complete Phase 1 range from phase base `858bb4f`, including
+the two source files, two test files, and the approved design/plan alignment.
+No Phase 2 registry or workspace-creation code is present, and unrelated files
+remain unmodified.

@@ -66,6 +66,9 @@ specific artifact type:
 - Do not ask about preferences that have a reasonable default.
 - If the objective and acceptance boundary are sufficient, submit the complete
   work order immediately.
+- Knowing the delivery form removes only the need to clarify delivery form; any
+  other non-inferable choice that materially changes acceptance or validation
+  still follows the one-question rule.
 - After an answer, merge the original request and clarification into one work
   order.
 
@@ -112,7 +115,10 @@ if that is the smallest safe change.
 
 - A failing regression test first demonstrates that two clean runs currently
   target the same thread.
-- After the change, two clean runs must use distinct thread IDs.
+- After the change, two clean runs must each use a separate app-server process
+  and private home with a fresh ephemeral `thread/start`. Thread IDs are
+  process-local, so tests prove distinct thread lifetimes from those boundaries
+  rather than comparing or exposing private IDs.
 - Steering during a run must target that run's active thread and turn.
 - Steering after completion must remain rejected.
 - Prewarm, cancellation, progress, redaction, and teardown tests must remain
@@ -291,7 +297,10 @@ Phase 1 is complete when:
 - The realtime prompt no longer contains the fixed web-versus-desktop example.
 - The generic clarification and complete-work-order invariants are covered by
   tests.
-- Two successful independent Codex runs never use the same thread.
+- Two successful independent Codex runs have distinct ephemeral thread
+  lifetimes, proven by separate app-server processes/private homes and a fresh
+  `thread/start` for each run; no globally unique or user-visible thread ID is
+  required.
 - Same-turn steering still works and post-completion steering is rejected.
 - Focused and repository-required verification passes.
 

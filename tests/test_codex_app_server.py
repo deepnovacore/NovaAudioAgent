@@ -152,6 +152,29 @@ class _Process:
         self._exited.set()
 
 
+class _DelayedCleanExitProcess(_Process):
+    """Expose the POSIX gap between group exit and child-watcher publication."""
+
+    def __init__(self, peer: "_Peer") -> None:
+        super().__init__(peer)
+        self.clean_exit_requested = asyncio.Event()
+        self.repeated_cleanup_wait_started = asyncio.Event()
+        self.wait_calls = 0
+        peer.on_close = self._request_clean_exit
+
+    def _request_clean_exit(self) -> None:
+        self.clean_exit_requested.set()
+
+    def publish_clean_exit(self) -> None:
+        super()._clean_exit()
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        if self.clean_exit_requested.is_set() and self.wait_calls >= 3:
+            self.repeated_cleanup_wait_started.set()
+        return await super().wait()
+
+
 class _Peer:
     def __init__(
         self,
@@ -926,15 +949,20 @@ async def test_steer_without_a_process_does_not_write(tmp_path: Path) -> None:
 
 
 class _RespawningFactory:
-    def __init__(self, make_peer: Callable[[], _Peer]) -> None:
+    def __init__(
+        self,
+        make_peer: Callable[[], _Peer],
+        make_process: Callable[[_Peer], _Process] = _Process,
+    ) -> None:
         self.make_peer = make_peer
+        self.make_process = make_process
         self.peers: list[_Peer] = []
         self.processes: list[_Process] = []
 
     async def __call__(self, *argv: str, **kwargs: Any) -> _Process:
         peer = self.make_peer()
         self.peers.append(peer)
-        process = _Process(peer)
+        process = self.make_process(peer)
         self.processes.append(process)
         return process
 
@@ -1032,6 +1060,41 @@ async def test_completed_warm_turn_that_requires_termination_is_uncertain(
     )
 
 
+async def test_completed_warm_turn_reaps_delayed_clean_exit_before_classifying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    factory = _RespawningFactory(
+        lambda: _Peer(tmp_path, multi_turn=True),
+        _DelayedCleanExitProcess,
+    )
+    transport = CodexAppServerTransport(
+        binary="codex-cli",
+        workspace=tmp_path,
+        preflight=_Preflight(),
+        process_factory=factory,
+        environ={"PATH": "/bin", "SECRET": "drop"},
+        clock=VirtualClock(),
+        protocol_probe=_ProtocolProbe(),
+    )
+    monkeypatch.setattr(codex_app_server, "_process_tree_running", lambda _process: False)
+    await transport.prewarm()
+    process = factory.processes[0]
+    assert isinstance(process, _DelayedCleanExitProcess)
+
+    run = asyncio.create_task(
+        transport.run("task-1", on_status=lambda _status: None, on_progress=None)
+    )
+    await process.clean_exit_requested.wait()
+    assert process.returncode is None
+    process.publish_clean_exit()
+    result = await run
+
+    assert process.wait_calls >= 2
+    assert (result.classification, result.code) == ("completed", "completed")
+    assert result.content["process"]["exit_code"] == 0
+    assert result.content["process"]["stop"] == "none"
+
+
 async def test_closed_warm_rpc_with_live_process_recovers_before_turn_write(tmp_path: Path) -> None:
     """Stdout EOF is process decay even when the child return code has not arrived yet."""
     transport, factory = _warm_transport(
@@ -1058,7 +1121,7 @@ async def test_closed_warm_rpc_with_live_process_recovers_before_turn_write(tmp_
 
 
 async def test_non_completed_turn_recycles_the_process(tmp_path: Path) -> None:
-    """Reuse is earned by a clean turn; anything else tears the session down."""
+    """A non-completed work order tears down its isolated session before recovery."""
     transport, factory = _warm_transport(
         tmp_path,
         lambda: _Peer(
@@ -1082,6 +1145,121 @@ async def test_non_completed_turn_recycles_the_process(tmp_path: Path) -> None:
 
     assert recovered.classification == "completed"
     assert len(factory.processes) == 2
+
+
+async def test_repeated_cancellation_of_active_warm_turn_finishes_isolated_cleanup(
+    tmp_path: Path,
+) -> None:
+    homes: list[Path] = []
+    spawned = 0
+
+    def make_peer() -> _Peer:
+        nonlocal spawned
+        spawned += 1
+        return _Peer(
+            tmp_path,
+            multi_turn=True,
+            hold_completion=spawned == 1,
+            hold_interrupt_completion=spawned == 1,
+        )
+
+    factory = _RespawningFactory(make_peer)
+    transport = CodexAppServerTransport(
+        binary="codex-cli",
+        workspace=tmp_path,
+        preflight=_Preflight(),
+        process_factory=factory,
+        environ={"PATH": "/bin", "SECRET": "drop"},
+        clock=VirtualClock(),
+        home_observer=homes.append,
+        protocol_probe=_ProtocolProbe(),
+    )
+    await transport.prewarm()
+    first_peer = factory.peers[0]
+    first_process = factory.processes[0]
+    run = asyncio.create_task(
+        transport.run("task-1", on_status=lambda _status: None, on_progress=None)
+    )
+    await first_peer.turn_started.wait()
+
+    run.cancel()
+    await first_peer.interrupt_received.wait()
+    run.cancel()
+    first_peer.complete(status="interrupted")
+
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert first_process.returncode is not None
+    assert transport._process is None  # type: ignore[attr-defined]
+    assert transport._rpc is None  # type: ignore[attr-defined]
+    assert transport._warm is False  # type: ignore[attr-defined]
+    assert transport._thread_response is None  # type: ignore[attr-defined]
+    assert transport._sensitive_inputs == []  # type: ignore[attr-defined]
+    assert homes and not homes[0].exists()
+
+    recovered = await transport.run("task-2", on_status=lambda _status: None, on_progress=None)
+
+    assert recovered.classification == "completed"
+    assert len(factory.processes) == 2
+    assert [_method_count(peer, "thread/start") for peer in factory.peers] == [1, 1]
+    assert [_method_count(peer, "turn/start") for peer in factory.peers] == [1, 1]
+
+
+async def test_repeated_cancellation_during_completed_warm_cleanup_cannot_leak_state(
+    tmp_path: Path,
+) -> None:
+    homes: list[Path] = []
+    process_count = 0
+
+    def make_process(peer: _Peer) -> _Process:
+        nonlocal process_count
+        process_count += 1
+        if process_count == 1:
+            return _DelayedCleanExitProcess(peer)
+        return _Process(peer)
+
+    factory = _RespawningFactory(
+        lambda: _Peer(tmp_path, multi_turn=True),
+        make_process,
+    )
+    transport = CodexAppServerTransport(
+        binary="codex-cli",
+        workspace=tmp_path,
+        preflight=_Preflight(),
+        process_factory=factory,
+        environ={"PATH": "/bin", "SECRET": "drop"},
+        clock=VirtualClock(),
+        home_observer=homes.append,
+        protocol_probe=_ProtocolProbe(),
+    )
+    await transport.prewarm()
+    first_process = factory.processes[0]
+    assert isinstance(first_process, _DelayedCleanExitProcess)
+    run = asyncio.create_task(
+        transport.run("task-1", on_status=lambda _status: None, on_progress=None)
+    )
+    await first_process.clean_exit_requested.wait()
+
+    run.cancel()
+    await first_process.repeated_cleanup_wait_started.wait()
+    run.cancel()
+    first_process.publish_clean_exit()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert transport._process is None  # type: ignore[attr-defined]
+    assert transport._rpc is None  # type: ignore[attr-defined]
+    assert transport._warm is False  # type: ignore[attr-defined]
+    assert transport._thread_response is None  # type: ignore[attr-defined]
+    assert transport._sensitive_inputs == []  # type: ignore[attr-defined]
+    assert homes and not homes[0].exists()
+
+    recovered = await transport.run("task-2", on_status=lambda _status: None, on_progress=None)
+
+    assert recovered.classification == "completed"
+    assert len(factory.processes) == 2
+    assert [_method_count(peer, "thread/start") for peer in factory.peers] == [1, 1]
+    assert [_method_count(peer, "turn/start") for peer in factory.peers] == [1, 1]
 
 
 async def test_completed_isolated_work_order_cannot_be_steered(tmp_path: Path) -> None:
