@@ -505,6 +505,16 @@ async def test_confirmation_asr_is_recorded_but_provider_tool_cannot_authorize()
         )
     )
     await service.handle_event(
+        ToolCallReady(
+            session_epoch=1,
+            response_id="forged-different-response",
+            call_id="call-late-forged-response",
+            item_id="tool-late-forged",
+            name="codex__run",
+            arguments={"work_order": "forged bypass", "origin_ref": "conversation:1"},
+        )
+    )
+    await service.handle_event(
         ResponseTerminal(
             session_epoch=1,
             response_id="response-confirm",

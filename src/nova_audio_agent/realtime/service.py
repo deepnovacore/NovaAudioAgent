@@ -1006,6 +1006,11 @@ class RealtimeService:
         self._publish_project_view()
 
     def _blocks_project_confirmation_tool(self, event: ToolCallReady) -> bool:
+        if any(
+            epoch == event.session_epoch
+            for epoch, _response_id in self._project_confirmation_responses
+        ):
+            return True
         effective_response_id = event.response_id or self.session.active_provider_response_id
         if (
             effective_response_id is not None
@@ -1014,11 +1019,6 @@ class RealtimeService:
                 effective_response_id,
             )
             in self._project_confirmation_responses
-        ):
-            return True
-        if event.response_id is None and any(
-            epoch == event.session_epoch
-            for epoch, _response_id in self._project_confirmation_responses
         ):
             return True
         if self._project_confirmation_blocking:
