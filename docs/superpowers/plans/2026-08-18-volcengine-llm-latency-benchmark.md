@@ -259,6 +259,10 @@ MODEL_CHOICES = (
     "deepseek-v4-pro-ga-260813",
     "deepseek-v4-flash-ga-260731",
     "doubao-seed-2-0-lite-260428",
+    "doubao-seed-1-6-flash-250828",
+    "doubao-seed-1-8-251228",
+    "glm-5-2-260617",
+    "kimi-k2-250905",
 )
 ```
 
@@ -303,7 +307,7 @@ git commit -m "feat: add opt-in Ark function-call benchmark"
 Run with `ARK_API_KEY` sourced from the ignored worktree `.env`:
 
 ```bash
-uv run --extra volcengine python scripts/benchmark_volcengine_llm.py --live --runs 2 --models doubao-seed-2-0-pro-260215 doubao-seed-2-1-pro-260628 doubao-seed-2-1-turbo-260628 deepseek-v4-pro-ga-260813 deepseek-v4-flash-ga-260731 doubao-seed-2-0-lite-260428
+uv run --extra volcengine python scripts/benchmark_volcengine_llm.py --live --runs 2 --models doubao-seed-2-0-pro-260215 doubao-seed-2-1-pro-260628 doubao-seed-2-1-turbo-260628 deepseek-v4-pro-ga-260813 deepseek-v4-flash-ga-260731 doubao-seed-2-0-lite-260428 doubao-seed-1-6-flash-250828 doubao-seed-1-8-251228 glm-5-2-260617 kimi-k2-250905
 ```
 
 Expected: aggregate JSON for every candidate; an incompatible model is reported without aborting the matrix.

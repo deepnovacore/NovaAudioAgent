@@ -22,6 +22,17 @@ The live benchmark compares models that the configured Ark account exposes:
 - `deepseek-v4-flash-ga-260731`
 - `doubao-seed-2-0-lite-260428` (speed lower-bound candidate)
 
+If none of those candidates is both non-inferior and repeatably faster, run a
+second-stage matrix against these additional account-visible models:
+
+- `doubao-seed-1-6-flash-250828`
+- `doubao-seed-1-8-251228`
+- `glm-5-2-260617`
+- `kimi-k2-250905`
+
+The same gates apply; older or third-party model families receive no relaxed
+scoring or protocol exceptions.
+
 DeepSeek candidates are not assumed to support the current Ark Responses contract.
 Protocol incompatibility is recorded as a benchmark result, not worked around in
 the evaluator. A separate Chat Completions adapter will be considered only if a
