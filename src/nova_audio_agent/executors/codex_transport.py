@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import os
 import re
-import signal
 import tempfile
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
@@ -35,6 +34,13 @@ from nova_audio_agent.executors.codex_preflight import (
     ProcessGroupCleanupResult,
     _finish_process_cleanup,
     _filtered_environment,
+)
+from nova_audio_agent.process_tree import (
+    KILL_SIGNAL,
+    TERMINATE_SIGNAL,
+    signal_tree,
+    spawn_supervision_kwargs,
+    tree_alive,
 )
 
 PROCESS_TIMEOUT = 520.0
@@ -230,7 +236,7 @@ class CodexTransport:
                 *argv,
                 cwd=self._workspace,
                 env=env,
-                start_new_session=os.name == "posix",
+                **spawn_supervision_kwargs(),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -707,10 +713,10 @@ async def _fallback_process_cleanup(
     leader_stop: str = "none"
     group_stop: str = "none"
     group_id = process.pid
-    group_gone = not _fallback_group_alive(group_id)
+    group_gone = not tree_alive(group_id)
 
     if not group_gone:
-        if _fallback_signal(process, signal.SIGTERM):
+        if _fallback_signal(process, TERMINATE_SIGNAL):
             group_stop = "terminate"
         _, group_gone = await asyncio.gather(
             _fallback_reap(process, grace=grace),
@@ -728,7 +734,7 @@ async def _fallback_process_cleanup(
             leader_stop = "terminate"
 
     if not group_gone:
-        if _fallback_signal(process, signal.SIGKILL):
+        if _fallback_signal(process, KILL_SIGNAL):
             group_stop = "kill"
         _, group_gone = await asyncio.gather(
             _fallback_reap(process, grace=grace),
@@ -793,11 +799,14 @@ async def _finish_fallback_cleanup(
     return interrupted, result
 
 
-def _fallback_signal(process: _Process, selected_signal: signal.Signals) -> bool:
+def _fallback_signal(process: _Process, selected_signal: int) -> bool:
+    """Signal the whole tree, falling back to the leader handle where there is no tree reach."""
+    if signal_tree(process.pid, selected_signal):
+        return True
+    if os.name == "posix":
+        return False
     try:
-        if os.name == "posix":
-            os.killpg(process.pid, selected_signal)
-        elif selected_signal == signal.SIGTERM:
+        if selected_signal == TERMINATE_SIGNAL:
             process.terminate()
         else:
             process.kill()
@@ -806,23 +815,9 @@ def _fallback_signal(process: _Process, selected_signal: signal.Signals) -> bool
     return True
 
 
-def _fallback_group_alive(group_id: int) -> bool:
-    if os.name != "posix":
-        return False
-    try:
-        os.killpg(group_id, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-
 async def _fallback_wait_group(group_id: int, *, grace: float) -> bool:
     deadline = asyncio.get_running_loop().time() + grace
-    while _fallback_group_alive(group_id):
+    while tree_alive(group_id):
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
             return False

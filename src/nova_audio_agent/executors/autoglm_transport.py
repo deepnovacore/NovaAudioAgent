@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import signal
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +15,13 @@ from nova_audio_agent.executors.autoglm_protocol import (
     AutoGlmJsonlParser,
     AutoGlmProtocolError,
     AutoGlmWorkerResult,
+)
+from nova_audio_agent.process_tree import (
+    KILL_SIGNAL,
+    TERMINATE_SIGNAL,
+    signal_tree,
+    spawn_supervision_kwargs,
+    tree_alive,
 )
 
 MAX_STDERR_BYTES = 64 * 1024
@@ -108,7 +114,7 @@ class AutoGlmTransport:
                     *self._argv(),
                     cwd=self._repo,
                     env=self._worker_environment(query),
-                    start_new_session=os.name == "posix",
+                    **spawn_supervision_kwargs(),
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
@@ -229,14 +235,14 @@ class AutoGlmTransport:
         if _has_process_group(process):
             if process.returncode is not None and not _group_alive(process):
                 return True
-            if _signal_group(process, signal.SIGTERM):
+            if _signal_group(process, TERMINATE_SIGNAL):
                 _, group_gone = await asyncio.gather(
                     _wait_for_exit(process, self._grace(deadline)),
                     _wait_for_group_gone(process, self._grace(deadline)),
                 )
                 if group_gone:
                     return True
-                if not _signal_group(process, signal.SIGKILL):
+                if not _signal_group(process, KILL_SIGNAL):
                     return False
                 _, group_gone = await asyncio.gather(
                     _wait_for_exit(process, self._grace(deadline)),
@@ -327,32 +333,25 @@ class _CredentialScanner:
         self._tail = combined[-overlap:] if overlap else b""
 
 
-def _signal_group(process: _Process, selected_signal: signal.Signals) -> bool:
+def _signal_group(process: _Process, selected_signal: int) -> bool:
     if not _has_process_group(process):
         return False
-    try:
-        os.killpg(process.pid, selected_signal)  # type: ignore[attr-defined]
-    except (OSError, ProcessLookupError):
-        return False
-    return True
+    return signal_tree(process.pid, selected_signal)  # type: ignore[attr-defined]
 
 
 def _group_alive(process: _Process) -> bool:
     if not _has_process_group(process):
         return False
-    try:
-        os.killpg(process.pid, 0)  # type: ignore[attr-defined]
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
+    if os.name != "posix":
+        # No whole-tree probe on Windows (see process_tree.tree_alive): taskkill /T has
+        # already walked the descendants, so the leader is the only evidence left.
+        return process.returncode is None
+    return tree_alive(process.pid)  # type: ignore[attr-defined]
 
 
 def _has_process_group(process: _Process) -> bool:
-    return os.name == "posix" and isinstance(getattr(process, "pid", None), int)
+    """Whether this process was spawned as a tree leader addressable by its own pid."""
+    return os.name in {"posix", "nt"} and isinstance(getattr(process, "pid", None), int)
 
 
 def _signal_leader(process: _Process, method: str) -> None:

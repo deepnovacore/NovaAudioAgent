@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import os
 import re
-import signal
 import shutil
 import tempfile
 import unicodedata
@@ -41,6 +40,13 @@ from nova_audio_agent.executors.codex_preflight import (
     _filtered_environment,
 )
 from nova_audio_agent.ports import PROGRESS_SUMMARY_LIMIT, ProgressPayload
+from nova_audio_agent.process_tree import (
+    KILL_SIGNAL,
+    TERMINATE_SIGNAL,
+    signal_tree,
+    spawn_supervision_kwargs,
+    tree_alive,
+)
 
 LIVE_APP_SERVER_OPTIONS = (
     "-c",
@@ -903,7 +909,7 @@ class CodexAppServerTransport:
             *LIVE_APP_SERVER_OPTIONS,
             cwd=self._workspace,
             env=env,
-            start_new_session=os.name == "posix",
+            **spawn_supervision_kwargs(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -1127,35 +1133,27 @@ async def _wait_process_tree(process: _Process) -> None:
 
 def _process_tree_running(process: _Process) -> bool:
     if os.name == "posix" and isinstance(process, asyncio.subprocess.Process):
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
+        return tree_alive(process.pid)
     return process.returncode is None
 
 
 def _terminate_process(process: _Process) -> None:
-    _signal_process_group(process, signal.SIGTERM, process.terminate)
+    _signal_process_group(process, TERMINATE_SIGNAL, process.terminate)
 
 
 def _kill_process(process: _Process) -> None:
-    _signal_process_group(process, signal.SIGKILL, process.kill)
+    _signal_process_group(process, KILL_SIGNAL, process.kill)
 
 
 def _signal_process_group(
     process: _Process,
-    sig: signal.Signals,
+    selected_signal: int,
     fallback: Callable[[], None],
 ) -> None:
-    if os.name == "posix" and isinstance(process, asyncio.subprocess.Process):
-        try:
-            os.killpg(process.pid, sig)
-            return
-        except OSError:
-            pass
+    if isinstance(process, asyncio.subprocess.Process) and signal_tree(
+        process.pid, selected_signal
+    ):
+        return
     try:
         fallback()
     except ProcessLookupError:
