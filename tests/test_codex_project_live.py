@@ -26,11 +26,16 @@ def _context(
     *,
     origin_ref: str = "conversation:1",
     delegate_id: str = "delegate-run",
+    private: object | None = None,
 ) -> DispatchContext:
     return SimpleNamespace(
         clock=clock,
         progress=None,
-        delegate=SimpleNamespace(origin_ref=origin_ref, delegate_id=delegate_id),
+        delegate=SimpleNamespace(
+            origin_ref=origin_ref,
+            delegate_id=delegate_id,
+            private=private,
+        ),
     )
 
 
@@ -323,7 +328,11 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
     resumed = await adapter.dispatch(
         "run",
         {"work_order": "continue it"},
-        _context(clock, delegate_id="delegate-resume"),
+        _context(
+            clock,
+            delegate_id="delegate-resume",
+            private=dispatched[0][0].private,
+        ),
     )
 
     assert committed.accepted is True
@@ -351,12 +360,16 @@ async def test_confirmed_dispatch_reserves_global_slot_and_exact_work_order(tmp_
     outcome = controller.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
     assert outcome.operation is not None
 
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="host-delegate")
+
     committed = await adapter.commit_confirmed(
         outcome.operation,
         origin_ref="conversation:2",
-        runtime_dispatch=lambda _request, *, reason: RuntimeDispatchResult(
-            accepted=True, delegate_id="host-delegate"
-        ),
+        runtime_dispatch=dispatch,
     )
     unrelated = await adapter.dispatch(
         "run",
@@ -370,12 +383,95 @@ async def test_confirmed_dispatch_reserves_global_slot_and_exact_work_order(tmp_
             clock,
             origin_ref="conversation:2",
             delegate_id="host-delegate",
+            private=outcome.operation,
         ),
     )
 
     assert committed.accepted is True
-    assert unrelated.content == {"error": "busy", "op": "run"}
+    assert dispatched[0][0].private is outcome.operation
+    assert unrelated.content != {"error": "busy", "op": "run"}
     assert mismatched.content == {"error": "confirmation_binding_mismatch", "op": "run"}
+
+
+@pytest.mark.asyncio
+async def test_confirmed_work_order_is_normalized_once_before_runtime_dispatch(
+    tmp_path: Path,
+) -> None:
+    adapter, _store = _adapter(tmp_path)
+    controller = adapter.confirmation
+    proposal = await adapter.dispatch(
+        "project",
+        {
+            "action": "create",
+            "workspace": "beta",
+            "work_order": "  host work\n",
+        },
+        _context(VirtualClock(), origin_ref="conversation:2"),
+    )
+    assert proposal.content["code"] == "confirmation_required"
+    assert controller.reserve_user_item(epoch=1, item_id="user-confirm")
+    outcome = controller.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    assert outcome.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="host-delegate")
+
+    committed = await adapter.commit_confirmed(
+        outcome.operation,
+        origin_ref="conversation:2",
+        runtime_dispatch=dispatch,
+    )
+    result = await adapter.dispatch(
+        "run",
+        dispatched[0][0].request,
+        _context(
+            VirtualClock(),
+            origin_ref="conversation:2",
+            delegate_id="host-delegate",
+            private=outcome.operation,
+        ),
+    )
+
+    assert committed.accepted is True
+    assert dispatched[0][0].request == {"work_order": "host work"}
+    assert result.content != {"error": "confirmation_binding_mismatch", "op": "run"}
+
+
+@pytest.mark.asyncio
+async def test_dropped_confirmed_delegate_cannot_make_later_run_busy(tmp_path: Path) -> None:
+    adapter, _store = _adapter(tmp_path)
+    controller = adapter.confirmation
+    controller.prepare(
+        action="create",
+        workspace_display_name="beta",
+        workspace_id=None,
+        session_title=None,
+        session_id=None,
+        work_order="first",
+        origin_ref="conversation:2",
+    )
+    assert controller.reserve_user_item(epoch=1, item_id="user-confirm")
+    outcome = controller.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    assert outcome.operation is not None
+    committed = await adapter.commit_confirmed(
+        outcome.operation,
+        origin_ref="conversation:2",
+        runtime_dispatch=lambda _request, *, reason: RuntimeDispatchResult(
+            accepted=True,
+            delegate_id="dropped-delegate",
+        ),
+    )
+
+    later = await adapter.dispatch(
+        "run",
+        {"work_order": "later"},
+        _context(VirtualClock(), delegate_id="later-delegate"),
+    )
+
+    assert committed.accepted is True
+    assert later.content != {"error": "busy", "op": "run"}
 
 
 @pytest.mark.asyncio
@@ -411,18 +507,27 @@ async def test_failed_resume_before_thread_validation_marks_session_unavailable(
     confirmation.reserve_user_item(epoch=1, item_id="user-confirm")
     outcome = confirmation.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
     assert outcome.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="resume-delegate")
+
     await adapter.commit_confirmed(
         outcome.operation,
         origin_ref="conversation:2",
-        runtime_dispatch=lambda _request, *, reason: RuntimeDispatchResult(
-            accepted=True, delegate_id="resume-delegate"
-        ),
+        runtime_dispatch=dispatch,
     )
 
     result = await adapter.dispatch(
         "run",
         {"work_order": "continue"},
-        _context(clock, origin_ref="conversation:2", delegate_id="resume-delegate"),
+        _context(
+            clock,
+            origin_ref="conversation:2",
+            delegate_id="resume-delegate",
+            private=dispatched[0][0].private,
+        ),
     )
 
     assert result.outcome == "failed"

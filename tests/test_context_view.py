@@ -14,6 +14,7 @@ import pytest
 
 from nova_audio_agent.context_view import FRESH_WINDOW, ContextView, compile_context_view
 from nova_audio_agent.executors import SlowSim
+from nova_audio_agent.executors.codex import CODEX_POLICY
 from nova_audio_agent.memory import (
     CONVERSATION_CHANNEL,
     Authorization,
@@ -24,6 +25,7 @@ from nova_audio_agent.memory import (
     parse_ref,
 )
 from nova_audio_agent.suggestions import SuggestionPool
+from nova_audio_agent.ports import Delegate
 from policies import SLOW_SIM_POLICY
 from snapshot import assert_snapshot, to_snapshot
 
@@ -130,6 +132,27 @@ def test_view_carries_the_seven_fields() -> None:
         "unresolved_question",
         "channel_update",
     ]
+
+
+def test_host_private_delegate_capability_is_absent_from_context() -> None:
+    capability = object()
+    delegate = Delegate(
+        delegate_id="private-confirmed",
+        executor="codex",
+        op="run",
+        request={"work_order": "x"},
+        origin_ref="conversation:1",
+        deadline=600.0,
+        routing_class="user_awaited",
+        dispatched_at=0.0,
+        private=capability,
+    )
+    memory = Memory(policies=(CODEX_POLICY,))
+
+    view = compile_context_view(memory, floor="idle", now=0.0, in_flight=(delegate,))
+
+    assert "private" not in view.in_flight[0].what
+    assert "object at" not in view.in_flight[0].what
 
 
 def test_channels_view_reads_the_summary_slot_not_the_raw_log() -> None:

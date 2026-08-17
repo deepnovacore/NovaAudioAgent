@@ -136,8 +136,6 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         self.confirmation = confirmation
         self._worker_factory = worker_factory
         self._on_project_view = on_project_view
-        self._armed: dict[str, ConfirmedProjectOperation] = {}
-        self._commit_reservation = False
 
     async def dispatch(
         self,
@@ -152,21 +150,19 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         normalized = _normalize_project_run(request)
         if normalized is None:
             return _failure("invalid_params", op)
-        delegate_id = ctx.delegate.delegate_id
-        armed = self._armed.get(delegate_id)
-        if self._commit_reservation or (self._armed and armed is None):
-            return _failure("busy", op)
-        if armed is not None and normalized[0] != armed.work_order:
-            self._armed.pop(delegate_id, None)
+        private = getattr(ctx.delegate, "private", None)
+        if private is not None and type(private) is not ConfirmedProjectOperation:
+            return _failure("confirmation_binding_mismatch", op)
+        confirmed = private if type(private) is ConfirmedProjectOperation else None
+        if confirmed is not None and normalized[0] != confirmed.work_order:
             return _failure("confirmation_binding_mismatch", op)
         if self._run_lock.locked():
             return _failure("busy", op)
         await self._run_lock.acquire()
         try:
-            armed = self._armed.pop(delegate_id, None)
-            if armed is not None:
-                assert armed.work_order is not None
-                return await self._run_confirmed(armed, armed.work_order, ctx)
+            if confirmed is not None:
+                assert confirmed.work_order is not None
+                return await self._run_confirmed(confirmed, confirmed.work_order, ctx)
             return await self._run_new(normalized[0], normalized[1], ctx)
         finally:
             self._run_lock.release()
@@ -351,24 +347,23 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                 return ProjectCommitResult(False, failure.code)
             self._publish_project_view()
             return ProjectCommitResult(True, "committed")
-        if self._run_lock.locked() or self._armed or self._commit_reservation:
+        normalized_work_order = _normalize_run_request({"work_order": work_order})
+        if normalized_work_order is None or normalized_work_order != work_order:
+            return ProjectCommitResult(False, "invalid_operation")
+        if self._run_lock.locked():
             return ProjectCommitResult(False, "busy")
-        self._commit_reservation = True
-        try:
-            admission = runtime_dispatch(
-                DelegateRequest(
-                    executor="codex",
-                    op="run",
-                    request={"work_order": work_order},
-                    origin_ref=origin_ref,
-                ),
-                reason=WakeReason(kind="realtime_tool", priority=100, routing_class="user_awaited"),
-            )
-        finally:
-            self._commit_reservation = False
+        admission = runtime_dispatch(
+            DelegateRequest(
+                executor="codex",
+                op="run",
+                request={"work_order": work_order},
+                origin_ref=origin_ref,
+                private=operation,
+            ),
+            reason=WakeReason(kind="realtime_tool", priority=100, routing_class="user_awaited"),
+        )
         if not admission.accepted or admission.delegate_id is None:
             return ProjectCommitResult(False, "runtime_rejected")
-        self._armed[admission.delegate_id] = operation
         return ProjectCommitResult(True, "accepted", admission.delegate_id)
 
     def _publish_project_view(self) -> None:
@@ -438,7 +433,12 @@ def _parse_project_request(
             type(value) is not str or not value.strip() or len(value) > limit
         ):
             return None
-    return action, workspace, session, work_order
+    return (
+        action,
+        None if workspace is None else workspace.strip(),
+        None if session is None else session.strip(),
+        None if work_order is None else work_order.strip(),
+    )
 
 
 def _project_ok(*, code: str, **content: Any) -> Handoff:

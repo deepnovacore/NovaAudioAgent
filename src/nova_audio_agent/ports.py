@@ -69,6 +69,9 @@ class DelegateRequest:
     op: str
     request: dict[str, Any]
     origin_ref: MemoryRef  # causal attribution: which task is this delegate answering, and for what
+    # Host-only in-process capability. Model/tool schemas never expose this field, and
+    # runtime projections must never copy it into ContextView, memory, or telemetry.
+    private: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +86,7 @@ class Delegate:
     deadline: float  # bound by the runtime from OpSpec.deadline_budget
     routing_class: RoutingClass  # inherited by the runtime along the causal chain
     dispatched_at: float
+    private: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,4 +372,5 @@ def bind_delegate(
         deadline=now + op.deadline_budget,
         routing_class=wake_reason.routing_class,
         dispatched_at=now,
+        private=request.private,
     )

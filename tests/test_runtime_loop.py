@@ -29,11 +29,46 @@ from nova_audio_agent.events import (
     SpeakStart,
     UserInput,
 )
+from nova_audio_agent.executors.sims import SlowSim
 from nova_audio_agent.memory import CONVERSATION_CHANNEL, Memory
+from nova_audio_agent.ports import DelegateRequest, WakeReason
 from nova_audio_agent.runtime import Runtime
 from policies import SIM_POLICIES
 
 DEADLINE_AT = 5.0
+
+
+@pytest.mark.asyncio
+async def test_host_private_delegate_capability_is_absent_from_deadline_evidence() -> None:
+    class PrivateCapability:
+        def __repr__(self) -> str:
+            return "PRIVATE_CAPABILITY_MUST_NOT_LEAK"
+
+    clock = VirtualClock()
+    runtime = Runtime(
+        clock=clock,
+        memory=Memory(policies=SIM_POLICIES),
+        executors={"slow_sim": SlowSim(inject="hang")},
+    )
+    runtime.apply(UserInput("start", ts=0.0, seq=1))
+    admission = runtime.dispatch_external(
+        DelegateRequest(
+            executor="slow_sim",
+            op="set_light",
+            request={"room": "客厅", "brightness": 30},
+            origin_ref="conversation:1",
+            private=PrivateCapability(),
+        ),
+        reason=WakeReason(kind="user_input", priority=100, routing_class="user_awaited"),
+    )
+    assert admission.delegate_id is not None
+
+    runtime._apply_deadline(Deadline(delegate_id=admission.delegate_id, ts=1.0))
+    observation = runtime.memory.channels["slow_sim"].items[-1]
+
+    assert observation.content["request"] == {"room": "客厅", "brightness": 30}
+    assert "PRIVATE_CAPABILITY_MUST_NOT_LEAK" not in repr(observation.content)
+    await runtime.run()
 
 
 def _dispatch_with_deadline(runtime: Runtime, clock: VirtualClock, *, latency: float) -> None:
