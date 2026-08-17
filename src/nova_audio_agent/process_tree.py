@@ -23,6 +23,7 @@ tests/test_repo_guards.py.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import subprocess
@@ -48,8 +49,10 @@ CREATE_NEW_PROCESS_GROUP = 0x00000200
 TASKKILL_NOT_FOUND = 128
 _TASKKILL_FAILED = 1
 _POLL_INTERVAL = 0.01
-# Bound on one taskkill pass. A wedged taskkill would otherwise block the asyncio loop inside
-# the teardown path indefinitely; 5s is generous for a local process-tree walk.
+# Bound on one taskkill pass. Without it a wedged taskkill would hang its caller forever;
+# 5s is generous for a local process-tree walk. The bound is a ceiling, not an escape: the
+# call still *blocks* for as long as it takes, which is why async callers must reach it
+# through `signal_tree_async` / `terminate_tree` rather than `signal_tree`.
 TASKKILL_TIMEOUT_S = 5.0
 _SUPERVISION_CLOCK = RealClock()
 
@@ -82,6 +85,22 @@ def signal_tree(pid: int, selected_signal: int, *, runner: TaskkillRunner | None
     if os.name == "nt":
         return _taskkill(pid, forced=selected_signal == KILL_SIGNAL, runner=runner) == 0
     return False
+
+
+async def signal_tree_async(
+    pid: int, selected_signal: int, *, runner: TaskkillRunner | None = None
+) -> bool:
+    """`signal_tree` for async callers: same verdict, never blocking the event loop.
+
+    POSIX is delegated straight through — `os.killpg` is one instant syscall, and a worker
+    thread would cost more than it saves. Windows has no group signal, so the tree is reached
+    by *spawning* `taskkill /T` and waiting on it: a blocking call that stalls every other
+    coroutine on the loop — audio frames, websocket pings, the rest of the teardown — for up
+    to `TASKKILL_TIMEOUT_S`. That one goes to a thread.
+    """
+    if os.name == "nt":
+        return await asyncio.to_thread(signal_tree, pid, selected_signal, runner=runner)
+    return signal_tree(pid, selected_signal, runner=runner)
 
 
 def tree_alive(pid: int) -> bool:
@@ -134,9 +153,12 @@ async def terminate_tree(
     """
     clock = clock or _SUPERVISION_CLOCK
     if os.name == "nt":
-        _taskkill(pid, forced=False, runner=runner)
+        # Both passes spawn-and-wait, so both go to a thread: this is an async function and
+        # its caller's loop must keep turning while taskkill walks the tree.
+        await asyncio.to_thread(_taskkill, pid, forced=False, runner=runner)
         await clock.sleep(grace)
-        return _taskkill(pid, forced=True, runner=runner) in {0, TASKKILL_NOT_FOUND}
+        forced = await asyncio.to_thread(_taskkill, pid, forced=True, runner=runner)
+        return forced in {0, TASKKILL_NOT_FOUND}
     if not tree_alive(pid):
         return True
     signal_tree(pid, TERMINATE_SIGNAL)
@@ -171,5 +193,9 @@ def _taskkill(pid: int, *, forced: bool, runner: TaskkillRunner | None) -> int:
 
 def _run_captured(argv: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
     """Default runner: taskkill's chatter is captured, and its runtime bounded, so a wedged
-    process can neither land on the host's stdio nor block the event loop indefinitely."""
+    process can neither land on the host's stdio nor hang its caller forever.
+
+    This blocks the calling thread for as long as taskkill takes. Keeping it off the event
+    loop is `signal_tree_async`'s job, not this function's.
+    """
     return subprocess.run(argv, capture_output=True, check=False, timeout=TASKKILL_TIMEOUT_S)

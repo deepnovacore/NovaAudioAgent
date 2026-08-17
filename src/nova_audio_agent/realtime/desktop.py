@@ -854,7 +854,7 @@ def watch_parent_stdin(
 
     if os.name == "posix":
         try:
-            loop.add_reader(fd, _consume_parent_liveness, fd, stop)
+            loop.add_reader(fd, _consume_parent_liveness, loop, fd, stop)
         except PermissionError:  # pragma: no cover - stdin the selector cannot poll
             # A descriptor the selector refuses is not one a blocking read can
             # judge either: a regular file reports EOF that says nothing about the
@@ -865,7 +865,7 @@ def watch_parent_stdin(
             # through to the thread instead of losing the sentinel.
             pass
         else:
-            return lambda: loop.remove_reader(fd)
+            return lambda: _release_parent_reader(loop, fd)
 
     def watch() -> None:
         while True:
@@ -888,13 +888,37 @@ def _no_unwatch() -> None:
     """Nothing to unregister: the liveness thread is a daemon and dies with exit."""
 
 
-def _consume_parent_liveness(parent_fd: int, stop: asyncio.Event) -> None:
+def _consume_parent_liveness(
+    loop: asyncio.AbstractEventLoop, parent_fd: int, stop: asyncio.Event
+) -> None:
+    """Read one byte; an empty read is EOF, which is the parent asking for a drain.
+
+    Selector readers are level-triggered, and a descriptor at EOF stays readable forever, so
+    a reader left registered here would be re-armed on every pass of the loop for the whole
+    drain — a busy spin over exactly the window the drain needs the CPU for. Unregistering
+    from inside the callback is safe: the verdict is one-shot, and nothing re-arms it.
+    """
     try:
         alive = os.read(parent_fd, 1)
     except OSError:
         alive = b""
-    if not alive:
-        stop.set()
+    if alive:
+        return
+    _release_parent_reader(loop, parent_fd)
+    stop.set()
+
+
+def _release_parent_reader(loop: asyncio.AbstractEventLoop, parent_fd: int) -> None:
+    """Unregister the liveness reader, tolerating a descriptor that no longer has one.
+
+    `remove_reader` merely returns `False` for an fd it is not watching, so the EOF callback
+    and the final cleanup can both call it; a loop already closed underneath us raises
+    instead, and that is equally nothing left to unregister.
+    """
+    try:
+        loop.remove_reader(parent_fd)
+    except RuntimeError:  # pragma: no cover - the loop closed before the final cleanup
+        pass
 
 
 def main() -> None:

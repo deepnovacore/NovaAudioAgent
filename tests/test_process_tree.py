@@ -13,6 +13,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from contextlib import suppress
 from pathlib import Path
 
@@ -188,6 +189,101 @@ def test_the_default_windows_runner_captures_taskkill_output(
     assert kwargs["capture_output"] is True
     assert kwargs["check"] is False
     assert kwargs["timeout"] == process_tree.TASKKILL_TIMEOUT_S
+
+
+async def test_signal_tree_async_never_leaves_the_loop_thread_on_posix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`killpg` is a single instant syscall, so POSIX must not pay for a worker thread."""
+    monkeypatch.setattr(process_tree.os, "name", "posix")
+    threads: list[int] = []
+    sent: list[tuple[int, int]] = []
+
+    def killpg(pid: int, selected: int) -> None:
+        threads.append(threading.get_ident())
+        sent.append((pid, selected))
+
+    monkeypatch.setattr(process_tree.os, "killpg", killpg)
+
+    assert await process_tree.signal_tree_async(4321, process_tree.TERMINATE_SIGNAL) is True
+    assert sent == [(4321, signal.SIGTERM)]
+    assert threads == [threading.get_ident()]
+
+
+@pytest.mark.parametrize(
+    ("error", "delivered"),
+    [(ProcessLookupError(), False), (PermissionError(), False), (OSError(), False)],
+)
+async def test_signal_tree_async_reports_the_same_posix_verdict_as_the_sync_call(
+    monkeypatch: pytest.MonkeyPatch, error: OSError, delivered: bool
+) -> None:
+    monkeypatch.setattr(process_tree.os, "name", "posix")
+
+    def killpg(pid: int, selected: int) -> None:
+        raise error
+
+    monkeypatch.setattr(process_tree.os, "killpg", killpg)
+
+    assert await process_tree.signal_tree_async(4321, process_tree.TERMINATE_SIGNAL) is delivered
+
+
+async def test_signal_tree_async_runs_taskkill_off_the_event_loop_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """taskkill is a bounded *blocking* call: on win32 it must be handed to a thread."""
+    monkeypatch.setattr(process_tree.os, "name", "nt")
+    events: list[tuple[str, object]] = []
+    threads: list[int] = []
+
+    def runner(argv):  # noqa: ANN001 - mirrors the injected runner protocol
+        threads.append(threading.get_ident())
+        events.append(("run", tuple(argv)))
+        return subprocess.CompletedProcess(list(argv), 0, b"", b"")
+
+    delivered = await process_tree.signal_tree_async(4321, process_tree.KILL_SIGNAL, runner=runner)
+
+    assert delivered is True
+    assert events == [("run", ("taskkill", "/PID", "4321", "/T", "/F"))]
+    assert threads and threading.get_ident() not in threads
+
+
+async def test_signal_tree_async_reports_the_same_windows_verdict_as_the_sync_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(process_tree.os, "name", "nt")
+    events: list[tuple[str, object]] = []
+    runner = _taskkill_runner(events, returncode=process_tree.TASKKILL_NOT_FOUND)
+
+    assert (
+        await process_tree.signal_tree_async(4321, process_tree.TERMINATE_SIGNAL, runner=runner)
+        is False
+    )
+
+
+async def test_terminate_tree_keeps_both_windows_taskkill_passes_off_the_loop_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(process_tree.os, "name", "nt")
+    events: list[tuple[str, object]] = []
+    threads: list[int] = []
+
+    def runner(argv):  # noqa: ANN001 - mirrors the injected runner protocol
+        threads.append(threading.get_ident())
+        events.append(("run", tuple(argv)))
+        return subprocess.CompletedProcess(list(argv), 0, b"", b"")
+
+    gone = await process_tree.terminate_tree(
+        4321, grace=2.5, runner=runner, clock=_RecordingClock(events)
+    )
+
+    assert gone is True
+    assert events == [
+        ("run", ("taskkill", "/PID", "4321", "/T")),
+        ("sleep", 2.5),
+        ("run", ("taskkill", "/PID", "4321", "/T", "/F")),
+    ]
+    assert len(threads) == 2
+    assert threading.get_ident() not in threads
 
 
 def test_signal_tree_survives_a_wedged_taskkill_that_blows_the_timeout(

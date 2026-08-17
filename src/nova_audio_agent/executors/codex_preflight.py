@@ -22,7 +22,7 @@ from nova_audio_agent.clock import RealClock
 from nova_audio_agent.process_tree import (
     KILL_SIGNAL,
     TERMINATE_SIGNAL,
-    signal_tree,
+    signal_tree_async,
     spawn_supervision_kwargs,
     tree_alive,
 )
@@ -677,7 +677,7 @@ async def _cleanup_process_group(
         not _process_group_alive(group_id) if os.name == "posix" else process.returncode is not None
     )
 
-    if not group_gone and _signal_process_tree(process, TERMINATE_SIGNAL):
+    if not group_gone and await _signal_process_tree(process, TERMINATE_SIGNAL):
         group_stop = "terminate"
         if os.name == "posix":
             _, group_gone = await asyncio.gather(
@@ -690,7 +690,7 @@ async def _cleanup_process_group(
         if leader_was_running and process.returncode is not None:
             leader_stop = "terminate"
 
-    if not group_gone and _signal_process_tree(process, KILL_SIGNAL):
+    if not group_gone and await _signal_process_tree(process, KILL_SIGNAL):
         group_stop = "kill"
         if os.name == "posix":
             _, group_gone = await asyncio.gather(
@@ -754,12 +754,16 @@ async def _bounded_reap(
         pass
 
 
-def _signal_process_tree(
+async def _signal_process_tree(
     process: asyncio.subprocess.Process,
     selected_signal: int,
 ) -> bool:
-    """Signal the whole tree, falling back to the leader handle where there is no tree reach."""
-    if signal_tree(process.pid, selected_signal):
+    """Signal the whole tree, falling back to the leader handle where there is no tree reach.
+
+    Async because the win32 half of a tree signal is a blocking `taskkill` spawn; the leader
+    fallbacks below are instant either way.
+    """
+    if await signal_tree_async(process.pid, selected_signal):
         return True
     if os.name == "posix" or process.returncode is not None:
         return False

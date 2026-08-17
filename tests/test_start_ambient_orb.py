@@ -236,6 +236,26 @@ def test_ps1_declares_same_env_contract() -> None:
     assert "[Console]::Error" in fail_body, "Fail must write to stderr, not the host"
 
 
+def test_ps1_resolves_a_native_codex_binary_instead_of_an_npm_shim() -> None:
+    """`create_subprocess_exec` cannot launch a `.cmd` shim, so the launcher must pin the exe."""
+    text = PS1_SOURCE.read_text(encoding="utf-8")
+
+    assert "codex.exe" in text, "the launcher must prefer the native codex executable"
+    assert "$env:NOVA_AUDIO_AGENT_CODEX_BIN" in text, (
+        "a resolved native codex must be handed to the backend by absolute path"
+    )
+    assert ".cmd" in text and ".bat" in text, "the npm batch shims must be recognised as shims"
+
+    refusals = [line for line in text.splitlines() if "无法直接启动" in line]
+    assert refusals, "a shim-only codex must fail with an actionable message"
+    for line in refusals:
+        assert line.lstrip().startswith("Fail "), "the refusal must abort, not merely warn"
+        assert "codex.exe" in line, "the message must name the native binary to install"
+    assert any("NOVA_AUDIO_AGENT_CODEX_BIN" in line for line in refusals), (
+        "the message must name the override the user can set instead"
+    )
+
+
 def test_ps1_launchers_have_utf8_bom() -> None:
     for source in (PS1_SOURCE, BOOTSTRAP_PS1_SOURCE):
         assert source.is_file(), f"{source} does not exist"

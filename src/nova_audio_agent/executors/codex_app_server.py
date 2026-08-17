@@ -43,7 +43,7 @@ from nova_audio_agent.ports import PROGRESS_SUMMARY_LIMIT, ProgressPayload
 from nova_audio_agent.process_tree import (
     KILL_SIGNAL,
     TERMINATE_SIGNAL,
-    signal_tree,
+    signal_tree_async,
     spawn_supervision_kwargs,
     tree_alive,
 )
@@ -1099,13 +1099,13 @@ class CodexAppServerTransport:
                 await _wait_process_tree(process)
             return "none"
         except TimeoutError:
-            _terminate_process(process)
+            await _terminate_process(process)
         try:
             async with asyncio.timeout(EXIT_GRACE):
                 await _wait_process_tree(process)
             return "terminate"
         except TimeoutError:
-            _kill_process(process)
+            await _kill_process(process)
             try:
                 async with asyncio.timeout(EXIT_GRACE):
                     await _wait_process_tree(process)
@@ -1115,7 +1115,7 @@ class CodexAppServerTransport:
 
 
 async def _kill_and_reap(process: _Process) -> None:
-    _kill_process(process)
+    await _kill_process(process)
     try:
         async with asyncio.timeout(EXIT_GRACE):
             await _wait_process_tree(process)
@@ -1137,20 +1137,22 @@ def _process_tree_running(process: _Process) -> bool:
     return process.returncode is None
 
 
-def _terminate_process(process: _Process) -> None:
-    _signal_process_group(process, TERMINATE_SIGNAL, process.terminate)
+async def _terminate_process(process: _Process) -> None:
+    await _signal_process_group(process, TERMINATE_SIGNAL, process.terminate)
 
 
-def _kill_process(process: _Process) -> None:
-    _signal_process_group(process, KILL_SIGNAL, process.kill)
+async def _kill_process(process: _Process) -> None:
+    await _signal_process_group(process, KILL_SIGNAL, process.kill)
 
 
-def _signal_process_group(
+async def _signal_process_group(
     process: _Process,
     selected_signal: int,
     fallback: Callable[[], None],
 ) -> None:
-    if isinstance(process, asyncio.subprocess.Process) and signal_tree(
+    """Async because the win32 half of a tree signal is a blocking `taskkill` spawn; the
+    leader fallback below is instant either way."""
+    if isinstance(process, asyncio.subprocess.Process) and await signal_tree_async(
         process.pid, selected_signal
     ):
         return

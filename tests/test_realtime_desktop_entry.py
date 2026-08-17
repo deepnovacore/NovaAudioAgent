@@ -56,6 +56,31 @@ async def test_parent_watch_stops_on_stdin_eof_through_the_loop_reader() -> None
         os.close(parent_read)
 
 
+@pytest.mark.asyncio
+async def test_parent_watch_unregisters_its_reader_the_moment_stdin_hits_eof() -> None:
+    """EOF leaves the fd permanently readable, so the callback must take itself off the loop.
+
+    Left registered, the level-triggered reader is re-armed on every pass of the loop for the
+    entire drain — a busy spin over exactly the window where the drain needs the CPU.
+    """
+
+    parent_read, parent_write = os.pipe()
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    unwatch = watch_parent_stdin(loop, stop, fd=parent_read)
+    try:
+        os.close(parent_write)
+        await asyncio.wait_for(stop.wait(), timeout=1.0)
+
+        # False means "there was nothing registered to remove": the EOF callback
+        # already unregistered itself rather than churning through the drain.
+        assert loop.remove_reader(parent_read) is False
+    finally:
+        # The final cleanup must stay a safe no-op once the reader is already gone.
+        unwatch()
+        os.close(parent_read)
+
+
 @pytest.mark.real_time
 @pytest.mark.asyncio
 async def test_parent_watch_threads_stdin_eof_when_the_loop_has_no_reader() -> None:

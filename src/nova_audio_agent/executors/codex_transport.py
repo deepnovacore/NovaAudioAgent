@@ -38,7 +38,7 @@ from nova_audio_agent.executors.codex_preflight import (
 from nova_audio_agent.process_tree import (
     KILL_SIGNAL,
     TERMINATE_SIGNAL,
-    signal_tree,
+    signal_tree_async,
     spawn_supervision_kwargs,
     tree_alive,
 )
@@ -716,7 +716,7 @@ async def _fallback_process_cleanup(
     group_gone = not tree_alive(group_id)
 
     if not group_gone:
-        if _fallback_signal(process, TERMINATE_SIGNAL):
+        if await _fallback_signal(process, TERMINATE_SIGNAL):
             group_stop = "terminate"
         _, group_gone = await asyncio.gather(
             _fallback_reap(process, grace=grace),
@@ -734,7 +734,7 @@ async def _fallback_process_cleanup(
             leader_stop = "terminate"
 
     if not group_gone:
-        if _fallback_signal(process, KILL_SIGNAL):
+        if await _fallback_signal(process, KILL_SIGNAL):
             group_stop = "kill"
         _, group_gone = await asyncio.gather(
             _fallback_reap(process, grace=grace),
@@ -799,9 +799,13 @@ async def _finish_fallback_cleanup(
     return interrupted, result
 
 
-def _fallback_signal(process: _Process, selected_signal: int) -> bool:
-    """Signal the whole tree, falling back to the leader handle where there is no tree reach."""
-    if signal_tree(process.pid, selected_signal):
+async def _fallback_signal(process: _Process, selected_signal: int) -> bool:
+    """Signal the whole tree, falling back to the leader handle where there is no tree reach.
+
+    Async because the win32 half of a tree signal is a blocking `taskkill` spawn; the leader
+    fallbacks below are instant either way.
+    """
+    if await signal_tree_async(process.pid, selected_signal):
         return True
     if os.name == "posix":
         return False

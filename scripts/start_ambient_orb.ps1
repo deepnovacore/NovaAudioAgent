@@ -4,11 +4,13 @@
     Windows launcher for the Ambient Orb desktop app.
 
 .DESCRIPTION
-    Mirrors scripts/start_ambient_orb.sh: checks npm and the Codex CLI on PATH, requires a
-    .env file at the repository root, resolves a Python interpreter that can import
-    nova_audio_agent (NOVA_AUDIO_AGENT_PYTHON -> %CONDA_PREFIX%\python.exe ->
-    .venv\Scripts\python.exe -> `conda run -n nova-audio-agent python`), exports
-    NOVA_AUDIO_AGENT_PYTHON / _CODEX_WORKSPACE / _ENV_FILE, and starts the desktop app.
+    Mirrors scripts/start_ambient_orb.sh: checks npm on PATH, resolves a native codex.exe
+    (never an npm .cmd shim, which CreateProcess cannot launch) into
+    NOVA_AUDIO_AGENT_CODEX_BIN, requires a .env file at the repository root, resolves a
+    Python interpreter that can import nova_audio_agent (NOVA_AUDIO_AGENT_PYTHON ->
+    %CONDA_PREFIX%\python.exe -> .venv\Scripts\python.exe ->
+    `conda run -n nova-audio-agent python`), exports NOVA_AUDIO_AGENT_PYTHON /
+    _CODEX_BIN / _CODEX_WORKSPACE / _ENV_FILE, and starts the desktop app.
 #>
 
 Set-StrictMode -Version Latest
@@ -31,8 +33,65 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     Fail '缺少 npm，请先安装 Node.js'
 }
 
-if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
-    Fail '缺少 Codex CLI，请先安装 codex'
+# The backend launches codex with CreateProcess (`create_subprocess_exec`), which can only
+# start a real executable image. npm installs codex as a `.cmd`/`.bat` shim that only cmd.exe
+# knows how to run, so a PATH lookup that stops at the shim yields ENOENT at the first turn.
+# Resolve a native `codex.exe` here and hand the backend its absolute path instead.
+function Resolve-CodexExe {
+    # -First 1 throughout: a PATH with several codex entries must still yield one string,
+    # never the array that would silently become a garbage command line.
+    $native = Get-Command codex.exe -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($native) {
+        return $native.Source
+    }
+
+    $shim = Get-Command codex -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $shim) {
+        return $null
+    }
+    $source = $shim.Source
+    if (-not $source) {
+        return $null
+    }
+    if ($source -notmatch '\.(cmd|bat)$') {
+        return $source
+    }
+
+    # npm's shim sits next to the package's own binary, either directly or one level down in
+    # the node_modules tree it was linked from; both layouts are worth one probe each.
+    $shimDir = Split-Path -Parent $source
+    $candidates = @(
+        (Join-Path $shimDir 'codex.exe'),
+        (Join-Path $shimDir 'node_modules\@openai\codex\bin\codex.exe'),
+        (Join-Path $shimDir '..\@openai\codex\bin\codex.exe')
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+    return $null
+}
+
+if ($env:NOVA_AUDIO_AGENT_CODEX_BIN) {
+    if (-not (Get-Command $env:NOVA_AUDIO_AGENT_CODEX_BIN -ErrorAction SilentlyContinue)) {
+        Fail '环境变量 NOVA_AUDIO_AGENT_CODEX_BIN 必须指向一个可执行的 codex'
+    }
+    # An override pointing at a shim fails in exactly the same way as a shim on PATH, and
+    # from further away, so it is worth catching here rather than at the first turn.
+    if ($env:NOVA_AUDIO_AGENT_CODEX_BIN -match '\.(cmd|bat)$') {
+        Fail 'NOVA_AUDIO_AGENT_CODEX_BIN 指向 npm 批处理包装（.cmd/.bat），后端无法直接启动它；请改为原生 codex.exe 的完整路径'
+    }
+} else {
+    $CodexBin = Resolve-CodexExe
+    if (-not $CodexBin) {
+        if (Get-Command codex -ErrorAction SilentlyContinue) {
+            Fail 'PATH 上的 codex 只是 npm 批处理包装（.cmd/.bat），后端无法直接启动它；请安装原生 codex.exe，或将 NOVA_AUDIO_AGENT_CODEX_BIN 设为 codex.exe 的完整路径'
+        }
+        Fail '缺少 Codex CLI，请先安装 codex'
+    }
+    $env:NOVA_AUDIO_AGENT_CODEX_BIN = $CodexBin
 }
 
 $EnvFile = Join-Path $RootDir '.env'

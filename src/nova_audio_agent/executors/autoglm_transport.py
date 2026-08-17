@@ -19,7 +19,7 @@ from nova_audio_agent.executors.autoglm_protocol import (
 from nova_audio_agent.process_tree import (
     KILL_SIGNAL,
     TERMINATE_SIGNAL,
-    signal_tree,
+    signal_tree_async,
     spawn_supervision_kwargs,
     tree_alive,
 )
@@ -235,14 +235,14 @@ class AutoGlmTransport:
         if _has_process_group(process):
             if process.returncode is not None and not _group_alive(process):
                 return True
-            if _signal_group(process, TERMINATE_SIGNAL):
+            if await _signal_group(process, TERMINATE_SIGNAL):
                 _, group_gone = await asyncio.gather(
                     _wait_for_exit(process, self._grace(deadline)),
                     _wait_for_group_gone(process, self._grace(deadline)),
                 )
                 if group_gone:
                     return True
-                if not _signal_group(process, KILL_SIGNAL):
+                if not await _signal_group(process, KILL_SIGNAL):
                     return False
                 _, group_gone = await asyncio.gather(
                     _wait_for_exit(process, self._grace(deadline)),
@@ -333,10 +333,11 @@ class _CredentialScanner:
         self._tail = combined[-overlap:] if overlap else b""
 
 
-def _signal_group(process: _Process, selected_signal: int) -> bool:
+async def _signal_group(process: _Process, selected_signal: int) -> bool:
+    """Async because the win32 half of a tree signal is a blocking `taskkill` spawn."""
     if not _has_process_group(process):
         return False
-    return signal_tree(process.pid, selected_signal)  # type: ignore[attr-defined]
+    return await signal_tree_async(process.pid, selected_signal)  # type: ignore[attr-defined]
 
 
 def _group_alive(process: _Process) -> bool:

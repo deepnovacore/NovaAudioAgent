@@ -1692,7 +1692,7 @@ async def test_shared_cleanup_reports_terminate_or_kill_without_real_waits(
     observed_graces: list[float] = []
     group_alive = True
 
-    def signal_process(process_value: _FakeProcess, selected: signal.Signals) -> bool:
+    async def signal_process(process_value: _FakeProcess, selected: signal.Signals) -> bool:
         nonlocal group_alive
         assert process_value is process
         observed_signals.append(selected)
@@ -1843,7 +1843,7 @@ async def test_residual_group_is_killed_after_leader_already_exited(
     def alive(_: int) -> bool:
         return group_alive
 
-    def signal_group(process_value: _FakeProcess, selected: signal.Signals) -> bool:
+    async def signal_group(process_value: _FakeProcess, selected: signal.Signals) -> bool:
         nonlocal group_alive
         assert process_value is process
         signals.append(selected)
