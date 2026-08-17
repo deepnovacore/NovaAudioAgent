@@ -223,8 +223,6 @@ class CodexAppServerTransport:
         self._process_wait: asyncio.Task[int] | None = None
         self._rpc_wait: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
-        self._stale_turn_ids: set[str] = set()
-        self._stale_turn_dropped = 0
         self._prewarm_lock = asyncio.Lock()
         self._validated_establish = False
 
@@ -327,7 +325,6 @@ class CodexAppServerTransport:
         if self._developer_instructions is not None:
             thread_params["developerInstructions"] = self._developer_instructions
         self._thread_response = await self._request("thread/start", thread_params, deadline)
-        self._stale_turn_ids.clear()
 
     async def run(
         self,
@@ -459,17 +456,25 @@ class CodexAppServerTransport:
                 process = self._process
                 stop = await self._teardown_session()
                 exit_code = None if process is None else process.returncode
+                classification = "completed" if exit_code == 0 and stop == "none" else "uncertain"
+                code = "completed" if classification == "completed" else "nonzero_exit"
                 on_status(
                     CodexProcessStatus(
                         running=exit_code is None,
                         exited=exit_code is not None,
-                        terminal="completed" if exit_code is not None else None,
+                        terminal=(
+                            "completed"
+                            if classification == "completed"
+                            else "failed"
+                            if exit_code is not None
+                            else None
+                        ),
                         exit_code=exit_code,
                     )
                 )
                 return CodexTransportResult(
-                    classification="completed",
-                    code="completed",
+                    classification=classification,
+                    code=code,
                     content=_content(
                         completion=completion,
                         exit_code=exit_code,
@@ -841,7 +846,6 @@ class CodexAppServerTransport:
         self._validated_establish = False
         self._thread_response = None
         self._thread_id = None
-        self._stale_turn_ids.clear()
         self._sensitive_inputs.clear()
         self._finish_private_home()
         return stop
@@ -961,12 +965,6 @@ class CodexAppServerTransport:
         if not self._initialized or self._projection is None:
             return
         method, params = item
-        stale_turn = _notification_turn_identity(method, params)
-        if stale_turn is not None and stale_turn in self._stale_turn_ids:
-            # TurnLease: a replayed notification from a finished warm turn must not
-            # bind or complete the next turn's projection.
-            self._stale_turn_dropped += 1
-            return
         if self._notification_observer is not None:
             try:
                 item_types: tuple[str, ...] = ()
@@ -1228,18 +1226,6 @@ def _sanitize_final_message(
         "truncated": len(normalized) > FINAL_TEXT_LIMIT,
         "sha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
     }
-
-
-def _notification_turn_identity(method: str, params: dict[str, Any]) -> str | None:
-    if method in {"turn/started", "turn/completed"}:
-        turn = params.get("turn")
-        if type(turn) is dict and type(turn.get("id")) is str:
-            return turn["id"]
-        return None
-    if method == "item/completed":
-        turn_id = params.get("turnId")
-        return turn_id if type(turn_id) is str else None
-    return None
 
 
 def _content(

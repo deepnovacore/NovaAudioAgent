@@ -290,17 +290,6 @@ class _Peer:
             return "turn-private"
         return f"turn-{max(1, self.turn_count)}"
 
-    def replay_stale_turn_started(self, turn_id: str) -> None:
-        self._feed(
-            {
-                "method": "turn/started",
-                "params": {
-                    "threadId": "thread-private",
-                    "turn": {"id": turn_id, "items": []},
-                },
-            }
-        )
-
     def complete(self, *, status: str = "completed") -> None:
         text = self.final_text
         if self.final_texts and self.turn_count <= len(self.final_texts):
@@ -1017,6 +1006,30 @@ async def test_completed_work_orders_use_distinct_app_server_threads(tmp_path: P
     assert second.content["protocol"]["transport_closed"] is True
     assert second.content["process"]["exit_code"] == 0
     assert second.content["process"]["stop"] == "none"
+
+
+async def test_completed_warm_turn_that_requires_termination_is_uncertain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport, factory = _warm_transport(tmp_path, lambda: _Peer(tmp_path, multi_turn=True))
+    await transport.prewarm()
+    monkeypatch.setattr(codex_app_server, "EXIT_GRACE", 0.01)
+    factory.peers[0].on_close = lambda: None
+    statuses: list[CodexProcessStatus] = []
+
+    result = await transport.run("task-1", on_status=statuses.append, on_progress=None)
+
+    assert factory.processes[0].terminate_calls == 1
+    assert (result.classification, result.code) == ("uncertain", "nonzero_exit")
+    assert result.content["process"]["exit_code"] == -15
+    assert result.content["process"]["stop"] == "terminate"
+    assert result.content["protocol"]["transport_closed"] is True
+    assert statuses[-1] == CodexProcessStatus(
+        running=False,
+        exited=True,
+        terminal="failed",
+        exit_code=-15,
+    )
 
 
 async def test_closed_warm_rpc_with_live_process_recovers_before_turn_write(tmp_path: Path) -> None:
