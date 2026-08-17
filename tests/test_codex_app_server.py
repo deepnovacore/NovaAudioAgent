@@ -1262,6 +1262,39 @@ async def test_repeated_cancellation_during_completed_warm_cleanup_cannot_leak_s
     assert [_method_count(peer, "turn/start") for peer in factory.peers] == [1, 1]
 
 
+async def test_warm_cleanup_error_does_not_replace_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport, factory = _warm_transport(
+        tmp_path,
+        lambda: _Peer(tmp_path, multi_turn=True, hold_completion=True),
+    )
+    await transport.prewarm()
+    private_home = transport._private_home  # type: ignore[attr-defined]
+    assert private_home is not None
+
+    def fail_cleanup() -> None:
+        raise OSError("private home is temporarily not removable")
+
+    monkeypatch.setattr(private_home, "cleanup", fail_cleanup)
+    run = asyncio.create_task(
+        transport.run("task-1", on_status=lambda _status: None, on_progress=None)
+    )
+    await factory.peers[0].turn_started.wait()
+
+    run.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert transport._process is None  # type: ignore[attr-defined]
+    assert transport._rpc is None  # type: ignore[attr-defined]
+    assert transport._warm is False  # type: ignore[attr-defined]
+    assert transport._thread_response is None  # type: ignore[attr-defined]
+    assert transport._sensitive_inputs == []  # type: ignore[attr-defined]
+    assert transport._private_home is None  # type: ignore[attr-defined]
+
+
 async def test_completed_isolated_work_order_cannot_be_steered(tmp_path: Path) -> None:
     transport, factory = _warm_transport(tmp_path, lambda: _Peer(tmp_path, multi_turn=True))
     await transport.prewarm()

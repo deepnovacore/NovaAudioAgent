@@ -287,23 +287,8 @@ class CodexLiveAdapter:
                 and self._status.terminal == "completed"
                 and self._status.exit_code == 0
             )
-            # Warm reuse (R102): a completed turn legitimately leaves the child
-            # alive with its transport open for the next delegation.
-            warm_clean = (
-                self._status.process_running
-                and evidence["protocol"]["transport_closed"] is False
-                and evidence["process"]["exit_code"] is None
-            )
-            clean = result.code == "completed" and (cold_clean or warm_clean)
-            if not warm_clean:
-                self._mark_prewarm_cold()
-            if warm_clean and not cold_clean:
-                self._status = replace(
-                    self._status,
-                    state="idle",
-                    process_running=False,
-                    terminal="completed" if clean else self._status.terminal,
-                )
+            clean = result.code == "completed" and cold_clean
+            self._mark_prewarm_cold()
             return _run_handoff(
                 outcome="ok" if clean else "unknown",
                 trust="untrusted_external",

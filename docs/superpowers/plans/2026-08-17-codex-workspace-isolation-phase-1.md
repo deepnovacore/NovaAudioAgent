@@ -25,6 +25,8 @@
 - `tests/test_realtime_qwen.py`: owns static prompt invariants and the regression against a preferred delivery-form pair.
 - `src/nova_audio_agent/executors/codex_app_server.py`: owns app-server process, thread, turn, steering, and cleanup lifecycle; a clean warm run will now use the existing teardown path rather than retain its thread.
 - `tests/test_codex_app_server.py`: owns the fake app-server protocol peer and lifecycle assertions; reuse-oriented tests become isolation-oriented tests while same-turn steering coverage remains intact.
+- `src/nova_audio_agent/executors/codex_live.py`: owns adapter-side acceptance of transport evidence; completed work orders accept only a cleanly exited isolated process.
+- `tests/test_codex_live.py`: owns adapter evidence classification; obsolete fake warm-reuse behavior is replaced by an isolation-contract regression.
 
 ---
 
@@ -346,9 +348,88 @@ probing, while keeping descendant cleanup bounded. Warm cancellation cleanup
 uses the cold-path shield-and-wait pattern so repeated `Task.cancel()` calls do
 not make a partially torn-down session reusable.
 
+### Task 3: Preserve cancellation and remove the adapter's obsolete warm contract
+
+**Files:**
+- Modify: `tests/test_codex_app_server.py`
+- Modify: `src/nova_audio_agent/executors/codex_app_server.py:515-523,835-865,909-921`
+- Modify: `tests/test_codex_live.py:457-487`
+- Modify: `src/nova_audio_agent/executors/codex_live.py:284-306`
+- Modify: `tests/test_realtime_qwen.py:575-589`
+- Modify: `src/nova_audio_agent/realtime/qwen.py:70-81`
+
+**Interfaces:**
+- Consumes: cancellation of `CodexAppServerTransport.run`, `CodexTransportResult` completion evidence, and `FRONTEND_INSTRUCTIONS`.
+- Produces: original cancellation remains observable even if teardown reports an error; adapter completion requires exited/zero evidence; concise generic clarification policy.
+
+- [x] **Step 1: Write the cancellation-error regression**
+
+Add an app-server test that starts a prewarmed run, makes private-home cleanup
+raise `OSError`, cancels the run, and asserts the awaited run still raises
+`asyncio.CancelledError`. Assert reusable process, RPC, thread, sensitive input,
+and private-home references are cleared before cancellation returns.
+
+- [x] **Step 2: Run the focused test and verify RED**
+
+Run:
+
+```bash
+env PYTHONPATH=src /Users/fishwowater/sqxh/nova-audio-agent/.venv/bin/pytest tests/test_codex_app_server.py::test_warm_cleanup_error_does_not_replace_cancellation -q
+```
+
+Expected: FAIL because `cleanup.result()` propagates the teardown `OSError`
+instead of the original `CancelledError`.
+
+- [x] **Step 3: Make cancellation primary and teardown state clearing unconditional**
+
+Keep teardown in a shielded child task, but capture its non-cancellation failure
+without replacing the original cancellation. Move lifecycle reference clearing
+into a `finally` path, and clear `_private_home` before attempting filesystem
+cleanup so a failed deletion cannot be reused or overwritten by the next spawn.
+
+- [x] **Step 4: Run the cancellation regression and verify GREEN**
+
+Run the focused test from Step 2. Expected: PASS with cancellation propagated
+and all reusable in-memory state cleared.
+
+- [x] **Step 5: Replace the fake warm-completion test and verify RED**
+
+Change `test_warm_reuse_completion_is_clean_and_returns_to_idle` so the same
+fake open-transport result must be rejected as `outcome="unknown"` with code
+`invalid_worker_result`, and prewarm must return to cold. Run that single test;
+expected RED because `warm_clean` still accepts it.
+
+- [x] **Step 6: Remove adapter-side warm completion acceptance and verify GREEN**
+
+Delete `warm_clean` and its idle-state rewrite from `CodexLiveAdapter._run`.
+For `classification == "completed"`, accept only `result.code == "completed"`
+plus exited status, terminal `completed`, and exit code `0`; always mark prewarm
+cold after a completed work order. Run the complete `tests/test_codex_live.py`.
+
+- [x] **Step 7: Compress the prompt and keep semantic tests positive**
+
+Express the generic rule once: clarify at most one material, non-inferable
+choice without dispatch; a known delivery form removes only that question;
+otherwise use reasonable defaults and dispatch. Remove the exact-old-wording
+absence assertion while keeping the positive relationship assertions and the
+specific regression that the preferred pair `网页还是桌面程序` is absent.
+
+- [x] **Step 8: Run focused and full verification**
+
+Run the two focused regressions, both affected test files, the complete Python
+suite, Ruff check/format, Ambient Orb tests/build, and offline Python build.
+Every command must exit zero before committing.
+
+- [x] **Step 9: Commit the review follow-up**
+
+```bash
+git add docs/superpowers/plans/2026-08-17-codex-workspace-isolation-phase-1.md src/nova_audio_agent/executors/codex_app_server.py src/nova_audio_agent/executors/codex_live.py src/nova_audio_agent/realtime/qwen.py tests/test_codex_app_server.py tests/test_codex_live.py tests/test_realtime_qwen.py
+git commit -m "fix: close codex isolation review gaps"
+```
+
 ## Final Verification
 
-- [ ] Run the repository's complete Python verification:
+- [x] Run the repository's complete Python verification:
 
 ```bash
 uv run ruff check src tests scripts

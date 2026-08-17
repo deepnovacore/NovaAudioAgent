@@ -519,7 +519,14 @@ class CodexAppServerTransport:
                     await asyncio.shield(cleanup)
                 except asyncio.CancelledError:
                     pass
-            cleanup.result()
+                except Exception:
+                    pass
+            try:
+                cleanup.result()
+            except Exception as cleanup_failure:
+                cancelled.add_note(
+                    f"warm cancellation cleanup failed: {type(cleanup_failure).__name__}"
+                )
             raise cancelled
         except (AppServerProtocolError, CodexAdapterDeadlineExceeded) as failure:
             turn_started = projection.turn_was_started
@@ -910,6 +917,7 @@ class CodexAppServerTransport:
         private_home = self._private_home
         if private_home is None:
             return
+        self._private_home = None
         path = Path(private_home.name)
         if self._home_observer is not None:
             try:
@@ -917,7 +925,6 @@ class CodexAppServerTransport:
             except Exception:
                 pass
         private_home.cleanup()
-        self._private_home = None
 
     async def _request(
         self,

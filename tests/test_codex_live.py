@@ -454,8 +454,8 @@ async def test_status_reports_prewarm_state_and_aclose_reaps_worker() -> None:
     assert worker.aclose_calls == 1
 
 
-async def test_warm_reuse_completion_is_clean_and_returns_to_idle() -> None:
-    """A completed warm turn leaves the child alive (R102); that is clean, not invalid."""
+async def test_open_transport_completion_is_rejected_after_isolated_work_order() -> None:
+    """Completed evidence is valid only after the isolated process exits cleanly."""
 
     class _WarmWorker(_Worker):
         async def run(self, work_order, *, on_status, on_progress, deadline=None):
@@ -463,7 +463,7 @@ async def test_warm_reuse_completion_is_clean_and_returns_to_idle() -> None:
             on_status(CodexProcessStatus(running=True, exited=False))
             self.started.set()
             await self.release.wait()
-            # Warm reuse: the child stays alive after turn/completed.
+            # Contradict the process-per-work-order transport contract.
             on_status(CodexProcessStatus(running=True, exited=False))
             result = _completed()
             content = dict(result.content)
@@ -481,7 +481,6 @@ async def test_warm_reuse_completion_is_clean_and_returns_to_idle() -> None:
 
     handoff = await run
 
-    assert handoff.outcome == "ok"
-    assert handoff.content["code"] == "completed"
-    assert adapter.status.state == "idle"
-    assert adapter.status.terminal == "completed"
+    assert handoff.outcome == "unknown"
+    assert handoff.content["code"] == "invalid_worker_result"
+    assert adapter.status.prewarm == "cold"
