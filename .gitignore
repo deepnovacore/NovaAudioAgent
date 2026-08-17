@@ -37,6 +37,7 @@ resources/cut-final/
 # Internal working material (demo video production)
 docs/demos/
 docs/superpowers/
+.worktrees/
 video/
 
 # Editors and operating systems
