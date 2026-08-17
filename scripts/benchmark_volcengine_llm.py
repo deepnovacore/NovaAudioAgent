@@ -34,6 +34,10 @@ MODEL_CHOICES = (
     "deepseek-v4-pro-ga-260813",
     "deepseek-v4-flash-ga-260731",
     "doubao-seed-2-0-lite-260428",
+    "doubao-seed-1-6-flash-250828",
+    "doubao-seed-1-8-251228",
+    "glm-5-2-260617",
+    "kimi-k2-250905",
 )
 DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 _SCHEDULE_SEED = 20260818

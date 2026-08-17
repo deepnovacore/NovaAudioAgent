@@ -5,7 +5,7 @@ import json
 import pytest
 
 from nova_audio_agent.realtime.volcengine.benchmark import ModelSummary
-from scripts.benchmark_volcengine_llm import build_parser, public_report, run_matrix
+from scripts.benchmark_volcengine_llm import MODEL_CHOICES, build_parser, public_report, run_matrix
 
 
 def test_parser_defaults_to_safe_mode_and_rejects_unlisted_model() -> None:
@@ -16,6 +16,15 @@ def test_parser_defaults_to_safe_mode_and_rejects_unlisted_model() -> None:
     assert args.runs == 2
     with pytest.raises(SystemExit):
         parser.parse_args(["--models", "arbitrary-model"])
+
+
+def test_model_allowlist_includes_second_stage_candidates() -> None:
+    assert {
+        "doubao-seed-1-6-flash-250828",
+        "doubao-seed-1-8-251228",
+        "glm-5-2-260617",
+        "kimi-k2-250905",
+    }.issubset(MODEL_CHOICES)
 
 
 @pytest.mark.asyncio
