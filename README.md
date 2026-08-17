@@ -145,6 +145,27 @@ speakers. The longer rationale is in [Design essence](docs/essence.md) and the
 Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), Git with submodule support,
 Node.js 22+ for the optional desktop application, and macOS for native Ambient Orb audio capture.
 
+### Named Codex workspaces and Sessions
+
+Realtime Codex can opt into isolated named workspaces and persistent Sessions:
+
+```bash
+NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED=true
+NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
+NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/NovaWorkspaces
+NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
+
+uv run nova-audio-agent workspace register alpha /absolute/path/to/repository
+uv run nova-audio-agent workspace list
+```
+
+Voice requests may list, create, or select a workspace and list or resume a Session. Create,
+select, and resume are proposals until a following ASR utterance explicitly confirms them; Qwen's
+tool calls cannot confirm them. Each normal task creates a new persistent Session, while resume
+starts a new app-server process on the saved Codex thread. Workspaces have separate `CODEX_HOME`
+directories, but Codex execution intentionally remains one global task at a time. The Orb displays
+only public workspace and Session labels—never paths, thread IDs, or registry keys.
+
 Clone the repository and its pinned Open-AutoGLM submodule:
 
 ```bash

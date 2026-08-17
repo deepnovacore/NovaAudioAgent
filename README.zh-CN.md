@@ -129,6 +129,26 @@ executor 的完成并不待在一个回合制的 `reason → act → observe` �
 环境要求：Python 3.11+、[uv](https://docs.astral.sh/uv/)、支持子模块的 Git、Node.js 22+
 （可选的桌面应用需要），以及 macOS（Ambient Orb 原生音频采集需要）。
 
+### 命名 Codex 工作区与持久 Session
+
+实时 Codex 可以显式开启相互隔离的命名工作区与可恢复 Session：
+
+```bash
+NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED=true
+NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
+NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/NovaWorkspaces
+NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
+
+uv run nova-audio-agent workspace register alpha /absolute/path/to/repository
+uv run nova-audio-agent workspace list
+```
+
+语音可以列出、创建或选择工作区，也可以列出或继续已有 Session。create、select、resume
+只会先生成提案，必须由下一条真实 ASR 明确确认；Qwen 的工具调用本身不能确认。普通任务每次创建
+新的持久 Session；继续任务会用保存的 Codex thread 启动一个新的 app-server 进程。不同工作区使用
+不同的 `CODEX_HOME`，但 Codex 仍有意保持全局同时只执行一个任务。Orb 只显示公开的工作区名和
+Session 标题，不显示路径、thread ID 或 registry key。
+
 克隆仓库及其钉定的 Open-AutoGLM 子模块：
 
 ```bash
