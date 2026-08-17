@@ -122,6 +122,7 @@ class DoubaoTtsSession:
             VolcMessage(
                 MessageType.FULL_CLIENT_REQUEST,
                 EventType.FINISH_SESSION,
+                b"{}",
                 session_id=self._session_id,
             ).marshal()
         )
@@ -134,6 +135,7 @@ class DoubaoTtsSession:
             VolcMessage(
                 MessageType.FULL_CLIENT_REQUEST,
                 EventType.CANCEL_SESSION,
+                b"{}",
                 session_id=self._session_id,
             ).marshal()
         )
@@ -149,11 +151,14 @@ class DoubaoTtsSession:
             message = VolcMessage.unmarshal(raw)
             if message.session_id not in {None, self._session_id}:
                 continue
-            if message.event == EventType.TTS_RESPONSE and message.payload:
+            if message.message_type == MessageType.AUDIO_ONLY_SERVER and message.payload:
                 yield TtsAudio(message.payload)
             elif message.event == EventType.SESSION_FINISHED:
                 return
-            elif message.event in {EventType.SESSION_FAILED, EventType.CONNECTION_FAILED}:
+            elif message.message_type == MessageType.ERROR or message.event in {
+                EventType.SESSION_FAILED,
+                EventType.CONNECTION_FAILED,
+            }:
                 raise DoubaoTtsError("豆包 TTS 请求失败")
 
     async def close(self) -> None:

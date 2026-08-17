@@ -51,7 +51,7 @@ def test_asr_protocol_encodes_gzipped_full_request_and_negative_final_audio() ->
     payload = json.loads(gzip.decompress(request[12 : 12 + payload_size]))
     assert payload["request"]["model_name"] == "bigmodel"
     assert payload["audio"]["rate"] == 16_000
-    assert final[:4] == bytes((0x11, 0x23, 0x01, 0x00))
+    assert final[:4] == bytes((0x11, 0x23, 0x11, 0x00))
     assert struct.unpack(">i", final[4:8])[0] == -2
 
 
@@ -61,9 +61,7 @@ def test_asr_protocol_decodes_partial_and_final_transcripts() -> None:
         json.dumps({"result": {"text": "你好"}}, ensure_ascii=False).encode()
     )
     final_payload = gzip.compress(
-        json.dumps(
-            {"result": {"text": "你好，Nova"}, "is_last_package": True}, ensure_ascii=False
-        ).encode()
+        json.dumps({"result": {"text": "你好，Nova"}}, ensure_ascii=False).encode()
     )
     partial_frame = (
         bytes((0x11, 0x91, 0x11, 0x00))
@@ -71,7 +69,7 @@ def test_asr_protocol_decodes_partial_and_final_transcripts() -> None:
         + partial_payload
     )
     final_frame = (
-        bytes((0x11, 0x93, 0x11, 0x00)) + struct.pack(">iI", -2, len(final_payload)) + final_payload
+        bytes((0x11, 0x93, 0x11, 0x00)) + struct.pack(">iI", 2, len(final_payload)) + final_payload
     )
 
     assert protocol.decode(partial_frame) == AsrTranscript("你好", final=False)
@@ -252,6 +250,35 @@ def test_volc_message_round_trips_tts_session_and_audio_events() -> None:
     assert VolcMessage.unmarshal(audio).payload == b"\x01\x02"
 
 
+def test_volc_message_decodes_connection_id_before_the_payload() -> None:
+    connect_id = b"provider-connect-id"
+    payload = b"{}"
+    raw = (
+        bytes((0x11, 0x94, 0x10, 0x00))
+        + struct.pack(">iI", int(EventType.CONNECTION_STARTED), len(connect_id))
+        + connect_id
+        + struct.pack(">I", len(payload))
+        + payload
+    )
+
+    message = VolcMessage.unmarshal(raw)
+
+    assert message.event == EventType.CONNECTION_STARTED
+    assert message.connect_id == "provider-connect-id"
+    assert message.payload == payload
+
+
+def test_volc_message_decodes_audio_only_frame_without_an_event_flag() -> None:
+    payload = b"\x01\x02\x03\x04"
+    raw = bytes((0x11, 0xB0, 0x00, 0x00)) + struct.pack(">I", len(payload)) + payload
+
+    message = VolcMessage.unmarshal(raw)
+
+    assert message.message_type == MessageType.AUDIO_ONLY_SERVER
+    assert message.event is None
+    assert message.payload == payload
+
+
 class _Socket:
     def __init__(self, incoming: list[bytes]) -> None:
         self.incoming = iter(incoming)
@@ -408,10 +435,13 @@ async def test_tts_session_streams_task_text_and_audio_until_session_finished() 
 
     task = VolcMessage.unmarshal(socket.sent[2])
     start = VolcMessage.unmarshal(socket.sent[1])
+    finish = VolcMessage.unmarshal(socket.sent[3])
     assert task.event == EventType.TASK_REQUEST
     assert json.loads(start.payload)["event"] == EventType.START_SESSION
     assert json.loads(task.payload)["event"] == EventType.TASK_REQUEST
     assert json.loads(task.payload)["req_params"]["text"] == "你好，"
+    assert finish.event == EventType.FINISH_SESSION
+    assert finish.payload == b"{}"
     assert VolcMessage.unmarshal(socket.sent[-1]).event == EventType.FINISH_CONNECTION
     assert socket.closed is True
     assert events == [TtsAudio(b"\x01\x02")]

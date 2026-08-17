@@ -69,7 +69,7 @@ class DoubaoAsrProtocol:
         flags = 0x03 if final else 0x01
         wire_sequence = -sequence if final else sequence
         return (
-            bytes((0x11, 0x20 | flags, 0x01, 0x00))
+            bytes((0x11, 0x20 | flags, 0x11, 0x00))
             + struct.pack(">iI", wire_sequence, len(encoded))
             + encoded
         )
@@ -104,7 +104,7 @@ class DoubaoAsrProtocol:
         if nested is not body:
             _raise_provider_error(nested)
         text = _extract_text(body)
-        final = sequence < 0 or body.get("is_last_package") is True
+        final = flags == 0x03 or sequence < 0 or body.get("is_last_package") is True
         return AsrTranscript(text, final=final) if text or final else None
 
 

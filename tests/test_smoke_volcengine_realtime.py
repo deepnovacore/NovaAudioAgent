@@ -4,7 +4,11 @@ import wave
 
 import pytest
 
-from scripts.smoke_volcengine_realtime import _read_pcm16_wave, _stage_latencies
+from scripts.smoke_volcengine_realtime import (
+    _read_pcm16_wave,
+    _send_realtime_frames,
+    _stage_latencies,
+)
 
 
 def test_probe_reads_only_bounded_mono_16k_pcm16(tmp_path) -> None:
@@ -34,3 +38,24 @@ def test_probe_reports_each_cascade_stage_without_content() -> None:
             "speech_end_to_tts_first_audio_ms": 600,
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_probe_paces_file_audio_like_32ms_microphone_frames() -> None:
+    class Adapter:
+        def __init__(self) -> None:
+            self.frames: list[bytes] = []
+
+        async def send_audio(self, pcm: bytes) -> None:
+            self.frames.append(pcm)
+
+    adapter = Adapter()
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    await _send_realtime_frames(adapter, b"\x01\x00" * 513, sleep=sleep)
+
+    assert adapter.frames == [b"\x01\x00" * 512, b"\x01\x00" + bytes(1_022)]
+    assert delays == [pytest.approx(0.032)]

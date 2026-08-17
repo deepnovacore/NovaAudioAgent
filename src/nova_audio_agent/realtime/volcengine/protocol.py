@@ -31,6 +31,7 @@ class EventType(IntEnum):
     TTS_SENTENCE_START = 350
     TTS_SENTENCE_END = 351
     TTS_RESPONSE = 352
+    TTS_ENDED = 359
 
 
 _SESSION_EVENTS = {
@@ -45,6 +46,12 @@ _SESSION_EVENTS = {
     EventType.TTS_SENTENCE_START,
     EventType.TTS_SENTENCE_END,
     EventType.TTS_RESPONSE,
+    EventType.TTS_ENDED,
+}
+_CONNECTION_RESPONSE_EVENTS = {
+    EventType.CONNECTION_STARTED,
+    EventType.CONNECTION_FAILED,
+    EventType.CONNECTION_FINISHED,
 }
 
 
@@ -55,11 +62,16 @@ class VolcProtocolError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class VolcMessage:
     message_type: MessageType
-    event: EventType
+    event: EventType | None
     payload: bytes = b""
     session_id: str | None = None
+    connect_id: str | None = None
+    sequence: int | None = None
+    error_code: int | None = None
 
     def marshal(self) -> bytes:
+        if self.event is None:
+            raise ValueError("client message requires event")
         body = bytearray(struct.pack(">i", int(self.event)))
         if self.event in _SESSION_EVENTS:
             if not self.session_id:
@@ -67,6 +79,13 @@ class VolcMessage:
             encoded_session = self.session_id.encode()
             body.extend(struct.pack(">I", len(encoded_session)))
             body.extend(encoded_session)
+        elif (
+            self.event in _CONNECTION_RESPONSE_EVENTS
+            and self.message_type != MessageType.FULL_CLIENT_REQUEST
+        ):
+            encoded_connect = (self.connect_id or "").encode()
+            body.extend(struct.pack(">I", len(encoded_connect)))
+            body.extend(encoded_connect)
         body.extend(struct.pack(">I", len(self.payload)))
         body.extend(self.payload)
         serialization = 0x10 if self.message_type == MessageType.FULL_CLIENT_REQUEST else 0x00
@@ -74,25 +93,56 @@ class VolcMessage:
 
     @classmethod
     def unmarshal(cls, raw: bytes) -> VolcMessage:
-        if len(raw) < 12 or raw[0] != 0x11 or raw[1] & 0x0F != 0x04:
+        if len(raw) < 8 or raw[0] >> 4 != 0x01:
+            raise VolcProtocolError("豆包语音返回了无效协议帧")
+        header_size = (raw[0] & 0x0F) * 4
+        flag = raw[1] & 0x0F
+        if header_size < 4 or header_size > len(raw) or flag not in {0, 1, 2, 3, 4}:
             raise VolcProtocolError("豆包语音返回了无效协议帧")
         try:
             message_type = MessageType(raw[1] >> 4)
-            event = EventType(struct.unpack(">i", raw[4:8])[0])
-        except (ValueError, struct.error) as exc:
-            raise VolcProtocolError("豆包语音返回了未知协议事件") from exc
-        offset = 8
+        except ValueError as exc:
+            raise VolcProtocolError("豆包语音返回了未知消息类型") from exc
+        offset = header_size
+        sequence: int | None = None
+        error_code: int | None = None
+        if message_type == MessageType.ERROR:
+            offset, error_code = _take_int(raw, offset, signed=False)
+        elif flag in {1, 3}:
+            offset, sequence = _take_int(raw, offset, signed=True)
+        event: EventType | None = None
         session_id: str | None = None
-        if event in _SESSION_EVENTS:
-            offset, encoded_session = _take_sized(raw, offset)
+        connect_id: str | None = None
+        if flag == 4:
             try:
-                session_id = encoded_session.decode()
-            except UnicodeDecodeError as exc:
-                raise VolcProtocolError("豆包语音返回了无效会话标识") from exc
+                offset, raw_event = _take_int(raw, offset, signed=True)
+                event = EventType(raw_event)
+            except (ValueError, struct.error) as exc:
+                raise VolcProtocolError("豆包语音返回了未知协议事件") from exc
+            if event in _SESSION_EVENTS:
+                offset, encoded_session = _take_sized(raw, offset)
+                try:
+                    session_id = encoded_session.decode()
+                except UnicodeDecodeError as exc:
+                    raise VolcProtocolError("豆包语音返回了无效会话标识") from exc
+            elif event in _CONNECTION_RESPONSE_EVENTS:
+                offset, encoded_connect = _take_sized(raw, offset)
+                try:
+                    connect_id = encoded_connect.decode()
+                except UnicodeDecodeError as exc:
+                    raise VolcProtocolError("豆包语音返回了无效连接标识") from exc
         offset, payload = _take_sized(raw, offset)
         if offset != len(raw):
             raise VolcProtocolError("豆包语音返回了尾随协议数据")
-        return cls(message_type, event, payload, session_id)
+        return cls(
+            message_type=message_type,
+            event=event,
+            payload=payload,
+            session_id=session_id,
+            connect_id=connect_id,
+            sequence=sequence,
+            error_code=error_code,
+        )
 
 
 def _take_sized(raw: bytes, offset: int) -> tuple[int, bytes]:
@@ -104,3 +154,10 @@ def _take_sized(raw: bytes, offset: int) -> tuple[int, bytes]:
     if end > len(raw):
         raise VolcProtocolError("豆包语音返回了截断协议帧")
     return end, raw[offset:end]
+
+
+def _take_int(raw: bytes, offset: int, *, signed: bool) -> tuple[int, int]:
+    end = offset + 4
+    if end > len(raw):
+        raise VolcProtocolError("豆包语音返回了截断协议帧")
+    return end, int.from_bytes(raw[offset:end], "big", signed=signed)

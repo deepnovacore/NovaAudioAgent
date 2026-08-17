@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 import time
 from typing import Any
@@ -30,6 +30,8 @@ _STAGES = (
     "volcengine.llm.first_text",
     "volcengine.tts.first_audio",
 )
+_FRAME_BYTES = 512 * 2
+_FRAME_SECONDS = 512 / 16_000
 
 
 class _ProbeTelemetry:
@@ -77,6 +79,21 @@ def _stage_latencies(records: Sequence[tuple[str, float]]) -> dict[str, float]:
         "speech_end_to_tts_first_audio_ms": (timestamps[_STAGES[3]] - timestamps[_STAGES[0]])
         * 1000,
     }
+
+
+async def _send_realtime_frames(
+    adapter: Any,
+    pcm: bytes,
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    for offset in range(0, len(pcm), _FRAME_BYTES):
+        frame = pcm[offset : offset + _FRAME_BYTES]
+        if len(frame) < _FRAME_BYTES:
+            frame += bytes(_FRAME_BYTES - len(frame))
+        await adapter.send_audio(frame)
+        if offset + _FRAME_BYTES < len(pcm):
+            await sleep(_FRAME_SECONDS)
 
 
 async def _run_once(settings: Settings, pcm: bytes, timeout: float) -> dict[str, float]:
@@ -128,12 +145,7 @@ async def _run_once(settings: Settings, pcm: bytes, timeout: float) -> dict[str,
     terminal_task = asyncio.create_task(wait_for_terminal())
     try:
         padded = pcm + (b"\x00\x00" * 16_000)
-        frame_bytes = 512 * 2
-        for offset in range(0, len(padded), frame_bytes):
-            frame = padded[offset : offset + frame_bytes]
-            if len(frame) < frame_bytes:
-                frame += bytes(frame_bytes - len(frame))
-            await adapter.send_audio(frame)
+        await _send_realtime_frames(adapter, padded)
         terminal = await asyncio.wait_for(terminal_task, timeout=timeout)
         if terminal.status != "completed":
             raise RuntimeError("provider response did not complete")
