@@ -10,9 +10,90 @@ from typing import Any
 import pytest
 
 from nova_audio_agent.config import ConfigurationError
-from nova_audio_agent.realtime.desktop import _run_desktop
+from nova_audio_agent.realtime import desktop as realtime_desktop
+from nova_audio_agent.realtime.desktop import _run_desktop, watch_parent_stdin
 
 READY_ENDPOINT = "127.0.0.1:51515"
+
+
+class _ThreadOnlyLoop:
+    """Stands in for a Windows Proactor loop: no ``add_reader``, threadsafe calls work.
+
+    ``add_reader_calls`` is the evidence: the off-POSIX branch must never reach
+    it, while the fallback branch must try it exactly once before threading.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self.add_reader_calls = 0
+
+    def add_reader(self, *args: object) -> None:
+        del args
+        self.add_reader_calls += 1
+        raise NotImplementedError("Proactor event loops have no add_reader")
+
+    def remove_reader(self, *args: object) -> None:
+        del args
+        raise AssertionError("the thread fallback owns no loop reader to remove")
+
+    def call_soon_threadsafe(self, callback: Any, *args: object) -> object:
+        return self._loop.call_soon_threadsafe(callback, *args)
+
+
+@pytest.mark.asyncio
+async def test_parent_watch_stops_on_stdin_eof_through_the_loop_reader() -> None:
+    """POSIX loops watch the fd directly: the parent's closed end means stop."""
+
+    parent_read, parent_write = os.pipe()
+    stop = asyncio.Event()
+    unwatch = watch_parent_stdin(asyncio.get_running_loop(), stop, fd=parent_read)
+    try:
+        assert stop.is_set() is False
+        os.close(parent_write)
+        await asyncio.wait_for(stop.wait(), timeout=1.0)
+    finally:
+        unwatch()
+        os.close(parent_read)
+
+
+@pytest.mark.real_time
+@pytest.mark.asyncio
+async def test_parent_watch_threads_stdin_eof_when_the_loop_has_no_reader() -> None:
+    """A loop without ``add_reader`` must not silently lose orphan detection."""
+
+    parent_read, parent_write = os.pipe()
+    stop = asyncio.Event()
+    loop = _ThreadOnlyLoop(asyncio.get_running_loop())
+    unwatch = watch_parent_stdin(loop, stop, fd=parent_read)  # type: ignore[arg-type]
+    try:
+        assert loop.add_reader_calls == 1
+        assert stop.is_set() is False
+        os.close(parent_write)
+        await asyncio.wait_for(stop.wait(), timeout=1.0)
+    finally:
+        unwatch()
+        os.close(parent_read)
+
+
+@pytest.mark.real_time
+@pytest.mark.asyncio
+async def test_parent_watch_never_registers_a_loop_reader_off_posix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off POSIX a selector reader on stdin is not merely unsupported, it is unsafe."""
+
+    monkeypatch.setattr(realtime_desktop.os, "name", "nt")
+    parent_read, parent_write = os.pipe()
+    stop = asyncio.Event()
+    loop = _ThreadOnlyLoop(asyncio.get_running_loop())
+    unwatch = watch_parent_stdin(loop, stop, fd=parent_read)  # type: ignore[arg-type]
+    try:
+        assert loop.add_reader_calls == 0
+        os.close(parent_write)
+        await asyncio.wait_for(stop.wait(), timeout=1.0)
+    finally:
+        unwatch()
+        os.close(parent_read)
 
 
 class _ReadyWriter:

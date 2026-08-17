@@ -13,6 +13,7 @@ import os
 import signal
 import string
 import struct
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -742,12 +743,7 @@ async def _run_desktop(
                 installed_signals.append(signal_name)
             except NotImplementedError:  # pragma: no cover - Windows event loops
                 pass
-    parent_watch_installed = False
-    try:
-        loop.add_reader(parent_fd, _consume_parent_liveness, parent_fd, stop)
-        parent_watch_installed = True
-    except (NotImplementedError, PermissionError):  # pragma: no cover - non-POSIX loops
-        pass
+    unwatch_parent = watch_parent_stdin(loop, stop, fd=parent_fd)
     bridge: DesktopSocketBridge | None = None
     assembly = None
     telemetry = None
@@ -834,10 +830,62 @@ async def _run_desktop(
         finally:
             if telemetry is not None:
                 telemetry.close()
-            if parent_watch_installed:
-                loop.remove_reader(parent_fd)
+            unwatch_parent()
             for signal_name in installed_signals:
                 loop.remove_signal_handler(signal_name)
+
+
+def watch_parent_stdin(
+    loop: asyncio.AbstractEventLoop,
+    stop: asyncio.Event,
+    fd: int = 0,
+) -> Callable[[], None]:
+    """Request a drain when the desktop parent closes this process' stdin.
+
+    The parent never writes to stdin, so a readable descriptor can only mean EOF:
+    either the deliberate ``stdin.end()`` of a graceful quit or a dead parent that
+    left this process orphaned. Either way the answer is the same drain.
+
+    POSIX loops watch the descriptor directly. Proactor loops have no
+    ``add_reader`` at all, so a daemon thread blocks on the read there and hands
+    the verdict back to the loop; without it, orphan detection would silently
+    disappear off POSIX. Returns the matching unwatch callable.
+    """
+
+    if os.name == "posix":
+        try:
+            loop.add_reader(fd, _consume_parent_liveness, fd, stop)
+        except PermissionError:  # pragma: no cover - stdin the selector cannot poll
+            # A descriptor the selector refuses is not one a blocking read can
+            # judge either: a regular file reports EOF that says nothing about the
+            # parent, so stay unwatched rather than invent a shutdown.
+            return _no_unwatch
+        except NotImplementedError:
+            # A POSIX build can still be handed a loop without readers: fall
+            # through to the thread instead of losing the sentinel.
+            pass
+        else:
+            return lambda: loop.remove_reader(fd)
+
+    def watch() -> None:
+        while True:
+            try:
+                alive = os.read(fd, 1)
+            except OSError:
+                break
+            if not alive:
+                break
+        try:
+            loop.call_soon_threadsafe(stop.set)
+        except RuntimeError:  # pragma: no cover - the loop already finished draining
+            pass
+
+    threading.Thread(target=watch, name="nova-parent-liveness", daemon=True).start()
+    return _no_unwatch
+
+
+def _no_unwatch() -> None:
+    """Nothing to unregister: the liveness thread is a daemon and dies with exit."""
 
 
 def _consume_parent_liveness(parent_fd: int, stop: asyncio.Event) -> None:

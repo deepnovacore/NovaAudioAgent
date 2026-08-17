@@ -53,6 +53,17 @@ test('main owns the fixed orb menu and validates every menu and board sender', a
   assert.match(renderer, /orbMenu\.show\(\)/)
 })
 
+test('quitting drains the backend on the stdin sentinel instead of killing it', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const beforeQuit = source.slice(source.indexOf("app.on('before-quit'"))
+
+  assert.match(beforeQuit, /event\.preventDefault\(\)/)
+  assert.match(beforeQuit, /shutdownBackend\(backend\)/)
+  assert.match(beforeQuit, /app\.exit\(0\)/)
+  // Every teardown path goes through the helper, so no bare signal survives.
+  assert.doesNotMatch(source, /backend\??\.kill\(/)
+})
+
 test('native VoiceProcessingIO starts only after explicit capture activation', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 

@@ -174,3 +174,51 @@ export function createReadinessListener({
     close: (reason = new Error('desktop readiness listener closed')) => settleReadiness(reason),
   }
 }
+
+// One drain per child, so a quit that re-enters (or a readiness timeout racing
+// the quit) joins the sequence already in flight instead of starting a new one.
+const drains = new WeakMap()
+
+/**
+ * Shut the backend down on the stdin-EOF sentinel, escalating only if it hangs.
+ *
+ * Closing stdin is the portable half of the contract: the parent never writes
+ * there, so the backend reads EOF as "drain and exit" on every platform. POSIX
+ * additionally gets SIGTERM, which the backend's signal handlers route into the
+ * same drain; Windows has no SIGTERM, and `kill()` there is an immediate
+ * TerminateProcess — precisely the abrupt teardown the sentinel replaces. A
+ * backend that has not exited within the grace window is killed outright.
+ *
+ * Resolves once the child is gone or has been force killed; never rejects, so a
+ * `before-quit` handler can always reach `app.exit(0)`.
+ */
+export function shutdownBackend(child, { graceMs = 3000, platform = process.platform } = {}) {
+  const started = drains.get(child)
+  if (started) return started
+  const drained = new Promise(resolve => {
+    // `!= null` deliberately: a live child reports null for both, so anything
+    // else means it is already gone and nothing should wait out the grace.
+    if (child.exitCode != null || child.signalCode != null) {
+      resolve()
+      return
+    }
+    let timer
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve()
+    }
+    // Listen before signalling so an instant exit cannot be missed.
+    child.once('exit', finish)
+    child.stdin?.end()
+    if (platform !== 'win32') child.kill('SIGTERM')
+    timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      finish()
+    }, graceMs)
+  })
+  drains.set(child, drained)
+  return drained
+}

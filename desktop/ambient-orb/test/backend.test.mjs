@@ -8,6 +8,7 @@ import {
   backendLaunchSpec,
   createReadinessListener,
   parseReadiness,
+  shutdownBackend,
 } from '../src/main/backend.mjs'
 
 const TOKEN = 'b'.repeat(32)
@@ -54,6 +55,35 @@ function pending(promise, ms = 60) {
     promise.then(() => 'settled', () => 'settled'),
     new Promise(done => setTimeout(() => done('pending'), ms)),
   ])
+}
+
+// A child process double: every stdin/signal effect lands in `calls` in order,
+// and 'exit' is emitted on demand so the grace race is driven by the test.
+function fakeChild() {
+  const calls = []
+  const listeners = new Map()
+  return {
+    calls,
+    exitCode: null,
+    signalCode: null,
+    stdin: { end: () => calls.push('stdin.end') },
+    kill: signal => {
+      calls.push(`kill:${signal}`)
+      return true
+    },
+    once(event, listener) {
+      const bucket = listeners.get(event) || []
+      bucket.push(listener)
+      listeners.set(event, bucket)
+      return this
+    },
+    // Fires the one-shot listeners the helper registered, the way a real exit does.
+    emit(event, ...args) {
+      const bucket = listeners.get(event) || []
+      listeners.set(event, [])
+      for (const listener of bucket) listener(...args)
+    },
+  }
 }
 
 test('passes token only through environment and dials back over loopback', () => {
@@ -266,6 +296,66 @@ test('readiness listener rejects an invalid token or timeout up front', () => {
   assert.throws(() => createReadinessListener({ token: 'nope' }), /token/)
   assert.throws(() => createReadinessListener({ token: TOKEN, timeoutMs: 0 }), /timeout/)
   assert.throws(() => createReadinessListener({ token: TOKEN, timeoutMs: Number.NaN }), /timeout/)
+})
+
+test('shutdown ends stdin first, then signals, and escalates only after the grace', async () => {
+  const child = fakeChild()
+
+  const drained = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM'])
+  await drained
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+})
+
+test('shutdown on win32 relies on the stdin sentinel instead of a signal', async () => {
+  const child = fakeChild()
+
+  const drained = shutdownBackend(child, { graceMs: 20, platform: 'win32' })
+
+  assert.deepEqual(child.calls, ['stdin.end'])
+  await drained
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGKILL'])
+})
+
+test('a backend that drains inside the grace window is never force killed', async () => {
+  const child = fakeChild()
+
+  const drained = shutdownBackend(child, { graceMs: 30_000, platform: 'darwin' })
+  child.exitCode = 0
+  child.emit('exit', 0, null)
+
+  assert.equal(await pending(drained, 50), 'settled')
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM'])
+})
+
+test('concurrent and repeated shutdowns share one drain sequence', async () => {
+  const child = fakeChild()
+
+  const first = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+  const second = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+
+  assert.equal(first, second)
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM'])
+  await Promise.all([first, second])
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+
+  const third = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+  assert.equal(await pending(third, 50), 'settled')
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+})
+
+test('shutting down an already exited backend never waits out the grace', async () => {
+  const exited = fakeChild()
+  exited.exitCode = 0
+  const signalled = fakeChild()
+  signalled.signalCode = 'SIGTERM'
+
+  for (const child of [exited, signalled]) {
+    const drained = shutdownBackend(child, { graceMs: 30_000, platform: 'darwin' })
+    assert.equal(await pending(drained, 50), 'settled')
+    assert.deepEqual(child.calls, [])
+  }
 })
 
 test('a spawned backend reaches readiness through the launch spec environment', async () => {

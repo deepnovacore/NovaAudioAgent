@@ -19,7 +19,7 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { backendLaunchSpec, createReadinessListener } from './backend.mjs'
+import { backendLaunchSpec, createReadinessListener, shutdownBackend } from './backend.mjs'
 import { loadAppWindow } from './app-protocol.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
@@ -54,6 +54,7 @@ let tray = null
 let bootstrap = null
 let nativeAudio = null
 let nativeBinary = null
+let quitDrain = null
 const pendingBoardRequests = new Map()
 
 function pythonExecutable() {
@@ -158,7 +159,9 @@ async function launchBackend() {
   // dial it; the readiness timeout still kills a backend that never arrives.
   const listener = createReadinessListener({
     token,
-    onTimeout: () => backend?.kill('SIGTERM'),
+    onTimeout: () => {
+      if (backend) void shutdownBackend(backend)
+    },
   })
   let ready
   try {
@@ -373,11 +376,17 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(start).catch(() => app.quit())
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', event => {
   app.isQuitting = true
   globalShortcut.unregisterAll()
-  if (backend && !backend.killed) backend.kill('SIGTERM')
   void nativeAudio?.deactivate()
+  if (!backend) return
+  // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
+  // kill would cut the session off mid-teardown, and on Windows there is no
+  // graceful signal at all. Later passes keep holding; the first pass exits.
+  event.preventDefault()
+  if (quitDrain) return
+  quitDrain = shutdownBackend(backend).then(() => app.exit(0), () => app.exit(0))
 })
 
 app.on('window-all-closed', event => event.preventDefault?.())
