@@ -420,7 +420,7 @@ def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
     if context.codex_live:
         if context.settings.codex_projects_enabled:
             managed_root, state_root = context.settings.require_codex_projects()
-            store = CodexProjectStore(state_root, managed_root)
+            store = CodexProjectStore(state_root, managed_root, recover_starting=True)
             store.ensure_imported(workspace.name or "workspace", workspace)
             confirmation = ProjectConfirmationController(
                 clock=context.clock,

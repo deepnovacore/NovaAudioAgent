@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -116,6 +117,8 @@ class ProjectConfirmationController:
         self._reserved: tuple[int, str] | None = None
         self._retry_count = 0
         self._commit_authority: ConfirmedProjectOperation | None = None
+        self._expiry_task: asyncio.Task[None] | None = None
+        self._expiry_observers: list[Callable[[], None]] = []
 
     @property
     def view(self) -> ProjectConfirmationView:
@@ -174,8 +177,18 @@ class ProjectConfirmationController:
         self._reserved = None
         self._retry_count = 0
         self._commit_authority = None
+        self._schedule_expiry(proposal)
         self._publish()
         return proposal
+
+    def observe_expiry(self, observer: Callable[[], None]) -> Callable[[], None]:
+        self._expiry_observers.append(observer)
+
+        def unsubscribe() -> None:
+            if observer in self._expiry_observers:
+                self._expiry_observers.remove(observer)
+
+        return unsubscribe
 
     def reserve_user_item(self, *, epoch: int, item_id: str) -> bool:
         proposal = self._proposal
@@ -200,6 +213,7 @@ class ProjectConfirmationController:
         if self._is_expired(proposal):
             self._clear_all()
             self._publish()
+            self._publish_expiry()
             return ConfirmationOutcome(
                 kind="expired",
                 response_text="确认已过期，本次操作已取消。",
@@ -251,6 +265,7 @@ class ProjectConfirmationController:
             return False
         self._clear_all()
         self._publish()
+        self._publish_expiry()
         return True
 
     def invalidate(self, _reason: str) -> bool:
@@ -269,6 +284,41 @@ class ProjectConfirmationController:
         self._reserved = None
         self._retry_count = 0
         self._commit_authority = None
+        task, self._expiry_task = self._expiry_task, None
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if task is not None and task is not current and not task.done():
+            task.cancel()
+
+    def _schedule_expiry(self, proposal: ProjectProposal) -> None:
+        old, self._expiry_task = self._expiry_task, None
+        if old is not None and not old.done():
+            old.cancel()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._expiry_task = loop.create_task(self._expire_generation(proposal))
+
+    async def _expire_generation(self, proposal: ProjectProposal) -> None:
+        try:
+            await self._clock.sleep(max(0.0, proposal.expires_at - self._clock.now()))
+        except asyncio.CancelledError:
+            return
+        if self._proposal is not proposal or not self._is_expired(proposal):
+            return
+        self._clear_all()
+        self._publish()
+        self._publish_expiry()
+
+    def _publish_expiry(self) -> None:
+        for observer in tuple(self._expiry_observers):
+            try:
+                observer()
+            except Exception:
+                pass
 
     def _publish(self) -> None:
         if self._on_change is None:

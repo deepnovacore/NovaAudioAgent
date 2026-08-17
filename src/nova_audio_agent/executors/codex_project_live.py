@@ -137,6 +137,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         self._worker_factory = worker_factory
         self._on_project_view = on_project_view
         self._armed: dict[str, ConfirmedProjectOperation] = {}
+        self._commit_reservation = False
 
     async def dispatch(
         self,
@@ -151,13 +152,21 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         normalized = _normalize_project_run(request)
         if normalized is None:
             return _failure("invalid_params", op)
+        delegate_id = ctx.delegate.delegate_id
+        armed = self._armed.get(delegate_id)
+        if self._commit_reservation or (self._armed and armed is None):
+            return _failure("busy", op)
+        if armed is not None and normalized[0] != armed.work_order:
+            self._armed.pop(delegate_id, None)
+            return _failure("confirmation_binding_mismatch", op)
         if self._run_lock.locked():
             return _failure("busy", op)
         await self._run_lock.acquire()
         try:
-            armed = self._armed.pop(ctx.delegate.origin_ref, None)
+            armed = self._armed.pop(delegate_id, None)
             if armed is not None:
-                return await self._run_confirmed(armed, normalized[0], ctx)
+                assert armed.work_order is not None
+                return await self._run_confirmed(armed, armed.work_order, ctx)
             return await self._run_new(normalized[0], normalized[1], ctx)
         finally:
             self._run_lock.release()
@@ -290,7 +299,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         path = self.store.revalidate_workspace(workspace.workspace_id)
         session = resumed or self.store.begin_session(workspace.workspace_id, session_title)
         self._publish_project_view()
-        ready = resumed is not None
+        ready = False
 
         def on_thread_ready(thread_id: str) -> None:
             nonlocal ready
@@ -313,7 +322,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         try:
             return await self._run(work_order, ctx)
         finally:
-            if not ready and resumed is None:
+            if not ready:
                 try:
                     self.store.mark_session_unavailable(session.session_id)
                 except ProjectStateError:
@@ -329,12 +338,8 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     ) -> ProjectCommitResult:
         if not self.confirmation.claim_confirmed(operation):
             return ProjectCommitResult(False, "confirmation_invalid")
-        if self._run_lock.locked() or origin_ref in self._armed:
-            return ProjectCommitResult(False, "busy")
         work_order = operation.work_order
         if work_order is None:
-            # Mutations without work still use the same global exclusion boundary.
-            await self._run_lock.acquire()
             try:
                 if operation.action == "create":
                     self.store.create_managed(operation.workspace_display_name)
@@ -344,23 +349,26 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                     return ProjectCommitResult(False, "invalid_operation")
             except ProjectStateError as failure:
                 return ProjectCommitResult(False, failure.code)
-            finally:
-                self._run_lock.release()
             self._publish_project_view()
             return ProjectCommitResult(True, "committed")
-        self._armed[origin_ref] = operation
-        admission = runtime_dispatch(
-            DelegateRequest(
-                executor="codex",
-                op="run",
-                request={"work_order": work_order},
-                origin_ref=origin_ref,
-            ),
-            reason=WakeReason(kind="realtime_tool", priority=100, routing_class="user_awaited"),
-        )
+        if self._run_lock.locked() or self._armed or self._commit_reservation:
+            return ProjectCommitResult(False, "busy")
+        self._commit_reservation = True
+        try:
+            admission = runtime_dispatch(
+                DelegateRequest(
+                    executor="codex",
+                    op="run",
+                    request={"work_order": work_order},
+                    origin_ref=origin_ref,
+                ),
+                reason=WakeReason(kind="realtime_tool", priority=100, routing_class="user_awaited"),
+            )
+        finally:
+            self._commit_reservation = False
         if not admission.accepted or admission.delegate_id is None:
-            self._armed.pop(origin_ref, None)
             return ProjectCommitResult(False, "runtime_rejected")
+        self._armed[admission.delegate_id] = operation
         return ProjectCommitResult(True, "accepted", admission.delegate_id)
 
     def _publish_project_view(self) -> None:
@@ -411,14 +419,18 @@ def _parse_project_request(
         "list": {"action"},
         "create": {"action", "workspace"},
         "select": {"action", "workspace"},
-        "sessions": {"action", "workspace"},
-        "resume": {"action", "workspace", "session", "work_order"},
+        "sessions": {"action"},
+        "resume": {"action", "work_order"},
     }
     if action not in expected:
         return None
     allowed = set(expected[action])
     if action == "create":
         allowed.add("work_order")
+    elif action == "sessions":
+        allowed.add("workspace")
+    elif action == "resume":
+        allowed.update(("workspace", "session"))
     if set(request) - allowed or not expected[action].issubset(request):
         return None
     for value, limit in ((workspace, 80), (session, 120), (work_order, 4000)):

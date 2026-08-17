@@ -21,11 +21,16 @@ from nova_audio_agent.runtime import RuntimeDispatchResult
 from nova_audio_agent.tool_schema import compile_tool_schema
 
 
-def _context(clock: VirtualClock) -> DispatchContext:
+def _context(
+    clock: VirtualClock,
+    *,
+    origin_ref: str = "conversation:1",
+    delegate_id: str = "delegate-run",
+) -> DispatchContext:
     return SimpleNamespace(
         clock=clock,
         progress=None,
-        delegate=SimpleNamespace(origin_ref="conversation:1"),
+        delegate=SimpleNamespace(origin_ref=origin_ref, delegate_id=delegate_id),
     )
 
 
@@ -133,6 +138,11 @@ class _ProjectFactory:
         return _ProjectWorker(resume or f"thread-{len(self.calls)}", on_ready)
 
 
+class _NeverReadyWorker(_ProjectWorker):
+    async def preflight(self, **_kwargs: Any) -> Mapping[str, Any]:
+        raise RuntimeError("missing history")
+
+
 def test_project_mode_exposes_one_additional_flat_tool() -> None:
     tools = compile_tool_schema((CODEX_PROJECT_LIVE_MANIFEST,))
     names = [
@@ -160,7 +170,6 @@ async def test_project_action_validation_and_proposal_only_dispatch(tmp_path: Pa
 
     invalid = (
         {"action": "list", "workspace": "alpha"},
-        {"action": "sessions"},
         {"action": "create"},
         {"action": "select"},
         {"action": "resume", "workspace": "alpha", "session": "missing"},
@@ -198,6 +207,7 @@ async def test_lists_are_public_and_exact_names_are_required(tmp_path: Path) -> 
     store.select_workspace("alpha")
 
     listed = await adapter.dispatch("project", {"action": "list"}, ctx)
+    current_sessions = await adapter.dispatch("project", {"action": "sessions"}, ctx)
     assert listed.outcome == "ok"
     assert listed.content == {
         "op": "project",
@@ -211,6 +221,12 @@ async def test_lists_are_public_and_exact_names_are_required(tmp_path: Path) -> 
         private in repr(listed.content)
         for private in ("canonical_path", "workspace_id", "codex_home", "nonce")
     )
+    assert current_sessions.content == {
+        "op": "project",
+        "code": "sessions_listed",
+        "workspace": "alpha",
+        "sessions": [],
+    }
 
     missing = await adapter.dispatch("project", {"action": "select", "workspace": "alp"}, ctx)
     assert missing.outcome == "failed"
@@ -304,10 +320,110 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
     committed = await adapter.commit_confirmed(
         outcome.operation, origin_ref="conversation:1", runtime_dispatch=dispatch
     )
-    resumed = await adapter.dispatch("run", {"work_order": "continue it"}, _context(clock))
+    resumed = await adapter.dispatch(
+        "run",
+        {"work_order": "continue it"},
+        _context(clock, delegate_id="delegate-resume"),
+    )
 
     assert committed.accepted is True
     assert dispatched[0][0].request == {"work_order": "continue it"}
     assert resumed.outcome == "ok"
     assert factory.calls[-1][2] == saved.codex_thread_id
     assert len(factory.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_confirmed_dispatch_reserves_global_slot_and_exact_work_order(tmp_path: Path) -> None:
+    adapter, store = _adapter(tmp_path)
+    clock = VirtualClock()
+    controller = adapter.confirmation
+    controller.prepare(
+        action="create",
+        workspace_display_name="beta",
+        workspace_id=None,
+        session_title=None,
+        session_id=None,
+        work_order="host work",
+        origin_ref="conversation:2",
+    )
+    assert controller.reserve_user_item(epoch=1, item_id="user-confirm")
+    outcome = controller.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    assert outcome.operation is not None
+
+    committed = await adapter.commit_confirmed(
+        outcome.operation,
+        origin_ref="conversation:2",
+        runtime_dispatch=lambda _request, *, reason: RuntimeDispatchResult(
+            accepted=True, delegate_id="host-delegate"
+        ),
+    )
+    unrelated = await adapter.dispatch(
+        "run",
+        {"work_order": "overtake"},
+        _context(clock, origin_ref="conversation:3"),
+    )
+    mismatched = await adapter.dispatch(
+        "run",
+        {"work_order": "wrong work"},
+        _context(
+            clock,
+            origin_ref="conversation:2",
+            delegate_id="host-delegate",
+        ),
+    )
+
+    assert committed.accepted is True
+    assert unrelated.content == {"error": "busy", "op": "run"}
+    assert mismatched.content == {"error": "confirmation_binding_mismatch", "op": "run"}
+
+
+@pytest.mark.asyncio
+async def test_failed_resume_before_thread_validation_marks_session_unavailable(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    identifiers = iter(f"identifier-{index:03d}" for index in range(100))
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=identifiers.__next__,
+    )
+    workspace = store.create_managed("alpha")
+    confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    factory = _ProjectFactory()
+    adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
+    await adapter.dispatch("run", {"work_order": "first", "session": "Task One"}, _context(clock))
+    saved = store.resolve_session(workspace.workspace_id, "Task One")
+    adapter._worker_factory = lambda _workspace, _home, resume, on_ready: _NeverReadyWorker(
+        resume or "missing", on_ready
+    )
+    confirmation.prepare(
+        action="resume",
+        workspace_display_name="alpha",
+        workspace_id=workspace.workspace_id,
+        session_title=saved.display_title,
+        session_id=saved.session_id,
+        work_order="continue",
+        origin_ref="conversation:2",
+    )
+    confirmation.reserve_user_item(epoch=1, item_id="user-confirm")
+    outcome = confirmation.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    assert outcome.operation is not None
+    await adapter.commit_confirmed(
+        outcome.operation,
+        origin_ref="conversation:2",
+        runtime_dispatch=lambda _request, *, reason: RuntimeDispatchResult(
+            accepted=True, delegate_id="resume-delegate"
+        ),
+    )
+
+    result = await adapter.dispatch(
+        "run",
+        {"work_order": "continue"},
+        _context(clock, origin_ref="conversation:2", delegate_id="resume-delegate"),
+    )
+
+    assert result.outcome == "failed"
+    assert store.resolve_session(workspace.workspace_id, "Task One").state == "unavailable"

@@ -93,11 +93,13 @@ class CodexProjectStore:
         *,
         now: Callable[[], float] | None = None,
         id_factory: Callable[[], str] | None = None,
+        recover_starting: bool = False,
     ) -> None:
         self.state_root = state_root.expanduser().absolute()
         self.managed_root = managed_root.expanduser().absolute()
         self._now = RealClock().now if now is None else now
         self._id_factory = (lambda: uuid4().hex) if id_factory is None else id_factory
+        self._recover_starting = recover_starting
         # Recovery is a store-startup action. A Session begun by this live store
         # must remain ``starting`` long enough for the following thread callback
         # to make it ready.
@@ -568,11 +570,12 @@ class CodexProjectStore:
         fd = self._open_lock()
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
-            state, recovered = self._load_state(recover_starting=not self._startup_loaded)
-            self._startup_loaded = True
+            should_recover = self._recover_starting and not self._startup_loaded
+            state, recovered = self._load_state(recover_starting=should_recover)
             result, changed = operation(state)
             if recovered or changed:
                 self._save_state(state)
+            self._startup_loaded = True
             return result
         finally:
             try:

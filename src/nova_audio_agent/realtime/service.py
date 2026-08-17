@@ -310,6 +310,11 @@ class RealtimeService:
         self._project_confirmation_items: set[tuple[int, str]] = set()
         self._project_confirmation_responses: set[tuple[int, str]] = set()
         self._project_confirmation_blocking = False
+        self._unsubscribe_project_expiry = (
+            project_confirmation.observe_expiry(self._project_confirmation_expired)
+            if project_confirmation is not None
+            else None
+        )
 
     @property
     def codex_state(self) -> CodexState:
@@ -445,6 +450,9 @@ class RealtimeService:
     async def close(self) -> None:
         self._stop.set()
         self._invalidate_project_confirmation("service_closed")
+        if self._unsubscribe_project_expiry is not None:
+            self._unsubscribe_project_expiry()
+            self._unsubscribe_project_expiry = None
         self._provider_epoch_needing_activation = None
         self._provider_reconnect_source_epoch = None
         self._urgent_host_response_owner = None
@@ -998,13 +1006,19 @@ class RealtimeService:
         self._publish_project_view()
 
     def _blocks_project_confirmation_tool(self, event: ToolCallReady) -> bool:
+        effective_response_id = event.response_id or self.session.active_provider_response_id
         if (
-            event.response_id is not None
+            effective_response_id is not None
             and (
                 event.session_epoch,
-                event.response_id,
+                effective_response_id,
             )
             in self._project_confirmation_responses
+        ):
+            return True
+        if event.response_id is None and any(
+            epoch == event.session_epoch
+            for epoch, _response_id in self._project_confirmation_responses
         ):
             return True
         if self._project_confirmation_blocking:
@@ -1082,6 +1096,12 @@ class RealtimeService:
             preemptive=False,
         )
         self._delivery_ready.set()
+
+    def _project_confirmation_expired(self) -> None:
+        self._project_confirmation_items.clear()
+        self._project_confirmation_blocking = False
+        self._queue_project_confirmation_fact("确认已过期，本次操作已取消。")
+        self._publish_project_view()
 
     def _publish_project_view(self) -> None:
         controller = self._project_confirmation

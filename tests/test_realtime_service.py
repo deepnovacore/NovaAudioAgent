@@ -495,6 +495,16 @@ async def test_confirmation_asr_is_recorded_but_provider_tool_cannot_authorize()
         UserTranscriptFinal(session_epoch=1, item_id="user-confirm", text="可以啊")
     )
     await service.handle_event(
+        ToolCallReady(
+            session_epoch=1,
+            response_id=None,
+            call_id="call-late-without-response",
+            item_id="tool-late",
+            name="codex__run",
+            arguments={"work_order": "late bypass", "origin_ref": "conversation:1"},
+        )
+    )
+    await service.handle_event(
         ResponseTerminal(
             session_epoch=1,
             response_id="response-confirm",

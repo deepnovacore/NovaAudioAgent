@@ -30,12 +30,18 @@ class _Now:
         return self.value
 
 
-def _store(tmp_path: Path, *, ids: _Ids | None = None) -> CodexProjectStore:
+def _store(
+    tmp_path: Path,
+    *,
+    ids: _Ids | None = None,
+    recover_starting: bool = False,
+) -> CodexProjectStore:
     return CodexProjectStore(
         tmp_path / "state",
         tmp_path / "managed",
         now=_Now(),
         id_factory=ids or _Ids(),
+        recover_starting=recover_starting,
     )
 
 
@@ -191,10 +197,23 @@ def test_sessions_transition_starting_ready_and_recover_incomplete_start(tmp_pat
     assert store.resolve_session(workspace.workspace_id, "登录修复") == ready
 
     second = store.begin_session(workspace.workspace_id, None)
-    restarted = _store(tmp_path)
+    restarted = _store(tmp_path, recover_starting=True)
     recovered = restarted.resolve_session(workspace.workspace_id, second.display_title)
     assert recovered.state == "unavailable"
     assert recovered.codex_thread_id is None
+
+
+def test_ordinary_second_store_does_not_recover_a_live_starting_session(tmp_path: Path) -> None:
+    live = _store(tmp_path)
+    workspace = live.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    starting = live.begin_session(workspace.workspace_id, "Task 1")
+
+    cli_store = _store(tmp_path)
+    observed = cli_store.resolve_session(workspace.workspace_id, "Task 1")
+    ready = live.mark_session_ready(starting.session_id, "thread-live")
+
+    assert observed.state == "starting"
+    assert ready.state == "ready"
 
 
 def test_sessions_are_workspace_scoped_and_titles_receive_deterministic_suffix(

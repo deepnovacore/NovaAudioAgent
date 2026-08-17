@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import pytest
 
 from nova_audio_agent.clock import VirtualClock
@@ -41,6 +42,28 @@ def _prepare_select(controller: ProjectConfirmationController):
         work_order=None,
         origin_ref="user:1",
     )
+
+
+async def _checkpoint() -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_proposal_expiry_is_clock_scheduled_and_published() -> None:
+    clock = VirtualClock(start=10.0)
+    changes: list[object] = []
+    expired: list[bool] = []
+    controller = _controller(clock, changes=changes)
+    controller.observe_expiry(lambda: expired.append(True))
+    _prepare_select(controller)
+    await asyncio.create_task(_checkpoint())
+
+    clock.advance_to(100.0)
+    await asyncio.create_task(_checkpoint())
+
+    assert controller.view.pending_confirmation is False
+    assert expired == [True]
+    assert changes[-1].pending_confirmation is False
 
 
 @pytest.mark.parametrize(
