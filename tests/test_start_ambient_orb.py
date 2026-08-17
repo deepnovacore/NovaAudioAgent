@@ -11,6 +11,8 @@ import pytest
 
 SOURCE = Path(__file__).parents[1] / "scripts" / "start_ambient_orb.sh"
 PS1_SOURCE = Path(__file__).parents[1] / "scripts" / "start_ambient_orb.ps1"
+BOOTSTRAP_PS1_SOURCE = Path(__file__).parents[1] / "scripts" / "bootstrap_backend.ps1"
+UTF8_BOM = b"\xef\xbb\xbf"
 pytestmark = pytest.mark.real_time
 
 
@@ -229,3 +231,15 @@ def test_ps1_declares_same_env_contract() -> None:
     assert "nova_audio_agent" in text
     assert "codex" in text
     assert "npm" in text
+
+    fail_body = text.split("function Fail {", 1)[1].split("\n}", 1)[0]
+    assert "[Console]::Error" in fail_body, "Fail must write to stderr, not the host"
+
+
+def test_ps1_launchers_have_utf8_bom() -> None:
+    for source in (PS1_SOURCE, BOOTSTRAP_PS1_SOURCE):
+        assert source.is_file(), f"{source} does not exist"
+        assert source.read_bytes()[:3] == UTF8_BOM, (
+            f"{source.name} must start with a UTF-8 BOM so Windows PowerShell 5.1 "
+            "reads it as UTF-8 instead of the legacy ANSI code page"
+        )

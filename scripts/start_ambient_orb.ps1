@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Windows launcher for the Ambient Orb desktop app.
@@ -19,7 +19,7 @@ $DesktopDir = Join-Path $RootDir 'desktop\ambient-orb'
 
 function Fail {
     param([string]$Message)
-    Write-Host "error: $Message" -ForegroundColor Red
+    [Console]::Error.WriteLine("error: $Message")
     exit 1
 }
 
