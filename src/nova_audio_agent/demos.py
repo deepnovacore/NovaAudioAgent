@@ -260,7 +260,7 @@ def _ambient_event() -> HandoffEvent:
         origin_ref="conversation:1",
         outcome="ok",
         trust="trusted_system",
-        content={"motion": "客厅持续有人活动"},
+        content={"motion": "客厅持续有人活动，已达到用户要求的提醒条件"},
     )
 
 
@@ -276,9 +276,9 @@ async def demo_proactive(settings: Settings, writer: DemoWriter) -> DemoResult:
         ts=runtime.clock.now(),
         trust="trusted_user",
         priority=USER_PRIORITY,
-        content={"text": "帮我留意一下客厅"},
+        content={"text": "如果客厅持续有人活动，就提醒我"},
     )
-    suggestion_text = "客厅持续有人活动，可以主动提醒我关注"
+    suggestion_text = "客厅持续有人活动，已达到用户要求的提醒条件"
     suggestion = runtime.suggestions.add(
         origin="fast_brain",
         kind="notify",
