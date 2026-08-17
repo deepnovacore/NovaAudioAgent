@@ -39,13 +39,14 @@ provider protocol closure unresolved. It would likely require another rescue pas
 ## Confirmed run binding
 
 Confirmed work will no longer use `ProjectCodexAdapter._armed` or a global dictionary.
-`commit_confirmed` will place the immutable `ConfirmedProjectOperation` itself in the
-host-created in-process `DelegateRequest` under a private key. Runtime delegate binding
-uses shallow copies, so the exact Python object identity survives until adapter dispatch.
-Provider-originated JSON cannot construct this type and the public schema still rejects
-the private key.
+`DelegateRequest` and its runtime-bound `Delegate` gain one host-only `private` capability
+field that defaults to `None`. It is never compiled into provider schemas, ContextView,
+deduplication identity, deadline evidence, memory, or telemetry. `commit_confirmed` places
+the immutable `ConfirmedProjectOperation` itself in that field, and runtime binding
+preserves the exact Python object identity until adapter dispatch. Provider-originated
+JSON cannot construct the Python type or populate the host-only field.
 
-The adapter accepts the private field only when its value is exactly a
+The adapter accepts the capability only when its value is exactly a
 `ConfirmedProjectOperation` whose normalized work order equals the normalized public
 `work_order`. The object is consumed by that one dispatch; rejection, cancellation, or a
 deadline leaves no adapter-side entry and therefore cannot poison later work.
