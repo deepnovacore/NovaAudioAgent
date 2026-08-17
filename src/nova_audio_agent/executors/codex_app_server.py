@@ -983,12 +983,16 @@ class CodexAppServerTransport:
     def _sync_saved_login(self, destination_home: Path) -> None:
         if self._api_key is not None:
             return
-        source_home = Path(
-            self._environ.get(
-                "CODEX_HOME",
-                str(Path(self._environ.get("HOME", str(Path.home()))) / ".codex"),
+        source_home = (
+            Path(
+                self._environ.get(
+                    "CODEX_HOME",
+                    str(Path(self._environ.get("HOME", str(Path.home()))) / ".codex"),
+                )
             )
-        ).expanduser().absolute()
+            .expanduser()
+            .absolute()
+        )
         if source_home == destination_home:
             return
         marker_path = destination_home / _CREDENTIAL_SOURCE_MARKER
@@ -1012,8 +1016,7 @@ class CodexAppServerTransport:
             replace_destination = destination is None
             if destination is not None and previous_source_digest is None:
                 replace_destination = (
-                    destination.content != source.content
-                    and source.mtime_ns > destination.mtime_ns
+                    destination.content != source.content and source.mtime_ns > destination.mtime_ns
                 )
             elif destination is not None and previous_source_digest != source.digest:
                 replace_destination = True
@@ -1389,10 +1392,7 @@ def _read_owned_file(
             not stat.S_ISREG(info.st_mode)
             or info.st_uid != _uid()
             or info.st_size > max_bytes
-            or (
-                required_mode is not None
-                and stat.S_IMODE(info.st_mode) != required_mode
-            )
+            or (required_mode is not None and stat.S_IMODE(info.st_mode) != required_mode)
         ):
             raise OSError
         with os.fdopen(fd, "rb", closefd=True) as stream:

@@ -597,9 +597,7 @@ async def test_project_commit_failure_uses_bounded_chinese_instead_of_internal_c
 
 @pytest.mark.asyncio
 async def test_confirmation_deferred_calls_are_closed_without_touching_unrelated_entries() -> None:
-    service, provider, _runtime, _frames = make_service(
-        id_factory=lambda: f"host-{next(counter)}"
-    )
+    service, provider, _runtime, _frames = make_service(id_factory=lambda: f"host-{next(counter)}")
     await service.connect()
     matching = ToolCallReady(
         session_epoch=1,

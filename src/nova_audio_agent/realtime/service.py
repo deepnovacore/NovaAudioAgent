@@ -325,9 +325,7 @@ class RealtimeService:
         self._on_project_view = on_project_view or (lambda _view: None)
         self._project_confirmation_items: set[tuple[int, str]] = set()
         self._project_confirmation_responses: set[tuple[int, str]] = set()
-        self._project_confirmation_closed_calls: OrderedDict[tuple[int, str], None] = (
-            OrderedDict()
-        )
+        self._project_confirmation_closed_calls: OrderedDict[tuple[int, str], None] = OrderedDict()
         self._project_confirmation_blocking = False
         self._project_expiry_task: asyncio.Task[None] | None = None
         self._unsubscribe_project_expiry = (
@@ -1084,11 +1082,7 @@ class RealtimeService:
                     result = await callback(outcome.operation, origin_ref)
                     accepted = getattr(result, "accepted", False) is True
                     code = getattr(result, "code", "commit_failed")
-                    text = (
-                        "已确认，正在处理。"
-                        if accepted
-                        else _project_commit_failure_text(code)
-                    )
+                    text = "已确认，正在处理。" if accepted else _project_commit_failure_text(code)
                 except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                     raise
                 except Exception:

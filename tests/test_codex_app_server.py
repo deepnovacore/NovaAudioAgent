@@ -668,9 +668,7 @@ async def test_destination_only_credential_refresh_survives_unchanged_host_login
         "second", on_status=lambda _value: None, on_progress=None
     )
 
-    assert destination.joinpath("auth.json").read_text() == (
-        '{"token":"destination-refresh"}'
-    )
+    assert destination.joinpath("auth.json").read_text() == ('{"token":"destination-refresh"}')
 
 
 async def test_credential_refresh_uses_owner_only_atomic_files(tmp_path: Path) -> None:

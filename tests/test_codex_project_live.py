@@ -580,10 +580,8 @@ async def test_resume_history_rejection_marks_session_unavailable(tmp_path: Path
     adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
     await adapter.dispatch("run", {"work_order": "first", "session": "Task One"}, _context(clock))
     saved = store.resolve_session(workspace.workspace_id, "Task One")
-    adapter._worker_factory = (
-        lambda _workspace, _home, resume, on_ready: _ResumeUnavailableWorker(
-            resume or "missing", on_ready
-        )
+    adapter._worker_factory = lambda _workspace, _home, resume, on_ready: _ResumeUnavailableWorker(
+        resume or "missing", on_ready
     )
     confirmation.prepare(
         action="resume",
