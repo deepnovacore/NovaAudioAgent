@@ -543,6 +543,57 @@ test('the native level envelope replays each dispatched frame on the wall clock'
   assert.equal(envelope.level(2001), 0, 'a barge-in silences the envelope')
 })
 
+test('the native level envelope pushes the frame-wide RMS, not the loudest window', () => {
+  // Half the frame is silence, half is a full-scale square wave. The loudest
+  // 10 ms window in this frame reads ~1 (that is what measurePcmLevel, the mic
+  // path, still reports below) but the frame the speaker actually plays back
+  // is only half as loud as full scale, i.e. sqrt(0.5) RMS.
+  const samples = 640
+  const pcm = new Uint8Array(samples * 2)
+  const view = new DataView(pcm.buffer)
+  for (let index = samples / 2; index < samples; index += 1) {
+    view.setInt16(index * 2, index % 2 ? -32_768 : 32_767, true)
+  }
+
+  const envelope = new NativeLevelEnvelope()
+  envelope.push(pcm, 1000)
+  const level = envelope.level(1000)
+
+  assert.ok(
+    Math.abs(level - Math.SQRT1_2) < 0.02,
+    `half-silent, half-full-scale frame reads ~${Math.SQRT1_2.toFixed(3)} (frame RMS), got ${level}`,
+  )
+  assert.ok(level < 0.9, 'must not be dragged up to the loudest window (peak) reading')
+
+  // Same PCM through the mic path (measurePcmLevel) still reports the peak —
+  // that path is unchanged and its onset-aligned semantics still apply.
+  assert.ok(
+    Math.abs(measurePcmLevel(pcm) - 1) < 0.01,
+    `the mic path still reports the loudest window, got ${measurePcmLevel(pcm)}`,
+  )
+})
+
+test('the native level envelope self-drains expired segments as frames keep arriving', () => {
+  // Hiding the orb window (tray toggle) stops the visual tick that otherwise
+  // drains the queue through level(now), but playback keeps dispatching
+  // frames the whole time it stays hidden. Each push must drain whatever has
+  // already finished playing so the queue stays bounded to just the audio
+  // still in flight, not the entire hidden period.
+  const envelope = new NativeLevelEnvelope()
+  const tenMsFrame = new Uint8Array(480) // 480 bytes at 48 bytes/ms = 10 ms
+
+  for (let index = 0; index < 500; index += 1) {
+    // Each frame arrives 10 seconds after the last even though it only plays
+    // for 10 ms, so every earlier segment is long expired by the next push.
+    envelope.push(tenMsFrame, index * 10_000)
+  }
+
+  assert.ok(
+    envelope.segments.length <= 2,
+    `the segment queue must stay bounded, got ${envelope.segments.length}`,
+  )
+})
+
 test('reset clears a pending onset candidate', () => {
   let minted = 0
   const tracker = new audioModule.OnsetTracker({ mintId: () => `s-${minted += 1}` })

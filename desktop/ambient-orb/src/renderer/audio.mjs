@@ -231,6 +231,23 @@ export function measurePcmLevel(pcm) {
   return peak
 }
 
+// The frame-wide RMS rather than the loudest window: unlike the mic path above,
+// a provider playback frame can span hundreds of milliseconds, so holding its
+// loudest instant flat for the whole frame would flatten syllable dynamics into
+// a high-biased staircase. This recomposes eachPcmWindowLevel's per-window RMS
+// back into one frame RMS by weighting each window's power by its own sample
+// count (the last window in a frame can be shorter than the rest), which is the
+// same total-sum-of-squares-over-total-samples RMS as measuring the whole frame
+// in one pass.
+export function measurePcmFrameLevel(pcm) {
+  const sampleCount = pcmSampleCount(pcm)
+  let power = 0
+  eachPcmWindowLevel(pcm, sampleCount, (level, start, end) => {
+    power += level * level * (end - start)
+  })
+  return Math.sqrt(power / sampleCount)
+}
+
 const ANALYSER_FFT_SIZE = 256
 const BYTE_TIME_DOMAIN_ZERO = 128
 
@@ -281,10 +298,15 @@ export class NativeLevelEnvelope {
   }
 
   push(pcm, now) {
-    // measurePcmLevel windows at the capture rate, which at the 24 kHz playback
-    // rate is a slightly shorter window — an amplitude, not a duration, so the
-    // reading is unaffected.
-    const level = measurePcmLevel(pcm)
+    // A hidden window (tray toggle) stops the visual tick that would otherwise
+    // drain level(now), but playback keeps dispatching frames — so push also
+    // drains anything that has already finished playing, keeping the queue
+    // bounded to whatever is still audible instead of the whole hidden period.
+    while (this.segments.length && this.segments[0].endAt <= now) this.segments.shift()
+    // measurePcmFrameLevel windows at the capture rate, which at the 24 kHz
+    // playback rate is a slightly shorter window — an amplitude, not a
+    // duration, so the reading is unaffected.
+    const level = measurePcmFrameLevel(pcm)
     const startAt = Math.max(now, this.cursor)
     const endAt = startAt + pcm.byteLength / PCM_BYTES_PER_MS
     this.segments.push({ startAt, endAt, level })
