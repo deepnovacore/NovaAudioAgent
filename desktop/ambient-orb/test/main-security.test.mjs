@@ -30,6 +30,9 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:native-audio:play',
     'nova:native-audio:terminal',
     'nova:orb-menu:show',
+    'nova:settings:changed',
+    'nova:settings:get',
+    'nova:settings:set',
     'nova:window-drag:end',
     'nova:window-drag:move',
     'nova:window-drag:start',
@@ -58,6 +61,77 @@ test('registers the orb context-menu channel exactly once', async () => {
 
   const registrations = source.match(/ipcMain\.on\(\s*'nova:orb-menu:show'/g) || []
   assert.equal(registrations.length, 1)
+})
+
+test('the orb menu opens the settings panel above the quit separator', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const menu = source.slice(source.indexOf('function showOrbMenu('))
+  const body = menu.slice(0, menu.indexOf('.popup('))
+
+  assert.match(body, /label: '设置…', click: \(\) => openSettingsWindow\(launchId\)/)
+  assert.ok(
+    body.indexOf("label: '设置…'") < body.indexOf("{ type: 'separator' }"),
+    'the settings entry sits above the separator',
+  )
+  assert.ok(
+    body.indexOf("{ type: 'separator' }") < body.indexOf('退出 Nova Audio Agent'),
+    'quit still sits below the separator',
+  )
+})
+
+test('the settings window is a singleton that never rebinds the shared permission handlers', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const open = source.slice(source.indexOf('function openSettingsWindow('))
+  const body = open.slice(0, open.indexOf('\n}\n'))
+
+  assert.match(source, /let settingsWindow = null/)
+  assert.match(body, /if \(settingsWindow\) \{\n\s*settingsWindow\.show\(\)\n\s*settingsWindow\.focus\(\)\n\s*return\n\s*\}/)
+  assert.match(body, /settingsWindowOptions\(preload, launchId\)/)
+  assert.match(body, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
+  assert.match(body, /allowRendererNavigation\(url\)/)
+  assert.match(body, /settingsWindow = null/)
+  assert.match(body, /loadURL\('nova:\/\/orb\/settings\.html'\)/)
+  // The microphone grant belongs to the orb: the settings panel shares the
+  // session partition but must never re-bind its permission handlers.
+  assert.doesNotMatch(body, /setPermission|configureWindowSecurity/)
+})
+
+test('settings IPC is sender-validated and answers from main without an orb relay', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /ipcMain\.handle\('nova:settings:get', event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
+  assert.match(source, /ipcMain\.handle\('nova:settings:set', async \(event, patch\) => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
+  assert.match(source, /sendToOrb\('nova:settings:changed', publicSettings\(currentSettings\)\)/)
+  // No requestId machinery: settings live in main, so nothing round-trips
+  // through the orb renderer the way the memory board has to.
+  const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
+  assert.doesNotMatch(set.slice(0, set.indexOf('\n  })')), /requestId|pendingBoardRequests/)
+})
+
+test('no decrypted secret can reach the renderer or a log line', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  // Only the presence map and the non-secret fields are ever returned.
+  assert.match(source, /function settingsView\(\) \{/)
+  assert.match(source, /\.\.\.publicSettings\(currentSettings\)/)
+  assert.match(source, /secretsPresent: secretsPresent\(currentSettings\)/)
+  assert.match(source, /keyringAvailable: secretCodec\.available\(\)/)
+  // Decryption for spawn is a later task; main must not hold plaintext at all.
+  assert.doesNotMatch(source, /readSecret/)
+  // The failure log for a settings save names the error type only, never the payload.
+  assert.match(source, /settings_save_failure type=\$\{error\.name\}/)
+  const logs = source.match(/console\.(?:log|warn|error)\([^\n]*/g) || []
+  for (const line of logs) {
+    assert.doesNotMatch(line, /secret|apiKey|patch/i, `log line leaks a secret: ${line}`)
+  }
+})
+
+test('the bootstrap payload carries the non-secret settings for the orb', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  const assignment = source.slice(source.indexOf('bootstrap = Object.freeze({'))
+  assert.match(assignment.slice(0, assignment.indexOf('})')), /settings: publicSettings\(currentSettings\)/)
+  assert.match(source, /currentSettings = await loadSettings\(settingsFile\(\)\)/)
 })
 
 test('quitting drains the backend on the stdin sentinel instead of killing it', async () => {

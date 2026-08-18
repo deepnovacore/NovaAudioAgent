@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>设置</title>
+    <link rel="stylesheet" href="./settings.css">
+  </head>
+  <body>
+    <header>
+      <h1>设置</h1>
+      <span id="status" aria-live="polite"></span>
+    </header>
+    <main>
+      <section>
+        <h2>外观</h2>
+        <fieldset id="palette">
+          <legend>光球配色</legend>
+          <label class="choice">
+            <input type="radio" name="palette" value="ember">
+            <span class="swatch swatch-ember" aria-hidden="true"></span>
+            <span class="option">
+              <span class="option-name">Ember 暖焰</span>
+              <span class="option-note">暖橙粒子，默认外观</span>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="palette" value="graphite">
+            <span class="swatch swatch-graphite" aria-hidden="true"></span>
+            <span class="option">
+              <span class="option-name">Graphite 月光</span>
+              <span class="option-note">冷银粒子，低调外观</span>
+            </span>
+          </label>
+        </fieldset>
+      </section>
+      <section>
+        <h2>主动性</h2>
+        <fieldset id="proactivity">
+          <legend>推拉节奏</legend>
+          <label class="choice">
+            <input type="radio" name="proactivity" value="conservative">
+            <span class="option">
+              <span class="option-name">保守</span>
+              <span class="option-note">几乎只等你来拉，很少主动推送</span>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="proactivity" value="balanced">
+            <span class="option">
+              <span class="option-name">均衡</span>
+              <span class="option-note">以你来拉为主，要紧的事才主动推一句</span>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="proactivity" value="eager">
+            <span class="option">
+              <span class="option-name">积极</span>
+              <span class="option-note">不必等你来拉，进展与提醒都主动推送</span>
+            </span>
+          </label>
+        </fieldset>
+      </section>
+      <section>
+        <h2>节奏与声音</h2>
+        <div class="field">
+          <label for="heartbeat">Codex 播报间隔</label>
+          <input type="range" id="heartbeat" min="15" max="120" step="1" value="30">
+          <output id="heartbeat-value" for="heartbeat">30 秒</output>
+        </div>
+        <div class="field">
+          <label for="voice">语音音色</label>
+          <input type="text" id="voice" maxlength="64" autocomplete="off" spellcheck="false">
+        </div>
+      </section>
+      <section id="secrets">
+        <h2>API 密钥</h2>
+        <p id="keyring-warning" class="warning" hidden>密钥将以明文保存(系统未提供钥匙串)</p>
+        <div class="secret">
+          <label for="dashscopeApiKey">DashScope</label>
+          <span class="badge" id="badge-dashscopeApiKey">未设置</span>
+          <input type="password" id="dashscopeApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
+          <button type="button" class="clear" data-key="dashscopeApiKey">清除</button>
+        </div>
+        <div class="secret">
+          <label for="tavilyApiKey">Tavily</label>
+          <span class="badge" id="badge-tavilyApiKey">未设置</span>
+          <input type="password" id="tavilyApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
+          <button type="button" class="clear" data-key="tavilyApiKey">清除</button>
+        </div>
+        <div class="secret">
+          <label for="modelApiKey">模型网关</label>
+          <span class="badge" id="badge-modelApiKey">未设置</span>
+          <input type="password" id="modelApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
+          <button type="button" class="clear" data-key="modelApiKey">清除</button>
+        </div>
+        <div class="secret">
+          <label for="codexApiKey">Codex</label>
+          <span class="badge" id="badge-codexApiKey">未设置</span>
+          <input type="password" id="codexApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
+          <button type="button" class="clear" data-key="codexApiKey">清除</button>
+        </div>
+        <button type="button" id="save-secrets">保存密钥</button>
+      </section>
+    </main>
+    <footer>
+      <p class="note">配色更改立即生效，其余选项修改后自动保存。</p>
+      <p class="note">语音、主动性与 API 密钥设置将在下次启动生效</p>
+    </footer>
+    <script type="module" src="./settings.mjs"></script>
+  </body>
+</html>

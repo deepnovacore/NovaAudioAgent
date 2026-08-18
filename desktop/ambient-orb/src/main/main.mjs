@@ -8,6 +8,7 @@ import {
   nativeImage,
   net,
   protocol,
+  safeStorage,
   screen,
   systemPreferences,
   Tray,
@@ -31,6 +32,14 @@ import { loadAppWindow } from './app-protocol.mjs'
 import { createDragController } from './drag-controller.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
+  applySettingsUpdate,
+  createSafeStorageCodec,
+  loadSettings,
+  publicSettings,
+  saveSettings,
+  secretsPresent,
+} from './settings-store.mjs'
+import {
   clampWindowPosition,
   loadWindowPosition,
   saveWindowPosition,
@@ -41,6 +50,7 @@ import {
   boardWindowOptions,
   browserWindowOptions,
   createBootstrapAccess,
+  settingsWindowOptions,
   validateBootstrap,
 } from './security.mjs'
 
@@ -75,11 +85,16 @@ const opaque = process.env.NOVA_ORB_OPAQUE === '1'
 let backend = null
 let mainWindow = null
 let boardWindow = null
+let settingsWindow = null
 let tray = null
 let bootstrap = null
 let nativeAudio = null
 let nativeBinary = null
 let quitDrain = null
+// Settings are main-owned: the panel asks main directly, so unlike the memory
+// board there is no relay through the orb renderer and no requestId to match.
+let currentSettings = null
+const secretCodec = createSafeStorageCodec(safeStorage)
 // Sticky: the backend can die in the window between its handshake and the orb's
 // first paint, when there is no renderer to tell. The flag is what the bootstrap
 // reply reports and what the post-load push replays, so that death is delivered
@@ -124,6 +139,21 @@ function configureWindowSecurity(window) {
 
 function windowPositionFile() {
   return resolve(app.getPath('userData'), 'ambient-orb-window-position.json')
+}
+
+function settingsFile() {
+  return resolve(app.getPath('userData'), 'ambient-orb-settings.json')
+}
+
+// The single shape the settings panel is ever told. Key material is reduced to
+// four booleans here and nowhere else, so no handler can widen it by accident;
+// `keyringAvailable` is what turns the plaintext warning line on.
+function settingsView() {
+  return {
+    ...publicSettings(currentSettings),
+    secretsPresent: secretsPresent(currentSettings),
+    keyringAvailable: secretCodec.available(),
+  }
 }
 
 // The orb is a single fixed size, so "which display's work area applies"
@@ -179,9 +209,32 @@ function openMemoryBoard(launchId) {
   void window.loadURL('nova://orb/memory-board.html')
 }
 
+function openSettingsWindow(launchId) {
+  if (settingsWindow) {
+    settingsWindow.show()
+    settingsWindow.focus()
+    return
+  }
+  const window = new BrowserWindow(settingsWindowOptions(preload, launchId))
+  // Same rule as the board: webContents-level walls only. Re-binding the
+  // session's permission handlers here would move the orb's microphone grant
+  // onto a panel that has no business holding it.
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event, url) => {
+    if (!allowRendererNavigation(url)) event.preventDefault()
+  })
+  window.once('ready-to-show', () => window.show())
+  window.on('closed', () => {
+    settingsWindow = null
+  })
+  settingsWindow = window
+  void window.loadURL('nova://orb/settings.html')
+}
+
 function showOrbMenu(launchId) {
   Menu.buildFromTemplate([
     { label: 'Memory Board', click: () => openMemoryBoard(launchId) },
+    { label: '设置…', click: () => openSettingsWindow(launchId) },
     { type: 'separator' },
     { label: '退出 Nova Audio Agent', click: () => app.quit() },
   ]).popup({ window: mainWindow })
@@ -265,6 +318,7 @@ async function launchBackend() {
     nativeAvailable,
     platform: process.platform,
     opaque,
+    settings: publicSettings(currentSettings),
   })
 }
 
@@ -279,6 +333,7 @@ async function requestCameraPermission() {
 
 async function start() {
   await requestCameraPermission()
+  currentSettings = await loadSettings(settingsFile())
   await launchBackend()
   const launchId = randomBytes(8).toString('hex')
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
@@ -346,6 +401,31 @@ async function start() {
       await unlink(temporary).catch(() => {})
     }
     return { saved: filePath }
+  })
+  ipcMain.handle('nova:settings:get', event => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+      throw new Error('settings request rejected')
+    }
+    return settingsView()
+  })
+  ipcMain.handle('nova:settings:set', async (event, patch) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+      throw new Error('settings update rejected')
+    }
+    // Plaintext key values ride in on `patch`, are sealed inside the store, and
+    // are never held, echoed, or logged here. Disk is the commit point: until
+    // the write lands, the in-memory settings stay as they were.
+    const next = applySettingsUpdate(currentSettings, patch, secretCodec)
+    try {
+      await saveSettings(settingsFile(), next)
+    } catch (error) {
+      console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
+      return { ...settingsView(), saved: false }
+    }
+    currentSettings = next
+    // Only the palette is live; voice, proactivity, and keys are read at launch.
+    sendToOrb('nova:settings:changed', publicSettings(currentSettings))
+    return { ...settingsView(), saved: true }
   })
   ipcMain.handle('nova:bootstrap', event => {
     // The renderer binds its backend-exit listener only after this reply lands, so a push

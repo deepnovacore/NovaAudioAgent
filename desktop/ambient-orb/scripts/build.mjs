@@ -11,10 +11,12 @@ const scripts = [
   'src/main/security.mjs',
   'src/main/native-audio.mjs',
   'src/main/drag-controller.mjs',
+  'src/main/settings-store.mjs',
   'src/renderer/index.mjs',
   'src/renderer/audio.mjs',
   'src/renderer/state.mjs',
   'src/renderer/orb-visual.mjs',
+  'src/renderer/settings.mjs',
 ]
 
 for (const file of scripts) {

@@ -55,6 +55,30 @@ test('memory board window shares the orb session with the same isolation walls',
   assert.equal(options.webPreferences.webSecurity, true)
 })
 
+test('settings window shares the orb session with the same isolation walls', () => {
+  const options = securityModule.settingsWindowOptions('/app/preload.cjs', 'launch-1')
+
+  assert.equal(options.width, 420)
+  assert.equal(options.height, 560)
+  assert.equal(options.title, '设置')
+  assert.equal(options.frame, true)
+  assert.equal(options.alwaysOnTop, undefined)
+  assert.equal(options.show, false)
+  assert.equal(options.webPreferences.contextIsolation, true)
+  assert.equal(options.webPreferences.nodeIntegration, false)
+  assert.equal(options.webPreferences.sandbox, true)
+  assert.equal(options.webPreferences.partition, 'nova-orb-launch-1')
+  assert.equal(options.webPreferences.preload, '/app/preload.cjs')
+  assert.equal(options.webPreferences.webSecurity, true)
+  // The orb's autoplay exemption is orb-only; a panel has no audio at all.
+  assert.equal(options.webPreferences.autoplayPolicy, undefined)
+})
+
+test('settings window rejects a missing preload or a forgeable launch id', () => {
+  assert.throws(() => securityModule.settingsWindowOptions('', 'launch-1'), /preload/)
+  assert.throws(() => securityModule.settingsWindowOptions('/app/preload.cjs', '../evil'), /launch id/)
+})
+
 test('browserWindowOptions defaults to the transparent orb backdrop', () => {
   const options = browserWindowOptions('/app/preload.cjs', 'launch-1')
 
