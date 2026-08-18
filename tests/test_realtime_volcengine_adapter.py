@@ -187,6 +187,27 @@ class _BlockingArk:
         await asyncio.Event().wait()
 
 
+class _PrewarmArk:
+    def __init__(self) -> None:
+        self.response_started = asyncio.Event()
+        self.release_text = asyncio.Event()
+
+    async def stream(self, **_kwargs: Any) -> AsyncIterator[Any]:
+        yield ArkResponseStarted("response-prewarm")
+        self.response_started.set()
+        await self.release_text.wait()
+        yield ArkTextDelta("你好。")
+        yield ArkResponseCompleted("response-prewarm")
+
+
+class _DelayedToolArk:
+    async def stream(self, **_kwargs: Any) -> AsyncIterator[Any]:
+        yield ArkResponseStarted("response-tool")
+        await asyncio.sleep(0)
+        yield ArkToolCall("item-tool", "call-tool", "weather__get", {"city": "上海"})
+        yield ArkResponseCompleted("response-tool")
+
+
 class _TtsSession:
     def __init__(self) -> None:
         self.texts: list[str] = []
@@ -339,6 +360,30 @@ async def test_adapter_runs_vad_asr_ark_tts_and_emits_normalized_events() -> Non
 
 
 @pytest.mark.asyncio
+async def test_adapter_prewarms_tts_before_the_first_text_delta() -> None:
+    ark = _PrewarmArk()
+    tts = _Tts()
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_Asr(), ark=ark, tts=tts, id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+    item = HostContextItem.progress(host_item_id="progress-1", event_id="event-1", content="上下文")
+    await adapter.inject_host_item(item)
+    await adapter.create_response(HostResponseIntent.host_fact(item))
+
+    await asyncio.wait_for(ark.response_started.wait(), timeout=1)
+
+    assert len(tts.sessions) == 1
+    assert tts.sessions[0].texts == []
+
+    collector = asyncio.create_task(_collect_until_terminal(adapter))
+    ark.release_text.set()
+    await asyncio.wait_for(collector, timeout=1)
+
+    assert tts.sessions[0].texts == ["你好。"]
+
+
+@pytest.mark.asyncio
 async def test_blank_asr_final_emits_failed_terminal_instead_of_waiting_for_response() -> None:
     adapter = VolcengineCascadedAdapter(
         vad=_Vad(),
@@ -437,14 +482,8 @@ async def test_new_onset_replaces_an_asr_session_still_draining_its_final() -> N
 
 
 @pytest.mark.asyncio
-async def test_adapter_emits_tool_call_without_opening_tts() -> None:
-    ark = _Ark(
-        [
-            ArkResponseStarted("response-tool"),
-            ArkToolCall("item-tool", "call-tool", "weather__get", {"city": "上海"}),
-            ArkResponseCompleted("response-tool"),
-        ]
-    )
+async def test_adapter_cancels_preheated_tts_for_a_tool_only_response() -> None:
+    ark = _DelayedToolArk()
     tts = _Tts()
     adapter = VolcengineCascadedAdapter(
         vad=_Vad(), asr=_Asr(), ark=ark, tts=tts, id_factory=lambda: "id"
@@ -457,7 +496,10 @@ async def test_adapter_emits_tool_call_without_opening_tts() -> None:
     events = await asyncio.wait_for(collector, timeout=1)
 
     assert any(isinstance(event, ToolCallReady) for event in events)
-    assert tts.sessions == []
+    assert len(tts.sessions) == 1
+    assert tts.sessions[0].texts == []
+    assert tts.sessions[0].cancelled is True
+    assert not any(isinstance(event, ResponseAudioDelta) for event in events)
 
 
 @pytest.mark.asyncio

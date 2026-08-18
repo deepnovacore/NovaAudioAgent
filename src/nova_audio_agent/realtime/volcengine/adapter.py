@@ -89,6 +89,7 @@ class VolcengineCascadedAdapter:
         self._response_task: asyncio.Task[None] | None = None
         self._active_response_id: str | None = None
         self._tts_session: Any | None = None
+        self._tts_open_task: asyncio.Task[Any] | None = None
         self._tts_task: asyncio.Task[None] | None = None
         self._tts_texts: list[str] = []
         self._tts_audio_emitted = False
@@ -355,6 +356,7 @@ class VolcengineCascadedAdapter:
                     self._active_response_id = response_id
                     self._telemetry.record("volcengine.llm.started", {"epoch": self._epoch})
                     await self._emit(ResponseStarted(self._epoch, response_id))
+                    self._prewarm_tts()
                 elif isinstance(event, ArkTextDelta):
                     if tool_seen:
                         raise _MixedResponse
@@ -374,6 +376,7 @@ class VolcengineCascadedAdapter:
                     if response_id is None:
                         raise ArkResponsesError("Ark tool call arrived before response identity")
                     tool_seen = True
+                    await self._cancel_tts()
                     self._telemetry.record("volcengine.llm.tool_call", {"epoch": self._epoch})
                     await self._emit(
                         ToolCallReady(
@@ -398,6 +401,8 @@ class VolcengineCascadedAdapter:
                         await self._emit(
                             ResponseTranscriptFinal(self._epoch, response_id, transcript)
                         )
+                    else:
+                        await self._cancel_tts()
                     await self._emit(
                         ResponseTerminal(self._epoch, response_id, "completed", "completed")
                     )
@@ -448,8 +453,23 @@ class VolcengineCascadedAdapter:
                 raise
 
     async def _open_tts(self, response_id: str) -> None:
-        self._tts_session = await self._tts.open()
+        open_task, self._tts_open_task = self._tts_open_task, None
+        if open_task is None:
+            self._tts_session = await self._tts.open()
+        else:
+            try:
+                self._tts_session = await open_task
+                self._telemetry.record("volcengine.tts.prewarm.ready", {"epoch": self._epoch})
+            except Exception:
+                self._telemetry.record("volcengine.tts.prewarm.failed", {"epoch": self._epoch})
+                self._tts_session = await self._tts.open()
         self._tts_task = asyncio.create_task(self._consume_tts(response_id, self._tts_session))
+
+    def _prewarm_tts(self) -> None:
+        if self._tts_session is not None or self._tts_open_task is not None:
+            return
+        self._tts_open_task = asyncio.create_task(self._tts.open())
+        self._telemetry.record("volcengine.tts.prewarm", {"epoch": self._epoch})
 
     async def _retry_tts(self, response_id: str) -> bool:
         if self._tts_audio_emitted or self._tts_retry_used:
@@ -505,9 +525,16 @@ class VolcengineCascadedAdapter:
                 self._reset_tts_state()
 
     async def _cancel_tts(self) -> None:
+        open_task, self._tts_open_task = self._tts_open_task, None
         session, task = self._tts_session, self._tts_task
         self._tts_session = None
         self._tts_task = None
+        if open_task is not None:
+            if not open_task.done():
+                open_task.cancel()
+            opened = (await asyncio.gather(open_task, return_exceptions=True))[0]
+            if not isinstance(opened, BaseException) and session is None:
+                session = opened
         if session is not None:
             try:
                 await session.cancel()
