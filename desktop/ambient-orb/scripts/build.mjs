@@ -14,6 +14,7 @@ const scripts = [
   'src/renderer/index.mjs',
   'src/renderer/audio.mjs',
   'src/renderer/state.mjs',
+  'src/renderer/orb-visual.mjs',
 ]
 
 for (const file of scripts) {

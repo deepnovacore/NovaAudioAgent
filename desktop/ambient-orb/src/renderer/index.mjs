@@ -10,6 +10,7 @@ import {
   OnsetTracker,
 } from './audio.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
+import { createOrbVisual } from './orb-visual.mjs'
 import { deriveOrbState } from './state.mjs'
 
 const shell = document.querySelector('#shell')
@@ -18,6 +19,15 @@ const stateLabel = document.querySelector('#state-label')
 const codexLabel = document.querySelector('#codex-label')
 const aecLabel = document.querySelector('#aec-label')
 const captionLabel = document.querySelector('#caption')
+
+// The particle field is a second, parallel consumer of the same derived state:
+// `data-state` and the labels above stay the authoritative contract, and the
+// visual only ever reads from render() below.
+const visual = createOrbVisual(document.querySelector('.orb-canvas'), {
+  reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  highContrast: window.matchMedia('(prefers-contrast: more)').matches,
+  palette: 'ember',
+})
 
 const axes = {
   booting: true,
@@ -76,6 +86,7 @@ function render() {
   aecLabel.textContent = state.aecLabel
   orb.setAttribute('aria-label', `${state.label}；${state.codexLabel}`)
   orb.setAttribute('aria-pressed', String(axes.activated))
+  visual.setState(state.name, { codexWorking: axes.codex === 'working' })
 }
 
 function send(value) {
@@ -548,6 +559,9 @@ orb.addEventListener('contextmenu', event => {
   event.preventDefault()
   window.novaAudioAgentDesktop.orbMenu.show()
 })
-window.addEventListener('beforeunload', () => { void deactivateCapture() })
+window.addEventListener('beforeunload', () => {
+  visual.destroy()
+  void deactivateCapture()
+})
 render()
 void boot()

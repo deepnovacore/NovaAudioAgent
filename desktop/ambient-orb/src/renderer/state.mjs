@@ -11,6 +11,10 @@ const LABELS = Object.freeze({
   error: 'Nova Audio Agent 发生错误',
 })
 
+// The single source of truth for the `data-state` vocabulary: the visual layer
+// derives its per-state parameters from this list rather than restating it.
+export const ORB_STATE_NAMES = Object.freeze(Object.keys(LABELS))
+
 // Windows has no systemPreferences prompt to point users at, so the denied
 // label carries its own navigation hint there; other platforms keep the
 // shorter copy above.
