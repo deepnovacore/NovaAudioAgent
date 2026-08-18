@@ -13,7 +13,7 @@ from openai import AsyncOpenAI
 
 from nova_audio_agent.calls import AttentionDecision
 from nova_audio_agent.clock import RealClock
-from nova_audio_agent.config import ConfigurationError, Settings
+from nova_audio_agent.config import ConfigurationError, Settings, resolve_proactivity
 from nova_audio_agent.executors.autoglm import AutoGlmAdapter, AutoGlmWdaClient
 from nova_audio_agent.executors.autoglm_transport import AutoGlmTransport
 from nova_audio_agent.executors.camera import (
@@ -391,6 +391,7 @@ def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
                 binary=binary,
                 workspace=workspace,
                 api_key=codex_api_key,
+                working_interval=context.settings.codex_working_interval,
             )
         )
     return CodexAdapter(
@@ -465,6 +466,7 @@ def _build_assembly(
     active_names, expected_active = _active_executor_names(settings)
     model_api_key = model_api_key_override or settings.require_api_key()
     tavily_api_key = settings.require_tavily_api_key()
+    proactivity = resolve_proactivity(settings)
     clock = RealClock()
     media_store = MediaStore()
     context = _ExecutorBuildContext(
@@ -548,6 +550,8 @@ def _build_assembly(
         sink=sink,
         on_suggestion_selected=on_suggestion_selected,
         on_attention_decision=on_attention_decision,
+        suggestion_cooldown=proactivity.cooldown,
+        fresh_window=proactivity.fresh_window,
     )
     return Assembly(
         runtime=runtime,

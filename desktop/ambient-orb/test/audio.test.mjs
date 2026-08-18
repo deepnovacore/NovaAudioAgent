@@ -6,11 +6,25 @@ import * as audioModule from '../src/renderer/audio.mjs'
 const {
   AlertTone,
   GenerationPlayback,
+  NativeLevelEnvelope,
+  PlaybackMeter,
   applyAlertCommand,
   decodeAudioFrame,
   floatToPcm16,
+  measurePcmLevel,
   observePcmOnset,
 } = audioModule
+
+// A full-scale square wave: the loudest signal PCM16 can carry, so its RMS is
+// the meter's ceiling.
+function squarePcm(samples = 320) {
+  const pcm = new Uint8Array(samples * 2)
+  const view = new DataView(pcm.buffer)
+  for (let index = 0; index < samples; index += 1) {
+    view.setInt16(index * 2, index % 2 ? -32_768 : 32_767, true)
+  }
+  return pcm
+}
 
 function audioFrame({ utterance = 'u-1', epoch = 1, sequence = 0, pcm = [0, 1] } = {}) {
   const header = Buffer.from(JSON.stringify({
@@ -382,6 +396,30 @@ test('onset tracker sends one onset then periodic refreshes with a stable id', (
   assert.equal(tracker.active, true)
 })
 
+test('onset tracker surfaces the attack window it is still inside', () => {
+  let minted = 0
+  const tracker = new audioModule.OnsetTracker({ mintId: () => `s-${minted += 1}` })
+
+  assert.equal(tracker.pending, false, 'silence is not a candidate')
+  assert.equal(tracker.observe(0.1, 10, 10), null)
+  assert.equal(tracker.pending, true, 'a level over the threshold is a candidate first')
+  assert.equal(tracker.active, false, 'and not yet a confirmed onset')
+
+  assert.deepEqual(tracker.observe(0.1, 60, 50), { type: 'onset', speechId: 's-1' })
+  assert.equal(tracker.pending, false, 'a confirmed onset is no longer a candidate')
+  assert.equal(tracker.active, true)
+
+  // Falling back under the threshold drops the candidate without minting an id.
+  tracker.observe(0.0, 100)
+  tracker.observe(0.0, 300)
+  assert.equal(tracker.active, false)
+  assert.equal(tracker.observe(0.1, 310, 10), null)
+  assert.equal(tracker.pending, true)
+  tracker.reset()
+  assert.equal(tracker.pending, false, 'reset clears the attack window too')
+  assert.equal(minted, 1)
+})
+
 test('onset tracker mints a new utterance only after the hangover expires', () => {
   let minted = 0
   const tracker = new audioModule.OnsetTracker({ mintId: () => `s-${minted += 1}` })
@@ -429,6 +467,156 @@ for (const sampleRate of [44_100, 48_000]) {
     assert.ok(deliveredAt <= 60)
   })
 }
+
+test('measures silence as zero and a full-scale square wave as one', () => {
+  assert.equal(measurePcmLevel(new Uint8Array(320)), 0)
+
+  const level = measurePcmLevel(squarePcm())
+
+  assert.ok(Math.abs(level - 1) < 0.001, `full scale reads ~1, got ${level}`)
+})
+
+test('the amplitude meter reads the loudest window the onset detector sees', () => {
+  // A half-scale burst inside an otherwise silent frame: the frame-wide RMS
+  // would dilute it away, so the meter must report the loudest 10 ms window.
+  const samples = 640
+  const pcm = new Uint8Array(samples * 2)
+  const view = new DataView(pcm.buffer)
+  for (let index = 0; index < 160; index += 1) {
+    view.setInt16(index * 2, index % 2 ? -16_384 : 16_384, true)
+  }
+
+  const level = measurePcmLevel(pcm)
+
+  assert.ok(Math.abs(level - 0.5) < 0.01, `the burst window reads ~0.5, got ${level}`)
+  assert.equal(measurePcmLevel(pcm.subarray(320)), 0, 'the silent tail reads as silence')
+})
+
+test('the amplitude meter rejects the same malformed PCM the onset detector does', () => {
+  assert.throws(() => measurePcmLevel(new Uint8Array(0)), /PCM16 is invalid/)
+  assert.throws(() => measurePcmLevel(new Uint8Array(3)), /PCM16 is invalid/)
+  assert.throws(() => measurePcmLevel([0, 0]), /PCM16 is invalid/)
+})
+
+test('the playback meter inserts one unity master gain ahead of an analyser', () => {
+  const connections = []
+  const destination = { name: 'destination' }
+  const analyser = {
+    name: 'analyser',
+    fftSize: 2048,
+    reads: 0,
+    getByteTimeDomainData(array) {
+      analyser.reads += 1
+      for (let index = 0; index < array.length; index += 1) {
+        array[index] = index % 2 ? 0 : 255
+      }
+    },
+    connect: target => connections.push(['analyser', target.name]),
+    disconnect: () => {},
+  }
+  const gain = {
+    name: 'gain',
+    gain: { value: 0 },
+    connect: target => connections.push(['gain', target.name]),
+    disconnect: () => {},
+  }
+  const context = {
+    destination,
+    createGain: () => gain,
+    createAnalyser: () => analyser,
+  }
+  let playing = false
+  const meter = new PlaybackMeter(context, () => playing)
+
+  assert.equal(meter.destination, gain, 'sources connect to the master gain')
+  assert.equal(gain.gain.value, 1, 'the mix is unchanged')
+  assert.equal(analyser.fftSize, 256)
+  assert.deepEqual(connections, [['gain', 'analyser'], ['analyser', 'destination']])
+
+  assert.equal(meter.level(), 0, 'silence while nothing is playing')
+  assert.equal(analyser.reads, 0, 'an idle meter does not even read the analyser')
+
+  playing = true
+  const level = meter.level()
+  assert.ok(Math.abs(level - 0.996) < 0.01, `a full-scale buffer reads ~1, got ${level}`)
+  assert.equal(analyser.reads, 1)
+})
+
+test('the native level envelope replays each dispatched frame on the wall clock', () => {
+  const envelope = new NativeLevelEnvelope()
+  const loud = squarePcm(240)
+  const quiet = new Uint8Array(480)
+
+  assert.equal(envelope.level(1000), 0, 'nothing dispatched is silence')
+
+  // 480 bytes at 48 bytes per millisecond is a 10 ms frame.
+  envelope.push(loud, 1000)
+  envelope.push(quiet, 1000)
+
+  assert.ok(Math.abs(envelope.level(1000) - 1) < 0.001, 'the first frame is audible now')
+  assert.ok(Math.abs(envelope.level(1009) - 1) < 0.001)
+  assert.equal(envelope.level(1010), 0, 'the queued silent frame follows it')
+  assert.equal(envelope.level(1020), 0, 'the queue drains after the last frame')
+
+  // A frame dispatched after the queue drained starts at its own arrival time.
+  envelope.push(loud, 2000)
+  assert.equal(envelope.level(1999), 0, 'a future frame is not audible early')
+  assert.ok(Math.abs(envelope.level(2000) - 1) < 0.001)
+
+  envelope.clear()
+  assert.equal(envelope.level(2001), 0, 'a barge-in silences the envelope')
+})
+
+test('the native level envelope pushes the frame-wide RMS, not the loudest window', () => {
+  // Half the frame is silence, half is a full-scale square wave. The loudest
+  // 10 ms window in this frame reads ~1 (that is what measurePcmLevel, the mic
+  // path, still reports below) but the frame the speaker actually plays back
+  // is only half as loud as full scale, i.e. sqrt(0.5) RMS.
+  const samples = 640
+  const pcm = new Uint8Array(samples * 2)
+  const view = new DataView(pcm.buffer)
+  for (let index = samples / 2; index < samples; index += 1) {
+    view.setInt16(index * 2, index % 2 ? -32_768 : 32_767, true)
+  }
+
+  const envelope = new NativeLevelEnvelope()
+  envelope.push(pcm, 1000)
+  const level = envelope.level(1000)
+
+  assert.ok(
+    Math.abs(level - Math.SQRT1_2) < 0.02,
+    `half-silent, half-full-scale frame reads ~${Math.SQRT1_2.toFixed(3)} (frame RMS), got ${level}`,
+  )
+  assert.ok(level < 0.9, 'must not be dragged up to the loudest window (peak) reading')
+
+  // Same PCM through the mic path (measurePcmLevel) still reports the peak —
+  // that path is unchanged and its onset-aligned semantics still apply.
+  assert.ok(
+    Math.abs(measurePcmLevel(pcm) - 1) < 0.01,
+    `the mic path still reports the loudest window, got ${measurePcmLevel(pcm)}`,
+  )
+})
+
+test('the native level envelope self-drains expired segments as frames keep arriving', () => {
+  // Hiding the orb window (tray toggle) stops the visual tick that otherwise
+  // drains the queue through level(now), but playback keeps dispatching
+  // frames the whole time it stays hidden. Each push must drain whatever has
+  // already finished playing so the queue stays bounded to just the audio
+  // still in flight, not the entire hidden period.
+  const envelope = new NativeLevelEnvelope()
+  const tenMsFrame = new Uint8Array(480) // 480 bytes at 48 bytes/ms = 10 ms
+
+  for (let index = 0; index < 500; index += 1) {
+    // Each frame arrives 10 seconds after the last even though it only plays
+    // for 10 ms, so every earlier segment is long expired by the next push.
+    envelope.push(tenMsFrame, index * 10_000)
+  }
+
+  assert.ok(
+    envelope.segments.length <= 2,
+    `the segment queue must stay bounded, got ${envelope.segments.length}`,
+  )
+})
 
 test('reset clears a pending onset candidate', () => {
   let minted = 0

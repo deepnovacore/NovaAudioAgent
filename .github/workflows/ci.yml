@@ -9,7 +9,12 @@ permissions:
 
 jobs:
   python:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     env:
       NOVA_AUDIO_AGENT_TEST_TIME_BUDGET: "7.5"
     steps:
@@ -30,7 +35,11 @@ jobs:
       - run: uv run nova-audio-agent --help
 
   electron:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: desktop/ambient-orb
@@ -44,3 +53,37 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  package:
+    needs: electron
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            script: package:mac
+            artifact: ambient-orb-mac
+          - os: ubuntu-latest
+            script: package:linux
+            artifact: ambient-orb-linux
+          - os: windows-latest
+            script: package:win
+            artifact: ambient-orb-win
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop/ambient-orb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/ambient-orb/package-lock.json
+      - run: npm ci
+      - run: npm run ${{ matrix.script }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: desktop/ambient-orb/dist/**
+          if-no-files-found: error

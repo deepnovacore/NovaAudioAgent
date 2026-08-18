@@ -11,6 +11,9 @@ const allowedRendererPaths = new Set([
   '/memory-board.html',
   '/memory-board.css',
   '/memory-board.mjs',
+  '/settings.html',
+  '/settings.css',
+  '/settings.mjs',
 ])
 
 export function installAppProtocol(targetProtocol, { rendererRoot, fetchFile }) {

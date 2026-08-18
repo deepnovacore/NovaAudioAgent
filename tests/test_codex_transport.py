@@ -34,6 +34,7 @@ from nova_audio_agent.executors.codex_transport import (
     CodexTransport,
 )
 from nova_audio_agent.ports import DelegateRequest, DispatchContext, bind_delegate
+from nova_audio_agent.process_tree import spawn_supervision_kwargs
 
 
 WORK_ORDER = "create exactly one sentinel file"
@@ -514,7 +515,10 @@ async def test_exact_argv_uses_fixed_root_options_and_private_output(tmp_path: P
     assert kwargs["stdin"] == asyncio.subprocess.PIPE
     assert kwargs["stdout"] == asyncio.subprocess.PIPE
     assert kwargs["stderr"] == asyncio.subprocess.PIPE
-    assert kwargs["start_new_session"] is (os.name == "posix")
+    expected_supervision_kwargs = spawn_supervision_kwargs()
+    for key, value in expected_supervision_kwargs.items():
+        assert kwargs[key] == value
+    assert ("start_new_session" in kwargs) is (os.name == "posix")
     assert "shell" not in kwargs
 
 
@@ -1688,7 +1692,7 @@ async def test_shared_cleanup_reports_terminate_or_kill_without_real_waits(
     observed_graces: list[float] = []
     group_alive = True
 
-    def signal_process(process_value: _FakeProcess, selected: signal.Signals) -> bool:
+    async def signal_process(process_value: _FakeProcess, selected: signal.Signals) -> bool:
         nonlocal group_alive
         assert process_value is process
         observed_signals.append(selected)
@@ -1839,7 +1843,7 @@ async def test_residual_group_is_killed_after_leader_already_exited(
     def alive(_: int) -> bool:
         return group_alive
 
-    def signal_group(process_value: _FakeProcess, selected: signal.Signals) -> bool:
+    async def signal_group(process_value: _FakeProcess, selected: signal.Signals) -> bool:
         nonlocal group_alive
         assert process_value is process
         signals.append(selected)

@@ -1,0 +1,14 @@
+# Normalize line endings to LF in the working tree on every platform.
+# This keeps source-text regex tests (which match literal `\n` across
+# lines) stable regardless of which OS checks the repo out, and keeps
+# `git diff` sane by never letting CRLF sneak into version control.
+* text=auto eol=lf
+
+# Binary assets: leave bytes untouched, never diff/merge as text.
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.ico -text
+*.icns -text
+*.zip -text
+*.mp4 -text

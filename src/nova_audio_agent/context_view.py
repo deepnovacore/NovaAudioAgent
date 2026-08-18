@@ -160,6 +160,7 @@ def compile_context_view(
     manifests: Sequence[ExecutorManifest] = (),
     selected_suggestion: str | None = None,
     trigger_kind: str | None = None,
+    fresh_window: float = FRESH_WINDOW,
 ) -> ContextView:
     """Pure function: the same inputs compile the same view, and memory is left unchanged."""
     channels = tuple(
@@ -185,7 +186,7 @@ def compile_context_view(
             *_probes(channels, manifests),
             *_pooled(suggestions, now=now, selected=selected_suggestion),
             *_unresolved(memory.structured),
-            *_updates(channels, now=now),
+            *_updates(channels, now=now, fresh_window=fresh_window),
         ),
         floor=floor,
         now=now,
@@ -302,24 +303,26 @@ def _unresolved(structured: StructuredState) -> Iterator[Affordance]:
         )
 
 
-def _updates(channels: Sequence[ChannelView], *, now: float) -> Iterator[Affordance]:
+def _updates(
+    channels: Sequence[ChannelView], *, now: float, fresh_window: float = FRESH_WINDOW
+) -> Iterator[Affordance]:
     """Other channels just had activity. At most one entry per channel — take its latest.
 
     **The conversation channel doesn't count**: the model is speaking on that channel right
     now, and what it just said isn't "material". Encoding every user utterance in here would
     just turn this field into a copy of the transcript.
 
-    "Just" is judged by FRESH_WINDOW, the same kind of lazy evaluation as cooldown. Whether the
-    judgment is accurate is a separate matter — what's wanted here is for "how long ago this
-    channel last spoke" to be visible to the model, and `ts` is carried along precisely to
-    supply the number that the cross-cutting invariant "citing a stale value must carry its
-    observation time" needs.
+    "Just" is judged by `fresh_window` (default `FRESH_WINDOW`), the same kind of lazy
+    evaluation as cooldown. Whether the judgment is accurate is a separate matter — what's
+    wanted here is for "how long ago this channel last spoke" to be visible to the model,
+    and `ts` is carried along precisely to supply the number that the cross-cutting
+    invariant "citing a stale value must carry its observation time" needs.
     """
     for channel in channels:
         if channel.name == CONVERSATION_CHANNEL or not channel.recent:
             continue
         item = channel.recent[-1]
-        if now - item.ts > FRESH_WINDOW:
+        if now - item.ts > fresh_window:
             continue
         yield Affordance(
             source="channel_update",

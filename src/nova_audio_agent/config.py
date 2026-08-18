@@ -2,17 +2,50 @@
 
 from __future__ import annotations
 
+import os
 import re
+from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ConfigurationError(RuntimeError):
     """A safe startup error that never contains credential values."""
+
+
+ProactivityPreset = Literal["conservative", "balanced", "eager"]
+
+# Preset -> (SuggestionPool.fire cooldown, ContextView FRESH_WINDOW), both in virtual
+# seconds. Wider apart than the module defaults so the desktop settings panel's three
+# presets are distinguishable; "balanced" reproduces today's defaults exactly.
+_PROACTIVITY_PRESETS: dict[ProactivityPreset, tuple[float, float]] = {
+    "conservative": (120.0, 20.0),
+    "balanced": (60.0, 30.0),
+    "eager": (30.0, 45.0),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ProactivityParams:
+    """The two knobs the proactivity preset actually resolves to."""
+
+    cooldown: float
+    fresh_window: float
+
+
+def _venv_python(root: str) -> str:
+    """Interpreter path inside a virtualenv rooted at `root`, per platform.
+
+    AutoGLM's default venv layout follows the interpreter that created it:
+    `Scripts/python.exe` on Windows (`os.name == "nt"`), `bin/python`
+    elsewhere. `NOVA_AUDIO_AGENT_AUTOGLM_PYTHON` still overrides this default.
+    """
+    return f"{root}/Scripts/python.exe" if os.name == "nt" else f"{root}/bin/python"
 
 
 class Settings(BaseSettings):
@@ -50,7 +83,7 @@ class Settings(BaseSettings):
     codex_api_key: SecretStr | None = None
     codex_prewarm: bool = True
     autoglm_repo: Path | None = Path("thirdparty/Open-AutoGLM")
-    autoglm_python: str = ".autoglm-venv/bin/python"
+    autoglm_python: str = Field(default_factory=lambda: _venv_python(".autoglm-venv"))
     autoglm_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
     autoglm_model: str = "autoglm-phone"
     autoglm_api_key: SecretStr | None = None
@@ -60,12 +93,46 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="TAVILY_API_KEY",
     )
+    proactivity_preset: ProactivityPreset = "balanced"
+    codex_working_interval: float = 30.0
+    suggestion_cooldown: float | None = None
+    fresh_window: float | None = None
 
     @field_validator("qwen_guard_history_pairs", mode="before")
     @classmethod
     def _parse_qwen_guard_history_pairs(cls, value: object) -> object:
         if type(value) is str and value in {"1", "2", "4"}:
             return int(value)
+        return value
+
+    @field_validator("codex_working_interval")
+    @classmethod
+    def _validate_codex_working_interval(cls, value: float) -> float:
+        if not (5.0 <= value <= 600.0):
+            raise ValueError("NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL 必须在 5.0 到 600.0 之间")
+        return value
+
+    @field_validator("suggestion_cooldown", "fresh_window")
+    @classmethod
+    def _validate_proactivity_override(
+        cls,
+        value: float | None,
+        info: ValidationInfo,
+    ) -> float | None:
+        """Reject a negative, NaN, or infinite override instead of misbehaving on one.
+
+        These two are the preset's escape hatch, so they take any float the
+        environment offers. A negative cooldown fires the pool on every tick, a
+        NaN window makes every freshness comparison false, and an infinite one
+        never expires: all three are silent misbehaviour rather than errors
+        unless they are refused where they enter the process.
+        """
+        if value is None:
+            return value
+        if not isfinite(value) or value < 0.0:
+            raise ValueError(
+                f"NOVA_AUDIO_AGENT_{info.field_name.upper()} 必须是不小于 0 的有限秒数"
+            )
         return value
 
     def require_api_key(self) -> str:
@@ -212,3 +279,23 @@ class Settings(BaseSettings):
             normalized_wda_url,
             device_id,
         )
+
+
+def resolve_proactivity(settings: Settings) -> ProactivityParams:
+    """Derive push-and-pull suggestion pacing from `settings.proactivity_preset`,
+    with `suggestion_cooldown` / `fresh_window` as explicit per-field overrides.
+
+    Floor priority thresholds (`PREEMPT_MIN_PRIORITY`, `HIT_ALERT_MIN_PRIORITY` in
+    `realtime/service.py`) are deliberately NOT preset-mapped here. The preset only
+    shifts how eagerly push-and-pull suggestions surface — the SuggestionPool
+    cooldown and the ContextView fresh window — never who may preempt the floor or
+    who must defer to it. Preempt/defer stays a fixed Floor-arbitration invariant
+    regardless of proactivity; conflating the two would let a user's "eager" choice
+    quietly relax that safety property instead of only turning up suggestion volume.
+    """
+    cooldown, fresh_window = _PROACTIVITY_PRESETS[settings.proactivity_preset]
+    if settings.suggestion_cooldown is not None:
+        cooldown = settings.suggestion_cooldown
+    if settings.fresh_window is not None:
+        fresh_window = settings.fresh_window
+    return ProactivityParams(cooldown=cooldown, fresh_window=fresh_window)

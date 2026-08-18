@@ -28,7 +28,13 @@ test('keeps capture playback codex and shell as independent axes', () => {
   assert.match(state.label, /正在聆听/)
   assert.equal(state.codexLabel, 'Codex 正在后台工作')
   assert.equal(state.shellExpanded, true)
-  assert.equal(state.aecLabel, 'macOS 系统级 AEC')
+  assert.equal(state.aecLabel, '系统级 AEC')
+})
+
+test('labels the browser AEC path without implying it is a fallback', () => {
+  const state = deriveOrbState({ ...base, audioMode: 'browser_aec' })
+
+  assert.equal(state.aecLabel, '浏览器 AEC')
 })
 
 test('provides stable accessible labels for permission disconnect and interruption', () => {
@@ -36,6 +42,32 @@ test('provides stable accessible labels for permission disconnect and interrupti
   assert.equal(deriveOrbState({ ...base, connected: false }).name, 'disconnected')
   assert.equal(deriveOrbState({ ...base, playback: 'interrupted' }).name, 'interrupted')
   assert.ok(deriveOrbState({ ...base, playback: 'speaking' }).label)
+})
+
+test('shows booting until the first connection instead of an immediate disconnect', () => {
+  // The renderer's axes start out booting with connected=false, so a plain
+  // "disconnected wins" precedence made 'booting' unreachable: the very first
+  // frames have to read as an agent starting up, not as one that already died.
+  assert.equal(deriveOrbState({ ...base, booting: true, connected: false }).name, 'booting')
+  assert.match(deriveOrbState({ ...base, booting: true, connected: false }).label, /正在启动/)
+
+  // A disconnect that lands after boot still collapses the orb.
+  assert.equal(deriveOrbState({ ...base, connected: false }).name, 'disconnected')
+
+  // A failed bootstrap is an error, not a boot still in progress.
+  assert.equal(
+    deriveOrbState({ ...base, booting: true, connected: false, error: 'bootstrap' }).name,
+    'error',
+  )
+})
+
+test('derives candidate from the onset attack window', () => {
+  const candidate = deriveOrbState({ ...base, capture: 'candidate' })
+
+  assert.equal(candidate.name, 'candidate')
+  assert.match(candidate.label, /检测到可能的语音/)
+  // A confirmed onset outranks the attack window it grew out of.
+  assert.equal(deriveOrbState({ ...base, capture: 'listening' }).name, 'listening')
 })
 
 test('does not claim an AEC implementation before microphone activation', () => {
@@ -46,4 +78,22 @@ test('does not claim an AEC implementation before microphone activation', () => 
   })
 
   assert.equal(state.aecLabel, 'AEC 未启用')
+})
+
+test('adds a Windows-specific hint to the permission-denied label', () => {
+  const state = deriveOrbState({ ...base, permission: 'denied', platform: 'win32' })
+
+  assert.equal(state.name, 'permission-denied')
+  assert.equal(
+    state.label,
+    '麦克风权限被拒绝(请在 系统设置 → 隐私 → 麦克风 中允许桌面应用)',
+  )
+})
+
+test('keeps the shorter permission-denied label on non-Windows platforms', () => {
+  const darwin = deriveOrbState({ ...base, permission: 'denied', platform: 'darwin' })
+  const unspecified = deriveOrbState({ ...base, permission: 'denied' })
+
+  assert.equal(darwin.label, '麦克风权限被拒绝')
+  assert.equal(unspecified.label, '麦克风权限被拒绝')
 })

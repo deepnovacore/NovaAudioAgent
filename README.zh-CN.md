@@ -158,22 +158,33 @@ dual-axis 演示的是"一次 FastBrain 调用同时开口与派活"；proactive
 app-server 后端）、AutoGLM、摄像头 Watch/Guard 与 Qwen 实时语音——均通过环境变量配置；
 逐项安装、注意事项与完整变量参考见[上手指南](docs/getting-started.md)。
 
-## 5. macOS Ambient Orb
+## 5. Ambient Orb
 
-Ambient Orb 是本地语音界面：
+Ambient Orb 是本地语音界面。macOS 与 Linux 使用共用的 shell 启动器，Windows 使用 PowerShell 启动器：
 
 ```bash
 uv sync --extra vision --dev
-./scripts/start_ambient_orb_macos.sh
+./scripts/start_ambient_orb.sh          # macOS、Linux
 ```
 
-默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 视频回放均依赖 `vision` extra。
+```powershell
+.\scripts\start_ambient_orb.ps1         # Windows
+```
 
-它会启动 Python realtime 后端、构建原生 VoiceProcessingIO helper，并拉起 Electron 渲染器
-（上下文隔离、沙箱与窄 preload 桥）；需要 macOS、Node.js、`codex` 可执行文件、麦克风权限，
-以及 `.env` 中的 `DASHSCOPE_API_KEY`。provider 事件与宿主的响应及 delegate 身份逐一关联，
-播放确认为音频清除与完成加上围栏；Memory Board 视图可按请求渲染每条记忆通道的最新条目——
-正是前文按通道记忆的可视化对照。
+它会启动 Python realtime 后端并拉起 Electron 渲染器（上下文隔离、沙箱与窄 preload 桥）；需要
+Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或设置面板中的 `DASHSCOPE_API_KEY`。
+macOS 上还会构建原生 VoiceProcessingIO helper 以获得系统级回声消除；Windows 与 Linux 使用
+Chromium 自带的回声消除。Linux 会话运行在 X11 上（Wayland 会话经由 XWayland）。分平台说明见
+[上手指南](docs/getting-started.md)。
+
+默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 视频回放均依赖上面安装的 `vision` extra。
+
+orb 以 Canvas 2D 粒子场呈现，状态由粒子行为承载——聆听时向心聚拢，说话时随播放振幅脉动，
+Codex delegate 工作时外侧有一圈轨道带环绕——可选暖焰琥珀（Ember）或石墨月光（Graphite）配色。
+右键 orb 可打开 Memory Board（按请求渲染每条记忆通道的最新条目，正是前文按通道记忆的可视化
+对照），以及设置面板：配色、按推拉的主动性档位、Codex 播报间隔、语音音色与 API 密钥（经操作
+系统钥匙串加密保存）。provider 事件与宿主的响应及 delegate 身份逐一关联，播放确认为音频清除
+与完成加上围栏。
 
 ## 6. 仓库布局
 

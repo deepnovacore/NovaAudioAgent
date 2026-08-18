@@ -27,7 +27,6 @@ dependencies = [
     "pydantic>=2,<3",
     "python-dotenv>=1",
     "pydantic-settings>=2,<3",
-    "pygame>=2.6,<3",
     "rich",
     "typer",
     "websockets>=15,<16",

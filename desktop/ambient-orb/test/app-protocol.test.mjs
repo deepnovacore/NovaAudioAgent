@@ -54,6 +54,34 @@ test('session-local app protocol serves only allowlisted renderer files', async 
   ])
 })
 
+test('session-local app protocol serves the settings panel assets', async () => {
+  let handler
+  const fetched = []
+  installAppProtocol({ handle: (_scheme, next) => { handler = next } }, {
+    rendererRoot: '/tmp/orb-renderer',
+    fetchFile: async file => {
+      fetched.push(file)
+      return new Response('ok')
+    },
+  })
+
+  for (const path of ['settings.html', 'settings.css', 'settings.mjs']) {
+    const response = await handler({ url: `nova://orb/${path}` })
+    assert.equal(await response.text(), 'ok')
+  }
+  assert.deepEqual(fetched, [
+    resolve('/tmp/orb-renderer', 'settings.html'),
+    resolve('/tmp/orb-renderer', 'settings.css'),
+    resolve('/tmp/orb-renderer', 'settings.mjs'),
+  ])
+
+  const rejected = await handler({ url: 'nova://orb/settings.json' })
+  assert.equal(rejected.status, 404)
+  const wrongHost = await handler({ url: 'nova://elsewhere/settings.html' })
+  assert.equal(wrongHost.status, 404)
+  assert.equal(fetched.length, 3, 'a rejected path never reaches the filesystem')
+})
+
 test('session-local app protocol registers before window navigation', async () => {
   const events = []
   const targetProtocol = {

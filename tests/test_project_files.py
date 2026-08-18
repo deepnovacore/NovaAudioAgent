@@ -189,8 +189,8 @@ def test_conda_environment_provisions_uv() -> None:
 @pytest.mark.parametrize(
     ("readme", "section_heading", "next_heading"),
     (
-        (Path("README.md"), "## 5. macOS Ambient Orb", "## 6. Repository layout"),
-        (Path("README.zh-CN.md"), "## 5. macOS Ambient Orb", "## 6. 仓库布局"),
+        (Path("README.md"), "## 5. Ambient Orb", "## 6. Repository layout"),
+        (Path("README.zh-CN.md"), "## 5. Ambient Orb", "## 6. 仓库布局"),
     ),
 )
 def test_ambient_orb_readme_installs_vision_before_launch(
@@ -202,7 +202,7 @@ def test_ambient_orb_readme_installs_vision_before_launch(
     section = document.split(section_heading, 1)[1].split(next_heading, 1)[0]
 
     assert section.index("uv sync --extra vision --dev") < section.index(
-        "./scripts/start_ambient_orb_macos.sh"
+        "./scripts/start_ambient_orb.sh"
     )
 
 
