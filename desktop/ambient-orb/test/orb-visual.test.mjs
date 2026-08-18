@@ -428,6 +428,33 @@ test('setPalette re-renders the atlas and reports the active palette', () => {
   mounted.visual.destroy()
 })
 
+test('setPalette rebuilds only the offscreen atlas, never the visible canvas', () => {
+  const mounted = mount()
+  const visibleGradientsBefore = mounted.context.calls.gradients
+
+  mounted.visual.setPalette('graphite')
+
+  assert.equal(mounted.context.calls.gradients, visibleGradientsBefore)
+  assert.equal(mounted.context.calls.gradients, 0, 'sprites are blitted, never gradient-drawn live')
+  const atlas = mounted.offscreen.at(-1)
+  assert.ok(atlas.calls.gradients > 0, 'the rebuilt atlas cells are radial-gradient discs')
+  mounted.visual.destroy()
+})
+
+test('setPalette repaints immediately in static (reduced-motion) mode', () => {
+  const mounted = mount({ reducedMotion: true })
+  const offscreenBefore = mounted.offscreen.length
+  const clearsBefore = mounted.context.calls.clearRect
+
+  mounted.visual.setPalette('graphite')
+
+  assert.equal(mounted.offscreen.length, offscreenBefore + 1, 'the atlas is rebuilt for the new palette')
+  assert.equal(mounted.context.calls.clearRect, clearsBefore + 1, 'the static frame repaints in place')
+  assert.ok(drawnCount(mounted.context) > 0, 'the repaint still draws the constellation')
+  assert.equal(mounted.pending.length, 0, 'a palette swap never starts the animation loop')
+  mounted.visual.destroy()
+})
+
 test('reduced motion never schedules a frame and redraws once per state change', () => {
   let rafCalls = 0
   const mounted = mount({
@@ -450,11 +477,20 @@ test('reduced motion never schedules a frame and redraws once per state change',
   mounted.visual.destroy()
 })
 
-test('high contrast also stays static', () => {
+test('high contrast never schedules a frame, at construction or after', () => {
   let rafCalls = 0
   const mounted = mount({ highContrast: true, raf: () => { rafCalls += 1; return 1 } })
 
+  // The CSS hides .orb-canvas under prefers-contrast, but the module itself
+  // must not even ask for a frame: no rAF at construction, and none earned by
+  // any subsequent state or level change either.
+  assert.equal(rafCalls, 0, 'no animation loop scheduled at construction')
+  assert.equal(mounted.visual.fps, 0)
+  assert.ok(drawnCount(mounted.context) > 0, 'a static frame is still drawn to the hidden canvas')
+
   mounted.visual.setState('speaking')
+  assert.equal(rafCalls, 0)
+  mounted.visual.setLevel(1)
   assert.equal(rafCalls, 0)
   mounted.visual.destroy()
 })
@@ -475,6 +511,39 @@ test('the reduced-motion constellation is seeded: same seed same positions', () 
   third.visual.setState('inactive')
   assert.notDeepEqual(centres(third.context), firstPoints)
   for (const mounted of [first, second, other, third]) mounted.visual.destroy()
+})
+
+test('collapsed alert states share identical parameters but still render distinct constellations', () => {
+  // disconnected, error, and permission-denied all point at the exact same
+  // frozen COLLAPSE params object, so any difference in their static layouts
+  // can only come from the state *name* being folded into the field's seed.
+  assert.equal(STATE_PARAMS.disconnected, STATE_PARAMS.error)
+  assert.equal(STATE_PARAMS.error, STATE_PARAMS['permission-denied'])
+
+  const mounted = mount({ reducedMotion: true, seed: 777 })
+  resetDraws(mounted.context)
+  mounted.visual.setState('disconnected')
+  const disconnectedPoints = centres(mounted.context)
+
+  resetDraws(mounted.context)
+  mounted.visual.setState('error')
+  const errorPoints = centres(mounted.context)
+
+  resetDraws(mounted.context)
+  mounted.visual.setState('permission-denied')
+  const deniedPoints = centres(mounted.context)
+
+  assert.ok(disconnectedPoints.length > 0)
+  assert.notDeepEqual(errorPoints, disconnectedPoints, 'same params, distinct seeded constellation')
+  assert.notDeepEqual(deniedPoints, disconnectedPoints)
+  assert.notDeepEqual(deniedPoints, errorPoints)
+
+  // Revisiting a state reproduces its exact prior layout: the seed is a pure
+  // function of (seed, state name), not a one-shot mutation.
+  resetDraws(mounted.context)
+  mounted.visual.setState('disconnected')
+  assert.deepEqual(centres(mounted.context), disconnectedPoints)
+  mounted.visual.destroy()
 })
 
 test('a static-mode scatter impulse decays across state snapshots instead of persisting', () => {
@@ -588,6 +657,22 @@ test('the renderer feeds the visual from the same render pass as data-state', as
   )
   // The data-state contract still drives the label and accessibility surface.
   assert.match(source, /shell\.dataset\.state = state\.name/)
+})
+
+test('the renderer applies the bootstrap palette and future settings pushes', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  // Construction always starts on the 'ember' default: bootstrap.settings does
+  // not exist until a later task, and is not available synchronously anyway.
+  assert.match(source, /palette: 'ember',/)
+  // Once bootstrap resolves, the palette it carries (if any) is applied live;
+  // optional chaining keeps this a no-op today instead of a throw.
+  assert.match(source, /visual\.setPalette\(bootstrap\.settings\?\.palette\)/)
+  // Future live pushes swap the palette the same way, guarded the same way.
+  assert.match(
+    source,
+    /window\.novaAudioAgentDesktop\.settings\?\.onChanged\?\.\(next => visual\.setPalette\(next\.palette\)\)/,
+  )
 })
 
 test('STATE_FPS covers every orb state and tiers them by how much they move', () => {

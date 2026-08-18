@@ -45,6 +45,9 @@ function getPlaybackLevel() {
 // capture path, which already walks every PCM frame for onset detection; the
 // speaker is pulled by the visual's own loop, because only it knows when it is
 // about to draw a speaking frame.
+// The palette itself arrives later, from bootstrap.settings (a future task's
+// preload channel), so construction always starts on the 'ember' default and
+// boot() below swaps it live once settings are known.
 const visual = createOrbVisual(document.querySelector('.orb-canvas'), {
   reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   highContrast: window.matchMedia('(prefers-contrast: more)').matches,
@@ -493,9 +496,17 @@ async function boot() {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
     axes.audioMode = bootstrap.audioMode
     axes.platform = bootstrap.platform
+    // bootstrap.settings does not exist yet (it lands with the settings task);
+    // the optional chain reads as undefined today, and setPalette already
+    // falls back to 'ember' for anything that isn't a known palette name.
+    visual.setPalette(bootstrap.settings?.palette)
     if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
     window.novaAudioAgentDesktop.onBackendExit(handleBackendExit)
+    // Same guard for the live-push side: window.novaAudioAgentDesktop.settings
+    // is not exposed by the preload script until that same future task, so
+    // this must not throw in the meantime.
+    window.novaAudioAgentDesktop.settings?.onChanged?.(next => visual.setPalette(next.palette))
     window.novaAudioAgentDesktop.memoryBoard.onFetch(requestId => {
       send({ type: 'memory.board.request', request_id: requestId })
     })

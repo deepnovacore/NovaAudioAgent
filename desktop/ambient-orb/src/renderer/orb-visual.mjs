@@ -233,6 +233,18 @@ export function mulberry32(seed) {
   }
 }
 
+// FNV-1a: a small, well-distributed string hash used only to fold a state
+// name into the numeric seed, so `stateSeed(base, name)` lands on a distinct
+// mulberry32 stream per state instead of the same stream at every state.
+function hashStateName(name) {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < name.length; index += 1) {
+    hash ^= name.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return hash >>> 0
+}
+
 function approach(current, target, elapsedMs, tau) {
   return current + (target - current) * (1 - Math.exp(-elapsedMs / tau))
 }
@@ -254,7 +266,14 @@ function spriteRows(name) {
       [colors.shadow, 0.25],
       [colors.accent, 1],
       [colors.error, 1],
-      [colors.shadow, 1],
+      // ROW_DIM (the 'inactive' tone) used to bake `shadow` (#3A404A, a dark
+      // blue-grey) at full row alpha, then let the state's own 0.35 alpha and
+      // 'lighter' compositing crush it further: over the dark plate that was
+      // reliably unreadable. The exported GRAPHITE hex table stays untouched;
+      // only this row swaps to the mid tone at a reduced baked alpha, closer
+      // to how EMBER's own dim tier (`inactive`, a mid-brightness brown-grey)
+      // already reads at the same state alpha.
+      [colors.mid, 0.6],
     ]
   }
   return [
@@ -381,38 +400,56 @@ export function createOrbVisual(canvas, options = {}) {
   const sizeIndex = new Uint8Array(total)
   const tierRow = new Uint8Array(total)
 
-  const random = mulberry32(seed)
-  for (let index = 0; index < total; index += 1) {
-    // sqrt keeps the field area-uniform instead of clumping at the centre.
-    const normalized = 0.16 + 0.84 * Math.sqrt(random())
-    homeRadius[index] = normalized
-    angle[index] = random() * TAU
-    spin[index] = 0.7 + random() * 0.65
-    wobbleFrequency[index] = 0.6 + random() * 1.2
-    wobblePhase[index] = random() * TAU
-    twinkleFrequency[index] = 0.5 + random() * 1.5
-    twinklePhase[index] = random() * TAU
-    if (normalized > 0.82) {
-      sizeIndex[index] = 2
-      tierRow[index] = random() < 0.55 ? ROW_DUST : ROW_COOL
-    } else if (normalized > 0.5) {
-      sizeIndex[index] = 1
-      tierRow[index] = ROW_COOL
-    } else if (normalized > 0.3) {
-      sizeIndex[index] = 1
-      tierRow[index] = ROW_WARM
-    } else {
-      sizeIndex[index] = 0
-      tierRow[index] = ROW_HOT
+  const codexAngle = new Float32Array(CODEX_COUNT)
+
+  // Fills every typed array above from a single PRNG stream, in place: the
+  // arrays are allocated once and reused, whether this runs once at
+  // construction (the common, animated case) or again on every state change
+  // in static mode (see `stateSeed` below).
+  function fillField(fieldSeed) {
+    const random = mulberry32(fieldSeed)
+    for (let index = 0; index < total; index += 1) {
+      // sqrt keeps the field area-uniform instead of clumping at the centre.
+      const normalized = 0.16 + 0.84 * Math.sqrt(random())
+      homeRadius[index] = normalized
+      angle[index] = random() * TAU
+      spin[index] = 0.7 + random() * 0.65
+      wobbleFrequency[index] = 0.6 + random() * 1.2
+      wobblePhase[index] = random() * TAU
+      twinkleFrequency[index] = 0.5 + random() * 1.5
+      twinklePhase[index] = random() * TAU
+      if (normalized > 0.82) {
+        sizeIndex[index] = 2
+        tierRow[index] = random() < 0.55 ? ROW_DUST : ROW_COOL
+      } else if (normalized > 0.5) {
+        sizeIndex[index] = 1
+        tierRow[index] = ROW_COOL
+      } else if (normalized > 0.3) {
+        sizeIndex[index] = 1
+        tierRow[index] = ROW_WARM
+      } else {
+        sizeIndex[index] = 0
+        tierRow[index] = ROW_HOT
+      }
+    }
+    for (let index = 0; index < CODEX_COUNT; index += 1) {
+      codexAngle[index] = (index / CODEX_COUNT) * TAU + random() * 0.06
     }
   }
 
-  const codexAngle = new Float32Array(CODEX_COUNT)
-  for (let index = 0; index < CODEX_COUNT; index += 1) {
-    codexAngle[index] = (index / CODEX_COUNT) * TAU + random() * 0.06
+  // A reduced-motion or high-contrast viewer never sees particles ease
+  // between states — each state change swaps directly to its own still
+  // frame — so each state can and should get its own constellation instead
+  // of the same field merely rescaled by that state's convergence. An
+  // animated viewer keeps one continuous field: reseeding it on every state
+  // change would jump the whole pattern instead of easing, which is exactly
+  // what the live tiers are built to avoid.
+  function stateSeed(name) {
+    return staticMode ? (seed ^ hashStateName(name)) >>> 0 : seed
   }
 
   let stateName = DEFAULT_STATE
+  fillField(stateSeed(stateName))
   let params = STATE_PARAMS[stateName]
   let codexWorking = false
   let level = 0
@@ -645,8 +682,9 @@ export function createOrbVisual(canvas, options = {}) {
     if (destroyed) return
     const known = Object.hasOwn(STATE_PARAMS, name)
     const nextName = known ? name : stateName
-    const changed = nextName !== stateName || codexNext !== codexWorking
-    if (nextName !== stateName && STATE_PARAMS[nextName].scatter > 0) {
+    const stateNameChanged = nextName !== stateName
+    const changed = stateNameChanged || codexNext !== codexWorking
+    if (stateNameChanged && STATE_PARAMS[nextName].scatter > 0) {
       scatter = STATE_PARAMS[nextName].scatter
     }
     stateName = nextName
@@ -654,6 +692,11 @@ export function createOrbVisual(canvas, options = {}) {
     codexWorking = codexNext
     if (!changed) return
     if (staticMode) {
+      // Two states can share the exact same STATE_PARAMS object (disconnected,
+      // error, and permission-denied all point at the same frozen COLLAPSE), so
+      // the constellation swap has to be keyed on the state *name*, not on
+      // whether any parameter actually moved.
+      if (stateNameChanged) fillField(stateSeed(stateName))
       drawStaticFrame()
     } else if (tickIntervalMs() === 0) {
       // Nothing here moves, so there is nothing to ease into: snap, draw the one
