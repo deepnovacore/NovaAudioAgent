@@ -153,7 +153,7 @@ test('the ICO container indexes one PNG entry per windows size', async t => {
   assert.equal(expectedOffset, ico.length, 'the entry table accounts for every byte')
 })
 
-test('tray PNGs land at the three per-platform sizes', async t => {
+test('tray PNGs land at the three per-platform sizes, each with its retina double', async t => {
   const { directory } = await generate()
   t.after(() => rm(directory, { recursive: true, force: true }))
 
@@ -161,13 +161,21 @@ test('tray PNGs land at the three per-platform sizes', async t => {
   const trayDirectory = resolve(directory, 'resources/tray')
   assert.deepEqual(
     (await readdir(trayDirectory)).sort(),
-    ['tray-16.png', 'tray-22.png', 'tray-32.png'],
+    [
+      'tray-16.png', 'tray-16@2x.png',
+      'tray-22.png', 'tray-22@2x.png',
+      'tray-32.png', 'tray-32@2x.png',
+    ].sort(),
   )
   for (const size of TRAY_SIZES) {
-    const bytes = await readFile(resolve(trayDirectory, `tray-${size}.png`))
-    const header = readPngHeader(bytes)
-    assert.equal(header.width, size)
-    assert.equal(header.height, size)
+    const base = readPngHeader(await readFile(resolve(trayDirectory, `tray-${size}.png`)))
+    assert.equal(base.width, size)
+    assert.equal(base.height, size)
+    // Electron picks the @2x file up on its own from the base name, so it has
+    // to be exactly double or a Retina menu bar gets a scaled, blurry icon.
+    const retina = readPngHeader(await readFile(resolve(trayDirectory, `tray-${size}@2x.png`)))
+    assert.equal(retina.width, size * 2)
+    assert.equal(retina.height, size * 2)
   }
 })
 
@@ -307,12 +315,13 @@ test('the committed icon artifacts are the ones the generator produces', async t
   // nothing about the icon. Pixels still catch the case that matters: a layout
   // edit committed without rerunning `npm run icons`.
   for (const size of TRAY_SIZES) {
-    const file = `resources/tray/tray-${size}.png`
-    const [committed, fresh] = await Promise.all([
-      readFile(resolve(packageRoot, file)),
-      readFile(resolve(directory, file)),
-    ])
-    assert.deepEqual(decodePng(committed).rgba, decodePng(fresh).rgba, `${file} is checked in up to date`)
+    for (const file of [`resources/tray/tray-${size}.png`, `resources/tray/tray-${size}@2x.png`]) {
+      const [committed, fresh] = await Promise.all([
+        readFile(resolve(packageRoot, file)),
+        readFile(resolve(directory, file)),
+      ])
+      assert.deepEqual(decodePng(committed).rgba, decodePng(fresh).rgba, `${file} is checked in up to date`)
+    }
   }
 })
 

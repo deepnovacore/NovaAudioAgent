@@ -396,10 +396,21 @@ function defaultRunIconutil({ iconset, output }) {
   return { ok: true }
 }
 
+// Each tray size ships alongside its double. Electron resolves `tray-16@2x.png`
+// on its own when handed `tray-16.png`, so a Retina menu bar draws real pixels
+// instead of one 16px image scaled up into a smudge — which is most of the
+// reason a hand-made tray icon looks worse than a stock one.
+function trayFiles(outputDir) {
+  return TRAY_SIZES.flatMap(size => [
+    { file: resolve(outputDir, `resources/tray/tray-${size}.png`), size },
+    { file: resolve(outputDir, `resources/tray/tray-${size}@2x.png`), size: size * 2 },
+  ])
+}
+
 function outputPaths(outputDir, { icns }) {
   return {
     svg: resolve(outputDir, 'resources/icon.svg'),
-    tray: TRAY_SIZES.map(size => resolve(outputDir, `resources/tray/tray-${size}.png`)),
+    tray: trayFiles(outputDir),
     icons: ICON_SIZES.map(size => resolve(outputDir, `build/icons/${size}x${size}.png`)),
     ico: resolve(outputDir, 'build/icon.ico'),
     icns: icns ? resolve(outputDir, 'build/icon.icns') : null,
@@ -407,7 +418,13 @@ function outputPaths(outputDir, { icns }) {
 }
 
 async function allPresent(paths) {
-  const files = [paths.svg, ...paths.tray, ...paths.icons, paths.ico, paths.icns].filter(Boolean)
+  const files = [
+    paths.svg,
+    ...paths.tray.map(entry => entry.file),
+    ...paths.icons,
+    paths.ico,
+    paths.icns,
+  ].filter(Boolean)
   for (const file of files) {
     // readFile, not existsSync: a zero-byte or unreadable leftover from an
     // interrupted run must count as missing, not as "already generated".
@@ -441,13 +458,19 @@ export async function makeIcons({
     written.push(file)
   }
 
-  // One render per size, reused by every container that wants it.
-  const pngs = new Map(ICON_SIZES.map(size => [size, encodePng(size, renderMark(size))]))
+  // One render per distinct size, memoized: the tray doubles, the icon ladder,
+  // the ICO entries, and the iconset overlap heavily, and 512px is the
+  // expensive one to draw twice.
+  const cache = new Map()
+  const pngFor = size => {
+    if (!cache.has(size)) cache.set(size, encodePng(size, renderMark(size)))
+    return cache.get(size)
+  }
 
   await write(paths.svg, markSvg())
-  for (const [index, size] of TRAY_SIZES.entries()) await write(paths.tray[index], pngs.get(size))
-  for (const [index, size] of ICON_SIZES.entries()) await write(paths.icons[index], pngs.get(size))
-  await write(paths.ico, encodeIco(ICO_SIZES.map(size => ({ size, png: pngs.get(size) }))))
+  for (const { file, size } of paths.tray) await write(file, pngFor(size))
+  for (const [index, size] of ICON_SIZES.entries()) await write(paths.icons[index], pngFor(size))
+  await write(paths.ico, encodeIco(ICO_SIZES.map(size => ({ size, png: pngFor(size) }))))
 
   if (paths.icns) {
     // The iconset is scratch: iconutil wants a directory of exactly-named PNGs,
@@ -459,7 +482,7 @@ export async function makeIcons({
     try {
       await mkdir(iconset)
       await Promise.all(ICONSET_ENTRIES.map(
-        ([name, size]) => writeFile(join(iconset, name), pngs.get(size)),
+        ([name, size]) => writeFile(join(iconset, name), pngFor(size)),
       ))
       const result = await runIconutil({ iconset, output: paths.icns })
       if (result?.ok) written.push(paths.icns)
