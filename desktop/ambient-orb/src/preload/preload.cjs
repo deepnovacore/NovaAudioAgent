@@ -53,7 +53,16 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     move: (dx, dy) => ipcRenderer.send('nova:window-drag:move', { dx, dy }),
     end: () => ipcRenderer.send('nova:window-drag:end'),
   }),
-  orbMenu: Object.freeze({
-    show: () => ipcRenderer.send('nova:orb-menu:show'),
+  settings: Object.freeze({
+    get: () => ipcRenderer.invoke('nova:settings:get'),
+    // The payload may carry plaintext key values on their way *into* main; the
+    // reply never carries any back out.
+    set: patch => ipcRenderer.invoke('nova:settings:set', patch),
+    onChanged: callback => {
+      if (typeof callback !== 'function') return () => {}
+      const listener = (_event, value) => callback(value)
+      ipcRenderer.on('nova:settings:changed', listener)
+      return () => ipcRenderer.removeListener('nova:settings:changed', listener)
+    },
   }),
 }))

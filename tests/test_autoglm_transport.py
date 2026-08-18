@@ -17,6 +17,7 @@ from nova_audio_agent.executors.autoglm_transport import (
     AutoGlmTransportFailure,
 )
 from nova_audio_agent.executors import autoglm_transport
+from nova_audio_agent.process_tree import spawn_supervision_kwargs
 
 
 API_KEY = "autoglm-test-secret"
@@ -210,7 +211,10 @@ async def test_run_browse_passes_credentials_only_through_worker_environment() -
     assert kwargs["env"]["NOVA_AUDIO_AGENT_AUTOGLM_API_KEY"] == API_KEY
     assert kwargs["env"]["NOVA_AUDIO_AGENT_AUTOGLM_QUERY"] == "weather in Shanghai"
     assert "UNRELATED_SECRET" not in kwargs["env"]
-    assert kwargs["start_new_session"] is (autoglm_transport.os.name == "posix")
+    expected_supervision_kwargs = spawn_supervision_kwargs()
+    for key, value in expected_supervision_kwargs.items():
+        assert kwargs[key] == value
+    assert ("start_new_session" in kwargs) is (autoglm_transport.os.name == "posix")
 
 
 @pytest.mark.asyncio

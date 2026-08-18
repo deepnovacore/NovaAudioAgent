@@ -8,6 +8,7 @@ import {
   nativeImage,
   net,
   protocol,
+  safeStorage,
   screen,
   systemPreferences,
   Tray,
@@ -19,9 +20,29 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { backendLaunchSpec, readReadiness } from './backend.mjs'
+import {
+  backendLaunchSpec,
+  createReadinessListener,
+  fallbackPython,
+  shutdownBackend,
+  venvPython,
+  watchBackendExit,
+} from './backend.mjs'
 import { loadAppWindow } from './app-protocol.mjs'
+import { createDragController } from './drag-controller.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
+import {
+  createSafeStorageCodec,
+  createSettingsWriter,
+  hasPlaintextSecret,
+  loadSettings,
+  publicSettings,
+  readSecret,
+  saveSettings,
+  SECRET_KEYS,
+  secretsPresent,
+  secretValueIsSafe,
+} from './settings-store.mjs'
 import {
   clampWindowPosition,
   loadWindowPosition,
@@ -33,6 +54,7 @@ import {
   boardWindowOptions,
   browserWindowOptions,
   createBootstrapAccess,
+  settingsWindowOptions,
   validateBootstrap,
 } from './security.mjs'
 
@@ -41,25 +63,61 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { standard: true, secure: true, supportFetchAPI: true },
 }])
 
+// Windows groups taskbar/notification identity by AppUserModelID; a no-op
+// everywhere else, so it is set unconditionally rather than gated by platform.
+app.setAppUserModelId('ai.deepnovacore.nova-audio-agent.orb')
+
+// Wayland has no global window positioning, so the orb is pinned to X11
+// (XWayland handles Wayland sessions transparently). These switches must be
+// appended before the app is ready; Chromium reads them once at startup.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('ozone-platform', 'x11')
+  app.commandLine.appendSwitch('enable-transparent-visuals')
+}
+
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, '../..')
 const rendererRoot = resolve(packageRoot, 'src/renderer')
 const preload = resolve(packageRoot, 'src/preload/preload.cjs')
 const WINDOW_SIZE = Object.freeze({ width: 184, height: 184 })
+// Long-standing Chromium/X11 quirk: the ARGB visual backing a transparent,
+// frameless window isn't reliably available the instant 'ready' fires, so
+// window creation is delayed a beat on linux only.
+const LINUX_WINDOW_DELAY_MS = 300
+const opaque = process.env.NOVA_ORB_OPAQUE === '1'
 
 let backend = null
 let mainWindow = null
 let boardWindow = null
+let settingsWindow = null
 let tray = null
 let bootstrap = null
 let nativeAudio = null
 let nativeBinary = null
+let quitDrain = null
+// Settings are main-owned: the panel asks main directly, so unlike the memory
+// board there is no relay through the orb renderer and no requestId to match.
+let currentSettings = null
+const secretCodec = createSafeStorageCodec(safeStorage)
+// Sticky: the backend can die in the window between its handshake and the orb's
+// first paint, when there is no renderer to tell. The flag is what the bootstrap
+// reply reports and what the post-load push replays, so that death is delivered
+// rather than lost.
+let backendExited = false
 const pendingBoardRequests = new Map()
 
 function pythonExecutable() {
   if (process.env.NOVA_AUDIO_AGENT_PYTHON) return process.env.NOVA_AUDIO_AGENT_PYTHON
-  if (process.env.VIRTUAL_ENV) return resolve(process.env.VIRTUAL_ENV, 'bin/python')
-  return 'python3'
+  if (process.env.VIRTUAL_ENV) return venvPython(process.env.VIRTUAL_ENV)
+  return fallbackPython()
+}
+
+// Every push to the orb goes through here. `mainWindow` is never nulled — the orb has no
+// 'closed' handler because it is not meant to close before the app quits — so a send after
+// the window is gone would throw "Object has been destroyed" out of whatever callback made
+// it, uncaught, in the main process. One guard, one place.
+function sendToOrb(channel, ...args) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
 }
 
 function configureWindowSecurity(window) {
@@ -87,19 +145,61 @@ function windowPositionFile() {
   return resolve(app.getPath('userData'), 'ambient-orb-window-position.json')
 }
 
-async function createWindow(launchId) {
-  const window = new BrowserWindow(browserWindowOptions(preload, launchId))
-  const positionFile = windowPositionFile()
-  const primary = screen.getPrimaryDisplay().workArea
-  const fallback = { x: primary.x + primary.width - 208, y: primary.y + 24 }
-  const saved = await loadWindowPosition(positionFile)
-  const candidate = saved || fallback
+function settingsFile() {
+  return resolve(app.getPath('userData'), 'ambient-orb-settings.json')
+}
+
+// The single shape the settings panel is ever told. Key material is reduced to
+// four booleans here and nowhere else, so no handler can widen it by accident;
+// `keyringAvailable` is what turns the plaintext warning line on. It answers
+// for the file as it stands, not merely for today's keyring: an entry written
+// while no keyring existed is still readable by anyone, so the warning stays up
+// until the next save re-seals it.
+function settingsView() {
+  return {
+    ...publicSettings(currentSettings),
+    secretsPresent: secretsPresent(currentSettings),
+    keyringAvailable: secretCodec.available() && !hasPlaintextSecret(currentSettings),
+  }
+}
+
+// One writer for the whole process, so overlapping panel changes queue instead
+// of racing: each patch is merged against the state the previous write
+// committed, not against the snapshot its handler happened to start from.
+const settingsWriter = createSettingsWriter({
+  getCurrent: () => currentSettings,
+  commit: next => {
+    currentSettings = next
+  },
+  save: next => saveSettings(settingsFile(), next),
+  codec: secretCodec,
+})
+
+// The orb is a single fixed size, so "which display's work area applies"
+// depends only on where the candidate position would put its center.
+function clampToNearestWorkArea(candidate) {
   const center = {
     x: candidate.x + Math.floor(WINDOW_SIZE.width / 2),
     y: candidate.y + Math.floor(WINDOW_SIZE.height / 2),
   }
   const workArea = screen.getDisplayNearestPoint(center).workArea
-  const position = clampWindowPosition(candidate, WINDOW_SIZE, workArea)
+  return clampWindowPosition(candidate, WINDOW_SIZE, workArea)
+}
+
+// The scheduler is injectable so a future test can drive this without a real
+// 300 ms sleep; production always calls it with the default setTimeout.
+function wait(ms, schedule = setTimeout) {
+  return new Promise(resolve => schedule(resolve, ms))
+}
+
+async function createWindow(launchId) {
+  const window = new BrowserWindow(browserWindowOptions(preload, launchId, { opaque }))
+  const positionFile = windowPositionFile()
+  const primary = screen.getPrimaryDisplay().workArea
+  const fallback = { x: primary.x + primary.width - 208, y: primary.y + 24 }
+  const saved = await loadWindowPosition(positionFile)
+  const candidate = saved || fallback
+  const position = clampToNearestWorkArea(candidate)
   window.setPosition(position.x, position.y)
   window.setAlwaysOnTop(true, 'floating')
   configureWindowSecurity(window)
@@ -128,19 +228,78 @@ function openMemoryBoard(launchId) {
   void window.loadURL('nova://orb/memory-board.html')
 }
 
+function openSettingsWindow(launchId) {
+  if (settingsWindow) {
+    settingsWindow.show()
+    settingsWindow.focus()
+    return
+  }
+  const window = new BrowserWindow(settingsWindowOptions(preload, launchId))
+  // Same rule as the board: webContents-level walls only. Re-binding the
+  // session's permission handlers here would move the orb's microphone grant
+  // onto a panel that has no business holding it.
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event, url) => {
+    if (!allowRendererNavigation(url)) event.preventDefault()
+  })
+  window.once('ready-to-show', () => window.show())
+  window.on('closed', () => {
+    settingsWindow = null
+  })
+  settingsWindow = window
+  void window.loadURL('nova://orb/settings.html')
+}
+
 function showOrbMenu(launchId) {
   Menu.buildFromTemplate([
     { label: 'Memory Board', click: () => openMemoryBoard(launchId) },
+    { label: '设置…', click: () => openSettingsWindow(launchId) },
     { type: 'separator' },
     { label: '退出 Nova Audio Agent', click: () => app.quit() },
   ]).popup({ window: mainWindow })
 }
 
-function createTray() {
-  const pixel = nativeImage.createFromDataURL(
+// One rendering per status-area convention: macOS asks for 16pt, the GTK and
+// Ayatana status areas for 22, and the Windows notification area for 32. Feeding
+// a 16px image to Windows is how a tray icon ends up a blurry smudge.
+const TRAY_ICON_FILES = Object.freeze({
+  darwin: 'tray-16.png',
+  linux: 'tray-22.png',
+  win32: 'tray-32.png',
+})
+
+// Same two-sided resolution as `nativeBinary`: packaged, the tray PNGs ride in
+// as extraResources next to the native helper rather than inside the asar;
+// unpacked, they are read straight out of the repo's resources/ tree.
+function trayIconFile() {
+  // Anything that is neither macOS nor Windows (a BSD Electron build) gets the
+  // linux rendering: those desktops run the same GTK/Ayatana status area, so 22
+  // is the right guess where win32's 32 would simply be wrong.
+  const file = TRAY_ICON_FILES[process.platform] || TRAY_ICON_FILES.linux
+  return app.isPackaged
+    ? resolve(process.resourcesPath, 'tray', file)
+    : resolve(packageRoot, 'resources/tray', file)
+}
+
+// `createFromPath` reports failure by returning an empty image rather than by
+// throwing, so a missing or unreadable file has to be caught on isEmpty() — an
+// existsSync check alone would hand Electron a blank Tray and no explanation.
+// The 1x1 transparent pixel is what keeps the menu reachable in that case: an
+// invisible tray entry is still better than a crash on startup.
+function trayImage() {
+  const file = trayIconFile()
+  if (existsSync(file)) {
+    const image = nativeImage.createFromPath(file)
+    if (!image.isEmpty()) return image
+  }
+  console.warn(`[ambient-orb] tray icon unreadable, falling back to a blank pixel: ${file}`)
+  return nativeImage.createFromDataURL(
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL6WQAAAABJRU5ErkJggg==',
   )
-  const next = new Tray(pixel)
+}
+
+function createTray() {
+  const next = new Tray(trayImage())
   next.setToolTip('Nova Audio Agent Ambient Orb')
   next.setContextMenu(Menu.buildFromTemplate([
     { label: '显示', click: () => mainWindow?.show() },
@@ -151,32 +310,86 @@ function createTray() {
   return next
 }
 
+// Decrypts only the secrets the panel actually has stored, only for the
+// instant the backend is spawned: the result is a local, passed once into
+// `backendLaunchSpec` below and held nowhere else — never on `this` or any
+// module-level object, so there is nothing left to leak once this call
+// returns. A key present in the store but unreadable (keychain unavailable,
+// entry sealed by another OS user/machine, corrupt ciphertext) is logged by
+// name only — never its value, never even attempted — and simply omitted
+// from the result, which `backendLaunchSpec` treats exactly like "absent". A
+// value that decrypts to something Node would refuse in a child environment (a
+// NUL or other control character, from a store written before that was
+// validated) is dropped the same way rather than allowed to fail the spawn and
+// quit the app before the panel can clear it.
+function decryptSecretsForSpawn(settings, codec) {
+  const present = secretsPresent(settings)
+  const decrypted = {}
+  for (const key of SECRET_KEYS) {
+    if (!present[key]) continue
+    const plaintext = readSecret(settings, key, codec)
+    if (typeof plaintext !== 'string' || !plaintext) {
+      console.error(`[desktop-diagnostic] settings_secret_unreadable key=${key}`)
+    } else if (!secretValueIsSafe(plaintext)) {
+      console.error(`[desktop-diagnostic] settings_secret_invalid key=${key}`)
+    } else {
+      decrypted[key] = plaintext
+    }
+  }
+  return decrypted
+}
+
 async function launchBackend() {
   const token = randomBytes(16).toString('hex')
   const workspace = process.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || process.cwd()
-  const spec = backendLaunchSpec({
-    python: pythonExecutable(),
-    workspace,
+  // The listener owns the handshake, so it must be bound before the backend can
+  // dial it; the readiness timeout still kills a backend that never arrives.
+  const listener = createReadinessListener({
     token,
-    parentEnv: process.env,
+    onTimeout: () => {
+      if (backend) void shutdownBackend(backend)
+    },
   })
-  backend = spawn(spec.command, spec.argv, {
-    cwd: workspace,
-    env: spec.env,
-    stdio: spec.stdio,
-  })
-  backend.stderr.on('data', chunk => {
-    console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
-  })
-  backend.stdout.on('data', chunk => {
-    console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
-  })
-  backend.once('exit', () => {
-    if (!app.isQuitting) mainWindow?.webContents.send('nova:backend-exit')
-  })
-  const ready = await readReadiness(backend.stdio[3], {
-    onTimeout: () => backend?.kill('SIGTERM'),
-  })
+  let ready
+  try {
+    const decryptedSecrets = decryptSecretsForSpawn(currentSettings, secretCodec)
+    const spec = backendLaunchSpec({
+      python: pythonExecutable(),
+      workspace,
+      token,
+      readyEndpoint: await listener.endpoint,
+      parentEnv: process.env,
+      settings: currentSettings,
+      decryptedSecrets,
+    })
+    backend = spawn(spec.command, spec.argv, {
+      cwd: workspace,
+      env: spec.env,
+      stdio: spec.stdio,
+    })
+    backend.stderr.on('data', chunk => {
+      console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
+    })
+    backend.stdout.on('data', chunk => {
+      console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
+    })
+    // Covers both deaths: the child that exits, and the child that never started
+    // at all (a missing interpreter emits 'error' and no 'exit' — unlistened, it
+    // would be thrown into this process). Either way the handshake is failed now
+    // instead of waiting out the timeout, and `launchBackend` rejects, which the
+    // whenReady().catch() below turns into a quit exactly as a timeout does.
+    watchBackendExit(backend, {
+      closeReadiness: listener.close,
+      onExit: reason => {
+        backendExited = true
+        console.error(`[backend-diagnostic] ${reason}`)
+        if (!app.isQuitting) sendToOrb('nova:backend-exit')
+      },
+    })
+    ready = await listener.readiness
+  } finally {
+    listener.close()
+  }
   const validated = validateBootstrap({ endpoint: ready.endpoint, token })
   nativeBinary = app.isPackaged
     ? resolve(process.resourcesPath, 'native/macos_voice_io')
@@ -184,12 +397,15 @@ async function launchBackend() {
   const nativeAvailable = process.platform === 'darwin' && existsSync(nativeBinary)
   nativeAudio = nativeAvailable ? createNativeAudioManager({
     binary: nativeBinary,
-    onEvent: event => mainWindow?.webContents.send('nova:native-audio:event', event),
+    onEvent: event => sendToOrb('nova:native-audio:event', event),
   }) : null
   bootstrap = Object.freeze({
     ...validated,
     audioMode: 'inactive',
     nativeAvailable,
+    platform: process.platform,
+    opaque,
+    settings: publicSettings(currentSettings),
   })
 }
 
@@ -204,11 +420,20 @@ async function requestCameraPermission() {
 
 async function start() {
   await requestCameraPermission()
+  currentSettings = await loadSettings(settingsFile())
   await launchBackend()
   const launchId = randomBytes(8).toString('hex')
+  if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
-  let dragActive = false
-  let dragMoved = false
+  const dragController = createDragController({
+    getCursor: () => screen.getCursorScreenPoint(),
+    getWindowPosition: () => {
+      const [x, y] = mainWindow.getPosition()
+      return { x, y }
+    },
+    setWindowPosition: position => mainWindow.setPosition(position.x, position.y),
+    clamp: clampToNearestWorkArea,
+  })
   const readBootstrap = createBootstrapAccess(bootstrap, mainWindow.webContents)
   ipcMain.on('nova:orb-menu:show', event => {
     if (mainWindow && event.sender === mainWindow.webContents) showOrbMenu(launchId)
@@ -225,7 +450,7 @@ async function start() {
         resolveRequest({ error: 'timeout' })
       }, 5000)
       pendingBoardRequests.set(requestId, { resolve: resolveRequest, timer })
-      mainWindow.webContents.send('nova:memory-board:fetch', requestId)
+      sendToOrb('nova:memory-board:fetch', requestId)
     })
   })
   ipcMain.on('nova:memory-board:data', (event, payload) => {
@@ -264,8 +489,42 @@ async function start() {
     }
     return { saved: filePath }
   })
+  ipcMain.handle('nova:settings:get', event => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+      throw new Error('settings request rejected')
+    }
+    return settingsView()
+  })
+  ipcMain.handle('nova:settings:set', async (event, patch) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+      throw new Error('settings update rejected')
+    }
+    // Plaintext key values ride in on `patch`, are sealed inside the store, and
+    // are never held, echoed, or logged here. Disk is the commit point: until
+    // the write lands, the in-memory settings stay as they were. The writer
+    // serializes, so a second change arriving mid-save merges onto the first
+    // rather than overwriting it from a stale snapshot.
+    let rejectedSecrets = []
+    try {
+      const written = await settingsWriter(patch)
+      // Key names only, never values — this call's per-field rejects, so the
+      // panel can say which paste failed instead of the save looking like a
+      // silent, total success while that one field kept its old value.
+      rejectedSecrets = written.rejectedSecrets ?? []
+    } catch (error) {
+      console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
+      return { ...settingsView(), saved: false, rejectedSecrets: [] }
+    }
+    // Only the palette is live; voice, proactivity, and keys are read at launch.
+    sendToOrb('nova:settings:changed', publicSettings(currentSettings))
+    return { ...settingsView(), saved: true, rejectedSecrets }
+  })
   ipcMain.handle('nova:bootstrap', event => {
-    return readBootstrap(event.sender)
+    // The renderer binds its backend-exit listener only after this reply lands, so a push
+    // sent before then has nobody to reach. Riding the verdict on the very payload the
+    // renderer is already awaiting removes the ordering question entirely. Read here, at
+    // invoke time — the frozen startup payload predates every death it would have to report.
+    return { ...readBootstrap(event.sender), backendExited }
   })
   ipcMain.handle('nova:native-audio:capture', async (event, enabled) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
@@ -306,51 +565,48 @@ async function start() {
   })
   ipcMain.on('nova:window-drag:start', event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
-    dragActive = true
-    dragMoved = false
+    dragController.start()
   })
   ipcMain.on('nova:window-drag:move', (event, payload) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
-    if (!dragActive || !validDragDelta(payload?.dx, payload?.dy)) return
-    const [x, y] = mainWindow.getPosition()
-    const candidate = { x: x + payload.dx, y: y + payload.dy }
-    const center = {
-      x: candidate.x + Math.floor(WINDOW_SIZE.width / 2),
-      y: candidate.y + Math.floor(WINDOW_SIZE.height / 2),
-    }
-    const workArea = screen.getDisplayNearestPoint(center).workArea
-    const position = clampWindowPosition(candidate, WINDOW_SIZE, workArea)
-    mainWindow.setPosition(position.x, position.y)
-    dragMoved = true
+    // The renderer's pointermove ticks carry a dx/dy shape purely so this
+    // stays a bounded, well-formed IPC message; actual movement is derived
+    // only from the main process's own cursor poll (dragController.tick),
+    // never from renderer-reported coordinates, which drift under mixed-DPI
+    // scaling and don't exist at all on Wayland.
+    if (!validDragDelta(payload?.dx, payload?.dy)) return
+    dragController.tick()
   })
   ipcMain.on('nova:window-drag:end', event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
-    const shouldSave = dragActive && dragMoved
-    dragActive = false
-    dragMoved = false
-    if (!shouldSave) return
-    const [x, y] = mainWindow.getPosition()
-    void saveWindowPosition(windowPositionFile(), { x, y }).catch(error => {
+    const { moved, position } = dragController.end()
+    if (!moved || !position) return
+    void saveWindowPosition(windowPositionFile(), position).catch(error => {
       console.error(`[desktop-diagnostic] window_position_save_failure type=${error.name}`)
     })
-  })
-  ipcMain.on('nova:orb-menu:show', event => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) return
-    Menu.buildFromTemplate([
-      { label: '退出 Nova Audio Agent', click: () => app.quit() },
-    ]).popup({ window: mainWindow })
   })
   void loadAppWindow(mainWindow, {
     rendererRoot,
     fetchFile: file => net.fetch(pathToFileURL(file).href),
+  }).then(() => {
+    // Belt-and-braces only. The renderer binds its listener from boot(), after its own
+    // bootstrap round-trip, so this push may still arrive before anything is listening —
+    // which is why the bootstrap reply above carries `backendExited` as the real fix.
+    // This covers the ordinary case where boot() finished long before the load settled.
+    if (backendExited) sendToOrb('nova:backend-exit')
   }).catch(() => {
     console.error('Ambient Orb renderer failed to load')
     app.quit()
   })
   tray = createTray()
-  globalShortcut.register('CommandOrControl+Shift+Space', () => {
+  const shortcutRegistered = globalShortcut.register('CommandOrControl+Shift+Space', () => {
     mainWindow?.isVisible() ? mainWindow.hide() : mainWindow?.show()
   })
+  // Wayland/XWayland sessions may silently refuse global shortcuts; surface
+  // that instead of leaving the user to wonder why the hotkey never fires.
+  if (!shortcutRegistered) {
+    console.warn('[ambient-orb] global shortcut unavailable on this session')
+  }
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -360,11 +616,17 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(start).catch(() => app.quit())
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', event => {
   app.isQuitting = true
   globalShortcut.unregisterAll()
-  if (backend && !backend.killed) backend.kill('SIGTERM')
   void nativeAudio?.deactivate()
+  if (!backend) return
+  // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
+  // kill would cut the session off mid-teardown, and on Windows there is no
+  // graceful signal at all. Later passes keep holding; the first pass exits.
+  event.preventDefault()
+  if (quitDrain) return
+  quitDrain = shutdownBackend(backend).then(() => app.exit(0), () => app.exit(0))
 })
 
 app.on('window-all-closed', event => event.preventDefault?.())

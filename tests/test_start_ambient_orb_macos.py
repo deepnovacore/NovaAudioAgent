@@ -93,6 +93,12 @@ def launcher_fixture(
     launcher = scripts / SOURCE.name
     shutil.copy2(SOURCE, launcher)
     launcher.chmod(0o755)
+    # The launcher is now a shim that execs its sibling shared script; copy it
+    # alongside so the shim can resolve it inside the fake checkout.
+    shared_script = SOURCE.parent / "start_ambient_orb.sh"
+    shared_copy = scripts / shared_script.name
+    shutil.copy2(shared_script, shared_copy)
+    shared_copy.chmod(0o755)
 
     (root / ".env.example").write_text("DASHSCOPE_API_KEY=\n")
     if env_file:

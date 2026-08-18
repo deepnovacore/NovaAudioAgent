@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 import nova_audio_agent.cli as cli_module
 from nova_audio_agent.assembly import resolve_camera_source
 from nova_audio_agent.cli import app
-from nova_audio_agent.config import ConfigurationError, Settings
+from nova_audio_agent.config import ConfigurationError, Settings, _venv_python
 from nova_audio_agent.events import UserInput
 from nova_audio_agent.executors.camera import ScriptedFrameSource
 from nova_audio_agent.media import MediaStore
@@ -550,6 +550,26 @@ def test_autoglm_settings_preserve_virtualenv_python_symlink(tmp_path: Path) -> 
     )
 
     assert settings.require_autoglm()[1] == str(venv_python.absolute())
+
+
+def test_venv_python_resolves_the_interpreter_path_per_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(os, "name", "posix")
+    assert _venv_python(".autoglm-venv") == ".autoglm-venv/bin/python"
+
+    monkeypatch.setattr(os, "name", "nt")
+    assert _venv_python(".autoglm-venv") == ".autoglm-venv/Scripts/python.exe"
+
+
+def test_autoglm_python_default_tracks_the_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NOVA_AUDIO_AGENT_AUTOGLM_PYTHON", raising=False)
+
+    monkeypatch.setattr(os, "name", "posix")
+    assert Settings(_env_file=None).autoglm_python == ".autoglm-venv/bin/python"
+
+    monkeypatch.setattr(os, "name", "nt")
+    assert Settings(_env_file=None).autoglm_python == ".autoglm-venv/Scripts/python.exe"
 
 
 @pytest.mark.parametrize(

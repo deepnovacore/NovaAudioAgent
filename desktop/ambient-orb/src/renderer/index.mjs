@@ -6,10 +6,14 @@ import {
   fallbackToBrowserCapture,
   floatToPcm16,
   GenerationPlayback,
+  measurePcmLevel,
+  NativeLevelEnvelope,
   observePcmOnset,
   OnsetTracker,
+  PlaybackMeter,
 } from './audio.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
+import { createOrbVisualSafe } from './orb-visual.mjs'
 import { deriveOrbState } from './state.mjs'
 
 const shell = document.querySelector('#shell')
@@ -18,6 +22,41 @@ const stateLabel = document.querySelector('#state-label')
 const codexLabel = document.querySelector('#codex-label')
 const aecLabel = document.querySelector('#aec-label')
 const captionLabel = document.querySelector('#caption')
+
+// Declared ahead of the visual because the visual's loop pulls this: the
+// browser meter reads a Web Audio analyser, the native envelope replays what was
+// handed to the out-of-process player. Only one backend is ever live for a
+// generation, so the louder of the two is the one actually reaching a speaker.
+let playbackMeter = null
+const nativeLevel = new NativeLevelEnvelope()
+
+function getPlaybackLevel() {
+  return Math.max(
+    nativeLevel.level(performance.now()),
+    playbackMeter ? playbackMeter.level() : 0,
+  )
+}
+
+// The particle field is a second, parallel consumer of the same derived state:
+// `data-state` and the labels above stay the authoritative contract, and the
+// visual only ever reads from render() below.
+//
+// Amplitude arrives from two directions. The microphone is pushed in from the
+// capture path, which already walks every PCM frame for onset detection; the
+// speaker is pulled by the visual's own loop, because only it knows when it is
+// about to draw a speaking frame.
+// The palette itself arrives later, from bootstrap.settings (a future task's
+// preload channel), so construction always starts on the 'ember' default and
+// boot() below swaps it live once settings are known.
+// Guarded, not raw: the orb is the one decorative part of this renderer, and a
+// canvas it cannot acquire (or one that throws mid-draw) must not take the
+// socket, the drag handle, or the accessibility labels down with it.
+const visual = createOrbVisualSafe(document.querySelector('.orb-canvas'), {
+  reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  highContrast: window.matchMedia('(prefers-contrast: more)').matches,
+  palette: 'ember',
+  getSpeakingLevel: () => getPlaybackLevel(),
+})
 
 const axes = {
   booting: true,
@@ -34,6 +73,7 @@ const axes = {
   shellExpanded: false,
   audioMode: 'inactive',
   activationPending: false,
+  platform: 'unknown',
 }
 
 let socket
@@ -78,6 +118,18 @@ function render() {
   aecLabel.textContent = state.aecLabel
   orb.setAttribute('aria-label', `${state.label}；${state.codexLabel}`)
   orb.setAttribute('aria-pressed', String(axes.activated))
+  visual.setState(state.name, { codexWorking: axes.codex === 'working' })
+}
+
+// The one door onto the interrupted playback axis. A real barge-in — the user
+// talking over playback — has the capture axis already in 'listening' by the
+// time the clear lands, so deriveOrbState keeps returning 'listening' and the
+// 'interrupted' state never renders. The scatter is therefore applied as a
+// one-shot impulse over whatever field is on screen, independent of the derived
+// name, while the label contract itself stays untouched.
+function markPlaybackInterrupted() {
+  if (axes.playback !== 'interrupted') visual.interrupt()
+  axes.playback = 'interrupted'
 }
 
 function send(value) {
@@ -90,6 +142,14 @@ function startAlertTone() {
     if (context.state !== 'running') void context.resume().catch(() => {})
     alertTone.play(context)
   } catch { /* the concrete Guard speech still follows */ }
+}
+
+// Every buffer source goes through one master gain into an analyser, at unity:
+// the mix the user hears is unchanged, and the orb gets a real amplitude to
+// read instead of guessing from the queue.
+function playbackDestination() {
+  playbackMeter ||= new PlaybackMeter(context, () => playingSources.size > 0)
+  return playbackMeter.destination
 }
 
 function scheduleFrames() {
@@ -105,7 +165,7 @@ function scheduleFrames() {
     buffer.copyToChannel(samples, 0)
     const node = context.createBufferSource()
     node.buffer = buffer
-    node.connect(context.destination)
+    node.connect(playbackDestination())
     playingSources.add(node)
     axes.playback = 'speaking'
     render()
@@ -148,10 +208,18 @@ async function ensurePlaybackContext() {
   if (context.state !== 'running') throw new Error('Web Audio playback is unavailable')
 }
 
+// Both capture paths — the browser worklet and the native voice-processing tap —
+// land here, so this is the one place the microphone reaches the orb.
 function detectLocalOnset(pcm) {
   const now = performance.now()
   const verdict = observePcmOnset(pcm, onsetTracker, now)
-  axes.capture = onsetTracker.active ? 'listening' : 'idle'
+  visual.setLevel(measurePcmLevel(pcm))
+  // Three-way, not two: the tracker's 50 ms attack window is what 'candidate'
+  // names, so a syllable that has not held long enough to mint a speech id
+  // still lights the orb instead of leaving it idle.
+  axes.capture = onsetTracker.active
+    ? 'listening'
+    : onsetTracker.pending ? 'candidate' : 'idle'
   if (verdict) {
     alertTone.stop()
     send({ type: 'speech.onset', speech_id: verdict.speechId, t_render_ms: now })
@@ -166,6 +234,9 @@ function scheduleNativeFrames() {
     const frames = nativeFrames.get(key) || []
     frames.push(frame)
     nativeFrames.set(key, frames)
+    // Native PCM is played out of process, where there is no analyser to read,
+    // so its amplitude is measured here and replayed on a wall-clock envelope.
+    nativeLevel.push(frame.pcm, performance.now())
     window.novaAudioAgentDesktop.nativeAudio.play(
       frame.pcm,
       frame.utteranceId,
@@ -246,6 +317,7 @@ function stopCurrentNativePlayback() {
   const { utteranceId, generationEpoch } = current
   const cleared = playback.clear(utteranceId, generationEpoch)
   nativeFrames.clear()
+  nativeLevel.clear()
   window.novaAudioAgentDesktop.nativeAudio.clear()
   send({
     type: 'playback.stopped',
@@ -328,12 +400,13 @@ async function handleControl(message) {
     if (cleared) {
       if (backend === 'native') {
         nativeFrames.delete(`${message.utterance_id}:${message.generation_epoch}`)
+        nativeLevel.clear()
         nativeEvidence = await window.novaAudioAgentDesktop.nativeAudio.clear(
           message.utterance_id,
           message.generation_epoch,
         )
       }
-      axes.playback = 'interrupted'
+      markPlaybackInterrupted()
     }
     let playedMs = cleared
       ? Math.max(cleared.playedMs, Number(nativeEvidence?.playedMs) || 0)
@@ -362,10 +435,11 @@ async function handleControl(message) {
       startTone: startAlertTone,
       clearNative: (utteranceId, generationEpoch) => {
         nativeFrames.delete(`${utteranceId}:${generationEpoch}`)
+        nativeLevel.clear()
         return window.novaAudioAgentDesktop.nativeAudio.clear(utteranceId, generationEpoch)
       },
     })
-    if (result.cleared) axes.playback = 'interrupted'
+    if (result.cleared) markPlaybackInterrupted()
     if (hasIdentity) {
       send({
         type: 'playback.cleared',
@@ -442,18 +516,32 @@ async function handleSocketMessage(event) {
   }
 }
 
+// Named, module-level, and idempotent: both doors onto a dead backend — the pushed
+// 'nova:backend-exit' event and the verdict carried on the bootstrap reply — land here.
+function handleBackendExit() {
+  axes.connected = false
+  axes.error = 'backend-exit'
+  alertTone.stop()
+  playback.stopAll()
+  render()
+}
+
 async function boot() {
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
     axes.audioMode = bootstrap.audioMode
+    axes.platform = bootstrap.platform
+    // bootstrap.settings does not exist yet (it lands with the settings task);
+    // the optional chain reads as undefined today, and setPalette already
+    // falls back to 'ember' for anything that isn't a known palette name.
+    visual.setPalette(bootstrap.settings?.palette)
+    if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
-    window.novaAudioAgentDesktop.onBackendExit(() => {
-      axes.connected = false
-      axes.error = 'backend-exit'
-      alertTone.stop()
-      playback.stopAll()
-      render()
-    })
+    window.novaAudioAgentDesktop.onBackendExit(handleBackendExit)
+    // Same guard for the live-push side: window.novaAudioAgentDesktop.settings
+    // is not exposed by the preload script until that same future task, so
+    // this must not throw in the meantime.
+    window.novaAudioAgentDesktop.settings?.onChanged?.(next => visual.setPalette(next.palette))
     window.novaAudioAgentDesktop.memoryBoard.onFetch(requestId => {
       send({ type: 'memory.board.request', request_id: requestId })
     })
@@ -511,6 +599,10 @@ async function boot() {
     }
     axes.connected = true
     axes.booting = false
+    // Applied after the optimistic connect, which would otherwise overwrite it: the
+    // backend may have died before this renderer existed, in which case its exit was
+    // never pushed here and only the bootstrap reply above knows about it.
+    if (bootstrap.backendExited === true) handleBackendExit()
   } catch {
     axes.booting = false
     axes.error = 'bootstrap'
@@ -520,13 +612,22 @@ async function boot() {
 
 orb.addEventListener('pointerdown', event => {
   if (event.button !== 0) return
-  dragGesture.start(event.screenX, event.screenY)
+  // Client coordinates only ever gate the six-pixel drag threshold below;
+  // once main starts polling the cursor, the window tracks it 1:1 and the
+  // pointer stays put relative to the page, so these never drive movement.
+  dragGesture.start(event.clientX, event.clientY)
   orb.setPointerCapture(event.pointerId)
   window.novaAudioAgentDesktop.windowDrag.start()
 })
 
 orb.addEventListener('pointermove', event => {
-  const delta = dragGesture.move(event.screenX, event.screenY)
+  // A contentless tick: main derives the new window position entirely from
+  // its own screen.getCursorScreenPoint() poll, so this delta only proves
+  // the six-pixel threshold has been crossed and never reaches the drag math.
+  const delta = dragGesture.move(event.clientX, event.clientY)
+  // This gate stays open through a live drag only because move() returns a
+  // truthy {dx: 0, dy: 0} once latched, even with unchanged coordinates;
+  // main's cursor-poll ticks depend on that contract, not on dx/dy being nonzero.
   if (delta) window.novaAudioAgentDesktop.windowDrag.move(delta.dx, delta.dy)
 })
 
@@ -544,6 +645,9 @@ orb.addEventListener('contextmenu', event => {
   event.preventDefault()
   window.novaAudioAgentDesktop.orbMenu.show()
 })
-window.addEventListener('beforeunload', () => { void deactivateCapture() })
+window.addEventListener('beforeunload', () => {
+  visual.destroy()
+  void deactivateCapture()
+})
 render()
 void boot()

@@ -585,9 +585,11 @@ class AppServerTurnProjection:
         *,
         clock: Clock,
         on_progress: Callable[[ProgressPayload], None] | None,
+        working_interval: float = WORKING_INTERVAL,
     ) -> None:
         self._clock = clock
         self._on_progress = on_progress
+        self._working_interval = working_interval
         self._thread_id: str | None = None
         self._notification_turn_id: str | None = None
         self._response_turn_id: str | None = None
@@ -726,7 +728,8 @@ class AppServerTurnProjection:
         now = self._clock.now()
         summary = self._compose_summary()
         if (
-            self._last_working_at is not None and now - self._last_working_at >= WORKING_INTERVAL
+            self._last_working_at is not None
+            and now - self._last_working_at >= self._working_interval
         ) or (self._summary_prose is not None and not self._has_emitted_prose):
             self._last_working_at = now
             self._has_emitted_prose = self._has_emitted_prose or self._summary_prose is not None

@@ -1,6 +1,6 @@
 :root {
   color-scheme: dark;
-  font-family: ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", system-ui, sans-serif;
   background: transparent;
 }
 
@@ -13,6 +13,14 @@ html, body {
   overflow: hidden;
   background: transparent;
   user-select: none;
+}
+
+/* Opaque fallback (NOVA_ORB_OPAQUE=1): compositors that can't do a
+   transparent, frameless surface get a rounded dark plate instead of a
+   broken/black window. */
+body[data-opaque="1"] {
+  background: rgba(20, 14, 8, .92);
+  border-radius: 24px;
 }
 
 #shell {
@@ -33,39 +41,28 @@ html, body {
   padding: 0;
   border: 1px solid rgba(255, 255, 255, .2);
   border-radius: 50%;
-  background: rgba(12, 20, 38, .72);
+  /* Opaque ground for the particle plate: the window itself is transparent, so
+     the disc needs a hue-neutral dark base the palette can glow against. */
+  background: rgba(18, 13, 8, .72);
   box-shadow: 0 14px 38px rgba(0, 0, 0, .34);
   cursor: pointer;
+  overflow: hidden;
   -webkit-app-region: no-drag;
 }
 
-.halo, .core {
+/* The orb's appearance lives in orb-visual.mjs: this element is only the
+   surface it paints on, centred over the button's border box and clipped to
+   the disc. State-driven appearance is fed from render(), never from CSS. */
+.orb-canvas {
   position: absolute;
-  inset: 11px;
+  left: 50%;
+  top: 50%;
+  width: 116px;
+  height: 116px;
+  transform: translate(-50%, -50%);
   border-radius: 50%;
+  pointer-events: none;
 }
-
-.halo {
-  background: conic-gradient(from 20deg, #58e6ff, #7b6cff, #ff79c9, #58e6ff);
-  filter: blur(8px);
-  opacity: .65;
-  animation: orbit 5s linear infinite;
-}
-
-.core {
-  inset: 20px;
-  background: radial-gradient(circle at 35% 28%, #eefcff, #7a8cff 38%, #222848 72%);
-  box-shadow: inset 0 -12px 24px rgba(18, 20, 51, .55);
-  transition: transform .16s ease, filter .16s ease;
-}
-
-[data-state="listening"] .core,
-[data-state="candidate"] .core { transform: scale(1.08); filter: hue-rotate(-22deg); }
-[data-state="speaking"] .core { animation: breathe .72s ease-in-out infinite alternate; }
-[data-state="interrupted"] .core { transform: scale(.9); filter: saturate(.65); }
-[data-state="disconnected"] .halo,
-[data-state="error"] .halo,
-[data-state="permission-denied"] .halo { background: #ff647c; animation: none; }
 
 .capture-indicator {
   position: absolute;
@@ -110,14 +107,33 @@ html, body {
 
 #caption[data-role='user'] { color: rgba(190, 235, 255, .9); }
 
-@keyframes orbit { to { transform: rotate(1turn); } }
-@keyframes breathe { to { transform: scale(1.1); } }
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
+/* High contrast trades the nebula for a plain two-tone disc: no glow, no
+   translucency, nothing whose meaning depends on subtle colour. The alert
+   states keep the flat red the gradient halo used to carry, and the capture
+   indicator stays above the generated disc. */
 @media (prefers-contrast: more) {
   #orb { border: 2px solid white; background: black; }
+  .orb-canvas { display: none; }
+  #orb::after {
+    content: '';
+    position: absolute;
+    inset: 22px;
+    border-radius: 50%;
+    background: white;
+  }
+  /* This fallback disc renders under prefers-contrast regardless of which
+     particle palette (ember or graphite) is active — it is a system-level
+     accessibility path, not a palette one — so its alert colour must not
+     silently track either palette's own error hex. #ff3b30 is a fixed,
+     deliberately palette-neutral red, chosen only for strong contrast against
+     the flat black/white disc this media query already draws. */
+  [data-state="disconnected"] #orb::after,
+  [data-state="error"] #orb::after,
+  [data-state="permission-denied"] #orb::after { background: #ff3b30; }
+  .capture-indicator { z-index: 1; }
   #state-label, #codex-label, #aec-label { color: white; text-shadow: none; }
 }

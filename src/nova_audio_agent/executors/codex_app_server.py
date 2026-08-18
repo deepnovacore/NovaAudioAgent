@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import re
-import signal
 import stat
 import tempfile
 import unicodedata
@@ -32,6 +31,7 @@ from nova_audio_agent.executors.codex_app_server_protocol import (
     JsonRpcConnection,
     MAX_JSONL_LINE,
     TurnCompletion,
+    WORKING_INTERVAL,
     validate_effective_config,
     validate_schema_directory,
 )
@@ -43,6 +43,13 @@ from nova_audio_agent.executors.codex_preflight import (
     _filtered_environment,
 )
 from nova_audio_agent.ports import PROGRESS_SUMMARY_LIMIT, ProgressPayload
+from nova_audio_agent.process_tree import (
+    KILL_SIGNAL,
+    TERMINATE_SIGNAL,
+    signal_tree_async,
+    spawn_supervision_kwargs,
+    tree_alive,
+)
 
 LIVE_APP_SERVER_OPTIONS = (
     "-c",
@@ -198,10 +205,12 @@ class CodexAppServerTransport:
         codex_home: Path | None = None,
         resume_thread_id: str | None = None,
         on_thread_ready: ThreadReadyObserver | None = None,
+        working_interval: float = WORKING_INTERVAL,
     ) -> None:
         self._binary = binary
         self._workspace = workspace
         self._api_key = api_key
+        self._working_interval = working_interval
         self._developer_instructions = _bounded_developer_instructions(developer_instructions)
         self._environ = dict(os.environ) if environ is None else dict(environ)
         self._preflight = (
@@ -284,7 +293,11 @@ class CodexAppServerTransport:
             report = await self.preflight(deadline=deadline)
             try:
                 await self._establish(deadline, on_status=None)
-                probe = AppServerTurnProjection(clock=self._clock, on_progress=None)
+                probe = AppServerTurnProjection(
+                    clock=self._clock,
+                    on_progress=None,
+                    working_interval=self._working_interval,
+                )
                 self._bind_thread(probe, notify_ready=False)
                 self._thread_id = probe.thread_id
                 self._warm = True
@@ -456,6 +469,7 @@ class CodexAppServerTransport:
         projection = AppServerTurnProjection(
             clock=self._clock,
             on_progress=None if on_progress is None else self._sanitized_progress(on_progress),
+            working_interval=self._working_interval,
         )
         try:
             self._bind_thread(projection, notify_ready=True)
@@ -658,6 +672,7 @@ class CodexAppServerTransport:
         self._projection = AppServerTurnProjection(
             clock=self._clock,
             on_progress=None if on_progress is None else self._sanitized_progress(on_progress),
+            working_interval=self._working_interval,
         )
         self._initialized = False
         self._turn_request_written = False
@@ -957,7 +972,7 @@ class CodexAppServerTransport:
             *LIVE_APP_SERVER_OPTIONS,
             cwd=self._workspace,
             env=env,
-            start_new_session=os.name == "posix",
+            **spawn_supervision_kwargs(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -1238,13 +1253,13 @@ class CodexAppServerTransport:
                 await _wait_process_tree(process)
             return "none"
         except TimeoutError:
-            _terminate_process(process)
+            await _terminate_process(process)
         try:
             async with asyncio.timeout(EXIT_GRACE):
                 await _wait_process_tree(process)
             return "terminate"
         except TimeoutError:
-            _kill_process(process)
+            await _kill_process(process)
             try:
                 async with asyncio.timeout(EXIT_GRACE):
                     await _wait_process_tree(process)
@@ -1254,7 +1269,7 @@ class CodexAppServerTransport:
 
 
 async def _kill_and_reap(process: _Process) -> None:
-    _kill_process(process)
+    await _kill_process(process)
     try:
         async with asyncio.timeout(EXIT_GRACE):
             await _wait_process_tree(process)
@@ -1272,35 +1287,29 @@ async def _wait_process_tree(process: _Process) -> None:
 
 def _process_tree_running(process: _Process) -> bool:
     if os.name == "posix" and isinstance(process, asyncio.subprocess.Process):
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
+        return tree_alive(process.pid)
     return process.returncode is None
 
 
-def _terminate_process(process: _Process) -> None:
-    _signal_process_group(process, signal.SIGTERM, process.terminate)
+async def _terminate_process(process: _Process) -> None:
+    await _signal_process_group(process, TERMINATE_SIGNAL, process.terminate)
 
 
-def _kill_process(process: _Process) -> None:
-    _signal_process_group(process, signal.SIGKILL, process.kill)
+async def _kill_process(process: _Process) -> None:
+    await _signal_process_group(process, KILL_SIGNAL, process.kill)
 
 
-def _signal_process_group(
+async def _signal_process_group(
     process: _Process,
-    sig: signal.Signals,
+    selected_signal: int,
     fallback: Callable[[], None],
 ) -> None:
-    if os.name == "posix" and isinstance(process, asyncio.subprocess.Process):
-        try:
-            os.killpg(process.pid, sig)
-            return
-        except OSError:
-            pass
+    """Async because the win32 half of a tree signal is a blocking `taskkill` spawn; the
+    leader fallback below is instant either way."""
+    if isinstance(process, asyncio.subprocess.Process) and await signal_tree_async(
+        process.pid, selected_signal
+    ):
+        return
     try:
         fallback()
     except ProcessLookupError:

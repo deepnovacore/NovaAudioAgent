@@ -11,10 +11,24 @@ const LABELS = Object.freeze({
   error: 'Nova Audio Agent 发生错误',
 })
 
+// The single source of truth for the `data-state` vocabulary: the visual layer
+// derives its per-state parameters from this list rather than restating it.
+export const ORB_STATE_NAMES = Object.freeze(Object.keys(LABELS))
+
+// Windows has no systemPreferences prompt to point users at, so the denied
+// label carries its own navigation hint there; other platforms keep the
+// shorter copy above.
+const WINDOWS_PERMISSION_DENIED_LABEL =
+  '麦克风权限被拒绝(请在 系统设置 → 隐私 → 麦克风 中允许桌面应用)'
+
 export function deriveOrbState(input) {
   let name
   if (input.error) name = 'error'
-  else if (!input.connected) name = 'disconnected'
+  // A renderer that has not finished bootstrapping has not connected yet
+  // either, so plain "disconnected wins" made 'booting' unreachable at the one
+  // moment it describes. Booting only shields the socket axis: an error still
+  // outranks it, and a disconnect that lands after boot still collapses.
+  else if (!input.connected && !input.booting) name = 'disconnected'
   else if (input.permission === 'denied') name = 'permission-denied'
   else if (input.booting) name = 'booting'
   else if (!input.activated) name = 'inactive'
@@ -29,14 +43,17 @@ export function deriveOrbState(input) {
     input.pendingConfirmation === true ? '等待确认' : '',
   ].filter(Boolean)
   const codexStatus = input.codex === 'working' ? 'Codex 正在后台工作' : 'Codex 空闲'
+  const label = name === 'permission-denied' && input.platform === 'win32'
+    ? WINDOWS_PERMISSION_DENIED_LABEL
+    : LABELS[name]
   return Object.freeze({
     name,
-    label: LABELS[name],
+    label,
     codexLabel: [...project, codexStatus].join(' · '),
     aecLabel: input.audioMode === 'voice_processing_io'
-      ? 'macOS 系统级 AEC'
+      ? '系统级 AEC'
       : input.audioMode === 'browser_aec'
-        ? '浏览器 AEC 回退'
+        ? '浏览器 AEC'
         : 'AEC 未启用',
     shellExpanded: input.shellExpanded === true,
   })

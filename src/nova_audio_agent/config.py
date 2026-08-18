@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import re
+from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +31,87 @@ def _safe_project_root(value: Path, variable: str) -> Path:
     return resolved
 
 
+ProactivityPreset = Literal["conservative", "balanced", "eager"]
+# Preset -> (SuggestionPool.fire cooldown, ContextView FRESH_WINDOW), both in virtual
+# seconds. Wider apart than the module defaults so the desktop settings panel's three
+# presets are distinguishable; "balanced" reproduces today's defaults exactly.
+_PROACTIVITY_PRESETS: dict[ProactivityPreset, tuple[float, float]] = {
+    "conservative": (120.0, 20.0),
+    "balanced": (60.0, 30.0),
+    "eager": (30.0, 45.0),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ProactivityParams:
+    """The two knobs the proactivity preset actually resolves to."""
+
+    cooldown: float
+    fresh_window: float
+
+
+def _venv_python(root: str) -> str:
+    """Interpreter path inside a virtualenv rooted at `root`, per platform.
+
+    AutoGLM's default venv layout follows the interpreter that created it:
+    `Scripts/python.exe` on Windows (`os.name == "nt"`), `bin/python`
+    elsewhere. `NOVA_AUDIO_AGENT_AUTOGLM_PYTHON` still overrides this default.
+    """
+    return f"{root}/Scripts/python.exe" if os.name == "nt" else f"{root}/bin/python"
+
+
+def _secret_value(value: SecretStr | None) -> str:
+    return "" if value is None else value.get_secret_value().strip()
+
+
+def _required_setting(value: str, name: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ConfigurationError(f"{name} 不能为空")
+    return normalized
+
+
+def _secure_endpoint(value: str, *, scheme: str, name: str) -> str:
+    normalized = value.strip().rstrip("/")
+    try:
+        parsed = urlsplit(normalized)
+    except ValueError:
+        parsed = None
+    if (
+        parsed is None
+        or parsed.scheme != scheme
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise ConfigurationError(f"{name} 必须是安全的 {scheme}:// 地址")
+    return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class VolcengineRealtimeConfig:
+    ark_base_url: str
+    ark_model: str
+    ark_support_model: str
+    ark_api_key: str
+    asr_endpoint: str
+    asr_resource_id: str
+    asr_api_key: str
+    asr_chunk_ms: int
+    tts_endpoint: str
+    tts_resource_id: str
+    tts_voice: str
+    tts_api_key: str
+    tts_output_sample_rate: int
+    vad_threshold: float
+    vad_pre_roll_ms: int
+    vad_min_speech_ms: int
+    vad_silence_end_ms: int
+    vad_speech_pad_ms: int
+    vad_max_utterance_ms: int
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="NOVA_AUDIO_AGENT_",
@@ -43,6 +127,7 @@ class Settings(BaseSettings):
     watch_model: str | None = None
     surrogate_model: str = "qwen-flash"
     compressor_model: str = "qwen-flash"
+    realtime_provider: Literal["qwen", "volcengine"] = "qwen"
     qwen_realtime_url: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
     qwen_realtime_model: str = "qwen-audio-3.0-realtime-plus"
     qwen_realtime_voice: str = "longanqian"
@@ -53,6 +138,31 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="DASHSCOPE_API_KEY",
     )
+    ark_api_key: SecretStr | None = Field(default=None, validation_alias="ARK_API_KEY")
+    doubao_asr_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="DOUBAO_ASR_API_KEY",
+    )
+    doubao_bigmodel_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="DOUBAO_BIGMODEL_API_KEY",
+    )
+    volcengine_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    volcengine_ark_model: str = "doubao-seed-2-0-pro-260215"
+    volcengine_ark_support_model: str = "doubao-seed-2-0-pro-260215"
+    doubao_asr_endpoint: str = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
+    doubao_asr_resource_id: str = "volc.seedasr.sauc.duration"
+    doubao_asr_chunk_ms: int = 200
+    doubao_tts_endpoint: str = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+    doubao_tts_resource_id: str = "seed-tts-2.0"
+    doubao_tts_voice: str = "zh_female_vv_uranus_bigtts"
+    doubao_tts_output_sample_rate: int = 24_000
+    volcengine_vad_threshold: float = 0.5
+    volcengine_vad_pre_roll_ms: int = 260
+    volcengine_vad_min_speech_ms: int = 250
+    volcengine_vad_silence_end_ms: int = 560
+    volcengine_vad_speech_pad_ms: int = 30
+    volcengine_vad_max_utterance_ms: int = 15_000
     executor: Literal["fast_sim", "slow_sim", "ha", "codex", "autoglm"] = "fast_sim"
     executors: str = ""
     ha_url: str | None = None
@@ -66,7 +176,7 @@ class Settings(BaseSettings):
     codex_managed_root: Path = Path("~/NovaWorkspaces")
     codex_project_state_root: Path = Path("~/.nova-audio-agent")
     autoglm_repo: Path | None = Path("thirdparty/Open-AutoGLM")
-    autoglm_python: str = ".autoglm-venv/bin/python"
+    autoglm_python: str = Field(default_factory=lambda: _venv_python(".autoglm-venv"))
     autoglm_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
     autoglm_model: str = "autoglm-phone"
     autoglm_api_key: SecretStr | None = None
@@ -76,12 +186,46 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="TAVILY_API_KEY",
     )
+    proactivity_preset: ProactivityPreset = "balanced"
+    codex_working_interval: float = 30.0
+    suggestion_cooldown: float | None = None
+    fresh_window: float | None = None
 
     @field_validator("qwen_guard_history_pairs", mode="before")
     @classmethod
     def _parse_qwen_guard_history_pairs(cls, value: object) -> object:
         if type(value) is str and value in {"1", "2", "4"}:
             return int(value)
+        return value
+
+    @field_validator("codex_working_interval")
+    @classmethod
+    def _validate_codex_working_interval(cls, value: float) -> float:
+        if not (5.0 <= value <= 600.0):
+            raise ValueError("NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL 必须在 5.0 到 600.0 之间")
+        return value
+
+    @field_validator("suggestion_cooldown", "fresh_window")
+    @classmethod
+    def _validate_proactivity_override(
+        cls,
+        value: float | None,
+        info: ValidationInfo,
+    ) -> float | None:
+        """Reject a negative, NaN, or infinite override instead of misbehaving on one.
+
+        These two are the preset's escape hatch, so they take any float the
+        environment offers. A negative cooldown fires the pool on every tick, a
+        NaN window makes every freshness comparison false, and an infinite one
+        never expires: all three are silent misbehaviour rather than errors
+        unless they are refused where they enter the process.
+        """
+        if value is None:
+            return value
+        if not isfinite(value) or value < 0.0:
+            raise ValueError(
+                f"NOVA_AUDIO_AGENT_{info.field_name.upper()} 必须是不小于 0 的有限秒数"
+            )
         return value
 
     def require_api_key(self) -> str:
@@ -114,6 +258,77 @@ class Settings(BaseSettings):
         if not api_key:
             raise ConfigurationError("缺少 DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY")
         return url, model, voice, api_key
+
+    def require_volcengine_realtime(self) -> VolcengineRealtimeConfig:
+        ark_key = _secret_value(self.ark_api_key)
+        tts_key = _secret_value(self.doubao_bigmodel_api_key)
+        asr_key = _secret_value(self.doubao_asr_api_key) or tts_key
+        if not ark_key:
+            raise ConfigurationError("缺少 ARK_API_KEY")
+        if not tts_key:
+            raise ConfigurationError("缺少 DOUBAO_BIGMODEL_API_KEY")
+        if not asr_key:
+            raise ConfigurationError("缺少 DOUBAO_ASR_API_KEY 或 DOUBAO_BIGMODEL_API_KEY")
+        if self.doubao_asr_chunk_ms <= 0:
+            raise ConfigurationError("NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS 必须为正整数")
+        if self.doubao_tts_output_sample_rate != 24_000:
+            raise ConfigurationError("NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE 必须为 24000")
+        if not 0 < self.volcengine_vad_threshold <= 1:
+            raise ConfigurationError("NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD 必须在 (0, 1] 内")
+        if self.volcengine_vad_pre_roll_ms < 0 or self.volcengine_vad_speech_pad_ms < 0:
+            raise ConfigurationError("火山 VAD pre-roll 与 speech pad 不能为负数")
+        if self.volcengine_vad_min_speech_ms <= 0 or self.volcengine_vad_silence_end_ms <= 0:
+            raise ConfigurationError("火山 VAD min speech 与 silence end 必须为正整数")
+        if self.volcengine_vad_max_utterance_ms < self.volcengine_vad_min_speech_ms:
+            raise ConfigurationError("火山 VAD max utterance 不能短于 min speech")
+        return VolcengineRealtimeConfig(
+            ark_base_url=_secure_endpoint(
+                self.volcengine_ark_base_url,
+                scheme="https",
+                name="NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL",
+            ),
+            ark_model=_required_setting(
+                self.volcengine_ark_model,
+                "NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL",
+            ),
+            ark_support_model=_required_setting(
+                self.volcengine_ark_support_model,
+                "NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL",
+            ),
+            ark_api_key=ark_key,
+            asr_endpoint=_secure_endpoint(
+                self.doubao_asr_endpoint,
+                scheme="wss",
+                name="NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT",
+            ),
+            asr_resource_id=_required_setting(
+                self.doubao_asr_resource_id,
+                "NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID",
+            ),
+            asr_api_key=asr_key,
+            asr_chunk_ms=self.doubao_asr_chunk_ms,
+            tts_endpoint=_secure_endpoint(
+                self.doubao_tts_endpoint,
+                scheme="wss",
+                name="NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT",
+            ),
+            tts_resource_id=_required_setting(
+                self.doubao_tts_resource_id,
+                "NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID",
+            ),
+            tts_voice=_required_setting(
+                self.doubao_tts_voice,
+                "NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE",
+            ),
+            tts_api_key=tts_key,
+            tts_output_sample_rate=self.doubao_tts_output_sample_rate,
+            vad_threshold=self.volcengine_vad_threshold,
+            vad_pre_roll_ms=self.volcengine_vad_pre_roll_ms,
+            vad_min_speech_ms=self.volcengine_vad_min_speech_ms,
+            vad_silence_end_ms=self.volcengine_vad_silence_end_ms,
+            vad_speech_pad_ms=self.volcengine_vad_speech_pad_ms,
+            vad_max_utterance_ms=self.volcengine_vad_max_utterance_ms,
+        )
 
     def require_home_assistant(self) -> tuple[str, str, str]:
         if self.ha_url is None or not self.ha_url.strip():
@@ -240,3 +455,23 @@ class Settings(BaseSettings):
             normalized_wda_url,
             device_id,
         )
+
+
+def resolve_proactivity(settings: Settings) -> ProactivityParams:
+    """Derive push-and-pull suggestion pacing from `settings.proactivity_preset`,
+    with `suggestion_cooldown` / `fresh_window` as explicit per-field overrides.
+
+    Floor priority thresholds (`PREEMPT_MIN_PRIORITY`, `HIT_ALERT_MIN_PRIORITY` in
+    `realtime/service.py`) are deliberately NOT preset-mapped here. The preset only
+    shifts how eagerly push-and-pull suggestions surface — the SuggestionPool
+    cooldown and the ContextView fresh window — never who may preempt the floor or
+    who must defer to it. Preempt/defer stays a fixed Floor-arbitration invariant
+    regardless of proactivity; conflating the two would let a user's "eager" choice
+    quietly relax that safety property instead of only turning up suggestion volume.
+    """
+    cooldown, fresh_window = _PROACTIVITY_PRESETS[settings.proactivity_preset]
+    if settings.suggestion_cooldown is not None:
+        cooldown = settings.suggestion_cooldown
+    if settings.fresh_window is not None:
+        fresh_window = settings.fresh_window
+    return ProactivityParams(cooldown=cooldown, fresh_window=fresh_window)

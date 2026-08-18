@@ -24,7 +24,7 @@ export function validateBootstrap(value) {
   return Object.freeze({ endpoint: endpoint.href, token: value.token })
 }
 
-export function browserWindowOptions(preload, launchId) {
+export function browserWindowOptions(preload, launchId, { opaque = false } = {}) {
   if (typeof preload !== 'string' || !preload) throw new Error('preload is required')
   if (!/^[A-Za-z0-9_-]+$/.test(launchId)) throw new Error('launch id is invalid')
   return {
@@ -35,13 +35,15 @@ export function browserWindowOptions(preload, launchId) {
     maxWidth: 184,
     maxHeight: 184,
     frame: false,
-    transparent: true,
+    // Compositors without a working transparent-visuals path (opted into via
+    // NOVA_ORB_OPAQUE) get a solid plate instead of a broken/black surface.
+    transparent: !opaque,
     resizable: false,
     maximizable: false,
     fullscreenable: false,
     alwaysOnTop: true,
     hasShadow: false,
-    backgroundColor: '#00000000',
+    backgroundColor: opaque ? '#141005' : '#00000000',
     show: false,
     skipTaskbar: true,
     webPreferences: {
@@ -56,14 +58,14 @@ export function browserWindowOptions(preload, launchId) {
   }
 }
 
-export function boardWindowOptions(preload, launchId) {
+// Both secondary windows are ordinary framed panels that share the orb's
+// session partition (and therefore its preload) while keeping every isolation
+// wall the orb itself runs behind. Only their size and title differ.
+function panelWindowOptions(preload, launchId, panel) {
   if (typeof preload !== 'string' || !preload) throw new Error('preload is required')
   if (!/^[A-Za-z0-9_-]+$/.test(launchId)) throw new Error('launch id is invalid')
   return {
-    width: 480,
-    height: 620,
-    minWidth: 360,
-    minHeight: 400,
+    ...panel,
     frame: true,
     show: false,
     webPreferences: {
@@ -75,6 +77,25 @@ export function boardWindowOptions(preload, launchId) {
       preload,
     },
   }
+}
+
+export function boardWindowOptions(preload, launchId) {
+  return panelWindowOptions(preload, launchId, {
+    width: 480,
+    height: 620,
+    minWidth: 360,
+    minHeight: 400,
+  })
+}
+
+export function settingsWindowOptions(preload, launchId) {
+  return panelWindowOptions(preload, launchId, {
+    width: 420,
+    height: 560,
+    minWidth: 380,
+    minHeight: 420,
+    title: '设置',
+  })
 }
 
 export function createBootstrapAccess(bootstrap, renderer) {
