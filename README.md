@@ -177,21 +177,34 @@ camera Watch/Guard, and Qwen realtime voice — are configured through environme
 per-integration setup, cautions, and the full variable reference are in
 [Getting started](docs/getting-started.md).
 
-## 5. macOS Ambient Orb
+## 5. Ambient Orb
 
-The Ambient Orb is the local voice interface:
+The Ambient Orb is the local voice interface. macOS and Linux use the shared shell launcher,
+Windows uses the PowerShell one:
 
 ```bash
-./scripts/start_ambient_orb_macos.sh
+./scripts/start_ambient_orb.sh          # macOS, Linux
 ```
 
-It starts the Python realtime backend, builds the native VoiceProcessingIO helper, and launches
-the Electron renderer (context isolation, sandboxing, and a narrow preload bridge); it requires
-macOS, Node.js, the `codex` executable, microphone permission, and `DASHSCOPE_API_KEY` in `.env`.
-Provider events are correlated with host response and delegate identities, playback
-acknowledgements fence audio clearing and completion, and a Memory Board view renders every memory
-channel's latest items on request — the visual counterpart of the channel-wise memory described
-above.
+```powershell
+.\scripts\start_ambient_orb.ps1         # Windows
+```
+
+It starts the Python realtime backend and launches the Electron renderer (context isolation,
+sandboxing, and a narrow preload bridge); it requires Node.js, the `codex` executable, microphone
+permission, and `DASHSCOPE_API_KEY` in `.env` or the settings panel. On macOS it also builds the
+native VoiceProcessingIO helper for system-level echo cancellation; Windows and Linux use
+Chromium's echo cancellation instead. Linux sessions run on X11 (Wayland sessions go through
+XWayland). See [Getting started](docs/getting-started.md) for the per-platform notes.
+
+The orb renders as a Canvas 2D particle field whose behavior carries state — particles converge
+while listening, pulse with playback amplitude while speaking, and an outer band orbits while a
+Codex delegate works — in either the Ember or Graphite palette. Right-clicking the orb opens the
+Memory Board, which renders every memory channel's latest items on request (the visual counterpart
+of the channel-wise memory described above), and a settings panel for the palette, push-and-pull
+proactivity preset, Codex progress cadence, voice, and API keys (encrypted through the OS keychain).
+Provider events are correlated with host response and delegate identities, and playback
+acknowledgements fence audio clearing and completion.
 
 ## 6. Repository layout
 
