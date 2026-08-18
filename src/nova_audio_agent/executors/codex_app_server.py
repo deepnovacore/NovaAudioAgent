@@ -29,6 +29,7 @@ from nova_audio_agent.executors.codex_app_server_protocol import (
     JsonRpcConnection,
     MAX_JSONL_LINE,
     TurnCompletion,
+    WORKING_INTERVAL,
     validate_effective_config,
     validate_schema_directory,
 )
@@ -189,10 +190,12 @@ class CodexAppServerTransport:
         home_observer: HomeObserver | None = None,
         notification_observer: NotificationObserver | None = None,
         protocol_probe: _ProtocolProbe | None = None,
+        working_interval: float = WORKING_INTERVAL,
     ) -> None:
         self._binary = binary
         self._workspace = workspace
         self._api_key = api_key
+        self._working_interval = working_interval
         self._developer_instructions = _bounded_developer_instructions(developer_instructions)
         self._environ = dict(os.environ) if environ is None else dict(environ)
         self._preflight = (
@@ -274,7 +277,11 @@ class CodexAppServerTransport:
             report = await self.preflight(deadline=deadline)
             try:
                 await self._establish(deadline, on_status=None)
-                probe = AppServerTurnProjection(clock=self._clock, on_progress=None)
+                probe = AppServerTurnProjection(
+                    clock=self._clock,
+                    on_progress=None,
+                    working_interval=self._working_interval,
+                )
                 probe.bind_thread(self._thread_response, workspace=self._workspace)
                 self._thread_id = probe.thread_id
                 self._warm = True
@@ -419,6 +426,7 @@ class CodexAppServerTransport:
         projection = AppServerTurnProjection(
             clock=self._clock,
             on_progress=None if on_progress is None else self._sanitized_progress(on_progress),
+            working_interval=self._working_interval,
         )
         try:
             projection.bind_thread(self._thread_response, workspace=self._workspace)
@@ -616,6 +624,7 @@ class CodexAppServerTransport:
         self._projection = AppServerTurnProjection(
             clock=self._clock,
             on_progress=None if on_progress is None else self._sanitized_progress(on_progress),
+            working_interval=self._working_interval,
         )
         self._initialized = False
         self._turn_request_written = False

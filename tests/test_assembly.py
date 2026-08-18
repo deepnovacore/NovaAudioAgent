@@ -787,6 +787,75 @@ def test_codex_assembly_never_shadows_model_and_worker_credentials(
     assert model_calls[0]["api_key"] != transport_calls[0]["api_key"]
 
 
+def test_codex_live_assembly_threads_working_interval_into_the_protocol_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **_kwargs: object())
+    transport_calls: list[dict[str, object]] = []
+
+    def fake_app_server_transport(**kwargs):
+        transport_calls.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(assembly_module, "CodexAppServerTransport", fake_app_server_transport)
+    settings = Settings(
+        model_api_key=SecretStr("model-secret"),
+        tavily_api_key=SecretStr("tavily-secret"),
+        executor="codex",
+        codex_workspace=tmp_path,
+        codex_bin="/opt/tools/codex",
+        codex_working_interval=45.5,
+        _env_file=None,
+    )
+
+    build_codex_live_assembly(settings, sink=_Sink())
+
+    assert transport_calls == [
+        {
+            "binary": "/opt/tools/codex",
+            "workspace": tmp_path.resolve(),
+            "api_key": None,
+            "working_interval": 45.5,
+        }
+    ]
+
+
+def test_build_assembly_threads_proactivity_preset_into_runtime_pacing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **_kwargs: object())
+
+    def build(preset: str, **overrides: object):
+        return build_assembly(
+            Settings(
+                model_api_key=SecretStr("model-secret"),
+                tavily_api_key=SecretStr("tavily-secret"),
+                executor="fast_sim",
+                proactivity_preset=preset,
+                _env_file=None,
+                **overrides,
+            ),
+            sink=_Sink(),
+        )
+
+    balanced = build("balanced")
+    assert balanced.runtime.suggestions._default_cooldown == 60.0
+    assert balanced.runtime._fresh_window == 30.0
+
+    eager = build("eager")
+    assert eager.runtime.suggestions._default_cooldown == 30.0
+    assert eager.runtime._fresh_window == 45.0
+
+    conservative = build("conservative")
+    assert conservative.runtime.suggestions._default_cooldown == 120.0
+    assert conservative.runtime._fresh_window == 20.0
+
+    overridden = build("eager", suggestion_cooldown=7.0, fresh_window=8.0)
+    assert overridden.runtime.suggestions._default_cooldown == 7.0
+    assert overridden.runtime._fresh_window == 8.0
+
+
 def test_non_codex_assembly_does_not_require_codex_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

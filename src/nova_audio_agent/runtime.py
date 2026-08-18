@@ -46,7 +46,7 @@ from nova_audio_agent.calls import (
     run_surrogate_call,
 )
 from nova_audio_agent.clock import Clock, RealClock, VirtualClock
-from nova_audio_agent.context_view import ContextView, compile_context_view
+from nova_audio_agent.context_view import FRESH_WINDOW, ContextView, compile_context_view
 from nova_audio_agent.delegates import REJECTED_WAKE_KIND, DelegateLedger, validate_origin_ref
 from nova_audio_agent.events import (
     AssistantSpoken,
@@ -629,6 +629,8 @@ class Runtime:
         sink: SpeechSink | None = None,
         on_suggestion_selected: Callable[[Suggestion, WakeReason], None] | None = None,
         on_attention_decision: Callable[[AttentionDecision], None] | None = None,
+        suggestion_cooldown: float = DEFAULT_COOLDOWN,
+        fresh_window: float = FRESH_WINDOW,
     ) -> None:
         self.clock = clock
         self.memory = memory
@@ -638,7 +640,8 @@ class Runtime:
         self.applied: list[Event] = []
         self.floor = Floor()
         self.delegates = DelegateLedger()
-        self.suggestions = SuggestionPool()
+        self.suggestions = SuggestionPool(default_cooldown=suggestion_cooldown)
+        self._fresh_window = fresh_window
         self.fastbrain = fastbrain
         self.surrogate = surrogate
         self.compressor = compressor
@@ -1025,6 +1028,7 @@ class Runtime:
             manifests=tuple(adapter.manifest for adapter in self.executors.values()),
             selected_suggestion=selected_suggestion,
             trigger_kind=trigger_kind,
+            fresh_window=self._fresh_window,
         )
 
     def _spawn_slot(self, slot: Slot, reason: WakeReason) -> None:

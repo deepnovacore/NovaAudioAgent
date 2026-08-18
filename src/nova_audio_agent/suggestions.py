@@ -106,9 +106,10 @@ class SuggestionPool:
     """The add/update state machine. The only writer is the core — both
     decision ports only read the affordances it compiles."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, default_cooldown: float = DEFAULT_COOLDOWN) -> None:
         self._items: list[Suggestion] = []
         self._seq = 0
+        self._default_cooldown = default_cooldown
 
     def add(
         self,
@@ -153,7 +154,7 @@ class SuggestionPool:
     def get(self, suggestion_id: str) -> Suggestion | None:
         return next((item for item in self._items if item.id == suggestion_id), None)
 
-    def fire(self, suggestion_id: str, *, now: float, cooldown: float = DEFAULT_COOLDOWN) -> None:
+    def fire(self, suggestion_id: str, *, now: float, cooldown: float | None = None) -> None:
         """This suggestion **was really spoken**: lock it and start the
         cooldown.
 
@@ -170,11 +171,17 @@ class SuggestionPool:
         second utterance would reach here too; without this guard the
         cooldown would be restarted, and the suggestion would sleep an extra
         round for nothing.
+
+        `cooldown=None` (the default) uses the pool's own `default_cooldown`
+        (itself `DEFAULT_COOLDOWN` unless the constructor was given the
+        push-and-pull proactivity preset's resolved cooldown) — pass an
+        explicit value only to override that default for one call.
         """
         index, item = self._locate(suggestion_id)
         if item is None or item.status != "pending":
             return
-        self._items[index] = replace(item, status="fired", cooldown_until=now + cooldown)
+        resolved_cooldown = self._default_cooldown if cooldown is None else cooldown
+        self._items[index] = replace(item, status="fired", cooldown_until=now + resolved_cooldown)
 
     def withdraw(self, suggestion_id: str) -> bool:
         """Withdraw one exact pending suggestion without deleting its evidence."""
