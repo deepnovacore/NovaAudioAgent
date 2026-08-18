@@ -10,6 +10,7 @@ import test from 'node:test'
 // under, and what are this key's scalar/list/mapping values.
 
 const CONFIG_PATH = resolve(import.meta.dirname, '../electron-builder.yml')
+const PACKAGE_JSON_PATH = resolve(import.meta.dirname, '../package.json')
 
 function indentOf(line) {
   const match = /^( *)/.exec(line)
@@ -193,4 +194,18 @@ test('the tray icon resource stays top-level for every platform', () => {
 test('THIRD_PARTY_NOTICES.md and LICENSES/** ship in files for every platform', () => {
   assert.ok(config.files.includes('THIRD_PARTY_NOTICES.md'), 'expected THIRD_PARTY_NOTICES.md in files')
   assert.ok(config.files.includes('LICENSES/**/*'), 'expected LICENSES/**/* in files')
+})
+
+test('every package: script disables publishing explicitly', async () => {
+  const pkg = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf8'))
+  const packageScripts = Object.entries(pkg.scripts).filter(([name]) => name.startsWith('package:'))
+
+  assert.ok(packageScripts.length > 0, 'expected at least one package: script to check')
+  for (const [name, command] of packageScripts) {
+    assert.match(
+      command,
+      /--publish never\b/,
+      `expected "${name}" to pass --publish never so CI never attempts to publish a release`,
+    )
+  }
 })

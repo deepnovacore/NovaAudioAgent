@@ -87,3 +87,25 @@ def test_the_orb_resolves_the_venv_interpreter_per_platform() -> None:
     assert BACKEND_LAUNCHER in _sources(ORB_SOURCE, ".mjs")
     assert "'Scripts', 'python.exe'" in launcher
     assert "'bin', 'python'" in launcher
+
+
+def test_gitattributes_pins_lf_and_marks_png_binary() -> None:
+    """A Windows checkout must not silently flip source text to CRLF.
+
+    Many tests match source text with regexes containing literal `\\n` across
+    lines; CRLF would break them on the windows-latest electron CI leg, which
+    is blocking (no continue-on-error). `.gitattributes` is what keeps every
+    platform's working tree normalized to LF.
+    """
+    gitattributes = Path(".gitattributes")
+
+    assert gitattributes.is_file(), "expected a repo-root .gitattributes"
+
+    lines = gitattributes.read_text(encoding="utf-8").splitlines()
+
+    assert any(
+        line.split("#", 1)[0].split() == ["*", "text=auto", "eol=lf"] for line in lines
+    ), "expected a `* text=auto eol=lf` default so every platform's working tree normalizes to LF"
+    assert any(
+        line.split("#", 1)[0].split() == ["*.png", "-text"] for line in lines
+    ), "expected `*.png -text` so binary tray/build icons are never treated as text"
