@@ -109,13 +109,20 @@ export function backendLaunchSpec({
   // The inherited fd-3 readiness pipe is gone: stdio stops at stderr and the
   // backend dials back instead, so a stale parent value must never imply one.
   delete env.NOVA_AUDIO_AGENT_DESKTOP_READY_FD
-  // Overrides only: an absent or empty decrypted value leaves the key out of
-  // `env` entirely, so whatever the launcher's own `.env`/parent env supplied
-  // keeps winning. Never a replacement with an empty string.
+  // Overrides only: an absent, empty, or whitespace-only decrypted value
+  // leaves the key out of `env` entirely, so whatever the launcher's own
+  // `.env`/parent env supplied keeps winning. Never a replacement with an
+  // empty (or effectively empty) string. Trimmed *before* the emptiness
+  // check so a whitespace-only secret ("   ") can't slip through as truthy
+  // and silently clobber a working parent value with something unusable —
+  // and the value actually injected is the trimmed one, so accidental
+  // surrounding whitespace in a pasted key is cleaned up too.
   if (decryptedSecrets && typeof decryptedSecrets === 'object') {
     for (const [secretKey, envName] of Object.entries(SECRET_ENV_MAP)) {
       const value = decryptedSecrets[secretKey]
-      if (typeof value === 'string' && value) env[envName] = value
+      if (typeof value !== 'string') continue
+      const trimmed = value.trim()
+      if (trimmed) env[envName] = trimmed
     }
   }
   return {

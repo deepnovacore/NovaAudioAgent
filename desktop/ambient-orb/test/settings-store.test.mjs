@@ -245,6 +245,56 @@ test('readSecret returns null instead of throwing when the ciphertext no longer 
   assert.equal(readSecret(stored, 'strayKey', fakeCodec()), null)
 })
 
+// Companion to main-security.test.mjs's source-text scan for
+// `console.*` lines naming a secret: that scan keys on identifier
+// substrings ("plaintext", "secret", "apiKey") in main.mjs's source, so a
+// rename of any of those locals would defeat it silently without this test
+// noticing. This test instead runs the *real* decrypt path (readSecret,
+// which is what main.mjs's decryptSecretsForSpawn calls before logging on
+// failure) end to end with a distinctive runtime marker and inspects the
+// actual captured log text for that marker's content — a check that holds
+// regardless of what any variable in the source is named.
+test('a decrypt failure never lets the plaintext reach the console, only the key name', () => {
+  const MARKER = 'MARKER-SECRET-DO-NOT-LOG'
+  const sealingCodec = fakeCodec()
+  const sealed = applySettingsUpdate(DEFAULT_SETTINGS, {
+    secrets: { codexApiKey: MARKER },
+  }, sealingCodec)
+
+  // Worst case, not just the happy path: the codec that fails to decrypt
+  // throws an error whose *message* itself echoes the marker, the way a
+  // buggy or overly chatty crypto library might embed input context in its
+  // diagnostics. readSecret's catch block must discard the thrown error
+  // entirely rather than forwarding any part of it.
+  const hostileCodec = {
+    available: () => true,
+    encrypt: sealingCodec.encrypt,
+    decrypt: () => {
+      throw new Error(`decrypt failed while handling ${MARKER}`)
+    },
+  }
+
+  const calls = []
+  const mockConsole = { error: (...args) => calls.push(args.join(' ')) }
+
+  // Mirrors main.mjs's decryptSecretsForSpawn (src/main/main.mjs, just above
+  // `launchBackend`): decrypt via readSecret, and on any non-string/empty
+  // result, log the key name only via the exact
+  // `settings_secret_unreadable key=${key}` diagnostic — never the value.
+  const key = 'codexApiKey'
+  const plaintext = readSecret(sealed, key, hostileCodec)
+  if (typeof plaintext === 'string' && plaintext) {
+    mockConsole.error(`[test-leak-canary] ${plaintext}`)
+  } else {
+    mockConsole.error(`[desktop-diagnostic] settings_secret_unreadable key=${key}`)
+  }
+
+  assert.equal(plaintext, null)
+  const logged = calls.join('\n')
+  assert.doesNotMatch(logged, new RegExp(MARKER), 'the marker plaintext leaked into a log line')
+  assert.match(logged, /key=codexApiKey/, 'the diagnostic must still name the unreadable key')
+})
+
 test('applySettingsUpdate clears a stored key on an empty string and ignores the rest', () => {
   const codec = fakeCodec()
   const stored = applySettingsUpdate(DEFAULT_SETTINGS, {

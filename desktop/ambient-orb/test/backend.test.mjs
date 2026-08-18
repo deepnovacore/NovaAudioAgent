@@ -212,6 +212,37 @@ test('launch spec omits a secret env var entirely when absent, empty, or undefin
   assert.equal('DASHSCOPE_API_KEY' in noSecretsAtAll.env, false)
 })
 
+test('launch spec omits a whitespace-only decrypted secret, letting the parent value survive', () => {
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: { DASHSCOPE_API_KEY: 'from-dotenv' },
+    decryptedSecrets: { dashscopeApiKey: '   ' },
+  })
+
+  // A whitespace-only decrypted value is truthy in JS but unusable as a key,
+  // so it must be treated exactly like "absent": omitted from `env` entirely
+  // rather than overriding the parent's working value with garbage.
+  assert.equal(spec.env.DASHSCOPE_API_KEY, 'from-dotenv')
+})
+
+test('launch spec injects a decrypted secret with its surrounding whitespace trimmed', () => {
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+    decryptedSecrets: { dashscopeApiKey: '  sk-x  ' },
+  })
+
+  // Accidental surrounding whitespace from a pasted key is cleaned up, not
+  // injected verbatim.
+  assert.equal(spec.env.DASHSCOPE_API_KEY, 'sk-x')
+})
+
 test('a parent-env api key survives when the panel key is absent, and is overridden when present', () => {
   const withoutPanelKey = backendLaunchSpec({
     python: '/venv/bin/python',
