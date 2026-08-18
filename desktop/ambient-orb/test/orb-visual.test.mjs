@@ -444,6 +444,28 @@ test('the reduced-motion constellation is seeded: same seed same positions', () 
   for (const mounted of [first, second, other, third]) mounted.visual.destroy()
 })
 
+test('a static-mode scatter impulse decays across state snapshots instead of persisting', () => {
+  const mounted = mount({ reducedMotion: true, seed: 4242 })
+
+  // The construction-time snapshot draws the default "booting" state; drop
+  // it so the capture below reflects only the "listening" redraw.
+  resetDraws(mounted.context)
+  mounted.visual.setState('listening')
+  const before = centres(mounted.context)
+  assert.ok(before.length > 0)
+
+  // A barge-in leaves scatter=1 on the interrupted snapshot; routing back to
+  // listening (scatter=0) must fully clear the impulse, not carry it forward.
+  resetDraws(mounted.context)
+  mounted.visual.setState('interrupted')
+  resetDraws(mounted.context)
+  mounted.visual.setState('listening')
+  const after = centres(mounted.context)
+
+  assert.deepEqual(after, before, 'the seeded layout must be a pure function of (seed, state)')
+  mounted.visual.destroy()
+})
+
 test('destroy cancels the pending frame and stops the loop', () => {
   const mounted = mount()
   mounted.step()

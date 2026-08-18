@@ -393,6 +393,7 @@ export function createOrbVisual(canvas, options = {}) {
     ringOpacity = params.ringRadius ? 1 : 0
     pulse = params.pulseGain * params.pulseDirection
     levelSmoothed = level
+    scatter = params.scatter
   }
 
   function advance(elapsedMs) {
