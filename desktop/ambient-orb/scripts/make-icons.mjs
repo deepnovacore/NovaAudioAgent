@@ -143,11 +143,20 @@ function insideRoundedSquare(x, y, size, corner) {
   return dx * dx + dy * dy <= corner * corner
 }
 
+// JS `%` keeps the sign of the dividend, so a single `+ TAU` is not enough to
+// normalise: atan2 returns -π..π and the band's start angle is free to be
+// anywhere in 0..2π, which can leave the difference negative even after one
+// wrap. A negative `relative` would compare as inside the sector and paint a
+// full ring, so both terms are folded properly rather than nudged.
+function normalizeAngle(radians) {
+  return ((radians % TAU) + TAU) % TAU
+}
+
 // Angles run clockwise from +x with y down, matching how the SVG path is built.
-function insideSector(angle, start, end) {
-  const span = (end - start + TAU) % TAU
-  const relative = (angle - start + TAU) % TAU
-  return relative <= span
+// Exported for the test that pins the 0-crossing case the current band
+// constants happen not to exercise.
+export function insideSector(angle, start, end) {
+  return normalizeAngle(angle - start) <= normalizeAngle(end - start)
 }
 
 function smoothstep(value) {
@@ -275,15 +284,22 @@ export function markSvg(size = 512) {
     `  <rect width="${size}" height="${size}" rx="${round(plate.corner * size)}" fill="${plate.color}"/>`,
     `  <path d="M${point(band.startDeg)} A${round(bandRadius)} ${round(bandRadius)} 0 ${sweep > 180 ? 1 : 0} 1 ${point(band.endDeg)}" fill="none" stroke="${band.color}" stroke-width="${round(band.width * size)}" stroke-linecap="round"/>`,
   ]
-  // Grouped by colour: three short groups instead of a circle-per-fill wall.
-  for (const color of [EMBER_DEEP, EMBER_CORE, EMBER_HIGHLIGHT]) {
-    const group = dots.filter(dot => dot.color === color)
-    if (group.length === 0) continue
+  // Grouped by *runs* of colour in draw order, never by colour globally. The
+  // rasterizer paints `dots` in array order, so collecting all dots of one
+  // colour into a single <g> would reorder any overlapping pair of different
+  // tones and let the SVG disagree with the PNGs about which ember is on top.
+  // Runs collapse the long uniform stretches (the shells are largely
+  // single-toned) while leaving paint order exactly as drawn.
+  for (let index = 0; index < dots.length;) {
+    const { color } = dots[index]
+    let end = index
+    while (end < dots.length && dots[end].color === color) end += 1
     lines.push(`  <g fill="${color}">`)
-    for (const dot of group) {
+    for (const dot of dots.slice(index, end)) {
       lines.push(`    <circle cx="${round(dot.x * size)}" cy="${round(dot.y * size)}" r="${round(dot.r * size)}"/>`)
     }
     lines.push('  </g>')
+    index = end
   }
   lines.push('</svg>')
   return `${lines.join('\n')}\n`
@@ -357,11 +373,14 @@ export function encodeIco(entries) {
   let offset = directory.length
   for (const [index, entry] of entries.entries()) {
     const at = 6 + index * 16
-    // 256 is stored as 0: the field is one byte, and 256 & 0xff is already 0,
-    // but writing it explicitly is the difference between a documented
-    // convention and an accident that happens to work.
-    directory[at] = entry.size >= 256 ? 0 : entry.size
-    directory[at + 1] = entry.size >= 256 ? 0 : entry.size
+    // The width/height fields are one byte each, so 256 — the largest an ICO
+    // can describe — is spelled 0. Anything larger cannot be expressed at all,
+    // and silently writing `size & 0xff` would advertise a 512px image to
+    // Windows as 256px, so it is refused here instead.
+    if (entry.size > 256) throw new RangeError(`an ICO entry cannot exceed 256px, got ${entry.size}`)
+    const declared = entry.size === 256 ? 0 : entry.size
+    directory[at] = declared
+    directory[at + 1] = declared
     directory[at + 2] = 0 // no palette
     directory[at + 3] = 0 // reserved
     directory.writeUInt16LE(1, at + 4) // colour planes

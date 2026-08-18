@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { inflateSync } from 'node:zlib'
+import { crc32, inflateSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -10,8 +10,12 @@ import {
   ICO_SIZES,
   ICON_SIZES,
   TRAY_SIZES,
+  encodeIco,
+  insideSector,
   makeIcons,
+  markShapes,
   markSvg,
+  renderMark,
 } from '../scripts/make-icons.mjs'
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -75,6 +79,26 @@ function chunkTypes(bytes) {
   return types
 }
 
+// Every chunk's CRC, checked with node's own zlib.crc32 rather than a second
+// copy of the generator's table. This is the assertion that would catch a wrong
+// polynomial or a CRC taken over the data without the type — mistakes that
+// produce a file every real decoder rejects while the geometry assertions above
+// stay perfectly happy.
+function assertChunkCrcs(bytes, label) {
+  let offset = 8
+  let count = 0
+  while (offset + 8 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset)
+    const covered = bytes.subarray(offset + 4, offset + 8 + length)
+    const stored = bytes.readUInt32BE(offset + 8 + length)
+    assert.equal(crc32(covered) >>> 0, stored, `${label}: ${covered.subarray(0, 4)} CRC`)
+    offset += 12 + length
+    count += 1
+  }
+  assert.equal(offset, bytes.length, `${label}: chunks tile the file exactly`)
+  assert.equal(count, 3, `${label}: IHDR, IDAT, IEND`)
+}
+
 async function generate(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'nova-icons-'))
   const result = await makeIcons({
@@ -104,6 +128,11 @@ test('every generated PNG carries a valid signature and its declared size', asyn
     assert.equal(header.filter, 0)
     assert.equal(header.interlace, 0)
     assert.deepEqual(chunkTypes(bytes), ['IHDR', 'IDAT', 'IEND'])
+    assertChunkCrcs(bytes, `${size}px`)
+    // The IDAT actually decodes, and to exactly the pixels the mark draws:
+    // without this the encoder could ship a stream no decoder accepts.
+    const decoded = decodePng(bytes)
+    assert.deepEqual(decoded.rgba, renderMark(size), `${size}px round-trips to the rendered mark`)
   }
 })
 
@@ -148,9 +177,24 @@ test('the ICO container indexes one PNG entry per windows size', async t => {
     const header = readPngHeader(png)
     assert.equal(header.width, size, `entry ${size} embedded PNG width`)
     assert.equal(header.height, size, `entry ${size} embedded PNG height`)
+    // The blob really is a whole, intact PNG and not a slice off by a few bytes.
+    assertChunkCrcs(png, `ICO entry ${size}`)
     expectedOffset += bytesInRes
   }
   assert.equal(expectedOffset, ico.length, 'the entry table accounts for every byte')
+})
+
+test('an ICO entry larger than the format can describe is refused, not truncated', () => {
+  // The width/height fields are single bytes. Writing `size & 0xff` would tell
+  // Windows a 512px image is 256px — a wrong icon rather than a loud failure.
+  assert.throws(
+    () => encodeIco([{ size: 512, png: Buffer.alloc(8) }]),
+    /cannot exceed 256px/,
+  )
+  // 256 itself is still fine, and still spelled 0.
+  const ok = encodeIco([{ size: 256, png: Buffer.alloc(8) }])
+  assert.equal(ok[6], 0)
+  assert.equal(ok[7], 0)
 })
 
 test('tray PNGs land at the three per-platform sizes, each with its retina double', async t => {
@@ -202,14 +246,67 @@ test('two generations are byte-identical', async t => {
   }
 })
 
+test('the band sector holds up when it crosses zero degrees', () => {
+  const radians = degrees => (degrees / 360) * Math.PI * 2
+  // atan2 hands the rasterizer -π..π, so a sector that wraps past 0 is where a
+  // naive single `+ TAU` normalisation goes negative and reports every angle as
+  // inside — a full ring instead of an arc. The current constants (118°-238°)
+  // never cross zero, so nothing else in the suite would notice a regression
+  // here until someone moved the band.
+  const start = radians(300)
+  const end = radians(60)
+  assert.equal(insideSector(radians(330), start, end), true, '330 is inside 300-60')
+  assert.equal(insideSector(radians(-30), start, end), true, 'the same angle as atan2 reports it')
+  assert.equal(insideSector(radians(30), start, end), true, '30 is inside')
+  assert.equal(insideSector(radians(180), start, end), false, '180 is outside')
+  assert.equal(insideSector(radians(-150), start, end), false, 'and as atan2 reports it')
+  // The ordinary, non-crossing case still behaves.
+  assert.equal(insideSector(radians(180), radians(118), radians(238)), true)
+  assert.equal(insideSector(radians(0), radians(118), radians(238)), false)
+  assert.equal(insideSector(radians(-90), radians(118), radians(238)), false)
+})
+
+test('the SVG paints the particles in exactly the rasterizer order', () => {
+  // Both outputs come from markShapes(), but only if the SVG keeps the array
+  // order. Grouping every dot of one colour into a single <g> — the obvious
+  // tidy-up — silently reorders overlapping dots of different tones, so the
+  // vector file and the PNGs would disagree about which ember is on top.
+  const svg = markSvg()
+  const painted = [...svg.matchAll(/<g fill="(#[0-9A-F]{6})">|<circle cx="([-\d.]+)" cy="([-\d.]+)" r="([-\d.]+)"\/>/g)]
+  const order = []
+  let fill = null
+  for (const match of painted) {
+    if (match[1]) fill = match[1]
+    else order.push({ color: fill, cx: Number(match[2]), cy: Number(match[3]), r: Number(match[4]) })
+  }
+  const round2 = value => Math.round(value * 100) / 100 + 0
+  assert.deepEqual(
+    order,
+    markShapes().dots.map(dot => ({
+      color: dot.color,
+      cx: round2(dot.x * 512),
+      cy: round2(dot.y * 512),
+      r: round2(dot.r * 512),
+    })),
+  )
+})
+
 test('the mark renders as amber particles over a dark plate, not a gradient sphere', async t => {
   const { directory } = await generate()
   t.after(() => rm(directory, { recursive: true, force: true }))
 
   const svg = await readFile(resolve(directory, 'resources/icon.svg'), 'utf8')
-  assert.equal(svg, markSvg(), 'the committed SVG is the generator output')
+  assert.equal(svg, markSvg(), 'makeIcons writes the mark, not some other SVG')
   assert.match(svg, /viewBox="0 0 512 512"/)
   assert.match(svg, /fill="#141005"/)
+  // Every dot the layout produces must reach the SVG. The generator used to
+  // group by a hardcoded palette list, which would silently drop a particle
+  // whose tone was introduced later while the rasterizer kept drawing it.
+  const { dots } = markShapes()
+  assert.equal((svg.match(/<circle /g) || []).length, dots.length, 'no particle is dropped')
+  for (const color of new Set(dots.map(dot => dot.color))) {
+    assert.ok(svg.includes(`fill="${color}"`), `${color} reaches the SVG`)
+  }
   for (const color of ['#FFB454', '#FFE3B3', '#C96F2B']) {
     assert.ok(svg.includes(color), `${color} particles are present`)
   }
@@ -219,12 +316,10 @@ test('the mark renders as amber particles over a dark plate, not a gradient sphe
   assert.match(svg, /<path d="M[^"]*A[^"]*" fill="none" stroke="#FFD9A0"/)
   // No gradient sphere and no concentric-ring motif.
   assert.doesNotMatch(svg, /Gradient|<circle[^>]*fill="none"/)
-  const dots = svg.match(/<circle /g) || []
   assert.ok(dots.length >= 24 && dots.length <= 40, `24-40 particle dots, got ${dots.length}`)
 })
 
-test('the raster mark keeps the plate opaque and the corners transparent', async t => {
-  const { renderMark } = await import('../scripts/make-icons.mjs')
+test('the raster mark keeps the plate opaque and the corners transparent', () => {
   const size = 64
   const rgba = renderMark(size)
   assert.equal(rgba.length, size * size * 4)

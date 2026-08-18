@@ -272,7 +272,10 @@ const TRAY_ICON_FILES = Object.freeze({
 // as extraResources next to the native helper rather than inside the asar;
 // unpacked, they are read straight out of the repo's resources/ tree.
 function trayIconFile() {
-  const file = TRAY_ICON_FILES[process.platform] || TRAY_ICON_FILES.win32
+  // Anything that is neither macOS nor Windows (a BSD Electron build) gets the
+  // linux rendering: those desktops run the same GTK/Ayatana status area, so 22
+  // is the right guess where win32's 32 would simply be wrong.
+  const file = TRAY_ICON_FILES[process.platform] || TRAY_ICON_FILES.linux
   return app.isPackaged
     ? resolve(process.resourcesPath, 'tray', file)
     : resolve(packageRoot, 'resources/tray', file)
