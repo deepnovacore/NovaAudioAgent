@@ -424,10 +424,16 @@ def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
     if context.codex_live:
         if context.settings.codex_projects_enabled:
             managed_root, state_root = context.settings.require_codex_projects()
+            store = None
             try:
                 store = CodexProjectStore(state_root, managed_root, recover_starting=True)
                 store.ensure_imported(workspace.name or "workspace", workspace)
             except ProjectStateError as failure:
+                # Release the owner flock taken in the constructor; leaving it
+                # to GC would make the next startup attempt in this process
+                # fail with state_busy although nothing is running.
+                if store is not None:
+                    store.close()
                 raise ConfigurationError(
                     f"Codex project state unavailable: {failure.code}"
                 ) from None

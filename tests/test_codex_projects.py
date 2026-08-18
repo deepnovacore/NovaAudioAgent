@@ -505,3 +505,53 @@ def test_maximally_retained_registry_encoding_stays_below_hard_byte_limit() -> N
     ).encode("utf-8")
 
     assert len(raw) < codex_projects.MAX_STATE_BYTES
+
+
+def test_marking_active_session_unavailable_promotes_newest_ready_session(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    workspace = store.create_managed("alpha")
+    older = store.begin_session(workspace.workspace_id, "older")
+    store.mark_session_ready(older.session_id, "thread-older")
+    newer = store.begin_session(workspace.workspace_id, "newer")
+    store.mark_session_ready(newer.session_id, "thread-newer")
+
+    store.mark_session_unavailable(newer.session_id)
+    assert store.resolve_session(workspace.workspace_id, None).session_id == older.session_id
+
+    store.mark_session_unavailable(older.session_id)
+    with pytest.raises(ProjectStateError, match="session_not_found"):
+        store.resolve_session(workspace.workspace_id, None)
+
+
+def test_rolled_back_managed_create_restores_most_recent_active_workspace(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first = store.create_managed("first")
+    store.create_managed("second")
+    store.select_workspace("first")
+    created = store.create_managed("third")
+    assert store.snapshot().active_workspace_id == created.workspace_id
+
+    assert store.rollback_managed_create(created.workspace_id, wait=True) is True
+
+    snapshot = store.snapshot()
+    assert snapshot.active_workspace_id == first.workspace_id
+    assert [item.display_name for item in snapshot.workspaces] == ["first", "second"]
+    assert not Path(created.canonical_path).exists()
+
+
+def test_missing_fcntl_fails_closed_without_breaking_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path)
+    store.create_managed("alpha")
+    monkeypatch.setattr(codex_projects, "fcntl", None)
+
+    with pytest.raises(ProjectStateError, match="state_lock_failed"):
+        store.snapshot()
+    with pytest.raises(ProjectStateError, match="state_lock_failed"):
+        _store(tmp_path, recover_starting=True)

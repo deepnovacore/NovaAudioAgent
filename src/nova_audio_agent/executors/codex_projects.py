@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import errno
-import fcntl
 import json
 import math
 import os
 import re
 import stat
 import unicodedata
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    # The projects feature requires POSIX advisory locks, but merely importing
+    # this module (e.g. via the executors package with projects disabled) must
+    # not fail on platforms without fcntl; lock acquisition fails closed below.
+    fcntl = None  # type: ignore[assignment]
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -129,7 +136,8 @@ class CodexProjectStore:
         if fd is None:
             return
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
 
@@ -300,7 +308,7 @@ class CodexProjectStore:
 
         return self._transaction(read)
 
-    def rollback_managed_create(self, workspace_id: str) -> bool:
+    def rollback_managed_create(self, workspace_id: str, *, wait: bool = False) -> bool:
         removed: Path | None = None
 
         def update(state: _State) -> tuple[bool, bool]:
@@ -320,11 +328,21 @@ class CodexProjectStore:
             removed = path
             del state.workspaces[workspace_id]
             if state.active_workspace_id == workspace_id:
-                state.active_workspace_id = next(iter(state.workspaces), None)
+                # Hand the active slot back to the most recently used survivor
+                # rather than an arbitrary dict-order entry, so a rolled-back
+                # create restores the workspace the user was in before it.
+                replacement = max(
+                    state.workspaces.values(),
+                    key=lambda item: (item.last_used_at, item.created_at, item.workspace_id),
+                    default=None,
+                )
+                state.active_workspace_id = (
+                    None if replacement is None else replacement.workspace_id
+                )
             return True, True
 
         try:
-            return self._transaction(update)
+            return self._transaction(update, wait=wait)
         except BaseException:
             if removed is not None:
                 try:
@@ -493,7 +511,27 @@ class CodexProjectStore:
                 last_used_at=self._stamp(),
             )
             state.sessions[session_id] = unavailable
-            return unavailable, unavailable != session
+            changed = unavailable != session
+            # An unavailable session must not stay the workspace default:
+            # resolve_session(workspace, None) would keep resolving it and
+            # every bare resume would fail even when ready sessions exist.
+            workspace = state.workspaces.get(session.workspace_id)
+            if workspace is not None and workspace.active_session_id == session_id:
+                replacement = max(
+                    (
+                        item
+                        for item in state.sessions.values()
+                        if item.workspace_id == workspace.workspace_id and item.state == "ready"
+                    ),
+                    key=lambda item: (item.last_used_at, item.created_at, item.session_id),
+                    default=None,
+                )
+                state.workspaces[workspace.workspace_id] = replace(
+                    workspace,
+                    active_session_id=None if replacement is None else replacement.session_id,
+                )
+                changed = True
+            return unavailable, changed
 
         return self._transaction(update, wait=wait)
 
@@ -707,6 +745,8 @@ class CodexProjectStore:
         *,
         wait: bool = False,
     ) -> _T:
+        if fcntl is None:
+            raise ProjectStateError("state_lock_failed")
         self._ensure_state_root()
         fd = self._open_lock()
         acquired = False
@@ -773,6 +813,8 @@ class CodexProjectStore:
             raise ProjectStateError("state_permissions") from None
 
     def _open_owner_lock(self) -> int:
+        if fcntl is None:
+            raise ProjectStateError("state_lock_failed")
         flags = os.O_RDWR | os.O_CREAT
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW

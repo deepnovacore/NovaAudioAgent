@@ -172,7 +172,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     ) -> Handoff:
         if op == "project":
             result = await self._dispatch_project(request, ctx)
-            await self._refresh_project_view()
+            await self._refresh_project_view_tolerant()
             return result
         if op != "run":
             return await super().dispatch(op, request, ctx)
@@ -201,19 +201,19 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         if parsed is None:
             return _failure("invalid_params", "project")
         action, workspace_name, session_title, work_order = parsed
-        if action == "list":
-            snapshot = await _complete_sync(self.store.snapshot)
-            return _project_ok(
-                code="listed",
-                workspaces=[
-                    {
-                        "workspace": item.display_name,
-                        "active": item.workspace_id == snapshot.active_workspace_id,
-                    }
-                    for item in snapshot.workspaces[:20]
-                ],
-            )
         try:
+            if action == "list":
+                snapshot = await _complete_sync(self.store.snapshot)
+                return _project_ok(
+                    code="listed",
+                    workspaces=[
+                        {
+                            "workspace": item.display_name,
+                            "active": item.workspace_id == snapshot.active_workspace_id,
+                        }
+                        for item in _most_recent(snapshot.workspaces)
+                    ],
+                )
             if action == "sessions":
                 workspace = await _complete_sync(self.store.resolve_workspace, workspace_name)
                 sessions = await _complete_sync(self.store.list_sessions, workspace)
@@ -226,7 +226,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                             "state": item.state,
                             "active": item.session_id == workspace.active_session_id,
                         }
-                        for item in sessions[:20]
+                        for item in _most_recent(sessions)
                     ],
                 )
             if action == "create":
@@ -275,8 +275,13 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     async def _lookup_failure(self, code: str) -> Handoff:
         content: dict[str, Any] = {"op": "project", "code": code}
         if code == "workspace_not_found":
-            workspaces = await _complete_sync(self.store.list_workspaces)
-            content["candidates"] = [item.display_name for item in workspaces[:20]]
+            # Candidate names are a courtesy; a busy or failing registry read
+            # must not turn the bounded failure into an adapter exception.
+            try:
+                workspaces = await _complete_sync(self.store.list_workspaces)
+            except ProjectStateError:
+                workspaces = ()
+            content["candidates"] = [item.display_name for item in _most_recent(workspaces)]
         return Handoff(outcome="failed", trust="trusted_system", content=content)
 
     async def _run_new(
@@ -303,11 +308,18 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                     self.store.create_managed, operation.workspace_display_name
                 )
                 if operation.work_order is None:
-                    await self._refresh_project_view()
+                    await self._refresh_project_view_tolerant()
                     return _project_ok(code="created", workspace=workspace.display_name)
-                return await self._run_bound(
-                    workspace, None, operation.session_title, operation.work_order, ctx
-                )
+                try:
+                    result = await self._run_bound(
+                        workspace, None, operation.session_title, operation.work_order, ctx
+                    )
+                except BaseException:
+                    await self._rollback_confirmed_create(workspace.workspace_id)
+                    raise
+                if result.outcome != "ok":
+                    await self._rollback_confirmed_create(workspace.workspace_id)
+                return result
             assert operation.workspace_id is not None
             workspace = await _complete_sync(
                 self.store.resolve_workspace, operation.workspace_display_name
@@ -316,7 +328,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                 raise ProjectStateError("workspace_boundary_changed")
             if operation.action == "select":
                 selected = await _complete_sync(self.store.select_workspace, workspace.display_name)
-                await self._refresh_project_view()
+                await self._refresh_project_view_tolerant()
                 return _project_ok(code="selected", workspace=selected.display_name)
             assert operation.session_id is not None
             session = await _complete_sync(
@@ -345,7 +357,6 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         session = resumed or await _complete_sync(
             self.store.begin_session, workspace.workspace_id, session_title
         )
-        await self._refresh_project_view()
         ready = False
         binding_invalid = False
         reported_thread_id: str | None = None
@@ -361,6 +372,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             reported_thread_id = thread_id
 
         try:
+            await self._refresh_project_view_tolerant()
             worker = self._worker_factory(
                 path,
                 self.store.codex_home(workspace),
@@ -398,11 +410,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                         session.session_id,
                         wait=True,
                     )
-                try:
-                    await self._refresh_project_view()
-                except ProjectStateError as failure:
-                    if failure.code != "state_busy":
-                        raise
+                await self._refresh_project_view_tolerant()
 
     async def commit_confirmed(
         self,
@@ -428,7 +436,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                     return ProjectCommitResult(False, "invalid_operation")
             except ProjectStateError as failure:
                 return ProjectCommitResult(False, failure.code)
-            await self._refresh_project_view()
+            await self._refresh_project_view_tolerant()
             return ProjectCommitResult(True, "committed")
         normalized_work_order = _normalize_run_request({"work_order": work_order})
         if normalized_work_order is None or normalized_work_order != work_order:
@@ -460,6 +468,37 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             return
         self._public_project_view = view
         self._publish_project_view()
+
+    async def _refresh_project_view_tolerant(self) -> None:
+        """Refresh the cached view, tolerating a transiently locked registry.
+
+        `state_busy` only means another owner-side process held the flock for
+        an instant; the operation that preceded the refresh already committed,
+        so the stale cached view must not convert into a spoken failure.
+        """
+        try:
+            await self._refresh_project_view()
+        except ProjectStateError as failure:
+            if failure.code != "state_busy":
+                raise
+
+    async def _rollback_confirmed_create(self, workspace_id: str) -> None:
+        """Best-effort removal of a just-created workspace whose first run failed.
+
+        The store refuses to remove a workspace that gained sessions or files,
+        so this can never destroy user work; any registry error here must not
+        mask the run failure the caller is about to report.
+        """
+        try:
+            await _complete_sync(self.store.rollback_managed_create, workspace_id, wait=True)
+        except ProjectStateError:
+            return
+
+    async def aclose(self) -> None:
+        try:
+            await super().aclose()
+        finally:
+            self.store.close()
 
     def public_project_view(self, *, pending_confirmation: bool) -> PublicProjectView:
         return replace(
@@ -540,6 +579,13 @@ def _parse_project_request(
         None if session is None else session.strip(),
         None if work_order is None else work_order.strip(),
     )
+
+
+def _most_recent(items: Any) -> list[Any]:
+    # Listings answer "which one did I just use"; the registry snapshot is
+    # oldest-first, so slicing it directly would hide every recent record once
+    # more than 20 exist. Stable sort keeps creation order for equal stamps.
+    return sorted(items, key=lambda item: (-item.last_used_at, item.created_at))[:20]
 
 
 def _project_ok(*, code: str, **content: Any) -> Handoff:

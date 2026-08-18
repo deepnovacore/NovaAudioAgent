@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,12 +14,16 @@ from nova_audio_agent.clock import VirtualClock
 from nova_audio_agent.executors.codex_project_live import (
     CODEX_PROJECT_LIVE_MANIFEST,
     ProjectCodexAdapter,
+    ProjectCommitResult,
 )
 from nova_audio_agent.executors.codex import CodexProcessStatus, CodexTransportResult
 from nova_audio_agent.executors.codex_app_server import SteerTransportResult
-from nova_audio_agent.executors.codex_projects import CodexProjectStore
+from nova_audio_agent.executors.codex_projects import CodexProjectStore, ProjectStateError
 from nova_audio_agent.ports import DispatchContext
-from nova_audio_agent.realtime.project_confirmation import ProjectConfirmationController
+from nova_audio_agent.realtime.project_confirmation import (
+    ConfirmedProjectOperation,
+    ProjectConfirmationController,
+)
 from nova_audio_agent.runtime import RuntimeDispatchResult
 from nova_audio_agent.tool_schema import compile_tool_schema
 
@@ -862,3 +867,198 @@ async def test_late_public_view_refresh_cannot_overwrite_newer_workspace(
 
     view = adapter.public_project_view(pending_confirmation=False)
     assert view.workspace_display_name == "beta"
+
+
+@pytest.mark.asyncio
+async def test_locked_registry_yields_bounded_state_busy_not_an_exception(tmp_path: Path) -> None:
+    adapter, store = _adapter(tmp_path)
+    ctx = _context(VirtualClock())
+
+    with open(store.lock_path, "rb") as holder:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        try:
+            listed = await adapter.dispatch("project", {"action": "list"}, ctx)
+            proposal = await adapter.dispatch(
+                "project", {"action": "select", "workspace": "alpha"}, ctx
+            )
+        finally:
+            fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+
+    assert listed.outcome == proposal.outcome == "failed"
+    assert listed.content["code"] == proposal.content["code"] == "state_busy"
+    assert adapter.confirmation.pending is False
+
+
+@pytest.mark.asyncio
+async def test_prepared_confirmation_survives_busy_view_refresh(tmp_path: Path) -> None:
+    adapter, store = _adapter(tmp_path)
+    ctx = _context(VirtualClock())
+
+    def busy_view(*, pending_confirmation: bool) -> Any:
+        raise ProjectStateError("state_busy")
+
+    store.public_view = busy_view  # type: ignore[method-assign]
+    proposal = await adapter.dispatch("project", {"action": "select", "workspace": "alpha"}, ctx)
+
+    assert proposal.outcome == "ok"
+    assert proposal.content["code"] == "confirmation_required"
+    assert adapter.confirmation.pending is True
+
+
+@pytest.mark.asyncio
+async def test_run_tolerates_busy_view_refresh_and_keeps_session_ready(tmp_path: Path) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    workspace = store.create_managed("alpha")
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=_ProjectFactory(),
+    )
+
+    def busy_view(*, pending_confirmation: bool) -> Any:
+        raise ProjectStateError("state_busy")
+
+    store.public_view = busy_view  # type: ignore[method-assign]
+    result = await adapter.dispatch("run", {"work_order": "task"}, _context(clock))
+
+    assert result.outcome == "ok"
+    assert [item.state for item in store.list_sessions(workspace)] == ["ready"]
+
+
+@pytest.mark.asyncio
+async def test_committed_select_reports_success_despite_busy_view_refresh(
+    tmp_path: Path,
+) -> None:
+    adapter, store = _adapter(tmp_path)
+    beta = store.create_managed("beta")
+    controller = adapter.confirmation
+    controller.prepare(
+        action="select",
+        workspace_display_name="beta",
+        workspace_id=beta.workspace_id,
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+    assert controller.reserve_user_item(epoch=1, item_id="user-1")
+    outcome = controller.accept_transcript(epoch=1, item_id="user-1", text="确认")
+    assert outcome.operation is not None
+
+    def busy_view(*, pending_confirmation: bool) -> Any:
+        raise ProjectStateError("state_busy")
+
+    store.public_view = busy_view  # type: ignore[method-assign]
+    committed = await adapter.commit_confirmed(
+        outcome.operation,
+        origin_ref="conversation:1",
+        runtime_dispatch=lambda request, *, reason: RuntimeDispatchResult(
+            accepted=True, delegate_id="unused"
+        ),
+    )
+
+    assert committed == ProjectCommitResult(True, "committed")
+    assert store.snapshot().active_workspace_id == beta.workspace_id
+
+
+@pytest.mark.asyncio
+async def test_session_listing_shows_the_most_recent_sessions_first(tmp_path: Path) -> None:
+    clock = VirtualClock(start=1.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    workspace = store.create_managed("alpha")
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=lambda *_args, **_kwargs: _UnusedWorker(),
+    )
+    for index in range(21):
+        clock.advance_to(float(index + 2))
+        session = store.begin_session(workspace.workspace_id, f"task-{index:02d}")
+        store.mark_session_ready(session.session_id, f"thread-{index:02d}")
+
+    listed = await adapter.dispatch("project", {"action": "sessions"}, _context(clock))
+
+    titles = [item["session"] for item in listed.content["sessions"]]
+    assert len(titles) == 20
+    assert titles[0] == "task-20"
+    assert "task-00" not in titles
+
+
+@pytest.mark.asyncio
+async def test_failed_confirmed_create_rolls_back_workspace_and_active_pointer(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    alpha = store.create_managed("alpha")
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=lambda _workspace, _home, resume, on_ready: _NeverReadyWorker(
+            resume or "missing", on_ready
+        ),
+    )
+    operation = ConfirmedProjectOperation(
+        action="create",
+        workspace_display_name="beta",
+        workspace_id=None,
+        session_title=None,
+        session_id=None,
+        work_order="build it",
+        origin_ref="conversation:1",
+        nonce="nonce",
+    )
+
+    result = await adapter.dispatch(
+        "run", {"work_order": "build it"}, _context(clock, private=operation)
+    )
+
+    assert result.outcome == "failed"
+    snapshot = store.snapshot()
+    assert [item.display_name for item in snapshot.workspaces] == ["alpha"]
+    assert snapshot.active_workspace_id == alpha.workspace_id
+    assert sorted(path.name for path in (tmp_path / "managed").iterdir()) == [
+        Path(alpha.canonical_path).name
+    ]
+
+
+@pytest.mark.asyncio
+async def test_aclose_releases_owner_lock_for_successor(tmp_path: Path) -> None:
+    clock = VirtualClock()
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+        recover_starting=True,
+    )
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=lambda *_args, **_kwargs: _UnusedWorker(),
+    )
+
+    await adapter.aclose()
+
+    successor = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        recover_starting=True,
+    )
+    successor.close()

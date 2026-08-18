@@ -27,7 +27,10 @@ from nova_audio_agent.executors.camera import (
 from nova_audio_agent.executors.codex import CODEX_POLICY, CodexAdapter
 from nova_audio_agent.executors.codex_live import CodexLiveAdapter
 from nova_audio_agent.executors.codex_project_live import ProjectCodexAdapter
-from nova_audio_agent.executors.codex_projects import ProjectStateError
+from nova_audio_agent.executors.codex_projects import (
+    CodexProjectStore,
+    ProjectStateError,
+)
 from nova_audio_agent.executors.watcher import WatchAdapter
 from nova_audio_agent.ports import Delegate, SurrogateOutput
 from nova_audio_agent.realtime.protocol import SessionIdentity
@@ -1191,3 +1194,11 @@ def test_project_registry_failure_becomes_bounded_configuration_error(
         )
 
     assert str(tmp_path) not in str(raised.value)
+    # The failed build must release its owner flock, or the next in-process
+    # startup attempt would report state_busy although nothing is running.
+    follower = CodexProjectStore(
+        tmp_path / "private-state",
+        tmp_path / "managed",
+        recover_starting=True,
+    )
+    follower.close()
