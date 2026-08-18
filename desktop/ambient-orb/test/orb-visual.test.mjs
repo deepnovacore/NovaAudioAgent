@@ -4,6 +4,7 @@ import test from 'node:test'
 
 import {
   createOrbVisual,
+  createOrbVisualSafe,
   paletteColors,
   STATE_FPS,
   STATE_PARAMS,
@@ -99,6 +100,36 @@ function mount(options = {}) {
   return { visual, canvas, context, offscreen, pending, cancelled, take, step, settle }
 }
 
+// A matchMedia stub whose queries can be flipped and fired on demand. The visual
+// arms one query per live preference — display density, reduced motion, and
+// contrast — so a stub has to serve several queries at once.
+function mediaStub() {
+  const queries = []
+  const matchMedia = query => {
+    const media = {
+      media: query,
+      matches: false,
+      handlers: [],
+      addEventListener: (type, handler) => media.handlers.push(handler),
+      removeEventListener: (type, handler) => {
+        const at = media.handlers.indexOf(handler)
+        if (at >= 0) media.handlers.splice(at, 1)
+      },
+    }
+    queries.push(media)
+    return media
+  }
+  // The newest query for a given string: the density query re-arms on change.
+  const find = query => queries.filter(media => media.media === query).at(-1)
+  const emit = (query, matches) => {
+    const media = find(query)
+    assert.ok(media, `no media query was armed for ${query}`)
+    media.matches = matches
+    for (const handler of [...media.handlers]) handler({ matches })
+  }
+  return { matchMedia, queries, find, emit }
+}
+
 // Sprites are drawn with the 9-argument form (atlas cell → destination box),
 // so the on-screen centre of each particle lives in the destination rect.
 function centres(context) {
@@ -191,15 +222,65 @@ test('interrupted is a one-shot scatter over the listening parameters', () => {
   }
 })
 
-test('disconnected error and permission-denied collapse to the same alert ring', () => {
+test('the three terminal states share the alert language but not the behaviour', () => {
+  // Shared: all three are a collapsed, dimmed, alert-toned ring — the colour
+  // semantics a grayscale viewer cannot tell apart anyway.
   for (const name of ['disconnected', 'error', 'permission-denied']) {
     const params = STATE_PARAMS[name]
     assert.equal(params.convergence, 0.9, `${name}.convergence`)
-    assert.equal(params.orbitSpeed, 0.03, `${name}.orbitSpeed`)
     assert.equal(params.alpha, 0.5, `${name}.alpha`)
-    assert.equal(params.ringRadius, 46, `${name}.ringRadius`)
+    assert.equal(params.pulseGain, 0, `${name}.pulseGain`)
     assert.equal(params.tone, 'alert', `${name}.tone`)
+    assert.ok(params.ringRadius > 0, `${name} collapses onto a ring`)
   }
+
+  // Distinct: radius, density, and restlessness carry the difference, so the
+  // three read apart in motion and in grayscale rather than only by colour.
+  assert.deepEqual(
+    ['ringRadius', 'countRatio', 'orbitSpeed', 'jitter'].map(key => STATE_PARAMS.disconnected[key]),
+    [46, 0.5, 0.03, 0.04],
+  )
+  assert.deepEqual(
+    ['ringRadius', 'countRatio', 'orbitSpeed', 'jitter'].map(key => STATE_PARAMS.error[key]),
+    [38, 0.75, 0.06, 0.06],
+  )
+  assert.deepEqual(
+    ['ringRadius', 'countRatio', 'orbitSpeed', 'jitter'].map(
+      key => STATE_PARAMS['permission-denied'][key],
+    ),
+    [28, 0.35, 0.02, 0.04],
+  )
+})
+
+test('the terminal states render distinct geometry in animated mode too', () => {
+  // Reduced motion folds the state name into the field seed, so its layouts
+  // differ for free; animated mode keeps one continuous field, and the only
+  // thing that can separate the three there is their own parameters.
+  const mounted = mount()
+  const shape = name => {
+    resetDraws(mounted.context)
+    mounted.visual.setState(name)
+    // Every terminal state is a zero-fps tier: setState draws its single
+    // snapped frame, which is the whole animated-mode appearance.
+    return { count: drawnCount(mounted.context), radius: meanRadius(mounted.context) }
+  }
+
+  const disconnected = shape('disconnected')
+  const error = shape('error')
+  const denied = shape('permission-denied')
+
+  for (const [left, right, label] of [
+    [disconnected, error, 'disconnected vs error'],
+    [error, denied, 'error vs permission-denied'],
+    [disconnected, denied, 'disconnected vs permission-denied'],
+  ]) {
+    assert.notEqual(left.count, right.count, `${label}: particle density differs`)
+    assert.ok(
+      Math.abs(left.radius - right.radius) > 2,
+      `${label}: ring radius differs (${left.radius} vs ${right.radius})`,
+    )
+  }
+  mounted.visual.destroy()
 })
 
 test('paletteColors returns the exact ember table', () => {
@@ -377,6 +458,66 @@ test('the interrupted scatter impulse decays back toward the listening field', (
   mounted.visual.destroy()
 })
 
+test('interrupt scatters the current field whatever state it is in', () => {
+  // A real barge-in never reaches setState('interrupted'): the capture axis is
+  // already 'listening' when the playback clear lands, so deriveOrbState keeps
+  // saying 'listening' and the impulse has to apply over that field instead.
+  const mounted = mount()
+  mounted.visual.setState('listening')
+  mounted.settle()
+  resetDraws(mounted.context)
+  mounted.step()
+  const listeningRadius = meanRadius(mounted.context)
+
+  mounted.visual.interrupt()
+  resetDraws(mounted.context)
+  mounted.step()
+  const scatteredRadius = meanRadius(mounted.context)
+
+  assert.ok(scatteredRadius > listeningRadius, 'the impulse throws the field outward')
+  assert.equal(mounted.visual.state, 'listening', 'and never relabels the state')
+  assert.equal(mounted.visual.params, STATE_PARAMS.listening)
+
+  mounted.settle()
+  resetDraws(mounted.context)
+  mounted.step()
+  const settledRadius = meanRadius(mounted.context)
+
+  assert.ok(
+    Math.abs(settledRadius - listeningRadius) < 1.5,
+    `the impulse decays back to listening (${settledRadius} vs ${listeningRadius})`,
+  )
+  mounted.visual.destroy()
+})
+
+test('interrupt keeps the static layout a pure function of seed and state', () => {
+  const mounted = mount({ reducedMotion: true, seed: 4242 })
+  resetDraws(mounted.context)
+  mounted.visual.setState('listening')
+  const canonical = centres(mounted.context)
+  assert.ok(canonical.length > 0)
+
+  resetDraws(mounted.context)
+  mounted.visual.interrupt()
+  const frames = centres(mounted.context)
+
+  // Reduced motion has no loop to decay an impulse, so the barge-in is one
+  // scattered snapshot followed immediately by the state's own constellation.
+  assert.equal(frames.length, canonical.length * 2, 'the impulse frame then the re-snap')
+  assert.notDeepEqual(
+    frames.slice(0, canonical.length),
+    canonical,
+    'the barge-in is still acknowledged',
+  )
+  assert.deepEqual(
+    frames.slice(canonical.length),
+    canonical,
+    'and the layout returns to the state canonical constellation',
+  )
+  assert.equal(mounted.pending.length, 0, 'a static orb still schedules nothing')
+  mounted.visual.destroy()
+})
+
 test('setLevel stores a clamped amplitude that the next frame reads', () => {
   const mounted = mount()
   mounted.visual.setState('speaking')
@@ -513,12 +654,23 @@ test('the reduced-motion constellation is seeded: same seed same positions', () 
   for (const mounted of [first, second, other, third]) mounted.visual.destroy()
 })
 
-test('collapsed alert states share identical parameters but still render distinct constellations', () => {
-  // disconnected, error, and permission-denied all point at the exact same
-  // frozen COLLAPSE params object, so any difference in their static layouts
-  // can only come from the state *name* being folded into the field's seed.
-  assert.equal(STATE_PARAMS.disconnected, STATE_PARAMS.error)
-  assert.equal(STATE_PARAMS.error, STATE_PARAMS['permission-denied'])
+test('collapsed alert states carry their own parameters and render distinct constellations', () => {
+  // These three used to share one frozen COLLAPSE object, which made them
+  // pixel-identical wherever colour is unavailable. Each now varies radius,
+  // density, and restlessness on its own.
+  for (const [left, right] of [
+    ['disconnected', 'error'],
+    ['error', 'permission-denied'],
+    ['disconnected', 'permission-denied'],
+  ]) {
+    for (const key of ['ringRadius', 'countRatio', 'orbitSpeed']) {
+      assert.notEqual(
+        STATE_PARAMS[left][key],
+        STATE_PARAMS[right][key],
+        `${left}.${key} must differ from ${right}.${key}`,
+      )
+    }
+  }
 
   const mounted = mount({ reducedMotion: true, seed: 777 })
   resetDraws(mounted.context)
@@ -534,7 +686,7 @@ test('collapsed alert states share identical parameters but still render distinc
   const deniedPoints = centres(mounted.context)
 
   assert.ok(disconnectedPoints.length > 0)
-  assert.notDeepEqual(errorPoints, disconnectedPoints, 'same params, distinct seeded constellation')
+  assert.notDeepEqual(errorPoints, disconnectedPoints, 'each terminal state gets its own layout')
   assert.notDeepEqual(deniedPoints, disconnectedPoints)
   assert.notDeepEqual(deniedPoints, errorPoints)
 
@@ -566,6 +718,91 @@ test('a static-mode scatter impulse decays across state snapshots instead of per
 
   assert.deepEqual(after, before, 'the seeded layout must be a pure function of (seed, state)')
   mounted.visual.destroy()
+})
+
+// The guarded factory is expected to report a dead canvas exactly once, so the
+// warning has to be captured rather than printed into the test output.
+function captureWarnings(sink) {
+  const original = console.warn
+  console.warn = (...args) => sink.push(args.join(' '))
+  return () => { console.warn = original }
+}
+
+const NOOP_API = ['setState', 'setLevel', 'setPalette', 'setAccessibility', 'interrupt', 'destroy']
+
+test('a canvas that cannot be acquired yields a working no-op visual', () => {
+  const warnings = []
+  const restore = captureWarnings(warnings)
+  try {
+    // No 2D context is the real-world failure: a renderer whose socket, drag,
+    // and label wiring must still come up around a dead orb.
+    const visual = createOrbVisualSafe({ getContext: () => null })
+
+    assert.ok(Object.isFrozen(visual), 'the fallback is frozen')
+    for (const method of NOOP_API) {
+      assert.equal(typeof visual[method], 'function', `${method} is still callable`)
+    }
+    visual.setState('listening')
+    visual.setLevel(0.5)
+    visual.setPalette('graphite')
+    visual.setAccessibility({ reducedMotion: true })
+    visual.interrupt()
+    visual.destroy()
+
+    assert.equal(visual.state, 'booting')
+    assert.equal(visual.params, STATE_PARAMS.booting)
+    assert.equal(visual.palette, 'ember')
+    assert.equal(visual.level, 0)
+    assert.equal(visual.smoothedLevel, 0)
+    assert.equal(visual.fps, 0)
+    assert.equal(visual.particleCount, 0)
+    assert.equal(warnings.length, 1, 'the failure is reported exactly once')
+  } finally {
+    restore()
+  }
+})
+
+test('the first draw failure disables the visual instead of reaching its caller', () => {
+  const warnings = []
+  const restore = captureWarnings(warnings)
+  try {
+    const canvas = stubCanvas()
+    const clearRect = canvas.context.clearRect
+    let broken = false
+    canvas.context.clearRect = () => {
+      if (broken) throw new Error('the canvas surface went away')
+      clearRect()
+    }
+    const visual = createOrbVisualSafe(canvas, {
+      reducedMotion: true,
+      devicePixelRatio: 2,
+      createCanvas: (width, height) => stubCanvas(width, height),
+    })
+
+    visual.setState('idle')
+    assert.ok(drawnCount(canvas.context) > 0, 'a healthy visual still draws')
+
+    broken = true
+    visual.setState('listening')
+    assert.equal(warnings.length, 1, 'the throw is logged, not rethrown')
+
+    // From here the visual is permanently the no-op: no more canvas work, no
+    // more log noise, and no exception can escape into the socket message tail.
+    resetDraws(canvas.context)
+    visual.setState('speaking')
+    visual.setLevel(1)
+    visual.interrupt()
+    visual.setPalette('graphite')
+    visual.setAccessibility({ reducedMotion: false })
+    visual.destroy()
+
+    assert.equal(drawnCount(canvas.context), 0, 'the dead visual stops touching the canvas')
+    assert.equal(warnings.length, 1, 'and it complains only once')
+    assert.equal(visual.fps, 0)
+    assert.equal(visual.particleCount, 0)
+  } finally {
+    restore()
+  }
 })
 
 test('destroy cancels the pending frame and stops the loop', () => {
@@ -647,8 +884,11 @@ test('the stylesheet drops the gradient sphere but keeps the accessibility overr
 test('the renderer feeds the visual from the same render pass as data-state', async () => {
   const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
-  assert.match(source, /import \{ createOrbVisual \} from '\.\/orb-visual\.mjs'/)
-  assert.match(source, /createOrbVisual\(/)
+  // Construction goes through the guarded factory: a canvas that cannot be
+  // acquired must not take the socket, drag, and label wiring down with it.
+  assert.match(source, /import \{ createOrbVisualSafe \} from '\.\/orb-visual\.mjs'/)
+  assert.match(source, /const visual = createOrbVisualSafe\(/)
+  assert.doesNotMatch(source, /[^e]createOrbVisual\(/, 'never the unguarded factory')
   assert.match(source, /prefers-reduced-motion: reduce/)
   assert.match(source, /prefers-contrast: more/)
   assert.match(
@@ -885,44 +1125,112 @@ test('a fast frame time leaves the full field alone', () => {
 
 test('a pixel-ratio change rebuilds the backing store and the sprite atlas', () => {
   let ratio = 1
-  const queries = []
-  const mounted = mount({
-    devicePixelRatio: () => ratio,
-    matchMedia: query => {
-      const media = {
-        media: query,
-        matches: true,
-        handlers: [],
-        addEventListener: (type, handler) => media.handlers.push(handler),
-        removeEventListener: (type, handler) => {
-          const at = media.handlers.indexOf(handler)
-          if (at >= 0) media.handlers.splice(at, 1)
-        },
-      }
-      queries.push(media)
-      return media
-    },
-  })
+  const media = mediaStub()
+  const mounted = mount({ devicePixelRatio: () => ratio, matchMedia: media.matchMedia })
+  const densities = () => media.queries.filter(query => query.media.startsWith('(resolution'))
 
   assert.deepEqual([mounted.canvas.width, mounted.canvas.height], [116, 116])
-  assert.equal(queries.length, 1, 'the current density is watched')
-  assert.equal(queries[0].media, '(resolution: 1dppx)')
+  assert.equal(densities().length, 1, 'the current density is watched')
+  assert.equal(densities()[0].media, '(resolution: 1dppx)')
   assert.equal(mounted.offscreen.length, 1)
 
   ratio = 3
-  queries[0].handlers[0]()
+  densities()[0].handlers[0]()
 
   // The cap still holds: a 3x display is drawn at 2x.
   assert.deepEqual([mounted.canvas.width, mounted.canvas.height], [232, 232])
   assert.equal(mounted.offscreen.length, 2, 'the atlas is re-rendered at the new density')
-  assert.equal(queries.length, 2, 'the listener re-arms on the new density')
-  assert.equal(queries[1].media, '(resolution: 3dppx)')
-  assert.equal(queries[0].handlers.length, 0, 'the stale query is released')
+  assert.equal(densities().length, 2, 'the listener re-arms on the new density')
+  assert.equal(densities()[1].media, '(resolution: 3dppx)')
+  assert.equal(densities()[0].handlers.length, 0, 'the stale query is released')
 
   mounted.step()
   assert.ok(drawnCount(mounted.context) > 0)
   mounted.visual.destroy()
-  assert.equal(queries[1].handlers.length, 0, 'destroy releases the density listener')
+  assert.equal(densities()[1].handlers.length, 0, 'destroy releases the density listener')
+})
+
+test('enabling reduce motion mid-session stops the loop and draws one still frame', () => {
+  const media = mediaStub()
+  const mounted = mount({ matchMedia: media.matchMedia, seed: 4242 })
+  mounted.visual.setState('listening')
+  mounted.step()
+  assert.equal(mounted.pending.length, 1, 'the live tier is running')
+
+  resetDraws(mounted.context)
+  const clears = mounted.context.calls.clearRect
+  media.emit('(prefers-reduced-motion: reduce)', true)
+
+  assert.equal(mounted.pending.length, 0, 'the loop stops instead of animating on')
+  assert.equal(mounted.visual.fps, 0)
+  assert.equal(mounted.context.calls.clearRect, clears + 1, 'exactly one static frame')
+  assert.ok(drawnCount(mounted.context) > 0, 'and it is a drawn constellation')
+
+  // From here on the orb behaves exactly like one built in reduced motion: a
+  // state change redraws in place and never schedules.
+  resetDraws(mounted.context)
+  mounted.visual.setState('idle')
+  assert.equal(mounted.context.calls.clearRect, clears + 2)
+  assert.equal(mounted.pending.length, 0)
+
+  // Turning the preference back off resumes the tier the state is worth.
+  media.emit('(prefers-reduced-motion: reduce)', false)
+  assert.equal(mounted.pending.length, 1, 'the loop comes back')
+  assert.equal(mounted.visual.fps, 15)
+  const resumed = mounted.context.calls.clearRect
+  mounted.step()
+  assert.equal(mounted.context.calls.clearRect, resumed + 1, 'and it animates again')
+
+  mounted.visual.destroy()
+  assert.equal(
+    media.find('(prefers-reduced-motion: reduce)').handlers.length,
+    0,
+    'destroy releases the preference listener',
+  )
+})
+
+test('enabling high contrast mid-session stops scheduling entirely', () => {
+  const media = mediaStub()
+  const mounted = mount({ matchMedia: media.matchMedia })
+  mounted.visual.setState('speaking')
+  mounted.step()
+  assert.equal(mounted.pending.length, 1)
+
+  media.emit('(prefers-contrast: more)', true)
+
+  // The stylesheet hides .orb-canvas under prefers-contrast, so a frame drawn
+  // into it would be pure cost: nothing may be scheduled, then or later.
+  assert.equal(mounted.pending.length, 0, 'the in-flight frame is dropped')
+  assert.equal(mounted.visual.fps, 0)
+  mounted.visual.setState('listening')
+  mounted.visual.setLevel(1)
+  assert.equal(mounted.pending.length, 0, 'and nothing later earns a frame either')
+
+  media.emit('(prefers-contrast: more)', false)
+  assert.equal(mounted.pending.length, 1, 'the visible canvas gets its tier back')
+  assert.equal(mounted.visual.fps, 60)
+
+  mounted.visual.destroy()
+  assert.equal(media.find('(prefers-contrast: more)').handlers.length, 0)
+})
+
+test('setAccessibility keeps the orb static while either preference is on', () => {
+  const mounted = mount()
+  mounted.visual.setState('listening')
+  mounted.step()
+  assert.equal(mounted.pending.length, 1)
+
+  mounted.visual.setAccessibility({ reducedMotion: true, highContrast: true })
+  assert.equal(mounted.pending.length, 0)
+  assert.equal(mounted.visual.fps, 0)
+
+  mounted.visual.setAccessibility({ reducedMotion: false })
+  assert.equal(mounted.pending.length, 0, 'high contrast alone still hides the canvas')
+
+  mounted.visual.setAccessibility({ highContrast: false })
+  assert.equal(mounted.pending.length, 1, 'with both off the tier returns')
+  assert.equal(mounted.visual.fps, 60)
+  mounted.visual.destroy()
 })
 
 test('the renderer feeds microphone and playback amplitude into the visual', async () => {
@@ -937,6 +1245,37 @@ test('the renderer feeds microphone and playback amplitude into the visual', asy
   assert.match(source, /nativeLevel\.push\(frame\.pcm/)
   // Playback is routed through the meter rather than straight at the speakers.
   assert.doesNotMatch(source, /node\.connect\(context\.destination\)/)
+})
+
+test('the renderer fires the barge-in impulse on the playback interrupted transition', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  // Every transition onto the interrupted playback axis goes through one door,
+  // which is also the only place the axis is assigned.
+  assert.match(
+    source,
+    /function markPlaybackInterrupted\(\) \{\n  if \(axes\.playback !== 'interrupted'\) visual\.interrupt\(\)\n  axes\.playback = 'interrupted'\n\}/,
+  )
+  assert.equal(
+    source.match(/axes\.playback = 'interrupted'/g).length,
+    1,
+    'the interrupted axis is assigned only inside that door',
+  )
+  // Both clear paths — the plain playback.clear and the alert replacement —
+  // walk through it, so the scatter is independent of what deriveOrbState says.
+  assert.equal(source.match(/markPlaybackInterrupted\(\)/g).length, 3)
+  assert.match(source, /if \(result\.cleared\) markPlaybackInterrupted\(\)/)
+})
+
+test('the renderer maps the onset attack window onto the candidate state', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  // 'candidate' is only reachable if the 50 ms attack window the tracker is
+  // still inside reaches the axes; without it the orb jumps idle → listening.
+  assert.match(
+    source,
+    /axes\.capture = onsetTracker\.active\n\s*\? 'listening'\n\s*: onsetTracker\.pending \? 'candidate' : 'idle'/,
+  )
 })
 
 test('the build syntax-checks the visual module', async () => {

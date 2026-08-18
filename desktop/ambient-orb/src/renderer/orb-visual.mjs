@@ -138,17 +138,22 @@ const LISTENING = stateParams({
 
 // A dead or refused session collapses the whole field onto one thin ring: the
 // silhouette reads as "stopped" at a glance, without borrowing the live states'
-// colour language.
-const COLLAPSE = stateParams({
-  convergence: 0.9,
-  orbitSpeed: 0.03,
-  jitter: 0.04,
-  pulseGain: 0,
-  alpha: 0.5,
-  countRatio: 0.8,
-  ringRadius: RING_RADIUS,
-  tone: 'alert',
-})
+// colour language. The three terminal states share that language — collapsed,
+// dimmed, alert-toned — but they must not share one geometry: colour is the
+// first thing a grayscale display, a colour-blind viewer, or a photo of a menu
+// bar loses, so each varies its ring radius, density, and restlessness instead.
+function collapseParams({ ringRadius, countRatio, orbitSpeed, jitter = 0.04 }) {
+  return stateParams({
+    convergence: 0.9,
+    orbitSpeed,
+    jitter,
+    pulseGain: 0,
+    alpha: 0.5,
+    countRatio,
+    ringRadius,
+    tone: 'alert',
+  })
+}
 
 export const STATE_PARAMS = Object.freeze({
   booting: stateParams({
@@ -195,11 +200,20 @@ export const STATE_PARAMS = Object.freeze({
     countRatio: 1,
   }),
   // A barge-in is a one-shot outward impulse over the listening field: the
-  // scatter decays away while the state itself stays "interrupted".
+  // scatter decays away while the state itself stays "interrupted". This entry
+  // covers the case the derived state can actually name — playback cleared
+  // without the microphone taking over — and owns the impulse size that
+  // interrupt() reuses for a barge-in over any other state.
   interrupted: Object.freeze({ ...LISTENING, scatter: 1 }),
-  disconnected: COLLAPSE,
-  error: COLLAPSE,
-  'permission-denied': COLLAPSE,
+  // A dropped backend: the widest, sparsest, slowest ring — the field simply
+  // stopped where it was.
+  disconnected: collapseParams({ ringRadius: RING_RADIUS, countRatio: 0.5, orbitSpeed: 0.03 }),
+  // A failure is restless: a tighter ring, denser, drifting faster and
+  // trembling, so "something went wrong" reads differently from "nothing is
+  // there" even with the colour thrown away.
+  error: collapseParams({ ringRadius: 38, countRatio: 0.75, orbitSpeed: 0.06, jitter: 0.06 }),
+  // A refusal is small and closed: the tightest, sparsest, near-still ring.
+  'permission-denied': collapseParams({ ringRadius: 28, countRatio: 0.35, orbitSpeed: 0.02 }),
 })
 
 // Tick tiers. A resting orb sits in the menu bar for hours, so it must not pay
@@ -219,6 +233,13 @@ export const STATE_FPS = Object.freeze({
 })
 
 const DEFAULT_STATE = 'booting'
+
+// The two accessibility preferences that decide whether this module animates at
+// all. Both are watched live: a viewer who turns Reduce Motion on mid-session
+// must not keep getting animation, and one who turns high contrast on must not
+// keep paying for frames drawn into a canvas the stylesheet has hidden.
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
+const HIGH_CONTRAST_QUERY = '(prefers-contrast: more)'
 
 // Deterministic PRNG: the layout must be reproducible so a reduced-motion
 // constellation is stable across redraws and assertable in tests.
@@ -362,7 +383,12 @@ export function createOrbVisual(canvas, options = {}) {
 
   // A high-contrast viewer sees the CSS solid disc instead of this canvas, and
   // a reduced-motion viewer gets one still constellation: neither runs a loop.
-  const staticMode = reducedMotion === true || highContrast === true || !schedule
+  // Both preferences can be toggled while the orb is on screen, so these are
+  // live values rather than a construction-time snapshot.
+  let reducedMotionOn = reducedMotion === true
+  let highContrastOn = highContrast === true
+  const computeStaticMode = () => reducedMotionOn || highContrastOn || !schedule
+  let staticMode = computeStaticMode()
 
   // The raw device ratio drives the media query; the capped one drives the
   // backing store, because past 2x a 116px disc stops paying for the pixels.
@@ -373,7 +399,12 @@ export function createOrbVisual(canvas, options = {}) {
 
   let rawPixelRatio = readRawRatio()
   let pixelRatio = capRatio(rawPixelRatio)
-  const context = canvas.getContext('2d')
+  const context = canvas?.getContext?.('2d')
+  // A refused 2D context (a GPU process that just died, a canvas that is not
+  // one) would otherwise surface as a TypeError from inside the first draw:
+  // failing here is what lets createOrbVisualSafe below trade the whole visual
+  // for a no-op instead of taking the renderer down with it.
+  if (!context) throw new Error('the orb canvas has no 2D context')
 
   function applyBackingStore() {
     const backingSize = Math.round(ORB_SIZE * pixelRatio)
@@ -580,7 +611,10 @@ export function createOrbVisual(canvas, options = {}) {
       context.strokeStyle = colors.ring
       context.lineWidth = 1.5
       context.beginPath()
-      context.arc(CENTER, CENTER, RING_RADIUS, 0, TAU)
+      // The smoothed target radius, not a constant: each terminal state
+      // collapses onto its own ring, and the stroke has to sit under the
+      // particles rather than at one fixed radius they no longer share.
+      context.arc(CENTER, CENTER, targetRadius, 0, TAU)
       context.stroke()
       context.globalAlpha = 1
     }
@@ -708,6 +742,65 @@ export function createOrbVisual(canvas, options = {}) {
     }
   }
 
+  // The one place the mode decides what the field should be doing right now,
+  // shared by construction and by a live preference change.
+  function applyMode() {
+    stopLoop()
+    if (staticMode || tickIntervalMs() === 0) drawStaticFrame()
+    else startLoop()
+  }
+
+  // Reduce Motion or high contrast can be switched on and off while the orb is
+  // on screen. Entering either one stops the loop and leaves a single still
+  // frame; leaving both hands the state's tier back.
+  function setAccessibility(preferences = {}) {
+    if (destroyed) return
+    const nextReduced = typeof preferences.reducedMotion === 'boolean'
+      ? preferences.reducedMotion
+      : reducedMotionOn
+    const nextContrast = typeof preferences.highContrast === 'boolean'
+      ? preferences.highContrast
+      : highContrastOn
+    if (nextReduced === reducedMotionOn && nextContrast === highContrastOn) return
+    reducedMotionOn = nextReduced
+    highContrastOn = nextContrast
+    const nextStatic = computeStaticMode()
+    // Dropping one preference while the other still holds changes nothing on
+    // screen: the orb was static and stays static.
+    if (nextStatic === staticMode) return
+    staticMode = nextStatic
+    // The mode is folded into the field seed — static mode gives every state its
+    // own constellation, animated mode keeps one continuous field — so crossing
+    // the boundary has to refill the field for the mode it is now in.
+    fillField(stateSeed(stateName))
+    applyMode()
+  }
+
+  // A one-shot barge-in impulse over whatever field is on screen.
+  //
+  // The 'interrupted' *state* is only reachable when playback is cleared without
+  // the microphone having taken over, and a real barge-in is the opposite case:
+  // the user talks over playback, the capture axis is already 'listening' when
+  // the clear lands, and deriveOrbState keeps saying 'listening' — correctly, as
+  // that is what the orb is doing. So the renderer calls this instead, and the
+  // scatter rides the current state rather than replacing it.
+  function interrupt() {
+    if (destroyed) return
+    scatter = STATE_PARAMS.interrupted.scatter
+    if (!staticMode && tickIntervalMs() > 0) {
+      // A running loop decays the impulse; a hidden orb picks it up on resume.
+      startLoop()
+      return
+    }
+    // Nothing is coming to decay it here — reduced motion, high contrast, or a
+    // zero-fps tier — so the impulse gets a single frame and is then released
+    // back to the state's canonical constellation, which is what keeps a static
+    // layout a pure function of (seed, state).
+    draw()
+    scatter = 0
+    drawStaticFrame()
+  }
+
   function handleVisibilityChange() {
     const nextHidden = documentRef?.visibilityState === 'hidden'
     if (nextHidden === hidden) return
@@ -717,6 +810,34 @@ export function createOrbVisual(canvas, options = {}) {
   }
 
   let ratioQuery = null
+  let reducedMotionQuery = null
+  let highContrastQuery = null
+
+  // A stub may fire its listeners with no event at all, so the query object is
+  // the fallback source of truth for what the preference now reads as.
+  function queryMatches(event, query) {
+    if (typeof event?.matches === 'boolean') return event.matches
+    return query?.matches === true
+  }
+
+  function handleReducedMotionChange(event) {
+    setAccessibility({ reducedMotion: queryMatches(event, reducedMotionQuery) })
+  }
+
+  function handleHighContrastChange(event) {
+    setAccessibility({ highContrast: queryMatches(event, highContrastQuery) })
+  }
+
+  // The initial values arrive as constructor options (the renderer reads them in
+  // the same pass that builds the orb); these listeners only carry later
+  // changes, so a preference flipped at runtime lands like one set at boot.
+  function armAccessibilityQueries() {
+    if (!matchMediaRef) return
+    reducedMotionQuery = matchMediaRef(REDUCED_MOTION_QUERY)
+    reducedMotionQuery?.addEventListener?.('change', handleReducedMotionChange)
+    highContrastQuery = matchMediaRef(HIGH_CONTRAST_QUERY)
+    highContrastQuery?.addEventListener?.('change', handleHighContrastChange)
+  }
 
   function armRatioQuery() {
     if (!matchMediaRef) return
@@ -767,21 +888,25 @@ export function createOrbVisual(canvas, options = {}) {
     documentRef?.removeEventListener?.('visibilitychange', handleVisibilityChange)
     ratioQuery?.removeEventListener?.('change', handleRatioChange)
     ratioQuery = null
+    reducedMotionQuery?.removeEventListener?.('change', handleReducedMotionChange)
+    reducedMotionQuery = null
+    highContrastQuery?.removeEventListener?.('change', handleHighContrastChange)
+    highContrastQuery = null
   }
 
   armRatioQuery()
-  if (staticMode) {
-    drawStaticFrame()
-  } else {
-    documentRef?.addEventListener?.('visibilitychange', handleVisibilityChange)
-    if (tickIntervalMs() === 0) drawStaticFrame()
-    else startLoop()
-  }
+  armAccessibilityQueries()
+  // Hooked up in either mode: a static orb can become animated mid-session, and
+  // the handler is a no-op while nothing is scheduled anyway.
+  documentRef?.addEventListener?.('visibilitychange', handleVisibilityChange)
+  applyMode()
 
   return {
     setState,
     setLevel,
     setPalette,
+    setAccessibility,
+    interrupt,
     destroy,
     get state() { return stateName },
     get params() { return params },
@@ -791,4 +916,89 @@ export function createOrbVisual(canvas, options = {}) {
     get fps() { return staticMode ? 0 : STATE_FPS[stateName] },
     get particleCount() { return Math.min(activeMax, total) },
   }
+}
+
+// Every method of the real API, doing nothing: the orb is decoration, and a
+// renderer whose canvas is unusable still has a socket, a drag handle, a state
+// label, and an aria contract to keep serving.
+function createNoopVisual() {
+  return Object.freeze({
+    setState() {},
+    setLevel() {},
+    setPalette() {},
+    setAccessibility() {},
+    interrupt() {},
+    destroy() {},
+    get state() { return DEFAULT_STATE },
+    get params() { return STATE_PARAMS[DEFAULT_STATE] },
+    get palette() { return 'ember' },
+    get level() { return 0 },
+    get smoothedLevel() { return 0 },
+    get fps() { return 0 },
+    get particleCount() { return 0 },
+  })
+}
+
+// The constructor the renderer actually uses. Two failures are contained here:
+// a visual that cannot be built at all, and a live one whose first throw would
+// otherwise escape into a caller that has no business handling it — render(), or
+// the awaited socket-message tail, where one exception poisons the queue.
+//
+// The trade is deliberately total and one-way: the orb goes away, permanently,
+// and the renderer keeps running. A canvas that threw once will throw again
+// every frame, so retrying it would only turn one warning into a flood.
+export function createOrbVisualSafe(canvas, options = {}) {
+  const noop = createNoopVisual()
+  let warned = false
+  function warn(error) {
+    if (warned) return
+    warned = true
+    globalThis.console?.warn?.(
+      `nova orb: the particle visual is disabled (${error?.message || error})`,
+    )
+  }
+
+  let target
+  try {
+    target = createOrbVisual(canvas, options)
+  } catch (error) {
+    warn(error)
+    return noop
+  }
+
+  function disable(error) {
+    if (target === noop) return
+    const broken = target
+    target = noop
+    warn(error)
+    // Tear the broken visual down so its loop and listeners stop too.
+    try { broken.destroy() } catch { /* it is already past helping */ }
+  }
+
+  function guard(name) {
+    return (...args) => {
+      try {
+        return target[name](...args)
+      } catch (error) {
+        disable(error)
+        return undefined
+      }
+    }
+  }
+
+  return Object.freeze({
+    setState: guard('setState'),
+    setLevel: guard('setLevel'),
+    setPalette: guard('setPalette'),
+    setAccessibility: guard('setAccessibility'),
+    interrupt: guard('interrupt'),
+    destroy: guard('destroy'),
+    get state() { return target.state },
+    get params() { return target.params },
+    get palette() { return target.palette },
+    get level() { return target.level },
+    get smoothedLevel() { return target.smoothedLevel },
+    get fps() { return target.fps },
+    get particleCount() { return target.particleCount },
+  })
 }

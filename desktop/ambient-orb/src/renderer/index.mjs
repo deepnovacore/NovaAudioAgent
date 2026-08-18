@@ -13,7 +13,7 @@ import {
   PlaybackMeter,
 } from './audio.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
-import { createOrbVisual } from './orb-visual.mjs'
+import { createOrbVisualSafe } from './orb-visual.mjs'
 import { deriveOrbState } from './state.mjs'
 
 const shell = document.querySelector('#shell')
@@ -48,7 +48,10 @@ function getPlaybackLevel() {
 // The palette itself arrives later, from bootstrap.settings (a future task's
 // preload channel), so construction always starts on the 'ember' default and
 // boot() below swaps it live once settings are known.
-const visual = createOrbVisual(document.querySelector('.orb-canvas'), {
+// Guarded, not raw: the orb is the one decorative part of this renderer, and a
+// canvas it cannot acquire (or one that throws mid-draw) must not take the
+// socket, the drag handle, or the accessibility labels down with it.
+const visual = createOrbVisualSafe(document.querySelector('.orb-canvas'), {
   reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   highContrast: window.matchMedia('(prefers-contrast: more)').matches,
   palette: 'ember',
@@ -113,6 +116,17 @@ function render() {
   orb.setAttribute('aria-label', `${state.label}；${state.codexLabel}`)
   orb.setAttribute('aria-pressed', String(axes.activated))
   visual.setState(state.name, { codexWorking: axes.codex === 'working' })
+}
+
+// The one door onto the interrupted playback axis. A real barge-in — the user
+// talking over playback — has the capture axis already in 'listening' by the
+// time the clear lands, so deriveOrbState keeps returning 'listening' and the
+// 'interrupted' state never renders. The scatter is therefore applied as a
+// one-shot impulse over whatever field is on screen, independent of the derived
+// name, while the label contract itself stays untouched.
+function markPlaybackInterrupted() {
+  if (axes.playback !== 'interrupted') visual.interrupt()
+  axes.playback = 'interrupted'
 }
 
 function send(value) {
@@ -197,7 +211,12 @@ function detectLocalOnset(pcm) {
   const now = performance.now()
   const verdict = observePcmOnset(pcm, onsetTracker, now)
   visual.setLevel(measurePcmLevel(pcm))
-  axes.capture = onsetTracker.active ? 'listening' : 'idle'
+  // Three-way, not two: the tracker's 50 ms attack window is what 'candidate'
+  // names, so a syllable that has not held long enough to mint a speech id
+  // still lights the orb instead of leaving it idle.
+  axes.capture = onsetTracker.active
+    ? 'listening'
+    : onsetTracker.pending ? 'candidate' : 'idle'
   if (verdict) {
     alertTone.stop()
     send({ type: 'speech.onset', speech_id: verdict.speechId, t_render_ms: now })
@@ -384,7 +403,7 @@ async function handleControl(message) {
           message.generation_epoch,
         )
       }
-      axes.playback = 'interrupted'
+      markPlaybackInterrupted()
     }
     let playedMs = cleared
       ? Math.max(cleared.playedMs, Number(nativeEvidence?.playedMs) || 0)
@@ -417,7 +436,7 @@ async function handleControl(message) {
         return window.novaAudioAgentDesktop.nativeAudio.clear(utteranceId, generationEpoch)
       },
     })
-    if (result.cleared) axes.playback = 'interrupted'
+    if (result.cleared) markPlaybackInterrupted()
     if (hasIdentity) {
       send({
         type: 'playback.cleared',

@@ -396,6 +396,30 @@ test('onset tracker sends one onset then periodic refreshes with a stable id', (
   assert.equal(tracker.active, true)
 })
 
+test('onset tracker surfaces the attack window it is still inside', () => {
+  let minted = 0
+  const tracker = new audioModule.OnsetTracker({ mintId: () => `s-${minted += 1}` })
+
+  assert.equal(tracker.pending, false, 'silence is not a candidate')
+  assert.equal(tracker.observe(0.1, 10, 10), null)
+  assert.equal(tracker.pending, true, 'a level over the threshold is a candidate first')
+  assert.equal(tracker.active, false, 'and not yet a confirmed onset')
+
+  assert.deepEqual(tracker.observe(0.1, 60, 50), { type: 'onset', speechId: 's-1' })
+  assert.equal(tracker.pending, false, 'a confirmed onset is no longer a candidate')
+  assert.equal(tracker.active, true)
+
+  // Falling back under the threshold drops the candidate without minting an id.
+  tracker.observe(0.0, 100)
+  tracker.observe(0.0, 300)
+  assert.equal(tracker.active, false)
+  assert.equal(tracker.observe(0.1, 310, 10), null)
+  assert.equal(tracker.pending, true)
+  tracker.reset()
+  assert.equal(tracker.pending, false, 'reset clears the attack window too')
+  assert.equal(minted, 1)
+})
+
 test('onset tracker mints a new utterance only after the hangover expires', () => {
   let minted = 0
   const tracker = new audioModule.OnsetTracker({ mintId: () => `s-${minted += 1}` })

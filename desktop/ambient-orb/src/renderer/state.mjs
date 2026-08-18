@@ -24,7 +24,11 @@ const WINDOWS_PERMISSION_DENIED_LABEL =
 export function deriveOrbState(input) {
   let name
   if (input.error) name = 'error'
-  else if (!input.connected) name = 'disconnected'
+  // A renderer that has not finished bootstrapping has not connected yet
+  // either, so plain "disconnected wins" made 'booting' unreachable at the one
+  // moment it describes. Booting only shields the socket axis: an error still
+  // outranks it, and a disconnect that lands after boot still collapses.
+  else if (!input.connected && !input.booting) name = 'disconnected'
   else if (input.permission === 'denied') name = 'permission-denied'
   else if (input.booting) name = 'booting'
   else if (!input.activated) name = 'inactive'

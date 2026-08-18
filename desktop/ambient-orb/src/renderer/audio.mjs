@@ -150,6 +150,14 @@ export class OnsetTracker {
     this.lastSentAt = 0
   }
 
+  // The attack window, surfaced for the orb: speech is over the threshold but
+  // has not held for `attackMs` yet, which is exactly the 'candidate' state.
+  // A read-only view of the same counter `observe` thresholds — no new
+  // thresholds, and nothing here can change the verdict.
+  get pending() {
+    return !this.active && this.candidateMs > 0
+  }
+
   observe(level, now, durationMs = 0) {
     if (level >= this.level) {
       this.lastSpeechAt = now
