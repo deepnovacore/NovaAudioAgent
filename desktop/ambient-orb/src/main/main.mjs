@@ -36,7 +36,9 @@ import {
   createSafeStorageCodec,
   loadSettings,
   publicSettings,
+  readSecret,
   saveSettings,
+  SECRET_KEYS,
   secretsPresent,
 } from './settings-store.mjs'
 import {
@@ -255,6 +257,29 @@ function createTray() {
   return next
 }
 
+// Decrypts only the secrets the panel actually has stored, only for the
+// instant the backend is spawned: the result is a local, passed once into
+// `backendLaunchSpec` below and held nowhere else — never on `this` or any
+// module-level object, so there is nothing left to leak once this call
+// returns. A key present in the store but unreadable (keychain unavailable,
+// entry sealed by another OS user/machine, corrupt ciphertext) is logged by
+// name only — never its value, never even attempted — and simply omitted
+// from the result, which `backendLaunchSpec` treats exactly like "absent".
+function decryptSecretsForSpawn(settings, codec) {
+  const present = secretsPresent(settings)
+  const decrypted = {}
+  for (const key of SECRET_KEYS) {
+    if (!present[key]) continue
+    const plaintext = readSecret(settings, key, codec)
+    if (typeof plaintext === 'string' && plaintext) {
+      decrypted[key] = plaintext
+    } else {
+      console.error(`[desktop-diagnostic] settings_secret_unreadable key=${key}`)
+    }
+  }
+  return decrypted
+}
+
 async function launchBackend() {
   const token = randomBytes(16).toString('hex')
   const workspace = process.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || process.cwd()
@@ -268,12 +293,15 @@ async function launchBackend() {
   })
   let ready
   try {
+    const decryptedSecrets = decryptSecretsForSpawn(currentSettings, secretCodec)
     const spec = backendLaunchSpec({
       python: pythonExecutable(),
       workspace,
       token,
       readyEndpoint: await listener.endpoint,
       parentEnv: process.env,
+      settings: currentSettings,
+      decryptedSecrets,
     })
     backend = spawn(spec.command, spec.argv, {
       cwd: workspace,

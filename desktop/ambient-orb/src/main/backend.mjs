@@ -7,6 +7,28 @@ const TOKEN_PATTERN = /^[a-f0-9]{32}$/
 const READY_ENDPOINT_PATTERN = /^127\.0\.0\.1:([0-9]{1,5})$/
 const NEWLINE = 0x0a
 
+// Mirrors settings-store.mjs's DEFAULT_SETTINGS for exactly the three fields this
+// module injects. Duplicated rather than imported: backend.mjs stays importable
+// without the settings-store module (and its node:fs/node:crypto surface) ever
+// loading, and a missing/corrupt settings file must never produce the literal
+// string "undefined" in a child's environment.
+const SETTINGS_DEFAULTS = Object.freeze({
+  proactivity: 'balanced',
+  codexHeartbeatSeconds: 30,
+  voice: 'longanqian',
+})
+
+// decryptedSecrets key -> env var name. Only a non-empty decrypted string maps
+// to an override; an absent/empty key is omitted entirely so the user's own
+// `.env` (or parent environment) keeps winning. Names match the Settings
+// aliases in src/nova_audio_agent/config.py exactly.
+const SECRET_ENV_MAP = Object.freeze({
+  dashscopeApiKey: 'DASHSCOPE_API_KEY',
+  tavilyApiKey: 'TAVILY_API_KEY',
+  modelApiKey: 'NOVA_AUDIO_AGENT_MODEL_API_KEY',
+  codexApiKey: 'NOVA_AUDIO_AGENT_CODEX_API_KEY',
+})
+
 /**
  * How long one connection may hold a file descriptor without authenticating.
  *
@@ -48,7 +70,15 @@ export function fallbackPython(platform = process.platform) {
   return platform === 'win32' ? 'python' : 'python3'
 }
 
-export function backendLaunchSpec({ python, workspace, token, readyEndpoint, parentEnv }) {
+export function backendLaunchSpec({
+  python,
+  workspace,
+  token,
+  readyEndpoint,
+  parentEnv,
+  settings,
+  decryptedSecrets,
+}) {
   if (typeof python !== 'string' || !python) throw new Error('python is required')
   if (typeof workspace !== 'string' || !workspace) throw new Error('workspace is required')
   if (!TOKEN_PATTERN.test(token)) throw new Error('128-bit token is required')
@@ -59,16 +89,35 @@ export function backendLaunchSpec({ python, workspace, token, readyEndpoint, par
   if (endpointPort < 1 || endpointPort > 65535) {
     throw new Error('loopback readiness endpoint is required')
   }
+  // Per-field fallback, not just a whole-object one: a partially-populated
+  // settings object (or none at all, e.g. before the store's first write)
+  // still resolves every field rather than handing the child `undefined`.
+  const proactivity = settings?.proactivity ?? SETTINGS_DEFAULTS.proactivity
+  const codexHeartbeatSeconds = settings?.codexHeartbeatSeconds
+    ?? SETTINGS_DEFAULTS.codexHeartbeatSeconds
+  const voice = settings?.voice ?? SETTINGS_DEFAULTS.voice
   const env = {
     ...parentEnv,
     NOVA_AUDIO_AGENT_DESKTOP_TOKEN: token,
     NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT: readyEndpoint,
     NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
     NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    NOVA_AUDIO_AGENT_PROACTIVITY_PRESET: proactivity,
+    NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),
+    NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: voice,
   }
   // The inherited fd-3 readiness pipe is gone: stdio stops at stderr and the
   // backend dials back instead, so a stale parent value must never imply one.
   delete env.NOVA_AUDIO_AGENT_DESKTOP_READY_FD
+  // Overrides only: an absent or empty decrypted value leaves the key out of
+  // `env` entirely, so whatever the launcher's own `.env`/parent env supplied
+  // keeps winning. Never a replacement with an empty string.
+  if (decryptedSecrets && typeof decryptedSecrets === 'object') {
+    for (const [secretKey, envName] of Object.entries(SECRET_ENV_MAP)) {
+      const value = decryptedSecrets[secretKey]
+      if (typeof value === 'string' && value) env[envName] = value
+    }
+  }
   return {
     command: python,
     argv: ['-m', 'nova_audio_agent.realtime.desktop'],

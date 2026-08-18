@@ -122,6 +122,127 @@ test('launch spec strips a stale inherited readiness pipe', () => {
   assert.equal('NOVA_AUDIO_AGENT_DESKTOP_READY_FD' in spec.env, false)
 })
 
+test('launch spec injects the panel proactivity, heartbeat, and voice settings', () => {
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+    settings: { proactivity: 'eager', codexHeartbeatSeconds: 45, voice: 'longanqian' },
+  })
+
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET, 'eager')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL, '45')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE, 'longanqian')
+})
+
+test('launch spec falls back to the settings-store defaults when settings is missing', () => {
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+  })
+
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET, 'balanced')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL, '30')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE, 'longanqian')
+})
+
+test('launch spec falls back per-field for a partially-populated settings object', () => {
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+    settings: { proactivity: 'conservative' },
+  })
+
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET, 'conservative')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL, '30')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE, 'longanqian')
+})
+
+test('launch spec injects decrypted secrets as env overrides when present', () => {
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+    decryptedSecrets: {
+      dashscopeApiKey: 'dash-key',
+      tavilyApiKey: 'tavily-key',
+      modelApiKey: 'model-key',
+      codexApiKey: 'codex-key',
+    },
+  })
+
+  assert.equal(spec.env.DASHSCOPE_API_KEY, 'dash-key')
+  assert.equal(spec.env.TAVILY_API_KEY, 'tavily-key')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_MODEL_API_KEY, 'model-key')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_API_KEY, 'codex-key')
+})
+
+test('launch spec omits a secret env var entirely when absent, empty, or undefined', () => {
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+    decryptedSecrets: { dashscopeApiKey: '', tavilyApiKey: null },
+  })
+
+  assert.equal('DASHSCOPE_API_KEY' in spec.env, false)
+  assert.equal('TAVILY_API_KEY' in spec.env, false)
+  assert.equal('NOVA_AUDIO_AGENT_MODEL_API_KEY' in spec.env, false)
+  assert.equal('NOVA_AUDIO_AGENT_CODEX_API_KEY' in spec.env, false)
+
+  const noSecretsAtAll = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+  })
+  assert.equal('DASHSCOPE_API_KEY' in noSecretsAtAll.env, false)
+})
+
+test('a parent-env api key survives when the panel key is absent, and is overridden when present', () => {
+  const withoutPanelKey = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: { DASHSCOPE_API_KEY: 'from-dotenv' },
+  })
+  assert.equal(withoutPanelKey.env.DASHSCOPE_API_KEY, 'from-dotenv')
+
+  const withEmptyPanelKey = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: { DASHSCOPE_API_KEY: 'from-dotenv' },
+    decryptedSecrets: { dashscopeApiKey: '' },
+  })
+  assert.equal(withEmptyPanelKey.env.DASHSCOPE_API_KEY, 'from-dotenv')
+
+  const withPanelKey = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: { DASHSCOPE_API_KEY: 'from-dotenv' },
+    decryptedSecrets: { dashscopeApiKey: 'from-panel' },
+  })
+  assert.equal(withPanelKey.env.DASHSCOPE_API_KEY, 'from-panel')
+})
+
 test('launch spec refuses any readiness endpoint that is not a loopback port', () => {
   const base = {
     python: '/venv/bin/python',

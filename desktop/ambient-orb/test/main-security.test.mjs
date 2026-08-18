@@ -111,19 +111,51 @@ test('settings IPC is sender-validated and answers from main without an orb rela
 test('no decrypted secret can reach the renderer or a log line', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
-  // Only the presence map and the non-secret fields are ever returned.
+  // Only the presence map and the non-secret fields are ever returned to the panel.
   assert.match(source, /function settingsView\(\) \{/)
   assert.match(source, /\.\.\.publicSettings\(currentSettings\)/)
   assert.match(source, /secretsPresent: secretsPresent\(currentSettings\)/)
   assert.match(source, /keyringAvailable: secretCodec\.available\(\)/)
-  // Decryption for spawn is a later task; main must not hold plaintext at all.
-  assert.doesNotMatch(source, /readSecret/)
   // The failure log for a settings save names the error type only, never the payload.
   assert.match(source, /settings_save_failure type=\$\{error\.name\}/)
+  // Every console.* line is scanned: a line mentioning "secret" or "apiKey" is
+  // allowed only if it is exactly the key-name-only unreadable-secret
+  // diagnostic; anything else naming a secret, or naming the raw settings
+  // patch, or interpolating the decrypted `plaintext` local, fails the test.
   const logs = source.match(/console\.(?:log|warn|error)\([^\n]*/g) || []
   for (const line of logs) {
-    assert.doesNotMatch(line, /secret|apiKey|patch/i, `log line leaks a secret: ${line}`)
+    assert.doesNotMatch(line, /patch/i, `log line leaks the settings patch: ${line}`)
+    assert.doesNotMatch(line, /plaintext/, `log line leaks a decrypted secret value: ${line}`)
+    if (/secret|apiKey/i.test(line)) {
+      assert.match(
+        line,
+        /settings_secret_unreadable key=\$\{key\}/,
+        `log line mentioning secrets must be the key-name-only diagnostic: ${line}`,
+      )
+    }
   }
+})
+
+test('readSecret is wired at the spawn site, decrypting only what backendLaunchSpec receives', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  // Now consciously wired: the pin from before Task 20 (`doesNotMatch(/readSecret/)`)
+  // is gone, because secrets must reach the spawned backend somehow.
+  const readSecretSite = source.indexOf('readSecret(')
+  const spawnSite = source.indexOf('backend = spawn(')
+  assert.ok(readSecretSite >= 0, 'readSecret must be wired now that spawn needs decrypted secrets')
+  assert.ok(spawnSite >= 0, 'the backend is still spawned here')
+  assert.ok(readSecretSite < spawnSite, 'secrets are decrypted before the backend is spawned')
+
+  // The decrypted secrets reach backendLaunchSpec, not any wider scope.
+  const specCall = source.slice(source.indexOf('const spec = backendLaunchSpec({'))
+  const specBody = specCall.slice(0, specCall.indexOf('\n    })'))
+  assert.match(specBody, /settings: currentSettings/)
+  assert.match(specBody, /decryptedSecrets,?/)
+
+  // The decrypted value never survives past the call that builds `spec`: no
+  // module-level `let`/`var decryptedSecrets` binding exists anywhere.
+  assert.doesNotMatch(source, /\b(?:let|var)\s+decryptedSecrets\b/)
 })
 
 test('the bootstrap payload carries the non-secret settings for the orb', async () => {
