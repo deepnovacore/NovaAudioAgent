@@ -6,7 +6,8 @@
   "main": "src/main/main.mjs",
   "scripts": {
     "test": "node --test",
-    "build": "node scripts/build.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "build": "node scripts/make-icons.mjs --if-missing && node scripts/build.mjs",
     "start": "npm run build && electron .",
     "package:mac": "npm run build && electron-builder --config electron-builder.yml --mac dir"
   },

@@ -259,11 +259,44 @@ function showOrbMenu(launchId) {
   ]).popup({ window: mainWindow })
 }
 
-function createTray() {
-  const pixel = nativeImage.createFromDataURL(
+// One rendering per status-area convention: macOS asks for 16pt, the GTK and
+// Ayatana status areas for 22, and the Windows notification area for 32. Feeding
+// a 16px image to Windows is how a tray icon ends up a blurry smudge.
+const TRAY_ICON_FILES = Object.freeze({
+  darwin: 'tray-16.png',
+  linux: 'tray-22.png',
+  win32: 'tray-32.png',
+})
+
+// Same two-sided resolution as `nativeBinary`: packaged, the tray PNGs ride in
+// as extraResources next to the native helper rather than inside the asar;
+// unpacked, they are read straight out of the repo's resources/ tree.
+function trayIconFile() {
+  const file = TRAY_ICON_FILES[process.platform] || TRAY_ICON_FILES.win32
+  return app.isPackaged
+    ? resolve(process.resourcesPath, 'tray', file)
+    : resolve(packageRoot, 'resources/tray', file)
+}
+
+// `createFromPath` reports failure by returning an empty image rather than by
+// throwing, so a missing or unreadable file has to be caught on isEmpty() — an
+// existsSync check alone would hand Electron a blank Tray and no explanation.
+// The 1x1 transparent pixel is what keeps the menu reachable in that case: an
+// invisible tray entry is still better than a crash on startup.
+function trayImage() {
+  const file = trayIconFile()
+  if (existsSync(file)) {
+    const image = nativeImage.createFromPath(file)
+    if (!image.isEmpty()) return image
+  }
+  console.warn(`[ambient-orb] tray icon unreadable, falling back to a blank pixel: ${file}`)
+  return nativeImage.createFromDataURL(
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL6WQAAAABJRU5ErkJggg==',
   )
-  const next = new Tray(pixel)
+}
+
+function createTray() {
+  const next = new Tray(trayImage())
   next.setToolTip('Nova Audio Agent Ambient Orb')
   next.setContextMenu(Menu.buildFromTemplate([
     { label: '显示', click: () => mainWindow?.show() },

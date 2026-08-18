@@ -16,6 +16,10 @@ files:
 extraResources:
   - from: build/macos_voice_io
     to: native/macos_voice_io
+  # The tray reads these with nativeImage.createFromPath, so they stay outside
+  # the asar alongside the native helper rather than being bundled into it.
+  - from: resources/tray
+    to: tray
 
 mac:
   category: public.app-category.productivity
