@@ -21,6 +21,7 @@ const MAX_PIXEL_RATIO = 2
 const PLATE_RADIUS = 57
 
 const DEFAULT_COUNT = 240
+const MIN_COUNT = 120
 const FIELD_RADIUS = 44
 const CORE_RADIUS = 12
 const RING_RADIUS = 46
@@ -38,9 +39,25 @@ const PULSE_PX = 12
 const SCATTER_PX = 16
 
 const PARAM_TAU = 180
-const LEVEL_TAU = 90
 const SCATTER_TAU = 260
+
+// Amplitude envelope: a syllable has to land on the field immediately, but the
+// field must not flicker back to nothing between two of them. Both numbers are
+// exponential time constants — one constant covers 1 - e^-1 = 63.2% of the
+// remaining distance — so the attack is fast and the release is slow.
+const LEVEL_ATTACK_MS = 40
+const LEVEL_DECAY_MS = 220
+
 const MAX_FRAME_MS = 50
+const FIRST_FRAME_MS = 16
+// rAF timestamps never land exactly on a tier boundary; without this a 16.7 ms
+// display would skip every other 30 fps frame and halve the tier.
+const TICK_SLACK_MS = 1
+
+// Auto-degrade: if our own advance+draw is costing this much per frame on
+// average, the machine cannot afford the full field and the count is halved once.
+const DEGRADE_FRAME_MS = 4
+const DEGRADE_WINDOW = 30
 
 // Sprite atlas: three disc sizes across, one row per colour tier.
 const SPRITE_SIZES = Object.freeze([5, 9, 15])
@@ -185,6 +202,22 @@ export const STATE_PARAMS = Object.freeze({
   'permission-denied': COLLAPSE,
 })
 
+// Tick tiers. A resting orb sits in the menu bar for hours, so it must not pay
+// display rate for a field that is barely moving, and a dead session must not
+// pay anything at all: zero means one static frame with the loop stopped.
+export const STATE_FPS = Object.freeze({
+  speaking: 60,
+  listening: 60,
+  interrupted: 60,
+  candidate: 30,
+  booting: 30,
+  idle: 15,
+  inactive: 0,
+  disconnected: 0,
+  error: 0,
+  'permission-denied': 0,
+})
+
 const DEFAULT_STATE = 'booting'
 
 // Deterministic PRNG: the layout must be reproducible so a reduced-motion
@@ -288,6 +321,12 @@ export function createOrbVisual(canvas, options = {}) {
     createCanvas = defaultCreateCanvas,
     raf,
     cancelRaf,
+    now,
+    getSpeakingLevel = null,
+    document: documentRef = globalThis.document,
+    matchMedia: matchMediaRef = typeof globalThis.matchMedia === 'function'
+      ? query => globalThis.matchMedia(query)
+      : null,
   } = options
 
   const schedule = raf
@@ -298,19 +337,32 @@ export function createOrbVisual(canvas, options = {}) {
     || (typeof globalThis.cancelAnimationFrame === 'function'
       ? handle => globalThis.cancelAnimationFrame(handle)
       : () => {})
+  const clock = typeof now === 'function'
+    ? now
+    : () => (globalThis.performance?.now?.() ?? Date.now())
 
   // A high-contrast viewer sees the CSS solid disc instead of this canvas, and
   // a reduced-motion viewer gets one still constellation: neither runs a loop.
   const staticMode = reducedMotion === true || highContrast === true || !schedule
 
-  const pixelRatio = Math.min(
-    MAX_PIXEL_RATIO,
-    Math.max(1, Number(pixelRatioInput ?? globalThis.devicePixelRatio ?? 1) || 1),
-  )
-  const backingSize = Math.round(ORB_SIZE * pixelRatio)
-  canvas.width = backingSize
-  canvas.height = backingSize
+  // The raw device ratio drives the media query; the capped one drives the
+  // backing store, because past 2x a 116px disc stops paying for the pixels.
+  const readRawRatio = typeof pixelRatioInput === 'function'
+    ? () => Number(pixelRatioInput()) || 1
+    : () => Number(pixelRatioInput ?? globalThis.devicePixelRatio ?? 1) || 1
+  const capRatio = raw => Math.min(MAX_PIXEL_RATIO, Math.max(1, raw))
+
+  let rawPixelRatio = readRawRatio()
+  let pixelRatio = capRatio(rawPixelRatio)
   const context = canvas.getContext('2d')
+
+  function applyBackingStore() {
+    const backingSize = Math.round(ORB_SIZE * pixelRatio)
+    canvas.width = backingSize
+    canvas.height = backingSize
+  }
+
+  applyBackingStore()
 
   let paletteName = PALETTES[palette] ? palette : 'ember'
   let colors = paletteColors(paletteName)
@@ -382,6 +434,39 @@ export function createOrbVisual(canvas, options = {}) {
   let frameHandle = null
   let lastTimestamp = -1
   let destroyed = false
+  let hidden = documentRef?.visibilityState === 'hidden'
+
+  // Rolling frame-cost window, allocated once: the tick must stay allocation-free.
+  const frameCost = new Float32Array(DEGRADE_WINDOW)
+  let frameCostIndex = 0
+  let frameCostFilled = 0
+  let frameCostTotal = 0
+  let activeMax = total
+  let degraded = false
+
+  function sampleFrameCost(costMs) {
+    if (degraded || !Number.isFinite(costMs)) return
+    frameCostTotal += costMs - frameCost[frameCostIndex]
+    frameCost[frameCostIndex] = costMs
+    frameCostIndex = frameCostIndex + 1 === DEGRADE_WINDOW ? 0 : frameCostIndex + 1
+    if (frameCostFilled < DEGRADE_WINDOW) {
+      frameCostFilled += 1
+      if (frameCostFilled < DEGRADE_WINDOW) return
+    }
+    if (frameCostTotal / DEGRADE_WINDOW <= DEGRADE_FRAME_MS) return
+    // Halved once and never again: a field that keeps shrinking under its own
+    // measurement noise would be worse than a slow one.
+    degraded = true
+    activeMax = Math.max(Math.min(total, MIN_COUNT), Math.floor(total / 2))
+  }
+
+  // Speaking follows what the speakers are doing; every other state follows the
+  // microphone level pushed in by setLevel.
+  function levelTarget() {
+    if (stateName !== 'speaking' || typeof getSpeakingLevel !== 'function') return level
+    const value = Number(getSpeakingLevel())
+    return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0
+  }
 
   function snapToTarget() {
     convergence = params.convergence
@@ -392,7 +477,7 @@ export function createOrbVisual(canvas, options = {}) {
     targetRadius = params.ringRadius || CORE_RADIUS
     ringOpacity = params.ringRadius ? 1 : 0
     pulse = params.pulseGain * params.pulseDirection
-    levelSmoothed = level
+    levelSmoothed = levelTarget()
     scatter = params.scatter
   }
 
@@ -405,7 +490,13 @@ export function createOrbVisual(canvas, options = {}) {
     targetRadius = approach(targetRadius, params.ringRadius || CORE_RADIUS, elapsedMs, PARAM_TAU)
     ringOpacity = approach(ringOpacity, params.ringRadius ? 1 : 0, elapsedMs, PARAM_TAU)
     pulse = approach(pulse, params.pulseGain * params.pulseDirection, elapsedMs, PARAM_TAU)
-    levelSmoothed = approach(levelSmoothed, level, elapsedMs, LEVEL_TAU)
+    const nextLevel = levelTarget()
+    levelSmoothed = approach(
+      levelSmoothed,
+      nextLevel,
+      elapsedMs,
+      nextLevel > levelSmoothed ? LEVEL_ATTACK_MS : LEVEL_DECAY_MS,
+    )
     scatter *= Math.exp(-elapsedMs / SCATTER_TAU)
     if (scatter < 0.001) scatter = 0
     // Every particle advances, including the ones countRatio is currently
@@ -461,7 +552,7 @@ export function createOrbVisual(canvas, options = {}) {
 
     const tone = params.tone
     const overrideRow = tone === 'alert' ? ROW_ALERT : tone === 'dim' ? ROW_DIM : -1
-    const active = Math.max(0, Math.min(total, Math.round(total * countRatio)))
+    const active = Math.max(0, Math.min(activeMax, Math.round(total * countRatio)))
     const pulseOffset = levelSmoothed * pulse * PULSE_PX
 
     for (let index = 0; index < active; index += 1) {
@@ -502,14 +593,51 @@ export function createOrbVisual(canvas, options = {}) {
     context.globalCompositeOperation = 'source-over'
   }
 
+  function tickIntervalMs() {
+    const fps = STATE_FPS[stateName]
+    return fps > 0 ? 1000 / fps : 0
+  }
+
   function tick(timestamp) {
     if (destroyed) return
+    const interval = tickIntervalMs()
+    // A state that went static between two frames stops here rather than
+    // rescheduling; setState already drew its single frame.
+    if (interval === 0) {
+      frameHandle = null
+      return
+    }
     frameHandle = schedule(tick)
+    if (lastTimestamp >= 0 && timestamp - lastTimestamp + TICK_SLACK_MS < interval) return
     const elapsedMs = lastTimestamp < 0
-      ? 16
-      : Math.min(MAX_FRAME_MS, Math.max(0, timestamp - lastTimestamp))
+      ? FIRST_FRAME_MS
+      // The stall guard has to leave room for the slowest tier's own interval,
+      // or a 15 fps field would animate a quarter slower than wall clock.
+      : Math.min(Math.max(MAX_FRAME_MS, interval * 2), Math.max(0, timestamp - lastTimestamp))
     lastTimestamp = timestamp
+    const startedAt = clock()
     advance(elapsedMs)
+    draw()
+    sampleFrameCost(clock() - startedAt)
+  }
+
+  function stopLoop() {
+    if (frameHandle === null) return
+    unschedule(frameHandle)
+    frameHandle = null
+  }
+
+  function startLoop() {
+    if (destroyed || staticMode || hidden || frameHandle !== null) return
+    if (tickIntervalMs() === 0) return
+    // The gap since the last frame is not animation time: a resumed orb starts
+    // from a nominal frame instead of jumping through the whole pause.
+    lastTimestamp = -1
+    frameHandle = schedule(tick)
+  }
+
+  function drawStaticFrame() {
+    snapToTarget()
     draw()
   }
 
@@ -524,10 +652,52 @@ export function createOrbVisual(canvas, options = {}) {
     stateName = nextName
     params = STATE_PARAMS[nextName]
     codexWorking = codexNext
-    if (staticMode && changed) {
-      snapToTarget()
-      draw()
+    if (!changed) return
+    if (staticMode) {
+      drawStaticFrame()
+    } else if (tickIntervalMs() === 0) {
+      // Nothing here moves, so there is nothing to ease into: snap, draw the one
+      // frame this state is worth, and give the loop back.
+      stopLoop()
+      drawStaticFrame()
+    } else {
+      startLoop()
     }
+  }
+
+  function handleVisibilityChange() {
+    const nextHidden = documentRef?.visibilityState === 'hidden'
+    if (nextHidden === hidden) return
+    hidden = nextHidden
+    if (hidden) stopLoop()
+    else startLoop()
+  }
+
+  let ratioQuery = null
+
+  function armRatioQuery() {
+    if (!matchMediaRef) return
+    ratioQuery?.removeEventListener?.('change', handleRatioChange)
+    ratioQuery = matchMediaRef(`(resolution: ${rawPixelRatio}dppx)`)
+    ratioQuery?.addEventListener?.('change', handleRatioChange)
+  }
+
+  // Dragging the orb between a Retina and an external display changes the ratio
+  // without resizing anything, so the backing store has to be rebuilt here.
+  function handleRatioChange() {
+    if (destroyed) return
+    const nextRaw = readRawRatio()
+    if (nextRaw === rawPixelRatio) return
+    rawPixelRatio = nextRaw
+    armRatioQuery()
+    const nextRatio = capRatio(nextRaw)
+    if (nextRatio === pixelRatio) return
+    pixelRatio = nextRatio
+    applyBackingStore()
+    atlas = renderAtlas(createCanvas, paletteName, pixelRatio)
+    // Resizing a canvas clears it, so a frame nobody else will draw is drawn
+    // here: static mode, a static tier, and a hidden orb all have no loop.
+    if (frameHandle === null) draw()
   }
 
   function setLevel(rms) {
@@ -543,23 +713,26 @@ export function createOrbVisual(canvas, options = {}) {
     paletteName = next
     colors = paletteColors(next)
     atlas = renderAtlas(createCanvas, next, pixelRatio)
-    if (staticMode) draw()
+    // A state whose tier stopped the loop has nobody else to repaint it.
+    if (frameHandle === null) draw()
   }
 
   function destroy() {
     if (destroyed) return
     destroyed = true
-    if (frameHandle !== null) {
-      unschedule(frameHandle)
-      frameHandle = null
-    }
+    stopLoop()
+    documentRef?.removeEventListener?.('visibilitychange', handleVisibilityChange)
+    ratioQuery?.removeEventListener?.('change', handleRatioChange)
+    ratioQuery = null
   }
 
+  armRatioQuery()
   if (staticMode) {
-    snapToTarget()
-    draw()
+    drawStaticFrame()
   } else {
-    frameHandle = schedule(tick)
+    documentRef?.addEventListener?.('visibilitychange', handleVisibilityChange)
+    if (tickIntervalMs() === 0) drawStaticFrame()
+    else startLoop()
   }
 
   return {
@@ -571,5 +744,8 @@ export function createOrbVisual(canvas, options = {}) {
     get params() { return params },
     get palette() { return paletteName },
     get level() { return level },
+    get smoothedLevel() { return levelSmoothed },
+    get fps() { return staticMode ? 0 : STATE_FPS[stateName] },
+    get particleCount() { return Math.min(activeMax, total) },
   }
 }

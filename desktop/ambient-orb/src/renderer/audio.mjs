@@ -182,15 +182,19 @@ export class OnsetTracker {
   }
 }
 
-export function observePcmOnset(pcm, tracker, now) {
+function pcmSampleCount(pcm) {
   if (!(pcm instanceof Uint8Array) || !pcm.byteLength || pcm.byteLength % 2) {
     throw new Error('capture PCM16 is invalid')
   }
-  const sampleCount = pcm.byteLength / 2
+  return pcm.byteLength / 2
+}
+
+// The onset detector and the orb's amplitude meter want the same thing — the
+// RMS of each 10 ms window of a frame — so the loop lives here once and callers
+// only decide what a window's level means to them.
+function eachPcmWindowLevel(pcm, sampleCount, visit) {
   const samplesPerWindow = CAPTURE_SAMPLE_RATE * ONSET_WINDOW_MS / 1000
-  const frameMs = sampleCount / CAPTURE_SAMPLE_RATE * 1000
   const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength)
-  let verdict = null
   for (let start = 0; start < sampleCount; start += samplesPerWindow) {
     const end = Math.min(sampleCount, start + samplesPerWindow)
     let power = 0
@@ -198,13 +202,106 @@ export function observePcmOnset(pcm, tracker, now) {
       const sample = view.getInt16(index * 2, true) / 0x8000
       power += sample * sample
     }
+    visit(Math.sqrt(power / (end - start)), start, end)
+  }
+}
+
+export function observePcmOnset(pcm, tracker, now) {
+  const sampleCount = pcmSampleCount(pcm)
+  const frameMs = sampleCount / CAPTURE_SAMPLE_RATE * 1000
+  let verdict = null
+  eachPcmWindowLevel(pcm, sampleCount, (level, start, end) => {
     const durationMs = (end - start) / CAPTURE_SAMPLE_RATE * 1000
-    const level = Math.sqrt(power / (end - start))
     const windowEnd = now - frameMs + end / CAPTURE_SAMPLE_RATE * 1000
     const observed = tracker.observe(level, windowEnd, durationMs)
     if (verdict === null && observed !== null) verdict = observed
-  }
+  })
   return verdict
+}
+
+// The loudest window rather than the frame-wide RMS: the orb should light up on
+// the same evidence the onset detector thresholds, so a single loud syllable in
+// an otherwise quiet frame reads as speech in the visual too.
+export function measurePcmLevel(pcm) {
+  const sampleCount = pcmSampleCount(pcm)
+  let peak = 0
+  eachPcmWindowLevel(pcm, sampleCount, level => {
+    if (level > peak) peak = level
+  })
+  return peak
+}
+
+const ANALYSER_FFT_SIZE = 256
+const BYTE_TIME_DOMAIN_ZERO = 128
+
+// Amplitude of what the user is actually hearing, for the browser playback path.
+// Every buffer source connects to one master gain at unity — the mix is
+// untouched — and that gain feeds an analyser before the speakers. Reading the
+// time domain rather than the frequency bins keeps this an amplitude meter and
+// not a spectrum: the orb only ever asks "how loud".
+export class PlaybackMeter {
+  constructor(context, isPlaying = () => true) {
+    this.isPlaying = isPlaying
+    this.gain = context.createGain()
+    this.gain.gain.value = 1
+    this.analyser = context.createAnalyser()
+    this.analyser.fftSize = ANALYSER_FFT_SIZE
+    this.samples = new Uint8Array(ANALYSER_FFT_SIZE)
+    this.gain.connect(this.analyser)
+    this.analyser.connect(context.destination)
+  }
+
+  get destination() {
+    return this.gain
+  }
+
+  // An analyser keeps returning the tail of its last window forever, so a
+  // drained queue has to read as silence from the caller's own bookkeeping
+  // rather than from the node.
+  level() {
+    if (!this.isPlaying()) return 0
+    this.analyser.getByteTimeDomainData(this.samples)
+    let power = 0
+    for (let index = 0; index < this.samples.length; index += 1) {
+      const sample = (this.samples[index] - BYTE_TIME_DOMAIN_ZERO) / BYTE_TIME_DOMAIN_ZERO
+      power += sample * sample
+    }
+    return Math.min(1, Math.sqrt(power / this.samples.length))
+  }
+}
+
+// The native backend plays PCM out of process, where there is no analyser to
+// read. Each frame's amplitude is measured where it is dispatched and replayed
+// on a wall-clock queue, which is what the speaker is doing a few milliseconds
+// later — close enough for a visual, and it costs nothing per frame.
+export class NativeLevelEnvelope {
+  constructor() {
+    this.segments = []
+    this.cursor = 0
+  }
+
+  push(pcm, now) {
+    // measurePcmLevel windows at the capture rate, which at the 24 kHz playback
+    // rate is a slightly shorter window — an amplitude, not a duration, so the
+    // reading is unaffected.
+    const level = measurePcmLevel(pcm)
+    const startAt = Math.max(now, this.cursor)
+    const endAt = startAt + pcm.byteLength / PCM_BYTES_PER_MS
+    this.segments.push({ startAt, endAt, level })
+    this.cursor = endAt
+  }
+
+  level(now) {
+    while (this.segments.length && this.segments[0].endAt <= now) this.segments.shift()
+    const segment = this.segments[0]
+    if (!segment || segment.startAt > now) return 0
+    return segment.level
+  }
+
+  clear() {
+    this.segments.length = 0
+    this.cursor = 0
+  }
 }
 
 export class GenerationPlayback {

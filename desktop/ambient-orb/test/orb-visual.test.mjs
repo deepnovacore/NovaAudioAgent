@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-import { createOrbVisual, paletteColors, STATE_PARAMS } from '../src/renderer/orb-visual.mjs'
+import {
+  createOrbVisual,
+  paletteColors,
+  STATE_FPS,
+  STATE_PARAMS,
+} from '../src/renderer/orb-visual.mjs'
 import { ORB_STATE_NAMES } from '../src/renderer/state.mjs'
 
 // A canvas stub, not jsdom: the visual only ever touches the 2D context surface
@@ -42,12 +47,18 @@ function stubCanvas(width = 0, height = 0) {
 function mount(options = {}) {
   const canvas = stubCanvas()
   const offscreen = []
+  // `pending` holds callbacks and `handles` their rAF handles at the same index,
+  // so a cancel really drops the frame instead of only recording the handle.
   const pending = []
+  const handles = []
   const cancelled = []
   let nextHandle = 0
   const visual = createOrbVisual(canvas, {
     devicePixelRatio: 2,
     seed: 0x5eed,
+    // A zero-cost clock: the auto-degrade heuristic must be driven on purpose,
+    // never by how fast the machine running the suite happens to be.
+    now: () => 0,
     createCanvas: (width, height) => {
       const created = stubCanvas(width, height)
       offscreen.push(created)
@@ -56,22 +67,36 @@ function mount(options = {}) {
     raf: callback => {
       pending.push(callback)
       nextHandle += 1
+      handles.push(nextHandle)
       return nextHandle
     },
-    cancelRaf: handle => cancelled.push(handle),
+    cancelRaf: handle => {
+      cancelled.push(handle)
+      const at = handles.indexOf(handle)
+      if (at >= 0) {
+        handles.splice(at, 1)
+        pending.splice(at, 1)
+      }
+    },
     ...options,
   })
   const context = canvas.context
-  const step = (advanceMs = 16) => {
-    const callback = pending.shift()
+  const take = () => {
+    handles.shift()
+    return pending.shift()
+  }
+  // One tier frame by default: the tick throttles to the active state's rate,
+  // so "advance a frame" means advancing past that state's interval.
+  const step = advanceMs => {
+    const callback = take()
     assert.ok(callback, 'expected a scheduled frame')
-    step.clock += advanceMs
+    step.clock += advanceMs ?? Math.max(16, 1000 / (visual.fps || 60) + 1)
     callback(step.clock)
   }
   step.clock = 1000
   // Runs the smoothing to steady state so per-state counts are comparable.
   const settle = (frames = 90) => { for (let index = 0; index < frames; index += 1) step() }
-  return { visual, canvas, context, offscreen, pending, cancelled, step, settle }
+  return { visual, canvas, context, offscreen, pending, cancelled, take, step, settle }
 }
 
 // Sprites are drawn with the 9-argument form (atlas cell → destination box),
@@ -285,10 +310,10 @@ test('countRatio thins the field for low-energy states', () => {
   mounted.step()
   const idleCount = drawnCount(mounted.context)
 
-  mounted.visual.setState('inactive')
-  mounted.settle()
+  // `inactive` is a static tier: it snaps to its parameters and draws exactly
+  // one frame, so the thinning shows up in that snapshot rather than in a loop.
   resetDraws(mounted.context)
-  mounted.step()
+  mounted.visual.setState('inactive')
   const inactiveCount = drawnCount(mounted.context)
 
   assert.ok(idleCount >= 230 && idleCount <= 240, `idle draws ~240 particles, got ${idleCount}`)
@@ -392,6 +417,14 @@ test('setPalette re-renders the atlas and reports the active palette', () => {
 
   mounted.visual.setPalette('graphite')
   assert.equal(mounted.offscreen.length, 2, 'an unchanged palette is a no-op')
+
+  // A state whose tier stopped the loop has to be repainted in the new colours
+  // right here, because no frame is coming to do it.
+  mounted.visual.setState('error')
+  const clears = mounted.context.calls.clearRect
+  mounted.visual.setPalette('ember')
+  assert.equal(mounted.context.calls.clearRect, clears + 1)
+  assert.equal(mounted.pending.length, 0, 'and it stays stopped')
   mounted.visual.destroy()
 })
 
@@ -473,7 +506,7 @@ test('destroy cancels the pending frame and stops the loop', () => {
   const scheduled = mounted.pending.length
   assert.equal(scheduled, 1, 'exactly one frame is ever in flight')
 
-  const stale = mounted.pending.shift()
+  const stale = mounted.take()
   mounted.visual.destroy()
 
   assert.equal(mounted.cancelled.length, 1)
@@ -555,6 +588,270 @@ test('the renderer feeds the visual from the same render pass as data-state', as
   )
   // The data-state contract still drives the label and accessibility surface.
   assert.match(source, /shell\.dataset\.state = state\.name/)
+})
+
+test('STATE_FPS covers every orb state and tiers them by how much they move', () => {
+  assert.ok(Object.isFrozen(STATE_FPS))
+  assert.deepEqual(Object.keys(STATE_FPS).sort(), [...ORB_STATE_NAMES].sort())
+  assert.deepEqual(STATE_FPS, {
+    speaking: 60,
+    listening: 60,
+    // A barge-in is a live listening field with a decaying impulse over it.
+    interrupted: 60,
+    candidate: 30,
+    booting: 30,
+    idle: 15,
+    // Zero means one static frame and no loop at all.
+    inactive: 0,
+    disconnected: 0,
+    error: 0,
+    'permission-denied': 0,
+  })
+})
+
+test('the tick tiers throttle the loop instead of drawing every animation frame', () => {
+  const mounted = mount()
+
+  mounted.visual.setState('idle')
+  assert.equal(mounted.visual.fps, 15)
+  mounted.step(16)
+  const clears = mounted.context.calls.clearRect
+  // 15 fps is one draw per 66.7 ms, so three 16 ms animation frames are skipped.
+  for (let index = 0; index < 3; index += 1) mounted.step(16)
+  assert.equal(mounted.context.calls.clearRect, clears, 'sub-interval frames draw nothing')
+  assert.equal(mounted.pending.length, 1, 'skipped frames still reschedule')
+  mounted.step(20)
+  assert.equal(mounted.context.calls.clearRect, clears + 1, 'the frame past the interval draws')
+
+  mounted.visual.setState('listening')
+  assert.equal(mounted.visual.fps, 60)
+  mounted.step(16)
+  const live = mounted.context.calls.clearRect
+  for (let index = 0; index < 3; index += 1) mounted.step(16)
+  assert.equal(mounted.context.calls.clearRect, live + 3, '60 fps draws every frame')
+
+  mounted.visual.setState('candidate')
+  assert.equal(mounted.visual.fps, 30)
+  mounted.step(16)
+  const candidate = mounted.context.calls.clearRect
+  mounted.step(16)
+  assert.equal(mounted.context.calls.clearRect, candidate, '30 fps skips every other frame')
+  mounted.step(18)
+  assert.equal(mounted.context.calls.clearRect, candidate + 1)
+  mounted.visual.destroy()
+})
+
+test('a static state draws one frame and stops the loop until a live state returns', () => {
+  const mounted = mount()
+  mounted.step()
+  assert.equal(mounted.pending.length, 1)
+  resetDraws(mounted.context)
+  const clears = mounted.context.calls.clearRect
+
+  mounted.visual.setState('error')
+
+  assert.equal(mounted.visual.fps, 0)
+  assert.equal(mounted.cancelled.length, 1, 'the in-flight frame is cancelled')
+  assert.equal(mounted.pending.length, 0, 'a dead session schedules nothing at all')
+  assert.equal(mounted.context.calls.clearRect, clears + 1, 'exactly one static frame')
+  assert.ok(drawnCount(mounted.context) > 0, 'the collapsed ring is still drawn')
+
+  // A repeat of the same static state must not cost another frame either.
+  mounted.visual.setState('error')
+  assert.equal(mounted.pending.length, 0)
+  assert.equal(mounted.context.calls.clearRect, clears + 1)
+
+  mounted.visual.setState('listening')
+  assert.equal(mounted.pending.length, 1, 'a live state restarts the loop')
+  mounted.step()
+  assert.equal(mounted.context.calls.clearRect, clears + 2)
+  mounted.visual.destroy()
+})
+
+test('a hidden document stops the loop and becoming visible resumes it', () => {
+  const listeners = new Map()
+  const documentStub = {
+    visibilityState: 'visible',
+    addEventListener: (type, handler) => listeners.set(type, handler),
+    removeEventListener: type => listeners.delete(type),
+  }
+  const mounted = mount({ document: documentStub })
+  mounted.step()
+  assert.equal(mounted.pending.length, 1)
+
+  documentStub.visibilityState = 'hidden'
+  listeners.get('visibilitychange')()
+
+  assert.equal(mounted.pending.length, 0, 'an off-screen orb costs nothing')
+  const clears = mounted.context.calls.clearRect
+
+  documentStub.visibilityState = 'visible'
+  listeners.get('visibilitychange')()
+
+  assert.equal(mounted.pending.length, 1, 'the loop resumes when the orb is visible again')
+  mounted.step()
+  assert.equal(mounted.context.calls.clearRect, clears + 1)
+
+  mounted.visual.destroy()
+  assert.equal(listeners.has('visibilitychange'), false, 'destroy unhooks the document')
+})
+
+// The envelope is exponential with a 40 ms attack and a 220 ms decay time
+// constant: one constant covers 1 - e^-1 = 63.2% of the remaining distance.
+test('the level envelope attacks over 40 ms and decays over 220 ms', () => {
+  const mounted = mount()
+  mounted.visual.setState('listening')
+  mounted.step()
+  assert.equal(mounted.visual.smoothedLevel, 0)
+
+  mounted.visual.setLevel(1)
+  mounted.step(40)
+  assert.ok(
+    Math.abs(mounted.visual.smoothedLevel - 0.6321) < 0.005,
+    `attack reaches 63% in 40 ms, got ${mounted.visual.smoothedLevel}`,
+  )
+
+  mounted.visual.setLevel(0)
+  // 220 ms of decay, spread over frames the tick's per-frame budget accepts.
+  for (let index = 0; index < 5; index += 1) mounted.step(44)
+  assert.ok(
+    Math.abs(mounted.visual.smoothedLevel - 0.2325) < 0.005,
+    `decay falls to 36.8% by t=260 ms, got ${mounted.visual.smoothedLevel}`,
+  )
+
+  // Attack must be the faster of the two: a syllable has to land, not fade in.
+  mounted.visual.setLevel(1)
+  mounted.step(44)
+  assert.ok(mounted.visual.smoothedLevel > 0.7, 'the same 44 ms climbs far further than it fell')
+  mounted.visual.destroy()
+})
+
+test('while speaking the level is pulled from the injected playback source', () => {
+  let playbackLevel = 0
+  const mounted = mount({ getSpeakingLevel: () => playbackLevel })
+
+  mounted.visual.setState('speaking')
+  mounted.step()
+  playbackLevel = 1
+  mounted.step(40)
+
+  assert.ok(
+    Math.abs(mounted.visual.smoothedLevel - 0.6321) < 0.005,
+    `speaking follows the playback meter, got ${mounted.visual.smoothedLevel}`,
+  )
+  assert.equal(mounted.visual.level, 0, 'the microphone level is untouched by the pull')
+
+  // Listening reads the microphone instead: the playback meter must not leak in.
+  mounted.visual.setState('listening')
+  mounted.visual.setLevel(0)
+  for (let index = 0; index < 20; index += 1) mounted.step(44)
+
+  assert.ok(
+    mounted.visual.smoothedLevel < 0.05,
+    `the playback meter is not read while listening, got ${mounted.visual.smoothedLevel}`,
+  )
+  mounted.visual.destroy()
+})
+
+test('a slow rolling frame time halves the field once and never past the floor', () => {
+  let elapsed = 0
+  let phase = 0
+  // Each frame is measured with two clock reads; the second one is 5 ms later.
+  const now = () => {
+    phase += 1
+    if (phase % 2 === 1) return elapsed
+    elapsed += 5
+    return elapsed
+  }
+  const mounted = mount({ now, count: 200 })
+  mounted.visual.setState('idle')
+
+  for (let index = 0; index < 29; index += 1) mounted.step()
+  assert.equal(mounted.visual.particleCount, 200, 'a partial window never degrades')
+
+  mounted.step()
+  // Half of 200 is under the 120-particle floor, so the floor wins.
+  assert.equal(mounted.visual.particleCount, 120)
+  resetDraws(mounted.context)
+  mounted.step()
+  assert.equal(drawnCount(mounted.context), 120, 'the thinned field is what gets drawn')
+
+  for (let index = 0; index < 90; index += 1) mounted.step()
+  assert.equal(mounted.visual.particleCount, 120, 'the field is halved at most once')
+  mounted.visual.destroy()
+})
+
+test('a fast frame time leaves the full field alone', () => {
+  let elapsed = 0
+  let phase = 0
+  const now = () => {
+    phase += 1
+    if (phase % 2 === 1) return elapsed
+    elapsed += 1.5
+    return elapsed
+  }
+  const mounted = mount({ now })
+  mounted.visual.setState('listening')
+  for (let index = 0; index < 120; index += 1) mounted.step()
+
+  assert.equal(mounted.visual.particleCount, 240)
+  mounted.visual.destroy()
+})
+
+test('a pixel-ratio change rebuilds the backing store and the sprite atlas', () => {
+  let ratio = 1
+  const queries = []
+  const mounted = mount({
+    devicePixelRatio: () => ratio,
+    matchMedia: query => {
+      const media = {
+        media: query,
+        matches: true,
+        handlers: [],
+        addEventListener: (type, handler) => media.handlers.push(handler),
+        removeEventListener: (type, handler) => {
+          const at = media.handlers.indexOf(handler)
+          if (at >= 0) media.handlers.splice(at, 1)
+        },
+      }
+      queries.push(media)
+      return media
+    },
+  })
+
+  assert.deepEqual([mounted.canvas.width, mounted.canvas.height], [116, 116])
+  assert.equal(queries.length, 1, 'the current density is watched')
+  assert.equal(queries[0].media, '(resolution: 1dppx)')
+  assert.equal(mounted.offscreen.length, 1)
+
+  ratio = 3
+  queries[0].handlers[0]()
+
+  // The cap still holds: a 3x display is drawn at 2x.
+  assert.deepEqual([mounted.canvas.width, mounted.canvas.height], [232, 232])
+  assert.equal(mounted.offscreen.length, 2, 'the atlas is re-rendered at the new density')
+  assert.equal(queries.length, 2, 'the listener re-arms on the new density')
+  assert.equal(queries[1].media, '(resolution: 3dppx)')
+  assert.equal(queries[0].handlers.length, 0, 'the stale query is released')
+
+  mounted.step()
+  assert.ok(drawnCount(mounted.context) > 0)
+  mounted.visual.destroy()
+  assert.equal(queries[1].handlers.length, 0, 'destroy releases the density listener')
+})
+
+test('the renderer feeds microphone and playback amplitude into the visual', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  // Both capture paths land in detectLocalOnset, so one call covers browser and
+  // native microphones alike.
+  assert.match(source, /visual\.setLevel\(measurePcmLevel\(pcm\)\)/)
+  assert.match(source, /getSpeakingLevel: \(\) => getPlaybackLevel\(\)/)
+  assert.match(source, /new PlaybackMeter\(/)
+  assert.match(source, /new NativeLevelEnvelope\(/)
+  assert.match(source, /nativeLevel\.push\(frame\.pcm/)
+  // Playback is routed through the meter rather than straight at the speakers.
+  assert.doesNotMatch(source, /node\.connect\(context\.destination\)/)
 })
 
 test('the build syntax-checks the visual module', async () => {

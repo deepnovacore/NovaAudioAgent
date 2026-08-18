@@ -6,8 +6,11 @@ import {
   fallbackToBrowserCapture,
   floatToPcm16,
   GenerationPlayback,
+  measurePcmLevel,
+  NativeLevelEnvelope,
   observePcmOnset,
   OnsetTracker,
+  PlaybackMeter,
 } from './audio.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
 import { createOrbVisual } from './orb-visual.mjs'
@@ -20,13 +23,33 @@ const codexLabel = document.querySelector('#codex-label')
 const aecLabel = document.querySelector('#aec-label')
 const captionLabel = document.querySelector('#caption')
 
+// Declared ahead of the visual because the visual's loop pulls this: the
+// browser meter reads a Web Audio analyser, the native envelope replays what was
+// handed to the out-of-process player. Only one backend is ever live for a
+// generation, so the louder of the two is the one actually reaching a speaker.
+let playbackMeter = null
+const nativeLevel = new NativeLevelEnvelope()
+
+function getPlaybackLevel() {
+  return Math.max(
+    nativeLevel.level(performance.now()),
+    playbackMeter ? playbackMeter.level() : 0,
+  )
+}
+
 // The particle field is a second, parallel consumer of the same derived state:
 // `data-state` and the labels above stay the authoritative contract, and the
 // visual only ever reads from render() below.
+//
+// Amplitude arrives from two directions. The microphone is pushed in from the
+// capture path, which already walks every PCM frame for onset detection; the
+// speaker is pulled by the visual's own loop, because only it knows when it is
+// about to draw a speaking frame.
 const visual = createOrbVisual(document.querySelector('.orb-canvas'), {
   reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   highContrast: window.matchMedia('(prefers-contrast: more)').matches,
   palette: 'ember',
+  getSpeakingLevel: () => getPlaybackLevel(),
 })
 
 const axes = {
@@ -101,6 +124,14 @@ function startAlertTone() {
   } catch { /* the concrete Guard speech still follows */ }
 }
 
+// Every buffer source goes through one master gain into an analyser, at unity:
+// the mix the user hears is unchanged, and the orb gets a real amplitude to
+// read instead of guessing from the queue.
+function playbackDestination() {
+  playbackMeter ||= new PlaybackMeter(context, () => playingSources.size > 0)
+  return playbackMeter.destination
+}
+
 function scheduleFrames() {
   if (!context) return
   let frame
@@ -114,7 +145,7 @@ function scheduleFrames() {
     buffer.copyToChannel(samples, 0)
     const node = context.createBufferSource()
     node.buffer = buffer
-    node.connect(context.destination)
+    node.connect(playbackDestination())
     playingSources.add(node)
     axes.playback = 'speaking'
     render()
@@ -157,9 +188,12 @@ async function ensurePlaybackContext() {
   if (context.state !== 'running') throw new Error('Web Audio playback is unavailable')
 }
 
+// Both capture paths — the browser worklet and the native voice-processing tap —
+// land here, so this is the one place the microphone reaches the orb.
 function detectLocalOnset(pcm) {
   const now = performance.now()
   const verdict = observePcmOnset(pcm, onsetTracker, now)
+  visual.setLevel(measurePcmLevel(pcm))
   axes.capture = onsetTracker.active ? 'listening' : 'idle'
   if (verdict) {
     alertTone.stop()
@@ -175,6 +209,9 @@ function scheduleNativeFrames() {
     const frames = nativeFrames.get(key) || []
     frames.push(frame)
     nativeFrames.set(key, frames)
+    // Native PCM is played out of process, where there is no analyser to read,
+    // so its amplitude is measured here and replayed on a wall-clock envelope.
+    nativeLevel.push(frame.pcm, performance.now())
     window.novaAudioAgentDesktop.nativeAudio.play(
       frame.pcm,
       frame.utteranceId,
@@ -255,6 +292,7 @@ function stopCurrentNativePlayback() {
   const { utteranceId, generationEpoch } = current
   const cleared = playback.clear(utteranceId, generationEpoch)
   nativeFrames.clear()
+  nativeLevel.clear()
   window.novaAudioAgentDesktop.nativeAudio.clear()
   send({
     type: 'playback.stopped',
@@ -337,6 +375,7 @@ async function handleControl(message) {
     if (cleared) {
       if (backend === 'native') {
         nativeFrames.delete(`${message.utterance_id}:${message.generation_epoch}`)
+        nativeLevel.clear()
         nativeEvidence = await window.novaAudioAgentDesktop.nativeAudio.clear(
           message.utterance_id,
           message.generation_epoch,
@@ -371,6 +410,7 @@ async function handleControl(message) {
       startTone: startAlertTone,
       clearNative: (utteranceId, generationEpoch) => {
         nativeFrames.delete(`${utteranceId}:${generationEpoch}`)
+        nativeLevel.clear()
         return window.novaAudioAgentDesktop.nativeAudio.clear(utteranceId, generationEpoch)
       },
     })
