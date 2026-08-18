@@ -72,6 +72,39 @@ def test_both_explicit_overrides_win_over_preset() -> None:
     assert resolve_proactivity(settings) == ProactivityParams(cooldown=1.0, fresh_window=2.0)
 
 
+@pytest.mark.parametrize("field", ["suggestion_cooldown", "fresh_window"])
+@pytest.mark.parametrize("value", [-1.0, -0.1, float("nan"), float("inf"), float("-inf")])
+def test_proactivity_override_rejects_negative_or_non_finite(field: str, value: float) -> None:
+    # A negative cooldown fires the pool on every tick and a NaN window makes
+    # every freshness comparison false: both are silent misbehaviour, not errors,
+    # unless the override is validated where it enters the process.
+    expected = f"NOVA_AUDIO_AGENT_{field.upper()}"
+    with pytest.raises(ValidationError, match=expected):
+        Settings(**{field: value}, _env_file=None)
+
+
+@pytest.mark.parametrize("field", ["suggestion_cooldown", "fresh_window"])
+@pytest.mark.parametrize("value", [0.0, 0.5, 30.0, 3600.0])
+def test_proactivity_override_accepts_zero_and_positive(field: str, value: float) -> None:
+    settings = Settings(**{field: value}, _env_file=None)
+
+    assert getattr(settings, field) == value
+
+
+@pytest.mark.parametrize("field", ["suggestion_cooldown", "fresh_window"])
+def test_proactivity_override_stays_optional(field: str) -> None:
+    assert getattr(Settings(_env_file=None), field) is None
+
+
+def test_proactivity_override_rejects_a_negative_environment_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN", "-1")
+
+    with pytest.raises(ValidationError, match="NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN"):
+        Settings(_env_file=None)
+
+
 def test_codex_working_interval_defaults_to_thirty_seconds() -> None:
     assert Settings(_env_file=None).codex_working_interval == 30.0
 

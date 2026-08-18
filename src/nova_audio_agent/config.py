@@ -5,11 +5,12 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -109,6 +110,29 @@ class Settings(BaseSettings):
     def _validate_codex_working_interval(cls, value: float) -> float:
         if not (5.0 <= value <= 600.0):
             raise ValueError("NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL 必须在 5.0 到 600.0 之间")
+        return value
+
+    @field_validator("suggestion_cooldown", "fresh_window")
+    @classmethod
+    def _validate_proactivity_override(
+        cls,
+        value: float | None,
+        info: ValidationInfo,
+    ) -> float | None:
+        """Reject a negative, NaN, or infinite override instead of misbehaving on one.
+
+        These two are the preset's escape hatch, so they take any float the
+        environment offers. A negative cooldown fires the pool on every tick, a
+        NaN window makes every freshness comparison false, and an infinite one
+        never expires: all three are silent misbehaviour rather than errors
+        unless they are refused where they enter the process.
+        """
+        if value is None:
+            return value
+        if not isfinite(value) or value < 0.0:
+            raise ValueError(
+                f"NOVA_AUDIO_AGENT_{info.field_name.upper()} 必须是不小于 0 的有限秒数"
+            )
         return value
 
     def require_api_key(self) -> str:
