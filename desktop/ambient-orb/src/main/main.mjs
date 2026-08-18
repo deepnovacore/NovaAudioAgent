@@ -468,15 +468,20 @@ async function start() {
     // the write lands, the in-memory settings stay as they were. The writer
     // serializes, so a second change arriving mid-save merges onto the first
     // rather than overwriting it from a stale snapshot.
+    let rejectedSecrets = []
     try {
-      await settingsWriter(patch)
+      const written = await settingsWriter(patch)
+      // Key names only, never values — this call's per-field rejects, so the
+      // panel can say which paste failed instead of the save looking like a
+      // silent, total success while that one field kept its old value.
+      rejectedSecrets = written.rejectedSecrets ?? []
     } catch (error) {
       console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
-      return { ...settingsView(), saved: false }
+      return { ...settingsView(), saved: false, rejectedSecrets: [] }
     }
     // Only the palette is live; voice, proactivity, and keys are read at launch.
     sendToOrb('nova:settings:changed', publicSettings(currentSettings))
-    return { ...settingsView(), saved: true }
+    return { ...settingsView(), saved: true, rejectedSecrets }
   })
   ipcMain.handle('nova:bootstrap', event => {
     // The renderer binds its backend-exit listener only after this reply lands, so a push

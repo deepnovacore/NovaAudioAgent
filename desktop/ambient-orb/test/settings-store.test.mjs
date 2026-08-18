@@ -405,9 +405,14 @@ test('a secret carrying a NUL or other control character is refused, not stored'
   assert.deepEqual(patched.secrets.dashscopeApiKey, stored.secrets.dashscopeApiKey)
   assert.equal(readSecret(patched, 'tavilyApiKey', codec), 'tvly-fine')
   assert.equal(patched.palette, 'graphite')
+  // The poisoned field is named, by key only, so a caller can tell the
+  // renderer which paste failed instead of the save looking like a silent,
+  // total success.
+  assert.deepEqual(patched.rejectedSecrets, ['dashscopeApiKey'])
   for (const bad of ['\u0000', 'sk-\u0000x', 'sk-\u001bx', 'sk\nx', 'sk\tx', 'sk\u007fx']) {
     const attempt = applySettingsUpdate(DEFAULT_SETTINGS, { secrets: { modelApiKey: bad } }, codec)
     assert.deepEqual(attempt.secrets, {}, `${JSON.stringify(bad)} never reaches the store`)
+    assert.deepEqual(attempt.rejectedSecrets, ['modelApiKey'], `${JSON.stringify(bad)} is named as rejected`)
   }
 })
 
@@ -503,6 +508,9 @@ test('applySettingsUpdate keeps unspecified fields and refuses malformed secret 
   assert.equal(updated.codexHeartbeatSeconds, 75, 'an out-of-range patch keeps the stored value')
   assert.equal(updated.voice, 'longcheng')
   assert.deepEqual(updated.secrets, {})
+  // Both a wrong-typed value and an over-length one are named as rejected,
+  // not just refused silently.
+  assert.deepEqual(updated.rejectedSecrets, ['dashscopeApiKey', 'tavilyApiKey'])
 })
 
 test('a patch cannot smuggle in a pre-sealed secret entry', () => {
@@ -518,8 +526,14 @@ test('a patch cannot smuggle in a pre-sealed secret entry', () => {
 
 test('applySettingsUpdate tolerates a missing or non-object patch', () => {
   const codec = fakeCodec()
-  assert.deepEqual(applySettingsUpdate(DEFAULT_SETTINGS, undefined, codec), DEFAULT_SETTINGS)
-  assert.deepEqual(applySettingsUpdate(DEFAULT_SETTINGS, 'palette', codec), DEFAULT_SETTINGS)
+  assert.deepEqual(
+    applySettingsUpdate(DEFAULT_SETTINGS, undefined, codec),
+    { ...DEFAULT_SETTINGS, rejectedSecrets: [] },
+  )
+  assert.deepEqual(
+    applySettingsUpdate(DEFAULT_SETTINGS, 'palette', codec),
+    { ...DEFAULT_SETTINGS, rejectedSecrets: [] },
+  )
 })
 
 test('loadSettings answers defaults for a missing or corrupt file', async () => {
@@ -546,7 +560,11 @@ test('saveSettings round-trips through loadSettings and leaves no temporary behi
 
     await saveSettings(file, settings)
 
-    assert.deepEqual(await loadSettings(file), settings)
+    // `rejectedSecrets` rides on the applySettingsUpdate result as an extra,
+    // additive field for this call only; it is never part of the persisted
+    // schema, so it must not survive the round trip either.
+    const { rejectedSecrets: _rejectedSecrets, ...persisted } = settings
+    assert.deepEqual(await loadSettings(file), persisted)
     assert.deepEqual(await readdir(directory), ['ambient-orb-settings.json'])
   })
 })
@@ -614,14 +632,16 @@ test('a rejected secret leaves the file byte-for-byte as it was for that key', a
     }, codec))
     const before = await readFile(file, 'utf8')
 
-    await saveSettings(file, applySettingsUpdate(
+    const patched = applySettingsUpdate(
       await loadSettings(file),
       { secrets: { codexApiKey: 'sk-\u0000bad' } },
       codec,
-    ))
+    )
+    await saveSettings(file, patched)
 
     assert.equal(await readFile(file, 'utf8'), before)
     assert.equal(readSecret(await loadSettings(file), 'codexApiKey', codec), 'sk-good')
+    assert.deepEqual(patched.rejectedSecrets, ['codexApiKey'], 'the caller can see which key failed')
   })
 })
 

@@ -192,24 +192,34 @@ function sealSecret(plaintext, codec) {
 }
 
 // Plaintext lives only inside this call: `updates` values are consumed into the
-// sealed form and never retained.
+// sealed form and never retained. `rejected` collects the key *names* (never
+// values) of any field this call refused, so the caller — and eventually the
+// panel — can say which paste failed instead of the save looking silently
+// successful while that one field quietly kept its old value.
 function updatedSecrets(stored, updates, codec) {
   const secrets = { ...stored }
-  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return secrets
+  const rejected = []
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return { secrets, rejected }
   for (const key of SECRET_KEYS) {
     if (!Object.hasOwn(updates, key)) continue
     const value = updates[key]
-    if (typeof value !== 'string' || value.length > MAX_SECRET_LENGTH) continue
+    if (typeof value !== 'string' || value.length > MAX_SECRET_LENGTH) {
+      rejected.push(key)
+      continue
+    }
     if (value === '') {
       delete secrets[key]
       continue
     }
     // Per field, like every other validator here: an unusable key is refused on
     // its own and the rest of the patch still lands.
-    if (!secretValueIsSafe(value)) continue
+    if (!secretValueIsSafe(value)) {
+      rejected.push(key)
+      continue
+    }
     secrets[key] = sealSecret(value, codec)
   }
-  return secrets
+  return { secrets, rejected }
 }
 
 // Opportunistic migration, run on every update so it costs nothing extra and
@@ -233,7 +243,11 @@ function resealPlaintext(secrets, codec) {
 }
 
 // `patch` is renderer-shaped: non-secret fields plus optional *plaintext*
-// secrets. Anything it fails to justify keeps the stored value.
+// secrets. Anything it fails to justify keeps the stored value. `rejectedSecrets`
+// rides on the returned object as an extra, additive field — never persisted,
+// since `saveSettings` normalizes before writing and the schema doesn't carry
+// it — naming (by key only) which secret fields in *this* patch were refused,
+// so a caller can tell "silently kept the old value" apart from "saved".
 export function applySettingsUpdate(current, patch, codec) {
   const stored = normalizeSettings(current)
   const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}
@@ -243,7 +257,9 @@ export function applySettingsUpdate(current, patch, codec) {
     codexHeartbeatSeconds: source.codexHeartbeatSeconds,
     voice: source.voice,
   }, stored)
-  next.secrets = resealPlaintext(updatedSecrets(stored.secrets, source.secrets, codec), codec)
+  const { secrets, rejected } = updatedSecrets(stored.secrets, source.secrets, codec)
+  next.secrets = resealPlaintext(secrets, codec)
+  next.rejectedSecrets = rejected
   return next
 }
 

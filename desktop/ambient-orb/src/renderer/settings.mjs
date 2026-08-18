@@ -5,6 +5,14 @@
 const api = window.novaAudioAgentDesktop.settings
 
 const SECRET_KEYS = ['dashscopeApiKey', 'tavilyApiKey', 'modelApiKey', 'codexApiKey']
+// The panel's own labels for each key, reused for the rejected-secret error
+// line so it names fields the way the user sees them, not their JS key.
+const SECRET_LABELS = {
+  dashscopeApiKey: 'DashScope',
+  tavilyApiKey: 'Tavily',
+  modelApiKey: '模型网关',
+  codexApiKey: 'Codex',
+}
 
 const statusLabel = document.querySelector('#status')
 const warning = document.querySelector('#keyring-warning')
@@ -72,14 +80,15 @@ async function push(patch, note) {
     pendingPatch = mergePatch(pendingPatch, patch)
     pendingNote = note
     statusLabel.textContent = '保存中…'
-    return false
+    return { saved: false, view: null }
   }
   saving = true
   saveSecretsButton.disabled = true
   statusLabel.textContent = '保存中…'
   let saved = false
+  let view = null
   try {
-    const view = await api.set(patch)
+    view = await api.set(patch)
     render(view)
     saved = view?.saved !== false
     statusLabel.textContent = saved ? note : '保存失败'
@@ -96,7 +105,7 @@ async function push(patch, note) {
     pendingNote = null
     void push(nextPatch, nextNote)
   }
-  return saved
+  return { saved, view }
 }
 
 async function saveSecrets() {
@@ -110,10 +119,19 @@ async function saveSecrets() {
     statusLabel.textContent = '没有要保存的密钥'
     return
   }
-  if (!await push({ secrets }, '密钥已保存')) return
-  for (const key of SECRET_KEYS) {
+  const { saved, view } = await push({ secrets }, '密钥已保存')
+  if (!saved) return
+  const rejected = new Set(view?.rejectedSecrets ?? [])
+  for (const key of Object.keys(secrets)) {
     const input = secretInput(key)
-    input.value = ''
+    // Only what this call actually accepted is cleared: a rejected paste
+    // stays put so the user can see and fix it, instead of the field going
+    // blank while the badge still reads 未设置.
+    if (!rejected.has(key)) input.value = ''
+  }
+  if (rejected.size) {
+    const labels = SECRET_KEYS.filter(key => rejected.has(key)).map(key => SECRET_LABELS[key])
+    statusLabel.textContent = `部分密钥未保存(含非法字符): ${labels.join('、')}`
   }
 }
 

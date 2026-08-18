@@ -127,3 +127,34 @@ test('a change made mid-save is coalesced and flushed, never dropped', () => {
   assert.match(script, /function mergePatch\(base, next\)/)
   assert.match(script, /merged\[field\] = bothObjects \? \{ \.\.\.existing, \.\.\.value \} : value/)
 })
+
+test('saveSecrets clears only the fields the save actually accepted', () => {
+  // Old behaviour: any successful save cleared every key field, including one
+  // the store had just refused (a control character, say) — the user's paste
+  // vanished from the screen with 密钥已保存 showing and no other signal but
+  // the 未设置 badge. Now a field is cleared only if it is not in the rejected
+  // set the response names.
+  assert.match(script, /const \{ saved, view \} = await push\(\{ secrets \}, '密钥已保存'\)/)
+  assert.match(script, /const rejected = new Set\(view\?\.rejectedSecrets \?\? \[\]\)/)
+  assert.match(script, /for \(const key of Object\.keys\(secrets\)\) \{/)
+  assert.match(script, /if \(!rejected\.has\(key\)\) input\.value = ''/)
+})
+
+test('saveSecrets names any rejected key by its panel label and only reports success when nothing was rejected', () => {
+  assert.match(script, /const SECRET_LABELS = \{/)
+  assert.match(script, /dashscopeApiKey: 'DashScope',/)
+  assert.match(script, /tavilyApiKey: 'Tavily',/)
+  assert.match(script, /modelApiKey: '模型网关',/)
+  assert.match(script, /codexApiKey: 'Codex',/)
+  // The error line is gated on `rejected.size`, so an all-accepted save keeps
+  // the plain 密钥已保存 note `push` already set and never reaches this branch.
+  assert.match(script, /if \(rejected\.size\) \{/)
+  assert.match(
+    script,
+    /statusLabel\.textContent = `部分密钥未保存\(含非法字符\): \$\{labels\.join\('、'\)\}`/,
+  )
+  assert.match(
+    script,
+    /const labels = SECRET_KEYS\.filter\(key => rejected\.has\(key\)\)\.map\(key => SECRET_LABELS\[key\]\)/,
+  )
+})
