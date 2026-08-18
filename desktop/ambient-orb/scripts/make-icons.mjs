@@ -9,9 +9,15 @@
 // Two constraints shape the implementation. It has no dependencies (node core
 // only: zlib for the PNG IDAT stream, and iconutil, when macOS offers it, for
 // the .icns container), and it is deterministic: the layout comes from a fixed
-// mulberry32 seed, the PNGs carry no timestamp chunk, and two runs produce
-// byte-identical files. That is what lets `resources/` artifacts be committed
-// and reviewed as content instead of as opaque binaries that churn every build.
+// mulberry32 seed, the PNGs carry no timestamp chunk, and two runs on one
+// machine produce byte-identical files. That is what lets `resources/`
+// artifacts be committed and reviewed as content instead of as opaque binaries
+// that churn every build.
+//
+// The determinism stops at the compressor, deliberately. Node's bundled zlib
+// deflates the same pixels to different bytes across releases (1.2.12 and 1.3.1
+// disagree), so the committed PNGs are only byte-stable for a given zlib —
+// which is why the test suite compares decoded pixels rather than files.
 
 import { deflateSync } from 'node:zlib'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { inflateSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -35,6 +36,32 @@ function readPngHeader(bytes) {
   // IEND is a whole chunk: zero-length, its type, and its (constant) CRC.
   assert.equal(bytes.subarray(bytes.length - 12).toString('latin1'), '\0\0\0\0IEND\xae\x42\x60\x82', 'IEND terminator')
   return header
+}
+
+// The pixels, recovered from the container. Every row is written with filter
+// type 0, so undoing the encoding is inflate plus dropping one byte per row —
+// which is exactly what lets the committed-artifact test below compare the
+// *image* instead of the compressor's output.
+function decodePng(bytes) {
+  const header = readPngHeader(bytes)
+  const parts = []
+  let offset = 8
+  while (offset + 8 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset)
+    if (bytes.subarray(offset + 4, offset + 8).toString('latin1') === 'IDAT') {
+      parts.push(bytes.subarray(offset + 8, offset + 8 + length))
+    }
+    offset += 12 + length
+  }
+  const raw = inflateSync(Buffer.concat(parts))
+  const stride = header.width * 4
+  assert.equal(raw.length, (stride + 1) * header.height, 'decompressed scanline count')
+  const rgba = Buffer.alloc(stride * header.height)
+  for (let y = 0; y < header.height; y += 1) {
+    assert.equal(raw[y * (stride + 1)], 0, `row ${y} uses filter type 0`)
+    raw.copy(rgba, y * stride, y * (stride + 1) + 1, (y + 1) * (stride + 1))
+  }
+  return { ...header, rgba }
 }
 
 function chunkTypes(bytes) {
@@ -268,12 +295,24 @@ test('the committed icon artifacts are the ones the generator produces', async t
   const { directory } = await generate()
   t.after(() => rm(directory, { recursive: true, force: true }))
 
-  for (const file of ['resources/icon.svg', ...TRAY_SIZES.map(size => `resources/tray/tray-${size}.png`)]) {
+  // The SVG is text the generator emits verbatim, so it is compared byte for byte.
+  assert.equal(
+    await readFile(resolve(packageRoot, 'resources/icon.svg'), 'utf8'),
+    await readFile(resolve(directory, 'resources/icon.svg'), 'utf8'),
+    'resources/icon.svg is checked in up to date',
+  )
+  // The PNGs are compared as pixels, not as files. Node's bundled zlib changes
+  // between releases (1.2.12 and 1.3.1 deflate the same mark to different
+  // bytes), so a byte comparison here would fail on a node upgrade that changed
+  // nothing about the icon. Pixels still catch the case that matters: a layout
+  // edit committed without rerunning `npm run icons`.
+  for (const size of TRAY_SIZES) {
+    const file = `resources/tray/tray-${size}.png`
     const [committed, fresh] = await Promise.all([
       readFile(resolve(packageRoot, file)),
       readFile(resolve(directory, file)),
     ])
-    assert.deepEqual(committed, fresh, `${file} is checked in up to date`)
+    assert.deepEqual(decodePng(committed).rgba, decodePng(fresh).rgba, `${file} is checked in up to date`)
   }
 })
 
