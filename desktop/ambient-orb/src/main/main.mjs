@@ -32,14 +32,16 @@ import { loadAppWindow } from './app-protocol.mjs'
 import { createDragController } from './drag-controller.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
-  applySettingsUpdate,
   createSafeStorageCodec,
+  createSettingsWriter,
+  hasPlaintextSecret,
   loadSettings,
   publicSettings,
   readSecret,
   saveSettings,
   SECRET_KEYS,
   secretsPresent,
+  secretValueIsSafe,
 } from './settings-store.mjs'
 import {
   clampWindowPosition,
@@ -149,14 +151,29 @@ function settingsFile() {
 
 // The single shape the settings panel is ever told. Key material is reduced to
 // four booleans here and nowhere else, so no handler can widen it by accident;
-// `keyringAvailable` is what turns the plaintext warning line on.
+// `keyringAvailable` is what turns the plaintext warning line on. It answers
+// for the file as it stands, not merely for today's keyring: an entry written
+// while no keyring existed is still readable by anyone, so the warning stays up
+// until the next save re-seals it.
 function settingsView() {
   return {
     ...publicSettings(currentSettings),
     secretsPresent: secretsPresent(currentSettings),
-    keyringAvailable: secretCodec.available(),
+    keyringAvailable: secretCodec.available() && !hasPlaintextSecret(currentSettings),
   }
 }
+
+// One writer for the whole process, so overlapping panel changes queue instead
+// of racing: each patch is merged against the state the previous write
+// committed, not against the snapshot its handler happened to start from.
+const settingsWriter = createSettingsWriter({
+  getCurrent: () => currentSettings,
+  commit: next => {
+    currentSettings = next
+  },
+  save: next => saveSettings(settingsFile(), next),
+  codec: secretCodec,
+})
 
 // The orb is a single fixed size, so "which display's work area applies"
 // depends only on where the candidate position would put its center.
@@ -264,17 +281,23 @@ function createTray() {
 // returns. A key present in the store but unreadable (keychain unavailable,
 // entry sealed by another OS user/machine, corrupt ciphertext) is logged by
 // name only — never its value, never even attempted — and simply omitted
-// from the result, which `backendLaunchSpec` treats exactly like "absent".
+// from the result, which `backendLaunchSpec` treats exactly like "absent". A
+// value that decrypts to something Node would refuse in a child environment (a
+// NUL or other control character, from a store written before that was
+// validated) is dropped the same way rather than allowed to fail the spawn and
+// quit the app before the panel can clear it.
 function decryptSecretsForSpawn(settings, codec) {
   const present = secretsPresent(settings)
   const decrypted = {}
   for (const key of SECRET_KEYS) {
     if (!present[key]) continue
     const plaintext = readSecret(settings, key, codec)
-    if (typeof plaintext === 'string' && plaintext) {
-      decrypted[key] = plaintext
-    } else {
+    if (typeof plaintext !== 'string' || !plaintext) {
       console.error(`[desktop-diagnostic] settings_secret_unreadable key=${key}`)
+    } else if (!secretValueIsSafe(plaintext)) {
+      console.error(`[desktop-diagnostic] settings_secret_invalid key=${key}`)
+    } else {
+      decrypted[key] = plaintext
     }
   }
   return decrypted
@@ -442,15 +465,15 @@ async function start() {
     }
     // Plaintext key values ride in on `patch`, are sealed inside the store, and
     // are never held, echoed, or logged here. Disk is the commit point: until
-    // the write lands, the in-memory settings stay as they were.
-    const next = applySettingsUpdate(currentSettings, patch, secretCodec)
+    // the write lands, the in-memory settings stay as they were. The writer
+    // serializes, so a second change arriving mid-save merges onto the first
+    // rather than overwriting it from a stale snapshot.
     try {
-      await saveSettings(settingsFile(), next)
+      await settingsWriter(patch)
     } catch (error) {
       console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
       return { ...settingsView(), saved: false }
     }
-    currentSettings = next
     // Only the palette is live; voice, proactivity, and keys are read at launch.
     sendToOrb('nova:settings:changed', publicSettings(currentSettings))
     return { ...settingsView(), saved: true }

@@ -138,12 +138,23 @@ export function secretsPresent(settings) {
 }
 
 // The only Electron-aware factory in the module, and it is never called by the
-// tests: everything below takes the codec as an argument.
-export function createSafeStorageCodec(safeStorage) {
+// tests with a real safeStorage: everything below takes the codec as an
+// argument, and `platform` is a parameter so the linux branch is exercised from
+// any host.
+export function createSafeStorageCodec(safeStorage, platform = process.platform) {
   return {
     available: () => {
       try {
-        return safeStorage.isEncryptionAvailable() === true
+        if (safeStorage.isEncryptionAvailable() !== true) return false
+        if (platform !== 'linux') return true
+        // Linux only: with no keyring on the session bus Electron falls back to
+        // the `basic_text` backend, which "encrypts" with a hardcoded password
+        // — anyone with the file can read the key, so it is not protection and
+        // must not silence the panel's plaintext warning. An Electron too old
+        // to name its backend cannot prove otherwise, so it counts the same
+        // way: unprotected.
+        if (typeof safeStorage.getSelectedStorageBackend !== 'function') return false
+        return safeStorage.getSelectedStorageBackend() !== 'basic_text'
       } catch {
         return false
       }
@@ -151,6 +162,24 @@ export function createSafeStorageCodec(safeStorage) {
     encrypt: plaintext => safeStorage.encryptString(plaintext),
     decrypt: ciphertext => safeStorage.decryptString(Buffer.from(ciphertext)),
   }
+}
+
+// Shared with the spawn-time injection guard in main.mjs: Node refuses a C0
+// control character (NUL above all) in a child process's environment value, so
+// a secret carrying one would fail the very launch that needs it — and the app
+// would quit before the panel could clear the offending key. Such a value is
+// refused at the door instead of stored.
+export function secretValueIsSafe(value) {
+  return typeof value === 'string' && !CONTROL_CHARACTERS.test(value)
+}
+
+// Whether the file is plaintext-equivalent *as stored*, which is not the same
+// question as whether a keyring is available right now: an entry written before
+// the keyring appeared stays readable by anyone until some later save re-seals
+// it, and the panel must keep saying so until then.
+export function hasPlaintextSecret(settings) {
+  const { secrets } = normalizeSettings(settings)
+  return SECRET_KEYS.some(key => secrets[key]?.enc === 'none')
 }
 
 function sealSecret(plaintext, codec) {
@@ -175,9 +204,32 @@ function updatedSecrets(stored, updates, codec) {
       delete secrets[key]
       continue
     }
+    // Per field, like every other validator here: an unusable key is refused on
+    // its own and the rest of the patch still lands.
+    if (!secretValueIsSafe(value)) continue
     secrets[key] = sealSecret(value, codec)
   }
   return secrets
+}
+
+// Opportunistic migration, run on every update so it costs nothing extra and
+// lands atomically with that save: a machine that has since grown a keyring
+// stops carrying entries the old one wrote in the clear. Each key stands alone
+// — a re-seal that throws leaves that entry exactly as it was, because a lost
+// key is worse than a plaintext one.
+function resealPlaintext(secrets, codec) {
+  if (!codec || !codec.available()) return secrets
+  const migrated = { ...secrets }
+  for (const key of SECRET_KEYS) {
+    const entry = migrated[key]
+    if (!entry || entry.enc !== 'none') continue
+    try {
+      migrated[key] = sealSecret(Buffer.from(entry.data, 'base64').toString('utf8'), codec)
+    } catch {
+      // Keep what is stored: the next save tries again.
+    }
+  }
+  return migrated
 }
 
 // `patch` is renderer-shaped: non-secret fields plus optional *plaintext*
@@ -191,8 +243,29 @@ export function applySettingsUpdate(current, patch, codec) {
     codexHeartbeatSeconds: source.codexHeartbeatSeconds,
     voice: source.voice,
   }, stored)
-  next.secrets = updatedSecrets(stored.secrets, source.secrets, codec)
+  next.secrets = resealPlaintext(updatedSecrets(stored.secrets, source.secrets, codec), codec)
   return next
+}
+
+// One queue for every settings write, so two patches that overlap in time merge
+// in order instead of racing: each one is computed against the state the one
+// before it committed, rather than against the snapshot it started from. Disk
+// stays the commit point — a failed write rejects to its own caller, commits
+// nothing, and leaves the queue usable for whatever is behind it.
+export function createSettingsWriter({ getCurrent, commit, save, codec }) {
+  let queue = Promise.resolve()
+  return patch => {
+    const write = queue.then(async () => {
+      const next = applySettingsUpdate(getCurrent(), patch, codec)
+      await save(next)
+      commit(next)
+      return next
+    })
+    // The chain itself must never carry a rejection forward, or one failed save
+    // would poison every write after it.
+    queue = write.then(() => {}, () => {})
+    return write
+  }
 }
 
 // Main-process only, and deliberately not wired to any IPC handler: this is

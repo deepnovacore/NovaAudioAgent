@@ -108,8 +108,22 @@ test('palette changes push immediately while key edits wait for their button', (
   assert.match(script, /push\(\{ palette: input\.value \}/)
   assert.match(script, /saveSecrets/)
   assert.match(script, /button\.clear/)
-  // An impatient second change mid-save is refused, and the panel re-renders
-  // from the last stored answer rather than leaving an unsaved value on screen.
+})
+
+test('a change made mid-save is coalesced and flushed, never dropped', () => {
+  // The old behaviour refused the second change outright, which silently lost
+  // it: a slider nudged twice in a second kept only the first value. Now the
+  // newest patch per field waits in `pendingPatch` and is pushed as soon as the
+  // in-flight save resolves.
   assert.match(script, /let saving = false/)
-  assert.match(script, /if \(saving\) \{\n\s*render\(latestView\)/)
+  assert.match(script, /let pendingPatch = null/)
+  assert.match(script, /if \(saving\) \{\n\s*pendingPatch = mergePatch\(pendingPatch, patch\)/)
+  assert.doesNotMatch(script, /if \(saving\) \{\n\s*render\(/)
+  // The flush happens after the save settles, and the merge goes one level
+  // deeper wherever a field carries an object, so two key edits queued behind
+  // the same save cannot erase each other.
+  assert.match(script, /if \(pendingPatch\)/)
+  assert.match(script, /void push\(nextPatch, nextNote\)/)
+  assert.match(script, /function mergePatch\(base, next\)/)
+  assert.match(script, /merged\[field\] = bothObjects \? \{ \.\.\.existing, \.\.\.value \} : value/)
 })

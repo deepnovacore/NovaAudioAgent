@@ -115,13 +115,18 @@ test('no decrypted secret can reach the renderer or a log line', async () => {
   assert.match(source, /function settingsView\(\) \{/)
   assert.match(source, /\.\.\.publicSettings\(currentSettings\)/)
   assert.match(source, /secretsPresent: secretsPresent\(currentSettings\)/)
-  assert.match(source, /keyringAvailable: secretCodec\.available\(\)/)
+  // The warning flag is about the *file*, not only about today's keyring: an
+  // entry written while no keyring existed keeps it on until it is re-sealed.
+  assert.match(
+    source,
+    /keyringAvailable: secretCodec\.available\(\) && !hasPlaintextSecret\(currentSettings\)/,
+  )
   // The failure log for a settings save names the error type only, never the payload.
   assert.match(source, /settings_save_failure type=\$\{error\.name\}/)
   // Every console.* line is scanned: a line mentioning "secret" or "apiKey" is
-  // allowed only if it is exactly the key-name-only unreadable-secret
-  // diagnostic; anything else naming a secret, or naming the raw settings
-  // patch, or interpolating the decrypted `plaintext` local, fails the test.
+  // allowed only if it is one of the two key-name-only secret diagnostics;
+  // anything else naming a secret, or naming the raw settings patch, or
+  // interpolating the decrypted `plaintext` local, fails the test.
   const logs = source.match(/console\.(?:log|warn|error)\([^\n]*/g) || []
   for (const line of logs) {
     assert.doesNotMatch(line, /patch/i, `log line leaks the settings patch: ${line}`)
@@ -129,11 +134,47 @@ test('no decrypted secret can reach the renderer or a log line', async () => {
     if (/secret|apiKey/i.test(line)) {
       assert.match(
         line,
-        /settings_secret_unreadable key=\$\{key\}/,
+        /settings_secret_(?:unreadable|invalid) key=\$\{key\}/,
         `log line mentioning secrets must be the key-name-only diagnostic: ${line}`,
       )
     }
   }
+})
+
+test('every settings write goes through one queue so overlapping patches merge', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  // Two panel changes can be in flight at once, and each handler used to
+  // snapshot `currentSettings` for itself: last writer won and the other
+  // field's change vanished. One writer, one queue, latest committed state.
+  assert.match(source, /const settingsWriter = createSettingsWriter\(\{/)
+  const writer = source.slice(source.indexOf('const settingsWriter = createSettingsWriter({'))
+  const body = writer.slice(0, writer.indexOf('\n})'))
+  assert.match(body, /getCurrent: \(\) => currentSettings/)
+  assert.match(body, /commit: next => \{\n\s*currentSettings = next\n\s*\}/)
+  assert.match(body, /save: next => saveSettings\(settingsFile\(\), next\)/)
+  assert.match(body, /codec: secretCodec/)
+
+  const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
+  const handler = set.slice(0, set.indexOf('\n  })'))
+  assert.match(handler, /await settingsWriter\(patch\)/)
+  assert.doesNotMatch(
+    handler,
+    /applySettingsUpdate|currentSettings = /,
+    'the handler no longer computes or commits state on its own',
+  )
+})
+
+test('a stored secret that would poison the child environment is omitted at spawn', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const decrypt = source.slice(source.indexOf('function decryptSecretsForSpawn('))
+  const body = decrypt.slice(0, decrypt.indexOf('\n}\n'))
+
+  // A NUL in an env value makes Node refuse the spawn, which would quit the app
+  // before the panel could clear the offending key. The value is dropped here
+  // and the key named — never its content.
+  assert.match(body, /secretValueIsSafe\(plaintext\)/)
+  assert.match(body, /settings_secret_invalid key=\$\{key\}/)
 })
 
 test('readSecret is wired at the spawn site, decrypting only what backendLaunchSpec receives', async () => {

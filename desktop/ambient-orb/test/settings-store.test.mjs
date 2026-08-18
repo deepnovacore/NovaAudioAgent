@@ -8,6 +8,9 @@ import {
   DEFAULT_SETTINGS,
   SECRET_KEYS,
   applySettingsUpdate,
+  createSafeStorageCodec,
+  createSettingsWriter,
+  hasPlaintextSecret,
   loadSettings,
   normalizeSettings,
   publicSettings,
@@ -28,6 +31,23 @@ function fakeCodec({ available = true } = {}) {
       return text.slice(7)
     },
   }
+}
+
+// Stands in for Electron's `safeStorage` module, which the codec factory is the
+// only thing in the repo to touch. `getSelectedStorageBackend` is added only
+// when the test wants it, because older Electron does not have the method.
+function fakeSafeStorage({ encryptionAvailable = true, backend } = {}) {
+  const storage = {
+    isEncryptionAvailable: () => encryptionAvailable,
+    encryptString: plaintext => Buffer.from(`sealed:${plaintext}`, 'utf8'),
+    decryptString: buffer => Buffer.from(buffer).toString('utf8').slice(7),
+  }
+  if (backend !== undefined) storage.getSelectedStorageBackend = () => backend
+  return storage
+}
+
+function plaintextEntry(value) {
+  return { enc: 'none', data: Buffer.from(value, 'utf8').toString('base64') }
 }
 
 async function withTempDirectory(run) {
@@ -236,6 +256,161 @@ test('applySettingsUpdate falls back to enc:none when no keyring is available', 
   assert.equal(readSecret(updated, 'modelApiKey', codec), 'sk-plain')
 })
 
+test('the safeStorage codec refuses linux basic_text, which is not protected storage', () => {
+  // `isEncryptionAvailable()` answers true for the basic_text backend too, but
+  // that backend encrypts with a hardcoded password: the file is readable by
+  // anyone, so the store must treat it exactly like "no keyring at all".
+  const basicText = createSafeStorageCodec(fakeSafeStorage({ backend: 'basic_text' }), 'linux')
+  const keyring = createSafeStorageCodec(fakeSafeStorage({ backend: 'gnome_libsecret' }), 'linux')
+  const older = createSafeStorageCodec(fakeSafeStorage(), 'linux')
+  const macos = createSafeStorageCodec(fakeSafeStorage(), 'darwin')
+  const windows = createSafeStorageCodec(fakeSafeStorage(), 'win32')
+  const noKeyring = createSafeStorageCodec(
+    fakeSafeStorage({ encryptionAvailable: false, backend: 'kwallet6' }),
+    'linux',
+  )
+  const throwing = createSafeStorageCodec({
+    isEncryptionAvailable: () => {
+      throw new Error('no dbus session')
+    },
+  }, 'linux')
+
+  assert.equal(basicText.available(), false, 'basic_text is a hardcoded password, not protection')
+  assert.equal(keyring.available(), true, 'a real linux keyring backend still counts')
+  assert.equal(
+    older.available(),
+    false,
+    'an Electron without getSelectedStorageBackend cannot prove protection on linux',
+  )
+  assert.equal(macos.available(), true, 'only linux has the basic_text fallback')
+  assert.equal(windows.available(), true)
+  assert.equal(noKeyring.available(), false)
+  assert.equal(throwing.available(), false, 'a throwing safeStorage is unavailable, not a crash')
+})
+
+test('a secret saved under linux basic_text is stored as plaintext and says so', () => {
+  const codec = createSafeStorageCodec(fakeSafeStorage({ backend: 'basic_text' }), 'linux')
+  const updated = applySettingsUpdate(DEFAULT_SETTINGS, {
+    secrets: { modelApiKey: 'sk-linux' },
+  }, codec)
+
+  assert.equal(updated.secrets.modelApiKey.enc, 'none')
+  assert.equal(hasPlaintextSecret(updated), true, 'the panel warning must be on')
+  assert.equal(readSecret(updated, 'modelApiKey', codec), 'sk-linux')
+})
+
+test('hasPlaintextSecret answers for what is stored, not for the codec of the moment', () => {
+  const stale = normalizeSettings({
+    secrets: {
+      dashscopeApiKey: plaintextEntry('sk-stale'),
+      codexApiKey: { enc: 'safeStorage', data: 'c2VhbGVk' },
+    },
+  })
+  const sealed = normalizeSettings({
+    secrets: { codexApiKey: { enc: 'safeStorage', data: 'c2VhbGVk' } },
+  })
+
+  // The keyring is available now, but this entry was written before it was:
+  // the file is still plaintext-equivalent, so the warning must persist.
+  assert.equal(hasPlaintextSecret(stale), true)
+  assert.equal(hasPlaintextSecret(sealed), false)
+  assert.equal(hasPlaintextSecret(DEFAULT_SETTINGS), false)
+  assert.equal(hasPlaintextSecret(undefined), false)
+})
+
+test('any update re-seals the secrets a vanished keyring left in plaintext', () => {
+  const codec = fakeCodec()
+  const encrypted = []
+  const observing = {
+    available: codec.available,
+    encrypt: plaintext => {
+      encrypted.push(plaintext)
+      return codec.encrypt(plaintext)
+    },
+    decrypt: codec.decrypt,
+  }
+  const stored = normalizeSettings({
+    secrets: {
+      dashscopeApiKey: plaintextEntry('sk-stale'),
+      codexApiKey: { enc: 'safeStorage', data: Buffer.from('sealed:sk-fresh').toString('base64') },
+    },
+  })
+
+  const migrated = applySettingsUpdate(stored, { palette: 'graphite' }, observing)
+
+  assert.equal(migrated.palette, 'graphite')
+  assert.equal(migrated.secrets.dashscopeApiKey.enc, 'safeStorage')
+  assert.equal(readSecret(migrated, 'dashscopeApiKey', observing), 'sk-stale')
+  assert.deepEqual(encrypted, ['sk-stale'], 'only the plaintext entry is re-sealed')
+  assert.deepEqual(
+    migrated.secrets.codexApiKey,
+    stored.secrets.codexApiKey,
+    'an already-sealed entry is not re-encrypted',
+  )
+  assert.equal(hasPlaintextSecret(migrated), false)
+})
+
+test('no keyring means no migration: a plaintext entry is left exactly as it was', () => {
+  const stored = normalizeSettings({ secrets: { tavilyApiKey: plaintextEntry('tvly-stale') } })
+
+  const updated = applySettingsUpdate(stored, { palette: 'graphite' }, fakeCodec({ available: false }))
+
+  assert.deepEqual(updated.secrets.tavilyApiKey, stored.secrets.tavilyApiKey)
+  assert.equal(hasPlaintextSecret(updated), true)
+})
+
+test('a re-seal that throws leaves that one entry untouched rather than losing it', () => {
+  const codec = fakeCodec()
+  const partial = {
+    available: codec.available,
+    encrypt: plaintext => {
+      if (plaintext === 'sk-doomed') throw new Error('keyring went away mid-write')
+      return codec.encrypt(plaintext)
+    },
+    decrypt: codec.decrypt,
+  }
+  const stored = normalizeSettings({
+    secrets: {
+      dashscopeApiKey: plaintextEntry('sk-doomed'),
+      tavilyApiKey: plaintextEntry('sk-ok'),
+    },
+  })
+
+  const migrated = applySettingsUpdate(stored, { palette: 'graphite' }, partial)
+
+  assert.deepEqual(
+    migrated.secrets.dashscopeApiKey,
+    stored.secrets.dashscopeApiKey,
+    'a failed re-seal is a no-op, never a dropped key',
+  )
+  assert.equal(readSecret(migrated, 'dashscopeApiKey', partial), 'sk-doomed')
+  assert.equal(migrated.secrets.tavilyApiKey.enc, 'safeStorage', 'the other entry still migrates')
+  assert.equal(migrated.palette, 'graphite')
+})
+
+test('a secret carrying a NUL or other control character is refused, not stored', () => {
+  const codec = fakeCodec()
+  const stored = applySettingsUpdate(DEFAULT_SETTINGS, {
+    secrets: { dashscopeApiKey: 'sk-good' },
+  }, codec)
+
+  // A NUL in an env value makes Node refuse the spawn outright, so a secret
+  // that contains one would brick the next launch. The field is rejected on
+  // its own; everything else in the same patch still lands.
+  const patched = applySettingsUpdate(stored, {
+    palette: 'graphite',
+    secrets: { dashscopeApiKey: 'sk-\u0000poison', tavilyApiKey: 'tvly-fine' },
+  }, codec)
+
+  assert.deepEqual(patched.secrets.dashscopeApiKey, stored.secrets.dashscopeApiKey)
+  assert.equal(readSecret(patched, 'tavilyApiKey', codec), 'tvly-fine')
+  assert.equal(patched.palette, 'graphite')
+  for (const bad of ['\u0000', 'sk-\u0000x', 'sk-\u001bx', 'sk\nx', 'sk\tx', 'sk\u007fx']) {
+    const attempt = applySettingsUpdate(DEFAULT_SETTINGS, { secrets: { modelApiKey: bad } }, codec)
+    assert.deepEqual(attempt.secrets, {}, `${JSON.stringify(bad)} never reaches the store`)
+  }
+})
+
 test('readSecret returns null instead of throwing when the ciphertext no longer decrypts', () => {
   const stored = normalizeSettings({
     secrets: { codexApiKey: { enc: 'safeStorage', data: 'bm90LW91cnM=' } },
@@ -401,4 +576,112 @@ test('saveSettings normalizes before writing so junk can never reach disk', asyn
     const body = JSON.parse(await readFile(file, 'utf8'))
     assert.deepEqual(body, DEFAULT_SETTINGS)
   })
+})
+
+test('the next save rewrites a plaintext entry on disk as ciphertext', async () => {
+  await withTempDirectory(async directory => {
+    const file = join(directory, 'ambient-orb-settings.json')
+    await saveSettings(file, { secrets: { modelApiKey: plaintextEntry('sk-stale') } })
+
+    // An unrelated field changes; the stale entry rides along with that write,
+    // so the migration is atomic with the save rather than a separate rewrite.
+    await saveSettings(file, applySettingsUpdate(
+      await loadSettings(file),
+      { voice: 'longcheng' },
+      fakeCodec(),
+    ))
+
+    const body = await readFile(file, 'utf8')
+    assert.doesNotMatch(body, /"enc":"none"/)
+    assert.match(body, /"enc":"safeStorage"/)
+    assert.doesNotMatch(
+      body,
+      new RegExp(plaintextEntry('sk-stale').data),
+      'the plaintext-equivalent base64 is gone from the file',
+    )
+    const reloaded = await loadSettings(file)
+    assert.equal(reloaded.voice, 'longcheng')
+    assert.equal(readSecret(reloaded, 'modelApiKey', fakeCodec()), 'sk-stale')
+  })
+})
+
+test('a rejected secret leaves the file byte-for-byte as it was for that key', async () => {
+  await withTempDirectory(async directory => {
+    const file = join(directory, 'ambient-orb-settings.json')
+    const codec = fakeCodec()
+    await saveSettings(file, applySettingsUpdate(DEFAULT_SETTINGS, {
+      secrets: { codexApiKey: 'sk-good' },
+    }, codec))
+    const before = await readFile(file, 'utf8')
+
+    await saveSettings(file, applySettingsUpdate(
+      await loadSettings(file),
+      { secrets: { codexApiKey: 'sk-\u0000bad' } },
+      codec,
+    ))
+
+    assert.equal(await readFile(file, 'utf8'), before)
+    assert.equal(readSecret(await loadSettings(file), 'codexApiKey', codec), 'sk-good')
+  })
+})
+
+test('the settings writer serializes overlapping saves against the latest state', async () => {
+  const codec = fakeCodec()
+  let current = DEFAULT_SETTINGS
+  const writes = []
+  let second = null
+  const writer = createSettingsWriter({
+    codec,
+    getCurrent: () => current,
+    commit: next => {
+      current = next
+    },
+    save: async next => {
+      writes.push(next)
+      // The second patch arrives while the first write is still in flight —
+      // exactly the race. Without a queue it snapshots the pre-first state and
+      // the palette change is lost when the second write commits.
+      if (writes.length === 1) second = writer({ voice: 'longcheng' })
+      await Promise.resolve()
+      await Promise.resolve()
+      return next
+    },
+  })
+
+  const first = await writer({ palette: 'graphite' })
+  const merged = await second
+
+  assert.equal(first.palette, 'graphite')
+  assert.equal(merged.palette, 'graphite', 'the second patch merged onto the committed first')
+  assert.equal(merged.voice, 'longcheng')
+  assert.equal(current.palette, 'graphite')
+  assert.equal(current.voice, 'longcheng')
+  assert.equal(writes.length, 2, 'both patches reached disk')
+})
+
+test('the settings writer neither commits nor stalls when one save fails', async () => {
+  let current = DEFAULT_SETTINGS
+  let failNext = true
+  const writer = createSettingsWriter({
+    codec: fakeCodec(),
+    getCurrent: () => current,
+    commit: next => {
+      current = next
+    },
+    save: async next => {
+      if (failNext) {
+        failNext = false
+        throw new Error('EACCES')
+      }
+      return next
+    },
+  })
+
+  await assert.rejects(writer({ palette: 'graphite' }), /EACCES/)
+  assert.equal(current.palette, 'ember', 'disk is the commit point, so nothing changed')
+
+  const after = await writer({ palette: 'graphite' })
+
+  assert.equal(after.palette, 'graphite', 'the queue survives a rejected write')
+  assert.equal(current.palette, 'graphite')
 })

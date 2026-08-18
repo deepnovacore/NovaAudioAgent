@@ -228,6 +228,32 @@ test('launch spec omits a whitespace-only decrypted secret, letting the parent v
   assert.equal(spec.env.DASHSCOPE_API_KEY, 'from-dotenv')
 })
 
+test('launch spec omits a decrypted secret carrying a control character', () => {
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: { DASHSCOPE_API_KEY: 'from-dotenv' },
+    decryptedSecrets: {
+      dashscopeApiKey: 'sk-\u0000poison',
+      modelApiKey: 'mk-\u001bpoison',
+      tavilyApiKey: 'tvly-clean',
+    },
+  })
+
+  // Node refuses a NUL in an env value and the spawn throws, which would take
+  // the app down at launch — before the panel could clear the bad key. The
+  // injection loop is the last line of defence: drop the value, keep the rest,
+  // and let the parent environment's own value stand.
+  assert.equal(spec.env.DASHSCOPE_API_KEY, 'from-dotenv')
+  assert.equal('NOVA_AUDIO_AGENT_MODEL_API_KEY' in spec.env, false)
+  assert.equal(spec.env.TAVILY_API_KEY, 'tvly-clean')
+  for (const value of Object.values(spec.env)) {
+    assert.doesNotMatch(String(value), /poison/, 'no poisoned value survives into env')
+  }
+})
+
 test('launch spec injects a decrypted secret with its surrounding whitespace trimmed', () => {
   const spec = backendLaunchSpec({
     python: '/venv/bin/python',

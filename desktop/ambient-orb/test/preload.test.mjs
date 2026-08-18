@@ -70,4 +70,3 @@ test('preload declares each bridge namespace exactly once', async () => {
     assert.equal(declarations.length, 1, `${namespace} is declared once`)
   }
 })
-

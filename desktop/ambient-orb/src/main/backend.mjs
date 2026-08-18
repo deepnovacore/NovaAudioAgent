@@ -18,6 +18,13 @@ const SETTINGS_DEFAULTS = Object.freeze({
   voice: 'longanqian',
 })
 
+// Duplicated from settings-store.mjs for the same reason SETTINGS_DEFAULTS is:
+// this module stays importable on its own. Node refuses a C0 control character
+// in a child's environment value and throws out of `spawn`, so a stored secret
+// that somehow carries one must be dropped here rather than take the launch —
+// and with it the app — down before the panel can clear it.
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
+
 // decryptedSecrets key -> env var name. Only a non-empty decrypted string maps
 // to an override; an absent/empty key is omitted entirely so the user's own
 // `.env` (or parent environment) keeps winning. Names match the Settings
@@ -122,7 +129,10 @@ export function backendLaunchSpec({
       const value = decryptedSecrets[secretKey]
       if (typeof value !== 'string') continue
       const trimmed = value.trim()
-      if (trimmed) env[envName] = trimmed
+      // A control character in the value would make Node reject the whole
+      // spawn, so the key is dropped exactly like an empty one: the launch
+      // proceeds, and whatever the parent environment holds keeps winning.
+      if (trimmed && !CONTROL_CHARACTERS.test(trimmed)) env[envName] = trimmed
     }
   }
   return {

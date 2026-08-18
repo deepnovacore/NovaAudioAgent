@@ -16,7 +16,11 @@ const voice = document.querySelector('#voice')
 const saveSecretsButton = document.querySelector('#save-secrets')
 
 let saving = false
-let latestView = null
+// The newest patch waiting behind the save in flight, and the note to show once
+// it lands. Latest-wins per field is exactly right for radios and a slider: the
+// value on screen is the value the user last chose.
+let pendingPatch = null
+let pendingNote = null
 
 function secretInput(key) {
   return document.querySelector(`#${key}`)
@@ -35,7 +39,6 @@ function renderBadges(present) {
 
 function render(view) {
   if (!view) return
-  latestView = view
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
   heartbeat.value = String(view.codexHeartbeatSeconds)
@@ -46,30 +49,54 @@ function render(view) {
   warning.hidden = view.keyringAvailable !== false
 }
 
+// Field-wise, and one level deeper wherever a field carries an object, so two
+// patches queued behind the same save cannot erase each other's fields. The
+// panel needs no knowledge of which field that is: the newest value wins per
+// leaf, which is what the radios, the slider, and the key form all want.
+function mergePatch(base, next) {
+  const merged = { ...base }
+  for (const [field, value] of Object.entries(next)) {
+    const existing = merged[field]
+    const bothObjects = value && typeof value === 'object'
+      && existing && typeof existing === 'object'
+    merged[field] = bothObjects ? { ...existing, ...value } : value
+  }
+  return merged
+}
+
 async function push(patch, note) {
-  // A second change mid-save is refused rather than queued, and the panel is
-  // re-rendered from the last stored answer so it never shows an unsaved state.
+  // A change made mid-save is coalesced rather than dropped: it waits for the
+  // in-flight save and is pushed the moment that one answers, so a quickly
+  // nudged slider still ends up stored at the value the user left it on.
   if (saving) {
-    render(latestView)
-    statusLabel.textContent = '请稍候…'
+    pendingPatch = mergePatch(pendingPatch, patch)
+    pendingNote = note
+    statusLabel.textContent = '保存中…'
     return false
   }
   saving = true
   saveSecretsButton.disabled = true
   statusLabel.textContent = '保存中…'
+  let saved = false
   try {
     const view = await api.set(patch)
     render(view)
-    const saved = view?.saved !== false
+    saved = view?.saved !== false
     statusLabel.textContent = saved ? note : '保存失败'
-    return saved
   } catch {
     statusLabel.textContent = '保存失败'
-    return false
   } finally {
     saving = false
     saveSecretsButton.disabled = false
   }
+  if (pendingPatch) {
+    const nextPatch = pendingPatch
+    const nextNote = pendingNote
+    pendingPatch = null
+    pendingNote = null
+    void push(nextPatch, nextNote)
+  }
+  return saved
 }
 
 async function saveSecrets() {
