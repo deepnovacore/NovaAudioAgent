@@ -13,11 +13,11 @@ files:
   - THIRD_PARTY_NOTICES.md
   - LICENSES/**/*
 
+# The tray reads these with nativeImage.createFromPath, so they stay outside
+# the asar and top-level (every platform's tray needs them), while the
+# macOS-only Swift AEC helper below moves under `mac:` so win/linux builds
+# don't fail on a missing file.
 extraResources:
-  - from: build/macos_voice_io
-    to: native/macos_voice_io
-  # The tray reads these with nativeImage.createFromPath, so they stay outside
-  # the asar alongside the native helper rather than being bundled into it.
   - from: resources/tray
     to: tray
 
@@ -29,5 +29,31 @@ mac:
   extendInfo:
     LSUIElement: true
     NSMicrophoneUsageDescription: Nova Audio Agent 使用麦克风进行带系统级回声消除的实时语音交互。
+  icon: build/icon.icns
   target:
     - dir
+  extraResources:
+    - from: build/macos_voice_io
+      to: native/macos_voice_io
+
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+  icon: build/icons
+  executableName: nova-ambient-orb
+  synopsis: "Nova ambient voice orb"
+
+deb:
+  recommends:
+    - fonts-noto-cjk
