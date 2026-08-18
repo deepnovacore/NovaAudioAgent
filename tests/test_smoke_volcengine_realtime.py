@@ -5,10 +5,16 @@ import wave
 import pytest
 
 from scripts.smoke_volcengine_realtime import (
+    _tail_label,
     _read_pcm16_wave,
     _send_realtime_frames,
     _stage_latencies,
 )
+
+
+def test_probe_labels_small_sample_tail_as_max() -> None:
+    assert _tail_label(3) == "max"
+    assert _tail_label(20) == "p95"
 
 
 def test_probe_reads_only_bounded_mono_16k_pcm16(tmp_path) -> None:

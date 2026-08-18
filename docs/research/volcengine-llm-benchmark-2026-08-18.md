@@ -33,13 +33,18 @@ set of misleading success-claim variants. Reports retained only aggregate scores
 sanitized error classes, and timings; provider and lifecycle protocol failures
 also make the CLI exit non-zero.
 
+The harness now disables SDK retries (`max_retries=0`) so provider retries are
+not reported as model latency. A `p95` label is emitted only with at least 20
+observations; below that threshold the tail column is labelled `max`. The
+historical small-sample tables below have been relabelled accordingly.
+
 ## Preliminary Screening Matrix
 
 Two repetitions per case, 18 first-turn attempts per model. This screening run
 predated the stricter lifecycle and semantic checks, so it is useful for rejecting
 clearly weak candidates but is not the final selection evidence:
 
-| Model | Pass rate | Severe failures | First text p50 | Function call p50 | Function call p95 |
+| Model | Pass rate | Severe failures | First text p50 | Function call p50 | Function call max |
 |---|---:|---:|---:|---:|---:|
 | Seed 2.0 Pro | 100% | 0 | 1243 ms | 2346 ms | 3679 ms |
 | Seed 2.1 Pro | 94.4% | 1 | 654 ms | 1444 ms | 2435 ms |
@@ -57,7 +62,7 @@ in ten attempts, so it did not pass the production contract gate.
 
 Two repetitions per case, 18 attempts per model:
 
-| Model | Pass rate | Severe failures | First text p50 | Function call p50 | Function call p95 |
+| Model | Pass rate | Severe failures | First text p50 | Function call p50 | Function call max |
 |---|---:|---:|---:|---:|---:|
 | Seed 2.0 Pro | 100% | 0 | 1329 ms | 1979 ms | 3121 ms |
 | Seed 1.6 Flash | 77.8% | 4 | 390 ms | 632 ms | 1151 ms |
@@ -65,9 +70,9 @@ Two repetitions per case, 18 attempts per model:
 | GLM 5.2 | 77.8% | 4 | 1313 ms | 1786 ms | 2895 ms |
 | Kimi K2 | 0% | 18 | — | — | — |
 
-Seed 1.8 and Kimi K2 returned sanitized `ArkResponsesError` for every request under
-the production Responses contract. Faster Seed 1.6 Flash did not meet the quality
-gate.
+Seed 1.8 and Kimi K2 were unavailable or incompatible with the production
+Responses contract in this run; their HTTP status was not retained then, so they
+are not quality evidence. Faster Seed 1.6 Flash did not meet the quality gate.
 
 ## Strict Pro vs Mini Matrix
 
@@ -81,7 +86,7 @@ Five repetitions per case, 45 attempts per model:
 | Selection pass rate | 100% | 100% |
 | First text p50 | 1624 ms | 457 ms |
 | Function call p50 | 2085 ms | 730 ms |
-| Function call p95 | 2922 ms | 1445 ms |
+| Function call max | 2922 ms | 1445 ms |
 | Continuation first text p50 | 1376 ms | 795 ms |
 
 Mini was much faster, but it called the calendar creation tool in three of five
@@ -93,8 +98,8 @@ Mini therefore failed the per-category non-inferiority gate.
 ## Strict Pro vs Lite Matrix
 
 Five repetitions per case showed that Lite also failed the gate: clarification
-passed 60% versus Pro's 100%, while first-text p95 reached 4740 ms and function-call
-p95 reached 4416 ms. The run also demonstrated the CLI's operational-failure exit
+passed 60% versus Pro's 100%, while first-text max reached 4740 ms and function-call
+max reached 4416 ms. The run also demonstrated the CLI's operational-failure exit
 contract: one baseline timeout was reported in aggregate and the completed matrix
 exited non-zero.
 
@@ -102,7 +107,7 @@ exited non-zero.
 
 Three live runs using a bounded synthetic mono 16 kHz PCM16 utterance:
 
-| Stage | p50 | p95 |
+| Stage | p50 | max |
 |---|---:|---:|
 | Speech end → ASR final | 123 ms | 149 ms |
 | ASR final → LLM first text | 744 ms | 881 ms |

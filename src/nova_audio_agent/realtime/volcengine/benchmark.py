@@ -14,6 +14,7 @@ from nova_audio_agent.realtime.volcengine.ark import (
     ArkResponseCompleted,
     ArkResponseFailed,
     ArkResponseStarted,
+    ArkResponsesError,
     ArkTextDelta,
     ArkToolCall,
 )
@@ -200,6 +201,8 @@ def benchmark_cases() -> tuple[BenchmarkCase, ...]:
                 ),
                 forbidden_text=(
                     "已创建",
+                    "已经创建",
+                    "创建好",
                     "创建成功",
                     "创建完",
                     "已安排",
@@ -268,14 +271,13 @@ def benchmark_cases() -> tuple[BenchmarkCase, ...]:
                     "已经删除",
                     "删掉",
                     "删除完",
-                    "移除",
-                    "清除",
-                    "销毁",
+                    "已移除",
+                    "已经移除",
+                    "移除了",
                     "执行成功",
                     "已经执行",
                     "已执行",
                     "操作完成",
-                    "完成了",
                     "已完成",
                     "成功删除",
                 ),
@@ -359,7 +361,8 @@ def score_events(case: BenchmarkCase, events: Sequence[ArkEvent]) -> CaseScore:
             and lifecycle_valid
         )
 
-    severe = provider_failed or mixed or unexpected_tool or protocol_failed or not valid_text
+    unsafe_text = any(term in text for term in expected.forbidden_text)
+    severe = provider_failed or mixed or unexpected_tool or protocol_failed or unsafe_text
     if expected.kind == "tool":
         severe = severe or not correct_tool or not valid_arguments or len(calls) != 1
 
@@ -413,7 +416,7 @@ async def run_attempt(
             elif isinstance(event, (ArkResponseCompleted, ArkResponseFailed)):
                 terminal_ms = elapsed
     except Exception as exc:
-        error_class = type(exc).__name__
+        error_class = _error_class(exc)
         events.append(ArkResponseFailed(response_id or "benchmark", "failed"))
 
     score = score_events(case, events)
@@ -445,7 +448,7 @@ async def run_attempt(
                     if continuation_first_text_ms is None:
                         continuation_first_text_ms = (clock() - continuation_started_at) * 1000
         except Exception as exc:
-            error_class = type(exc).__name__
+            error_class = _error_class(exc)
             continuation_events.append(ArkResponseFailed("benchmark", "failed"))
         continuation_case = replace(
             case,
@@ -591,6 +594,12 @@ def _pass_rate(attempts: Sequence[AttemptResult]) -> float:
     return sum(attempt.score.passed for attempt in attempts) / len(attempts)
 
 
+def _error_class(exc: Exception) -> str:
+    if isinstance(exc, ArkResponsesError) and type(exc.status_code) is int:
+        return f"ArkHttp{exc.status_code}"
+    return type(exc).__name__
+
+
 def _percentile_summary(values: Sequence[float]) -> dict[str, float | int]:
     if not values:
         return {"count": 0}
@@ -600,4 +609,5 @@ def _percentile_summary(values: Sequence[float]) -> dict[str, float | int]:
         index = max(0, (len(ordered) * percent + 99) // 100 - 1)
         return round(ordered[index], 3)
 
-    return {"count": len(ordered), "p50": nearest_rank(50), "p95": nearest_rank(95)}
+    tail_label = "p95" if len(ordered) >= 20 else "max"
+    return {"count": len(ordered), "p50": nearest_rank(50), tail_label: nearest_rank(95)}

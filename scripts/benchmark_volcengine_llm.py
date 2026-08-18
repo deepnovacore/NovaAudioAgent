@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--models",
         nargs="+",
         choices=MODEL_CHOICES,
-        default=list(MODEL_CHOICES),
+        default=[BASELINE_MODEL],
         help="allowlisted Ark model IDs to compare",
     )
     parser.add_argument("--runs", type=_bounded_runs, default=2)
@@ -92,7 +92,7 @@ def _live_client_factory(timeout: float) -> Callable[[str], ArkResponsesClient]:
 
     def create(model: str) -> ArkResponsesClient:
         return ArkResponsesClient(
-            client=AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout),
+            client=AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=0),
             model=model,
             instructions=FRONTEND_INSTRUCTIONS,
         )

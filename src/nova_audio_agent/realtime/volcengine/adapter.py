@@ -53,7 +53,9 @@ class _MixedResponse(RuntimeError):
 
 _USER_RESPONSE_PENDING_KINDS = frozenset({"recovery", "dialogue_context", "tool_output"})
 _CONTEXT_PENDING_KINDS = frozenset({"recovery", "dialogue_context"})
+_MAX_PENDING_HOST_ITEMS = 256
 _MAX_CONSUMED_HOST_ITEMS = 256
+_MAX_ABANDONED_TOOL_CALLS = 256
 
 
 class VolcengineCascadedAdapter:
@@ -80,6 +82,8 @@ class VolcengineCascadedAdapter:
         self._consumed_host_items: OrderedDict[str, int] = OrderedDict()
         self._consumption_generation = 0
         self._previous_response_id: str | None = None
+        self._pending_tool_call_id: str | None = None
+        self._abandoned_tool_call_ids: OrderedDict[str, None] = OrderedDict()
         self._events: asyncio.Queue[RealtimeFrontBrainEvent | None] = asyncio.Queue()
         self._audio_lock = asyncio.Lock()
         self._asr_session: Any | None = None
@@ -106,6 +110,8 @@ class VolcengineCascadedAdapter:
         self._consumed_host_items.clear()
         self._consumption_generation = 0
         self._previous_response_id = None
+        self._pending_tool_call_id = None
+        self._abandoned_tool_call_ids.clear()
         self._reset_tts_state()
         self._vad.reset()
         # Keep this reconnect queue swap before the first suspension point: close()
@@ -126,9 +132,15 @@ class VolcengineCascadedAdapter:
             if started is not None:
                 await self._start_asr(started.pre_roll_pcm)
                 if started.speech_pcm and self._asr_session is not None:
-                    await self._asr_session.append(started.speech_pcm)
+                    try:
+                        await self._asr_session.append(started.speech_pcm)
+                    except Exception:
+                        await self._fail_active_asr("volcengine_asr_append")
             elif was_speech and self._asr_session is not None:
-                await self._asr_session.append(pcm)
+                try:
+                    await self._asr_session.append(pcm)
+                except Exception:
+                    await self._fail_active_asr("volcengine_asr_append")
             stopped = next((event for event in decisions if event.kind == "speech_stopped"), None)
             if stopped is not None:
                 await self._stop_asr(commit=stopped.commit)
@@ -147,6 +159,8 @@ class VolcengineCascadedAdapter:
             raise ValueError("user activation requires a progress or final item")
         if item.host_item_id in self._pending_items:
             raise VolcengineRealtimeError("火山实时会话收到重复的宿主项标识")
+        if len(self._pending_items) >= _MAX_PENDING_HOST_ITEMS:
+            raise VolcengineRealtimeError("火山实时会话宿主项积压已满")
         provider_item_id = self._id_factory()
         self._pending_items[item.host_item_id] = (
             item,
@@ -159,12 +173,21 @@ class VolcengineCascadedAdapter:
             raise VolcengineRealtimeError("火山实时会话未连接")
         if self._response_task is not None and not self._response_task.done():
             raise VolcengineRealtimeError("火山实时响应仍在进行")
+        if (
+            intent.item.kind == "tool_output"
+            and intent.item.call_id in self._abandoned_tool_call_ids
+        ):
+            self._abandoned_tool_call_ids.pop(intent.item.call_id)
+            self._pending_items.pop(intent.item.host_item_id, None)
+            self._response_task = asyncio.create_task(self._run_silent_response())
+            return
         if self._consume_satisfied_item(intent.item.host_item_id):
             self._response_task = asyncio.create_task(self._run_silent_response())
             return
         inputs = self._take_response_inputs(intent)
         if not inputs:
             raise VolcengineRealtimeError("火山实时响应没有宿主输入")
+        self._resolve_pending_tool_call(inputs)
         self._response_task = asyncio.create_task(self._run_ark(inputs))
 
     async def cancel_response(self, response_id: str) -> None:
@@ -233,13 +256,13 @@ class VolcengineCascadedAdapter:
 
     async def _stop_asr(self, *, commit: bool) -> None:
         session = self._asr_session
-        if session is None:
-            return
         speech_id, self._active_speech_id = self._active_speech_id, None
         if speech_id is None:
-            raise VolcengineRealtimeError("豆包 ASR 话语缺少开始标识")
+            return
         await self._emit(UserSpeechEnded(self._epoch, speech_id))
         self._telemetry.record("volcengine.vad.end", {"epoch": self._epoch, "commit": commit})
+        if session is None:
+            return
         if not commit:
             await self._discard_asr()
             return
@@ -250,6 +273,16 @@ class VolcengineCascadedAdapter:
             await self._emit(ProviderErrorEvent(self._epoch, "volcengine_asr_finish", True))
             await self._emit(UserTranscriptFailed(self._epoch, item_id))
             await self._discard_asr()
+
+    async def _fail_active_asr(self, code: str) -> None:
+        speech_id, self._active_speech_id = self._active_speech_id, None
+        item_id, self._active_asr_item_id = self._active_asr_item_id, None
+        if speech_id is not None:
+            await self._emit(UserSpeechEnded(self._epoch, speech_id))
+        await self._emit(ProviderErrorEvent(self._epoch, code, True))
+        if item_id is not None:
+            await self._emit(UserTranscriptFailed(self._epoch, item_id))
+        await self._discard_asr()
 
     async def _consume_asr(self, item_id: str, session: Any) -> None:
         try:
@@ -279,6 +312,7 @@ class VolcengineCascadedAdapter:
             await asyncio.gather(self._response_task, return_exceptions=True)
         pending_inputs, consumed_ids = self._take_user_response_inputs()
         self._mark_items_consumed(consumed_ids)
+        self._resolve_pending_tool_call(pending_inputs)
         self._response_task = asyncio.create_task(
             self._run_ark([*pending_inputs, {"role": "user", "content": text}])
         )
@@ -309,6 +343,25 @@ class VolcengineCascadedAdapter:
             del self._pending_items[host_item_id]
         return selected, tuple(consumed_ids)
 
+    def _resolve_pending_tool_call(self, inputs: Sequence[dict[str, Any]]) -> None:
+        call_id = self._pending_tool_call_id
+        if call_id is None:
+            return
+        if any(
+            item.get("type") == "function_call_output" and item.get("call_id") == call_id
+            for item in inputs
+        ):
+            self._pending_tool_call_id = None
+            return
+        # Ark does not permit a new user request to continue a response whose
+        # function call has not received its matching output.
+        self._abandoned_tool_call_ids[call_id] = None
+        self._abandoned_tool_call_ids.move_to_end(call_id)
+        while len(self._abandoned_tool_call_ids) > _MAX_ABANDONED_TOOL_CALLS:
+            self._abandoned_tool_call_ids.popitem(last=False)
+        self._previous_response_id = None
+        self._pending_tool_call_id = None
+
     def _mark_items_consumed(self, host_item_ids: tuple[str, ...]) -> None:
         if not host_item_ids:
             return
@@ -320,12 +373,9 @@ class VolcengineCascadedAdapter:
             self._consumed_host_items.popitem(last=False)
 
     def _consume_satisfied_item(self, host_item_id: str) -> bool:
-        generation = self._consumed_host_items.get(host_item_id)
-        if generation is None:
+        if host_item_id not in self._consumed_host_items:
             return False
-        for item_id, item_generation in tuple(self._consumed_host_items.items()):
-            if item_generation == generation:
-                del self._consumed_host_items[item_id]
+        del self._consumed_host_items[host_item_id]
         return True
 
     async def _run_silent_response(self) -> None:
@@ -344,6 +394,7 @@ class VolcengineCascadedAdapter:
         text_seen = False
         first_text_recorded = False
         tool_seen = False
+        pending_tool: ArkToolCall | None = None
         chunker = TextChunker()
         try:
             async for event in self._ark.stream(
@@ -376,18 +427,9 @@ class VolcengineCascadedAdapter:
                     if response_id is None:
                         raise ArkResponsesError("Ark tool call arrived before response identity")
                     tool_seen = True
+                    pending_tool = event
                     await self._cancel_tts()
                     self._telemetry.record("volcengine.llm.tool_call", {"epoch": self._epoch})
-                    await self._emit(
-                        ToolCallReady(
-                            self._epoch,
-                            event.call_id,
-                            event.item_id,
-                            event.name,
-                            event.arguments,
-                            response_id,
-                        )
-                    )
                 elif isinstance(event, ArkResponseFailed):
                     response_id = event.response_id
                     raise ArkResponsesError("Ark response failed")
@@ -403,6 +445,18 @@ class VolcengineCascadedAdapter:
                         )
                     else:
                         await self._cancel_tts()
+                        if pending_tool is not None:
+                            self._pending_tool_call_id = pending_tool.call_id
+                            await self._emit(
+                                ToolCallReady(
+                                    self._epoch,
+                                    pending_tool.call_id,
+                                    pending_tool.item_id,
+                                    pending_tool.name,
+                                    pending_tool.arguments,
+                                    response_id,
+                                )
+                            )
                     await self._emit(
                         ResponseTerminal(self._epoch, response_id, "completed", "completed")
                     )

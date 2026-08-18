@@ -331,6 +331,12 @@ class _HangingSocket(_Socket):
         raise AssertionError("unreachable")
 
 
+class _InterruptSocket(_Socket):
+    async def send(self, payload: bytes) -> None:
+        del payload
+        raise KeyboardInterrupt
+
+
 def _asr_response(sequence: int, body: dict[str, Any]) -> bytes:
     payload = gzip.compress(json.dumps(body, ensure_ascii=False).encode())
     flag = 0x93 if sequence < 0 else 0x91
@@ -382,6 +388,28 @@ async def test_asr_handshake_timeout_is_bounded_and_sanitized() -> None:
         await client.open()
 
     assert socket.closed is True
+    assert "credential-must-not-leak" not in str(failure.value)
+
+
+@pytest.mark.asyncio
+async def test_ark_client_retains_only_http_status_category_for_request_failures() -> None:
+    class Responses:
+        async def create(self, **_kwargs: Any) -> _AsyncEvents:
+            failure = RuntimeError("credential-must-not-leak")
+            failure.status_code = 404  # type: ignore[attr-defined]
+            raise failure
+
+    client = ArkResponsesClient(
+        client=SimpleNamespace(responses=Responses()), model="model", instructions="system"
+    )
+
+    with pytest.raises(ArkResponsesError) as failure:
+        _ = [
+            event
+            async for event in client.stream(input_items=[], tools=(), previous_response_id=None)
+        ]
+
+    assert failure.value.status_code == 404
     assert "credential-must-not-leak" not in str(failure.value)
 
 
@@ -462,3 +490,40 @@ async def test_tts_session_streams_task_text_and_audio_until_session_finished() 
     assert VolcMessage.unmarshal(socket.sent[-1]).event == EventType.FINISH_CONNECTION
     assert socket.closed is True
     assert events == [TtsAudio(b"\x01\x02")]
+
+
+@pytest.mark.asyncio
+async def test_tts_open_cancellation_closes_a_partially_opened_websocket() -> None:
+    socket = _HangingSocket()
+    client = DoubaoTtsClient(
+        endpoint="wss://speech.example/tts",
+        api_key="secret",
+        resource_id="seed-tts-2.0",
+        voice="voice",
+        connector=_Connector(socket),
+    )
+
+    opening = asyncio.create_task(client.open())
+    await asyncio.sleep(0)
+    opening.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await opening
+
+    assert socket.closed is True
+
+
+@pytest.mark.asyncio
+async def test_tts_open_closes_socket_without_wrapping_non_exception_interrupts() -> None:
+    socket = _InterruptSocket([])
+    client = DoubaoTtsClient(
+        endpoint="wss://speech.example/tts",
+        api_key="secret",
+        resource_id="seed-tts-2.0",
+        voice="voice",
+        connector=_Connector(socket),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        await client.open()
+
+    assert socket.closed is True

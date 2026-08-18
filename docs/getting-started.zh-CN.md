@@ -123,9 +123,10 @@ uv run python scripts/smoke_volcengine_realtime.py \
 ```
 
 如果要比较 Ark 模型而不发送音频，可以运行有界的合成 function-call 矩阵。脚本必须显式传入
-`--live`，只接受仓库中审核过的模型 allowlist；输出仅包含聚合后的质量、异常类型和 p50/p95
-耗时，不打印 prompt、工具参数、工具结果、回答文本、请求 ID 或凭据。即使 `--models` 没有写
-Seed 2.0 Pro，脚本也会自动加入这个基线：
+`--live`，只接受仓库中审核过的模型 allowlist；输出仅包含聚合后的质量、异常类型和耗时（样本少于
+20 个时显示 max，达到 20 个才显示 p95），不打印 prompt、工具参数、工具结果、回答文本、请求 ID
+或凭据。即使 `--models` 没有写 Seed 2.0 Pro，脚本也会自动加入这个基线；不传 `--models` 时只跑
+Seed 2.0 Pro：
 
 ```bash
 uv run --extra volcengine python scripts/benchmark_volcengine_llm.py \

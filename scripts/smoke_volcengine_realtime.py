@@ -162,6 +162,10 @@ def _nearest_rank(values: Sequence[float], percent: float) -> float:
     return ordered[index]
 
 
+def _tail_label(count: int) -> str:
+    return "p95" if count >= 20 else "max"
+
+
 async def _main(args: argparse.Namespace) -> int:
     if not args.live:
         raise ValueError("live provider calls require --live")
@@ -169,9 +173,10 @@ async def _main(args: argparse.Namespace) -> int:
     samples = [await _run_once(Settings(), pcm, args.timeout) for _ in range(args.runs)]
     for name in samples[0]:
         values = [sample[name] for sample in samples]
+        tail_label = _tail_label(len(values))
         print(
             f"{name}: count={len(values)} p50={_nearest_rank(values, 50):.1f}ms "
-            f"p95={_nearest_rank(values, 95):.1f}ms"
+            f"{tail_label}={_nearest_rank(values, 95):.1f}ms"
         )
     return 0
 

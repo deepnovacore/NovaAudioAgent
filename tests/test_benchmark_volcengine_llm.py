@@ -18,12 +18,28 @@ from scripts.benchmark_volcengine_llm import MODEL_CHOICES, build_parser, public
 
 def test_parser_defaults_to_safe_mode_and_rejects_unlisted_model() -> None:
     parser = build_parser()
-    args = parser.parse_args(["--models", "doubao-seed-2-0-pro-260215"])
+    args = parser.parse_args([])
 
     assert args.live is False
     assert args.runs == 2
+    assert args.models == ["doubao-seed-2-0-pro-260215"]
     with pytest.raises(SystemExit):
         parser.parse_args(["--models", "arbitrary-model"])
+
+
+def test_live_client_factory_disables_sdk_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("ARK_API_KEY", "secret")
+    monkeypatch.setattr(
+        benchmark_cli,
+        "AsyncOpenAI",
+        lambda **kwargs: captured.update(kwargs) or object(),
+    )
+
+    client = benchmark_cli._live_client_factory(12.0)("doubao-seed-2-0-pro-260215")
+
+    assert client is not None
+    assert captured["max_retries"] == 0
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf"])

@@ -257,13 +257,16 @@ class DoubaoTtsClient:
                 sample_rate=self._output_sample_rate,
                 receive_timeout=self._receive_timeout,
             )
-        except DoubaoTtsError:
+        except BaseException as exc:
             if websocket is not None:
-                await websocket.close()
-            raise
-        except Exception as exc:
-            if websocket is not None:
-                await websocket.close()
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
+            if isinstance(exc, asyncio.CancelledError | DoubaoTtsError):
+                raise
+            if not isinstance(exc, Exception):
+                raise
             raise DoubaoTtsError(f"豆包 TTS 建连失败（{type(exc).__name__}）") from exc
 
 

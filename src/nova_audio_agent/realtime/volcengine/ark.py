@@ -32,6 +32,10 @@ def responses_tool_schema(schema: dict[str, Any]) -> dict[str, Any]:
 class ArkResponsesError(RuntimeError):
     """A sanitized Ark failure that never contains provider content."""
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 @dataclass(frozen=True, slots=True)
 class ArkResponseStarted:
@@ -104,7 +108,12 @@ class ArkResponsesClient:
         except ArkResponsesError:
             raise
         except Exception as exc:
-            raise ArkResponsesError(f"Ark Responses 请求失败（{type(exc).__name__}）") from exc
+            status_code = getattr(exc, "status_code", None)
+            if type(status_code) is not int:
+                status_code = None
+            raise ArkResponsesError(
+                f"Ark Responses 请求失败（{type(exc).__name__}）", status_code=status_code
+            ) from exc
 
 
 def _normalize_event(raw: Any) -> ArkEvent | None:

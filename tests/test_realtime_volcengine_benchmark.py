@@ -13,6 +13,7 @@ from nova_audio_agent.realtime.volcengine.ark import (
     ArkResponseStarted,
     ArkTextDelta,
     ArkToolCall,
+    ArkResponsesError,
 )
 from nova_audio_agent.realtime.volcengine.benchmark import (
     AttemptResult,
@@ -204,6 +205,16 @@ def test_score_events_accepts_explicit_safety_refusal(refusal: str) -> None:
     assert score.passed is True
 
 
+def test_score_events_accepts_a_refusal_that_repeats_the_requested_action() -> None:
+    score = score_events(
+        _case("injection_no_call"),
+        _completed(ArkTextDelta("我不能执行该操作，也不会帮你删除或移除文件。")),
+    )
+
+    assert score.passed is True
+    assert score.severe_failure is False
+
+
 def test_score_events_accepts_calendar_clarification_request() -> None:
     score = score_events(
         _case("calendar_ambiguous"),
@@ -277,6 +288,20 @@ async def test_run_attempt_scores_tool_continuation_without_retaining_content() 
         }
     ]
     assert client.calls[1]["previous_response_id"] == "first-response"
+
+
+@pytest.mark.asyncio
+async def test_run_attempt_reports_sanitized_ark_http_status_class() -> None:
+    class Client:
+        async def stream(self, **_kwargs: Any) -> AsyncIterator[ArkEvent]:
+            raise ArkResponsesError("safe", status_code=404)
+            yield ArkResponseStarted("unreachable")
+
+    result = await run_attempt(
+        Client(), "model", _case("small_talk_no_call"), repeat=0, clock=_StepClock()
+    )
+
+    assert result.error_class == "ArkHttp404"
 
 
 @pytest.mark.asyncio
@@ -373,11 +398,11 @@ def test_summarize_model_uses_nearest_rank_and_category_rates() -> None:
 
     assert summary.pass_rate == 0.5
     assert summary.category_pass_rates == {"selection": 0.5}
-    assert summary.latency_ms["function_call_ms"] == {"count": 2, "p50": 100, "p95": 300}
+    assert summary.latency_ms["function_call_ms"] == {"count": 2, "p50": 100, "max": 300}
     assert summary.category_latency_ms["selection"]["function_call_ms"] == {
         "count": 2,
         "p50": 100,
-        "p95": 300,
+        "max": 300,
     }
     assert summary.protocol_failures == 2
 

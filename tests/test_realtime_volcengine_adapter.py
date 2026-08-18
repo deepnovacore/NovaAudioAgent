@@ -21,8 +21,10 @@ from nova_audio_agent.realtime.protocol import (
     UserTranscriptFinal,
 )
 from nova_audio_agent.realtime.qwen import GUARD_ACTIVATION_PREFIX
+import nova_audio_agent.realtime.volcengine.adapter as adapter_module
 from nova_audio_agent.realtime.volcengine.adapter import (
     VolcengineCascadedAdapter,
+    VolcengineRealtimeError,
     _host_input,
 )
 from nova_audio_agent.realtime.volcengine.ark import (
@@ -142,6 +144,34 @@ class _FailFinishAsr(_Asr):
         self.session = _FailFinishAsrSession()
 
 
+class _FailAppendAsrSession(_AsrSession):
+    def __init__(self) -> None:
+        super().__init__()
+        self.append_calls = 0
+
+    async def append(self, pcm: bytes) -> None:
+        self.append_calls += 1
+        if self.append_calls == 2:
+            raise ConnectionError("credential-must-not-leak")
+        await super().append(pcm)
+
+
+class _FailAppendAsr(_Asr):
+    def __init__(self) -> None:
+        self.session = _FailAppendAsrSession()
+
+
+class _FailReceiveAsrSession(_AsrSession):
+    async def events(self) -> AsyncIterator[AsrTranscript]:
+        raise ConnectionError("credential-must-not-leak")
+        yield AsrTranscript("", True)
+
+
+class _FailReceiveAsr(_Asr):
+    def __init__(self) -> None:
+        self.session = _FailReceiveAsrSession()
+
+
 class _HangingAsrSession(_AsrSession):
     def __init__(self) -> None:
         super().__init__()
@@ -173,6 +203,16 @@ class _Ark:
     def stream(self, **kwargs: Any) -> AsyncIterator[Any]:
         self.calls.append(kwargs)
         return _iterate(self.events)
+
+
+class _SequencedArk(_Ark):
+    def __init__(self, event_sets: list[list[Any]]) -> None:
+        super().__init__([])
+        self._event_sets = iter(event_sets)
+
+    def stream(self, **kwargs: Any) -> AsyncIterator[Any]:
+        self.calls.append(kwargs)
+        return _iterate(next(self._event_sets))
 
 
 class _BlockingArk:
@@ -319,6 +359,45 @@ def test_guard_activation_uses_the_shared_qwen_disclaimer_prefix() -> None:
     assert payload["role"] == "user"
     assert payload["content"].startswith(GUARD_ACTIVATION_PREFIX)
     assert "不是用户说的话，也不是新的用户目标" in payload["content"]
+
+
+@pytest.mark.asyncio
+async def test_asr_append_failure_ends_the_floor_without_raising() -> None:
+    adapter = VolcengineCascadedAdapter(
+        vad=_OnsetPacketVad(),
+        asr=_FailAppendAsr(),
+        ark=_Ark([]),
+        tts=_Tts(),
+        id_factory=iter(("session", "speech", "item")).__next__,
+    )
+    await adapter.connect(tools=_tools())
+
+    await adapter.send_audio(b"pre-roll-and-onset")
+
+    events = await asyncio.wait_for(_collect_until(adapter, UserTranscriptFailed), timeout=1)
+    assert any(isinstance(event, UserSpeechStarted) for event in events)
+    assert any(isinstance(event, UserSpeechEnded) for event in events)
+    assert any(
+        isinstance(event, ProviderErrorEvent) and event.code == "volcengine_asr_append"
+        for event in events
+    )
+    assert adapter._asr_session is None
+
+
+@pytest.mark.asyncio
+async def test_asr_receive_failure_still_ends_the_floor_on_vad_stop() -> None:
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_FailReceiveAsr(), ark=_Ark([]), tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+
+    await adapter.send_audio(b"first")
+    await asyncio.sleep(0)
+    await adapter.send_audio(b"stop")
+
+    events = await asyncio.wait_for(_collect_until(adapter, UserSpeechEnded), timeout=1)
+    assert sum(isinstance(event, UserSpeechEnded) for event in events) == 1
+    assert any(isinstance(event, UserTranscriptFailed) for event in events)
 
 
 @pytest.mark.asyncio
@@ -600,6 +679,57 @@ async def test_host_responses_consume_only_the_item_named_by_the_intent() -> Non
 
 
 @pytest.mark.asyncio
+async def test_satisfying_one_batched_host_item_keeps_the_other_item_available() -> None:
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(),
+        asr=_Asr(),
+        ark=_Ark([ArkResponseStarted("user-response"), ArkResponseCompleted("user-response")]),
+        tts=_Tts(),
+        id_factory=lambda: "id",
+    )
+    await adapter.connect(tools=_tools())
+    first = HostContextItem.recovery(host_item_id="first", event_id="event-first", content="第一项")
+    second = HostContextItem.tool_output(
+        host_item_id="second",
+        event_id="event-second",
+        call_id="call-second",
+        content="第二项",
+    )
+    await adapter.inject_host_item(first)
+    await adapter.inject_host_item(second)
+    await adapter._start_user_response("用户插话")
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+
+    await adapter.create_response(HostResponseIntent.host_fact(first))
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+    await adapter.create_response(HostResponseIntent.tool_result(second))
+    events = await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+
+    assert events[-1].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_host_item_injection_rejects_capacity_exhaustion_without_dropping_prior_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(adapter_module, "_MAX_PENDING_HOST_ITEMS", 1)
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_Asr(), ark=_Ark([]), tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+    first = HostContextItem.progress(host_item_id="first", event_id="event-first", content="第一项")
+    second = HostContextItem.progress(
+        host_item_id="second", event_id="event-second", content="第二项"
+    )
+
+    await adapter.inject_host_item(first)
+    with pytest.raises(VolcengineRealtimeError, match="宿主项积压"):
+        await adapter.inject_host_item(second)
+
+    assert tuple(adapter._pending_items) == ("first",)
+
+
+@pytest.mark.asyncio
 async def test_user_interrupt_carries_pending_context_and_tool_output_without_duplicate_continuation() -> (
     None
 ):
@@ -654,6 +784,88 @@ async def test_user_interrupt_carries_pending_context_and_tool_output_without_du
     ]
     assert any(isinstance(event, ResponseStarted) for event in silent_events)
     assert silent_events[-1].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_user_barge_in_drops_unresolved_tool_response_chain() -> None:
+    ark = _SequencedArk(
+        [
+            [
+                ArkResponseStarted("function-response"),
+                ArkToolCall("item-tool", "call-tool", "weather__get", {"city": "上海"}),
+                ArkResponseCompleted("function-response"),
+            ],
+            [ArkResponseStarted("user-response"), ArkResponseCompleted("user-response")],
+        ]
+    )
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_Asr(), ark=ark, tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+
+    await adapter._run_ark([])
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+    await adapter._start_user_response("先不要执行，换个问题")
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+
+    assert ark.calls[1]["previous_response_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_late_tool_output_after_barge_in_is_consumed_without_ark_continuation() -> None:
+    ark = _SequencedArk(
+        [
+            [
+                ArkResponseStarted("function-response"),
+                ArkToolCall("item-tool", "call-tool", "weather__get", {"city": "上海"}),
+                ArkResponseCompleted("function-response"),
+            ],
+            [ArkResponseStarted("user-response"), ArkResponseCompleted("user-response")],
+        ]
+    )
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_Asr(), ark=ark, tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+    await adapter._run_ark([])
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+    await adapter._start_user_response("先不要执行，换个问题")
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+    output = HostContextItem.tool_output(
+        host_item_id="late-output",
+        event_id="late-event",
+        call_id="call-tool",
+        content='{"condition":"晴"}',
+    )
+    await adapter.inject_host_item(output)
+
+    await adapter.create_response(HostResponseIntent.tool_result(output))
+    events = await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+
+    assert len(ark.calls) == 2
+    assert events[-1].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_mixed_tool_then_text_never_exposes_the_tool_to_the_host() -> None:
+    ark = _Ark(
+        [
+            ArkResponseStarted("mixed"),
+            ArkToolCall("item-tool", "call-tool", "weather__get", {"city": "上海"}),
+            ArkTextDelta("我来查询天气。"),
+        ]
+    )
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_Asr(), ark=ark, tts=_Tts(), id_factory=lambda: "id"
+    )
+    await adapter.connect(tools=_tools())
+
+    await adapter._start_user_response("上海天气")
+    events = await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+
+    assert not any(isinstance(event, ToolCallReady) for event in events)
+    assert any(isinstance(event, ProviderErrorEvent) for event in events)
+    assert events[-1].status == "failed"
 
 
 @pytest.mark.asyncio

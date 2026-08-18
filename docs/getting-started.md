@@ -204,9 +204,9 @@ uv run python scripts/smoke_volcengine_realtime.py \
 
 To compare Ark models without sending audio, run the bounded synthetic function-call matrix. It
 requires `--live`, accepts only the repository's reviewed model allowlist, and prints aggregate
-quality/error-class and p50/p95 timing metadata. It does not print prompts, tool arguments, tool
+quality/error-class and timing metadata (p95 only with 20+ observations; otherwise max). It does not print prompts, tool arguments, tool
 outputs, response text, request IDs, or credentials. The Seed 2.0 Pro baseline is included even
-when it is omitted from `--models`:
+when it is omitted from `--models`; without `--models`, it is the only model run:
 
 ```bash
 uv run --extra volcengine python scripts/benchmark_volcengine_llm.py \
