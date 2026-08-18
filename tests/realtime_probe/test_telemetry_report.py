@@ -204,3 +204,25 @@ def test_first_frame_to_audible_joins_on_generation_identity() -> None:
 
     assert len(metrics["first_frame_to_audible_ms"]) == 1
     assert metrics["first_frame_to_audible_ms"][0] == pytest.approx(99.0, abs=1.0)
+
+
+def test_volcengine_cascade_latency_is_paired_in_pipeline_order() -> None:
+    records = [
+        {"ts": 1.0, "kind": "volcengine.vad.end", "payload": {}},
+        {"ts": 1.1, "kind": "volcengine.asr.final", "payload": {}},
+        {"ts": 1.25, "kind": "volcengine.llm.first_text", "payload": {}},
+        {"ts": 1.4, "kind": "volcengine.tts.first_audio", "payload": {}},
+        {"ts": 2.0, "kind": "volcengine.vad.end", "payload": {}},
+        {"ts": 2.2, "kind": "volcengine.asr.final", "payload": {}},
+        {"ts": 2.5, "kind": "volcengine.llm.first_text", "payload": {}},
+        {"ts": 2.9, "kind": "volcengine.tts.first_audio", "payload": {}},
+    ]
+
+    metrics = compute_metrics(records)
+
+    assert metrics["volc_speech_end_to_asr_final_ms"] == pytest.approx([100, 200])
+    assert metrics["volc_asr_final_to_llm_first_text_ms"] == pytest.approx([150, 300])
+    assert metrics["volc_llm_first_text_to_tts_first_audio_ms"] == pytest.approx([150, 400])
+    assert metrics["volc_speech_end_to_tts_first_audio_ms"] == pytest.approx([400, 900])
+    report = render_telemetry_report(records)
+    assert "volc_speech_end_to_tts_first_audio_ms: count=2 p50=400.0ms p95=900.0ms" in report

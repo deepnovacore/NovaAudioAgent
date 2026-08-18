@@ -79,6 +79,10 @@ def compute_metrics(records: Sequence[Record]) -> dict[str, list[float]]:
         "hostitem_queued_to_injected_ms": [],
         "codex_dispatch_to_first_progress_ms": [],
         "codex_dispatch_to_handoff_ms": [],
+        "volc_speech_end_to_asr_final_ms": [],
+        "volc_asr_final_to_llm_first_text_ms": [],
+        "volc_llm_first_text_to_tts_first_audio_ms": [],
+        "volc_speech_end_to_tts_first_audio_ms": [],
     }
     offset = clock_offset_ms(records)
 
@@ -180,6 +184,31 @@ def compute_metrics(records: Sequence[Record]) -> dict[str, list[float]]:
             metrics["codex_dispatch_to_handoff_ms"].append(
                 (float(record["ts"]) - dispatch_at[delegate_id]) * 1000.0
             )
+
+    cascade: dict[str, float] = {}
+    for record in records:
+        kind = record.get("kind")
+        timestamp = float(record["ts"])
+        if kind == "volcengine.vad.end":
+            cascade = {"speech_end": timestamp}
+        elif kind == "volcengine.asr.final" and "speech_end" in cascade:
+            cascade["asr_final"] = timestamp
+            metrics["volc_speech_end_to_asr_final_ms"].append(
+                (timestamp - cascade["speech_end"]) * 1000.0
+            )
+        elif kind == "volcengine.llm.first_text" and "asr_final" in cascade:
+            cascade["llm_first_text"] = timestamp
+            metrics["volc_asr_final_to_llm_first_text_ms"].append(
+                (timestamp - cascade["asr_final"]) * 1000.0
+            )
+        elif kind == "volcengine.tts.first_audio" and "llm_first_text" in cascade:
+            metrics["volc_llm_first_text_to_tts_first_audio_ms"].append(
+                (timestamp - cascade["llm_first_text"]) * 1000.0
+            )
+            metrics["volc_speech_end_to_tts_first_audio_ms"].append(
+                (timestamp - cascade["speech_end"]) * 1000.0
+            )
+            cascade = {}
     return metrics
 
 

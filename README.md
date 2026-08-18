@@ -201,6 +201,12 @@ XWayland). See [Getting started](docs/getting-started.md) for the per-platform n
 Both the local-camera default and `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback require the
 `vision` extra installed above.
 
+Qwen remains the default voice provider. The alternative native Volcengine path is
+`Silero VAD v5.1.2 -> Seed ASR -> Doubao Seed 2.0 Pro -> Seed TTS 2.0`; install it with
+`uv sync --extra vision --extra volcengine --dev` and configure the selected provider's
+credentials. Upstream `silero-vad==5.1.2` currently pulls in PyTorch and torchaudio even though
+this backend selects ONNX inference, so the extra is sizeable.
+
 The orb renders as a Canvas 2D particle field whose behavior carries state — particles converge
 while listening, pulse with playback amplitude while speaking, and an outer band orbits while a
 Codex delegate works — in either the Ember or Graphite palette. Right-clicking the orb opens the

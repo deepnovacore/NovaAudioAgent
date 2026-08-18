@@ -179,6 +179,12 @@ Chromium 自带的回声消除。Linux 会话运行在 X11 上（Wayland 会话�
 
 默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 视频回放均依赖上面安装的 `vision` extra。
 
+Qwen 仍是默认语音 provider；原生火山备选链路为
+`Silero VAD v5.1.2 -> Seed ASR -> Doubao Seed 2.0 Pro -> Seed TTS 2.0`，使用
+`uv sync --extra vision --extra volcengine --dev` 安装，并配置所选 provider 的凭据。上游
+`silero-vad==5.1.2` 即使选择 ONNX 推理仍会传递安装 PyTorch 与 torchaudio，因此这个 extra
+的体积较大。
+
 orb 以 Canvas 2D 粒子场呈现，状态由粒子行为承载——聆听时向心聚拢，说话时随播放振幅脉动，
 Codex delegate 工作时外侧有一圈轨道带环绕——可选暖焰琥珀（Ember）或石墨月光（Graphite）配色。
 右键 orb 可打开 Memory Board（按请求渲染每条记忆通道的最新条目，正是前文按通道记忆的可视化

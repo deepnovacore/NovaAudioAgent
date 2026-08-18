@@ -36,6 +36,12 @@ dependencies = [
 vision = [
     "opencv-python>=4.10,<5",
 ]
+volcengine = [
+    "jsonschema>=4.23,<5",
+    "numpy>=1.26,<3",
+    "onnxruntime>=1.19,<2",
+    "silero-vad==5.1.2",
+]
 [project.scripts]
 nova-audio-agent = "nova_audio_agent.cli:app"
 
@@ -46,6 +52,7 @@ Issues = "https://github.com/deepnovacore/NovaAudioAgent/issues"
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.23,<5",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",

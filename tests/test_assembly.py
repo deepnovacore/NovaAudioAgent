@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from pydantic import SecretStr, ValidationError
 import pytest
 
 import nova_audio_agent.assembly as assembly_module
 import nova_audio_agent.realtime.qwen as qwen_module
+import nova_audio_agent.realtime.volcengine as volcengine_module
 from nova_audio_agent.assembly import (
     QwenRealtimeAssembly,
+    RealtimeAssembly,
     _active_executor_names,
     build_assembly,
     build_codex_live_assembly,
     build_qwen_realtime_assembly,
+    build_realtime_assembly,
 )
 from nova_audio_agent.calls import AttentionTrigger, WatchRecord
 from nova_audio_agent.config import ConfigurationError, Settings
@@ -39,6 +43,124 @@ class _Sink:
 
     def end(self, utterance_id: str) -> None:
         del utterance_id
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "builder_name"),
+    [
+        ("qwen", "build_qwen_realtime_assembly"),
+        ("volcengine", "build_volcengine_realtime_assembly"),
+    ],
+)
+def test_realtime_assembly_factory_selects_configured_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_name: str,
+    builder_name: str,
+) -> None:
+    expected = object()
+    captured: dict[str, object] = {}
+
+    def selected(settings: Settings, **kwargs: object) -> object:
+        captured["settings"] = settings
+        captured.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(assembly_module, builder_name, selected)
+    settings = Settings(realtime_provider=provider_name, _env_file=None)
+
+    actual = build_realtime_assembly(
+        settings,
+        sink=_Sink(),
+        on_audio_frame=lambda _frame: None,
+        on_audio_clear=lambda _utterance_id, _epoch: None,
+        on_audio_terminal=lambda _utterance_id, _epoch: None,
+        on_delivery=lambda _completion: None,
+    )
+
+    assert actual is expected
+    assert captured["settings"] is settings
+
+
+def test_qwen_realtime_assembly_remains_compatible_alias() -> None:
+    assert QwenRealtimeAssembly is RealtimeAssembly
+
+
+def test_volcengine_realtime_assembly_wires_native_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeVad:
+        def __init__(self, config: object) -> None:
+            captured["vad_config"] = config
+
+    monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(volcengine_module, "SileroVadSegmenter", FakeVad)
+    settings = Settings(
+        realtime_provider="volcengine",
+        ark_api_key=SecretStr("ark-secret"),
+        doubao_bigmodel_api_key=SecretStr("speech-secret"),
+        tavily_api_key=SecretStr("search-secret"),
+        volcengine_ark_model="doubao-seed-2-0-mini-260428",
+        volcengine_ark_support_model="doubao-seed-2-0-pro-260215",
+        codex_prewarm=False,
+        _env_file=None,
+    )
+
+    assembly = assembly_module.build_volcengine_realtime_assembly(
+        settings,
+        sink=_Sink(),
+        on_audio_frame=lambda _frame: None,
+        on_audio_clear=lambda _utterance_id, _epoch: None,
+        on_audio_terminal=lambda _utterance_id, _epoch: None,
+        on_delivery=lambda _completion: None,
+    )
+
+    assert isinstance(assembly, RealtimeAssembly)
+    assert assembly.provider._vad.__class__ is FakeVad
+    assert assembly.provider._asr._chunk_bytes == 6_400
+    assert captured["vad_config"].silence_end_ms == 560
+    assert assembly.provider._ark._model == "doubao-seed-2-0-mini-260428"
+    assert assembly.provider._tts._output_sample_rate == 24_000
+    assert assembly.core.gateway._client.base_url == "https://ark.cn-beijing.volces.com/api/v3"
+    assert assembly.runtime.surrogate._model == "doubao-seed-2-0-pro-260215"
+
+
+def test_volcengine_ark_fallback_forces_all_support_models_to_an_ark_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeVad:
+        def __init__(self, config: object) -> None:
+            del config
+
+    monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(volcengine_module, "SileroVadSegmenter", FakeVad)
+    settings = Settings(
+        realtime_provider="volcengine",
+        ark_api_key=SecretStr("ark-secret"),
+        doubao_bigmodel_api_key=SecretStr("speech-secret"),
+        tavily_api_key=SecretStr("search-secret"),
+        fast_model="qwen3-vl-plus",
+        surrogate_model="qwen-plus",
+        compressor_model="qwen-flash",
+        codex_prewarm=False,
+        _env_file=None,
+    )
+
+    assembly = assembly_module.build_volcengine_realtime_assembly(
+        settings,
+        sink=_Sink(),
+        on_audio_frame=lambda _frame: None,
+        on_audio_clear=lambda _utterance_id, _epoch: None,
+        on_audio_terminal=lambda _utterance_id, _epoch: None,
+        on_delivery=lambda _completion: None,
+    )
+
+    expected = "doubao-seed-2-0-pro-260215"
+    assert assembly.runtime.executors["watch"]._model == expected
+    assert assembly.runtime.executors["guard"]._model == expected
+    assert assembly.runtime.surrogate._model == expected
+    assert assembly.runtime.compressor._model == expected
 
 
 @pytest.mark.parametrize(

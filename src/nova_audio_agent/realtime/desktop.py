@@ -711,9 +711,9 @@ async def _run_desktop(
     from nova_audio_agent.config import ConfigurationError
 
     if build_assembly is None:
-        from nova_audio_agent.assembly import build_qwen_realtime_assembly
+        from nova_audio_agent.assembly import build_realtime_assembly
 
-        build_assembly = build_qwen_realtime_assembly
+        build_assembly = build_realtime_assembly
     if serve_websocket is None:
         from websockets.asyncio.server import serve
 
