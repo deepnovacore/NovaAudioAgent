@@ -1,0 +1,617 @@
+{
+  "schema_version": 1,
+  "classifier": [
+    "确认",
+    "确认执行",
+    "可以",
+    "可以执行",
+    "同意",
+    "没问题",
+    "就这么做",
+    "按这个来",
+    "开始吧",
+    "执行吧",
+    "做吧",
+    "好的确认",
+    "嗯确认",
+    "嗯嗯可以",
+    "那就执行吧",
+    "确认啊",
+    "可以呀",
+    "好确认哦",
+    "那可以啦",
+    "确认。",
+    "确 认",
+    "「确认」",
+    "确认！！！",
+    "  可以  ",
+    "ｃａｎｃｅｌ",
+    "确认①",
+    "【确认】",
+    "取消",
+    "不确认",
+    "不要",
+    "不行",
+    "先不要",
+    "先别",
+    "算了",
+    "停止",
+    "算了取消吧",
+    "我想想还是取消",
+    "可以取消吗",
+    "不可以",
+    "我觉得可以但是等一下",
+    "确认一下这个是什么",
+    "嗯嗯嗯可以",
+    "好的好的确认",
+    "确认啊啊",
+    "𜳰确认𜳱",
+    "确认𜳰",
+    "𐵐确认",
+    "",
+    "   ",
+    "。。。",
+    "今天天气不错",
+    "帮我编译一下"
+  ],
+  "controller": [
+    {
+      "name": "confirm-then-claim-once",
+      "covers": [
+        "confirmation.confirm",
+        "confirmation.commit_authority_single_use"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "确认"
+        },
+        {
+          "kind": "claim"
+        },
+        {
+          "kind": "claim"
+        }
+      ]
+    },
+    {
+      "name": "a-reconstructed-operation-cannot-commit",
+      "covers": [
+        "confirmation.commit_authority_identity"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "确认"
+        },
+        {
+          "kind": "claim_forged"
+        },
+        {
+          "kind": "claim"
+        }
+      ]
+    },
+    {
+      "name": "only-the-reserved-item-may-answer",
+      "covers": [
+        "confirmation.reservation"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-b"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-b",
+          "text": "确认"
+        },
+        {
+          "kind": "accept",
+          "epoch": 2,
+          "item_id": "item-a",
+          "text": "确认"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "确认"
+        }
+      ]
+    },
+    {
+      "name": "one-retry-then-cancel",
+      "covers": [
+        "confirmation.retry",
+        "confirmation.retry_once"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "什么"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-b"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-b",
+          "text": "还是没听清"
+        }
+      ]
+    },
+    {
+      "name": "a-long-unrecognised-utterance-cancels-without-a-retry",
+      "covers": [
+        "confirmation.retry_length_bound"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "我在跟别人说话这句话很长完全不是在回答刚才那个确认问题请不要当成回答"
+        }
+      ]
+    },
+    {
+      "name": "cancellation-clears-everything",
+      "covers": [
+        "confirmation.cancel"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "取消"
+        },
+        {
+          "kind": "claim"
+        }
+      ]
+    },
+    {
+      "name": "failed-transcription-cancels",
+      "covers": [
+        "confirmation.transcript_failure"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "fail",
+          "epoch": 1,
+          "item_id": "item-b"
+        },
+        {
+          "kind": "fail",
+          "epoch": 1,
+          "item_id": "item-a"
+        }
+      ]
+    },
+    {
+      "name": "expiry-is-refused-before-the-deadline-and-notifies-after",
+      "covers": [
+        "confirmation.expiry",
+        "confirmation.expiry_observer"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "set_clock",
+          "to": 89.0
+        },
+        {
+          "kind": "expire"
+        },
+        {
+          "kind": "view"
+        },
+        {
+          "kind": "set_clock",
+          "to": 90.0
+        },
+        {
+          "kind": "expire"
+        },
+        {
+          "kind": "expire"
+        },
+        {
+          "kind": "view"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "确认"
+        }
+      ]
+    },
+    {
+      "name": "an-expired-proposal-cannot-be-confirmed-even-before-it-is-collected",
+      "covers": [
+        "confirmation.expiry_boundary"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "set_clock",
+          "to": 89.999
+        },
+        {
+          "kind": "view"
+        },
+        {
+          "kind": "set_clock",
+          "to": 90.0
+        },
+        {
+          "kind": "view"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "确认"
+        },
+        {
+          "kind": "claim"
+        }
+      ]
+    },
+    {
+      "name": "a-new-proposal-replaces-the-one-in-flight",
+      "covers": [
+        "confirmation.single_proposal"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "第一个",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "第二个",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "确认"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-b"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-b",
+          "text": "确认"
+        }
+      ]
+    },
+    {
+      "name": "invalidation-drops-unspent-authority",
+      "covers": [
+        "confirmation.invalidate"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "reserve",
+          "epoch": 1,
+          "item_id": "item-a"
+        },
+        {
+          "kind": "accept",
+          "epoch": 1,
+          "item_id": "item-a",
+          "text": "确认"
+        },
+        {
+          "kind": "invalidate",
+          "reason": "provider_replaced"
+        },
+        {
+          "kind": "claim"
+        },
+        {
+          "kind": "invalidate",
+          "reason": "again"
+        }
+      ]
+    },
+    {
+      "name": "each-action-states-what-it-needs-resolved",
+      "covers": [
+        "confirmation.validation",
+        "confirmation.prompt_wording"
+      ],
+      "steps": [
+        {
+          "kind": "prepare",
+          "action": "select",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "prepare",
+          "action": "select",
+          "workspace_display_name": "研究项目",
+          "workspace_id": "ws-1",
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "prepare",
+          "action": "resume",
+          "workspace_display_name": "研究项目",
+          "workspace_id": "ws-1",
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "prepare",
+          "action": "resume",
+          "workspace_display_name": "研究项目",
+          "workspace_id": "ws-1",
+          "session_title": "上次的会话",
+          "session_id": "s-1",
+          "work_order": "继续跑测试",
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": "先建好再开始",
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": ""
+        },
+        {
+          "kind": "prepare",
+          "action": "delete",
+          "workspace_display_name": "研究项目",
+          "workspace_id": null,
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "prepare",
+          "action": "create",
+          "workspace_display_name": "研究项目",
+          "workspace_id": "",
+          "session_title": null,
+          "session_id": null,
+          "work_order": null,
+          "origin_ref": "conversation:1"
+        }
+      ],
+      "nonces": [
+        "nonce-1",
+        "nonce-2",
+        "nonce-3",
+        "nonce-4",
+        "nonce-5",
+        "nonce-6",
+        "nonce-7",
+        "nonce-8",
+        "nonce-9",
+        "nonce-10",
+        "nonce-11"
+      ]
+    }
+  ]
+}
