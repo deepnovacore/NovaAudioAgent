@@ -4,6 +4,27 @@ Written 2026-08-19 at the end of the session that produced commits `f452077..802
 `rewrite/node-typescript-runtime`. Read this before touching `realtime/session.py` or
 `realtime/service.py`.
 
+> **Superseded in part, as of `e88a836`.** Step 1 is done: the provider-frame fixture set exists as
+> `fixtures/realtime/session/v1/` with sixteen scenarios, and `differential-fixtures.md` documents
+> the family and the sweep that validates it. Three judgments below turned out to be wrong, and
+> acting on them would cost time:
+>
+> 1. **The double to copy is not `FakeSocket`.** That one drives `QwenAudioRealtimeAdapter`;
+>    `tests/test_realtime_qwen.py` never constructs a `RealtimeSession`. The session is driven by
+>    `FakeProvider` and `make_session` in `tests/test_realtime_session.py:48-146`, whose `events()`
+>    deliberately raises so the caller feeds `accept` directly.
+> 2. **NFC/NFKC does not enter through reconnect or packed history.** `session.py` uses
+>    `realtime/history.py`, already ported. The chain is `service.py` → `bridge.py` → `recall.py`,
+>    so the decision is due at the service port, not the session port.
+> 3. **Stage 2 is about a thousand lines larger than stated.** `service.py` hard-depends on
+>    `realtime/bridge.py` (363) and `realtime/project_confirmation.py` (412), neither ported, and
+>    the latter pulls in `recall.py` (225).
+>
+> The eleven scenarios listed under Step 1 became sixteen: two of the budget checks and the two
+> `origin_spoken` revision cases are separately observable, five event variants fall through rather
+> than six, and two guards the original list would have left indistinguishable needed their own
+> scenarios. The rest of this document still holds.
+
 ## Where to work
 
 ```
