@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { PROGRESS_SUMMARY_LIMIT } from '../src/events.js'
+import { hostFact, type HostResponseIntent } from '../src/realtime/protocol.js'
 import {
   EpochLedger,
   MAX_CAPTION_CHARS,
+  MAX_PENDING_HOST_EVENTS,
+  MAX_PREMAP_AUDIO_BYTES,
   MAX_TRACKED_HOST_EVENTS,
   MAX_TRACKED_PROVIDER_TURNS,
   MAX_TRACKED_USER_TRANSCRIPTS,
   RealtimeSessionState,
   truncateCaption,
+  type PendingResponse,
 } from '../src/realtime/session-state.js'
 
 /** Distinct code points, so a truncation's retained half is provable, not just its length. */
@@ -334,4 +338,251 @@ test('the transcript ledger is bounded independently of the turn ledger', () => 
   // The oldest transcript aged out, but no turn was ever recorded.
   assert.equal(state.acceptUserTranscriptTerminal('t-0'), true)
   assert.equal(state.userInputRevision, 0)
+})
+
+function hostFactIntent(eventId: string): HostResponseIntent {
+  return hostFact({
+    kind: 'progress',
+    host_item_id: `host-${eventId}`,
+    event_id: eventId,
+    content: '在跑。',
+    call_id: null,
+  })
+}
+
+function pending(eventId: string, revision: number): PendingResponse {
+  const intent = hostFactIntent(eventId)
+  return {intents: [intent], provider_intent: intent, user_input_revision: revision}
+}
+
+test('an injected event records its epoch and is withdrawable', () => {
+  const state = new RealtimeSessionState()
+  state.recordInjectedEvent('progress:1')
+  assert.equal(state.injectedEventEpoch('progress:1'), 0)
+
+  state.beginEpoch(3)
+  state.recordInjectedEvent('progress:2')
+  assert.equal(state.injectedEventEpoch('progress:2'), 3)
+  // The earlier one keeps the epoch it was injected in: that is the question being asked of it.
+  assert.equal(state.injectedEventEpoch('progress:1'), 0)
+
+  assert.equal(state.releaseInjectedEvent('progress:1'), true)
+  assert.equal(state.injectedEventEpoch('progress:1'), undefined)
+  assert.equal(state.releaseInjectedEvent('progress:1'), false)
+})
+
+test('recording an injected event tolerates more than pruning reclaims', () => {
+  // The record bound is above the prune target on purpose: recording must never drop an item the
+  // caller is about to reference, and pruning reclaims the slack once entries become prunable.
+  assert.ok(MAX_PENDING_HOST_EVENTS > MAX_TRACKED_HOST_EVENTS)
+  const state = new RealtimeSessionState()
+  for (let index = 0; index < MAX_PENDING_HOST_EVENTS; index += 1) {
+    state.recordInjectedEvent(`event-${index}`)
+  }
+  // Re-touch the oldest, so the next one becomes the eviction candidate.
+  state.recordInjectedEvent('event-0')
+  state.recordInjectedEvent('overflow')
+
+  assert.equal(state.injectedEventEpoch('event-0'), 0, 'the re-touched entry survived')
+  assert.equal(state.injectedEventEpoch('event-1'), undefined, 'the oldest-touched was evicted')
+  assert.equal(state.injectedEventEpoch('overflow'), 0)
+})
+
+test('pruning reclaims only answered injections, and stops at the target', () => {
+  const state = new RealtimeSessionState()
+  for (let index = 0; index < MAX_PENDING_HOST_EVENTS; index += 1) {
+    state.recordInjectedEvent(`event-${index}`)
+  }
+  // Only the first three are answered, so only they may be reclaimed.
+  for (const index of [0, 1, 2]) state.markEventResponded(`event-${index}`)
+  const before = state.snapshotVersion
+
+  state.pruneHostEventLedgers([])
+
+  const surplus = MAX_PENDING_HOST_EVENTS - MAX_TRACKED_HOST_EVENTS
+  assert.ok(surplus >= 3, 'the fixture needs more surplus than answered entries')
+  for (const index of [0, 1, 2]) {
+    assert.equal(
+      state.injectedEventEpoch(`event-${index}`),
+      undefined,
+      `event-${index} was answered and reclaimable`,
+    )
+  }
+  // Unanswered entries stay even though the ledger is still above target.
+  assert.equal(state.injectedEventEpoch('event-3'), 0, 'an unanswered injection is not reclaimed')
+  assert.ok(state.snapshotVersion > before, 'a prune publishes once')
+})
+
+test('a completed event id is prunable even before it was answered', () => {
+  // The caller passes the ids it has just finished with; they are prunable by that fact alone.
+  const state = new RealtimeSessionState()
+  for (let index = 0; index < MAX_PENDING_HOST_EVENTS; index += 1) {
+    state.recordInjectedEvent(`event-${index}`)
+  }
+  state.pruneHostEventLedgers(['event-0'])
+  assert.equal(state.injectedEventEpoch('event-0'), undefined)
+  assert.equal(state.injectedEventEpoch('event-1'), 0)
+})
+
+test('a retained suggestion injection is revoked in one go, and dies with its slot', () => {
+  const state = new RealtimeSessionState()
+  state.recordInjectedEvent('suggestion:1')
+  state.recordInjectedEvent('suggestion:2')
+  state.retainSuggestionInjection('suggestion:1')
+
+  state.revokeRetainedSuggestionInjections()
+  assert.equal(state.injectedEventEpoch('suggestion:1'), undefined)
+  assert.equal(state.injectedEventEpoch('suggestion:2'), 0, 'only retained ones are revoked')
+
+  // Revoking consumes the retentions. Re-injecting the same event afterwards must not be revoked
+  // again by a retention that was already spent.
+  state.recordInjectedEvent('suggestion:1')
+  state.revokeRetainedSuggestionInjections()
+  assert.equal(state.injectedEventEpoch('suggestion:1'), 0, 'a spent retention does not re-fire')
+
+  // A retention whose injection was evicted must not resurrect anything later.
+  state.recordInjectedEvent('suggestion:3')
+  state.retainSuggestionInjection('suggestion:3')
+  state.releaseInjectedEvent('suggestion:3')
+  state.revokeRetainedSuggestionInjections()
+  assert.equal(state.injectedEventEpoch('suggestion:3'), undefined)
+})
+
+test('pending responses are a queue, and the head is what the provider starts next', () => {
+  // Read the head into a local each time: `assert.equal` from node:assert/strict carries an
+  // assertion signature, so asserting a getter is undefined narrows every later read of it.
+  const state = new RealtimeSessionState()
+  const eventIdOf = (entry: PendingResponse | undefined): string | undefined =>
+    entry?.provider_intent.item.event_id
+
+  assert.equal(state.pendingResponseCount, 0)
+  assert.equal(eventIdOf(state.headPendingResponse), undefined)
+
+  state.queuePendingResponse(pending('progress:1', 0))
+  state.queuePendingResponse(pending('progress:2', 1))
+  assert.equal(state.pendingResponseCount, 2)
+  assert.equal(eventIdOf(state.headPendingResponse), 'progress:1')
+
+  assert.equal(eventIdOf(state.popPendingResponse()), 'progress:1')
+  assert.equal(eventIdOf(state.headPendingResponse), 'progress:2')
+  assert.deepEqual(
+    state.pendingResponses.map((entry: PendingResponse) => entry.provider_intent.item.event_id),
+    ['progress:2'],
+  )
+
+  state.clearPendingResponses()
+  assert.equal(state.pendingResponseCount, 0)
+  assert.equal(eventIdOf(state.popPendingResponse()), undefined)
+})
+
+test('a pending response remembers the world it answers', () => {
+  // A continuation is only suppressible while the user input it answers is still current, so the
+  // revision travels with the pending entry rather than being read at start time.
+  const state = new RealtimeSessionState()
+  state.acceptUserTurn('turn-1')
+  state.queuePendingResponse(pending('progress:1', state.userInputRevision))
+  state.acceptUserTurn('turn-2')
+
+  assert.equal(state.headPendingResponse?.user_input_revision, 1)
+  assert.notEqual(state.headPendingResponse?.user_input_revision, state.userInputRevision)
+})
+
+test('suppression is per response and reversible', () => {
+  const state = new RealtimeSessionState()
+  assert.equal(state.responseIsSuppressed('resp-1'), false)
+  state.suppressResponse('resp-1')
+  assert.equal(state.responseIsSuppressed('resp-1'), true)
+  assert.equal(state.responseIsSuppressed('resp-2'), false)
+
+  assert.equal(state.releaseSuppressedResponse('resp-1'), true)
+  assert.equal(state.releaseSuppressedResponse('resp-1'), false)
+
+  state.suppressResponse('resp-1')
+  state.suppressResponse('resp-2')
+  state.clearSuppressedResponses()
+  assert.equal(state.responseIsSuppressed('resp-1'), false)
+  assert.equal(state.responseIsSuppressed('resp-2'), false)
+})
+
+test('the pre-map buffer belongs to one response and is discarded whole', () => {
+  const state = new RealtimeSessionState()
+  assert.equal(state.premapResponseId, null)
+  assert.equal(state.premapAudioBytes, 0)
+
+  state.bufferPremapAudio('resp-1', new Uint8Array([0, 1]))
+  state.bufferPremapAudio('resp-1', new Uint8Array([2, 3, 4, 5]))
+  assert.equal(state.premapResponseId, 'resp-1')
+  assert.equal(state.premapAudioBytes, 6)
+  assert.deepEqual(state.premapAudio.map(chunk => chunk.byteLength), [2, 4])
+
+  // Over budget means the buffered audio is unusable, not that one delta is: everything goes.
+  state.clearPremapAudio()
+  assert.equal(state.premapResponseId, null)
+  assert.equal(state.premapAudioBytes, 0)
+  assert.deepEqual(state.premapAudio, [])
+})
+
+test('the pre-map budget is asked about separately from buffering', () => {
+  // Two guards share this question and then do different things with the answer, so the check
+  // cannot be folded into the buffer call.
+  const state = new RealtimeSessionState()
+  assert.equal(state.premapAudioWouldExceed(MAX_PREMAP_AUDIO_BYTES), false, 'exactly at the bound')
+  assert.equal(state.premapAudioWouldExceed(MAX_PREMAP_AUDIO_BYTES + 1), true)
+
+  state.bufferPremapAudio('resp-1', new Uint8Array(MAX_PREMAP_AUDIO_BYTES - 2))
+  assert.equal(state.premapAudioWouldExceed(2), false)
+  assert.equal(state.premapAudioWouldExceed(4), true)
+  // Asking does not mutate: a refused delta leaves the buffer exactly as it was.
+  assert.equal(state.premapAudioBytes, MAX_PREMAP_AUDIO_BYTES - 2)
+})
+
+test('pruning stops at the target even when more entries are reclaimable', () => {
+  // Reclaiming everything eligible would throw away injections the caller can still reference for
+  // the rest of the epoch. The ledger is trimmed to the target, not emptied of answered entries.
+  const state = new RealtimeSessionState()
+  for (let index = 0; index < MAX_PENDING_HOST_EVENTS; index += 1) {
+    state.recordInjectedEvent(`event-${index}`)
+  }
+  const surplus = MAX_PENDING_HOST_EVENTS - MAX_TRACKED_HOST_EVENTS
+  const answered = surplus + 8
+  for (let index = 0; index < answered; index += 1) state.markEventResponded(`event-${index}`)
+
+  state.pruneHostEventLedgers([])
+
+  for (let index = 0; index < surplus; index += 1) {
+    assert.equal(
+      state.injectedEventEpoch(`event-${index}`),
+      undefined,
+      `event-${index} was within the surplus`,
+    )
+  }
+  for (let index = surplus; index < answered; index += 1) {
+    assert.equal(
+      state.injectedEventEpoch(`event-${index}`),
+      0,
+      `event-${index} is answered but the ledger was already at target`,
+    )
+  }
+})
+
+test('pruning an injection drops the retention that was holding it', () => {
+  // A retention outliving its injection is worse than useless: the same event re-injected later
+  // would be revoked by a retention that belongs to a response already finished with.
+  const state = new RealtimeSessionState()
+  for (let index = 0; index < MAX_PENDING_HOST_EVENTS; index += 1) {
+    state.recordInjectedEvent(`suggestion:${index}`)
+  }
+  state.markEventResponded('suggestion:0')
+  state.retainSuggestionInjection('suggestion:0')
+
+  state.pruneHostEventLedgers([])
+  assert.equal(state.injectedEventEpoch('suggestion:0'), undefined, 'pruned as answered')
+
+  state.recordInjectedEvent('suggestion:0')
+  state.revokeRetainedSuggestionInjections()
+  assert.equal(
+    state.injectedEventEpoch('suggestion:0'),
+    0,
+    'the stale retention must not revoke the new injection',
+  )
 })

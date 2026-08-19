@@ -16,6 +16,7 @@
 
 import { z } from 'zod'
 import { PROGRESS_SUMMARY_LIMIT } from '../events.js'
+import type { HostResponseIntent } from './protocol.js'
 
 export const MAX_TRACKED_USER_TRANSCRIPTS = 4_096
 export const MAX_CAPTION_CHARS = 160
@@ -61,6 +62,21 @@ export interface RealtimeSnapshot {
   readonly active_delegates: readonly (readonly [string, DelegateRecord])[]
   readonly spoken_event_ids: readonly string[]
   readonly interrupted_event_ids: readonly string[]
+}
+
+/**
+ * A response the host asked for and the provider has not started yet.
+ *
+ * `provider_intent` is what the provider was actually sent, which for a batched continuation is a
+ * merge of `intents` rather than any one of them -- and the merge is where `origin_spoken` can be
+ * dropped, so the two cannot be collapsed. `user_input_revision` is the world this response
+ * answers: when newer user input arrives, the proof that its origin turn was already voiced goes
+ * stale and the response stops being suppressible.
+ */
+export interface PendingResponse {
+  readonly intents: readonly HostResponseIntent[]
+  readonly provider_intent: HostResponseIntent
+  readonly user_input_revision: number
 }
 
 export interface ProviderTurn {
@@ -152,6 +168,13 @@ export class RealtimeSessionState {
   readonly #spokenEventIds: string[] = []
   readonly #interruptedEventIds: string[] = []
   readonly #respondedEventIds = new Map<string, null>()
+  readonly #injectedEventEpochs = new Map<string, number>()
+  readonly #retainedSuggestionInjectionIds = new Set<string>()
+  readonly #pendingResponses: PendingResponse[] = []
+  readonly #suppressedResponseIds = new Set<string>()
+  #pendingAudio: Uint8Array[] = []
+  #pendingAudioBytes = 0
+  #premapResponseId: string | null = null
   #epoch = 0
   #userInputRevision = 0
   #snapshotVersion = 0
@@ -414,6 +437,179 @@ export class RealtimeSessionState {
       spoken_event_ids: [...this.#spokenEventIds],
       interrupted_event_ids: [...this.#interruptedEventIds],
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Injected host items
+  // -------------------------------------------------------------------------
+
+  /**
+   * Record that a host item reached the provider in the current epoch.
+   *
+   * A continuation may only be requested for an item the provider has confirmed, and the epoch it
+   * was confirmed in decides whether a later request still refers to the same conversation. The
+   * bound here (532) is deliberately above the pruning target (500): recording never drops an item
+   * the caller may still be about to reference, and pruning reclaims the slack once entries become
+   * prunable.
+   */
+  recordInjectedEvent(eventId: string): void {
+    this.#injectedEventEpochs.delete(eventId)
+    this.#injectedEventEpochs.set(eventId, this.#epoch)
+    while (this.#injectedEventEpochs.size > MAX_PENDING_HOST_EVENTS) {
+      const oldest = this.#injectedEventEpochs.keys().next()
+      if (oldest.done === true) break
+      this.#injectedEventEpochs.delete(oldest.value)
+      this.#retainedSuggestionInjectionIds.delete(oldest.value)
+    }
+    this.advanceSnapshot()
+  }
+
+  injectedEventEpoch(eventId: string): number | undefined {
+    return this.#injectedEventEpochs.get(eventId)
+  }
+
+  releaseInjectedEvent(eventId: string): boolean {
+    return this.#injectedEventEpochs.delete(eventId)
+  }
+
+  /**
+   * Retain a suggestion's injection so a fenced response can be re-offered, then revoke the lot.
+   *
+   * A suggestion whose response was interrupted keeps its injection for the rest of the epoch, so
+   * the same suggestion is not injected twice; the retention is dropped when the epoch ends.
+   */
+  retainSuggestionInjection(eventId: string): void {
+    this.#retainedSuggestionInjectionIds.add(eventId)
+  }
+
+  revokeRetainedSuggestionInjections(): void {
+    for (const eventId of this.#retainedSuggestionInjectionIds) {
+      this.#injectedEventEpochs.delete(eventId)
+    }
+    this.#retainedSuggestionInjectionIds.clear()
+  }
+
+  /**
+   * Reclaim both host-event ledgers down to their shared target.
+   *
+   * An injected item is only prunable once its response has been answered or has completed, so the
+   * scan skips entries a caller may still reference and stops as soon as the target is met.
+   */
+  pruneHostEventLedgers(completedEventIds: readonly string[]): void {
+    const prunable = new Set([...completedEventIds, ...this.#respondedEventIds.keys()])
+    for (const eventId of [...this.#injectedEventEpochs.keys()]) {
+      if (this.#injectedEventEpochs.size <= MAX_TRACKED_HOST_EVENTS) break
+      if (!prunable.has(eventId)) continue
+      this.#injectedEventEpochs.delete(eventId)
+      this.#retainedSuggestionInjectionIds.delete(eventId)
+    }
+    this.pruneRespondedEvents()
+    this.advanceSnapshot()
+  }
+
+  // -------------------------------------------------------------------------
+  // Pending responses
+  // -------------------------------------------------------------------------
+
+  get pendingResponseCount(): number {
+    return this.#pendingResponses.length
+  }
+
+  /** The response the provider is expected to start next, if any. */
+  get headPendingResponse(): PendingResponse | undefined {
+    return this.#pendingResponses[0]
+  }
+
+  queuePendingResponse(pending: PendingResponse): void {
+    this.#pendingResponses.push(pending)
+  }
+
+  /** Remove the head, whether it started or was given up on. */
+  popPendingResponse(): PendingResponse | undefined {
+    return this.#pendingResponses.shift()
+  }
+
+  /** Every queued response, oldest first, for a caller that has to give all of them up. */
+  get pendingResponses(): readonly PendingResponse[] {
+    return [...this.#pendingResponses]
+  }
+
+  clearPendingResponses(): void {
+    this.#pendingResponses.length = 0
+  }
+
+  // -------------------------------------------------------------------------
+  // Suppressed responses
+  // -------------------------------------------------------------------------
+
+  /**
+   * Mark a response's audible output as already accounted for.
+   *
+   * The host's played-origin proof owns audible acknowledgement, so a provider response that would
+   * repeat it is refused frame by frame rather than cancelled: the model still gets to finish its
+   * turn, the user just does not hear it twice.
+   */
+  suppressResponse(responseId: string): void {
+    this.#suppressedResponseIds.add(responseId)
+  }
+
+  responseIsSuppressed(responseId: string): boolean {
+    return this.#suppressedResponseIds.has(responseId)
+  }
+
+  releaseSuppressedResponse(responseId: string): boolean {
+    return this.#suppressedResponseIds.delete(responseId)
+  }
+
+  clearSuppressedResponses(): void {
+    this.#suppressedResponseIds.clear()
+  }
+
+  // -------------------------------------------------------------------------
+  // Pre-map audio
+  // -------------------------------------------------------------------------
+
+  /**
+   * The response whose audio is buffered, if any.
+   *
+   * The buffer belongs to one response at a time: audio can arrive before the event that names
+   * which renderer generation it belongs to, but a second response's audio cannot be mixed into
+   * the same buffer without losing which is which.
+   */
+  get premapResponseId(): string | null {
+    return this.#premapResponseId
+  }
+
+  get premapAudioBytes(): number {
+    return this.#pendingAudioBytes
+  }
+
+  /**
+   * Whether one more delta would exceed the budget.
+   *
+   * Deliberately separate from buffering. The reducer checks this in two places that then do
+   * different things -- one refuses without recording a turn at all, the other refuses a delta for
+   * a turn it already knows about -- and folding the check into the buffer call would hide that.
+   */
+  premapAudioWouldExceed(byteLength: number): boolean {
+    return this.#pendingAudioBytes + byteLength > MAX_PREMAP_AUDIO_BYTES
+  }
+
+  bufferPremapAudio(responseId: string, pcm: Uint8Array): void {
+    this.#premapResponseId = responseId
+    this.#pendingAudio.push(pcm)
+    this.#pendingAudioBytes += pcm.byteLength
+  }
+
+  get premapAudio(): readonly Uint8Array[] {
+    return [...this.#pendingAudio]
+  }
+
+  /** Discard the whole buffer. Over budget means the audio is unusable, not that a delta is. */
+  clearPremapAudio(): void {
+    this.#premapResponseId = null
+    this.#pendingAudio = []
+    this.#pendingAudioBytes = 0
   }
 
   /** Publish the accumulated changes as one new snapshot version. */
