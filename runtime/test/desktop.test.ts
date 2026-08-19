@@ -256,6 +256,97 @@ test('oversized PCM is rejected by the WebSocket payload bound', async () => {
   await server.close()
 })
 
+test('a renderer that disconnects can reconnect to the same live runtime', async () => {
+  // Python's realtime/desktop.py drains only on parent EOF or a signal, so a
+  // window reload must find the backend still serving.
+  let disconnects = 0
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onClientDisconnect: () => { disconnects += 1 },
+  })
+  const readiness = await server.start()
+
+  try {
+    const first = await connect(readiness.port)
+    const firstBootstrap = nextTextFrames(first, 2)
+    first.send(JSON.stringify({type: 'hello', token: TOKEN}))
+    await firstBootstrap
+    await closeClient(first)
+    assert.equal(disconnects, 1)
+
+    const second = await connect(readiness.port)
+    const secondBootstrap = nextTextFrames(second, 2)
+    second.send(JSON.stringify({type: 'hello', token: TOKEN}))
+    assert.deepEqual(await secondBootstrap, [
+      '{"type":"desktop.ready"}',
+      '{"type":"codex.state","state":"idle"}',
+    ])
+    await closeClient(second)
+  } finally {
+    await server.close()
+  }
+})
+
+test('forwarded PCM is a copy that a later frame cannot overwrite', async () => {
+  // `ws` allocates receive buffers from a shared pool, so a view would alias
+  // bytes the next frame reuses.
+  const received: Uint8Array[] = []
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onAudio: pcm => { received.push(pcm) },
+  })
+  const readiness = await server.start()
+  const socket = await connect(readiness.port)
+
+  try {
+    const bootstrap = nextTextFrames(socket, 2)
+    socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
+    await bootstrap
+
+    for (let frame = 1; frame <= 8; frame += 1) {
+      socket.send(Buffer.alloc(64, frame))
+    }
+    while (received.length < 8) await new Promise(resolve => setTimeout(resolve, 10))
+
+    received.forEach((pcm, index) => {
+      assert.deepEqual([...new Set(pcm)], [index + 1], `frame ${index + 1} was overwritten`)
+    })
+  } finally {
+    await closeClient(socket)
+    await server.close()
+  }
+})
+
+test('readiness announcement fails on its own deadline instead of hanging', async () => {
+  // A parent that accepts and then holds the connection open forever.
+  const held: Socket[] = []
+  const listener = createServer(socket => held.push(socket))
+  await new Promise<void>((resolve, reject) => {
+    listener.once('error', reject)
+    listener.listen({host: '127.0.0.1', port: 0}, resolve)
+  })
+  const address = listener.address()
+  assert.ok(address !== null && typeof address === 'object')
+
+  try {
+    await assert.rejects(
+      announceReadiness(
+        `127.0.0.1:${address.port}`,
+        {token: TOKEN, host: '127.0.0.1', port: 51_515},
+        50,
+      ),
+      (error: unknown) => error instanceof DesktopProtocolError
+        && error.message.includes('timed out'),
+    )
+  } finally {
+    for (const socket of held) socket.destroy()
+    await new Promise<void>((resolve, reject) => listener.close(error => {
+      if (error !== undefined) reject(error)
+      else resolve()
+    }))
+  }
+})
+
 test('desktop shutdown terminates a peer that does not acknowledge close', async () => {
   const server = new NodeDesktopServer({token: TOKEN, closeGraceMs: 25})
   const readiness = await server.start()

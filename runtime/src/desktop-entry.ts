@@ -11,10 +11,10 @@ const token = process.env.NOVA_AUDIO_AGENT_DESKTOP_TOKEN ?? ''
 const readyEndpoint = process.env.NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT ?? ''
 const stop = new AbortController()
 const parentPort = (process as UtilityProcess).parentPort
-const server = new NodeDesktopServer({
-  token,
-  onClientDisconnect: () => stop.abort(),
-})
+// Renderer disconnect is deliberately NOT a shutdown trigger. The Python runtime
+// (realtime/desktop.py) drains only on parent stdin EOF or SIGINT/SIGTERM, so a
+// window reload must be able to reconnect to a live backend instead of killing it.
+const server = new NodeDesktopServer({token})
 
 process.once('SIGINT', () => stop.abort())
 process.once('SIGTERM', () => stop.abort())

@@ -7,6 +7,7 @@ export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024
 export const DESKTOP_AUTH_TIMEOUT_MS = 3_000
 export const DESKTOP_CLOSE_GRACE_MS = 500
+export const DESKTOP_READY_TIMEOUT_MS = 5_000
 
 const tokenPattern = /^[a-f0-9]{32}$/u
 const readyEndpointPattern = /^127\.0\.0\.1:([0-9]{1,5})$/u
@@ -153,12 +154,16 @@ export class NodeDesktopServer {
     // closing the peer. The close code remains the renderer-visible verdict.
     socket.on('error', error => { void error })
     let authenticated = false
+    let rejected = false
     let processing = Promise.resolve()
     const authTimer = setTimeout(() => socket.close(4003, 'desktop protocol rejected'),
       this.#options.authTimeoutMs)
 
     socket.on('message', (data, isBinary) => {
       processing = processing.then(async () => {
+        // One rejection is terminal. Without this latch a peer could keep
+        // guessing tokens on the same socket in the window before close settles.
+        if (rejected) return
         if (!authenticated) {
           if (isBinary) throw new DesktopProtocolError('desktop authentication frame must be text')
           authenticateDesktopFrame(rawText(data), this.#options.token)
@@ -178,6 +183,7 @@ export class NodeDesktopServer {
         }
         await this.#options.onControl?.(parseDesktopControl(rawText(data)))
       }).catch(() => {
+        rejected = true
         socket.close(4003, 'desktop protocol rejected')
       })
     })
@@ -227,19 +233,37 @@ export function parseReadyEndpoint(raw: string): {readonly host: '127.0.0.1', re
 export async function announceReadiness(
   endpoint: string,
   readiness: DesktopReadiness,
+  timeoutMs = DESKTOP_READY_TIMEOUT_MS,
 ): Promise<void> {
   validateDesktopToken(readiness.token)
   if (readiness.host !== '127.0.0.1' || !Number.isInteger(readiness.port)
     || readiness.port < 1 || readiness.port > 65_535) {
     throw new DesktopProtocolError('desktop readiness payload is invalid')
   }
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new DesktopProtocolError('desktop readiness timeout is invalid')
+  }
   const target = parseReadyEndpoint(endpoint)
   const line = `${JSON.stringify(readiness)}\n`
   await new Promise<void>((resolve, reject) => {
     const socket = createConnection(target)
-    socket.once('error', reject)
+    // The handshake is one line followed by EOF. A parent that accepts the
+    // connection and then never closes it must not hang startup indefinitely
+    // with no diagnostic.
+    const timer = setTimeout(() => {
+      socket.destroy()
+      reject(new DesktopProtocolError('desktop readiness announcement timed out'))
+    }, timeoutMs)
+    socket.once('error', error => {
+      clearTimeout(timer)
+      reject(error)
+    })
     socket.once('connect', () => socket.end(line))
-    socket.once('close', hadError => hadError ? undefined : resolve())
+    socket.once('close', hadError => {
+      if (hadError) return
+      clearTimeout(timer)
+      resolve()
+    })
   })
 }
 
@@ -274,7 +298,10 @@ function rawBytes(data: RawData): Uint8Array {
   if (bytes.byteLength > MAX_DESKTOP_PCM_BYTES) {
     throw new DesktopProtocolError('desktop input PCM frame is too large')
   }
-  return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  // Copy rather than view. `ws` allocates receive buffers from a shared pool, so
+  // a view would alias bytes that a later frame overwrites, and the realtime
+  // uplink holds PCM across await points before it reaches a provider.
+  return new Uint8Array(bytes)
 }
 
 async function closeWebSocket(socket: WebSocket, graceMs: number): Promise<void> {
