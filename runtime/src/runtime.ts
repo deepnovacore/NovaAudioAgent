@@ -89,6 +89,8 @@ export interface ModelCall {
   readonly slot: Slot
   readonly reason: WakeReason
   readonly started_at: number
+  /** Present for the fast slot: the identity a streaming port opens the Floor with. */
+  readonly utterance_id?: string
   readonly channel?: string
   readonly compression_items?: readonly MemoryItem[]
   readonly context_view?: ContextView
@@ -170,6 +172,37 @@ export class CoreRuntime {
 
   endAgentSpeech(utteranceId: string): void {
     this.floor = this.floor.onSpeakEnd(utteranceId)
+  }
+
+  /**
+   * Request the Floor, called by a streaming port before its first sink write.
+   *
+   * Ported from `Runtime._open_floor`. Three steps, and the order of the last two is the
+   * point: post the event so every Floor transition stays replayable, THEN claim an
+   * in-place reservation. Posting alone only queues the event; `this.floor` would not
+   * change until apply, and with two concurrent slots there is a real window where
+   * `speak_start` is still queued while text already streams. A `surrogate.watch` view
+   * compiled in that window would read `floor=idle` and conclude it may speak, which is
+   * the opposite of reality rather than a conservative guess. The reservation does not
+   * break replay: applying the queued `speak_start` later recomputes the same transition
+   * from the same inputs.
+   *
+   * `allow` and `preempt` share this path. Floor's `onSpeakStart` replaces the current
+   * utterance wholesale, and the preempted utterance's late `speak_end` cannot enter
+   * because `onSpeakEnd` checks the utterance id, so no compensating event is needed.
+   */
+  openFloor(jobId: string, utteranceId: string, priority: number, at: number): boolean {
+    const decision = this.floor.decide(priority)
+    this.#preparedSpeech.set(jobId, {decision})
+    if (decision === 'defer') return false
+    this.post({kind: 'speak_start', payload: {utterance_id: utteranceId, priority}}, at)
+    this.floor = this.floor.onSpeakStart(utteranceId, priority)
+    return true
+  }
+
+  /** Release the Floor when a streaming utterance ends. */
+  closeFloor(utteranceId: string, at: number): EventRecord {
+    return this.post({kind: 'speak_end', payload: {utterance_id: utteranceId}}, at)
   }
 
   postExecutorCompletion(
@@ -832,6 +865,7 @@ export class CoreRuntime {
       slot,
       reason,
       started_at: startedAt,
+      ...(utteranceId === null ? {} : {utterance_id: utteranceId}),
       ...(compression === null ? {} : {channel: compression.channel}),
       ...(compression === null ? {} : {compression_items: compression.items}),
       ...(contextView === undefined ? {} : {context_view: contextView}),
@@ -1029,6 +1063,10 @@ export class CoreRuntime {
   }
 
   #prepareSpeech(job: ModelJob, output: unknown, at: number): void {
+    // A streaming port already arbitrated at its first text chunk and posted both Floor
+    // events itself. Deciding again here would consult a Floor that has moved on and
+    // would post a second speak_start for the same utterance.
+    if (this.#preparedSpeech.has(job.jobId)) return
     const parsed = fastBrainOutputSchema.safeParse(output)
     if (!parsed.success || parsed.data.speak.act === 'none' || parsed.data.speak.text.length === 0) {
       return

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ScriptedIdFactory } from '../src/ids.js'
+import { MonotonicIdFactory, ScriptedIdFactory } from '../src/ids.js'
 import { handoffPolicySchema } from '../src/memory.js'
 import { executorManifestSchema, fastBrainOutputSchema, opSpecSchema } from '../src/ports.js'
 import { CoreRuntime, type ModelCall } from '../src/runtime.js'
@@ -1005,4 +1005,112 @@ test('a compressor result for the wrong channel is rejected with a bounded diagn
   assert.equal(runtime.memory.channels.get('route_sim')?.summary, null)
   assert.deepEqual(runtime.diagnostics, [{code: 'invalid_compressor_output'}])
   runtime.assertQuiescent()
+})
+
+test('a streaming port arbitrates the Floor at its first chunk, not at completion', () => {
+  // Python consults the Floor when the first character arrives; deciding at model_done
+  // instead would read a Floor that has already moved on. This exercises exactly that
+  // window: the user starts speaking after the stream opened the Floor but before the
+  // model output lands.
+  const calls: ModelCall[] = []
+  const runtime = new CoreRuntime({
+    manifests: [],
+    ids: new MonotonicIdFactory(),
+    modelSlots: ['fast'],
+    onModelCall: call => calls.push(call),
+  })
+
+  runtime.apply(runtime.queue.popReady(0)
+    ?? runtime.post({kind: 'user_input', payload: {text: '把灯调暗'}}, 0))
+  const pending = runtime.queue.popReady(0)
+  if (pending !== undefined) runtime.apply(pending)
+
+  const call = calls.at(-1)
+  assert.ok(call !== undefined)
+  assert.equal(call.slot, 'fast')
+  // The utterance identity must reach the port, or it cannot open the Floor.
+  assert.ok(typeof call.utterance_id === 'string' && call.utterance_id.length > 0)
+
+  // First chunk arrives while the Floor is idle: allowed, and reserved in place.
+  assert.equal(runtime.floor.state, 'idle')
+  assert.equal(runtime.openFloor(call.job_id, call.utterance_id, 100, 0), true)
+  assert.equal(runtime.floor.state, 'agent_speaking',
+    'the reservation must be in place immediately, or a concurrent Surrogate view reads idle')
+
+  // The user barges in mid-stream. Deciding at completion would have seen this and
+  // deferred, contradicting the words already on the wire.
+  runtime.startUserSpeech('speech-1')
+  assert.equal(runtime.floor.state, 'user_speaking')
+
+  runtime.closeFloor(call.utterance_id, 1)
+  const speakEvents = []
+  for (;;) {
+    const event = runtime.queue.popReady(1)
+    if (event === undefined) break
+    if (event.kind === 'speak_start' || event.kind === 'speak_end') speakEvents.push(event.kind)
+  }
+  // Exactly one pair, posted by the streaming port rather than by completion handling.
+  assert.deepEqual(speakEvents, ['speak_start', 'speak_end'])
+})
+
+test('a deferred streaming utterance posts no Floor events at all', () => {
+  const calls: ModelCall[] = []
+  const runtime = new CoreRuntime({
+    manifests: [],
+    ids: new MonotonicIdFactory(),
+    modelSlots: ['fast'],
+    onModelCall: call => calls.push(call),
+  })
+  // A user already holds the floor when the stream starts.
+  runtime.startUserSpeech('speech-1')
+  const first = runtime.post({kind: 'user_input', payload: {text: '你好'}}, 0)
+  runtime.apply(first)
+  const call = calls.at(-1)
+  assert.ok(call?.utterance_id !== undefined)
+
+  assert.equal(runtime.openFloor(call.job_id, call.utterance_id, 100, 0), false)
+  assert.equal(runtime.floor.state, 'user_speaking', 'a deferred utterance must not reserve')
+  const queued = []
+  for (;;) {
+    const event = runtime.queue.popReady(0)
+    if (event === undefined) break
+    queued.push(event.kind)
+  }
+  assert.ok(!queued.includes('speak_start'))
+})
+
+test('speech a streaming port already voiced is never reclassified as deferred', () => {
+  // Without the completion-time guard, prepareSpeech re-decides against a Floor the
+  // stream itself has already taken: decide(100) against agent_speaking(100) is `defer`,
+  // so the utterance that was actually spoken would be filed in the suggestion pool
+  // instead of the conversation channel and recorded as a deferred Floor decision.
+  const calls: ModelCall[] = []
+  const runtime = new CoreRuntime({
+    manifests: [],
+    ids: new MonotonicIdFactory(),
+    modelSlots: ['fast'],
+    onModelCall: call => calls.push(call),
+  })
+  runtime.apply(runtime.post({kind: 'user_input', payload: {text: 'hi'}}, 0))
+  const call = calls.at(-1)
+  assert.ok(call?.utterance_id !== undefined)
+
+  assert.equal(runtime.openFloor(call.job_id, call.utterance_id, 100, 0), true)
+  runtime.completeModelCall(call.job_id, {
+    speak: {act: 'say', text: 'spoken words'},
+    action: {act: 'none'},
+  }, 0)
+  for (;;) {
+    const event = runtime.queue.popReady(0)
+    if (event === undefined) break
+    runtime.apply(event)
+  }
+
+  const conversation = runtime.memory.channels.get('conversation')?.items ?? []
+  assert.ok(conversation.some(item => item.content.text === 'spoken words'),
+    'voiced speech belongs in the conversation channel')
+  assert.ok(!runtime.suggestions.all().some(item => item.content.text === 'spoken words'),
+    'and must not also be offered as a suggestion')
+  assert.deepEqual(runtime.floorDecisions.map(decision => decision.decision), ['allow'],
+    'the recorded decision is the one the stream actually acted on')
 })
