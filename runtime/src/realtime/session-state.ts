@@ -427,10 +427,17 @@ function boundedProgress(value: string | null): string | null {
   return [...value].slice(0, PROGRESS_SUMMARY_LIMIT).join('')
 }
 
-/** Truncate by code point, so a caption bound cannot split an astral character. */
+/**
+ * Keep the last MAX_CAPTION_CHARS code points.
+ *
+ * A caption accumulates from deltas and the interesting end is the newest one: the display should
+ * follow what is being said now, not the opening of a long utterance. This is deliberately the
+ * opposite end from the progress-summary bound, which keeps its head. Slicing by code point is
+ * what keeps either bound from splitting an astral character.
+ */
 export function truncateCaption(text: string): string {
   const characters = [...text]
   return characters.length <= MAX_CAPTION_CHARS
     ? text
-    : characters.slice(0, MAX_CAPTION_CHARS).join('')
+    : characters.slice(-MAX_CAPTION_CHARS).join('')
 }

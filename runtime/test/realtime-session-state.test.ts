@@ -11,6 +11,11 @@ import {
   truncateCaption,
 } from '../src/realtime/session-state.js'
 
+/** Distinct code points, so a truncation's retained half is provable, not just its length. */
+function distinctCharacters(count: number): string[] {
+  return Array.from({length: count}, (_unused, index) => String.fromCodePoint(0x4e00 + index))
+}
+
 test('a ledger counts once and evicts oldest-first at its bound', () => {
   const ledger = new EpochLedger(3)
   assert.equal(ledger.add(1, 'a'), true)
@@ -99,6 +104,8 @@ test('a new epoch starts provider-allocated answers over, and only those', () =>
   state.openProviderTurn('resp-1')
   state.trackUserCaption('item-1')
   state.setCaption({role: 'user', text: '说了什么', final: false})
+  state.trackAssistantCaption('resp-1')
+  state.setCaption({role: 'assistant', text: '好的', final: false})
   const before = state.snapshotVersion
 
   state.beginEpoch(1)
@@ -111,6 +118,7 @@ test('a new epoch starts provider-allocated answers over, and only those', () =>
   assert.equal(state.hostEventIsDeduplicated('event-1'), true)
   // Captions are not this layer's to clear; the layer above resets them around a reconnect.
   assert.equal(state.userCaption, '说了什么')
+  assert.equal(state.assistantCaption, '好的')
   // The revision is a monotonic counter for the whole session, not per epoch.
   assert.equal(state.userInputRevision, 1)
   assert.ok(state.snapshotVersion > before, 'a new identity is a published change')
@@ -132,25 +140,27 @@ test('provider turns are bounded, evicting the oldest', () => {
   assert.equal(state.providerTurnPhase(`resp-${MAX_TRACKED_PROVIDER_TURNS}`), 'active')
 })
 
-test('reopening a response returns the existing turn untouched', () => {
-  const state = new RealtimeSessionState()
-  state.acceptUserTurn('turn-1')
-  const opened = state.openProviderTurn('resp-1')
-  opened.phase = 'cancel_requested'
-  opened.locally_fenced = true
-  opened.defer_playback_fence = true
+for (const phase of ['cancel_requested', 'completed', 'cancelled', 'failed'] as const) {
+  test(`reopening a ${phase} response returns the existing turn untouched`, () => {
+    const state = new RealtimeSessionState()
+    state.acceptUserTurn('turn-1')
+    const opened = state.openProviderTurn('resp-1')
+    opened.phase = phase
+    opened.locally_fenced = true
+    opened.defer_playback_fence = true
 
-  // Newer user input arrives, so a rebuilt entry would be re-dated against the new revision.
-  state.acceptUserTurn('turn-2')
-  const reopened = state.openProviderTurn('resp-1')
+    // Newer user input arrives, so a rebuilt entry would be re-dated against the new revision.
+    state.acceptUserTurn('turn-2')
+    const reopened = state.openProviderTurn('resp-1')
 
-  assert.equal(reopened, opened, 'the same entry, not a replacement')
-  assert.equal(reopened.phase, 'cancel_requested', 'a cancelled turn must not revive as active')
-  assert.equal(reopened.locally_fenced, true, 'a fence is a decision already taken')
-  assert.equal(reopened.defer_playback_fence, true)
-  assert.equal(reopened.user_input_revision, 1, 'it still answers the world it opened in')
-  assert.equal(state.providerTurnIsStale('resp-1'), true)
-})
+    assert.equal(reopened, opened, 'the same entry, not a replacement')
+    assert.equal(reopened.phase, phase, `a ${phase} turn must not revive as active`)
+    assert.equal(reopened.locally_fenced, true, 'a fence is a decision already taken')
+    assert.equal(reopened.defer_playback_fence, true)
+    assert.equal(reopened.user_input_revision, 1, 'it still answers the world it opened in')
+    assert.equal(state.providerTurnIsStale('resp-1'), true)
+  })
+}
 
 test('touching a provider turn moves it to the back of the eviction order', () => {
   const state = new RealtimeSessionState()
@@ -179,12 +189,18 @@ test('an omitted progress field preserves the slot; an explicit null clears it',
   assert.equal(state.snapshot().active_delegates[0]?.[1].progress_summary, null)
 })
 
-test('a progress summary is bounded by code point', () => {
+test('a progress summary keeps its head, bounded by code point', () => {
+  // Distinct code points, so the retained half is provable rather than merely the right length.
   const state = new RealtimeSessionState()
-  const long = '啊'.repeat(PROGRESS_SUMMARY_LIMIT + 50)
-  state.registerDelegate('d-1', {summary: 's', state: 'running', progress_summary: long})
+  const characters = distinctCharacters(PROGRESS_SUMMARY_LIMIT + 50)
+  state.registerDelegate('d-1', {
+    summary: 's',
+    state: 'running',
+    progress_summary: characters.join(''),
+  })
   const stored = state.snapshot().active_delegates[0]?.[1].progress_summary ?? ''
   assert.equal([...stored].length, PROGRESS_SUMMARY_LIMIT)
+  assert.equal(stored, characters.slice(0, PROGRESS_SUMMARY_LIMIT).join(''))
 })
 
 test('only running delegates are visible, and the snapshot version advances', () => {
@@ -206,14 +222,23 @@ test('a delegate needs both an id and a summary', () => {
   assert.throws(() => state.registerDelegate('d-1', {summary: '', state: 'running'}), TypeError)
 })
 
-test('captions are bounded without splitting an astral character', () => {
-  const astral = '\u{1f600}'
-  const long = astral.repeat(MAX_CAPTION_CHARS + 20)
-  const truncated = truncateCaption(long)
+test('a caption keeps its newest end, the opposite end from a progress summary', () => {
+  // A caption grows by deltas, so the display must follow what is being said now. Keeping the
+  // head would freeze the UI on the opening of a long utterance.
+  const characters = distinctCharacters(MAX_CAPTION_CHARS + 20)
+  const truncated = truncateCaption(characters.join(''))
+
   assert.equal([...truncated].length, MAX_CAPTION_CHARS)
-  // Splitting by UTF-16 units would leave a lone surrogate here.
-  assert.ok(!/[\uD800-\uDFFF]/u.test(truncated.slice(-1)) || truncated.endsWith(astral))
+  assert.equal(truncated, characters.slice(-MAX_CAPTION_CHARS).join(''))
   assert.equal(truncateCaption('短'), '短')
+})
+
+test('a caption bound never splits an astral character', () => {
+  const astral = '\u{1f600}'
+  const truncated = truncateCaption(astral.repeat(MAX_CAPTION_CHARS + 20))
+  assert.equal([...truncated].length, MAX_CAPTION_CHARS)
+  // Slicing by UTF-16 unit would leave a lone surrogate at one end or the other.
+  assert.equal(truncated.replaceAll(astral, ''), '', 'no half of a surrogate pair survived')
 })
 
 test('a new caption target resets the accumulated text', () => {
@@ -277,19 +302,28 @@ test('answered events are bounded only when pruned, oldest-touched first', () =>
   for (let index = 0; index < MAX_TRACKED_HOST_EVENTS; index += 1) {
     state.markEventResponded(`event-${index}`)
   }
-  // Re-answering the oldest moves it to the back, so the second-oldest becomes next to go.
+  // Re-answering the oldest moves it to the back, so the next few become the ones to go.
   state.markEventResponded('event-0')
-  state.markEventResponded('overflow')
+  // Several excess entries, so a prune that drops one and stops leaves the ledger over bound.
+  const excess = 5
+  for (let index = 0; index < excess; index += 1) state.markEventResponded(`overflow-${index}`)
 
   // Recording does not evict: a burst must not drop an event the same burst still needs.
-  assert.equal(state.respondedEventIds.length, MAX_TRACKED_HOST_EVENTS + 1)
+  assert.equal(state.respondedEventIds.length, MAX_TRACKED_HOST_EVENTS + excess)
   assert.equal(state.hostEventIsDeduplicated('event-1'), true)
 
   state.pruneRespondedEvents()
   assert.equal(state.respondedEventIds.length, MAX_TRACKED_HOST_EVENTS)
-  assert.equal(state.hostEventIsDeduplicated('event-1'), false, 'oldest-touched went first')
+  for (let index = 1; index <= excess; index += 1) {
+    assert.equal(
+      state.hostEventIsDeduplicated(`event-${index}`),
+      false,
+      `event-${index} was among the oldest-touched`,
+    )
+  }
+  assert.equal(state.hostEventIsDeduplicated(`event-${excess + 1}`), true, 'and no further')
   assert.equal(state.hostEventIsDeduplicated('event-0'), true, 'the re-answered one survived')
-  assert.equal(state.hostEventIsDeduplicated('overflow'), true)
+  assert.equal(state.hostEventIsDeduplicated(`overflow-${excess - 1}`), true)
 })
 
 test('the transcript ledger is bounded independently of the turn ledger', () => {
