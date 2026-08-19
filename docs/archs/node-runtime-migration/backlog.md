@@ -156,31 +156,37 @@ table and accepting an undocumented tolerance. Measuring it instead
 `runtime/test/unicode-nfkc.test.ts`) showed the gap is narrow, precisely bounded, and neither option
 was necessary.
 
-Across forty-two vectors -- fullwidth forms, CJK compatibility ideographs, Hangul, circled and
-squared forms, ligatures, combining sequences, Turkish and Greek casing, astral pairs -- CPython
-15.0.0 and ICU 77.1 agree on everything **except code points assigned in Unicode 16.0 that carry a
-compatibility decomposition**. There are thirty-six of them: outlined capitals U+1CCD6..U+1CCEF and
-outlined digits U+1CCF0..U+1CCF9. ICU decomposes each to an ASCII letter or digit; CPython 15.0.0
-has never heard of them and leaves them alone.
+The divergence has one cause -- code points assigned after the pin -- and three faces. CPython 15.0.0
+has never heard of them, so it does nothing to them; ICU 77.1 knows them and applies its rules.
 
-That is not a cosmetic difference. All thirty-six land in `[a-z0-9]`, which is exactly the domain of
-`recall.py`'s tokenizer -- so under the host normalizer an outlined `𜳰` would tokenize as `0` and
-match a memory containing a zero, where the oracle would not match it at all. Which memories a model
-is shown is contract-visible.
+1. **Compatibility decomposition**, thirty-six code points: outlined capitals U+1CCD6..U+1CCEF and
+   outlined digits U+1CCF0..U+1CCF9, each decomposing to an ASCII letter or digit.
+2. **Case mapping**, twenty-seven code points: Garay, Latin and Cyrillic capitals added in 16.0,
+   which ICU lowercases and the pin leaves alone.
+3. **Contextual composition**, the one that matters most and the one a per-code-point survey misses
+   entirely. `U+16D63 U+16D68` are each unchanged by NFKC alone, so neither looks like a divergence --
+   but ICU composes the pair into `U+16D6A` while CPython returns it untouched.
 
-`runtime/src/unicode-normalize.ts` holds those code points back from the host normalizer and lets it
-do everything else. Use `normalizeNfkcPinned` and `normalizeAndLowerPinned` for anything
-contract-visible; plain `.normalize('NFKC')` is fine only for text that never leaves the process. The
-approach stays correct as ICU advances, because a code point assigned after 15.0.0 is by definition
-one the pinned database does not decompose -- and a test derives the holdback set from the host rather
-than trusting the committed list, so drift in either direction fails.
+None of this is cosmetic. The decompositions and case mappings all land in `[a-z0-9]`, which is
+exactly `recall.py`'s tokenizer domain, so under the host an outlined `𜳰` tokenizes as `0` and
+matches a memory containing a zero where the oracle matches nothing.
 
-The vectors pin the whole `NFKC` then `lower()` pipeline, not just the first stage, because
-`recall.py` lowercases the result and the two runtimes' case mapping is not identical everywhere
-either. On the measured set they agree; the pairing is pinned so that stays checked.
+`runtime/src/unicode-normalize.ts` holds back **every code point the pin calls unassigned**, decided
+by the generated category table rather than by a list. That is deliberately broader than the code
+points the host visibly transforms: face 3 proves no narrower rule can be right, because any pair of
+newly-assigned code points could compose. Held-back characters are cut out and the runs around them
+normalized separately -- not replaced by a placeholder, which cannot work at all: a placeholder has to
+be a code point that cannot appear in the input, and private-use characters are legal text. An earlier
+version silently corrupted any input containing U+F0000.
 
-If a future CPython adopts Unicode 16.0, the "host alone does not agree" test fails, and the holdback
-can be deleted rather than carried indefinitely.
+Use `normalizeNfkcPinned`, `toLowerPinned`, or `normalizeAndLowerPinned` for anything
+contract-visible; plain `.normalize('NFKC')` and `.toLowerCase()` are fine only for text that never
+leaves the process.
+
+The claim is verified exhaustively rather than sampled: all 1,112,064 non-surrogate code points
+through both pipelines, plus 261,282 adjacent pairs drawn from every unassigned block small enough to
+be a real script. Zero divergences. If a future CPython adopts Unicode 16.0, the "host alone does not
+agree" tests fail and the holdback can be deleted rather than carried indefinitely.
 
 ### Pre-existing: the Codex progress end-to-end suite is load-sensitive
 
