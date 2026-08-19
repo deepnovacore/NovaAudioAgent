@@ -97,6 +97,13 @@ function textOf(data: RawData): string {
 export const webSocketQwenConnector: QwenConnector = (
   options: QwenConnectorOptions,
 ): Promise<QwenSocket> => new Promise<QwenSocket>((resolve, reject) => {
+  // Check before constructing anything. `addEventListener` does not replay an abort
+  // that already happened, so a pre-aborted signal would otherwise open a socket,
+  // resolve normally, and leave it live with no owner.
+  if (options.signal.aborted) {
+    reject(new Error('qwen realtime connect aborted'))
+    return
+  }
   const socket = new WebSocket(options.endpoint, {
     headers: {...options.headers},
     handshakeTimeout: Math.max(1, Math.floor(options.openTimeout * 1000)),
@@ -126,4 +133,7 @@ export const webSocketQwenConnector: QwenConnector = (
   socket.once('open', onOpen)
   socket.once('error', onError)
   options.signal.addEventListener('abort', onAbort, {once: true})
+  // Recheck after registering: an abort between the guard above and this line would
+  // have been missed by both, leaving the same unowned socket.
+  if (options.signal.aborted) onAbort()
 })

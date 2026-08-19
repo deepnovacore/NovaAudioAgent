@@ -244,6 +244,50 @@
           }
         }
       ]
+    },
+    {
+      "id": "base64-non-canonical-pad-bits-accepted",
+      "covers": "A one-byte delta is refused because Python requires aligned PCM16, not because of base64 canonicality. \"Zh==\" decodes to 0x66 in both runtimes.",
+      "frames": [
+        {
+          "type": "response.audio.delta",
+          "response_id": "resp-1",
+          "delta": "Zh=="
+        }
+      ]
+    },
+    {
+      "id": "base64-non-canonical-pad-bits-second-form",
+      "covers": "\"Zx==\" likewise decodes to one byte and is refused on alignment.",
+      "frames": [
+        {
+          "type": "response.audio.delta",
+          "response_id": "resp-1",
+          "delta": "Zx=="
+        }
+      ]
+    },
+    {
+      "id": "base64-bad-length-rejected",
+      "covers": "A length that is not a multiple of four is refused, matching Python.",
+      "frames": [
+        {
+          "type": "response.audio.delta",
+          "response_id": "resp-1",
+          "delta": "Zg="
+        }
+      ]
+    },
+    {
+      "id": "base64-non-canonical-pad-bits-aligned-accepted",
+      "covers": "The real non-canonical case: \"ZgZ=\" has non-zero unused pad bits AND an even byte length, so Python accepts 0x66 0x06. A canonical round-trip check would reject it.",
+      "frames": [
+        {
+          "type": "response.audio.delta",
+          "response_id": "resp-1",
+          "delta": "ZgZ="
+        }
+      ]
     }
   ]
 }

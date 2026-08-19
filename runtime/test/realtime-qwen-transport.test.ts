@@ -214,3 +214,23 @@ test('an aborted connect does not leak a half-open socket', async () => {
     await server.close()
   }
 })
+
+
+test('a pre-aborted signal rejects without opening a socket', async () => {
+  // `addEventListener` does not replay an abort that already happened, so without an
+  // explicit guard the connector resolved on open and left the socket unowned.
+  const server = await harness()
+  const stop = new AbortController()
+  stop.abort()
+  try {
+    await assert.rejects(connect(server.endpoint, stop.signal), /aborted/u)
+    // Nothing should have reached the server.
+    const connected = await Promise.race([
+      server.peer.then(() => 'connected' as const),
+      new Promise<'quiet'>(resolve => setTimeout(() => resolve('quiet'), 150)),
+    ])
+    assert.equal(connected, 'quiet', 'a pre-aborted connect must not dial the server')
+  } finally {
+    await server.close()
+  }
+})

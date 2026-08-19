@@ -29,12 +29,18 @@ function loadJson<T>(name: string): T {
 }
 
 /** Serves scripted frames, then reports EOF the way a closed transport does. */
-function scriptedSocket(frames: readonly Record<string, JsonValue>[]): QwenSocket {
+function scriptedSocket(
+  frames: readonly Record<string, JsonValue>[],
+  sent?: Record<string, JsonValue>[],
+): QwenSocket {
   const pending = [...frames]
   return {
     // Explicit promises rather than async bodies: nothing here awaits, and the EOF
     // signal must reject the promise, not throw synchronously into the read loop.
-    send: () => Promise.resolve(),
+    send: (payload: string) => {
+      sent?.push(JSON.parse(payload) as Record<string, JsonValue>)
+      return Promise.resolve()
+    },
     receive: () => {
       const next = pending.shift()
       return next === undefined
@@ -113,5 +119,57 @@ test('every normalization scenario documents what it covers and is exercised', (
   for (const scenario of fixture.scenarios) {
     assert.ok(scenario.covers.length > 0, `${scenario.id} must say what it covers`)
     assert.ok(scenario.frames.length > 0, `${scenario.id} must script at least one frame`)
+  }
+})
+
+
+test('the emitted session.update matches the Python-exported outbound payload', async () => {
+  // The session instructions are model-visible behavior. Comparing the TypeScript
+  // constant to itself is what let a hand-copied version silently drop 39 of its 52
+  // lines, so the whole outbound payload is checked against the oracle instead.
+  const fixture = loadJson<NormalizationFixture>('normalization.json')
+  const expected = loadJson<{readonly outbound_handshake: JsonValue}>(
+    'normalization-expected.json',
+  )
+
+  const sent: Record<string, JsonValue>[] = []
+  const socket = scriptedSocket(fixture.handshake, sent)
+  const adapter = new QwenAudioRealtimeAdapter({
+    url: 'wss://example.invalid/realtime',
+    apiKey: 'fixture-key',
+    model: 'fixture-model',
+    voice: 'fixture-voice',
+    connector: () => Promise.resolve(socket),
+    idFactory: identityFactory(),
+  })
+  const stop = new AbortController()
+  await adapter.connect({tools: [], signal: stop.signal})
+  await adapter.close()
+  stop.abort()
+
+  assert.equal(canonicalJson(sent), canonicalJson(expected.outbound_handshake))
+
+  // Guard the premise: a golden that lost the instructions would still compare equal
+  // to an equally empty payload, so assert the payload is substantial.
+  const update = sent.find(frame => frame.type === 'session.update')
+  assert.ok(update !== undefined)
+  const session = update.session as Record<string, JsonValue>
+  const instructions = session.instructions
+  assert.equal(typeof instructions, 'string')
+  assert.ok((instructions as string).split('\n').length >= 50,
+    'the session instructions must carry the full behavioral contract')
+  for (const required of [
+    'Nova Audio Agent 任务',
+    'Nova Audio Agent 宿主激活事实：',
+    'codex__run',
+    'codex__project',
+    'guard__start',
+    'watch__start',
+    'memory__recall',
+    'codex__status',
+    'work_order',
+  ]) {
+    assert.ok((instructions as string).includes(required),
+      `session instructions must still govern ${required}`)
   }
 })

@@ -89,6 +89,32 @@ def _identity_factory() -> Any:
     return next_id
 
 
+async def _replay_handshake(handshake: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Capture the frames the adapter sends while connecting.
+
+    The session.update payload carries the model-visible session instructions. A
+    hand-copied port of that text silently dropped most of it once, and no test
+    noticed because the Node assertion compared the constant to itself. Exporting
+    the whole outbound payload from Python makes drift a failure.
+    """
+    socket = ScriptedSocket(list(handshake))
+
+    async def connector(_endpoint: str, **_kwargs: Any) -> ScriptedSocket:
+        return socket
+
+    adapter = QwenAudioRealtimeAdapter(
+        url="wss://example.invalid/realtime",
+        api_key="fixture-key",
+        model="fixture-model",
+        voice="fixture-voice",
+        connector=connector,
+        id_factory=_identity_factory(),
+    )
+    await adapter.connect(tools=())
+    await adapter.close()
+    return socket.sent
+
+
 async def _replay(handshake: list[dict[str, Any]], frames: list[dict[str, Any]]) -> list[Any]:
     socket = ScriptedSocket([*handshake, *frames])
 
@@ -114,7 +140,11 @@ async def _replay(handshake: list[dict[str, Any]], frames: list[dict[str, Any]])
 async def _run() -> dict[str, Any]:
     document = json.loads(FIXTURE.read_text(encoding="utf-8"))
     handshake = document["handshake"]
-    results: dict[str, Any] = {"schema_version": document["schema_version"], "scenarios": {}}
+    results: dict[str, Any] = {
+        "schema_version": document["schema_version"],
+        "outbound_handshake": await _replay_handshake(handshake),
+        "scenarios": {},
+    }
     for scenario in document["scenarios"]:
         results["scenarios"][scenario["id"]] = await _replay(handshake, scenario["frames"])
     return results
