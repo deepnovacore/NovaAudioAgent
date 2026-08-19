@@ -28,6 +28,18 @@ export const DEFAULT_ITEM_CONFIRMATION_TIMEOUT = 5
 export const DEFAULT_CLOSE_TIMEOUT = 0.25
 export const MAX_TIMED_OUT_ITEM_IDS = 256
 
+/**
+ * Bound on normalized events buffered for `events()`.
+ *
+ * A deliberate Node-side addition: Python uses an unbounded `asyncio.Queue`, so a
+ * provider producing audio faster than the application consumes would grow memory
+ * without limit in either runtime. The transport's own backlog bound does not help,
+ * because the read loop drains it into this queue immediately. On overflow the
+ * session is failed rather than silently degraded, which matches the invariant that
+ * external data becomes a bounded contract failure.
+ */
+export const MAX_QWEN_EVENT_QUEUE = 4_096
+
 export const GUARD_ACTIVATION_PREFIX = 'Nova Audio Agent 宿主激活事实：'
 
 const NO_ACTIVE_RESPONSE_MESSAGES: ReadonlySet<string> = new Set([
@@ -482,7 +494,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
           continue
         }
         const normalized = this.#normalizeEvent(event, epoch)
-        if (normalized !== undefined) this.#enqueue(normalized)
+        if (normalized !== undefined && !this.#publish(normalized, epoch)) return
         if (normalized?.kind === 'provider_error') return
       }
     } catch (error) {
@@ -706,6 +718,30 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
 
   #enqueue(event: RealtimeProviderEvent | null): void {
     this.#queue.push(event)
+    this.#wakeQueue()
+  }
+
+  /** Enqueue a normalized event, failing the session if the consumer cannot keep up. */
+  #publish(event: RealtimeProviderEvent, epoch: number): boolean {
+    if (this.#queue.length >= MAX_QWEN_EVENT_QUEUE) {
+      this.#queue.length = 0
+      this.#queue.push(
+        {
+          session_epoch: epoch,
+          kind: 'provider_error',
+          code: 'event_queue_overflow',
+          recoverable: false,
+        },
+        null,
+      )
+      this.#wakeQueue()
+      return false
+    }
+    this.#enqueue(event)
+    return true
+  }
+
+  #wakeQueue(): void {
     const waiter = this.#queueWaiter
     this.#queueWaiter = undefined
     waiter?.()
@@ -714,11 +750,19 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   async #takeQueued(signal: AbortSignal): Promise<RealtimeProviderEvent | null | undefined> {
     while (this.#queue.length === 0) {
       if (signal.aborted) return undefined
-      await new Promise<void>(resolve => {
-        this.#queueWaiter = resolve
-        const onAbort = (): void => resolve()
-        signal.addEventListener('abort', onAbort, {once: true})
-      })
+      // Remove the abort listener on every path. Leaving it attached when the queue
+      // waiter wins accumulates one listener per event on a long-lived session, which
+      // retains memory and trips MaxListenersExceededWarning after ten events.
+      let onAbort: (() => void) | undefined
+      try {
+        await new Promise<void>(resolve => {
+          this.#queueWaiter = resolve
+          onAbort = resolve
+          signal.addEventListener('abort', onAbort, {once: true})
+        })
+      } finally {
+        if (onAbort !== undefined) signal.removeEventListener('abort', onAbort)
+      }
     }
     return this.#queue.shift() ?? null
   }
@@ -781,7 +825,19 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     } catch (error) {
       failure = error instanceof Error ? error : new Error('close failed')
     }
-    if (reader !== undefined) await reader.catch(() => undefined)
+    if (reader !== undefined) {
+      // `QwenSocket.close()` is not required to reject a receive() that is already
+      // parked, so a compliant but stalled transport would leave this reader pending
+      // forever. The reader is already detached by epoch, so bound the wait rather
+      // than block shutdown on it.
+      await Promise.race([
+        reader.catch(() => undefined),
+        new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, this.#closeTimeout * 1000)
+          timer.unref()
+        }),
+      ])
+    }
     return failure
   }
 

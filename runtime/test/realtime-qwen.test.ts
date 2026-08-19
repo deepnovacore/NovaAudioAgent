@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { getEventListeners } from 'node:events'
 import { test } from 'node:test'
 import {
   FRONTEND_INSTRUCTIONS,
   GUARD_ACTIVATION_PREFIX,
+  MAX_QWEN_EVENT_QUEUE,
   QwenAudioRealtimeAdapter,
   QwenRealtimeError,
   QwenSocketClosedError,
@@ -653,5 +655,129 @@ test('a reconnected session exposes its own events, not the previous sentinel', 
     kind: 'response_started',
     response_id: 'resp-after-reconnect',
   }])
+  stop.abort()
+})
+
+test('an event queue overflow fails the session instead of growing memory', async () => {
+  // The transport bound only protects its own backlog; the read loop drains that into
+  // the adapter queue immediately, so a fast provider needs its own limit here.
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+
+  // Start the read loop WITHOUT consuming events, so the queue can actually fill.
+  // Consuming while pushing keeps it below the bound and the overflow never happens,
+  // which is how an earlier version of this test timed out instead of asserting.
+  void adapter.injectHostItem({
+    kind: 'progress',
+    host_item_id: 'starts-the-reader',
+    event_id: 'ev-reader',
+    content: '启动读取',
+    call_id: null,
+  }, {confirmationTimeout: 0.01, asUserActivation: false, signal}).catch(() => undefined)
+
+  for (let index = 0; index <= MAX_QWEN_EVENT_QUEUE; index += 1) {
+    scripted.push({type: 'response.created', response: {id: `resp-${index}`}})
+  }
+  // Let the reader drain every frame into the adapter queue and trip the bound.
+  for (let turn = 0; turn < 200; turn += 1) {
+    await new Promise(resolve => setImmediate(resolve))
+  }
+
+  const stop = new AbortController()
+  const seen: RealtimeProviderEvent[] = []
+  for await (const event of adapter.events(stop.signal)) {
+    seen.push(event)
+    if (seen.length >= 4) break
+  }
+  stop.abort()
+
+  // On overflow the queue is replaced by exactly one terminal error and a sentinel,
+  // so the first event a consumer sees is the failure -- not the 4096 it missed.
+  assert.equal(seen.length, 1, 'overflow must discard the backlog and terminate')
+  assert.deepEqual(seen[0], {
+    session_epoch: 1,
+    kind: 'provider_error',
+    code: 'event_queue_overflow',
+    recoverable: false,
+  })
+})
+
+test('waiting for events does not accumulate abort listeners', async () => {
+  // One listener per wait would retain memory and trip MaxListenersExceededWarning.
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+
+  const stop = new AbortController()
+  const warnings: string[] = []
+  const onWarning = (warning: Error): void => { warnings.push(warning.name) }
+  process.on('warning', onWarning)
+  try {
+    const consumed: string[] = []
+    const reader = (async () => {
+      for await (const event of adapter.events(stop.signal)) {
+        consumed.push(event.kind)
+        if (consumed.length === 40) break
+      }
+    })()
+    // Push one at a time so every event is delivered from a parked wait.
+    for (let index = 0; index < 40; index += 1) {
+      scripted.push({type: 'response.created', response: {id: `resp-${index}`}})
+      await new Promise(resolve => setImmediate(resolve))
+    }
+    await reader
+    assert.equal(consumed.length, 40)
+    assert.ok(stop.signal.aborted === false)
+    // A leak shows up as one retained listener per delivered event.
+    assert.ok(getEventListeners(stop.signal, 'abort').length <= 1,
+      'each wait must remove its own abort listener')
+  } finally {
+    process.off('warning', onWarning)
+    stop.abort()
+  }
+  assert.deepEqual(warnings.filter(name => name === 'MaxListenersExceededWarning'), [])
+})
+
+test('close does not hang behind a receive that the transport never unblocks', async () => {
+  // QwenSocket.close() is not required to reject an already-parked receive(), so
+  // shutdown must bound its wait on the detached reader rather than block on it.
+  let parked = false
+  const inbound: Record<string, unknown>[] = [...handshake]
+  const stalled: QwenSocket = {
+    send: () => Promise.resolve(),
+    receive: () => {
+      const next = inbound.shift()
+      if (next !== undefined) return Promise.resolve(JSON.stringify(next))
+      parked = true
+      // Never settles, and close() below does nothing about it.
+      return new Promise<string>(() => undefined)
+    },
+    close: () => Promise.resolve(),
+  }
+  const adapter = new QwenAudioRealtimeAdapter({
+    url: 'wss://example.invalid/realtime',
+    apiKey: 'k',
+    model: 'm',
+    voice: 'v',
+    idFactory: ids(),
+    connector: () => Promise.resolve(stalled),
+    closeTimeout: 0.05,
+  })
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+
+  // Start the reader and prove it is genuinely parked before closing.
+  const stop = new AbortController()
+  void (async () => {
+    for await (const event of adapter.events(stop.signal)) void event
+  })()
+  await until(() => parked)
+
+  const started = Date.now()
+  await within(adapter.close(), 3_000, 'close to return')
+  assert.ok(Date.now() - started < 2_000, 'close must not block on a parked read')
   stop.abort()
 })
