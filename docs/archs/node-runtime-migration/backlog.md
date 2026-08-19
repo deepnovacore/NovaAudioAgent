@@ -188,6 +188,36 @@ through both pipelines, plus 261,282 adjacent pairs drawn from every unassigned 
 be a real script. Zero divergences. If a future CPython adopts Unicode 16.0, the "host alone does not
 agree" tests fail and the holdback can be deleted rather than carried indefinitely.
 
+### Corrected in the port: a replayed user-start could re-arm a spent origin
+
+`_remember_unbound_user_origin` refuses an item three ways -- already waiting, already having a
+transcript, already bound to a response -- and the first Node port checked only the first. A replayed
+`user_speech_started` would therefore put a *spent* item back in the queue, where a later response
+could bind to it and admit a tool call citing a turn the user had moved past. That is the evidence
+boundary the origin check exists to hold. It also used the wrong bound: 500 tracked tool calls rather
+than the 32-item refusal budget these actually belong to.
+
+Found by a Codex review. Two tests now cover the post-transcript and already-bound replays, and both
+assert on the queue rather than on a downstream symptom -- the bridge's fall back to the most recent
+transcript when a call has no bound origin is by design, so it cannot be used as the signal here.
+
+### Corrected in the port: an abandoned task could stop the run that replaced it
+
+`close` gives up on a task that will not stop, and a JavaScript promise cannot be cancelled, so that
+task can still finish later. The first port's guard read `this.#stop` at completion time -- which after
+a restart is the *replacement* controller -- found it un-aborted, and stopped a service that had
+already been restarted. Each guard is now handed the controller it belongs to.
+
+The distinction worth keeping: a *clean* return from an aborted run is an ordinary shutdown and
+correctly says nothing. The guard is for the task that fails after being abandoned, which is what the
+test exercises.
+
+### Corrected in the port: `close` was still unbounded on the transport
+
+Bounding the loops left `provider.close()` awaited unbounded, so a transport that never finishes
+closing held application shutdown open forever -- exactly the failure mode a degraded transport has.
+It is bounded now, with its own `shutdown_provider_close_abandoned` diagnostic.
+
 ### Corrected in the port: a stop flag that could not be listened to
 
 The first service port carried its own stop flag exposing only `aborted` and `abort()`, on the

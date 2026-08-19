@@ -300,12 +300,15 @@ export class RealtimeService {
     await this.connect()
     if (this.#tasks.length > 0) return
     // A fresh controller: an aborted one cannot be reused, and `start` after `close` has to work.
-    this.#stop = new AbortController()
-    const signal = this.#stop.signal
+    // Each guard is handed the controller it belongs to, so a task abandoned by an earlier close
+    // cannot report a failure against the run that replaced it.
+    const run = new AbortController()
+    this.#stop = run
+    const signal = run.signal
     this.#tasks = [
-      this.#guardTask(this.#receiveLoop(signal)),
-      this.#guardTask(this.#deliveryLoop(signal)),
-      this.#guardTask(this.#runtime.serve(signal)),
+      this.#guardTask(this.#receiveLoop(signal), run),
+      this.#guardTask(this.#deliveryLoop(signal), run),
+      this.#guardTask(this.#runtime.serve(signal), run),
     ]
   }
 
@@ -331,10 +334,16 @@ export class RealtimeService {
     // Held rather than propagated immediately: a close that failed still has to leave every task
     // cancelled and the service marked disconnected, so the failure is re-raised only after that.
     let closeFailure: {readonly cause: unknown} | null = null
+    let closeAbandoned = false
     try {
-      await this.#provider.close()
+      // Bounded like the loops are. A transport that never finishes closing would otherwise block
+      // application shutdown forever, which is exactly the failure mode a degraded transport has.
+      closeAbandoned = !await resolvedWithin(this.#provider.close(), SHUTDOWN_GRACE_MS)
     } catch (cause) {
       closeFailure = {cause}
+    }
+    if (closeAbandoned) {
+      this.#onDiagnostic('[realtime-diagnostic] shutdown_provider_close_abandoned')
     }
     const tasks = this.#tasks
     this.#tasks = []
@@ -1203,17 +1212,29 @@ export class RealtimeService {
    * service would look alive while no longer consuming its provider. A loop that ends *at all*
    * without the service being asked to stop is treated as a failure for the same reason.
    */
-  async #guardTask(task: Promise<void>): Promise<void> {
+  async #guardTask(task: Promise<void>, run: AbortController): Promise<void> {
     try {
       await task
-      if (!this.#stop.signal.aborted) this.#taskFailed()
+      if (!run.signal.aborted) this.#taskFailed(run)
     } catch (cause) {
       this.#onDiagnostic(`[realtime-diagnostic] task_failure type=${diagnosticName(cause)}`)
-      this.#taskFailed()
+      this.#taskFailed(run)
     }
   }
 
-  #taskFailed(): void {
+  /**
+   * Stop the service because one of its loops ended when it should not have.
+   *
+   * Scoped to the run that started the task, not to whatever run is current. A task abandoned by an
+   * earlier `close` can still resolve later, and without this check it would read the *replacement*
+   * controller, find it un-aborted, and take down a service that had already been restarted.
+   */
+  #taskFailed(run: AbortController): void {
+    if (run !== this.#stop) {
+      // From a run that is already over. Its outcome cannot bear on the current one.
+      this.#onDiagnostic('[realtime-diagnostic] task_failure_from_previous_run')
+      return
+    }
     this.#providerFailed = true
     this.#urgentHostResponseOwner = null
     this.#guardPreemption = null
@@ -1236,11 +1257,27 @@ export class RealtimeService {
   // *previous* user turn, which is precisely the kind of citation the origin check exists to stop.
   // ---------------------------------------------------------------------------------------------
 
-  /** Remember a user item whose transcript has not arrived, so a later response can claim it. */
+  /**
+   * Remember a user item whose transcript has not arrived, so a later response can claim it.
+   *
+   * Three ways an item is already accounted for, and all three have to be refused. Still waiting is
+   * the obvious one. Already having a transcript means the item is *spent* -- a replayed
+   * `user_speech_started` would otherwise put it back in the queue and let a future response bind to
+   * a turn the user has moved past, admitting a tool call on stale evidence. And already bound to a
+   * response is the same problem one step later.
+   *
+   * The bound is the refusal budget, not the tool-call budget: these are items waiting on a
+   * transcript, and a provider that has produced thirty-two of them without delivering one is not
+   * going to be fixed by remembering more.
+   */
   #rememberUnboundUserOrigin(itemId: string): void {
     if (this.#unboundUserOriginItems.includes(itemId)) return
+    if (this.#userOriginRefs.has(itemId)) return
+    for (const bound of this.#responseUserOriginItems.values()) {
+      if (bound === itemId) return
+    }
     this.#unboundUserOriginItems.push(itemId)
-    while (this.#unboundUserOriginItems.length > MAX_TRACKED_TOOL_CALLS) {
+    while (this.#unboundUserOriginItems.length > MAX_PENDING_TOOL_REFUSALS) {
       this.#unboundUserOriginItems.shift()
     }
   }
@@ -1826,6 +1863,21 @@ export class RealtimeService {
     return this.#recoverUncertainDelivery(failure)
   }
 
+  /**
+   * How many user items are waiting for a response to claim them.
+   *
+   * The evidence boundary is invisible from outside otherwise: a spent item wrongly re-queued only
+   * shows up later, as a tool call admitted against a turn the user has moved past.
+   */
+  get unboundUserOriginCountForTest(): number {
+    return this.#unboundUserOriginItems.length
+  }
+
+  /** How many responses hold a user turn as their evidence. */
+  get boundOriginCountForTest(): number {
+    return this.#responseUserOriginItems.size
+  }
+
   /** What the provider was handed at connect. Exposed so the copy can be checked, not assumed. */
   get providerSchemasForTest(): readonly Readonly<Record<string, JsonValue>>[] {
     return this.#providerSchemas
@@ -2018,6 +2070,24 @@ class Signal {
       // re-reads the signal immediately afterwards.
       signal?.addEventListener('abort', () => resolve(), {once: true})
     })
+  }
+}
+
+/**
+ * Whether a promise settled inside the grace period.
+ *
+ * Rejections propagate -- a provider that refused to close reported something the caller has to see --
+ * while a promise that never settles at all resolves to `false` so the caller can say so and move on.
+ */
+async function resolvedWithin(work: Promise<unknown>, graceMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<false>(resolve => {
+    timer = setTimeout(() => resolve(false), graceMs)
+  })
+  try {
+    return await Promise.race([work.then(() => true), deadline])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
   }
 }
 

@@ -904,3 +904,200 @@ test('a runtime rejection is recorded as a refusal the provider can see', async 
   assert.equal(admitted[0]!.acceptance.code, 'runtime_rejected')
   assert.equal(service.codexState, 'idle', 'nothing was dispatched, so nothing is running')
 })
+
+test('a replayed user-start cannot put a spent origin back in the queue', async () => {
+  // The evidence boundary. Once an item has a transcript it is spent; re-queueing it would let a
+  // *later* response bind to a turn the user has moved past, and admit a tool call citing it. Three
+  // guards, and this exercises the two that are easy to omit.
+  const {service} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  // The item now has a transcript. A replayed start for it must be ignored.
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  // The original entry is still there -- nothing has claimed it -- but the replay must not have
+  // added a second. Two copies would let two different responses each bind to the same spent turn.
+  assert.equal(
+    service.unboundUserOriginCountForTest,
+    1,
+    'the replay must not enqueue a second copy of a spent item',
+  )
+
+  // One response claims it, and the queue is empty afterwards.
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'r-1',
+  })
+  assert.equal(service.unboundUserOriginCountForTest, 0)
+
+  // And a second response finds nothing to claim, so it cannot be handed the same turn.
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'r-2',
+  })
+  assert.equal(
+    service.boundOriginCountForTest,
+    1,
+    'one response holds the turn; the second was not given a copy of it',
+  )
+})
+
+test('an item already bound to a response cannot be queued again', async () => {
+  const {service} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  // The response claims the item, emptying the unbound queue.
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'r-1',
+  })
+  assert.equal(service.unboundUserOriginCountForTest, 0, 'claimed by the response')
+  // A replay while it is bound but before its transcript arrives.
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  assert.equal(
+    service.unboundUserOriginCountForTest,
+    0,
+    'an item already bound to a response is not waiting for another',
+  )
+})
+
+test('a task abandoned by one close cannot take down the next run', async () => {
+  // A JavaScript promise cannot be cancelled, so a task the previous `close` gave up on can still
+  // resolve later. Without scoping the guard to its own run it would read the *replacement*
+  // controller, find it un-aborted, and stop a service that had already been restarted.
+  const diagnostics: string[] = []
+  let resolveStubborn: (() => void) | undefined
+  const options = {
+    ...queueOnlyOptions(),
+    session: {connect: () => Promise.resolve()} as unknown as RealtimeSession,
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      // Parked, not empty: a stream that ends is a provider that is gone, and the service is right to
+      // stop for it -- which would mask what this test is about.
+      events: (signal: AbortSignal) => parkedStream(signal),
+      close: () => Promise.resolve(),
+    },
+    onDiagnostic: (line: string) => diagnostics.push(line),
+  }
+  let call = 0
+  const service = new RealtimeService({
+    ...options,
+    runtime: {
+      ...options.runtime,
+      serve: (signal: AbortSignal) => {
+        call += 1
+        if (call === 1) {
+          // Ignores the abort, then *fails* after the restart. A clean return from an aborted run is
+          // an ordinary shutdown and correctly says nothing; a failure is what would otherwise be
+          // charged to whichever run happens to be current.
+          return new Promise<void>((_resolve, reject) => {
+            resolveStubborn = () => reject(new Error('late failure from an abandoned run'))
+          })
+        }
+        return new Promise<void>(resolve => {
+          signal.addEventListener('abort', () => resolve(), {once: true})
+        })
+      },
+    },
+  })
+  await service.start()
+  await service.close()
+  await service.start()
+  assert.equal(service.stopped, false, 'the second run is live')
+
+  // The abandoned first task finishes now.
+  resolveStubborn?.()
+  await new Promise<void>(resolve => setTimeout(resolve, 20))
+  assert.equal(service.stopped, false, 'the previous run must not stop this one')
+  assert.equal(
+    diagnostics.some(line => line.includes('task_failure_from_previous_run')),
+    true,
+    'and it is recorded rather than silently ignored',
+  )
+  await service.close()
+})
+
+test('a provider close that never settles does not block shutdown', async () => {
+  // The failure mode a degraded transport actually has. Bounding only the loops left this one able to
+  // hold application shutdown open forever.
+  const diagnostics: string[] = []
+  const service = new RealtimeService({
+    ...queueOnlyOptions(),
+    session: {connect: () => Promise.resolve()} as unknown as RealtimeSession,
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      events: () => emptyStream(),
+      close: () => new Promise<void>(() => undefined),
+    },
+    runtime: {
+      ...queueOnlyOptions().runtime,
+      serve: (signal: AbortSignal) => new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => resolve(), {once: true})
+      }),
+    },
+    onDiagnostic: line => diagnostics.push(line),
+  })
+  await service.start()
+  const started = Date.now()
+  await service.close()
+  assert.ok(Date.now() - started < 5_000, 'close must not wait on the transport forever')
+  assert.equal(service.stopped, true)
+  assert.equal(
+    diagnostics.some(line => line.includes('shutdown_provider_close_abandoned')),
+    true,
+    'a transport that would not close has to be named',
+  )
+})
