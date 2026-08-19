@@ -7,8 +7,11 @@
  * this response spoken, was this host event already answered -- and every answer is
  * bounded so a long session cannot grow without limit.
  *
- * Every ledger key carries the session epoch. A reconnect starts a new epoch, and an item
- * id from the old provider session must never satisfy a dedup check in the new one.
+ * Provider-allocated identities are keyed with the session epoch: a reconnect starts a new
+ * epoch, and an item id from the old provider session must never satisfy a dedup check in the
+ * new one. Host-allocated event ids are deliberately *not* epoch-scoped -- a host event that
+ * was already answered stays answered across a reconnect, because the host owns that identity
+ * and re-answering it would repeat the utterance to the user.
  */
 
 import { z } from 'zod'
@@ -141,12 +144,14 @@ function key(epoch: number, id: string): string {
 export class RealtimeSessionState {
   readonly #transcripts = new EpochLedger(MAX_TRACKED_USER_TRANSCRIPTS)
   readonly #turns = new EpochLedger(MAX_TRACKED_USER_TRANSCRIPTS)
+  // A Map is insertion-ordered, and `delete` + `set` moves a key to the end, so these two
+  // reproduce OrderedDict with `move_to_end` on every touch. That LRU-by-touch order is
+  // load-bearing: eviction is oldest-touched-first, not oldest-inserted-first.
   readonly #providerTurns = new Map<string, ProviderTurn>()
-  readonly #providerTurnOrder: string[] = []
   readonly #delegates = new Map<string, DelegateRecord>()
   readonly #spokenEventIds: string[] = []
   readonly #interruptedEventIds: string[] = []
-  readonly #respondedEventIds = new EpochLedger(MAX_TRACKED_HOST_EVENTS)
+  readonly #respondedEventIds = new Map<string, null>()
   #epoch = 0
   #userInputRevision = 0
   #snapshotVersion = 0
@@ -167,14 +172,19 @@ export class RealtimeSessionState {
     return this.#snapshotVersion
   }
 
-  /** Begin a new provider session. Every epoch-scoped answer starts over. */
+  /**
+   * Begin a new provider session.
+   *
+   * Epoch-scoped answers start over because their keys embed the epoch, not because anything is
+   * cleared here. Captions are deliberately left alone: clearing them belongs to the layer above,
+   * which does it around a reconnect, and doing it here too would hide a missing reset there.
+   */
   beginEpoch(epoch: number): void {
     if (!Number.isInteger(epoch) || epoch <= this.#epoch) {
       throw new RangeError(`session epoch must increase: ${this.#epoch} -> ${epoch}`)
     }
     this.#epoch = epoch
-    // Captions are display-only and belong to the session that produced them.
-    this.clearCaptions()
+    this.advanceSnapshot()
   }
 
   /** Count a user transcript terminal once; false means it was a duplicate. */
@@ -203,29 +213,74 @@ export class RealtimeSessionState {
     return this.#turns.has(this.#epoch, itemId)
   }
 
-  /** Record that a host event has been answered, so it is never answered twice. */
+  /**
+   * Record that a host event has been answered, so it is never answered twice.
+   *
+   * Re-recording an already-answered event moves it to the end of the eviction order without
+   * changing the answer, which is how a repeated response request keeps a still-relevant event
+   * from ageing out. `false` reports that it was already present.
+   *
+   * The bound is not enforced here: pruning is a separate step the session drives once per
+   * response request, so a burst of records cannot evict an event the same burst still needs.
+   */
   markEventResponded(eventId: string): boolean {
-    return this.#respondedEventIds.add(this.#epoch, eventId)
+    const known = this.#respondedEventIds.delete(eventId)
+    this.#respondedEventIds.set(eventId, null)
+    return !known
   }
 
   hostEventIsDeduplicated(eventId: string): boolean {
-    return this.#respondedEventIds.has(this.#epoch, eventId)
+    return this.#respondedEventIds.has(eventId)
   }
 
-  /** Open a provider turn, evicting the oldest when the bound is reached. */
-  openProviderTurn(responseId: string, userInputRevision: number): ProviderTurn {
-    const entry: ProviderTurn = {
+  /** Every answered host event id, oldest-touched first. */
+  get respondedEventIds(): readonly string[] {
+    return [...this.#respondedEventIds.keys()]
+  }
+
+  /**
+   * Withdraw an event's answer so it can be answered again.
+   *
+   * A suggestion whose response was interrupted never reached the user, so its authority goes
+   * back and the event becomes eligible again.
+   */
+  releaseRespondedEvent(eventId: string): boolean {
+    return this.#respondedEventIds.delete(eventId)
+  }
+
+  /** Drop oldest-touched answered events down to the bound. */
+  pruneRespondedEvents(): void {
+    while (this.#respondedEventIds.size > MAX_TRACKED_HOST_EVENTS) {
+      const oldest = this.#respondedEventIds.keys().next()
+      if (oldest.done === true) break
+      this.#respondedEventIds.delete(oldest.value)
+    }
+  }
+
+  /**
+   * Open a provider turn, evicting the oldest-touched when the bound is reached.
+   *
+   * A response id that is already recorded returns its existing turn **unchanged**. Its phase,
+   * fence flag, and input revision are decisions already taken; rebuilding the entry would
+   * revive a `cancel_requested` or terminal turn as `active` and would re-date a stale turn
+   * against the current input revision. Only the eviction position moves.
+   */
+  openProviderTurn(responseId: string): ProviderTurn {
+    const composite = key(this.#epoch, responseId)
+    const known = this.#providerTurns.get(composite)
+    const entry: ProviderTurn = known ?? {
       phase: 'active',
-      user_input_revision: userInputRevision,
+      user_input_revision: this.#userInputRevision,
       locally_fenced: false,
       defer_playback_fence: false,
     }
-    const composite = key(this.#epoch, responseId)
-    if (!this.#providerTurns.has(composite)) this.#providerTurnOrder.push(composite)
+    // Touch the key so eviction order is by last use, matching `OrderedDict.move_to_end`.
+    this.#providerTurns.delete(composite)
     this.#providerTurns.set(composite, entry)
-    while (this.#providerTurnOrder.length > MAX_TRACKED_PROVIDER_TURNS) {
-      const evicted = this.#providerTurnOrder.shift()
-      if (evicted !== undefined) this.#providerTurns.delete(evicted)
+    while (this.#providerTurns.size > MAX_TRACKED_PROVIDER_TURNS) {
+      const oldest = this.#providerTurns.keys().next()
+      if (oldest.done === true) break
+      this.#providerTurns.delete(oldest.value)
     }
     return entry
   }
@@ -252,14 +307,20 @@ export class RealtimeSessionState {
     return revision !== undefined && revision < this.#userInputRevision
   }
 
+  /**
+   * Append a spoken event id once.
+   *
+   * This deliberately does not advance the snapshot version. Callers append a whole response's
+   * event ids in a loop and then publish once, so the version counts published changes rather
+   * than individual appends.
+   */
   markEventSpoken(eventId: string): void {
     if (!this.#spokenEventIds.includes(eventId)) this.#spokenEventIds.push(eventId)
-    this.#advanceSnapshot()
   }
 
+  /** Append an interrupted event id once. Does not advance the snapshot; see markEventSpoken. */
   markEventInterrupted(eventId: string): void {
     if (!this.#interruptedEventIds.includes(eventId)) this.#interruptedEventIds.push(eventId)
-    this.#advanceSnapshot()
   }
 
   eventWasSpoken(eventId: string): boolean {
@@ -336,7 +397,7 @@ export class RealtimeSessionState {
       internal_activity: update.internal_activity ?? previous?.internal_activity ?? 0,
       elapsed: update.elapsed ?? previous?.elapsed ?? 0,
     })
-    this.#advanceSnapshot()
+    this.advanceSnapshot()
   }
 
   delegateState(delegateId: string): DelegateState | undefined {
@@ -355,7 +416,8 @@ export class RealtimeSessionState {
     }
   }
 
-  #advanceSnapshot(): void {
+  /** Publish the accumulated changes as one new snapshot version. */
+  advanceSnapshot(): void {
     this.#snapshotVersion += 1
   }
 }

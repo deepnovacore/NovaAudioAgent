@@ -4,6 +4,7 @@ import { PROGRESS_SUMMARY_LIMIT } from '../src/events.js'
 import {
   EpochLedger,
   MAX_CAPTION_CHARS,
+  MAX_TRACKED_HOST_EVENTS,
   MAX_TRACKED_PROVIDER_TURNS,
   MAX_TRACKED_USER_TRANSCRIPTS,
   RealtimeSessionState,
@@ -78,34 +79,41 @@ test('the user input revision advances once per genuinely new turn', () => {
 test('a response is stale exactly when newer user input has arrived', () => {
   const state = new RealtimeSessionState()
   state.acceptUserTurn('turn-1')
-  state.openProviderTurn('resp-1', state.userInputRevision)
+  state.openProviderTurn('resp-1')
   assert.equal(state.providerTurnIsStale('resp-1'), false)
 
   state.acceptUserTurn('turn-2')
   assert.equal(state.providerTurnIsStale('resp-1'), true, 'its world no longer exists')
 
-  state.openProviderTurn('resp-2', state.userInputRevision)
+  state.openProviderTurn('resp-2')
   assert.equal(state.providerTurnIsStale('resp-2'), false)
   // An unknown response is not stale; it is simply unknown.
   assert.equal(state.providerTurnIsStale('never-seen'), false)
   assert.equal(state.providerTurnIsStale(null), false)
 })
 
-test('a new epoch starts every epoch-scoped answer over', () => {
+test('a new epoch starts provider-allocated answers over, and only those', () => {
   const state = new RealtimeSessionState()
   state.acceptUserTurn('item-1')
   state.markEventResponded('event-1')
-  state.openProviderTurn('resp-1', 1)
+  state.openProviderTurn('resp-1')
   state.trackUserCaption('item-1')
   state.setCaption({role: 'user', text: '说了什么', final: false})
+  const before = state.snapshotVersion
 
   state.beginEpoch(1)
+
+  // Provider-allocated identities are scoped to the session that issued them.
   assert.equal(state.hasUserTurn('item-1'), false)
-  assert.equal(state.hostEventIsDeduplicated('event-1'), false)
   assert.equal(state.providerTurnPhase('resp-1'), undefined)
-  assert.equal(state.userCaption, '', 'captions belong to the session that produced them')
+  // A host event the host already answered stays answered: the host owns that identity, and
+  // re-answering it would repeat the utterance to the user after a reconnect.
+  assert.equal(state.hostEventIsDeduplicated('event-1'), true)
+  // Captions are not this layer's to clear; the layer above resets them around a reconnect.
+  assert.equal(state.userCaption, '说了什么')
   // The revision is a monotonic counter for the whole session, not per epoch.
   assert.equal(state.userInputRevision, 1)
+  assert.ok(state.snapshotVersion > before, 'a new identity is a published change')
 })
 
 test('the session epoch must strictly increase', () => {
@@ -118,22 +126,44 @@ test('the session epoch must strictly increase', () => {
 test('provider turns are bounded, evicting the oldest', () => {
   const state = new RealtimeSessionState()
   for (let index = 0; index <= MAX_TRACKED_PROVIDER_TURNS; index += 1) {
-    state.openProviderTurn(`resp-${index}`, 0)
+    state.openProviderTurn(`resp-${index}`)
   }
   assert.equal(state.providerTurnPhase('resp-0'), undefined, 'the oldest turn was evicted')
   assert.equal(state.providerTurnPhase(`resp-${MAX_TRACKED_PROVIDER_TURNS}`), 'active')
 })
 
-test('reopening a response does not grow the eviction order twice', () => {
+test('reopening a response returns the existing turn untouched', () => {
   const state = new RealtimeSessionState()
-  state.openProviderTurn('resp-1', 0)
-  const reopened = state.openProviderTurn('resp-1', 1)
-  assert.equal(reopened.user_input_revision, 1)
-  // Fill to the bound; if 'resp-1' occupied two slots the count would be wrong.
-  for (let index = 0; index < MAX_TRACKED_PROVIDER_TURNS - 1; index += 1) {
-    state.openProviderTurn(`filler-${index}`, 0)
+  state.acceptUserTurn('turn-1')
+  const opened = state.openProviderTurn('resp-1')
+  opened.phase = 'cancel_requested'
+  opened.locally_fenced = true
+  opened.defer_playback_fence = true
+
+  // Newer user input arrives, so a rebuilt entry would be re-dated against the new revision.
+  state.acceptUserTurn('turn-2')
+  const reopened = state.openProviderTurn('resp-1')
+
+  assert.equal(reopened, opened, 'the same entry, not a replacement')
+  assert.equal(reopened.phase, 'cancel_requested', 'a cancelled turn must not revive as active')
+  assert.equal(reopened.locally_fenced, true, 'a fence is a decision already taken')
+  assert.equal(reopened.defer_playback_fence, true)
+  assert.equal(reopened.user_input_revision, 1, 'it still answers the world it opened in')
+  assert.equal(state.providerTurnIsStale('resp-1'), true)
+})
+
+test('touching a provider turn moves it to the back of the eviction order', () => {
+  const state = new RealtimeSessionState()
+  for (let index = 0; index < MAX_TRACKED_PROVIDER_TURNS; index += 1) {
+    state.openProviderTurn(`resp-${index}`)
   }
-  assert.equal(state.providerTurnPhase('resp-1'), 'active')
+  // Re-touch the oldest so the second-oldest becomes next to go.
+  state.openProviderTurn('resp-0')
+  state.openProviderTurn('overflow')
+
+  assert.equal(state.providerTurnPhase('resp-0'), 'active', 'the re-touched turn survived')
+  assert.equal(state.providerTurnPhase('resp-1'), undefined, 'the oldest-touched was evicted')
+  assert.equal(state.providerTurnPhase('overflow'), 'active')
 })
 
 test('an omitted progress field preserves the slot; an explicit null clears it', () => {
@@ -208,12 +238,58 @@ test('spoken and interrupted event ids are recorded once each', () => {
   assert.equal(state.eventWasSpoken('e-2'), false)
 })
 
+test('appending event ids does not publish; the caller publishes once', () => {
+  // A response carries several event ids and is appended in a loop. Counting each append as a
+  // published change would make the version a function of how many ids a response happened to
+  // carry rather than of how many times state was published.
+  const state = new RealtimeSessionState()
+  const before = state.snapshotVersion
+  state.markEventSpoken('e-1')
+  state.markEventSpoken('e-2')
+  state.markEventInterrupted('e-3')
+  assert.equal(state.snapshotVersion, before, 'no append publishes on its own')
+
+  state.advanceSnapshot()
+  assert.equal(state.snapshotVersion, before + 1, 'one publish, whatever the id count')
+})
+
 test('a host event is answered at most once', () => {
   const state = new RealtimeSessionState()
   assert.equal(state.markEventResponded('event-1'), true)
   assert.equal(state.markEventResponded('event-1'), false)
   assert.equal(state.hostEventIsDeduplicated('event-1'), true)
   assert.equal(state.hostEventIsDeduplicated('event-2'), false)
+})
+
+test('withdrawing an answer makes the event answerable again', () => {
+  // A suggestion whose response was interrupted never reached the user, so its authority goes
+  // back and the event must be eligible again.
+  const state = new RealtimeSessionState()
+  state.markEventResponded('suggestion:1')
+  assert.equal(state.releaseRespondedEvent('suggestion:1'), true)
+  assert.equal(state.hostEventIsDeduplicated('suggestion:1'), false)
+  assert.equal(state.releaseRespondedEvent('suggestion:1'), false, 'withdrawing twice is a no-op')
+  assert.equal(state.markEventResponded('suggestion:1'), true)
+})
+
+test('answered events are bounded only when pruned, oldest-touched first', () => {
+  const state = new RealtimeSessionState()
+  for (let index = 0; index < MAX_TRACKED_HOST_EVENTS; index += 1) {
+    state.markEventResponded(`event-${index}`)
+  }
+  // Re-answering the oldest moves it to the back, so the second-oldest becomes next to go.
+  state.markEventResponded('event-0')
+  state.markEventResponded('overflow')
+
+  // Recording does not evict: a burst must not drop an event the same burst still needs.
+  assert.equal(state.respondedEventIds.length, MAX_TRACKED_HOST_EVENTS + 1)
+  assert.equal(state.hostEventIsDeduplicated('event-1'), true)
+
+  state.pruneRespondedEvents()
+  assert.equal(state.respondedEventIds.length, MAX_TRACKED_HOST_EVENTS)
+  assert.equal(state.hostEventIsDeduplicated('event-1'), false, 'oldest-touched went first')
+  assert.equal(state.hostEventIsDeduplicated('event-0'), true, 'the re-answered one survived')
+  assert.equal(state.hostEventIsDeduplicated('overflow'), true)
 })
 
 test('the transcript ledger is bounded independently of the turn ledger', () => {
