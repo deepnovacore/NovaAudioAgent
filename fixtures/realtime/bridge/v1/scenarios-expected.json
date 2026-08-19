@@ -2230,6 +2230,483 @@
       ]
     },
     {
+      "name": "a-falsy-summary-field-falls-through-to-the-next-one",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-1",
+              "event_id": "id-2",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-1"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-1",
+                "event_id": "id-2",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-1"
+              },
+              "task_summary": "from task",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-1",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_int",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_int",
+              "request": {
+                "work_order": 0,
+                "task": "from task"
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-3",
+              "event_id": "id-4",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-2"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-3",
+                "event_id": "id-4",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-2"
+              },
+              "task_summary": "from task",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-2",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_str",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_str",
+              "request": {
+                "work_order": "",
+                "task": "from task"
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-5",
+              "event_id": "id-6",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-3"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-5",
+                "event_id": "id-6",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-3"
+              },
+              "task_summary": "from task",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-3",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_bool",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_bool",
+              "request": {
+                "work_order": false,
+                "task": "from task"
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        },
+        {
+          "step": 3,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-7",
+              "event_id": "id-8",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-4"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-7",
+                "event_id": "id-8",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-4"
+              },
+              "task_summary": "from task",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-4",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_arr",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_arr",
+              "request": {
+                "work_order": [],
+                "task": "from task"
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        },
+        {
+          "step": 4,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-9",
+              "event_id": "id-10",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-5"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-9",
+                "event_id": "id-10",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-5"
+              },
+              "task_summary": "from task",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-5",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_obj",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_obj",
+              "request": {
+                "work_order": {},
+                "task": "from task"
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        },
+        {
+          "step": 5,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-11",
+              "event_id": "id-12",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-6"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-11",
+                "event_id": "id-12",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-6"
+              },
+              "task_summary": "from cond",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-6",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_int",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_int",
+              "request": {
+                "work_order": 0,
+                "task": "",
+                "condition": "from cond"
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        },
+        {
+          "step": 6,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-13",
+              "event_id": "id-14",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-7"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-13",
+                "event_id": "id-14",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-7"
+              },
+              "task_summary": "param_sim__loose_int",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-7",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_int",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_int",
+              "request": {
+                "work_order": 0,
+                "task": "",
+                "condition": ""
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        },
+        {
+          "step": 7,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-15",
+              "event_id": "id-16",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-8"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-15",
+                "event_id": "id-16",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-8"
+              },
+              "task_summary": "42",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-8",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_int",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_int",
+              "request": {
+                "work_order": 42,
+                "task": "from task"
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        },
+        {
+          "step": 8,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-17",
+              "event_id": "id-18",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-9"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-17",
+                "event_id": "id-18",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-9"
+              },
+              "task_summary": "from work order",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-9",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_str",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_str",
+              "request": {
+                "work_order": "from work order",
+                "task": "from task"
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        },
+        {
+          "step": 9,
+          "kind": "accept_tool_call",
+          "result": {
+            "accepted": true,
+            "code": "accepted",
+            "host_item": {
+              "kind": "tool_output",
+              "host_item_id": "id-19",
+              "event_id": "id-20",
+              "content": "{\"state\":\"accepted\"}",
+              "call_id": "call-10"
+            },
+            "response_intent": {
+              "kind": "delegation_acknowledgement",
+              "item": {
+                "kind": "tool_output",
+                "host_item_id": "id-19",
+                "event_id": "id-20",
+                "content": "{\"state\":\"accepted\"}",
+                "call_id": "call-10"
+              },
+              "task_summary": "padded",
+              "origin_spoken": false
+            },
+            "delegate_id": "d-10",
+            "sync_result": false,
+            "executor": "param_sim",
+            "op": "loose_str",
+            "inline_fulfilled": false,
+            "telemetry": null
+          },
+          "runtime_calls": [
+            {
+              "call": "dispatch_external",
+              "executor": "param_sim",
+              "op": "loose_str",
+              "request": {
+                "work_order": "  padded  ",
+                "task": "from task"
+              },
+              "origin_ref": "conversation:1",
+              "routing_class": "user_awaited",
+              "priority": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "a-length-bound-counts-code-points-not-utf16-units",
       "steps": [
         {

@@ -192,7 +192,7 @@ export class RealtimeRuntimeBridge {
       }
     }
     const summary = boundedSummary(
-      arguments_.work_order ?? arguments_.task ?? arguments_.condition ?? call.name,
+      firstTruthy(arguments_.work_order, arguments_.task, arguments_.condition, call.name),
     )
     if (summary === '') return this.#refused(call, 'invalid_params')
 
@@ -449,6 +449,32 @@ function acceptance(input: {
 
 function toolResultIntent(item: HostContextItem): HostResponseIntent {
   return {kind: 'tool_result', item, task_summary: null, origin_spoken: false}
+}
+
+/**
+ * The first field with something in it, by Python's notion of "something".
+ *
+ * The oracle chains these with `or`, which falls through on *any* falsy value -- an empty string, a
+ * zero, a false, an empty list. Nullish coalescing falls through only on null and undefined, so a
+ * schema permitting a numeric `work_order` of `0` would summarize the task as "0" here and as the
+ * `task` field there; an empty-string `work_order` was worse still, refusing a call the oracle
+ * dispatches. Matching the oracle's truthiness is the whole job of this function.
+ */
+function firstTruthy(...values: (JsonValue | undefined)[]): JsonValue | undefined {
+  for (const value of values) {
+    if (isPythonTruthy(value)) return value
+  }
+  return values.at(-1)
+}
+
+/** Whether Python's `bool()` would be true for this value. */
+function isPythonTruthy(value: JsonValue | undefined): boolean {
+  if (value === undefined || value === null || value === false) return false
+  if (value === true) return true
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') return value !== ''
+  if (Array.isArray(value)) return value.length > 0
+  return Object.keys(value).length > 0
 }
 
 function boundedSummary(value: JsonValue | undefined): string {

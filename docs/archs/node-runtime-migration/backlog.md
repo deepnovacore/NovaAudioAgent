@@ -188,6 +188,32 @@ through both pipelines, plus 261,282 adjacent pairs drawn from every unassigned 
 be a real script. Zero divergences. If a future CPython adopts Unicode 16.0, the "host alone does not
 agree" tests fail and the holdback can be deleted rather than carried indefinitely.
 
+### Corrected in the port: nullish coalescing is not Python truthiness
+
+The bridge picks a task summary from the first of `work_order`, `task`, `condition` that has
+something in it. The oracle chains them with `or`, which falls through on *any* falsy value; the first
+Node port used `??`, which falls through only on null and undefined. A Codex review found it and it
+reproduced on all four shapes: a numeric `0` was summarized as `"0"` instead of falling through to
+`task`, and an empty-string `work_order` made Node *refuse* a call the oracle dispatches.
+
+Unreachable with today's manifests -- all four shipped declarations are
+`{"type": "string", "minLength": 1}`, so validation refuses an empty string or a non-string before the
+summary is computed -- but a manifest that loosened one would have found it. Ten fixture steps now
+cover the falsy shapes and the truthy integer and string cases.
+
+### Accepted divergence: a container task summary renders as canonical JSON
+
+The oracle renders a non-string summary with `str()`, which for a container is Python repr:
+`str(['a'])` is `['a']`, `str({'k': 'v'})` is `{'k': 'v'}`. Neither is reproducible from a JSON-derived
+value in JavaScript, for two reasons already recorded here -- Python dicts preserve `json.loads`
+insertion order while JavaScript hoists integer-like keys, and JSON gives no way to tell an `int` `1`
+from a `float` `1.0`. The Node port uses canonical JSON.
+
+The fixture deliberately covers only the exactly-reproducible shapes (falsy fallthrough, truthy integer,
+truthy string) rather than encoding a golden that would be pretending to parity. A Node test states the
+container behavior directly, so a future manifest that loosens a summary field's type does not change it
+unnoticed.
+
 ### Corrected in the port: a length bound counted the wrong unit
 
 `_valid_value` enforces `minLength` and `maxLength` with Python's `len()`, which counts code points.

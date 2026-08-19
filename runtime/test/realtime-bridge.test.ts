@@ -470,3 +470,83 @@ test('a clock that moved backwards reports zero elapsed rather than a negative',
   }, {originRef: 'conversation:2'})
   assert.equal(result.telemetry?.elapsed, 0)
 })
+
+test('a container summary renders as canonical JSON, which is a recorded divergence', () => {
+  // The oracle renders a non-string summary with `str()`. For a container that is Python repr, whose
+  // dict ordering and int-vs-float spelling are the two divergences already recorded for model-facing
+  // serialization -- `str(['a'])` is `['a']` and `str({'k': 'v'})` is `{'k': 'v'}`, neither
+  // reproducible from a JSON-derived value in JavaScript. Canonical JSON is used instead, and stated
+  // here rather than in a golden that would be pretending to parity.
+  //
+  // Unreachable in production: every shipped manifest declares these fields
+  // `{"type": "string", "minLength": 1}`, so validation refuses a container before this is reached.
+  // The test exists so a future manifest that loosens one does not change behavior unnoticed.
+  const manifest = executorManifestSchema.parse({
+    name: 'loose_sim',
+    policy: {
+      channel: 'loose_sim',
+      priority: 50,
+      wake: 'fast',
+      typical_latency: 5,
+      compress_watermark: 8,
+    },
+    ops: [
+      {
+        name: 'act',
+        description: 'a summary field with no string constraint',
+        params: {
+          type: 'object',
+          properties: {work_order: {type: 'array'}},
+          additionalProperties: false,
+        },
+        deadline_budget: 10,
+      },
+      {
+        name: 'look',
+        description: 'the readonly path every manifest needs',
+        params: {type: 'object', properties: {}, additionalProperties: false},
+        readonly: true,
+        deadline_budget: 5,
+      },
+    ],
+  })
+  const memory = new Memory({policies: [manifest.policy]})
+  const bridge = new RealtimeRuntimeBridge({
+    runtime: {
+      clock: new VirtualClock(),
+      memory,
+      executors: new Map([[manifest.name, {manifest}]]),
+      ingestUserInput: () => Promise.reject(new Error('unused')),
+      updateExternal: () => false,
+      dispatchExternal: () => ({accepted: true, delegate_id: 'd-1'}),
+    },
+    tools: compileToolSchema([manifest]),
+    idFactory: () => 'id-1',
+  })
+  const accepted = bridge.acceptToolCall({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'item-1',
+    name: 'loose_sim__act',
+    arguments: {work_order: ['a', 'b']},
+    response_id: null,
+  }, {originRef: 'conversation:1'})
+  assert.equal(accepted.code, 'accepted')
+  assert.equal(
+    accepted.response_intent.task_summary,
+    '["a","b"]',
+    'canonical JSON, not the oracle\'s ["a", "b"] repr',
+  )
+  // An empty container still falls through, because that is truthiness rather than rendering.
+  const fellThrough = bridge.acceptToolCall({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-2',
+    item_id: 'item-1',
+    name: 'loose_sim__act',
+    arguments: {work_order: []},
+    response_id: null,
+  }, {originRef: 'conversation:1'})
+  assert.equal(fellThrough.response_intent.task_summary, 'loose_sim__act')
+})

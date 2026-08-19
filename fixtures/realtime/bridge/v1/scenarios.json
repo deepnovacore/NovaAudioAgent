@@ -2458,6 +2458,106 @@
               "deadline_budget": 10.0
             },
             {
+              "name": "loose_int",
+              "description": "summary fields where work_order is integer",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "integer"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "loose_str",
+              "description": "summary fields where work_order is string",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "loose_bool",
+              "description": "summary fields where work_order is boolean",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "boolean"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "loose_arr",
+              "description": "summary fields where work_order is array",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "array"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "loose_obj",
+              "description": "summary fields where work_order is object",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "object"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
               "name": "look",
               "description": "the readonly verification path every manifest needs",
               "params": {
@@ -2532,6 +2632,313 @@
           "origin_ref": "conversation:1"
         }
       ]
+    },
+    {
+      "name": "a-falsy-summary-field-falls-through-to-the-next-one",
+      "covers": [
+        "bridge.summary_python_truthiness"
+      ],
+      "manifests": [
+        {
+          "name": "param_sim",
+          "policy": {
+            "channel": "param_sim",
+            "priority": 45,
+            "wake": "fast",
+            "typical_latency": 4.0,
+            "compress_watermark": 8
+          },
+          "ops": [
+            {
+              "name": "act",
+              "description": "accept every summary-bearing field at once",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  },
+                  "other": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "loose_int",
+              "description": "summary fields where work_order is integer",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "integer"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "loose_str",
+              "description": "summary fields where work_order is string",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "loose_bool",
+              "description": "summary fields where work_order is boolean",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "boolean"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "loose_arr",
+              "description": "summary fields where work_order is array",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "array"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "loose_obj",
+              "description": "summary fields where work_order is object",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "object"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "look",
+              "description": "the readonly verification path every manifest needs",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "deadline_budget": 5.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-2"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-3"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-4"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-5"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-6"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-7"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-8"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-9"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-10"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-11"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "param_sim__loose_int",
+          "arguments": {
+            "work_order": 0,
+            "task": "from task"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "param_sim__loose_str",
+          "arguments": {
+            "work_order": "",
+            "task": "from task"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "param_sim__loose_bool",
+          "arguments": {
+            "work_order": false,
+            "task": "from task"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-4",
+          "name": "param_sim__loose_arr",
+          "arguments": {
+            "work_order": [],
+            "task": "from task"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-5",
+          "name": "param_sim__loose_obj",
+          "arguments": {
+            "work_order": {},
+            "task": "from task"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-6",
+          "name": "param_sim__loose_int",
+          "arguments": {
+            "work_order": 0,
+            "task": "",
+            "condition": "from cond"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-7",
+          "name": "param_sim__loose_int",
+          "arguments": {
+            "work_order": 0,
+            "task": "",
+            "condition": ""
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-8",
+          "name": "param_sim__loose_int",
+          "arguments": {
+            "work_order": 42,
+            "task": "from task"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-9",
+          "name": "param_sim__loose_str",
+          "arguments": {
+            "work_order": "from work order",
+            "task": "from task"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-10",
+          "name": "param_sim__loose_str",
+          "arguments": {
+            "work_order": "  padded  ",
+            "task": "from task"
+          },
+          "origin_ref": "conversation:1"
+        }
+      ],
+      "allow_unconsumed": true
     },
     {
       "name": "a-length-bound-counts-code-points-not-utf16-units",
