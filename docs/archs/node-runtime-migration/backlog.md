@@ -148,6 +148,40 @@ already enforced at the desktop boundary where Python enforces it.
 outbound check never fires for audio that came through the desktop boundary. It stays as
 defence-in-depth.
 
+### The NFKC gap, measured
+
+This was recorded as "not practically pinnable", with a choice between vendoring a normalization
+table and accepting an undocumented tolerance. Measuring it instead
+(`scripts/generate_nfkc_vectors.py`, `fixtures/runtime/unicode-nfkc-vectors.json`,
+`runtime/test/unicode-nfkc.test.ts`) showed the gap is narrow, precisely bounded, and neither option
+was necessary.
+
+Across forty-two vectors -- fullwidth forms, CJK compatibility ideographs, Hangul, circled and
+squared forms, ligatures, combining sequences, Turkish and Greek casing, astral pairs -- CPython
+15.0.0 and ICU 77.1 agree on everything **except code points assigned in Unicode 16.0 that carry a
+compatibility decomposition**. There are thirty-six of them: outlined capitals U+1CCD6..U+1CCEF and
+outlined digits U+1CCF0..U+1CCF9. ICU decomposes each to an ASCII letter or digit; CPython 15.0.0
+has never heard of them and leaves them alone.
+
+That is not a cosmetic difference. All thirty-six land in `[a-z0-9]`, which is exactly the domain of
+`recall.py`'s tokenizer -- so under the host normalizer an outlined `𜳰` would tokenize as `0` and
+match a memory containing a zero, where the oracle would not match it at all. Which memories a model
+is shown is contract-visible.
+
+`runtime/src/unicode-normalize.ts` holds those code points back from the host normalizer and lets it
+do everything else. Use `normalizeNfkcPinned` and `normalizeAndLowerPinned` for anything
+contract-visible; plain `.normalize('NFKC')` is fine only for text that never leaves the process. The
+approach stays correct as ICU advances, because a code point assigned after 15.0.0 is by definition
+one the pinned database does not decompose -- and a test derives the holdback set from the host rather
+than trusting the committed list, so drift in either direction fails.
+
+The vectors pin the whole `NFKC` then `lower()` pipeline, not just the first stage, because
+`recall.py` lowercases the result and the two runtimes' case mapping is not identical everywhere
+either. On the measured set they agree; the pairing is pinned so that stays checked.
+
+If a future CPython adopts Unicode 16.0, the "host alone does not agree" test fails, and the holdback
+can be deleted rather than carried indefinitely.
+
 ### Pre-existing: the Codex progress end-to-end suite is load-sensitive
 
 `tests/test_e2e_codex_progress_status.py` fails under machine load and passes idle, with the
@@ -226,7 +260,7 @@ believing either.
   | `ports.py` category check | `unicodedata.category` | Done: pinned table |
   | `executors/watcher.py`, `executors/codex_projects.py` (×2), `executors/codex_app_server.py`, `realtime/project_confirmation.py` | `unicodedata.category` | Reuse the pinned table; never `\p{...}` |
   | `executors/search.py` | `category in {"Cc","Cf"}` | Needs a pinned Cc/Cf subset, not the whole C set |
-  | `realtime/recall.py`, `executors/codex_projects.py`, `executors/codex.py`, `executors/codex_transport.py`, `executors/codex_app_server.py` (×2) | `unicodedata.normalize` NFC/NFKC | **Not practically pinnable.** `String.prototype.normalize` follows the host ICU. Reproducing CPython's normalization exactly means vendoring a normalization table. Either accept a documented tolerance for characters whose decomposition changed between versions, or vendor the table. Decide before porting recall or the Codex transports. |
+  | `realtime/recall.py`, `executors/codex_projects.py`, `executors/codex.py`, `executors/codex_transport.py`, `executors/codex_app_server.py` (×2) | `unicodedata.normalize` NFC/NFKC | **Resolved, and neither option was needed.** See "The NFKC gap, measured" below. |
   | `executors/codex.py` | `str.isprintable()` | No JavaScript equivalent. Python's rule is "not Cc, Cf, Cs, Co, Cn, Zl, Zp, or Zs except U+0020". Must be reimplemented explicitly against the pinned table, not approximated. |
   | `realtime/recall.py` | `str.lower()` | Python full lowercase and JavaScript `toLowerCase` agree for nearly all input but not all; if recall matching is contract-relevant, pin the cases that matter with fixtures. |
 

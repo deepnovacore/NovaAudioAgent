@@ -325,22 +325,29 @@ contract and in the Python oracle from the start, and no scenario sent one, so t
 renderer-initiated stop path -- which cancels the provider, not just the renderer -- was unported and
 every golden still passed. Grep the step union against the scenarios when adding either.
 
-**Some mutations are genuinely undetectable, and saying so is part of the result.** Three of the
-thirty-odd swept against the port could not be made to fail by any honest test, and each is worth
-knowing rather than papering over:
+**"Undetectable" is usually a failure of imagination.** Three mutations of the ported session were
+recorded here as genuinely unobservable, with reasoning. All three were wrong, and an adversarial
+review found the sequence for each. They are worth keeping as a catalogue of what "unobservable"
+actually looked like:
 
-- Leaving `defer_playback_fence` set after an expired preempt looks dangerous, because
-  `accept`'s terminal branch reads it -- but that branch also requires the current generation to
-  belong to the same response, and the fence already removed it. Both paths reach the same state.
-- Accepting any generation in `alertGuardHandoff` rather than the exact retained one is
-  unreachable while only one generation can be current and a handoff retains that one.
-- The 0.05s margin in `waitForStaleHold` exists for a real clock, where waking exactly on a
-  deadline races a strict comparison. A virtual clock advances to an exact instant, so it cannot
-  express the race.
+- Leaving `defer_playback_fence` set after an expired preempt. The reasoning was that the terminal's
+  defer branch also requires the current generation to belong to the response, and the fence already
+  removed it -- true, and irrelevant: the two branches differ in whether they **publish a snapshot
+  version**. Sampling the version either side of the terminal separates them, though the state
+  afterwards is identical.
+- Accepting a non-matching generation in `alertGuardHandoff`. Believed unreachable because only one
+  generation can be current and a handoff retains it. But once the retained audio *finishes*, the
+  generation is retired while the handoff is still recorded, and the check is then reached with
+  nothing current.
+- The margin in `waitForStaleHold`. Believed inexpressible on a virtual clock. The clock has
+  `nextTimerTimestamp()`, which answers it directly. The original test was worse than useless: it
+  raced the wait against an already-resolved promise, which reports "still waiting" whenever the
+  continuation is merely queued, so it passed either way.
 
-Write the test that proves undetectability if you can, and otherwise record the reasoning next to
-the code. An undetectable mutation is a claim about the shape of the state machine, and the next
-person should not have to re-derive it.
+Three lessons generalise. Look for the **snapshot version** when two paths converge on the same
+state; look for the state *after* the obvious one, since retirement and completion re-open checks
+that look unreachable; and never assert "still pending" by racing a resolved promise -- ask the clock
+what it has scheduled instead.
 
 **Sweep the port too, not only the oracle.** Once `accept` existed in TypeScript, seventeen
 mutations of it were swept the same way; sixteen were caught immediately and the seventeenth found a

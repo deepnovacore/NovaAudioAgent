@@ -1121,9 +1121,9 @@ export class RealtimeSession {
 
   /** Alert-fence the exact renderer generation retained for a Guard handoff. */
   alertGuardHandoff(generation: PlaybackGeneration): boolean {
-    // The exact-match check is not currently reachable as a failure -- only one generation can be
-    // current, and a live handoff retains that one -- but it states the contract the caller relies
-    // on, and a second concurrent generation would make it load-bearing.
+    // Reached with nothing current once the retained audio finishes: the generation is retired
+    // while the handoff is still recorded, so a mismatched one would otherwise take the
+    // nothing-is-playing branch and consume a handoff it does not name.
     if (
       this.#guardHandoffGeneration === null
       || !sameGeneration(this.#guardHandoffGeneration, generation)
@@ -1461,9 +1461,8 @@ export class RealtimeSession {
   async waitForStaleHold(maxHoldSeconds: number): Promise<boolean> {
     if (this.#floor.state !== 'user_speaking' || this.#userHoldSince === null) return false
     const remaining = this.#userHoldSince + maxHoldSeconds - this.#clock.now()
-    // The margin is for a real clock, where waking exactly on the deadline races the strict
-    // comparison in `releaseStaleUserHold` and the caller would spin. A virtual clock cannot show
-    // that, so no fixture can pin it.
+    // Past the deadline, not on it: `releaseStaleUserHold` compares strictly, so a wake at exactly
+    // the deadline would find the hold not yet stale and the caller would spin.
     if (remaining > 0) await this.#clock.sleep(remaining + 0.05)
     return true
   }

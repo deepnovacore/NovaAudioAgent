@@ -1,0 +1,809 @@
+{
+  "schema_version": 1,
+  "unicode_version": "15.0.0",
+  "vectors": [
+    {
+      "categories": [
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Zs",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Zs",
+        "Nd",
+        "Nd"
+      ],
+      "input": "hello world 42",
+      "name": "ascii-unchanged",
+      "nfkc": "hello world 42",
+      "nfkc_code_points": [
+        104,
+        101,
+        108,
+        108,
+        111,
+        32,
+        119,
+        111,
+        114,
+        108,
+        100,
+        32,
+        52,
+        50
+      ],
+      "nfkc_lower": "hello world 42"
+    },
+    {
+      "categories": [
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Zs",
+        "Lu",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll"
+      ],
+      "input": "HELLO World",
+      "name": "ascii-uppercase",
+      "nfkc": "HELLO World",
+      "nfkc_code_points": [
+        72,
+        69,
+        76,
+        76,
+        79,
+        32,
+        87,
+        111,
+        114,
+        108,
+        100
+      ],
+      "nfkc_lower": "hello world"
+    },
+    {
+      "categories": [
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Zs",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll"
+      ],
+      "input": "ＨＥＬＬＯ　ｗｏｒｌｄ",
+      "name": "fullwidth-latin",
+      "nfkc": "HELLO world",
+      "nfkc_code_points": [
+        72,
+        69,
+        76,
+        76,
+        79,
+        32,
+        119,
+        111,
+        114,
+        108,
+        100
+      ],
+      "nfkc_lower": "hello world"
+    },
+    {
+      "categories": [
+        "Nd",
+        "Nd",
+        "Nd",
+        "Nd",
+        "Nd",
+        "Nd",
+        "Nd",
+        "Nd",
+        "Nd",
+        "Nd"
+      ],
+      "input": "０１２３４５６７８９",
+      "name": "fullwidth-digits",
+      "nfkc": "0123456789",
+      "nfkc_code_points": [
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57
+      ],
+      "nfkc_lower": "0123456789"
+    },
+    {
+      "categories": [
+        "Lo",
+        "Lo",
+        "Lo",
+        "Lo",
+        "Lm"
+      ],
+      "input": "ﾆﾎﾝｺﾞ",
+      "name": "halfwidth-katakana",
+      "nfkc": "ニホンゴ",
+      "nfkc_code_points": [
+        12491,
+        12507,
+        12531,
+        12468
+      ],
+      "nfkc_lower": "ニホンゴ"
+    },
+    {
+      "categories": [
+        "Ps",
+        "Pe",
+        "Ps",
+        "Pe",
+        "Ps",
+        "Pe",
+        "Po",
+        "Po"
+      ],
+      "input": "（）［］｛｝！？",
+      "name": "fullwidth-punctuation",
+      "nfkc": "()[]{}!?",
+      "nfkc_code_points": [
+        40,
+        41,
+        91,
+        93,
+        123,
+        125,
+        33,
+        63
+      ],
+      "nfkc_lower": "()[]{}!?"
+    },
+    {
+      "categories": [
+        "Lo",
+        "Lo",
+        "Lo",
+        "Lo",
+        "Lo"
+      ],
+      "input": "豈更車賈滑",
+      "name": "cjk-compatibility",
+      "nfkc": "豈更車賈滑",
+      "nfkc_code_points": [
+        35912,
+        26356,
+        36554,
+        36040,
+        28369
+      ],
+      "nfkc_lower": "豈更車賈滑"
+    },
+    {
+      "categories": [
+        "Lo",
+        "Lo",
+        "Lo",
+        "Lo",
+        "Lo",
+        "Lo"
+      ],
+      "input": "编译测试运行",
+      "name": "cjk-unified-unchanged",
+      "nfkc": "编译测试运行",
+      "nfkc_code_points": [
+        32534,
+        35793,
+        27979,
+        35797,
+        36816,
+        34892
+      ],
+      "nfkc_lower": "编译测试运行"
+    },
+    {
+      "categories": [
+        "Lo",
+        "Lo",
+        "Lo"
+      ],
+      "input": "각",
+      "name": "hangul-jamo",
+      "nfkc": "각",
+      "nfkc_code_points": [
+        44033
+      ],
+      "nfkc_lower": "각"
+    },
+    {
+      "categories": [
+        "Lo"
+      ],
+      "input": "각",
+      "name": "hangul-syllable",
+      "nfkc": "각",
+      "nfkc_code_points": [
+        44033
+      ],
+      "nfkc_lower": "각"
+    },
+    {
+      "categories": [
+        "So",
+        "So",
+        "So"
+      ],
+      "input": "ⒶⒷⒸ",
+      "name": "circled-latin",
+      "nfkc": "ABC",
+      "nfkc_code_points": [
+        65,
+        66,
+        67
+      ],
+      "nfkc_lower": "abc"
+    },
+    {
+      "categories": [
+        "No",
+        "No",
+        "No"
+      ],
+      "input": "①②③",
+      "name": "circled-digits",
+      "nfkc": "123",
+      "nfkc_code_points": [
+        49,
+        50,
+        51
+      ],
+      "nfkc_lower": "123"
+    },
+    {
+      "categories": [
+        "So",
+        "So"
+      ],
+      "input": "㍱㍲",
+      "name": "squared-latin",
+      "nfkc": "hPada",
+      "nfkc_code_points": [
+        104,
+        80,
+        97,
+        100,
+        97
+      ],
+      "nfkc_lower": "hpada"
+    },
+    {
+      "categories": [
+        "Nl",
+        "Nl",
+        "Nl"
+      ],
+      "input": "ⅠⅡⅢ",
+      "name": "roman-numerals",
+      "nfkc": "IIIIII",
+      "nfkc_code_points": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "nfkc_lower": "iiiiii"
+    },
+    {
+      "categories": [
+        "Ll",
+        "Ll",
+        "Ll"
+      ],
+      "input": "ﬁne",
+      "name": "ligature-fi",
+      "nfkc": "fine",
+      "nfkc_code_points": [
+        102,
+        105,
+        110,
+        101
+      ],
+      "nfkc_lower": "fine"
+    },
+    {
+      "categories": [
+        "Ll",
+        "No",
+        "Zs",
+        "Sm",
+        "Zs",
+        "Ll",
+        "No"
+      ],
+      "input": "x² + y³",
+      "name": "superscripts",
+      "nfkc": "x2 + y3",
+      "nfkc_code_points": [
+        120,
+        50,
+        32,
+        43,
+        32,
+        121,
+        51
+      ],
+      "nfkc_lower": "x2 + y3"
+    },
+    {
+      "categories": [
+        "No",
+        "Zs",
+        "No"
+      ],
+      "input": "½ ⅓",
+      "name": "fraction",
+      "nfkc": "1⁄2 1⁄3",
+      "nfkc_code_points": [
+        49,
+        8260,
+        50,
+        32,
+        49,
+        8260,
+        51
+      ],
+      "nfkc_lower": "1⁄2 1⁄3"
+    },
+    {
+      "categories": [
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll"
+      ],
+      "input": "café",
+      "name": "combining-composed",
+      "nfkc": "café",
+      "nfkc_code_points": [
+        99,
+        97,
+        102,
+        233
+      ],
+      "nfkc_lower": "café"
+    },
+    {
+      "categories": [
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Mn"
+      ],
+      "input": "café",
+      "name": "combining-decomposed",
+      "nfkc": "café",
+      "nfkc_code_points": [
+        99,
+        97,
+        102,
+        233
+      ],
+      "nfkc_lower": "café"
+    },
+    {
+      "categories": [
+        "Ll",
+        "Mn",
+        "Mn"
+      ],
+      "input": "q̣̇",
+      "name": "combining-multiple",
+      "nfkc": "q̣̇",
+      "nfkc_code_points": [
+        113,
+        803,
+        775
+      ],
+      "nfkc_lower": "q̣̇"
+    },
+    {
+      "categories": [
+        "Lu",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll"
+      ],
+      "input": "İstanbul",
+      "name": "turkish-dotted-i",
+      "nfkc": "İstanbul",
+      "nfkc_code_points": [
+        304,
+        115,
+        116,
+        97,
+        110,
+        98,
+        117,
+        108
+      ],
+      "nfkc_lower": "i̇stanbul"
+    },
+    {
+      "categories": [
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Zs",
+        "Lu",
+        "Zs",
+        "Ll"
+      ],
+      "input": "STRASSE ẞ ß",
+      "name": "german-sharp-s",
+      "nfkc": "STRASSE ẞ ß",
+      "nfkc_code_points": [
+        83,
+        84,
+        82,
+        65,
+        83,
+        83,
+        69,
+        32,
+        7838,
+        32,
+        223
+      ],
+      "nfkc_lower": "strasse ß ß"
+    },
+    {
+      "categories": [
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Zs",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu"
+      ],
+      "input": "ΟΔΟΣ ΟΔΌΣ",
+      "name": "greek-final-sigma",
+      "nfkc": "ΟΔΟΣ ΟΔΌΣ",
+      "nfkc_code_points": [
+        927,
+        916,
+        927,
+        931,
+        32,
+        927,
+        916,
+        908,
+        931
+      ],
+      "nfkc_lower": "οδος οδός"
+    },
+    {
+      "categories": [
+        "Lu",
+        "Lu",
+        "Lu"
+      ],
+      "input": "ᎠᎡᎢ",
+      "name": "cherokee-uppercase",
+      "nfkc": "ᎠᎡᎢ",
+      "nfkc_code_points": [
+        5024,
+        5025,
+        5026
+      ],
+      "nfkc_lower": "ꭰꭱꭲ"
+    },
+    {
+      "categories": [
+        "Lu",
+        "Lu"
+      ],
+      "input": "𐐀𐐁",
+      "name": "deseret",
+      "nfkc": "𐐀𐐁",
+      "nfkc_code_points": [
+        66560,
+        66561
+      ],
+      "nfkc_lower": "𐐨𐐩"
+    },
+    {
+      "categories": [
+        "Cn"
+      ],
+      "input": "𞗐",
+      "name": "unicode-16-garay",
+      "nfkc": "𞗐",
+      "nfkc_code_points": [
+        124368
+      ],
+      "nfkc_lower": "𞗐"
+    },
+    {
+      "categories": [
+        "Cn"
+      ],
+      "input": "𖄀",
+      "name": "unicode-16-gurung",
+      "nfkc": "𖄀",
+      "nfkc_code_points": [
+        90368
+      ],
+      "nfkc_lower": "𖄀"
+    },
+    {
+      "categories": [
+        "Cn"
+      ],
+      "input": "𑯀",
+      "name": "unicode-16-sunuwar",
+      "nfkc": "𑯀",
+      "nfkc_code_points": [
+        72640
+      ],
+      "nfkc_lower": "𑯀"
+    },
+    {
+      "categories": [
+        "Cn"
+      ],
+      "input": "𐗀",
+      "name": "unicode-16-todhri",
+      "nfkc": "𐗀",
+      "nfkc_code_points": [
+        67008
+      ],
+      "nfkc_lower": "𐗀"
+    },
+    {
+      "categories": [
+        "Cn"
+      ],
+      "input": "𑎀",
+      "name": "unicode-16-tulu-tigalari",
+      "nfkc": "𑎀",
+      "nfkc_code_points": [
+        70528
+      ],
+      "nfkc_lower": "𑎀"
+    },
+    {
+      "categories": [
+        "Cn",
+        "Cn"
+      ],
+      "input": "𜰀𜳰",
+      "name": "unicode-16-symbols",
+      "nfkc": "𜰀𜳰",
+      "nfkc_code_points": [
+        117760,
+        118000
+      ],
+      "nfkc_lower": "𜰀𜳰"
+    },
+    {
+      "categories": [
+        "Cn",
+        "Cn",
+        "Cn"
+      ],
+      "input": "𜳰𜳱𜳹",
+      "name": "unicode-16-outlined-digits",
+      "nfkc": "𜳰𜳱𜳹",
+      "nfkc_code_points": [
+        118000,
+        118001,
+        118009
+      ],
+      "nfkc_lower": "𜳰𜳱𜳹"
+    },
+    {
+      "categories": [
+        "Cn",
+        "Cn",
+        "Cn"
+      ],
+      "input": "𜳖𜳗𜳹",
+      "name": "unicode-16-outlined-letters",
+      "nfkc": "𜳖𜳗𜳹",
+      "nfkc_code_points": [
+        117974,
+        117975,
+        118009
+      ],
+      "nfkc_lower": "𜳖𜳗𜳹"
+    },
+    {
+      "categories": [
+        "Cn"
+      ],
+      "input": "𞗰",
+      "name": "unicode-16-ol-onal",
+      "nfkc": "𞗰",
+      "nfkc_code_points": [
+        124400
+      ],
+      "nfkc_lower": "𞗰"
+    },
+    {
+      "categories": [
+        "Cn"
+      ],
+      "input": "𓑠",
+      "name": "unicode-16-egyptian",
+      "nfkc": "𓑠",
+      "nfkc_code_points": [
+        78944
+      ],
+      "nfkc_lower": "𓑠"
+    },
+    {
+      "categories": [
+        "So",
+        "So"
+      ],
+      "input": "😀😁",
+      "name": "astral-emoji",
+      "nfkc": "😀😁",
+      "nfkc_code_points": [
+        128512,
+        128513
+      ],
+      "nfkc_lower": "😀😁"
+    },
+    {
+      "categories": [
+        "So",
+        "Sk"
+      ],
+      "input": "👍🏽",
+      "name": "astral-with-modifier",
+      "nfkc": "👍🏽",
+      "nfkc_code_points": [
+        128077,
+        127997
+      ],
+      "nfkc_lower": "👍🏽"
+    },
+    {
+      "categories": [
+        "Lo",
+        "Lo",
+        "Zs",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Ll",
+        "Zs",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu",
+        "Lu"
+      ],
+      "input": "编译 compile ＣＯＭＰＩＬＥ",
+      "name": "mixed-script",
+      "nfkc": "编译 compile COMPILE",
+      "nfkc_code_points": [
+        32534,
+        35793,
+        32,
+        99,
+        111,
+        109,
+        112,
+        105,
+        108,
+        101,
+        32,
+        67,
+        79,
+        77,
+        80,
+        73,
+        76,
+        69
+      ],
+      "nfkc_lower": "编译 compile compile"
+    },
+    {
+      "categories": [
+        "Ll",
+        "Zs",
+        "Ll"
+      ],
+      "input": "a b",
+      "name": "nbsp",
+      "nfkc": "a b",
+      "nfkc_code_points": [
+        97,
+        32,
+        98
+      ],
+      "nfkc_lower": "a b"
+    },
+    {
+      "categories": [
+        "Ll",
+        "Zs",
+        "Ll"
+      ],
+      "input": "a　b",
+      "name": "ideographic-space",
+      "nfkc": "a b",
+      "nfkc_code_points": [
+        97,
+        32,
+        98
+      ],
+      "nfkc_lower": "a b"
+    },
+    {
+      "categories": [
+        "Ll",
+        "Cf",
+        "Ll"
+      ],
+      "input": "a‍b",
+      "name": "zero-width-joiner",
+      "nfkc": "a‍b",
+      "nfkc_code_points": [
+        97,
+        8205,
+        98
+      ],
+      "nfkc_lower": "a‍b"
+    },
+    {
+      "categories": [],
+      "input": "",
+      "name": "empty",
+      "nfkc": "",
+      "nfkc_code_points": [],
+      "nfkc_lower": ""
+    }
+  ]
+}

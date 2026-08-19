@@ -372,15 +372,15 @@ test('a deferred preempt fence is spent by expiring it, and only once', async ()
 })
 
 test('an expired preempt leaves no deferral for the terminal to act on', async () => {
-  // Not a discriminating test, and kept for the record of why. `acceptTerminal` branches on
-  // `defer_playback_fence`, so a deferral left set after the fence landed looks dangerous -- but
-  // that branch also requires the current generation to belong to this response, and the fence
-  // already removed it. Both paths therefore reach the same state, and clearing the flag is
-  // hygiene rather than behavior. Left as a regression check on the *sequence*, not the flag.
+  // The deferral is observable, through the snapshot version. A terminal on a response whose
+  // deferral was already spent takes the plain path and publishes nothing; one that still sees the
+  // flag set takes the defer path and publishes. Sampling the version either side of the terminal
+  // separates them -- the state afterwards is identical, which is why this first looked untestable.
   const {session, generation} = await withPlayingResponse()
   await session.hostPreempt()
   assert.equal(session.expireHostPreempt(generation), true)
 
+  const beforeTerminal = session.snapshot().version
   await session.accept({
     kind: 'response_terminal',
     session_epoch: 1,
@@ -388,31 +388,11 @@ test('an expired preempt leaves no deferral for the terminal to act on', async (
     status: 'cancelled',
     reason: 'host_preempt',
   })
-  await session.deliverPreemptiveHostResponse({
-    kind: 'host_fact',
-    item: {
-      kind: 'progress',
-      host_item_id: 'host-2',
-      event_id: 'progress:2',
-      content: '第二步。',
-      call_id: null,
-    },
-    task_summary: null,
-    origin_spoken: false,
-  })
-  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'resp-2'})
-  await session.accept({
-    kind: 'response_audio_delta',
-    session_epoch: 1,
-    response_id: 'resp-2',
-    pcm: new Uint8Array([6, 7]),
-  })
-  const replacement = session.currentGeneration
-  assert.notEqual(replacement, null)
-
-  // resp-1's terminal already arrived; a stale deferral on it cannot reach resp-2's generation.
-  assert.equal(session.currentGeneration, replacement, 'the replacement is untouched')
-  assert.equal(session.providerTurnPhase('resp-2'), 'active')
+  assert.equal(
+    session.snapshot().version,
+    beforeTerminal,
+    'the terminal took the plain path, which publishes nothing',
+  )
 })
 
 test('expiring a preempt for a generation that is not current does not fence anything', async () => {
@@ -449,14 +429,23 @@ test('alerting a generation that was never handed off is refused', async () => {
 })
 
 test('a Guard handoff alert names one exact generation, not whichever is retained', async () => {
-  // The retained generation is the one thing that survives the handoff, so alerting must match it
-  // exactly rather than accepting any generation while a handoff happens to be live.
+  // The check has to be reached with *nothing* current, which is what a live handoff produces once
+  // the retained audio finishes: the generation is retired but the handoff is still recorded. With
+  // something current, a mismatched generation is refused for a different reason and the
+  // exact-match check would look redundant.
   const {session, generation} = await withPlayingResponse()
   await session.reconnectForGuard({tools: [], oldGeneration: generation})
+  assert.equal(
+    session.playbackDone(generation.utterance_id, generation.generation_epoch, 100),
+    true,
+  )
+  assert.equal(session.currentGeneration, null, 'the retained audio has finished')
 
   const other: PlaybackGeneration = {...generation, generation_id: 'other', utterance_id: 'other'}
+  const before = session.snapshot().version
   assert.equal(session.alertGuardHandoff(other), false, 'a different generation is not it')
-  assert.equal(session.currentGeneration, generation, 'and nothing was fenced')
+  assert.equal(session.snapshot().version, before, 'and nothing was published')
+  // The handoff must still be there for the generation it actually names.
   assert.equal(session.alertGuardHandoff(generation), true, 'the real one still works')
 })
 
@@ -557,16 +546,11 @@ test('waiting for a stale hold sleeps past the deadline, then the release succee
   })
 
   const waiting = session.waitForStaleHold(10)
-  // The wait must sleep *past* the deadline, not to it: the release comparison is strict, so waking
-  // exactly on 10 would find the hold not yet stale and the caller would spin. Advancing to the
-  // deadline itself must therefore leave the wait pending.
-  clock.advanceTo(10)
-  const pending = await Promise.race([
-    waiting.then(() => 'woke'),
-    Promise.resolve('still waiting'),
-  ])
-  assert.equal(pending, 'still waiting', 'waking exactly on the deadline would be too early')
-  assert.equal(session.releaseStaleUserHold(10), false, 'and the release agrees it is not stale')
+  // The margin is directly observable: ask the clock when the timer is due. It has to be *past* the
+  // deadline, because the release comparison is strict -- waking exactly on 10 would find the hold
+  // not yet stale and the caller would spin. Racing an already-resolved promise cannot show this:
+  // it reports "still waiting" whenever the continuation is merely queued.
+  assert.equal(clock.nextTimerTimestamp(), 10.05, 'the wait must be due after the deadline')
 
   clock.advanceTo(10.05)
   assert.equal(await waiting, true)
