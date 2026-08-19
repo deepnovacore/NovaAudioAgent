@@ -265,6 +265,35 @@ Two lessons, both about the harness rather than the code:
   file rather than the service. Five projection mutations were invisible to it. The parity test now
   drives `projectRuntimeEvent` and reads what was queued.
 
+### Found while porting reconnect: an acknowledgement never reached `delivered`
+
+`_finish_semantic_acknowledgement` was not ported. Without it an acknowledgement bound to a
+continuation stayed `bound` forever, so a reconnect re-queued it and the user was told the same work had
+started a second time. Found by a reconnect test asserting the *absence* of a repeat, which is the kind
+of assertion that only fails when something is genuinely missing.
+
+It is ported now, with the three-way outcome intact: a completed response delivers the acknowledgement
+permanently; a `fallback` binding that did not complete gets exactly one retry, because it was a host
+fact of its own and losing it loses the only notice the user gets; a `continuation` binding that did not
+complete goes back to pending without re-queueing, because the batch will drive it again.
+
+### Measured coverage: family K (reconnect) is 13 of 18
+
+The five survivors, with why nothing distinguishes them:
+
+| Mutation | Why |
+|---|---|
+| Arming the source epoch after the await instead of before | Only a Guard racing the session's response-request lock can tell, and Guard is unported. |
+| Demanding an activation unconditionally | Needs the source epoch cleared *during* the await -- a user speaking mid-reconnect -- which needs a controllable await point inside `session.reconnect`. |
+| Leaving dead batches in the continuation queue | The drive pops abandoned batches at the head, so the filter is redundant with it. |
+| Computing `needsSemanticAcknowledgement` from the disposition instead of the dispatch | No state reaches disposition `abandoned` without `dispatch === 'dispatched'` *and* an executor, so the two expressions cannot disagree. An inline recall has no executor, so its acknowledgement is null either way. |
+| Overwriting a terminal batch's phase | The disposition is guarded separately (`if (final_disposition === null)`) and the batch is no longer in the queue, so the phase change has no reader. |
+| Re-queueing a `delivered` acknowledgement | `#queueSemanticAcknowledgement` refuses `delivered` itself, so the caller's filter is a second guard on the same condition. |
+
+Four of the six are redundant-by-construction and kept because the oracle keeps them. The first two are
+genuinely blocked: the Guard one until family L lands, the activation one until the session exposes a
+seam mid-reconnect. Both are listed here rather than left as a silent gap in a coverage number.
+
 ### Measured coverage, and the guards nothing distinguishes
 
 Family O (runtime event projection) is at 20 of 22. The two survivors are redundant by construction and

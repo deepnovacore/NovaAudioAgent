@@ -48,6 +48,7 @@ import {
   USER_HOLD_MAX_S,
   callKey,
   compareQueuedHostResponses,
+  parseCallKey,
   continuationBatch,
   semanticAcknowledgement,
   toolCallState,
@@ -944,6 +945,56 @@ export class RealtimeService {
     return this.#runtime.executors.get(channel)?.manifest.policy.priority ?? 50
   }
 
+  /**
+   * Settle the acknowledgements the response that just ended was carrying.
+   *
+   * Three outcomes, and the distinction is what stops the agent both repeating itself and going quiet.
+   * A completed response said it, so the acknowledgement is delivered and never mentioned again. A
+   * *fallback* binding that did not complete gets one more attempt -- it was a host fact of its own, and
+   * losing it would lose the only notice the user gets. A *continuation* binding that did not complete
+   * goes back to pending without re-queueing, because the batch it belonged to will drive it again.
+   *
+   * An origin already proven delivered is delivered regardless of the status: the user heard it, and a
+   * retry would be the second telling.
+   */
+  #finishSemanticAcknowledgement(event: {
+    readonly response_id: string
+    readonly status: string
+  }): void {
+    const bound = [...this.#semanticAcknowledgements.values()]
+      .filter(current => current.phase === 'bound' && current.response_id === event.response_id)
+    for (const acknowledgement of bound) {
+      if (acknowledgement.origin_delivered) {
+        this.#markAcknowledgementDelivered(acknowledgement)
+        continue
+      }
+      if (event.status === 'completed') {
+        this.#markAcknowledgementDelivered(acknowledgement)
+      } else if (acknowledgement.binding === 'fallback') {
+        acknowledgement.phase = 'pending'
+        acknowledgement.response_id = null
+        acknowledgement.binding = null
+        if (event.status === 'failed') {
+          // One retry after a failure, and only one: a provider failing the same fact repeatedly would
+          // otherwise have the host queue it forever.
+          if (acknowledgement.failed_retry_consumed) continue
+          acknowledgement.failed_retry_consumed = true
+        }
+        this.#queueSemanticAcknowledgement(acknowledgement)
+      } else if (acknowledgement.binding === 'continuation') {
+        acknowledgement.phase = 'pending'
+        acknowledgement.response_id = null
+        acknowledgement.binding = null
+      }
+    }
+  }
+
+  #markAcknowledgementDelivered(acknowledgement: SemanticAcknowledgement): void {
+    acknowledgement.phase = 'delivered'
+    acknowledgement.response_id = null
+    acknowledgement.binding = null
+  }
+
   /** Bind the one acknowledgement that asked for a turn to the response that will speak it. */
   #bindRequestedSemanticAcknowledgement(responseId: string): void {
     for (const acknowledgement of this.#semanticAcknowledgements.values()) {
@@ -955,9 +1006,160 @@ export class RealtimeService {
     }
   }
 
-  #reconnectProviderSession(options: {readonly expectedEpoch: number}): Promise<boolean> {
-    void options
-    return Promise.reject(new NotYetPortedError('provider reconnect'))
+  /**
+   * Replace the provider session, and reconcile everything that referred to the old one.
+   *
+   * Ported from `_reconnect_provider_session`. The whole method runs under `#reconnectLock`, and the
+   * two things that look like implementation detail are both load-bearing:
+   *
+   * The source epoch is armed *before* the await, so a Guard already waiting on the session's
+   * response-request lock can see that the provider identity advanced even if it runs before this
+   * resumes. Arming it after would let that Guard act against a session that no longer exists.
+   *
+   * The tail calls the private `#deliveryPass` rather than the public `flushHostItems`. The public
+   * wrapper turns an uncertain delivery into a reconnect, and reconnecting while already holding the
+   * lock would deadlock. Confirmation uncertainty is meant to escape to the caller here.
+   *
+   * Returns false when the epoch moved while waiting for the lock: someone else already replaced the
+   * session, and doing it again would discard a *live* one.
+   */
+  async #reconnectProviderSession(
+    options: {readonly expectedEpoch?: number} = {},
+  ): Promise<boolean> {
+    const requestedEpoch = options.expectedEpoch ?? this.session.sessionEpoch
+    return this.#reconnectLock.run(async () => {
+      if (this.session.sessionEpoch !== requestedEpoch) return false
+      const oldEpoch = this.session.sessionEpoch
+      this.#guardPreemption = null
+      this.#providerReconnectSourceEpoch = oldEpoch
+      await this.session.reconnect({tools: structuredClone(this.#providerSchemas)})
+      // Only if nothing cleared it while we were awaiting. A user who started speaking during the
+      // reconnect has already activated the new session, so demanding an activation would be wrong.
+      if (this.#providerReconnectSourceEpoch === oldEpoch) {
+        this.#providerEpochNeedingActivation = this.session.sessionEpoch
+        this.#providerReconnectSourceEpoch = null
+      }
+      const retryOwner = this.#urgentHostResponseOwner
+
+      // Every origin binding named items in a session that is gone. Keeping any of it would let a
+      // tool call cite evidence the new provider has never seen.
+      this.#awaitingUserOrigin = false
+      this.#userOriginPreexistingResponseId = null
+      this.#unboundUserOriginItems.length = 0
+      this.#responseUserOriginItems.clear()
+      this.#userOriginRefs.clear()
+      this.#originDeferredToolCalls.length = 0
+
+      if (retryOwner?.session_epoch === oldEpoch) this.#urgentHostResponseOwner = null
+      // An urgent item that was injected but never got a response is the one case worth retrying: it
+      // was delivered into a session that died before speaking it, so the user heard nothing.
+      if (retryOwner?.session_epoch === oldEpoch && retryOwner.response_id === null) {
+        this.#requeueHostItem(retryOwner.queued)
+      }
+      this.#clearCaptions()
+      this.#audioStarted.clear()
+      this.#reconcileToolStateAfterReconnect(oldEpoch)
+      this.#reopenFailedSemanticAcknowledgements()
+      this.#reconcileSemanticAcknowledgementsAfterReconnect()
+      await this.driveContinuations()
+      await this.#deliveryPass()
+      return true
+    })
+  }
+
+  /**
+   * Settle every tool call that belonged to the dead epoch.
+   *
+   * The dead epoch cannot receive a continuation, so nothing in it will ever be spoken about in its own
+   * turn. Each call therefore gets a final disposition here rather than waiting for a terminal that
+   * cannot arrive -- and the ones that actually ran get a background acknowledgement, because the work
+   * happened and the user has not heard about it.
+   */
+  #reconcileToolStateAfterReconnect(oldEpoch: number): void {
+    for (const callKeyValue of this.#pendingSync.values()) {
+      if (parseCallKey(callKeyValue).sessionEpoch !== oldEpoch) continue
+      const state = this.#toolCallState(callKeyValue)
+      // R105: the dead epoch cannot receive a continuation; the result, when it arrives, becomes a
+      // host fact in the new epoch.
+      if (state?.sync === 'pending') state.sync = 'announce'
+    }
+    for (const [batchKey, batch] of this.#continuationBatches.entries()) {
+      if (parseCallKey(batchKey).sessionEpoch !== oldEpoch) continue
+      for (const key of batch.call_keys) {
+        const state = this.#toolCallState(key)
+        if (state === undefined) continue
+        // Captured before the disposition is written, because that is what decides whether anything
+        // actually ran -- and only work that ran is worth telling the user about.
+        const needsSemanticAcknowledgement = state.dispatch === 'dispatched'
+          && state.acceptance.accepted
+        if (state.continuation !== 'terminal') {
+          state.continuation = 'abandoned'
+          state.continuation_response_id = null
+          if (state.sync === 'resolved') {
+            // CP3: resolved but its continuation never became terminal. Re-delivered as one announce
+            // host fact in the new epoch, matching the at-least-once posture of the acknowledgements.
+            this.#announceResolvedSyncState(state)
+          }
+        }
+        if (state.final_disposition === null) {
+          if (state.dispatch === 'not_dispatched') {
+            state.final_disposition = 'superseded'
+          } else if (!state.acceptance.accepted) {
+            state.final_disposition = 'refused'
+          } else {
+            state.final_disposition = 'abandoned'
+          }
+        }
+        if (needsSemanticAcknowledgement) this.#queueBackgroundAcknowledgement(state)
+      }
+      // A batch already terminal was spoken before the session died, so it keeps that.
+      if (batch.phase !== 'terminal') {
+        batch.phase = 'abandoned'
+        batch.continuation_response_id = null
+      }
+    }
+    const surviving = this.#continuationFifo
+      .filter(key => parseCallKey(key).sessionEpoch !== oldEpoch)
+    this.#continuationFifo.length = 0
+    this.#continuationFifo.push(...surviving)
+  }
+
+  /**
+   * Re-queue acknowledgements whose turn died with the old session.
+   *
+   * One that was requested or bound to a continuation was never actually spoken -- the turn carrying it
+   * belonged to a provider session that is gone -- so it goes back to pending and is queued again. A
+   * `delivered` one stays delivered: the user heard it, and repeating it would be worse than silence.
+   */
+  #reconcileSemanticAcknowledgementsAfterReconnect(): void {
+    for (const acknowledgement of this.#semanticAcknowledgements.values()) {
+      if (
+        acknowledgement.phase === 'requested'
+        || (acknowledgement.phase === 'bound' && acknowledgement.binding === 'continuation')
+      ) {
+        acknowledgement.phase = 'pending'
+        acknowledgement.response_id = null
+        acknowledgement.binding = null
+      }
+      if (acknowledgement.phase === 'pending' || acknowledgement.phase === 'queued') {
+        this.#queueSemanticAcknowledgement(acknowledgement)
+      }
+    }
+  }
+
+  /**
+   * Give a once-failed acknowledgement another chance after a reconnect.
+   *
+   * Its single retry was spent on a session that then died, which is not the same as having been tried
+   * and refused -- so the new session gets to attempt it once.
+   */
+  #reopenFailedSemanticAcknowledgements(): void {
+    for (const acknowledgement of this.#semanticAcknowledgements.values()) {
+      if (!acknowledgement.failed_retry_consumed) continue
+      if (acknowledgement.phase === 'pending') {
+        this.#queueSemanticAcknowledgement(acknowledgement)
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1424,6 +1626,7 @@ export class RealtimeService {
       ) {
         this.#onProviderTerminal(generation)
       }
+      this.#finishSemanticAcknowledgement(event)
       this.#finishContinuation(event)
       this.#finishOrigin(event.response_id)
     }
@@ -2198,6 +2401,71 @@ export class RealtimeService {
    */
   get unboundUserOriginCountForTest(): number {
     return this.#unboundUserOriginItems.length
+  }
+
+  /**
+   * Drive a reconnect directly.
+   *
+   * The paths that normally reach it -- a recoverable provider error, an uncertain delivery, a full
+   * refusal ledger -- each need their own setup, and the reconciliation this performs is worth testing
+   * on its own rather than only through one of them.
+   */
+  reconnectForTest(expectedEpoch?: number): Promise<boolean> {
+    return this.#reconnectProviderSession(
+      expectedEpoch === undefined ? {} : {expectedEpoch},
+    )
+  }
+
+  /** Stand in for the Guard delivery that would normally create an urgent owner. */
+  seedUrgentOwnerForTest(input: {
+    readonly sessionEpoch: number
+    readonly eventId: string
+    readonly responseId: string | null
+  }): void {
+    this.#urgentDeliveryToken += 1
+    this.#urgentHostResponseOwner = {
+      delivery_token: this.#urgentDeliveryToken,
+      session_epoch: input.sessionEpoch,
+      event_id: input.eventId,
+      queued: {
+        sortKey: [-90, -1, 0],
+        intent: hostFactIntent({
+          kind: 'final',
+          host_item_id: 'urgent-host-1',
+          event_id: input.eventId,
+          content: 'urgent',
+        }),
+        priority: 90,
+        preemptive: true,
+        seq: 0,
+        queued_at: 0,
+        semantic_event_id: null,
+        guard_activation: null,
+      },
+      response_id: input.responseId,
+      generation: null,
+    }
+  }
+
+  get urgentOwnerForTest(): UrgentHostResponseOwner | null {
+    return this.#urgentHostResponseOwner
+  }
+
+  get epochNeedingActivationForTest(): number | null {
+    return this.#providerEpochNeedingActivation
+  }
+
+  /** Each acknowledgement's phase, by event id. The phase is the whole state machine. */
+  get acknowledgementPhasesForTest(): Readonly<Record<string, string>> {
+    return Object.fromEntries(
+      [...this.#semanticAcknowledgements.entries()]
+        .map(([eventId, acknowledgement]) => [eventId, acknowledgement.phase]),
+    )
+  }
+
+  /** Each tracked tool call's final disposition, in admission order. */
+  get toolCallDispositionsForTest(): readonly (string | null)[] {
+    return [...this.#toolCalls.values()].map(state => state.final_disposition)
   }
 
   /** Which response holds which user turn, in binding order. */

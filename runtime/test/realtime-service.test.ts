@@ -364,12 +364,9 @@ test('an ordinary item is retried once, and a second uncertainty stops the servi
     item_kind: 'final',
   })
 
-  // The first attempt reaches the reconnect, which is not ported -- so it fails by name rather than
-  // reporting the retry budget as exhausted.
-  await assert.rejects(
-    () => service.reportUncertainDeliveryForTest(uncertain('host-1')),
-    NotYetPortedError,
-  )
+  // The first attempt spends the retry on a reconnect, which the queue-only fixture has no session
+  // for -- so it throws from there rather than reporting the budget as exhausted.
+  await assert.rejects(() => service.reportUncertainDeliveryForTest(uncertain('host-1')))
   assert.equal(service.stopped, false, 'a first uncertainty must not stop the service')
   assert.deepEqual(diagnostics, [])
 
@@ -389,15 +386,10 @@ test('the retry budget is per item, not global', async () => {
     provider_item_id: 'provider-1',
     item_kind: 'final',
   })
-  await assert.rejects(
-    () => service.reportUncertainDeliveryForTest(uncertain('host-1')),
-    NotYetPortedError,
-  )
-  await assert.rejects(
-    () => service.reportUncertainDeliveryForTest(uncertain('host-2')),
-    NotYetPortedError,
-    'a second item still gets its own retry',
-  )
+  await assert.rejects(() => service.reportUncertainDeliveryForTest(uncertain('host-1')))
+  // A second item still gets its own retry rather than inheriting a spent one, so it reaches the
+  // reconnect too instead of reporting the budget as exhausted.
+  await assert.rejects(() => service.reportUncertainDeliveryForTest(uncertain('host-2')))
   assert.equal(service.stopped, false)
 })
 
@@ -582,6 +574,12 @@ async function* parkedStream(signal: AbortSignal): AsyncGenerator<never> {
  */
 function pipelineService(options: {
   readonly toolResult?: {readonly accepted: boolean; readonly delegateId: string | null}
+  readonly onCaption?: (frame: {
+    readonly role: string
+    readonly text: string
+    readonly final: boolean
+  }) => void
+  readonly includeRecall?: boolean
 } = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
@@ -634,14 +632,18 @@ function pipelineService(options: {
     },
     onAlert: () => undefined,
   })
+  // The epoch has to increase on every connect: a reconnect that reused it would be a different
+  // provider session claiming the same identity, which the session refuses outright.
+  let epoch = 0
   const provider: SessionProvider & ServiceProvider = {
     connect: () => {
+      epoch += 1
       actions.push('connect')
-      return Promise.resolve({epoch: 1})
+      return Promise.resolve({epoch})
     },
     injectHostItem: (item) => {
       actions.push(`inject:${item.event_id}`)
-      return Promise.resolve({session_epoch: 1, host_item_id: item.host_item_id})
+      return Promise.resolve({session_epoch: epoch, host_item_id: item.host_item_id})
     },
     createResponse: (intent) => {
       actions.push(`create_response:${intent.kind}`)
@@ -690,7 +692,7 @@ function pipelineService(options: {
         signal.addEventListener('abort', () => resolve(), {once: true})
       }),
     },
-    tools: compileToolSchema([manifest]),
+    tools: compileToolSchema([manifest], {includeMemoryRecall: options.includeRecall ?? false}),
     session,
     bridge: new RealtimeRuntimeBridge({
       runtime: {
@@ -713,10 +715,13 @@ function pipelineService(options: {
           delegate_id: scripted.delegateId,
         }),
       },
-      tools: compileToolSchema([manifest]),
+      tools: compileToolSchema([manifest], {includeMemoryRecall: options.includeRecall ?? false}),
       idFactory: nextId,
     }),
     idFactory: nextId,
+    // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent optional from
+    // one explicitly set to undefined, and the service's contract is the former.
+    ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
     onDiagnostic: () => undefined,
   })
   return {service, actions, session}
@@ -2220,4 +2225,283 @@ test('a terminal for a different response does not close the bound batch', async
     reason: '',
   })
   assert.deepEqual(service.continuationOrderForTest, [], 'closed by its own terminal')
+})
+
+test('a reconnect drops every origin binding from the dead session', async () => {
+  // They name items a provider that no longer exists once held. Keeping any of them would let a tool
+  // call in the new session cite evidence that session has never seen.
+  const {service} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  assert.equal(service.boundOriginsForTest.length, 1)
+  assert.equal(service.unboundUserOriginCountForTest, 1)
+
+  await service.reconnectForTest()
+  assert.deepEqual(service.boundOriginsForTest, [], 'no response holds a dead turn')
+  assert.equal(service.unboundUserOriginCountForTest, 0, 'nothing waits on a dead transcript')
+})
+
+test('a reconnect settles the tool calls of the dead epoch instead of leaving them open', async () => {
+  // Nothing in the old epoch can receive a continuation, so a call left `queued` there would wait for
+  // a terminal that cannot arrive. Each gets a disposition, and work that actually ran gets an
+  // acknowledgement -- it happened, and the user has not heard about it.
+  const {service, actions} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+  assert.equal(service.continuationOrderForTest.length, 1, 'one batch open')
+  assert.equal(service.toolCallDispositionsForTest[0], null, 'not yet settled')
+
+  await service.reconnectForTest()
+  assert.deepEqual(
+    service.continuationOrderForTest,
+    [],
+    'the dead epoch leaves nothing in the queue',
+  )
+  assert.equal(
+    service.toolCallDispositionsForTest[0],
+    'abandoned',
+    'dispatched work that will not be spoken about is abandoned, not refused',
+  )
+  // And the acknowledgement reaches the provider, because that work really did start. Checked at the
+  // provider rather than in the queue: the reconnect ends with a delivery pass, so anything it queued
+  // into an idle floor has already been injected by the time this returns.
+  assert.ok(
+    actions.includes('inject:background:d-1'),
+    'the user is told about work that ran',
+  )
+})
+
+test('a reconnect requeues an urgent item that was injected but never spoken', async () => {
+  // It reached a session that died before speaking it, so the user heard nothing. That is the one case
+  // where re-delivering is right rather than a repeat.
+  const {service, actions} = pipelineService()
+  await service.connect()
+  service.seedUrgentOwnerForTest({sessionEpoch: 1, eventId: 'final:d-9', responseId: null})
+  await service.reconnectForTest()
+  // At the provider, not in the queue: the reconnect's own delivery pass has already flushed it.
+  assert.ok(actions.includes('inject:final:d-9'), 'requeued and delivered')
+  assert.equal(service.urgentOwnerForTest, null, 'and the owner is released')
+})
+
+test('a reconnect does not requeue an urgent item that already had a response', async () => {
+  // A response means the provider took it up. Re-queueing would say the same thing twice.
+  const {service, actions} = pipelineService()
+  await service.connect()
+  service.seedUrgentOwnerForTest({sessionEpoch: 1, eventId: 'final:d-9', responseId: 'r-7'})
+  await service.reconnectForTest()
+  assert.equal(actions.includes('inject:final:d-9'), false, 'not requeued')
+  assert.equal(service.urgentOwnerForTest, null)
+})
+
+test('a reconnect that lost the race leaves the live session alone', async () => {
+  // Someone else already replaced it. Replacing it again would discard a session that is working.
+  const {service} = pipelineService()
+  await service.connect()
+  const epoch = service.session.sessionEpoch
+  assert.equal(await service.reconnectForTest(epoch + 5), false, 'refused')
+  assert.equal(service.session.sessionEpoch, epoch, 'and the session is untouched')
+})
+
+test('a reconnect demands an activation, unless the user already spoke into the new session', async () => {
+  // A reconnected provider will not speak until something user-shaped arrives. But a user who started
+  // talking *during* the reconnect has already activated it, so demanding one would be wrong.
+  const quiet = pipelineService()
+  await quiet.service.connect()
+  await quiet.service.reconnectForTest()
+  assert.equal(
+    quiet.service.epochNeedingActivationForTest,
+    quiet.service.session.sessionEpoch,
+    'the new session needs activating',
+  )
+
+  const spoken = pipelineService()
+  await spoken.service.connect()
+  await spoken.service.reconnectForTest()
+  await spoken.service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: spoken.service.session.sessionEpoch,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  assert.equal(
+    spoken.service.epochNeedingActivationForTest,
+    null,
+    'the user activated it themselves',
+  )
+})
+
+test('a reconnect blanks speculative captions on both roles', async () => {
+  // Partial text from a dead epoch is speculation about a turn that no longer exists. Leaving it on
+  // screen would show the user words the new session never said.
+  const captions: {readonly role: string; readonly text: string; readonly final: boolean}[] = []
+  const {service} = pipelineService({onCaption: frame => captions.push(frame)})
+  await service.connect()
+  await service.reconnectForTest()
+  assert.deepEqual(
+    captions.map(frame => [frame.role, frame.text, frame.final]),
+    [['assistant', '', true], ['user', '', true]],
+    'both roles blanked, and marked final so nothing waits for more',
+  )
+})
+
+test('a batch already spoken before the reconnect keeps its terminal phase', async () => {
+  // It was spoken. Marking it abandoned would make the reconnect re-announce work the user already
+  // heard about.
+  const {service, actions} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  // The continuation turn runs to completion, so the batch is terminal.
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-2',
+    status: 'completed',
+    reason: '',
+  })
+  assert.equal(
+    service.toolCallDispositionsForTest[0],
+    'completed',
+    'spoken, and recorded as completed',
+  )
+  const injectedBefore = actions.filter(action => action.startsWith('inject:background')).length
+
+  await service.reconnectForTest()
+  assert.equal(
+    service.toolCallDispositionsForTest[0],
+    'completed',
+    'the reconnect must not downgrade work that was already spoken',
+  )
+  assert.equal(
+    actions.filter(action => action.startsWith('inject:background')).length,
+    injectedBefore,
+    'and must not re-announce it',
+  )
+})
+
+test('an inline-fulfilled call gets no background acknowledgement on reconnect', async () => {
+  // Recall answers in the same breath: there is no background work to tell the user about, so an
+  // acknowledgement would announce something that never ran. `dispatch` is what distinguishes it, which
+  // is why the flag is computed before the disposition is written.
+  const {service, actions} = pipelineService({includeRecall: true})
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'what did we decide',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'memory__recall',
+    arguments: {query: 'decide', scope: 'recent'},
+    response_id: 'r-1',
+  })
+  const accepted = service.toolCallAcceptances()[0]
+  assert.equal(accepted?.acceptance.inline_fulfilled, true, 'answered inline')
+
+  await service.reconnectForTest()
+  assert.equal(
+    actions.some(action => action.startsWith('inject:background:')),
+    false,
+    'no background acknowledgement for work that never went to the background',
+  )
+})
+
+test('an acknowledgement bound to an unfinished continuation is reopened by the reconnect', async () => {
+  // Its turn was speaking when the session died, so the user heard part of nothing. Left `bound` it
+  // would never be queued again -- the queue helper refuses anything already bound -- and the user
+  // would simply never be told the work started.
+  const {service, actions} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  // The continuation turn starts -- binding the acknowledgement to it -- and then never finishes.
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
+  assert.equal(
+    service.acknowledgementPhasesForTest['background:d-1'],
+    'bound',
+    'bound to a turn that is still speaking',
+  )
+  const before = actions.filter(action => action === 'inject:background:d-1').length
+
+  await service.reconnectForTest()
+  assert.equal(
+    actions.filter(action => action === 'inject:background:d-1').length,
+    before + 1,
+    'reopened and delivered in the new session',
+  )
 })
