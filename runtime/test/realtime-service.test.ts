@@ -191,7 +191,16 @@ test('an unported family fails by name rather than behaving as if it were off', 
     selected_suggestion: null,
   }), NotYetPortedError)
   await assert.rejects(() => service.driveContinuations(), NotYetPortedError)
-  await assert.rejects(() => service.handleEvent({session_epoch: 1}), NotYetPortedError)
+  await assert.rejects(
+    () => service.handleEvent({
+      kind: 'response_cancel_rejected',
+      session_epoch: 1,
+      response_id: 'r-1',
+      cancel_request_id: 'cancel-1',
+      reason: 'no_active_response',
+    }),
+    NotYetPortedError,
+  )
 })
 
 test('the guard history arms are the measured ones, and nothing else', () => {
@@ -380,3 +389,175 @@ test('the retry budget is per item, not global', async () => {
   )
   assert.equal(service.stopped, false)
 })
+
+test('the stop flag is a real AbortSignal, because the runtime registers a listener on it', async () => {
+  // The finding this test exists for: a look-alike carrying only `aborted` throws
+  // `TypeError: addEventListener is not a function` inside `serve`, which the task guard then reports
+  // as a provider failure -- so the service would stop on its first `start()`.
+  let received: AbortSignal | undefined
+  const service = new RealtimeService({
+    ...queueOnlyOptions(),
+    session: {
+      connect: () => Promise.resolve(),
+    } as unknown as RealtimeSession,
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      events: () => emptyStream(),
+      close: () => Promise.resolve(),
+    },
+    runtime: {
+      ...queueOnlyOptions().runtime,
+      serve: (signal: AbortSignal) => {
+        received = signal
+        // Exactly what CausalRuntime.serve does first.
+        signal.addEventListener('abort', () => undefined, {once: true})
+        return new Promise<void>(resolve => {
+          signal.addEventListener('abort', () => resolve(), {once: true})
+        })
+      },
+    },
+  })
+  await service.start()
+  assert.ok(received instanceof AbortSignal, 'the runtime must be handed a real AbortSignal')
+  assert.equal(service.stopped, false, 'start must not have tripped the failure path')
+  await service.close()
+  assert.equal(service.stopped, true)
+  assert.equal(received.aborted, true, 'close must abort the signal the runtime is watching')
+})
+
+test('start after close works, because the stop flag is replaced rather than reset', async () => {
+  // An AbortController cannot be un-aborted, so a service that kept one would never start again.
+  const signals: AbortSignal[] = []
+  const options = {
+    ...queueOnlyOptions(),
+    session: {connect: () => Promise.resolve()} as unknown as RealtimeSession,
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      events: () => emptyStream(),
+      close: () => Promise.resolve(),
+    },
+  }
+  const service = new RealtimeService({
+    ...options,
+    runtime: {
+      ...options.runtime,
+      serve: (signal: AbortSignal) => {
+        signals.push(signal)
+        return new Promise<void>(resolve => {
+          signal.addEventListener('abort', () => resolve(), {once: true})
+        })
+      },
+    },
+  })
+  await service.start()
+  await service.close()
+  await service.start()
+  assert.equal(signals.length, 2)
+  assert.equal(signals[0]!.aborted, true)
+  assert.equal(signals[1]!.aborted, false, 'the second run gets a signal that is not already aborted')
+  assert.equal(service.stopped, false)
+  await service.close()
+})
+
+test('close returns even when a task stays parked, and says so', async () => {
+  // A JavaScript promise cannot be cancelled the way an asyncio task can. A loop that ignored its
+  // abort signal would make `close` wait forever, and a service that never finishes closing is worse
+  // than one that names the task it could not stop.
+  const diagnostics: string[] = []
+  const service = new RealtimeService({
+    ...queueOnlyOptions(),
+    session: {connect: () => Promise.resolve()} as unknown as RealtimeSession,
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      events: () => emptyStream(),
+      close: () => Promise.resolve(),
+    },
+    runtime: {
+      ...queueOnlyOptions().runtime,
+      // Deliberately ignores the signal.
+      serve: () => new Promise<void>(() => undefined),
+    },
+    onDiagnostic: line => diagnostics.push(line),
+  })
+  await service.start()
+  const started = Date.now()
+  await service.close()
+  assert.ok(Date.now() - started < 5_000, 'close must not wait forever')
+  assert.equal(service.stopped, true)
+  assert.equal(
+    diagnostics.some(line => line.includes('shutdown_tasks_abandoned')),
+    true,
+    'a task that could not be stopped has to be reported, not hidden',
+  )
+})
+
+test('a provider stream parked at shutdown does not hold close open', async () => {
+  // The normal shutdown case: the provider has nothing to say and the iterator is suspended. It gets
+  // the stop signal precisely so it can unpark itself.
+  const service = new RealtimeService({
+    ...queueOnlyOptions(),
+    session: {connect: () => Promise.resolve()} as unknown as RealtimeSession,
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      events: (signal: AbortSignal) => parkedStream(signal),
+      close: () => Promise.resolve(),
+    },
+    runtime: {
+      ...queueOnlyOptions().runtime,
+      serve: (signal: AbortSignal) => new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => resolve(), {once: true})
+      }),
+    },
+    onDiagnostic: () => undefined,
+  })
+  await service.start()
+  const started = Date.now()
+  await service.close()
+  assert.ok(Date.now() - started < 5_000)
+  assert.equal(service.stopped, true)
+})
+
+test('a provider close failure is raised, after every task has been dealt with', async () => {
+  // A close that failed still has to leave the service disconnected and its tasks stopped, so the
+  // failure is held and re-raised at the very end rather than short-circuiting the shutdown.
+  let serveAborted = false
+  const service = new RealtimeService({
+    ...queueOnlyOptions(),
+    session: {connect: () => Promise.resolve()} as unknown as RealtimeSession,
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      events: () => emptyStream(),
+      close: () => Promise.reject(new Error('transport refused to close')),
+    },
+    runtime: {
+      ...queueOnlyOptions().runtime,
+      serve: (signal: AbortSignal) => new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => {
+          serveAborted = true
+          resolve()
+        }, {once: true})
+      }),
+    },
+    onDiagnostic: () => undefined,
+  })
+  await service.start()
+  await assert.rejects(() => service.close(), /transport refused to close/u)
+  assert.equal(service.stopped, true, 'still stopped')
+  assert.equal(serveAborted, true, 'the runtime task was still aborted')
+})
+
+/** A stream that ends immediately, which the receive loop treats as a provider that is gone. */
+async function* emptyStream(): AsyncGenerator<never> {
+  // Nothing to yield.
+}
+
+/** A stream that yields nothing and stays suspended until the stop signal fires. */
+async function* parkedStream(signal: AbortSignal): AsyncGenerator<never> {
+  await new Promise<void>(resolve => {
+    if (signal.aborted) {
+      resolve()
+      return
+    }
+    signal.addEventListener('abort', () => resolve(), {once: true})
+  })
+}

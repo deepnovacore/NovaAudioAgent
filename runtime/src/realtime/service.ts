@@ -29,18 +29,30 @@ import { USER_PRIORITY } from '../memory.js'
 import type { PlaybackCompletion, PlaybackGeneration } from '../playback.js'
 import type { WakeReason } from '../slots.js'
 import type { CompiledTools } from '../tool-schema.js'
-import type { RealtimeRuntimeBridge } from './bridge.js'
-import type { HostContextItem, HostResponseIntent } from './protocol.js'
+import type { RealtimeRuntimeBridge, ToolAcceptance, ToolCallReady } from './bridge.js'
+import type {
+  HostContextItem,
+  HostResponseIntent,
+  RealtimeProviderEvent,
+} from './protocol.js'
 import { ItemDeliveryUncertainError } from './protocol.js'
 import { RealtimeDeliveryError, type RealtimeSession } from './session.js'
-import type { CaptionFrame } from './session-state.js'
+import { MAX_CONTINUATION_TASK_SUMMARY, type CaptionFrame } from './session-state.js'
 import {
+  MAX_PENDING_TOOL_REFUSALS,
+  MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS,
+  MAX_TRACKED_TOOL_CALLS,
   MAX_UNCERTAIN_DELIVERY_RETRIES,
   PREEMPT_MIN_PRIORITY,
   USER_HOLD_MAX_S,
+  callKey,
   compareQueuedHostResponses,
+  continuationBatch,
+  semanticAcknowledgement,
+  toolCallState,
   type CodexState,
   type ContinuationBatch,
+  type DeferredOriginToolCall,
   type GuardActivationAuthority,
   type GuardHistoryRecovery,
   type GuardPreemption,
@@ -55,15 +67,25 @@ import type { RealtimeTelemetry } from './telemetry.js'
 /** The runtime surface the service reads. Thirteen call sites in the oracle, mostly reads. */
 export interface ServiceRuntime {
   readonly clock: Clock
-  readonly executors: ReadonlyMap<string, {readonly manifest: {readonly policy: {readonly priority: number; readonly suggest?: boolean}}}>
+  readonly executors: ReadonlyMap<
+    string,
+    {readonly manifest: {readonly policy: {readonly priority: number; readonly suggest?: boolean}}}
+  >
   observe(observer: (event: unknown, reason: WakeReason) => void): () => void
-  serve(stop: {readonly aborted: boolean}): Promise<void>
+  serve(stop: AbortSignal): Promise<void>
 }
 
 /** The provider surface the service uses directly: three calls, everything else via the session. */
 export interface ServiceProvider {
   sendAudio(pcm: Uint8Array): Promise<void>
-  events(): AsyncIterable<{readonly session_epoch: number}>
+  /**
+   * The event stream.
+   *
+   * Takes the stop signal because a parked stream is the normal case at shutdown: the provider has
+   * nothing to say and the iterator is suspended. Without the signal, `close()` would wait on an
+   * iteration that cannot be cancelled from outside.
+   */
+  events(signal: AbortSignal): AsyncIterable<RealtimeProviderEvent>
   close(): Promise<void>
 }
 
@@ -93,6 +115,14 @@ export interface RealtimeServiceOptions {
  * confirmation fails with a name instead of quietly behaving as if the feature were off. Silence
  * there would be indistinguishable from correctness.
  */
+/**
+ * How long `close` waits for a task that is not responding to its abort signal.
+ *
+ * Short: every loop here checks the signal at its next suspension point, so a task still running
+ * after this is stuck rather than slow, and waiting longer would only delay the diagnostic.
+ */
+const SHUTDOWN_GRACE_MS = 250
+
 export class NotYetPortedError extends Error {
   constructor(surface: string) {
     super(`${surface} is not ported yet (service.py family L/I)`)
@@ -138,7 +168,14 @@ export class RealtimeService {
    */
   readonly #continuationDriveLock = new Mutex()
   readonly #deliveryReady = new Signal()
-  readonly #stop = new AbortSignalLike()
+  /**
+   * The stop flag, as a real `AbortController`.
+   *
+   * Not a look-alike carrying only `aborted`: the runtime's `serve` registers an abort listener on
+   * whatever it is handed, so anything less than the real thing throws on the first `start()`.
+   * Replaced on each `start()` rather than reset, because an `AbortController` cannot be un-aborted.
+   */
+  #stop = new AbortController()
 
   #unsubscribe: (() => void) | null = null
   #tasks: Promise<void>[] = []
@@ -154,6 +191,25 @@ export class RealtimeService {
   readonly #continuationFifo: string[] = []
   readonly #semanticAcknowledgements = new Map<string, SemanticAcknowledgement>()
   readonly #audioStarted = new Set<string>()
+  /**
+   * Slots promised to calls admitted but not yet acknowledged.
+   *
+   * Counted against the same bound as the acknowledgements themselves, so two calls admitted back to
+   * back cannot both be promised a slot only one of them can have.
+   */
+  #semanticAcknowledgementReservations = 0
+  /** User items whose transcript has not arrived, oldest first. */
+  readonly #unboundUserOriginItems: string[] = []
+  /** `(epoch, response)` -> the user item that response is answering. */
+  readonly #responseUserOriginItems = new Map<string, string>()
+  /** User item -> the memory ref its transcript produced. LRU by touch. */
+  readonly #userOriginRefs = new Map<string, string>()
+  /** Tool calls waiting for the transcript that would justify them. */
+  readonly #originDeferredToolCalls: DeferredOriginToolCall[] = []
+  /** R105: delegate id -> the call key waiting on its synchronous result. */
+  readonly #pendingSync = new Map<string, string>()
+  #awaitingUserOrigin = false
+  #userOriginPreexistingResponseId: string | null = null
 
   constructor(options: RealtimeServiceOptions) {
     const recovery = options.guardHistoryRecovery ?? 'none'
@@ -194,7 +250,7 @@ export class RealtimeService {
   }
 
   get stopped(): boolean {
-    return this.#stop.aborted
+    return this.#stop.signal.aborted
   }
 
   /** What the host told the provider about each live tool call, in admission order. */
@@ -236,11 +292,13 @@ export class RealtimeService {
   async start(): Promise<void> {
     await this.connect()
     if (this.#tasks.length > 0) return
-    this.#stop.reset()
+    // A fresh controller: an aborted one cannot be reused, and `start` after `close` has to work.
+    this.#stop = new AbortController()
+    const signal = this.#stop.signal
     this.#tasks = [
-      this.#guardTask(this.#receiveLoop()),
-      this.#guardTask(this.#deliveryLoop()),
-      this.#guardTask(this.#runtime.serve(this.#stop)),
+      this.#guardTask(this.#receiveLoop(signal)),
+      this.#guardTask(this.#deliveryLoop(signal)),
+      this.#guardTask(this.#runtime.serve(signal)),
     ]
   }
 
@@ -273,8 +331,17 @@ export class RealtimeService {
     }
     const tasks = this.#tasks
     this.#tasks = []
-    await Promise.allSettled(tasks)
+    // Bounded. A promise cannot be cancelled from outside the way an asyncio task can, so a loop that
+    // ignores the abort would make `close` wait forever -- and a service that never finishes closing
+    // is worse than one that reports a task it could not stop. The loops all observe the signal, so
+    // reaching the timeout means one of them is genuinely stuck.
+    const abandoned = await settleWithin(tasks, SHUTDOWN_GRACE_MS)
     this.#connected = false
+    if (abandoned > 0) {
+      this.#onDiagnostic(
+        `[realtime-diagnostic] shutdown_tasks_abandoned count=${abandoned}`,
+      )
+    }
     if (closeFailure !== null) throw asError(closeFailure.cause)
   }
 
@@ -594,11 +661,14 @@ export class RealtimeService {
    * epoch that changed means a reconnect replaced the stream, so it re-subscribes. A stream that
    * ended having yielded nothing is a provider that is simply gone.
    */
-  async #receiveLoop(): Promise<void> {
-    while (!this.#stop.aborted) {
+  async #receiveLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
       const streamEpoch = this.session.sessionEpoch
       let received = false
-      for await (const event of this.#provider.events()) {
+      // The signal goes to the provider: at shutdown the stream is normally parked with nothing to
+      // say, and an iterator suspended in `await` cannot be stopped from out here.
+      for await (const event of this.#provider.events(signal)) {
+        if (signal.aborted) return
         if (event.session_epoch !== this.session.sessionEpoch) continue
         received = true
         try {
@@ -612,9 +682,9 @@ export class RealtimeService {
             throw cause
           }
         }
-        if (this.#stop.aborted) return
+        if (this.#stop.signal.aborted) return
       }
-      if (this.#stop.aborted || this.#providerFailed) return
+      if (this.#stop.signal.aborted || this.#providerFailed) return
       if (this.session.sessionEpoch !== streamEpoch) continue
       if (!received) return
     }
@@ -626,11 +696,13 @@ export class RealtimeService {
    * A delivery failure is reported and the loop continues: one item the provider refused must not
    * take down the loop that would deliver the next one.
    */
-  async #deliveryLoop(): Promise<void> {
-    while (!this.#stop.aborted) {
-      await this.#deliveryReady.wait()
+  async #deliveryLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      // Raced against the signal, not just checked after: the wait is where this loop spends almost
+      // all of its time, and a latch nobody sets again would hold it past shutdown.
+      await this.#deliveryReady.wait(signal)
       this.#deliveryReady.clear()
-      if (this.#stop.aborted) continue
+      if (signal.aborted) return
       try {
         await this.flushHostItems()
         // R105: a sync resolution may have made a held batch ready. The drive is reentrancy-safe --
@@ -646,9 +718,209 @@ export class RealtimeService {
     }
   }
 
-  handleEvent(event: {readonly session_epoch: number}): Promise<void> {
-    void event
-    return Promise.reject(new NotYetPortedError('provider event ingestion'))
+  /**
+   * Ingest one provider event.
+   *
+   * The shape is a sequence of `if isinstance` blocks in the oracle and stays one here, deliberately:
+   * a single event can be several things at once to this layer -- a `ResponseStarted` binds a user
+   * origin *and* a semantic acknowledgement *and* a continuation -- so a switch that ran one arm per
+   * event would have to duplicate the shared tail.
+   *
+   * Two events never reach the session at all. A cancel rejection is Guard's to arbitrate, and a
+   * provider error is about the transport rather than the conversation.
+   *
+   * The tail is the part worth reading twice: after everything an event implies has been recorded,
+   * continuations are driven (only if the session accepted it -- a rejected event changed nothing to
+   * speak about) and then a delivery pass runs unconditionally, because the floor may have opened even
+   * for an event the session refused.
+   */
+  async handleEvent(event: RealtimeProviderEvent): Promise<void> {
+    if (event.kind === 'response_cancel_rejected') {
+      // Guard's to arbitrate: a rejected cancel means the provider kept speaking through a preemption.
+      throw new NotYetPortedError('guard cancel rejection')
+    }
+    if (event.kind === 'provider_error') {
+      this.#onDiagnostic(
+        `[realtime-diagnostic] provider_error code=${event.code} recoverable=${event.recoverable}`,
+      )
+      if (event.recoverable) {
+        await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+        this.#clearCaptions()
+      } else {
+        this.#providerFailed = true
+        this.#urgentHostResponseOwner = null
+        this.#guardPreemption = null
+        this.#stop.abort()
+      }
+      return
+    }
+
+    if (this.#telemetry !== undefined) {
+      if (event.kind === 'response_started') {
+        this.#telemetry.record('provider.response_started', {response_id: event.response_id})
+      } else if (event.kind === 'response_audio_delta') {
+        // First delta only: the metric is time-to-first-audio, and recording every delta would make
+        // it a throughput counter instead.
+        if (!this.#audioStarted.has(event.response_id)) {
+          this.#audioStarted.add(event.response_id)
+          this.#telemetry.record('provider.first_audio_delta', {response_id: event.response_id})
+        }
+      } else if (event.kind === 'response_terminal') {
+        this.#audioStarted.delete(event.response_id)
+      }
+    }
+
+    const accepted = await this.session.accept(event)
+
+    if (this.#guardPreemption !== null) throw new NotYetPortedError('guard turn tracking')
+    if (this.#urgentHostResponseOwner !== null) throw new NotYetPortedError('urgent owner binding')
+
+    if (event.kind === 'response_started' && accepted) {
+      // Only for a response with no events yet: one that already has them has been bound, and
+      // rebinding would take a second user turn for the same response.
+      if (this.session.responseEventIds(event.response_id).length === 0) {
+        this.#bindResponseUserOrigin(event.response_id)
+      }
+      this.#bindContinuation(event.response_id)
+    }
+
+    if (this.#onCaption !== undefined) {
+      const caption = this.session.captionFor(
+        event,
+        event.kind === 'user_transcript_final' ? {accepted} : undefined,
+      )
+      if (caption !== null) this.#onCaption(caption)
+    }
+
+    if (event.kind === 'user_speech_started' && accepted) {
+      if (this.#providerEpochNeedingActivation === event.session_epoch) {
+        this.#providerEpochNeedingActivation = null
+      }
+      this.#providerReconnectSourceEpoch = null
+      // Qwen may finish its function call before emitting this turn's transcript final. Do not let
+      // that call bind to provider-authored placeholder text or the previous user turn.
+      this.#awaitingUserOrigin = true
+      this.#userOriginPreexistingResponseId = this.session.activeProviderResponseId
+      if (event.provider_item_id !== null) {
+        this.#rememberUnboundUserOrigin(event.provider_item_id)
+      }
+    }
+
+    if (event.kind === 'response_terminal' && accepted) {
+      const generation = this.session.currentGeneration
+      if (
+        generation !== null
+        && generation.session_epoch === event.session_epoch
+        && generation.response_id === event.response_id
+      ) {
+        this.#onProviderTerminal(generation)
+      }
+      this.#finishContinuation(event)
+      this.#finishOrigin(event.response_id)
+    }
+
+    if (event.kind === 'user_transcript_final') {
+      if (accepted) {
+        if (this.#providerEpochNeedingActivation === event.session_epoch) {
+          this.#providerEpochNeedingActivation = null
+        }
+        this.#providerReconnectSourceEpoch = null
+        const originRef = await this.#bridge.acceptUserTranscript(event.text)
+        this.#rememberUserOriginRef(event.item_id, originRef)
+        this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
+        if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
+        await this.#releaseDeferredOriginCalls(event.item_id, originRef)
+      }
+    } else if (event.kind === 'user_transcript_failed') {
+      if (accepted) {
+        // The transcript will never arrive, so anything waiting on it is waiting forever. Released
+        // with a null ref: the calls still need an answer, and the bridge refuses them for want of
+        // evidence rather than this layer dropping them silently.
+        const index = this.#unboundUserOriginItems.indexOf(event.item_id)
+        if (index !== -1) this.#unboundUserOriginItems.splice(index, 1)
+        for (const [key, itemId] of [...this.#responseUserOriginItems.entries()]) {
+          if (itemId === event.item_id) this.#responseUserOriginItems.delete(key)
+        }
+        this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
+        if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
+        await this.#releaseDeferredOriginCalls(event.item_id, null)
+      }
+    } else if (event.kind === 'tool_call_ready') {
+      if (!accepted) return
+      await this.#routeToolCall(event)
+    }
+
+    if (accepted) await this.driveContinuations()
+    await this.#deliveryPass()
+  }
+
+  /**
+   * Decide whether a tool call can be handled now, or has to wait for its evidence.
+   *
+   * Three cases, in the order the oracle checks them. If the response already has a bound user item,
+   * the call has its evidence -- unless the transcript for that item has not landed, in which case it
+   * waits. If no item is bound but a user turn is in flight, the call may belong to *that* turn, and
+   * the question becomes whether the response it names is the one that turn will answer. If nothing is
+   * pending at all, the call has whatever evidence it is going to get.
+   *
+   * The deferral queue is bounded. Full means the provider is producing calls faster than transcripts
+   * arrive, and no amount of waiting will fix it -- reconnecting is the way back to a session whose
+   * state can be reasoned about.
+   */
+  async #routeToolCall(event: ToolCallReady): Promise<void> {
+    const activeResponseId = this.session.activeProviderResponseId
+    const observedResponseId = event.response_id ?? activeResponseId
+    const originItemId = observedResponseId === null
+      ? undefined
+      : this.#responseUserOriginItems.get(callKey(event.session_epoch, observedResponseId))
+
+    if (originItemId !== undefined) {
+      const originRef = this.#userOriginRefs.get(originItemId)
+      if (originRef !== undefined) {
+        await this.#handleToolCall(event, {
+          observedProviderResponseId: observedResponseId,
+          originRef,
+        })
+      } else if (this.#originDeferredToolCalls.length >= MAX_PENDING_TOOL_REFUSALS) {
+        await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+      } else {
+        this.#originDeferredToolCalls.push({
+          event,
+          response_id: observedResponseId!,
+          user_item_id: originItemId,
+        })
+      }
+      return
+    }
+
+    if (this.#awaitingUserOrigin) {
+      // Whether the response this call names is the one the in-flight user turn will answer. If it is
+      // not -- a different response, a finished one, or one already fenced -- the call is not waiting
+      // on that turn and holding it back would delay it for evidence it was never going to get.
+      const originIsActive = observedResponseId !== null
+        && activeResponseId === observedResponseId
+        && this.session.providerTurnPhase(observedResponseId) === 'active'
+        && !this.session.providerTurnWasFenced(observedResponseId)
+      if (observedResponseId === this.#userOriginPreexistingResponseId) {
+        // The response was already running when the user started speaking, so it cannot be answering
+        // them: handle it now with whatever evidence it has.
+        await this.#handleToolCall(event)
+      } else if (!originIsActive) {
+        await this.#handleToolCall(event)
+      } else if (this.#originDeferredToolCalls.length >= MAX_PENDING_TOOL_REFUSALS) {
+        await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+      } else {
+        // Non-null by construction: `originIsActive` above required it.
+        this.#originDeferredToolCalls.push({
+          event,
+          response_id: observedResponseId,
+          user_item_id: null,
+        })
+      }
+      return
+    }
+
+    await this.#handleToolCall(event)
   }
 
   /**
@@ -661,7 +933,7 @@ export class RealtimeService {
   async #guardTask(task: Promise<void>): Promise<void> {
     try {
       await task
-      if (!this.#stop.aborted) this.#taskFailed()
+      if (!this.#stop.signal.aborted) this.#taskFailed()
     } catch (cause) {
       this.#onDiagnostic(`[realtime-diagnostic] task_failure type=${diagnosticName(cause)}`)
       this.#taskFailed()
@@ -678,6 +950,569 @@ export class RealtimeService {
 
   #reportDeliveryFailure(failure: RealtimeDeliveryError): void {
     this.#onDiagnostic(`[realtime-diagnostic] delivery_failure type=${diagnosticName(failure)}`)
+  }
+
+
+  // ---------------------------------------------------------------------------------------------
+  // Family H: binding a tool call to the user turn that justifies it.
+  //
+  // A tool proposal needs evidence, and the evidence is the user transcript of the turn the model was
+  // responding to. The provider does not hand those over together -- Qwen can finish a function call
+  // before emitting the turn's transcript final -- so the binding is built here from two streams that
+  // arrive out of order. Getting it wrong does not fail loudly; it attaches a proposal to the
+  // *previous* user turn, which is precisely the kind of citation the origin check exists to stop.
+  // ---------------------------------------------------------------------------------------------
+
+  /** Remember a user item whose transcript has not arrived, so a later response can claim it. */
+  #rememberUnboundUserOrigin(itemId: string): void {
+    if (this.#unboundUserOriginItems.includes(itemId)) return
+    this.#unboundUserOriginItems.push(itemId)
+    while (this.#unboundUserOriginItems.length > MAX_TRACKED_TOOL_CALLS) {
+      this.#unboundUserOriginItems.shift()
+    }
+  }
+
+  /**
+   * Claim the oldest unbound user item for this response.
+   *
+   * Oldest first, and only once per response: responses and user turns pair up in order, and a
+   * response that grabbed a newer item would leave the older one to be claimed by a later response
+   * that did not cause it.
+   */
+  #bindResponseUserOrigin(responseId: string): void {
+    if (this.#unboundUserOriginItems.length === 0) return
+    const key = callKey(this.session.sessionEpoch, responseId)
+    if (this.#responseUserOriginItems.has(key)) return
+    const itemId = this.#unboundUserOriginItems.shift()
+    if (itemId === undefined) return
+    this.#responseUserOriginItems.set(key, itemId)
+    this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
+    if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
+    while (this.#responseUserOriginItems.size > MAX_TRACKED_TOOL_CALLS) {
+      const oldest = this.#responseUserOriginItems.keys().next()
+      if (oldest.done === true) break
+      this.#responseUserOriginItems.delete(oldest.value)
+    }
+  }
+
+  /** Record the memory ref a transcript produced, LRU by touch. */
+  #rememberUserOriginRef(itemId: string, originRef: string): void {
+    this.#userOriginRefs.delete(itemId)
+    this.#userOriginRefs.set(itemId, originRef)
+    while (this.#userOriginRefs.size > MAX_TRACKED_TOOL_CALLS) {
+      const oldest = this.#userOriginRefs.keys().next()
+      if (oldest.done === true) break
+      this.#userOriginRefs.delete(oldest.value)
+    }
+  }
+
+  /**
+   * Run the tool calls that were waiting for this transcript.
+   *
+   * Two kinds of waiter. One names the user item it needs, and is released when that item arrives.
+   * The other could not be keyed at all -- it arrived before any item was known -- and those are
+   * released as a batch, all from the same response, but only if no keyed waiter matched: a keyed
+   * match means the transcript belongs to a specific call, and releasing the unkeyed batch alongside
+   * it would hand them evidence that is not theirs.
+   *
+   * The epoch is re-read each iteration. Handling one call can reconnect, and every remaining call
+   * belongs to a session that no longer exists.
+   */
+  async #releaseDeferredOriginCalls(itemId: string, originRef: string | null): Promise<void> {
+    const releaseEpoch = this.session.sessionEpoch
+    const deferred = [...this.#originDeferredToolCalls]
+    this.#originDeferredToolCalls.length = 0
+    const hasKeyedMatch = deferred.some(entry => entry.user_item_id === itemId)
+    const unkeyedResponseId = hasKeyedMatch
+      ? null
+      : deferred.find(entry => entry.user_item_id === null)?.response_id ?? null
+    for (const entry of deferred) {
+      if (this.session.sessionEpoch !== releaseEpoch) return
+      const matchesKeyed = entry.user_item_id === itemId
+      const matchesUnkeyedBatch = entry.user_item_id === null
+        && entry.response_id === unkeyedResponseId
+      if (!matchesKeyed && !matchesUnkeyedBatch) {
+        this.#originDeferredToolCalls.push(entry)
+        continue
+      }
+      await this.#handleToolCall(entry.event, {
+        observedProviderResponseId: entry.response_id,
+        originRef,
+      })
+    }
+  }
+
+  /** Where a batch's originating response ended up, collapsed to the four states a batch tracks. */
+  #originStatus(responseId: string): ContinuationBatch['origin_status'] {
+    const phase = this.session.providerTurnPhase(responseId)
+    // `cancel_requested` is still active: the cancel has been asked for, not observed, and treating
+    // it as cancelled would abandon a batch whose response may yet complete normally.
+    if (phase === 'active' || phase === 'cancel_requested') return 'active'
+    if (phase === 'failed') return 'failed'
+    if (phase === 'cancelled' || this.session.providerTurnWasFenced(responseId)) return 'cancelled'
+    return 'completed'
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Family J: admitting one tool call.
+  // ---------------------------------------------------------------------------------------------
+
+  #toolCallState(key: string): ToolCallState | undefined {
+    return this.#toolCalls.get(key) ?? this.#overflowToolCalls.get(key)
+  }
+
+  /**
+   * Admit one tool call, or record why it could not be.
+   *
+   * The long branch is first-sighting; the short one at the end handles a repeat of a call already
+   * known. Three things can stop an admission and they are genuinely different: *superseded* means
+   * the turn that proposed it is gone, so running it would act on an intention the user has moved
+   * past; *over capacity* means the ledgers are full and admitting more would grow without bound;
+   * and a bridge refusal means the proposal itself was not admissible.
+   */
+  async #handleToolCall(
+    event: ToolCallReady,
+    options: {
+      readonly observedProviderResponseId?: string | null
+      readonly originRef?: string | null
+    } = {},
+  ): Promise<void> {
+    const key = callKey(event.session_epoch, event.call_id)
+    const existing = this.#toolCallState(key)
+    if (existing !== undefined) {
+      // A repeat. Touch it so the LRU keeps it, and finish the one piece of work a repeat can carry:
+      // a superseded call whose output was never confirmed still owes the provider a result.
+      const ledger = this.#toolCalls.has(key) ? this.#toolCalls : this.#overflowToolCalls
+      ledger.delete(key)
+      ledger.set(key, existing)
+      if (
+        existing.observation === 'superseded'
+        && existing.continuation === 'abandoned'
+        && existing.output === 'pending'
+      ) {
+        await this.#confirmSupersededOutput(existing)
+      }
+      return
+    }
+
+    const observedProviderResponseId = options.observedProviderResponseId ?? null
+    const originRef = options.originRef ?? null
+    const activeResponseId = this.session.activeProviderResponseId
+    // The item id is the last resort: a call with no response at all still needs a batch key, and its
+    // own item is the only identifier that is certainly unique.
+    const providerResponseId = observedProviderResponseId
+      ?? event.response_id
+      ?? activeResponseId
+      ?? event.item_id
+    const originUserInputRevision = this.session.providerTurnUserInputRevision(providerResponseId)
+      ?? this.session.userInputRevision
+    const originPhase = this.session.providerTurnPhase(providerResponseId)
+    const hasProviderOrigin = event.response_id !== null || activeResponseId !== null
+
+    // Two different questions. When the caller already resolved which response this belongs to, the
+    // only thing left to ask is whether that response survived. When it did not, the call has to be
+    // matched against the provider's current turn first -- and a call naming a response that is not
+    // the active one is describing a turn that has already been replaced.
+    const superseded = observedProviderResponseId !== null
+      ? (
+        originPhase === 'cancelled'
+        || originPhase === 'failed'
+        || this.session.providerTurnWasFenced(providerResponseId)
+      )
+      : (
+        (event.response_id === null && activeResponseId === null)
+        || (
+          event.response_id !== null
+          && activeResponseId !== null
+          && activeResponseId !== event.response_id
+        )
+        || (
+          hasProviderOrigin
+          && (
+            (originPhase !== null && originPhase !== 'active')
+            || this.session.providerTurnWasFenced(providerResponseId)
+          )
+        )
+      )
+
+    if (
+      this.#toolCalls.size >= MAX_TRACKED_TOOL_CALLS
+      || this.#overflowToolCalls.size >= MAX_PENDING_TOOL_REFUSALS
+    ) {
+      this.#pruneTerminalToolState()
+    }
+    const callOverCapacity = this.#toolCalls.size >= MAX_TRACKED_TOOL_CALLS
+    const binding = this.#tools.bindings.get(event.name)
+    // A delegated call will eventually need to be spoken about, so its acknowledgement slot is
+    // reserved *before* admission -- admitting work the agent could never mention is worse than
+    // refusing it.
+    const requiresSemanticAcknowledgement = !superseded
+      && binding?.kind === 'delegate'
+      && binding.sync_result !== true
+    let semanticReserved = false
+    if (!callOverCapacity && requiresSemanticAcknowledgement) {
+      semanticReserved = this.#reserveSemanticAcknowledgement()
+    }
+    const overCapacity = callOverCapacity
+      || (requiresSemanticAcknowledgement && !semanticReserved)
+    if (overCapacity && this.#overflowToolCalls.size >= MAX_PENDING_TOOL_REFUSALS) {
+      // Both ledgers full of refusals the provider has not acknowledged. The session is no longer
+      // tracking reality, and reconnecting is the only way back to a state that can be reasoned about.
+      await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+      return
+    }
+
+    let acceptance: ToolAcceptance
+    if (superseded) {
+      acceptance = this.#supersededAcceptance(event)
+    } else if (overCapacity) {
+      acceptance = this.#overCapacityAcceptance(event)
+    } else {
+      try {
+        acceptance = originRef === null
+          ? this.#bridge.acceptToolCall(event)
+          : this.#bridge.acceptToolCall(event, {originRef})
+      } catch (cause) {
+        // The reservation was taken on the assumption the admission would happen. It did not, and a
+        // reservation nobody releases is a slot permanently unavailable to every later call.
+        if (semanticReserved) this.#semanticAcknowledgementReservations -= 1
+        throw cause
+      }
+    }
+
+    this.#recordToolAdmission({
+      logicalName: binding?.logical_name ?? null,
+      acceptance,
+      superseded,
+    })
+    const state: ToolCallState = toolCallState({
+      acceptance,
+      logical_name: binding?.logical_name ?? null,
+      provider_response_id: providerResponseId,
+      provider_session_epoch: event.session_epoch,
+      origin_user_input_revision: originUserInputRevision,
+      observation: superseded ? 'superseded' : 'observed',
+      dispatch: superseded
+        ? 'not_dispatched'
+        : overCapacity
+          ? 'rejected'
+          : acceptance.inline_fulfilled
+            ? 'fulfilled'
+            : acceptance.accepted
+              ? 'dispatched'
+              : 'rejected',
+    })
+    if (acceptance.inline_fulfilled && acceptance.telemetry !== null) {
+      this.#telemetry?.record('memory.recall', acceptance.telemetry)
+    }
+    if (acceptance.sync_result && acceptance.accepted && acceptance.delegate_id !== null) {
+      state.sync = 'pending'
+      this.#pendingSync.set(acceptance.delegate_id, key)
+    }
+    if (semanticReserved) {
+      try {
+        if (acceptance.accepted && acceptance.delegate_id !== null) {
+          if (this.#semanticAcknowledgement(state) === null) {
+            throw new Error('reserved semantic acknowledgement is unavailable')
+          }
+        }
+      } finally {
+        this.#semanticAcknowledgementReservations -= 1
+      }
+    }
+    if (overCapacity) {
+      this.#overflowToolCalls.set(key, state)
+    } else {
+      this.#toolCalls.set(key, state)
+    }
+
+    const batchKey = callKey(event.session_epoch, providerResponseId)
+    let batch = this.#continuationBatches.get(batchKey)
+    if (
+      superseded
+      && batch !== undefined
+      && (
+        batch.phase === 'requested'
+        || batch.phase === 'bound'
+        || batch.phase === 'terminal'
+        || batch.phase === 'abandoned'
+      )
+    ) {
+      // The batch has already spoken or given up. A superseded latecomer cannot join it, and the only
+      // thing left owed is the tool result the provider is still holding a slot for.
+      state.continuation = 'abandoned'
+      await this.#confirmSupersededOutput(state)
+      return
+    }
+    if (batch === undefined) {
+      batch = continuationBatch(providerResponseId)
+      this.#continuationBatches.set(batchKey, batch)
+      this.#continuationFifo.push(batchKey)
+    }
+    batch.call_keys.push(key)
+    const originStatus = this.#originStatus(providerResponseId)
+    if (superseded) {
+      batch.origin_status = 'cancelled'
+      // A cancel that has been requested but not observed leaves the batch collecting: the response
+      // may still deliver more calls, and closing the batch now would strand them.
+      if (originPhase !== 'cancel_requested') batch.phase = 'ready'
+    } else if (originStatus !== 'active') {
+      batch.origin_status = originStatus
+      batch.phase = 'ready'
+    }
+
+    if (
+      acceptance.accepted
+      && acceptance.delegate_id !== null
+      && acceptance.executor !== null
+      && !acceptance.sync_result
+    ) {
+      const summary = acceptance.response_intent.task_summary
+      const display = typeof summary === 'string' && summary.trim() !== ''
+        ? summary
+        : `${this.#executorDisplayName(acceptance.executor)} background task`
+      this.session.registerDelegate(acceptance.delegate_id, {
+        summary: [...display.trim()].slice(0, MAX_CONTINUATION_TASK_SUMMARY).join(''),
+        state: 'running',
+        channel: acceptance.executor,
+      })
+      if (acceptance.executor === 'codex') {
+        this.#telemetry?.record('codex.dispatch', {delegate_id: acceptance.delegate_id})
+      }
+      this.#publishCodexState()
+    }
+  }
+
+  /**
+   * Drop everything that has reached a terminal state.
+   *
+   * Called when a ledger is about to overflow rather than on a timer: what makes an entry droppable
+   * is that nothing can still refer to it, and that is a property of its state, not its age.
+   */
+  #pruneTerminalToolState(): void {
+    for (const ledger of [this.#toolCalls, this.#overflowToolCalls]) {
+      for (const [key, state] of [...ledger.entries()]) {
+        if (state.final_disposition !== null) ledger.delete(key)
+      }
+    }
+    for (const [key, batch] of [...this.#continuationBatches.entries()]) {
+      if (batch.phase === 'terminal' || batch.phase === 'abandoned') {
+        this.#continuationBatches.delete(key)
+      }
+    }
+    const surviving = this.#continuationFifo.filter(key => this.#continuationBatches.has(key))
+    this.#continuationFifo.length = 0
+    this.#continuationFifo.push(...surviving)
+  }
+
+  #supersededAcceptance(event: ToolCallReady): ToolAcceptance {
+    return this.#refusalAcceptance(event, 'superseded', '{"state":"superseded"}')
+  }
+
+  #overCapacityAcceptance(event: ToolCallReady): ToolAcceptance {
+    return this.#refusalAcceptance(
+      event,
+      'over_capacity',
+      '{"code":"over_capacity","state":"refused"}',
+    )
+  }
+
+  /** A refusal the service authors itself, rather than one the bridge produced. */
+  #refusalAcceptance(event: ToolCallReady, code: string, content: string): ToolAcceptance {
+    const hostItem: HostContextItem = {
+      kind: 'tool_output',
+      host_item_id: this.#idFactory(),
+      event_id: this.#idFactory(),
+      call_id: event.call_id,
+      content,
+    }
+    return {
+      accepted: false,
+      code,
+      host_item: hostItem,
+      response_intent: {kind: 'tool_result', item: hostItem, task_summary: null, origin_spoken: false},
+      delegate_id: null,
+      sync_result: false,
+      executor: null,
+      op: null,
+      inline_fulfilled: false,
+      telemetry: null,
+    }
+  }
+
+  #recordToolAdmission(input: {
+    readonly logicalName: string | null
+    readonly acceptance: ToolAcceptance
+    readonly superseded: boolean
+  }): void {
+    if (this.#telemetry === undefined || input.logicalName === null) return
+    const outcome = input.superseded
+      ? 'superseded'
+      : !input.acceptance.accepted
+        ? 'rejected'
+        : input.acceptance.inline_fulfilled
+          ? 'inline'
+          : input.acceptance.sync_result
+            ? 'sync'
+            : 'delegated'
+    this.#telemetry.record('tool.admission', {logical_name: input.logicalName, outcome})
+  }
+
+  /** Give the provider the result it is holding a slot for, once. */
+  async #confirmSupersededOutput(state: ToolCallState): Promise<void> {
+    if (state.output === 'confirmed') return
+    await this.session.injectToolOutput(state.acceptance.host_item)
+    state.output = 'confirmed'
+    state.final_disposition = 'superseded'
+  }
+
+  #executorDisplayName(channel: string): string {
+    if (channel === 'codex') return 'Codex'
+    return this.#runtime.executors.has(channel) ? channel : channel
+  }
+
+  /**
+   * Tell the renderer whether Codex is working, when that changes.
+   *
+   * Derived from the session's live delegates rather than counted here: the session is what knows
+   * when one finishes, and a separate counter would drift the moment a delegate ended by any route
+   * this layer does not see.
+   */
+  #publishCodexState(): void {
+    const next: CodexState = this.session.snapshot().active_delegates
+      .some(([, record]) => record.channel === 'codex')
+      ? 'running'
+      : 'idle'
+    if (next === this.#codexState) return
+    this.#codexState = next
+    try {
+      this.#onCodexState(next)
+    } catch (cause) {
+      // A renderer that cannot accept the state must not stop the service that produced it.
+      this.#onDiagnostic(`[realtime-diagnostic] codex_state_observer_failed type=${diagnosticName(cause)}`)
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Family N: the acknowledgement a delegated call owes the user.
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * The acknowledgement for one delegated call, creating it if the ledger has room.
+   *
+   * Returns null rather than evicting something live: an acknowledgement still waiting to be spoken
+   * is a promise to the user, and dropping one to make room for another would silently break it. Only
+   * already-delivered entries are reclaimed.
+   */
+  #semanticAcknowledgement(state: ToolCallState): SemanticAcknowledgement | null {
+    const summary = state.acceptance.response_intent.task_summary
+    const delegateId = state.acceptance.delegate_id
+    if (delegateId === null || summary === null) return null
+    const eventId = `background:${delegateId}`
+    const existing = this.#semanticAcknowledgements.get(eventId)
+    if (existing !== undefined) {
+      this.#semanticAcknowledgements.delete(eventId)
+      this.#semanticAcknowledgements.set(eventId, existing)
+      return existing
+    }
+    while (this.#semanticAcknowledgements.size >= MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS) {
+      const deliveredId = [...this.#semanticAcknowledgements.entries()]
+        .find(([, current]) => current.phase === 'delivered')?.[0]
+      if (deliveredId === undefined) return null
+      this.#semanticAcknowledgements.delete(deliveredId)
+    }
+    const channel = state.acceptance.executor
+    if (channel === null) return null
+    const created = semanticAcknowledgement({
+      event_id: eventId,
+      summary: [...summary].slice(0, MAX_CONTINUATION_TASK_SUMMARY).join(''),
+      channel,
+    })
+    created.origin_session_epoch = state.provider_session_epoch
+    created.origin_response_id = state.provider_response_id
+    created.origin_user_input_revision = state.origin_user_input_revision
+    this.#semanticAcknowledgements.set(eventId, created)
+    return created
+  }
+
+  /**
+   * Hold a slot before admitting a call that will need one.
+   *
+   * The reservation counts against the same bound as the acknowledgements themselves, so two calls
+   * admitted back to back cannot both be promised a slot only one of them can have.
+   */
+  #reserveSemanticAcknowledgement(): boolean {
+    while (
+      this.#semanticAcknowledgements.size + this.#semanticAcknowledgementReservations
+      >= MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS
+    ) {
+      const deliveredId = [...this.#semanticAcknowledgements.entries()]
+        .find(([, current]) => current.phase === 'delivered')?.[0]
+      if (deliveredId === undefined) return false
+      this.#semanticAcknowledgements.delete(deliveredId)
+    }
+    this.#semanticAcknowledgementReservations += 1
+    return true
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Family M: batching tool results into one turn.
+  // ---------------------------------------------------------------------------------------------
+
+  /** Bind the head batch to the response that will speak it. */
+  #bindContinuation(responseId: string): void {
+    const head = this.#continuationFifo[0]
+    if (head === undefined) return
+    const batch = this.#continuationBatches.get(head)
+    if (batch?.phase !== 'requested') return
+    batch.phase = 'bound'
+    batch.continuation_response_id = responseId
+    for (const key of batch.call_keys) {
+      const state = this.#toolCallState(key)
+      if (state === undefined) continue
+      state.continuation = 'bound'
+      state.continuation_response_id = responseId
+      const acknowledgement = this.#semanticAcknowledgement(state)
+      if (acknowledgement?.phase === 'pending') {
+        acknowledgement.phase = 'bound'
+        acknowledgement.response_id = responseId
+        acknowledgement.binding = 'continuation'
+      }
+    }
+  }
+
+  /**
+   * Close the head batch when the response that was speaking it ends.
+   *
+   * Only the head, and only if this is the response it was bound to: a terminal for some other
+   * response says nothing about whether this batch was spoken.
+   */
+  #finishContinuation(event: {readonly response_id: string; readonly status: string}): void {
+    const head = this.#continuationFifo[0]
+    if (head === undefined) return
+    const batch = this.#continuationBatches.get(head)
+    if (batch === undefined) return
+    if (batch.phase !== 'bound' || batch.continuation_response_id !== event.response_id) return
+    batch.phase = 'terminal'
+    for (const key of batch.call_keys) {
+      const state = this.#toolCallState(key)
+      if (state === undefined) continue
+      state.continuation = 'terminal'
+      state.final_disposition = !state.acceptance.accepted
+        ? 'refused'
+        : event.status === 'completed'
+          ? 'completed'
+          : 'abandoned'
+    }
+    this.#continuationFifo.shift()
+  }
+
+  /** A collecting batch whose originating response has ended is ready to speak. */
+  #finishOrigin(responseId: string): void {
+    const batch = this.#continuationBatches.get(callKey(this.session.sessionEpoch, responseId))
+    if (batch?.phase !== 'collecting') return
+    batch.origin_status = this.#originStatus(responseId)
+    batch.phase = 'ready'
   }
 
   /** Read-only views the tests and the desktop layer use. */
@@ -901,37 +1736,44 @@ class Signal {
     this.#set = false
   }
 
-  async wait(): Promise<void> {
+  async wait(signal?: AbortSignal): Promise<void> {
     if (this.#set) return
+    if (signal?.aborted === true) return
     await new Promise<void>(resolve => {
       this.#waiting.push(resolve)
+      // Resolves rather than rejects: an interrupted wait is a normal shutdown, and the caller
+      // re-reads the signal immediately afterwards.
+      signal?.addEventListener('abort', () => resolve(), {once: true})
     })
   }
 }
 
 /**
- * The stop flag, shaped like an abort signal so the runtime's `serve` can take it.
+ * Wait for every task, but not forever.
  *
- * Resettable, because `start` after a `close` has to be able to run again -- an `AbortController`
- * cannot be un-aborted.
+ * Returns how many were still running when the grace period ran out. A JavaScript promise cannot be
+ * cancelled the way an asyncio task can, so a loop that ignored its abort signal would make `close`
+ * hang -- and a service that never finishes closing is worse than one that names a task it could not
+ * stop. Every loop here observes the signal, so reaching the timeout means one is genuinely stuck.
  */
-class AbortSignalLike {
-  #aborted = false
-  readonly #waiting: (() => void)[] = []
-
-  get aborted(): boolean {
-    return this.#aborted
-  }
-
-  abort(): void {
-    this.#aborted = true
-    const waiting = this.#waiting.splice(0, this.#waiting.length)
-    for (const resolve of waiting) resolve()
-  }
-
-  reset(): void {
-    this.#aborted = false
-  }
+async function settleWithin(tasks: readonly Promise<void>[], graceMs: number): Promise<number> {
+  if (tasks.length === 0) return 0
+  let outstanding = tasks.length
+  const settled = tasks.map(task => task.then(
+    () => {
+      outstanding -= 1
+    },
+    () => {
+      outstanding -= 1
+    },
+  ))
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<void>(resolve => {
+    timer = setTimeout(resolve, graceMs)
+  })
+  await Promise.race([Promise.all(settled), deadline])
+  if (timer !== undefined) clearTimeout(timer)
+  return outstanding
 }
 
 /** A callback that was not supplied. Named so two of them are not two anonymous empty functions. */

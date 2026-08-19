@@ -14,7 +14,7 @@
 
 import type { HostResponseIntent } from './protocol.js'
 import type { PlaybackGeneration } from '../playback.js'
-import type { ToolAcceptance } from './bridge.js'
+import type { ToolAcceptance, ToolCallReady } from './bridge.js'
 
 /** Longest host fact the provider will be given. Beyond this the model stops attending to it. */
 export const MAX_HOST_FACT_CHARS = 3_000
@@ -197,7 +197,7 @@ export function semanticAcknowledgement(input: {
 
 /** A tool call held back until the user transcript that would justify it arrives. */
 export interface DeferredOriginToolCall {
-  readonly event: unknown
+  readonly event: ToolCallReady
   readonly response_id: string
   readonly user_item_id: string | null
 }

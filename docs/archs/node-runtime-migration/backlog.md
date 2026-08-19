@@ -188,6 +188,30 @@ through both pipelines, plus 261,282 adjacent pairs drawn from every unassigned 
 be a real script. Zero divergences. If a future CPython adopts Unicode 16.0, the "host alone does not
 agree" tests fail and the holdback can be deleted rather than carried indefinitely.
 
+### Corrected in the port: a stop flag that could not be listened to
+
+The first service port carried its own stop flag exposing only `aborted` and `abort()`, on the
+reasoning that it had to be resettable and an `AbortController` cannot be un-aborted. A Codex review
+found the consequence: `CausalRuntime.serve` registers an abort listener on whatever it is handed
+(`causal-runtime.ts:195`), so the look-alike threw `TypeError: addEventListener is not a function` --
+which the task guard then reported as a provider failure. The service would have stopped on its first
+`start()` against the real runtime.
+
+Fixed by using a real `AbortController` and replacing it on each `start()` rather than resetting one.
+
+### Corrected in the port: `close` could wait forever
+
+Python cancels each live task before `gather`. A JavaScript promise cannot be cancelled from outside,
+so the first port's `Promise.allSettled` would hang whenever a loop did not observe its abort -- and a
+service that never finishes closing is worse than one that reports a task it could not stop.
+
+Two halves to the fix. The loops all take the stop signal now, including the provider's `events()`,
+because a parked stream is the *normal* state at shutdown and an iterator suspended in `await` cannot
+be stopped from out here. And `close` waits with a bounded grace period, logging
+`shutdown_tasks_abandoned` with a count rather than hanging, so a genuinely stuck task is named.
+
+Both were verified by reverting each fix and watching a named test go red.
+
 ### Coupling the family split did not predict: delivery reaches Guard
 
 The service port was planned in three batches, with Guard (family L) and project confirmation (family
