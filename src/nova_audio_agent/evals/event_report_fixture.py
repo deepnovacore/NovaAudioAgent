@@ -20,9 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,9 +29,6 @@ FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "event_report"
 #: Test count of the pristine fixture. The harness requires at least this many so a
 #: suite that was deleted, emptied, or made undiscoverable cannot pass by exiting 0.
 EXPECTED_FIXTURE_TESTS = 17
-
-#: Files the worker must not touch. They are the acceptance evidence.
-READ_ONLY_PREFIXES = ("tests/", "README.md")
 
 GATE_TESTS_UNCHANGED = "tests_unchanged"
 GATE_README_UNCHANGED = "readme_unchanged"
@@ -57,15 +52,6 @@ class FixtureTestRun:
     passed: bool
     ran: int
     reason: str
-
-
-@contextmanager
-def create_event_report_workspace() -> Iterator[Path]:
-    """Copy the template into a disposable directory and yield the copy."""
-    with tempfile.TemporaryDirectory(prefix="nova-event-report-") as directory:
-        workspace = Path(directory) / "event_report_task"
-        copy_event_report_fixture(workspace)
-        yield workspace
 
 
 def copy_event_report_fixture(destination: Path) -> Path:

@@ -20,7 +20,6 @@ from nova_audio_agent.runtime import Runtime
 from policies import SIM_POLICIES
 
 USER_WAKE = WakeReason(kind="user_input", priority=100, routing_class="user_awaited")
-AMBIENT_WAKE = WakeReason(kind="handoff", priority=50, routing_class="ambient")
 
 
 def _delegate(delegate_id: str, *, now: float = 0.0, wake: WakeReason = USER_WAKE) -> Delegate:

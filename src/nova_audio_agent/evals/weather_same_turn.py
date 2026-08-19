@@ -147,9 +147,8 @@ class ScenarioReport:
 class ScenarioRecorder:
     """Store only the scenario allowlist with synthetic, monotone references.
 
-    Same posture as ``evals.live_tetris.EvaluationRecorder``: the recorder is the
-    redaction boundary, so an artifact can never carry a field the evaluator does
-    not read.
+    The recorder is the redaction boundary, so an artifact can never carry a field
+    the evaluator does not read.
     """
 
     def __init__(self, *, clock: Clock | None = None) -> None:

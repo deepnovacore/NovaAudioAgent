@@ -1,7 +1,0 @@
-{
-  "initialize": {"method": "initialize", "id": 1, "params": {"clientInfo": {"name": "nova-audio-agent", "version": "1"}}},
-  "thread_start": {"method": "thread/start", "id": 3, "params": {"ephemeral": true, "approvalPolicy": "never"}},
-  "turn_start": {"method": "turn/start", "id": 4, "params": {"threadId": "[INTERNAL]", "input": [{"type": "text", "text": "[REDACTED]"}]}},
-  "turn_steer": {"method": "turn/steer", "id": 5, "params": {"threadId": "[INTERNAL]", "expectedTurnId": "[INTERNAL]", "input": [{"type": "text", "text": "[REDACTED]"}]}},
-  "server_refusal": {"id": 6, "error": {"code": -32601, "message": "Method not implemented"}}
-}

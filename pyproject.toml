@@ -19,8 +19,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "langchain-core>=1.3,<2",
-    "langchain-openai>=1.3,<2",
     "httpx[http2]>=0.27,<1",
     "openai>=1.60",
     "pillow>=11,<13",

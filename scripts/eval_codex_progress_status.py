@@ -237,9 +237,9 @@ class HostFactTelemetry:
 class RecordingProvider:
     """Record what actually entered the provider conversation, changing nothing.
 
-    Same hot-swap posture as ``evals.live_tetris.RecordingCodexAdapter``: a delegating
-    wrapper is installed after assembly, so no production module is modified and the
-    recorded content is the real injected content rather than a reconstruction.
+    A delegating wrapper is installed after assembly, so no production module is
+    modified and the recorded content is the real injected content rather than a
+    reconstruction.
     """
 
     def __init__(self, inner: Any, recorder: ScenarioRecorder) -> None:
