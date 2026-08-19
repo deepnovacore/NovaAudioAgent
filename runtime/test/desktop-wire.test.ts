@@ -290,3 +290,52 @@ test('a non-integer sequence from a programmatic caller is refused', () => {
     /desktop audio sequence is invalid/u,
   )
 })
+
+test('an integer the runtime cannot represent is refused rather than rounded', () => {
+  // Python integers are unbounded; a JavaScript number is not. `9007199254740993` parses to
+  // `9007199254740992` and `Number.isInteger` is perfectly happy with the result -- so without this the
+  // bridge could fence a generation that is not the one the renderer sent.
+  //
+  // A deliberate divergence: the oracle accepts these. Refusing is strictly safer than acting on a
+  // different number than was received, and it is stated here rather than in a golden, because the
+  // golden would have to record the oracle's acceptance.
+  const header = (epoch: string, sequence = '0'): Uint8Array => {
+    const text = `{"utterance_id":"u-1","generation_epoch":${epoch},"sequence":${sequence}}`
+    const bytes = new TextEncoder().encode(text)
+    const out = new Uint8Array(6 + bytes.length + 2)
+    out.set([0x4e, 0x4f, 0x56, 0x41, (bytes.length >> 8) & 0xff, bytes.length & 0xff], 0)
+    out.set(bytes, 6)
+    out.set([0x00, 0x01], 6 + bytes.length)
+    return out
+  }
+  // Exactly at the boundary is fine.
+  assert.equal(decodeAudioFrame(header('9007199254740991')).generation_epoch, 9_007_199_254_740_991)
+  // One past it cannot be represented, so it is refused rather than silently becoming its neighbour.
+  assert.throws(() => decodeAudioFrame(header('9007199254740993')), /generation_epoch is invalid/u)
+  assert.throws(
+    () => decodeAudioFrame(header('1', '9007199254740993')),
+    /sequence is invalid/u,
+  )
+})
+
+test('an escaped key spelling is recognised as the field it decodes to', () => {
+  // `generation_epoch` is `generation_epoch` after parsing. A check reading the raw text would not
+  // match it, and the float would slip through -- which is what a pattern-based version did.
+  const header = (text: string): Uint8Array => {
+    const bytes = new TextEncoder().encode(text)
+    const out = new Uint8Array(6 + bytes.length + 2)
+    out.set([0x4e, 0x4f, 0x56, 0x41, (bytes.length >> 8) & 0xff, bytes.length & 0xff], 0)
+    out.set(bytes, 6)
+    out.set([0x00, 0x01], 6 + bytes.length)
+    return out
+  }
+  assert.throws(
+    () => decodeAudioFrame(header(String.raw`{"utterance_id":"u","generation_epoch":1.0,"sequence":0}`)),
+    /generation_epoch is invalid/u,
+  )
+  assert.equal(
+    decodeAudioFrame(header(String.raw`{"utterance_id":"u","generation_epoch":1,"sequence":0}`))
+      .generation_epoch,
+    1,
+  )
+})

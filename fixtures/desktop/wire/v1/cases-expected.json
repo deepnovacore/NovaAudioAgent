@@ -148,6 +148,17 @@
       "pcm": "0001"
     },
     {
+      "name": "decode-escaped-key-float",
+      "error": "desktop generation_epoch is invalid"
+    },
+    {
+      "name": "decode-escaped-key-integer",
+      "utterance_id": "u",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
       "name": "decode-duplicate-epoch-last-integer",
       "utterance_id": "u-1",
       "generation_epoch": 1,
@@ -457,6 +468,18 @@
         "utterance_id": "u-1",
         "generation_epoch": 1,
         "played_ms": 40
+      }
+    },
+    {
+      "name": "escaped-key-float",
+      "error": "desktop playback generation is invalid"
+    },
+    {
+      "name": "escaped-key-integer",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 1
       }
     },
     {

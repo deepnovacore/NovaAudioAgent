@@ -89,23 +89,24 @@ export function decodeAudioFrame(raw: Uint8Array): PlaybackFrame {
   }
   const split = 6 + headerSize
   if (split > raw.length) throw new DesktopProtocolError('desktop audio frame is truncated')
-  let headerText: string
   let header: unknown
+  let headerText: string
   try {
     headerText = new TextDecoder('utf-8', {fatal: true}).decode(raw.subarray(6, split))
-    header = JSON.parse(headerText)
   } catch {
     throw new DesktopProtocolError('desktop audio header is invalid')
   }
-  // The literal spelling has to be checked against the *text*, because parsing destroys it. Python's
-  // `json.loads` turns `1.0` into a float and `type(value) is not int` then refuses it; JavaScript
-  // turns both `1` and `1.0` into the same number, so a renderer sending `1.0` would be accepted here
-  // and refused there. Checked before the fields are read so the two runtimes refuse the same bytes.
-  requireIntegerLiterals(
-    headerText,
-    ['generation_epoch', 'sequence'],
-    field => new DesktopProtocolError(`desktop ${field} is invalid`),
-  )
+  try {
+    header = parseJsonWithIntegerFields(
+      headerText,
+      ['generation_epoch', 'sequence'],
+      field => new DesktopProtocolError(`desktop ${field} is invalid`),
+    )
+  } catch (cause) {
+    // A refusal from the integer check is specific and kept; a parse failure is not.
+    if (cause instanceof DesktopProtocolError) throw cause
+    throw new DesktopProtocolError('desktop audio header is invalid')
+  }
   // Copied, not referenced: a subarray keeps the whole received buffer alive, and this frame outlives
   // the read that produced it.
   const pcm = new Uint8Array(raw.subarray(split))
@@ -244,31 +245,52 @@ export function deliveryToEvent(completion: PlaybackCompletion): {
 }
 
 /**
- * Refuse a document whose named fields are not written as integers.
+ * Parse JSON, refusing any named field that is not written as an exactly-representable integer.
  *
- * The spelling has to come from the text because parsing destroys it: `json.loads` makes `1.0` a float
- * and the oracle's `type(value) is not int` then refuses it, while `JSON.parse` cannot tell `1.0` from
- * `1`. Without this the same bytes are accepted by one runtime and refused by the other.
+ * Two problems the text cannot be trusted with, and one mechanism for both.
  *
- * The *last* occurrence is the one checked, because that is the value a JSON parser keeps for a
- * duplicated key -- `{"a":1.5,"a":1}` is accepted by both parsers as `1`, so checking the first
- * occurrence would refuse a document the oracle admits. A field name embedded in another key or inside
- * a string value cannot match, because the pattern requires the quote immediately before the name.
+ * **Spelling.** `json.loads` makes `1.0` a float and the oracle's `type(value) is not int` refuses it,
+ * while `JSON.parse` cannot tell `1.0` from `1`. The reviver's `context.source` carries the original
+ * literal, so the distinction survives the parse.
+ *
+ * **Range.** Python integers are unbounded; a JavaScript number is not. `9007199254740993` parses to
+ * `9007199254740992` here, and `Number.isInteger` is perfectly happy with the result -- so a renderer
+ * could have a generation fenced that is not the one it sent. Comparing the source against the parsed
+ * value catches exactly the cases where something was lost.
+ *
+ * This replaced a regex over the raw text, which was bypassable two ways: an escaped key spelling
+ * (`generation_\u0065poch`) decodes to the field name but does not match the pattern, and a duplicated
+ * key resolves to its *last* value in both parsers while a pattern finds the first. The reviver sees
+ * decoded keys and fires once per member with the surviving value, so neither applies.
+ *
+ * Refusing an out-of-range integer is a deliberate divergence: the oracle accepts it. Refusing is
+ * strictly safer than acting on a different number than the renderer sent.
  */
-export function requireIntegerLiterals(
+export function parseJsonWithIntegerFields(
   text: string,
   fields: readonly string[],
   onInvalid: (field: string) => Error,
-): void {
-  for (const field of fields) {
-    const pattern = new RegExp(`"${field}"\\s*:\\s*([^,}\\s]+)`, 'gu')
-    let literal: string | undefined
-    for (const match of text.matchAll(pattern)) literal = match[1]
-    if (literal === undefined) continue
+): unknown {
+  const named = new Set(fields)
+  let invalid: string | null = null
+  const parsed: unknown = JSON.parse(text, function reviver(
+    key: string,
+    value: unknown,
+    context?: {readonly source?: string},
+  ): unknown {
+    if (!named.has(key) || context?.source === undefined) return value
+    const source = context.source
     // `null` is a legal value wherever a field is optional; it is not a number at all.
-    if (literal === 'null') continue
-    if (!/^-?\d+$/u.test(literal)) throw onInvalid(field)
-  }
+    if (source === 'null') return value
+    // Two conditions with one job between them, and the second does most of it: `String(value)` for a
+    // `1.0` source is `"1"`, so the round-trip comparison already rejects a float spelling. The digit
+    // pattern is kept because it states the intent -- and because it is the only thing rejecting a
+    // form like `1e0`, where the round trip happens to agree.
+    if (!/^-?\d+$/u.test(source) || String(value) !== source) invalid ??= key
+    return value
+  })
+  if (invalid !== null) throw onInvalid(invalid)
+  return parsed
 }
 
 function validatePlaybackFrame(frame: PlaybackFrame): void {

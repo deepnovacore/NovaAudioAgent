@@ -265,6 +265,35 @@ Two lessons, both about the harness rather than the code:
   file rather than the service. Five projection mutations were invisible to it. The parity test now
   drives `projectRuntimeEvent` and reads what was queued.
 
+### The integer check had to become a parser, not a pattern
+
+The first two versions of the integer-literal check were a regex over the raw JSON text, and a Codex
+review found two ways past it — after I had already found a third myself:
+
+- **Duplicate keys.** `{"generation_epoch":1.5,"generation_epoch":1}` resolves to `1` in both parsers,
+  but a pattern finds the first occurrence and refused a frame the oracle admits. (Found by asking the
+  question in my own review brief.)
+- **Escaped key spellings.** `"generation_\u0065poch":1.0` decodes to `generation_epoch`, so Python
+  sees a float and refuses. The pattern does not match the escaped spelling, so Node accepted it.
+- **Unrepresentable integers.** `9007199254740993` parses to `9007199254740992` in JavaScript, and
+  `Number.isInteger` is happy with the result — so the bridge could fence a generation that is not the
+  one the renderer sent. `sequence` and `played_ms` had the same silent loss.
+
+All three are gone, because the check now runs inside `JSON.parse`'s reviver. `context.source` carries
+the original literal, the reviver sees *decoded* key names, and it fires once per member with the
+surviving value — so escaping and duplication are both handled by the parser rather than worked around.
+The range problem is caught by comparing `String(value)` against the source: they differ exactly when
+something was lost.
+
+**A deliberate divergence:** the oracle accepts an out-of-range integer, since Python integers are
+unbounded. Node refuses it. Acting on a different number than the renderer sent is worse than refusing
+the frame, and a golden cannot express this because it would have to record the oracle's acceptance —
+so it is a Node test with the reasoning attached.
+
+One redundancy recorded rather than removed: the digit pattern and the round-trip comparison overlap,
+since `String(1)` is `"1"` and never `"1.0"`. The pattern stays because it states the intent, and
+because it is the only thing rejecting `1e0`, where the round trip agrees.
+
 ### The control frame needed the same integer-literal check as the audio header
 
 `{"generation_epoch": 2.0}` on a `playback.done` frame was accepted by the Node port and refused by the

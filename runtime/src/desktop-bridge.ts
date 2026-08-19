@@ -27,7 +27,7 @@ import {
   playbackAlertMessage,
   playbackClearMessage,
   playbackTerminalMessage,
-  requireIntegerLiterals,
+  parseJsonWithIntegerFields,
   validateInputPcm,
   type PublicProjectView,
 } from './desktop-wire.js'
@@ -563,8 +563,16 @@ export function parseClientMessage(
   }
   let value: unknown
   try {
-    value = JSON.parse(raw)
-  } catch {
+    // Only the fields the oracle type-checks as `int`. `t_render_ms` is deliberately absent: it accepts
+    // an int or a float there and coerces with `float()`, so both spellings are legal input.
+    value = parseJsonWithIntegerFields(raw, ['generation_epoch', 'played_ms'], field =>
+      new DesktopProtocolError(
+        field === 'generation_epoch'
+          ? 'desktop playback generation is invalid'
+          : 'desktop playback played_ms is invalid',
+      ))
+  } catch (cause) {
+    if (cause instanceof DesktopProtocolError) throw cause
     throw new DesktopProtocolError('desktop control frame is invalid JSON')
   }
   if (!isPlainObject(value) || typeof value.type !== 'string') {
@@ -582,16 +590,6 @@ export function parseClientMessage(
     return {kind: 'authenticated', payload: {}}
   }
 
-  // The integer fields' literal spelling has to come from the text, because parsing destroys it:
-  // Python's `json.loads` makes `2.0` a float and `type(value) is not int` refuses it, while JavaScript
-  // cannot tell `2.0` from `2`. Without this the same frame is accepted here and refused there.
-  // Only the fields the oracle type-checks as `int`. `t_render_ms` is deliberately absent: it accepts
-  // an int or a float there and coerces with `float()`, so both spellings are legal input.
-  requireIntegerLiterals(raw, ['generation_epoch', 'played_ms'], field => new DesktopProtocolError(
-    field === 'generation_epoch'
-      ? 'desktop playback generation is invalid'
-      : 'desktop playback played_ms is invalid',
-  ))
 
   const kind = value.type
   if (kind === 'speech.onset') {

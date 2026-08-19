@@ -209,6 +209,16 @@
       "bytes": "4e4f5641003e7b227574746572616e63655f6964223a2022752d31222c202267656e65726174696f6e5f65706f636822203a20312c202273657175656e6365223a20307d0001"
     },
     {
+      "name": "decode-escaped-key-float",
+      "kind": "decode_audio",
+      "bytes": "4e4f564100387b227574746572616e63655f6964223a2275222c2267656e65726174696f6e5f65706f6368223a312e302c2273657175656e6365223a307d0001"
+    },
+    {
+      "name": "decode-escaped-key-integer",
+      "kind": "decode_audio",
+      "bytes": "4e4f564100367b227574746572616e63655f6964223a2275222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
+    },
+    {
       "name": "decode-duplicate-epoch-last-integer",
       "kind": "decode_audio",
       "bytes": "4e4f5641004f7b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312e352c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
@@ -582,6 +592,18 @@
       "kind": "parse_client",
       "authenticated": true,
       "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_epoch\":1,\"played_ms\":1.5,\"played_ms\":40}"
+    },
+    {
+      "name": "escaped-key-float",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_\\u0065poch\":1.5}"
+    },
+    {
+      "name": "escaped-key-integer",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_\\u0065poch\":1}"
     },
     {
       "name": "epoch-name-inside-another-key",
