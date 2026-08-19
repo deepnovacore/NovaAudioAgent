@@ -1,9 +1,8 @@
 # Nova Audio Agent Node Differential Fixture Contract
 
 Status: v1 schema plus Python and Node runners active; twenty Python-exported core scenarios match.
-A second family covers the realtime session at the provider-frame level: twenty-three scenarios,
-Python exported and checked, with the Node leg checking the contract but not yet the goldens,
-because the reducer that has to satisfy them is not ported yet.
+A second family covers the realtime session at the provider-frame level: twenty-four scenarios,
+matching on both legs.
 
 ## Purpose
 
@@ -283,10 +282,10 @@ that leaves an id unconsumed or asks for one past the end fails. Both mean the t
 disagree about how much they allocate. In practice this guard is as load-bearing as the goldens: a
 guard removed by mistake usually shows up first as a generation the scenario never declared.
 
-`node_parity` in each manifest says whether the Node leg checks that scenario's golden. While it
-reads `pending-session-port`, only Python does, and a Node test fails the moment a
-`RealtimeSession` is exported while any marker survives. A green build that checks nothing must not
-read as parity.
+`node_parity` in each manifest says whether the Node leg checks that scenario's golden. All
+twenty-four now read `checked`; the marker stays in the contract because the next provider family
+will land its fixtures before its reducer too, and a test fails the moment a reducer is exported
+while any `pending-` marker survives. A green build that checks nothing must not read as parity.
 
 ### Validating the set
 
@@ -320,6 +319,14 @@ makes the contract as load-bearing here as the bytes.
 
 Do this again for any guard added later. A guard no scenario can distinguish is either dead code or
 a hole in the set, and the difference matters.
+
+**Sweep the port too, not only the oracle.** Once `accept` existed in TypeScript, seventeen
+mutations of it were swept the same way; sixteen were caught immediately and the seventeenth found a
+real hole. Replacing caption accumulation with replacement passed every golden, because no scenario
+sent two deltas for one item -- and with one delta, extending and replacing are the same thing. That
+is the shape of gap to expect from a port sweep: not a missing guard, but a scenario too short to
+tell two implementations apart. `node runtime/scripts/diff-session-fixture.mjs <id>` prints the first
+diverging step and field.
 
 ## Review Rules
 

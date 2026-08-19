@@ -2,11 +2,13 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
+import { canonicalJson } from '../src/canonical-json.js'
 import {
   loadSessionFixture,
   sessionFixtureJsonSchema,
   type SessionFixture,
 } from '../src/realtime/session-fixtures.js'
+import { runSessionFixture } from './session-fixture-host.js'
 
 // The test runs as runtime/dist/test/*.js, so three levels up is the repository root.
 const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/realtime/session/v1')
@@ -74,9 +76,8 @@ test('a scenario declares the synthetic capabilities it uses, and no others', as
 })
 
 test('the pending-parity marker cannot outlive the reducer that has to satisfy it', async () => {
-  // These fixtures land before the ported reducer, so for a while Python is the only leg checking
-  // the goldens. The marker says so. The moment a session reducer exists here, this fails until
-  // every marker is cleared -- because a green build that checks nothing must not read as parity.
+  // A scenario the Node leg does not check must say so. Once the reducer exists, every marker has
+  // to be cleared, because a green build that checks nothing must not read as parity.
   const runtime: Record<string, unknown> = await import('../src/index.js')
   if (!('RealtimeSession' in runtime)) return
 
@@ -87,5 +88,36 @@ test('the pending-parity marker cannot outlive the reducer that has to satisfy i
     pending,
     [],
     'RealtimeSession is ported: these scenarios must now be checked on both legs',
+  )
+})
+
+test('every checked scenario matches the Python-exported golden', async () => {
+  // The whole point of the family: the same committed bytes, replayed through the real session.
+  // Compared as canonical JSON so key order and number spelling cannot mask a real difference.
+  const checked = (await loadAll()).filter(
+    fixture => fixture.manifest.node_parity === 'checked',
+  )
+  assert.ok(checked.length > 0, 'at least one scenario must be checked on both legs')
+
+  // Collect every mismatch rather than stopping at the first: one divergence in a shared helper
+  // shows up in several scenarios, and seeing which ones is most of the diagnosis.
+  const mismatched: string[] = []
+  for (const fixture of checked) {
+    let actual: unknown
+    try {
+      actual = await runSessionFixture(fixture)
+    } catch (cause) {
+      mismatched.push(`${fixture.manifest.id} (threw: ${String(cause)})`)
+      continue
+    }
+    if (canonicalJson(actual) !== canonicalJson(fixture.expected)) {
+      mismatched.push(fixture.manifest.id)
+    }
+  }
+  assert.deepEqual(
+    mismatched,
+    [],
+    'Node output differs from the Python golden; '
+      + 'run `node runtime/scripts/diff-session-fixture.mjs <id>` for the first difference',
   )
 })

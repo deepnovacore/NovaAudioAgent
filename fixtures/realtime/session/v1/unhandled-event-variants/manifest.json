@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "unhandled-event-variants",
-  "description": "The five normalized events the reducer does not handle fall through and are refused, while the two transcript deltas among them still reach the caption side channel. Refusing an event and having nothing to say about it are different answers, and only the caption projection may consume a delta.",
+  "description": "The five normalized events the reducer does not handle fall through and are refused, while the two transcript deltas among them still reach the caption side channel. Refusing an event and having nothing to say about it are different answers, and only the caption projection may consume a delta. A caption also accumulates across deltas rather than being replaced by each one, and a final ends the accumulation, so the delta after it starts over.",
   "covers": [
     "session.accept.fallthrough",
     "session.accept.user_transcript_delta",
@@ -9,10 +9,12 @@
     "session.accept.item_confirmed",
     "session.accept.response_cancel_rejected",
     "session.accept.provider_error",
-    "session.caption_for"
+    "session.caption_for",
+    "session.caption_for.accumulates_across_deltas",
+    "session.caption_for.final_ends_accumulation"
   ],
   "clock": "virtual",
   "requires": [],
   "canonicalization": "exact",
-  "node_parity": "pending-session-port"
+  "node_parity": "checked"
 }

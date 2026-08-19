@@ -2,7 +2,10 @@
   "schema_version": 1,
   "ids": [],
   "steps": [
-    {"kind": "connect", "tools": 1},
+    {
+      "kind": "connect",
+      "tools": 1
+    },
     {
       "kind": "deliver_host_response",
       "as_user_activation": false,
@@ -19,31 +22,139 @@
         }
       }
     },
-    {"kind": "provider_event", "event": {
-      "kind": "response_started", "session_epoch": 1, "response_id": "resp-1"}},
-
-    {"kind": "provider_event", "event": {
-      "kind": "user_transcript_delta", "session_epoch": 1, "item_id": "item-a", "text": "帮我"}},
-    {"kind": "provider_event", "event": {
-      "kind": "response_transcript_delta", "session_epoch": 1, "response_id": "resp-1",
-      "text": "正在"}},
-    {"kind": "provider_event", "event": {
-      "kind": "item_confirmed", "session_epoch": 1, "host_item_id": "host-1",
-      "provider_item_id": "provider-host-1"}},
-    {"kind": "provider_event", "event": {
-      "kind": "response_cancel_rejected", "session_epoch": 1, "response_id": "resp-1",
-      "cancel_request_id": "cancel-1", "reason": "no_active_response"}},
-    {"kind": "provider_event", "event": {
-      "kind": "provider_error", "session_epoch": 1, "code": "disconnected",
-      "recoverable": true}},
-
-    {"kind": "caption_for", "accepted": null, "event": {
-      "kind": "user_transcript_delta", "session_epoch": 1, "item_id": "item-a", "text": "帮我"}},
-    {"kind": "caption_for", "accepted": null, "event": {
-      "kind": "response_transcript_delta", "session_epoch": 1, "response_id": "resp-1",
-      "text": "正在"}},
-    {"kind": "caption_for", "accepted": null, "event": {
-      "kind": "item_confirmed", "session_epoch": 1, "host_item_id": "host-1",
-      "provider_item_id": "provider-host-1"}}
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "response_started",
+        "session_epoch": 1,
+        "response_id": "resp-1"
+      }
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "user_transcript_delta",
+        "session_epoch": 1,
+        "item_id": "item-a",
+        "text": "帮我"
+      }
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "response_transcript_delta",
+        "session_epoch": 1,
+        "response_id": "resp-1",
+        "text": "正在"
+      }
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "item_confirmed",
+        "session_epoch": 1,
+        "host_item_id": "host-1",
+        "provider_item_id": "provider-host-1"
+      }
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "response_cancel_rejected",
+        "session_epoch": 1,
+        "response_id": "resp-1",
+        "cancel_request_id": "cancel-1",
+        "reason": "no_active_response"
+      }
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "provider_error",
+        "session_epoch": 1,
+        "code": "disconnected",
+        "recoverable": true
+      }
+    },
+    {
+      "kind": "caption_for",
+      "accepted": null,
+      "event": {
+        "kind": "user_transcript_delta",
+        "session_epoch": 1,
+        "item_id": "item-a",
+        "text": "帮我"
+      }
+    },
+    {
+      "kind": "caption_for",
+      "accepted": null,
+      "event": {
+        "kind": "response_transcript_delta",
+        "session_epoch": 1,
+        "response_id": "resp-1",
+        "text": "正在"
+      }
+    },
+    {
+      "kind": "caption_for",
+      "accepted": null,
+      "event": {
+        "kind": "item_confirmed",
+        "session_epoch": 1,
+        "host_item_id": "host-1",
+        "provider_item_id": "provider-host-1"
+      }
+    },
+    {
+      "kind": "caption_for",
+      "accepted": null,
+      "event": {
+        "kind": "user_transcript_delta",
+        "session_epoch": 1,
+        "item_id": "item-a",
+        "text": "看一下"
+      }
+    },
+    {
+      "kind": "caption_for",
+      "accepted": null,
+      "event": {
+        "kind": "response_transcript_delta",
+        "session_epoch": 1,
+        "response_id": "resp-1",
+        "text": "查了"
+      }
+    },
+    {
+      "kind": "caption_for",
+      "accepted": true,
+      "event": {
+        "kind": "user_transcript_final",
+        "session_epoch": 1,
+        "item_id": "item-a",
+        "text": "帮我看一下"
+      }
+    },
+    {
+      "kind": "caption_for",
+      "accepted": null,
+      "event": {
+        "kind": "user_transcript_delta",
+        "session_epoch": 1,
+        "item_id": "item-a",
+        "text": "再"
+      }
+    },
+    {
+      "kind": "caption_for",
+      "accepted": false,
+      "event": {
+        "kind": "user_transcript_final",
+        "session_epoch": 1,
+        "item_id": "item-b",
+        "text": "这句被拒了"
+      }
+    }
   ]
 }

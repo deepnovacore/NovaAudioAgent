@@ -308,8 +308,15 @@ export class RealtimeSessionState {
     return entry
   }
 
-  providerTurn(responseId: string | null): ProviderTurn | undefined {
-    return responseId === null ? undefined : this.#providerTurns.get(key(this.#epoch, responseId))
+  /**
+   * One provider turn. `sessionEpoch` names an older session, which only a handoff needs.
+   *
+   * A reconnect has to finish accounting for the turns it is abandoning, and by then the epoch has
+   * already advanced, so those turns can no longer be reached by the current one.
+   */
+  providerTurn(responseId: string | null, sessionEpoch?: number): ProviderTurn | undefined {
+    if (responseId === null) return undefined
+    return this.#providerTurns.get(key(sessionEpoch ?? this.#epoch, responseId))
   }
 
   providerTurnPhase(responseId: string | null): ProviderTurnPhase | undefined {
@@ -358,6 +365,37 @@ export class RealtimeSessionState {
     return {role: frame.role, text, final: frame.final}
   }
 
+  /**
+   * Extend a caption with one delta, keeping its newest end within the bound.
+   *
+   * A delta is a continuation, not a replacement, so the accumulated text is what gets bounded --
+   * bounding each delta on its own would keep every one of them whole and let the total run past
+   * the limit.
+   */
+  appendCaption(frame: CaptionFrame): CaptionFrame {
+    const previous = frame.role === 'user' ? this.#userCaptionText : this.#assistantCaptionText
+    const text = truncateCaption(previous + frame.text)
+    if (frame.role === 'user') this.#userCaptionText = text
+    else this.#assistantCaptionText = text
+    return {role: frame.role, text, final: frame.final}
+  }
+
+  /**
+   * Forget which item the user caption was accumulating.
+   *
+   * A final ends the accumulation: the next delta starts a new one even under the same item id,
+   * because what follows a final is a revision rather than a continuation.
+   */
+  resetUserCaptionTarget(): void {
+    this.#userCaptionItem = null
+    this.#userCaptionText = ''
+  }
+
+  resetAssistantCaptionTarget(): void {
+    this.#assistantCaptionResponse = null
+    this.#assistantCaptionText = ''
+  }
+
   trackUserCaption(itemId: string): boolean {
     if (this.#userCaptionItem === itemId) return false
     this.#userCaptionItem = itemId
@@ -378,6 +416,18 @@ export class RealtimeSessionState {
 
   get assistantCaption(): string {
     return this.#assistantCaptionText
+  }
+
+  /**
+   * Drop the assistant caption if it belongs to this response.
+   *
+   * A delivered response loses caption authority: further speculative text under its id would be
+   * attributed to a turn the user has already heard the end of.
+   */
+  clearAssistantCaptionFor(responseId: string): void {
+    if (this.#assistantCaptionResponse !== responseId) return
+    this.#assistantCaptionResponse = null
+    this.#assistantCaptionText = ''
   }
 
   clearCaptions(): void {
@@ -480,6 +530,11 @@ export class RealtimeSessionState {
    */
   retainSuggestionInjection(eventId: string): void {
     this.#retainedSuggestionInjectionIds.add(eventId)
+  }
+
+  /** Drop one retention: the suggestion was heard, so there is nothing left to re-offer. */
+  releaseRetainedSuggestionInjection(eventId: string): boolean {
+    return this.#retainedSuggestionInjectionIds.delete(eventId)
   }
 
   revokeRetainedSuggestionInjections(): void {

@@ -494,6 +494,242 @@
           "interrupted_event_ids": []
         }
       }
+    },
+    {
+      "step": 11,
+      "kind": "caption_for",
+      "result": {
+        "role": "user",
+        "text": "帮我看一下",
+        "final": false
+      },
+      "actions": [],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "clock": 0.0,
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": "resp-1",
+        "provider_idle": false,
+        "foreground_idle": false,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "帮我看一下",
+        "assistant_caption": "正在",
+        "responses": {
+          "resp-1": {
+            "phase": "active",
+            "was_fenced": false,
+            "user_input_revision": 0,
+            "has_spoken": false,
+            "event_ids": [
+              "progress:1"
+            ]
+          }
+        },
+        "host_events_deduplicated": [
+          "progress:1"
+        ],
+        "snapshot": {
+          "version": 3,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 12,
+      "kind": "caption_for",
+      "result": {
+        "role": "assistant",
+        "text": "正在查了",
+        "final": false
+      },
+      "actions": [],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "clock": 0.0,
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": "resp-1",
+        "provider_idle": false,
+        "foreground_idle": false,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "帮我看一下",
+        "assistant_caption": "正在查了",
+        "responses": {
+          "resp-1": {
+            "phase": "active",
+            "was_fenced": false,
+            "user_input_revision": 0,
+            "has_spoken": false,
+            "event_ids": [
+              "progress:1"
+            ]
+          }
+        },
+        "host_events_deduplicated": [
+          "progress:1"
+        ],
+        "snapshot": {
+          "version": 3,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 13,
+      "kind": "caption_for",
+      "result": {
+        "role": "user",
+        "text": "帮我看一下",
+        "final": true
+      },
+      "actions": [],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "clock": 0.0,
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": "resp-1",
+        "provider_idle": false,
+        "foreground_idle": false,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "",
+        "assistant_caption": "正在查了",
+        "responses": {
+          "resp-1": {
+            "phase": "active",
+            "was_fenced": false,
+            "user_input_revision": 0,
+            "has_spoken": false,
+            "event_ids": [
+              "progress:1"
+            ]
+          }
+        },
+        "host_events_deduplicated": [
+          "progress:1"
+        ],
+        "snapshot": {
+          "version": 3,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 14,
+      "kind": "caption_for",
+      "result": {
+        "role": "user",
+        "text": "再",
+        "final": false
+      },
+      "actions": [],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "clock": 0.0,
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": "resp-1",
+        "provider_idle": false,
+        "foreground_idle": false,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "再",
+        "assistant_caption": "正在查了",
+        "responses": {
+          "resp-1": {
+            "phase": "active",
+            "was_fenced": false,
+            "user_input_revision": 0,
+            "has_spoken": false,
+            "event_ids": [
+              "progress:1"
+            ]
+          }
+        },
+        "host_events_deduplicated": [
+          "progress:1"
+        ],
+        "snapshot": {
+          "version": 3,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 15,
+      "kind": "caption_for",
+      "result": null,
+      "actions": [],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "clock": 0.0,
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": "resp-1",
+        "provider_idle": false,
+        "foreground_idle": false,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "再",
+        "assistant_caption": "正在查了",
+        "responses": {
+          "resp-1": {
+            "phase": "active",
+            "was_fenced": false,
+            "user_input_revision": 0,
+            "has_spoken": false,
+            "event_ids": [
+              "progress:1"
+            ]
+          }
+        },
+        "host_events_deduplicated": [
+          "progress:1"
+        ],
+        "snapshot": {
+          "version": 3,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
     }
   ]
 }

@@ -10,7 +10,9 @@
     "session.accept.response_audio_delta.unbounded_delta"
   ],
   "clock": "virtual",
-  "requires": ["pcm_fixture"],
+  "requires": [
+    "pcm_fixture"
+  ],
   "canonicalization": "exact",
-  "node_parity": "pending-session-port"
+  "node_parity": "checked"
 }

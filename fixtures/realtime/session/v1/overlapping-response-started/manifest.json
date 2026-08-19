@@ -10,5 +10,5 @@
   "clock": "virtual",
   "requires": [],
   "canonicalization": "exact",
-  "node_parity": "pending-session-port"
+  "node_parity": "checked"
 }
