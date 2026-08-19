@@ -260,9 +260,14 @@ test('a renderer that disconnects can reconnect to the same live runtime', async
   // Python's realtime/desktop.py drains only on parent EOF or a signal, so a
   // window reload must find the backend still serving.
   let disconnects = 0
+  let observeDisconnect: (() => void) | undefined
+  const serverSawDisconnect = new Promise<void>(resolve => { observeDisconnect = resolve })
   const server = new NodeDesktopServer({
     token: TOKEN,
-    onClientDisconnect: () => { disconnects += 1 },
+    onClientDisconnect: () => {
+      disconnects += 1
+      observeDisconnect?.()
+    },
   })
   const readiness = await server.start()
 
@@ -272,6 +277,10 @@ test('a renderer that disconnects can reconnect to the same live runtime', async
     first.send(JSON.stringify({type: 'hello', token: TOKEN}))
     await firstBootstrap
     await closeClient(first)
+    // The client resolving its own close says nothing about the server having
+    // observed it, and only the server releasing its active slot admits a
+    // replacement. Wait for the server's own verdict.
+    await serverSawDisconnect
     assert.equal(disconnects, 1)
 
     const second = await connect(readiness.port)

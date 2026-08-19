@@ -79,11 +79,20 @@ export class SlotSet {
     if (!this.inflight[slot] || this.activeJobId[slot] !== jobId) {
       throw new Error(`stale model completion: ${slot}/${jobId}`)
     }
-    consume()
-    const reason = this.pending[slot]
-    this.pending[slot] = null
-    this.inflight[slot] = false
-    this.activeJobId[slot] = null
+    let reason: WakeReason | null = null
+    try {
+      // Runs before the slot is cleared, so a wake raised while consuming this
+      // output is still merged into `pending` instead of spawning a second job.
+      consume()
+    } finally {
+      // Release the slot even if consumption threw. A wedged `inflight` flag
+      // would silently stop this slot from ever waking again, turning one
+      // contract failure into a permanently deaf runtime.
+      reason = this.pending[slot]
+      this.pending[slot] = null
+      this.inflight[slot] = false
+      this.activeJobId[slot] = null
+    }
     if (reason !== null) this.wake(slot, reason)
   }
 }

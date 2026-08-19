@@ -81,3 +81,48 @@ test('routing can escalate but never downgrade when priorities merge', () => {
   assert.equal(merged.routing_class, 'user_awaited')
   assert.equal(higherWakeReason(urgentAmbient, userWake).routing_class, 'user_awaited')
 })
+
+test('a slot is released even when consuming its output throws', () => {
+  // A wedged inflight flag turns one contract failure into a permanently deaf
+  // slot, so release must not depend on consume() returning normally.
+  const spawned: string[] = []
+  let sequence = 0
+  const slots = new SlotSet(slot => {
+    sequence += 1
+    spawned.push(`${slot}:${sequence}`)
+    return `job-${sequence}`
+  })
+
+  slots.wake('fast', userWake)
+  assert.equal(slots.inflight.fast, true)
+
+  assert.throws(() => slots.onDone('fast', 'job-1', () => {
+    throw new Error('consumption blew up')
+  }), /consumption blew up/u)
+
+  assert.equal(slots.inflight.fast, false, 'the slot must not stay inflight')
+  assert.equal(slots.activeJobId.fast, null)
+  assert.equal(slots.pending.fast, null)
+
+  slots.wake('fast', userWake)
+  assert.deepEqual(spawned, ['fast:1', 'fast:2'], 'the slot must be able to wake again')
+})
+
+test('a wake pending when consumption throws is still dropped, not replayed', () => {
+  // The pending reason belongs to the job that failed; replaying it would run a
+  // wake whose evidence was never consumed.
+  let sequence = 0
+  const slots = new SlotSet(() => {
+    sequence += 1
+    return `job-${sequence}`
+  })
+  slots.wake('fast', userWake)
+  slots.wake('fast', userWake)
+  assert.notEqual(slots.pending.fast, null)
+
+  assert.throws(() => slots.onDone('fast', 'job-1', () => {
+    throw new Error('boom')
+  }))
+  assert.equal(slots.pending.fast, null)
+  assert.equal(sequence, 1, 'the pending wake must not have spawned a job')
+})

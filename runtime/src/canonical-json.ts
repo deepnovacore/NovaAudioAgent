@@ -20,12 +20,20 @@ function serializeJson(value: JsonValue): string {
 function serializeJsonNumber(value: number): string {
   // JSON has one numeric kind, so canonical bytes depend on numeric value, not
   // whether a source language originally parsed an integral token as int or float.
-  const encoded = JSON.stringify(value)
-  if (encoded === undefined) throw new TypeError('number is not JSON serializable')
-  return encoded
+  // `jsonValueSchema` already rejected NaN and the infinities, which are the only
+  // numbers JSON.stringify would refuse to render as a number.
+  return JSON.stringify(value)
 }
 
-function compareCodePoints(left: string, right: string): number {
+/**
+ * Order two strings by Unicode code point, the way Python `sorted` does.
+ *
+ * JavaScript's `<` compares UTF-16 code units, so a BMP character above the
+ * surrogate range (U+E000, say) sorts before an astral character (U+10000) there
+ * and after it by code point. Every ordering the two runtimes must agree on --
+ * canonical object keys and sorted identities alike -- goes through this.
+ */
+export function compareCodePoints(left: string, right: string): number {
   const leftPoints = Array.from(left, character => character.codePointAt(0)!)
   const rightPoints = Array.from(right, character => character.codePointAt(0)!)
   const length = Math.min(leftPoints.length, rightPoints.length)

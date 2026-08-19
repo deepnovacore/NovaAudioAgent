@@ -1,4 +1,4 @@
-import { canonicalJson } from './canonical-json.js'
+import { canonicalJson, compareCodePoints } from './canonical-json.js'
 import type { Diagnostic, ExecutorEffect, FloorDecisionRecord } from './effects.js'
 import {
   FRESH_WINDOW,
@@ -448,7 +448,7 @@ export class CoreRuntime {
 
   activeDelegates(): readonly Delegate[] {
     return [...this.#inFlight.values()].sort((left, right) => (
-      left.dispatched_at - right.dispatched_at || compareStrings(left.delegate_id, right.delegate_id)
+      left.dispatched_at - right.dispatched_at || compareCodePoints(left.delegate_id, right.delegate_id)
     ))
   }
 
@@ -1151,10 +1151,6 @@ export class CoreRuntime {
 
 function memoryItemRef(item: MemoryItem): string {
   return `${item.channel}:${item.seq}`
-}
-
-function compareStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
 }
 
 function sameDelegateRequest(left: Delegate, right: DelegateRequest): boolean {

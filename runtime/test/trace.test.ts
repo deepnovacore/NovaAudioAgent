@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, test } from 'node:test'
 import type { EventRecord } from '../src/events.js'
+import { compareCodePoints } from '../src/canonical-json.js'
 import { canonicalJson, replayTrace, TraceWriter } from '../src/trace.js'
 
 const temporaryDirectories: string[] = []
@@ -122,4 +123,25 @@ test('trace rejects raw prompt fields before writing any payload bytes', async (
 
   assert.throws(() => writer.write(event))
   assert.doesNotMatch(await readFile(path, 'utf8'), /fixture-private-raw-prompt-sentinel/u)
+})
+
+test('one code-point comparator orders identities the way Python sorted does', () => {
+  // U+E000 (private use, BMP) versus U+10000 (astral). By code point E000 comes
+  // first; by UTF-16 code unit the astral character's leading surrogate D800
+  // makes it first instead. JavaScript's `<` uses code units, so anything that
+  // must agree with Python has to go through compareCodePoints.
+  const bmp = 'd-'
+  const astral = 'd-\u{10000}'
+
+  assert.ok(compareCodePoints(bmp, astral) < 0, 'code point order puts U+E000 first')
+  assert.ok(bmp > astral, 'the naive comparator disagrees, which is the whole point')
+
+  const ids = [astral, bmp, 'd-1', 'd-10', 'd-2']
+  assert.deepEqual([...ids].sort(compareCodePoints), ['d-1', 'd-10', 'd-2', bmp, astral])
+
+  // The canonical serializer must reach the same verdict for object keys.
+  assert.equal(
+    canonicalJson({[astral]: 1, [bmp]: 2}),
+    `{${JSON.stringify(bmp)}:2,${JSON.stringify(astral)}:1}`,
+  )
 })

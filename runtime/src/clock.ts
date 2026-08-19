@@ -19,7 +19,7 @@ export class VirtualClock implements Clock {
   #sequence = 0
 
   constructor(start = 0) {
-    requireFiniteOrInfinity(start, 'virtual clock start')
+    requireNotNaN(start, 'virtual clock start')
     this.#current = start
   }
 
@@ -28,7 +28,7 @@ export class VirtualClock implements Clock {
   }
 
   sleep(duration: number, signal?: AbortSignal): Promise<void> {
-    requireFiniteOrInfinity(duration, 'sleep duration')
+    requireNotNaN(duration, 'sleep duration')
     if (duration < 0) throw new RangeError(`sleep duration cannot be negative: ${duration}`)
     if (signal?.aborted === true) return Promise.reject(abortError())
 
@@ -65,7 +65,7 @@ export class VirtualClock implements Clock {
   }
 
   advanceTo(timestamp: number): void {
-    requireFiniteOrInfinity(timestamp, 'virtual clock timestamp')
+    requireNotNaN(timestamp, 'virtual clock timestamp')
     if (timestamp < this.#current) {
       throw new RangeError(`virtual clock cannot move backwards: ${this.#current} -> ${timestamp}`)
     }
@@ -117,9 +117,17 @@ function compareWaiters(left: Waiter, right: Waiter): number {
   return left.due - right.due || left.sequence - right.sequence
 }
 
-function requireFiniteOrInfinity(value: number, field: string): void {
+/**
+ * Reject NaN and non-numbers, but deliberately allow the infinities.
+ *
+ * `sleep(Infinity)` is the "park until the clock is advanced past everything"
+ * primitive the runtime uses for an unbounded wait, and `nextTimerTimestamp`
+ * filters those waiters out rather than reporting a non-finite deadline. NaN has
+ * no such use and would silently corrupt every ordering comparison.
+ */
+function requireNotNaN(value: number, field: string): void {
   if (typeof value !== 'number' || Number.isNaN(value)) {
-    throw new TypeError(`${field} cannot be NaN`)
+    throw new TypeError(`${field} must be a number and cannot be NaN`)
   }
 }
 

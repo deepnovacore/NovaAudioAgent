@@ -65,6 +65,13 @@ export type RuntimeObserver = (event: EventRecord) => void
 
 const DEFAULT_SHUTDOWN_GRACE = 1
 
+/** Applied events between forced event-loop turns while the queue stays ready. */
+const DRAIN_YIELD_INTERVAL = 64
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>(resolve => { setImmediate(resolve) })
+}
+
 export class CausalRuntime {
   readonly core: CoreRuntime
   readonly #clock: Clock
@@ -144,17 +151,30 @@ export class CausalRuntime {
     this.#state = 'serving'
     const onAbort = (): void => this.#notifyWork()
     signal.addEventListener('abort', onAbort, {once: true})
+    let sinceYield = 0
     try {
       while (!signal.aborted) {
-        await Promise.resolve()
+        // A microtask yield lets owned task completions re-enter the queue, but it
+        // never returns control to the macrotask queue. An event queue that stays
+        // ready would therefore starve socket reads and timers for as long as it
+        // keeps producing work, so punctuate a long drain with a real event-loop
+        // turn.
+        if (sinceYield >= DRAIN_YIELD_INTERVAL) {
+          sinceYield = 0
+          await yieldToEventLoop()
+        } else {
+          await Promise.resolve()
+        }
         if (this.#failure !== undefined) throw this.#failure
         const event = this.core.queue.popReady(this.#clock.now())
         if (event !== undefined) {
+          sinceYield += 1
           this.core.apply(event)
           this.#finishIngress(event)
           for (const observer of this.#observers) observer(structuredClone(event))
           continue
         }
+        sinceYield = 0
         await this.#waitForWork(signal)
       }
     } finally {
