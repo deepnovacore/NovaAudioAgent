@@ -216,18 +216,27 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
  *
  * The speech axis has already been voiced by the time this runs, so the fold only has to
  * describe what happened. A deferred utterance still reports its text, because the
- * suggestion pool needs it, and the action axis is independent of that verdict.
+ * suggestion pool needs it, and the action axis is independent of that verdict. The
+ * contract failures and the surplus-action count travel with it because the reducer uses
+ * each to suppress the action entirely, exactly as `Runtime._consume` does.
  */
 export function foldFastBrainRecord(record: {
   readonly spoken_text: string
   readonly speak_act: 'say' | 'ask'
   readonly action: {readonly act: string}
+  readonly extra_actions: number
+  readonly contract_failures: readonly {readonly code: string, readonly tool_name: string | null}[]
 }): unknown {
   return {
     speak: record.spoken_text.length === 0
       ? {act: 'none'}
       : {act: record.speak_act, text: record.spoken_text},
     action: record.action,
+    // Both of these suppress the action in the reducer, so dropping them here would
+    // dispatch work the oracle refuses -- an unknown tool alongside a valid delegate, or
+    // two conflicting delegates where only the first would survive.
+    contract_failures: record.contract_failures.map(failure => ({...failure})),
+    extra_actions: record.extra_actions,
   }
 }
 

@@ -48,9 +48,29 @@ export const actionOutputSchema = z.discriminatedUnion('act', [
   z.object({act: z.literal('update'), update: updateSpecSchema}).strict(),
 ])
 
+export const contractFailureSchema = z.object({
+  code: z.string().min(1),
+  tool_name: z.string().min(1).nullable().default(null),
+}).strict()
+
 export const fastBrainOutputSchema = z.object({
   speak: speakOutputSchema,
   action: actionOutputSchema,
+  /**
+   * Malformed tool calls observed in this call's stream, without their payloads.
+   *
+   * Present so a streaming port can report what the oracle's CallRecord reports. Any
+   * entry suppresses the action entirely, so dropping this field would dispatch an
+   * action the oracle refuses.
+   */
+  contract_failures: z.array(contractFailureSchema).default([]),
+  /**
+   * How many actions arrived beyond the first.
+   *
+   * The action axis is singular, so a surplus is a conflict rather than last-one-wins.
+   * Any surplus suppresses every action, including the first.
+   */
+  extra_actions: z.number().int().nonnegative().default(0),
 }).strict()
 
 export const surrogateOutputSchema = z.object({

@@ -441,6 +441,17 @@ export class CoreRuntime {
     const parsed = result.data
     this.#consumeSpeech(parsed.speak, reason, eventSequence, job)
 
+    // Two gates, in this order, both of which suppress the action entirely. They answer
+    // different questions: is the output structurally valid, and does the world it
+    // answers still exist? Speech has already been consumed either way -- a rejected
+    // action does not retract words the user heard.
+    if (parsed.contract_failures.length > 0) {
+      return this.#rejectContract(parsed.contract_failures, reason)
+    }
+    if (parsed.extra_actions > 0) {
+      return this.#rejectMultipleActions(parsed.action.act, parsed.extra_actions, reason)
+    }
+
     if (parsed.action.act !== 'none' && job !== undefined) {
       const supersededBy = this.#supersedingUserInput(job)
       if (supersededBy !== undefined) {
@@ -1130,6 +1141,34 @@ export class CoreRuntime {
   #visibleMemoryRefs(): ReadonlySet<string> {
     return new Set([...this.memory.channels.values()]
       .flatMap(channel => channel.items.slice(-RECENT_LIMIT).map(item => memoryItemRef(item))))
+  }
+
+  /**
+   * Reject every action when one call returned more than one.
+   *
+   * Executing the first and rejecting the rest would produce the ambiguous failure "one
+   * of your two requests was handled; guess which". Executing none and telling the model
+   * lets the next call dispatch one, consume its handoff, and dispatch the second through
+   * a fully traceable path. Last-write-wins previously discarded the earlier action
+   * without a trace.
+   */
+  #rejectMultipleActions(act: string, extra: number, reason: WakeReason): WakeReason | null {
+    return this.#refuse({error: 'multiple_actions', count: extra + 1, act}, reason)
+  }
+
+  /** Record malformed model structure and use the same one-hop compensation brake. */
+  #rejectContract(
+    failures: readonly {readonly code: string, readonly tool_name: string | null}[],
+    reason: WakeReason,
+  ): WakeReason | null {
+    const first = failures[0]!
+    const content: Record<string, JsonValue> = {
+      error: 'model_contract_failure',
+      code: first.code,
+      tool_name: first.tool_name,
+    }
+    if (failures.length > 1) content.count = failures.length
+    return this.#refuse(content, reason)
   }
 
   #rejectDelegate(request: DelegateRequest, problem: string, reason: WakeReason): WakeReason | null {

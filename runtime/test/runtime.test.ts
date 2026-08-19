@@ -5,6 +5,7 @@ import { handoffPolicySchema } from '../src/memory.js'
 import { executorManifestSchema, fastBrainOutputSchema, opSpecSchema } from '../src/ports.js'
 import { CoreRuntime, type ModelCall } from '../src/runtime.js'
 import { wakeReasonSchema, type Slot } from '../src/slots.js'
+import { fixtureSlowSimManifest as fixtureSlowSim } from '../src/sim.js'
 
 const manifest = executorManifestSchema.parse({
   name: 'slow_sim',
@@ -1113,4 +1114,101 @@ test('speech a streaming port already voiced is never reclassified as deferred',
     'and must not also be offered as a suggestion')
   assert.deepEqual(runtime.floorDecisions.map(decision => decision.decision), ['allow'],
     'the recorded decision is the one the stream actually acted on')
+})
+
+test('a contract failure suppresses the action even when one is present', () => {
+  // The oracle rejects the whole turn: an unknown tool alongside a valid delegate must
+  // not dispatch, or a hallucinated tool name becomes a way to smuggle work through.
+  const runtime = new CoreRuntime({
+    manifests: [fixtureSlowSim],
+    ids: new MonotonicIdFactory(),
+    modelSlots: ['fast'],
+    onModelCall: () => undefined,
+  })
+  runtime.apply(runtime.post({kind: 'user_input', payload: {text: 'hi'}}, 0))
+
+  const compensation = runtime.consumeFastBrain({
+    speak: {act: 'none'},
+    action: {act: 'delegate', delegate: {
+      executor: 'slow_sim', op: 'set_light', request: {}, origin_ref: 'conversation:1',
+    }},
+    contract_failures: [{code: 'unknown_tool', tool_name: 'nope__missing'}],
+  }, wakeReasonSchema.parse({kind: 'user_input', priority: 100}), 1)
+
+  assert.equal(runtime.executorEffects.length, 0, 'nothing may be dispatched')
+  assert.equal(compensation?.kind, 'delegate_rejected')
+  const refusal = runtime.memory.channels.get('conversation')?.items.at(-1)
+  assert.equal(refusal?.outcome, 'failed')
+  assert.equal(refusal?.content.error, 'model_contract_failure')
+  assert.equal(refusal?.content.code, 'unknown_tool')
+  assert.equal(refusal?.content.tool_name, 'nope__missing')
+  // A single failure records no count; only a surplus does.
+  assert.equal(refusal?.content.count, undefined)
+})
+
+test('several contract failures record their count', () => {
+  const runtime = new CoreRuntime({
+    manifests: [fixtureSlowSim],
+    ids: new MonotonicIdFactory(),
+    modelSlots: ['fast'],
+    onModelCall: () => undefined,
+  })
+  runtime.apply(runtime.post({kind: 'user_input', payload: {text: 'hi'}}, 0))
+  runtime.consumeFastBrain({
+    speak: {act: 'none'},
+    action: {act: 'none'},
+    contract_failures: [
+      {code: 'unknown_tool', tool_name: 'a'},
+      {code: 'invalid_tool_arguments', tool_name: 'b'},
+    ],
+  }, wakeReasonSchema.parse({kind: 'user_input', priority: 100}), 1)
+  const refusal = runtime.memory.channels.get('conversation')?.items.at(-1)
+  assert.equal(refusal?.content.count, 2)
+  // The first failure is the reported one.
+  assert.equal(refusal?.content.tool_name, 'a')
+})
+
+test('a surplus action rejects every action, including the first', () => {
+  // Executing the first and rejecting the rest would produce "one of your two requests
+  // was handled; guess which".
+  const runtime = new CoreRuntime({
+    manifests: [fixtureSlowSim],
+    ids: new MonotonicIdFactory(),
+    modelSlots: ['fast'],
+    onModelCall: () => undefined,
+  })
+  runtime.apply(runtime.post({kind: 'user_input', payload: {text: 'hi'}}, 0))
+  runtime.consumeFastBrain({
+    speak: {act: 'none'},
+    action: {act: 'delegate', delegate: {
+      executor: 'slow_sim', op: 'set_light', request: {}, origin_ref: 'conversation:1',
+    }},
+    extra_actions: 1,
+  }, wakeReasonSchema.parse({kind: 'user_input', priority: 100}), 1)
+
+  assert.equal(runtime.executorEffects.length, 0)
+  const refusal = runtime.memory.channels.get('conversation')?.items.at(-1)
+  assert.equal(refusal?.content.error, 'multiple_actions')
+  assert.equal(refusal?.content.count, 2, 'the count includes the first action')
+  assert.equal(refusal?.content.act, 'delegate')
+})
+
+test('speech is still consumed when the action is rejected', () => {
+  // A rejected action does not retract words the user already heard.
+  const runtime = new CoreRuntime({
+    manifests: [fixtureSlowSim],
+    ids: new MonotonicIdFactory(),
+    modelSlots: ['fast'],
+    onModelCall: () => undefined,
+  })
+  runtime.apply(runtime.post({kind: 'user_input', payload: {text: 'hi'}}, 0))
+  runtime.consumeFastBrain({
+    speak: {act: 'say', text: '在处理'},
+    action: {act: 'none'},
+    extra_actions: 2,
+  }, wakeReasonSchema.parse({kind: 'user_input', priority: 100}), 1)
+
+  const conversation = runtime.memory.channels.get('conversation')?.items ?? []
+  assert.ok(conversation.some(item => item.content.text === '在处理'))
+  assert.ok(conversation.some(item => item.content.error === 'multiple_actions'))
 })
