@@ -128,6 +128,26 @@ once:
   Node env contract from one schema; do not copy either inconsistency.
 - Snapshot re-homing (the runtime scorecard reads test snapshots by filename, and two snapshots
   are hand-authored) is tracked in the parity matrix.
+- Unicode database version skew. Python classifies and normalizes characters with the database
+  bundled into CPython; V8 does so with the database bundled into ICU. Those versions differ and
+  drift with every release. Measured on the development machine: CPython 3.12.11 carries Unicode
+  15.0.0 and Node 24.8.0 with ICU 77.1 carries Unicode 16.0, so U+1CC00, U+1E5D0, and U+10D40 are
+  `Cn` to Python and assigned symbols to Node. Because committed fixtures are the permanent oracle,
+  any predicate reading a runtime's ambient Unicode tables makes those fixtures fragile against an
+  ICU or interpreter upgrade. The one ported instance
+  (`valid_progress_summary`) is fixed: `scripts/generate_unicode_tables.py` emits a pinned
+  15.0.0 category table that `runtime/src/events.ts` consults instead of `\p{C}`, and tests on both
+  sides fail loudly if either version moves. Nine call sites remain unported and must not silently
+  inherit the hazard:
+
+  | Python site | Dependency | Node porting note |
+  |---|---|---|
+  | `ports.py` category check | `unicodedata.category` | Done: pinned table |
+  | `executors/watcher.py`, `executors/codex_projects.py` (×2), `executors/codex_app_server.py`, `realtime/project_confirmation.py` | `unicodedata.category` | Reuse the pinned table; never `\p{...}` |
+  | `executors/search.py` | `category in {"Cc","Cf"}` | Needs a pinned Cc/Cf subset, not the whole C set |
+  | `realtime/recall.py`, `executors/codex_projects.py`, `executors/codex.py`, `executors/codex_transport.py`, `executors/codex_app_server.py` (×2) | `unicodedata.normalize` NFC/NFKC | **Not practically pinnable.** `String.prototype.normalize` follows the host ICU. Reproducing CPython's normalization exactly means vendoring a normalization table. Either accept a documented tolerance for characters whose decomposition changed between versions, or vendor the table. Decide before porting recall or the Codex transports. |
+  | `executors/codex.py` | `str.isprintable()` | No JavaScript equivalent. Python's rule is "not Cc, Cf, Cs, Co, Cn, Zl, Zp, or Zs except U+0020". Must be reimplemented explicitly against the pinned table, not approximated. |
+  | `realtime/recall.py` | `str.lower()` | Python full lowercase and JavaScript `toLowerCase` agree for nearly all input but not all; if recall matching is contract-relevant, pin the cases that matter with fixtures. |
 
 ## Deferred Issues
 
