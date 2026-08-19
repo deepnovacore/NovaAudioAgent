@@ -28,7 +28,8 @@ import {
   type ServiceProvider,
 } from '../src/realtime/service.js'
 import { PREEMPT_MIN_PRIORITY, type QueuedHostResponse } from '../src/realtime/service-state.js'
-import type { RealtimeSession } from '../src/realtime/session.js'
+import { RealtimeSession, type SessionProvider } from '../src/realtime/session.js'
+import { PlaybackRegistry } from '../src/playback.js'
 import { compileToolSchema } from '../src/tool-schema.js'
 
 const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/realtime/service/v1')
@@ -181,7 +182,8 @@ test('the scenario set exercises all three ordering fields', () => {
 
 test('an unported family fails by name rather than behaving as if it were off', async () => {
   // Silence here would be indistinguishable from correctness: a service that quietly declined to
-  // drive continuations looks exactly like one with nothing to drive.
+  // project runtime events looks exactly like one with no events to project. Each entry point still
+  // waiting on a family is listed, so this test is the record of what is missing.
   const service = queueOnlyService()
   assert.throws(() => service.projectRuntimeEvent({}, {
     kind: 'test',
@@ -189,8 +191,7 @@ test('an unported family fails by name rather than behaving as if it were off', 
     routing_class: 'user_awaited',
     origin: null,
     selected_suggestion: null,
-  }), NotYetPortedError)
-  await assert.rejects(() => service.driveContinuations(), NotYetPortedError)
+  }), NotYetPortedError, 'family O: runtime event projection')
   await assert.rejects(
     () => service.handleEvent({
       kind: 'response_cancel_rejected',
@@ -200,7 +201,15 @@ test('an unported family fails by name rather than behaving as if it were off', 
       reason: 'no_active_response',
     }),
     NotYetPortedError,
+    'family L: guard cancel rejection',
   )
+})
+
+test('driving continuations with nothing queued is a no-op, not a refusal', () => {
+  // The drive runs on every accepted event, so its empty case is the common one. It has to return
+  // quietly rather than throw or block, or an ordinary event would fail.
+  const service = queueOnlyService()
+  return service.driveContinuations()
 })
 
 test('the guard history arms are the measured ones, and nothing else', () => {
@@ -561,3 +570,337 @@ async function* parkedStream(signal: AbortSignal): AsyncGenerator<never> {
     signal.addEventListener('abort', () => resolve(), {once: true})
   })
 }
+
+/**
+ * An end-to-end pass through the pipeline, against a real session.
+ *
+ * The parity scenarios above cover ordering, and the lifecycle tests cover the loops. Neither exercises
+ * the thing the pipeline exists for: a user turn arriving, a tool call being admitted against it, and
+ * the batch that speaks about the result. That is what these do.
+ */
+function pipelineService(options: {
+  readonly toolResult?: {readonly accepted: boolean; readonly delegateId: string | null}
+} = {}): {
+  readonly service: RealtimeService
+  readonly actions: string[]
+  readonly session: RealtimeSession
+} {
+  const manifest = executorManifestSchema.parse({
+    name: 'codex',
+    policy: {
+      channel: 'codex',
+      priority: 50,
+      wake: 'fast',
+      typical_latency: 5,
+      compress_watermark: 8,
+    },
+    ops: [
+      {
+        name: 'start',
+        description: 'begin work',
+        params: {
+          type: 'object',
+          properties: {work_order: {type: 'string', minLength: 1, maxLength: 4_000}},
+          required: ['work_order'],
+          additionalProperties: false,
+        },
+        deadline_budget: 30,
+      },
+      {
+        name: 'status',
+        description: 'read status',
+        params: {type: 'object', properties: {}, additionalProperties: false},
+        readonly: true,
+        deadline_budget: 5,
+      },
+    ],
+  })
+  const clock = new VirtualClock()
+  const memory = new Memory({policies: [manifest.policy]})
+  const executors = new Map([[manifest.name, {manifest}]])
+  const actions: string[] = []
+  let idSeq = 0
+  const nextId = (): string => {
+    idSeq += 1
+    return `id-${idSeq}`
+  }
+  const playback = new PlaybackRegistry({
+    idFactory: nextId,
+    onFrame: () => undefined,
+    onClear: (utteranceId, generationEpoch) => {
+      actions.push(`clear:${utteranceId}:${generationEpoch}`)
+    },
+    onAlert: () => undefined,
+  })
+  const provider: SessionProvider & ServiceProvider = {
+    connect: () => {
+      actions.push('connect')
+      return Promise.resolve({epoch: 1})
+    },
+    injectHostItem: (item) => {
+      actions.push(`inject:${item.event_id}`)
+      return Promise.resolve({session_epoch: 1, host_item_id: item.host_item_id})
+    },
+    createResponse: (intent) => {
+      actions.push(`create_response:${intent.kind}`)
+      return Promise.resolve()
+    },
+    cancelResponse: (responseId) => {
+      actions.push(`cancel:${responseId}`)
+      return Promise.resolve()
+    },
+    sendAudio: () => Promise.resolve(),
+    events: () => emptyStream(),
+    close: () => {
+      actions.push('close')
+      return Promise.resolve()
+    },
+  }
+  const session = new RealtimeSession({
+    provider,
+    playback,
+    idFactory: nextId,
+    clock,
+    onDiagnostic: () => undefined,
+  })
+  const scripted = options.toolResult ?? {accepted: true, delegateId: 'd-1'}
+  let ingested = 0
+  const service = new RealtimeService({
+    provider,
+    runtime: {
+      clock,
+      executors,
+      observe: () => unsubscribeNothing,
+      serve: (signal: AbortSignal) => new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => resolve(), {once: true})
+      }),
+    },
+    tools: compileToolSchema([manifest]),
+    session,
+    bridge: new RealtimeRuntimeBridge({
+      runtime: {
+        clock,
+        memory,
+        executors,
+        ingestUserInput: (input: {readonly text: string}) => {
+          ingested += 1
+          const item = memory.append('conversation', {
+            ts: ingested,
+            trust: 'trusted_user',
+            priority: 100,
+            content: {text: input.text},
+          })
+          return Promise.resolve(`${item.channel}:${item.seq}`)
+        },
+        updateExternal: () => true,
+        dispatchExternal: () => ({
+          accepted: scripted.accepted,
+          delegate_id: scripted.delegateId,
+        }),
+      },
+      tools: compileToolSchema([manifest]),
+      idFactory: nextId,
+    }),
+    idFactory: nextId,
+    onDiagnostic: () => undefined,
+  })
+  return {service, actions, session}
+}
+
+test('a tool call is admitted against the user turn that justifies it', async () => {
+  const {service, actions, session} = pipelineService()
+  await service.connect()
+
+  // The user speaks, then their transcript lands, then the model calls a tool in response.
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  // The user has to stop speaking first: while they hold the floor a response is refused and
+  // cancelled outright, which is the session's barge-in guard rather than anything this layer decides.
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-item-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+
+  const admitted = service.toolCallAcceptances()
+  assert.equal(admitted.length, 1, 'exactly one call admitted')
+  assert.equal(admitted[0]!.acceptance.accepted, true)
+  assert.equal(admitted[0]!.acceptance.delegate_id, 'd-1')
+  assert.equal(admitted[0]!.call_id, 'call-1')
+  // The delegate is registered on the session, which is what makes the work visible to the model.
+  assert.equal(session.snapshot().active_delegates.length, 1)
+  assert.equal(service.codexState, 'running', 'the renderer is told Codex is working')
+
+  // The response ends, so the batch becomes ready and the tool result reaches the provider.
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  assert.ok(
+    actions.some(action => action.startsWith('create_response:')),
+    'a continuation turn was requested for the finished work',
+  )
+})
+
+test('a tool call arriving before its transcript waits, then runs', async () => {
+  // The provider can finish a function call before emitting the turn's transcript final. Handling it
+  // immediately would bind it to the *previous* user turn -- the citation the origin check exists to
+  // stop -- so it waits, and the transcript releases it.
+  const {service} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  // The user has to stop speaking first: while they hold the floor a response is refused and
+  // cancelled outright, which is the session's barge-in guard rather than anything this layer decides.
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-item-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+  assert.equal(service.toolCallAcceptances().length, 0, 'held, not admitted')
+
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  const admitted = service.toolCallAcceptances()
+  assert.equal(admitted.length, 1, 'the transcript released it')
+  assert.equal(admitted[0]!.acceptance.accepted, true)
+})
+
+test('a failed transcript releases the calls waiting on it rather than stranding them', async () => {
+  // The transcript will never arrive, so anything waiting is waiting forever. The calls still need an
+  // answer: the bridge refuses them for want of evidence, which the provider can render.
+  const {service} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  // The user has to stop speaking first: while they hold the floor a response is refused and
+  // cancelled outright, which is the session's barge-in guard rather than anything this layer decides.
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-item-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_failed',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+  })
+  const admitted = service.toolCallAcceptances()
+  assert.equal(admitted.length, 1, 'answered rather than stranded')
+  assert.equal(admitted[0]!.acceptance.accepted, false)
+  assert.equal(admitted[0]!.acceptance.code, 'missing_origin_ref')
+})
+
+test('a runtime rejection is recorded as a refusal the provider can see', async () => {
+  const {service} = pipelineService({toolResult: {accepted: false, delegateId: null}})
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  // The user has to stop speaking first: while they hold the floor a response is refused and
+  // cancelled outright, which is the session's barge-in guard rather than anything this layer decides.
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-item-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+  const admitted = service.toolCallAcceptances()
+  assert.equal(admitted.length, 1)
+  assert.equal(admitted[0]!.acceptance.accepted, false)
+  assert.equal(admitted[0]!.acceptance.code, 'runtime_rejected')
+  assert.equal(service.codexState, 'idle', 'nothing was dispatched, so nothing is running')
+})

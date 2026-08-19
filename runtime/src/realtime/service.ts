@@ -208,6 +208,13 @@ export class RealtimeService {
   readonly #originDeferredToolCalls: DeferredOriginToolCall[] = []
   /** R105: delegate id -> the call key waiting on its synchronous result. */
   readonly #pendingSync = new Map<string, string>()
+  /**
+   * `(epoch, response)` keys whose playback the user demonstrably heard.
+   *
+   * Proof rather than assumption: an acknowledgement is only suppressed as already-said when there is
+   * a record of the turn carrying it having actually been played.
+   */
+  readonly #originDeliveryProofs = new Map<string, null>()
   #awaitingUserOrigin = false
   #userOriginPreexistingResponseId: string | null = null
 
@@ -635,8 +642,273 @@ export class RealtimeService {
     })
   }
 
-  #driveContinuationsLocked(): Promise<void> {
-    return Promise.reject(new NotYetPortedError('continuation drive'))
+  /**
+   * Whether a continuation may be requested right now.
+   *
+   * Two reasons not to. The user speaking outranks anything the agent wants to say. And an armed
+   * preemption means something urgent is about to interrupt, so starting a turn now would produce one
+   * that is immediately cut off.
+   */
+  #continuationRequestIsBlocked(): boolean {
+    return this.session.floor.state === 'user_speaking'
+      || (
+        this.#pendingPreemptPriority !== null
+        && this.#pendingPreemptPriority >= PREEMPT_MIN_PRIORITY
+      )
+  }
+
+  /**
+   * Give the model a turn to speak about finished tool work, one batch at a time.
+   *
+   * Strictly FIFO and strictly one in flight. The FIFO is why the agent narrates work in the order it
+   * was asked for rather than the order it finished; the single-flight check is why it does not talk
+   * over itself. Both are enforced by looking only at the head of the queue -- a batch that is not
+   * ready blocks the ones behind it deliberately, because speaking about later work first would
+   * describe a sequence the user did not ask for.
+   *
+   * Every `return` here leaves the batch where it is, to be retried when something changes. Every
+   * `continue` has popped a batch that will never speak.
+   */
+  async #driveContinuationsLocked(): Promise<void> {
+    if (
+      this.#pendingPreemptPriority !== null
+      && this.#pendingPreemptPriority >= PREEMPT_MIN_PRIORITY
+    ) {
+      return
+    }
+    // One turn in flight at a time. Checked across all batches rather than just the head, because a
+    // batch can still be speaking after its own key left the front of the queue.
+    for (const batch of this.#continuationBatches.values()) {
+      if (batch.phase === 'requested' || batch.phase === 'bound') return
+    }
+
+    while (this.#continuationFifo.length > 0) {
+      const head = this.#continuationFifo[0]!
+      const batch = this.#continuationBatches.get(head)
+      if (batch === undefined) {
+        this.#continuationFifo.shift()
+        continue
+      }
+      if (batch.phase === 'terminal' || batch.phase === 'abandoned') {
+        this.#continuationFifo.shift()
+        continue
+      }
+      if (batch.phase !== 'ready') return
+
+      const abandoning = batch.origin_status === 'cancelled' || batch.origin_status === 'failed'
+      if (!abandoning) {
+        // R105: a sync member is still awaiting its Handoff or Deadline. The batch stays unready
+        // without popping or requesting -- speaking now would describe a result that does not exist.
+        for (const key of batch.call_keys) {
+          if (this.#toolCallState(key)?.sync === 'pending') return
+        }
+      }
+
+      // The provider is holding a slot for every tool result in this batch. They are injected before
+      // the turn is requested, and before the abandon path too: an abandoned batch still owes the
+      // provider its results, or the protocol stalls waiting for them.
+      const intents: HostResponseIntent[] = []
+      for (const key of batch.call_keys) {
+        const state = this.#toolCallState(key)
+        if (state === undefined) continue
+        if (state.output === 'pending') {
+          await this.session.injectToolOutput(state.acceptance.host_item)
+          state.output = 'confirmed'
+        }
+        intents.push(state.acceptance.response_intent)
+      }
+
+      if (abandoning) {
+        this.#abandonBatch(batch)
+        this.#continuationFifo.shift()
+        continue
+      }
+      if (intents.length === 0) {
+        // Every member has been pruned out from under the batch, so there is nothing to speak about.
+        batch.phase = 'abandoned'
+        this.#continuationFifo.shift()
+        continue
+      }
+      if (this.#continuationRequestIsBlocked()) return
+
+      const requestResult = await this.session.requestToolContinuation(intents, {
+        originSpoken: this.#batchOriginWasDelivered(batch),
+      })
+      // Retryable means the provider could not take it *now*: the batch keeps its place and the next
+      // pass tries again. Rejected means it never will.
+      if (requestResult === 'retryable') return
+      if (requestResult === 'rejected') {
+        this.#abandonBatch(batch)
+        this.#continuationFifo.shift()
+        continue
+      }
+      batch.phase = 'requested'
+      for (const key of batch.call_keys) {
+        const state = this.#toolCallState(key)
+        if (state !== undefined) state.continuation = 'requested'
+      }
+      return
+    }
+  }
+
+  /**
+   * Give up on a batch, and settle what each member is owed.
+   *
+   * The final disposition distinguishes three things a caller cares about: work that was never
+   * dispatched is `superseded`, work the bridge refused is `refused`, and work that ran but will not
+   * be spoken about is `abandoned` -- and only that last kind gets a background acknowledgement,
+   * because it is the only one where something actually happened that the user has not heard about.
+   */
+  #abandonBatch(batch: ContinuationBatch): void {
+    for (const key of batch.call_keys) {
+      const state = this.#toolCallState(key)
+      if (state === undefined) continue
+      state.continuation = 'abandoned'
+      if (state.sync === 'pending') {
+        // R105: an abandoned batch converts the pending sync wait to the announce path; the result
+        // becomes a host fact instead of part of a turn that is no longer happening.
+        state.sync = 'announce'
+      } else if (state.sync === 'resolved') {
+        // CP3: resolved while collecting. The output injection above landed in a dead turn and no
+        // continuation will speak it, so it is downgraded to one announce host fact.
+        this.#announceResolvedSyncState(state)
+      }
+      if (state.dispatch === 'not_dispatched') {
+        state.final_disposition = 'superseded'
+      } else if (!state.acceptance.accepted) {
+        state.final_disposition = 'refused'
+      } else {
+        state.final_disposition = 'abandoned'
+        this.#queueBackgroundAcknowledgement(state)
+      }
+    }
+    batch.phase = 'abandoned'
+  }
+
+  /**
+   * Whether the user has already heard the acknowledgement this batch would repeat.
+   *
+   * Only meaningful for a single-call batch: with more than one there is no single origin to have been
+   * delivered. The revision check is what makes it safe -- a proof from before the user spoke again
+   * says nothing about whether they have heard about *this* turn.
+   */
+  #batchOriginWasDelivered(batch: ContinuationBatch): boolean {
+    if (batch.call_keys.length !== 1) return false
+    const state = this.#toolCallState(batch.call_keys[0]!)
+    if (state === undefined || !this.#refreshOriginDelivery(state, batch)) return false
+    const acknowledgement = this.#semanticAcknowledgement(state)
+    return acknowledgement !== null
+      && acknowledgement.origin_delivered
+      && acknowledgement.origin_user_input_revision === this.session.userInputRevision
+  }
+
+  /**
+   * Mark an acknowledgement as already spoken, if there is proof its turn was played.
+   *
+   * A proof only counts for a lone asynchronous call: with several in a batch, or with a synchronous
+   * result, the turn that played was not the acknowledgement.
+   */
+  #refreshOriginDelivery(state: ToolCallState, batch?: ContinuationBatch): boolean {
+    const key = callKey(state.provider_session_epoch, state.provider_response_id)
+    const resolved = batch ?? this.#continuationBatches.get(key)
+    const singleAsync = resolved?.call_keys.length === 1
+      && this.#toolCallState(resolved.call_keys[0]!) === state
+      && state.acceptance.response_intent.kind === 'delegation_acknowledgement'
+    if (!singleAsync || !this.#originDeliveryProofs.has(key)) return false
+    const acknowledgement = this.#semanticAcknowledgement(state)
+    if (acknowledgement === null) return false
+    acknowledgement.origin_delivered = true
+    return true
+  }
+
+  /**
+   * Queue the acknowledgement for work that ran but will not be spoken about in its own turn.
+   *
+   * If the user already heard it, it is marked delivered instead of queued: saying it twice is worse
+   * than not saying it again.
+   */
+  #queueBackgroundAcknowledgement(state: ToolCallState): void {
+    const acknowledgement = this.#semanticAcknowledgement(state)
+    if (acknowledgement === null) return
+    this.#refreshOriginDelivery(state)
+    if (acknowledgement.origin_delivered) {
+      acknowledgement.phase = 'delivered'
+      acknowledgement.response_id = null
+      acknowledgement.binding = null
+      return
+    }
+    this.#queueSemanticAcknowledgement(acknowledgement)
+  }
+
+  /** Queue one acknowledgement as a host fact, unless it is already queued or already said. */
+  #queueSemanticAcknowledgement(acknowledgement: SemanticAcknowledgement): void {
+    if (
+      acknowledgement.phase === 'requested'
+      || acknowledgement.phase === 'bound'
+      || acknowledgement.phase === 'delivered'
+    ) {
+      return
+    }
+    if (this.#hostItems.some(queued => queued.semantic_event_id === acknowledgement.event_id)) {
+      // Already waiting its turn. Marked queued rather than queued again, so the user hears it once.
+      acknowledgement.phase = 'queued'
+      return
+    }
+    const priority = this.#executorPriority(acknowledgement.channel)
+    this.queueHostItem({
+      kind: 'host_fact',
+      item: {
+        kind: 'progress',
+        host_item_id: this.#idFactory(),
+        event_id: acknowledgement.event_id,
+        content: `${this.#executorDisplayName(acknowledgement.channel)} 已接手开始处理：${acknowledgement.summary}`,
+        call_id: null,
+      },
+      task_summary: null,
+      origin_spoken: false,
+    }, {semanticEventId: acknowledgement.event_id, priority})
+    acknowledgement.phase = 'queued'
+  }
+
+  /**
+   * CP3: a resolved-but-undelivered sync result of an abandoned batch keeps its compact view.
+   *
+   * Requeued as the one announce host fact, rather than discarded: the work ran and produced a result
+   * the model was going to ground itself on, and losing it silently is worse than saying it plainly.
+   */
+  #announceResolvedSyncState(state: ToolCallState): void {
+    const delegateId = state.acceptance.delegate_id
+    if (delegateId === null) return
+    state.sync = 'announce'
+    this.queueHostItem({
+      kind: 'host_fact',
+      item: {
+        kind: 'final',
+        host_item_id: this.#idFactory(),
+        event_id: `sync:${delegateId}`,
+        content: state.acceptance.host_item.content,
+        call_id: null,
+      },
+      task_summary: null,
+      origin_spoken: false,
+    }, {priority: this.#executorPriority(state.acceptance.executor)})
+  }
+
+  /** A channel's manifest priority, or the default when there is no manifest for it. */
+  #executorPriority(channel: string | null): number {
+    if (channel === null) return 50
+    return this.#runtime.executors.get(channel)?.manifest.policy.priority ?? 50
+  }
+
+  /** Bind the one acknowledgement that asked for a turn to the response that will speak it. */
+  #bindRequestedSemanticAcknowledgement(responseId: string): void {
+    for (const acknowledgement of this.#semanticAcknowledgements.values()) {
+      if (acknowledgement.phase !== 'requested') continue
+      acknowledgement.phase = 'bound'
+      acknowledgement.response_id = responseId
+      acknowledgement.binding = 'fallback'
+      return
+    }
   }
 
   #reconnectProviderSession(options: {readonly expectedEpoch: number}): Promise<boolean> {
@@ -781,6 +1053,7 @@ export class RealtimeService {
       if (this.session.responseEventIds(event.response_id).length === 0) {
         this.#bindResponseUserOrigin(event.response_id)
       }
+      this.#bindRequestedSemanticAcknowledgement(event.response_id)
       this.#bindContinuation(event.response_id)
     }
 
