@@ -85,6 +85,10 @@ def _run() -> dict[str, Any]:
         "schema_version": document["schema_version"],
         # str(float) drives every rendered timestamp and the uncertainty field.
         "float_renderings": {repr(value): str(value) for value in document["float_vectors"]},
+        # .1f drives the media age, and it rounds half to even unlike toFixed.
+        "fixed_one_renderings": {
+            repr(value): f"{value:.1f}" for value in document["fixed_one_vectors"]
+        },
         "systems": {
             "fastbrain": FASTBRAIN_SYSTEM,
             "fastbrain_live": FASTBRAIN_LIVE_SYSTEM,

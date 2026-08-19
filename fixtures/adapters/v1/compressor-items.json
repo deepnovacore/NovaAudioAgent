@@ -4,7 +4,7 @@
   "scenarios": [
     {
       "id": "sorted-keys-and-float-ts",
-      "covers": "Integer-like content keys sort by code point and ts keeps its decimal point, the two properties a naive JSON.stringify port loses.",
+      "covers": "Integer-like content keys sort by code point and an integral float ts renders without a decimal point, because the oracle serializes with prompt_json rather than json.dumps. Both are properties a naive port loses in opposite directions.",
       "items": [
         {
           "channel": "conversation",
@@ -62,7 +62,13 @@
               ],
               "a": "他说\"客厅\""
             },
-            "emoji": "😀"
+            "emoji": "😀",
+            "number_spellings": {
+              "integral_float": 1.0,
+              "negative_zero": -0.0,
+              "upper": 1e+16,
+              "lower": 1e-05
+            }
           },
           "outcome": "failed",
           "refs": [

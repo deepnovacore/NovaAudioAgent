@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Sequence
 from types import MappingProxyType
 from typing import Any
 
+from nova_audio_agent.canonical_json import prompt_json
 from nova_audio_agent.context_view import ContextView
 from nova_audio_agent.memory import MemoryItem
 from nova_audio_agent.media import MediaStore, materialize_images, select_image_candidates
@@ -219,7 +220,10 @@ class GatewayCompressor:
         self._model = model
 
     async def compress(self, items: Sequence[MemoryItem]) -> str:
-        prompt = json.dumps(
+        # prompt_json, not json.dumps: the compressor prompt is model-visible, and
+        # json.dumps would render a float ts as `1.0` and preserve dict order, neither
+        # of which the Node port can reproduce. See canonical_json.prompt_json.
+        prompt = prompt_json(
             [
                 {
                     "ref": item.ref,
@@ -227,15 +231,10 @@ class GatewayCompressor:
                     "trust": item.trust,
                     "outcome": item.outcome,
                     "content": item.content,
-                    "refs": item.refs,
+                    "refs": list(item.refs),
                 }
                 for item in items
-            ],
-            ensure_ascii=False,
-            # Sorted for the same reason prompting.py sorts: JavaScript hoists
-            # integer-like keys and JSON parsing discards insertion order, so an
-            # unsorted compressor prompt is not reproducible by the Node port.
-            sort_keys=True,
+            ]
         )
         response = await self._gateway.complete(
             model=self._model,

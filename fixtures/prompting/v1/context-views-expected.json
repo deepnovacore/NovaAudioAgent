@@ -1,12 +1,26 @@
 {
+  "fixed_one_renderings": {
+    "0.0": "0.0",
+    "0.04": "0.0",
+    "0.049": "0.0",
+    "0.05": "0.1",
+    "1.15": "1.1",
+    "10.0": "10.0",
+    "2.2": "2.2",
+    "2.249999": "2.2",
+    "2.25": "2.2",
+    "2.35": "2.4",
+    "9.95": "9.9"
+  },
   "float_renderings": {
-    "-0.0": "-0.0",
     "0.0": "0.0",
     "0.0001": "0.0001",
+    "0.05": "0.05",
     "0.1": "0.1",
     "0.25": "0.25",
     "0.3333333333333333": "0.3333333333333333",
     "1.0": "1.0",
+    "1.15": "1.15",
     "1.5e-07": "1.5e-07",
     "1000000000000000.0": "1000000000000000.0",
     "12.5": "12.5",
@@ -16,9 +30,15 @@
     "1e+21": "1e+21",
     "1e-05": "1e-05",
     "1e-07": "1e-07",
+    "2.25": "2.25",
+    "2.35": "2.35",
     "9007199254740992.0": "9007199254740992.0"
   },
   "rendered": {
+    "content-number-spellings": {
+      "plain": "# 现在 t=5.0，说话权状态：idle\n\n## 在飞的活\n- 无\n\n## 通道 conversation\n- t=1.0 conversation:1 (trusted_system) {\"big\": 10000000000000000, \"exact\": 2.5, \"huge\": 1e+21, \"neg\": 0, \"score\": 1, \"small\": 0.00001, \"tiny\": 1e-7}\n\n## 现在手边的素材\n- 无\n\n## 意图\n- 猜测：（还没有）\n- 约束：（无）\n- 不确定度：0.5\n- 待澄清：（无）\n\n## 目标\n- 目标：（无）\n- 验收：（无）\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：（无）\n- deny：（无）\n- evidence_refs：（无）",
+      "with_trigger": "# 现在 t=5.0，说话权状态：idle\n当前触发事件：unspecified\n\n## 在飞的活\n- 无\n\n## 通道 conversation\n- t=1.0 conversation:1 (trusted_system) {\"big\": 10000000000000000, \"exact\": 2.5, \"huge\": 1e+21, \"neg\": 0, \"score\": 1, \"small\": 0.00001, \"tiny\": 1e-7}\n\n## 现在手边的素材\n- 无\n\n## 意图\n- 猜测：（还没有）\n- 约束：（无）\n- 不确定度：0.5\n- 待澄清：（无）\n\n## 目标\n- 目标：（无）\n- 验收：（无）\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：（无）\n- deny：（无）\n- evidence_refs：（无）"
+    },
     "empty-view": {
       "plain": "# 现在 t=0.0，说话权状态：idle\n\n## 在飞的活\n- 无\n\n## 现在手边的素材\n- 无\n\n## 意图\n- 猜测：（还没有）\n- 约束：（无）\n- 不确定度：0.5\n- 待澄清：（无）\n\n## 目标\n- 目标：（无）\n- 验收：（无）\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：（无）\n- deny：（无）\n- evidence_refs：（无）",
       "with_trigger": "# 现在 t=0.0，说话权状态：idle\n当前触发事件：unspecified\n\n## 在飞的活\n- 无\n\n## 现在手边的素材\n- 无\n\n## 意图\n- 猜测：（还没有）\n- 约束：（无）\n- 不确定度：0.5\n- 待澄清：（无）\n\n## 目标\n- 目标：（无）\n- 验收：（无）\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：（无）\n- deny：（无）\n- evidence_refs：（无）"
@@ -26,6 +46,10 @@
     "integer-like-content-keys": {
       "plain": "# 现在 t=3.0，说话权状态：idle\n\n## 在飞的活\n- 无\n\n## 通道 conversation\n- t=1.0 conversation:1 (trusted_system) {\"10\": \"ten\", \"2\": \"two\", \"a\": 2, \"b\": 1}\n\n## 现在手边的素材\n- 无\n\n## 意图\n- 猜测：（还没有）\n- 约束：（无）\n- 不确定度：0.5\n- 待澄清：（无）\n\n## 目标\n- 目标：（无）\n- 验收：（无）\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：（无）\n- deny：（无）\n- evidence_refs：（无）",
       "with_trigger": "# 现在 t=3.0，说话权状态：idle\n当前触发事件：unspecified\n\n## 在飞的活\n- 无\n\n## 通道 conversation\n- t=1.0 conversation:1 (trusted_system) {\"10\": \"ten\", \"2\": \"two\", \"a\": 2, \"b\": 1}\n\n## 现在手边的素材\n- 无\n\n## 意图\n- 猜测：（还没有）\n- 约束：（无）\n- 不确定度：0.5\n- 待澄清：（无）\n\n## 目标\n- 目标：（无）\n- 验收：（无）\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：（无）\n- deny：（无）\n- evidence_refs：（无）"
+    },
+    "list-fields-with-control-characters": {
+      "plain": "# 现在 t=2.0，说话权状态：idle\n\n## 在飞的活\n- 无\n\n## 现在手边的素材\n- 无\n\n## 意图\n- 猜测：（还没有）\n- 约束：['first\\nsecond', 'tab\\there', \"has'quote\"]\n- 不确定度：0.5\n- 待澄清：['has\"double', 'both\\'and\"', 'ctrl\\x01here']\n\n## 目标\n- 目标：（无）\n- 验收：['line\\r\\nbreak']\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：['back\\\\slash']\n- deny：（无）\n- evidence_refs：（无）",
+      "with_trigger": "# 现在 t=2.0，说话权状态：idle\n当前触发事件：unspecified\n\n## 在飞的活\n- 无\n\n## 现在手边的素材\n- 无\n\n## 意图\n- 猜测：（还没有）\n- 约束：['first\\nsecond', 'tab\\there', \"has'quote\"]\n- 不确定度：0.5\n- 待澄清：['has\"double', 'both\\'and\"', 'ctrl\\x01here']\n\n## 目标\n- 目标：（无）\n- 验收：['line\\r\\nbreak']\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：['back\\\\slash']\n- deny：（无）\n- evidence_refs：（无）"
     },
     "live-progress-projection": {
       "plain": "# 现在 t=20.0，说话权状态：idle\n\n## 在飞的活\n- 无\n\n## 通道 codex\n- t=5.0 codex:1 (trusted_system) {\"op\": \"run\", \"phase\": \"started\"}\n- t=6.0 codex:2 (trusted_system) {\"op\": \"run\", \"phase\": \"working\", \"summary\": \"跑测试\"}\n- t=7.0 codex:3 (trusted_system) {\"op\": \"status\", \"state\": \"running\"}\n- t=8.0 codex:4 (trusted_system) {\"op\": \"status\", \"state\": \"weird\"}\n\n## 现在手边的素材\n- [codex 通道 t=6.0 刚有动静] {\"op\": \"run\", \"phase\": \"working\", \"summary\": \"跑测试\"}\n\n## 意图\n- 猜测：（还没有）\n- 约束：（无）\n- 不确定度：0.5\n- 待澄清：（无）\n\n## 目标\n- 目标：（无）\n- 验收：（无）\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：（无）\n- deny：（无）\n- evidence_refs：（无）",

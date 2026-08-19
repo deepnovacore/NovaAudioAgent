@@ -165,9 +165,29 @@ export function pythonFloat(value: number): string {
   return rendered.includes('.') ? rendered : `${rendered}.0`
 }
 
-/** Python `f"{value:.1f}"`. */
-function fixedOne(value: number): string {
-  return value.toFixed(1)
+/**
+ * Python `f"{value:.1f}"`, which rounds half to even on the exact binary64 value.
+ *
+ * `Number.prototype.toFixed` rounds half away from zero, so an exactly representable
+ * midpoint diverges: 2.25 renders `2.2` in Python and `2.3` here. The exact decimal
+ * expansion decides which side of the midpoint the value really falls on -- 0.05 is
+ * slightly above it and rounds up in both, while 2.25 is exact and rounds to even.
+ * Twenty places is far more than a bounded age in seconds can need.
+ */
+export function pythonFixedOne(value: number): string {
+  if (!Number.isFinite(value)) throw new TypeError(`age must be finite: ${value}`)
+  const negative = value < 0 || Object.is(value, -0)
+  const [whole, fraction = ''] = Math.abs(value).toFixed(20).split('.')
+  const first = fraction[0] ?? '0'
+  const tail = fraction.slice(1)
+  let roundUp: boolean
+  if (tail === '' || tail[0]! < '5') roundUp = false
+  else if (tail[0]! > '5') roundUp = true
+  else if (/[1-9]/u.test(tail.slice(1))) roundUp = true
+  else roundUp = Number(first) % 2 === 1
+  const scaled = BigInt(whole! + first) + (roundUp ? 1n : 0n)
+  const digits = scaled.toString().padStart(2, '0')
+  return `${negative ? '-' : ''}${digits.slice(0, -1)}.${digits.slice(-1)}`
 }
 
 export function renderContextView(view: ContextView, includeTrigger = false): string {
@@ -260,12 +280,40 @@ function pythonTruthy(
     : String(value)
 }
 
+/**
+ * Python `repr` of a string: quote selection plus control-character escaping.
+ *
+ * CPython prefers single quotes, switches to double quotes only when the value contains
+ * a single quote and no double quote, and escapes backslash, the active quote, and every
+ * control character. Constraints, acceptance criteria, and authorization entries are all
+ * free-form strings that can legitimately contain a newline, so emitting the raw
+ * character here would break the prompt's line structure.
+ */
+function pythonStringRepr(value: string): string {
+  const useDouble = value.includes("'") && !value.includes('"')
+  const quote = useDouble ? '"' : "'"
+  let out = ''
+  for (const character of value) {
+    if (character === '\\') out += '\\\\'
+    else if (character === quote) out += `\\${quote}`
+    else if (character === '\n') out += '\\n'
+    else if (character === '\r') out += '\\r'
+    else if (character === '\t') out += '\\t'
+    else {
+      const code = character.codePointAt(0)!
+      // CPython escapes C0, DEL, and C1 as \xNN; anything printable stays literal.
+      out += (code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f))
+        ? `\\x${code.toString(16).padStart(2, '0')}`
+        : character
+    }
+  }
+  return `${quote}${out}${quote}`
+}
+
 /** Python `str()` of a list, which uses `repr` on each element. */
 function pythonRepr(value: JsonValue): string {
   if (typeof value === 'string') {
-    return value.includes("'") && !value.includes('"')
-      ? `"${value}"`
-      : `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+    return pythonStringRepr(value)
   }
   if (Array.isArray(value)) return `[${value.map(pythonRepr).join(', ')}]`
   if (value === null) return 'None'
@@ -273,7 +321,7 @@ function pythonRepr(value: JsonValue): string {
   if (value === false) return 'False'
   if (typeof value === 'number') return pythonNumber(value)
   return `{${Object.entries(value)
-    .map(([key, item]) => `${pythonRepr(key)}: ${pythonRepr(item)}`)
+    .map(([key, item]) => `${pythonStringRepr(key)}: ${pythonRepr(item)}`)
     .join(', ')}}`
 }
 
@@ -365,7 +413,8 @@ export function renderFastBrainContext(
       const at = capturedAt.get(ref)
       if (at !== undefined) {
         const age = Math.max(0, view.now - at)
-        line += `；约 ${fixedOne(age)} 秒前（核对 token t=${at}）`
+        // captured_at is a float in the oracle, so it renders like every timestamp.
+        line += `；约 ${pythonFixedOne(age)} 秒前（核对 token t=${pythonFloat(at)}）`
       }
       lines.push(line)
     }

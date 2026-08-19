@@ -17,7 +17,6 @@ import {
   COMPRESSOR_SYSTEM,
   FASTBRAIN_SYSTEM,
   SURROGATE_SYSTEM,
-  pythonFloat,
   pythonJsonDumps,
   renderContextView,
   renderFastBrainContext,
@@ -287,21 +286,22 @@ export class GatewaySurrogate {
 /**
  * The compressor prompt, rendered the way the oracle's `json.dumps` renders it.
  *
- * Fields are emitted in code-point order because the oracle now sorts them, and `ts`
- * goes through `pythonFloat` because it is a float there and must carry its decimal
- * point. Building the object literal and serializing it would lose both properties, so
- * the fields are emitted explicitly and the order is asserted against the golden.
+ * The oracle serializes this with `prompt_json`, so keys sort by code point and numbers
+ * follow ECMAScript rules. That makes a plain serialization correct: no field needs its
+ * own spelling, and the golden pins the result.
  */
 export function compressorPrompt(items: readonly MemoryItem[]): string {
-  const rendered = items.map(item => [
-    `"content": ${pythonJsonDumps(item.content)}`,
-    `"outcome": ${pythonJsonDumps(item.outcome)}`,
-    `"ref": ${JSON.stringify(`${item.channel}:${item.seq}`)}`,
-    `"refs": ${pythonJsonDumps([...item.refs])}`,
-    `"trust": ${JSON.stringify(item.trust)}`,
-    `"ts": ${pythonFloat(item.ts)}`,
-  ].join(', '))
-  return `[${rendered.map(fields => `{${fields}}`).join(', ')}]`
+  // Now that the oracle routes this through prompt_json, ts follows ECMAScript number
+  // rules like every other value, so the whole item serializes uniformly and no field
+  // needs hand-emitting.
+  return pythonJsonDumps(items.map(item => ({
+    ref: `${item.channel}:${item.seq}`,
+    ts: item.ts,
+    trust: item.trust,
+    outcome: item.outcome,
+    content: item.content,
+    refs: [...item.refs],
+  })))
 }
 
 export class GatewayCompressor {

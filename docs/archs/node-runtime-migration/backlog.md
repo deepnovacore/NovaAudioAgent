@@ -131,6 +131,17 @@ once:
   the Floor is consulted once at the first chunk rather than at completion, is the open work.
   Until then, treat the assembly as fixture-faithful but not production-faithful on this
   point.
+- Prompt number and string spelling. `json.dumps` preserves the int-versus-float
+  distinction it parsed and Python `repr` has its own escaping, neither of which JavaScript
+  can reproduce from parsed JSON. A payload that arrived as `{"score": 1.0}` renders `1.0`
+  under `json.dumps` and `1` in Node; `-0.0`, `1e+16`, and `1e-05` diverge the same way.
+  Resolved by routing every prompt-bound serialization through
+  `canonical_json.prompt_json`, which keeps `json.dumps` separators but applies ECMAScript
+  number rules and code-point key order, so the model-visible bytes are language-neutral by
+  construction. Timestamps interpolated with f-strings keep Python `str(float)` because
+  those fields are typed `float` and therefore deterministic, and the media age keeps
+  Python's `.1f` half-even rounding, which `toFixed` does not implement. All three are
+  pinned by exported vectors.
 - Unicode database version skew. Python classifies and normalizes characters with the database
   bundled into CPython; V8 does so with the database bundled into ICU. Those versions differ and
   drift with every release. Measured on the development machine: CPython 3.12.11 carries Unicode

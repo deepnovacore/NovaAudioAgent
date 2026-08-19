@@ -1,19 +1,24 @@
 """Production prompt contracts and the sole ContextView text renderer.
 
-Rendered content object keys are sorted by code point. Python dicts preserve
-insertion order, JavaScript hoists integer-like keys ahead of string keys, and JSON
-parsing discards insertion order outright, so an unsorted render cannot be
-reproduced by the Node port of this module. Sorting makes these model-visible bytes
-language-neutral rather than hiding the difference behind fixture normalization,
-matching the choice already made for ContextView ``in_flight.what``.
+Rendered content goes through ``canonical_json.prompt_json`` rather than
+``json.dumps``. Keys are sorted by code point because JavaScript hoists integer-like
+keys and JSON parsing discards the insertion order Python would otherwise preserve,
+and numbers follow ECMAScript rules because ``json.dumps`` preserves an
+int-versus-float distinction JavaScript cannot represent -- a payload that arrived as
+``{"score": 1.0}`` would render ``1.0`` here and ``1`` there. Both choices make these
+model-visible bytes language-neutral rather than hiding the difference behind fixture
+normalization, matching ContextView ``in_flight.what``.
+
+Timestamps interpolated with f-strings still use Python ``str(float)``, because those
+fields are typed ``float`` and their spelling is therefore deterministic.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict
 from typing import Any, Mapping
 
+from nova_audio_agent.canonical_json import prompt_json
 from nova_audio_agent.context_view import ContextView
 
 FASTBRAIN_SYSTEM = """\
@@ -160,7 +165,7 @@ def render_context_snapshot(
             lines.append(
                 f"- t={item['ts']} {channel['name']}:{item['seq']}"
                 f" ({item['trust']}){outcome} "
-                f"{json.dumps(content, ensure_ascii=False, sort_keys=True)}"
+                f"{prompt_json(content)}"
             )
         lines.append("")
 
@@ -202,26 +207,20 @@ def _affordance_line(item: Mapping[str, Any], *, live_projection: bool = False) 
     source = item["source"]
     if source == "probe":
         verdict = "能判定" if item["conclusive"] else "不足以判定"
-        unknown = json.dumps(content["unknown"], ensure_ascii=False, sort_keys=True)
+        unknown = prompt_json(content["unknown"])
         return (
             f"- [只读复核] {content['executor']}.{content['op']}："
             f"{verdict}那条不确定的结果（{item['ref']}：{unknown}）"
         )
     if source == "suggestion":
         mark = " **（代理已选择；请用自己的话表达）**" if content.get("selected") else ""
-        return (
-            f"- [{content['kind']} {item['ref']}] "
-            f"{json.dumps(content['suggestion'], ensure_ascii=False, sort_keys=True)}{mark}"
-        )
+        return f"- [{content['kind']} {item['ref']}] {prompt_json(content['suggestion'])}{mark}"
     if source == "unresolved_question":
         return f"- [未决问题 {item['ref']}] {content['question']}"
     observation = content["observation"]
     if live_projection:
         observation = _project_live_progress(observation)
-    return (
-        f"- [{content['channel']} 通道 t={content['ts']} 刚有动静] "
-        f"{json.dumps(observation, ensure_ascii=False, sort_keys=True)}"
-    )
+    return f"- [{content['channel']} 通道 t={content['ts']} 刚有动静] {prompt_json(observation)}"
 
 
 def _project_live_progress(content: Mapping[str, Any]) -> Mapping[str, Any]:

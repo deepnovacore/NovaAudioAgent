@@ -8,6 +8,7 @@ import {
   FASTBRAIN_LIVE_SYSTEM,
   FASTBRAIN_SYSTEM,
   SURROGATE_SYSTEM,
+  pythonFixedOne,
   pythonFloat,
   renderContextSnapshot,
 } from '../src/prompting.js'
@@ -30,6 +31,7 @@ interface Fixture {
 interface Golden {
   readonly schema_version: number
   readonly float_renderings: Readonly<Record<string, string>>
+  readonly fixed_one_renderings: Readonly<Record<string, string>>
   readonly systems: Readonly<Record<string, string>>
   readonly rendered: Readonly<Record<string, {readonly plain: string, readonly with_trigger: string}>>
 }
@@ -90,4 +92,31 @@ test('Python str(float) is reproduced for every prompt timestamp boundary', () =
     assert.ok(matches.length > 0, `no golden rendering for ${String(value)}`)
     assert.equal(rendered, matches[0], `pythonFloat(${String(value)})`)
   }
+})
+
+
+test('Python .1f half-even rounding is reproduced for the media age', () => {
+  // toFixed rounds half away from zero, so an exactly representable midpoint diverges:
+  // 2.25 is 2.2 in Python and 2.3 with toFixed. The golden decides.
+  const golden = loadJson<Golden>('context-views-expected.json')
+  const vectors = loadJson<{readonly fixed_one_vectors: readonly number[]}>(
+    'context-views.json',
+  )
+  assert.ok(vectors.fixed_one_vectors.length >= 10)
+
+  let sawMidpoint = false
+  for (const value of vectors.fixed_one_vectors) {
+    const matches = Object.entries(golden.fixed_one_renderings)
+      .filter(([key]) => Number(key) === value)
+      .map(([, expected]) => expected)
+    assert.ok(matches.length > 0, `no golden .1f for ${String(value)}`)
+    assert.equal(pythonFixedOne(value), matches[0], `.1f(${String(value)})`)
+    if (value === 2.25) {
+      sawMidpoint = true
+      // Guard the premise: this vector must actually distinguish the two rules.
+      assert.equal(matches[0], '2.2')
+      assert.equal(value.toFixed(1), '2.3')
+    }
+  }
+  assert.ok(sawMidpoint, 'the exact-midpoint vector must be present')
 })

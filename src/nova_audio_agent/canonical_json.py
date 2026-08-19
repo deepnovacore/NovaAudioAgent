@@ -23,7 +23,21 @@ def canonical_json_bytes(value: Any) -> bytes:
     return canonical_json(value).encode("utf-8")
 
 
-def _serialize(value: Any) -> str:
+def prompt_json(value: Any) -> str:
+    """Serialize one JSON value for a prompt: canonical bytes, Python separators.
+
+    Prompt text uses ``json.dumps`` defaults (``", "`` and ``": "``) but must not use
+    its numbers. ``json.dumps`` preserves the int-versus-float distinction it parsed,
+    so a payload that arrived as ``{"score": 1.0}`` renders ``1.0`` in Python and ``1``
+    in JavaScript, where JSON parsing keeps no such distinction. It also switches to
+    exponential notation at different thresholds and writes ``-0.0``. Routing prompt
+    content through the canonical number rules makes these model-visible bytes
+    language-neutral, the same choice already made for ContextView ``in_flight.what``.
+    """
+    return _serialize(value, item_separator=", ", key_separator=": ")
+
+
+def _serialize(value: Any, *, item_separator: str = ",", key_separator: str = ":") -> str:
     if value is None:
         return "null"
     if value is True:
@@ -35,12 +49,23 @@ def _serialize(value: Any) -> str:
     if isinstance(value, int | float):
         return _serialize_number(value)
     if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
-        return "[" + ",".join(_serialize(item) for item in value) + "]"
+        return (
+            "["
+            + item_separator.join(
+                _serialize(item, item_separator=item_separator, key_separator=key_separator)
+                for item in value
+            )
+            + "]"
+        )
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("canonical JSON object keys must be strings")
-        fields = (f"{_serialize(key)}:{_serialize(value[key])}" for key in sorted(value))
-        return "{" + ",".join(fields) + "}"
+        fields = (
+            f"{_serialize_string(key)}{key_separator}"
+            f"{_serialize(value[key], item_separator=item_separator, key_separator=key_separator)}"
+            for key in sorted(value)
+        )
+        return "{" + item_separator.join(fields) + "}"
     raise TypeError(f"value is not JSON serializable: {type(value).__name__}")
 
 

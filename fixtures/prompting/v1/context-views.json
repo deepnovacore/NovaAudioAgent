@@ -388,25 +388,145 @@
           }
         }
       }
+    },
+    {
+      "id": "content-number-spellings",
+      "covers": "Numbers inside content that json.dumps would spell differently from JavaScript: an integral float, negative zero, and both exponent thresholds.",
+      "view": {
+        "now": 5.0,
+        "floor": "idle",
+        "trigger_kind": null,
+        "in_flight": [],
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "omitted": 0,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 1.0,
+                "trust": "trusted_system",
+                "priority": 100,
+                "content": {
+                  "score": 1.0,
+                  "neg": -0.0,
+                  "big": 1e+16,
+                  "small": 1e-05,
+                  "exact": 2.5,
+                  "huge": 1e+21,
+                  "tiny": 1e-07
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ]
+          }
+        ],
+        "affordances": [],
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 0.5,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "unset",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "list-fields-with-control-characters",
+      "covers": "Structured list fields render through Python str(), which uses repr on each element: newlines, tabs, and both quote characters must be escaped, not emitted raw, or the prompt's line structure breaks.",
+      "view": {
+        "now": 2.0,
+        "floor": "idle",
+        "trigger_kind": null,
+        "in_flight": [],
+        "channels": [],
+        "affordances": [],
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [
+              "first\nsecond",
+              "tab\there",
+              "has'quote"
+            ],
+            "unresolved_questions": [
+              "has\"double",
+              "both'and\"",
+              "ctrl\u0001here"
+            ],
+            "uncertainty": 0.5,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [
+              "line\r\nbreak"
+            ],
+            "status": "unset",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [
+              "back\\slash"
+            ],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        }
+      }
     }
   ],
   "float_vectors": [
     0.0,
-    -0.0,
-    1.0,
-    12.5,
-    0.1,
-    0.25,
-    1000000000000000.0,
-    1e+16,
-    1e+21,
-    0.0001,
-    1e-05,
     1e-07,
     1.5e-07,
-    1e+100,
+    1e-05,
+    0.0001,
+    0.05,
+    0.1,
+    0.25,
     0.3333333333333333,
+    1.0,
+    1.15,
+    2.25,
+    2.35,
+    12.5,
     123456789.5,
-    9007199254740992.0
+    1000000000000000.0,
+    9007199254740992.0,
+    1e+16,
+    1e+21,
+    1e+100
+  ],
+  "fixed_one_vectors": [
+    0.0,
+    0.05,
+    1.15,
+    2.2,
+    2.25,
+    2.249999,
+    2.35,
+    9.95,
+    10.0,
+    0.04,
+    0.049
   ]
 }

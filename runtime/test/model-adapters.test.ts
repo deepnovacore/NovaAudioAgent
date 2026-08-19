@@ -111,10 +111,15 @@ test('the compressor prompt matches the Python oracle byte for byte', () => {
       `${scenario.id}: ${scenario.covers}`,
     )
   }
-  // Guard the premise: the sorted-key scenario must actually exercise both hazards.
+  // Guard the premise: the scenario must actually exercise both hazards.
   const sorted = golden.prompts['sorted-keys-and-float-ts']!
+  // Code-point key order, which JavaScript would otherwise reorder.
   assert.match(sorted, /"10": "ten", "2": "two"/u)
-  assert.match(sorted, /"ts": 1\.0/u)
+  // An integral float renders without a decimal point on BOTH sides, because the
+  // oracle routes this through prompt_json. json.dumps would have written 1.0 here,
+  // which no JavaScript number can express.
+  assert.match(sorted, /"ts": 1\}/u)
+  assert.doesNotMatch(sorted, /"ts": 1\.0/u)
 })
 
 test('a background trigger cannot reach Codex tools', () => {
