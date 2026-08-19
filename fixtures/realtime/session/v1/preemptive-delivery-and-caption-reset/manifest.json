@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "preemptive-delivery-and-caption-reset",
+  "description": "A preemptive host response waits only for the provider, not for the renderer: it is delivered while a generation is still playing, which is the whole point of preempting. A non-preemptive delivery in the same state raises instead, because a refusal would tell the caller the event was handled when it was not. Resetting captions drops both accumulators without touching anything the reducer decided.",
+  "covers": [
+    "session.deliver_preemptive_host_response.overlaps_playback",
+    "session.deliver_preemptive_host_response.confirmation_timeout",
+    "session.deliver_host_item.host_fact_shorthand",
+    "session.reset_captions"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "checked"
+}

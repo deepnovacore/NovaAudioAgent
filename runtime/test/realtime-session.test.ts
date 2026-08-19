@@ -10,7 +10,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { VirtualClock } from '../src/clock.js'
-import { PlaybackRegistry } from '../src/playback.js'
+import {
+  PlaybackRegistry,
+  type PlaybackCompletion,
+  type PlaybackGeneration,
+} from '../src/playback.js'
 import { RealtimeSession, type SessionProvider } from '../src/realtime/session.js'
 import type { HostContextItem, HostResponseIntent } from '../src/realtime/protocol.js'
 
@@ -61,6 +65,11 @@ function makeSession(options: {readonly ids?: readonly string[]} = {}): {
     onFrame: noop,
     onClear: (utteranceId, generationEpoch) => {
       actions.push(`clear:${utteranceId}:${generationEpoch}`)
+    },
+    // An alert fence is a distinct message: the renderer is told the utterance was cut off, not
+    // merely to drop what it has.
+    onAlert: (utteranceId, generationEpoch) => {
+      actions.push(`alert:${String(utteranceId)}:${String(generationEpoch)}`)
     },
   })
   const session = new RealtimeSession({
@@ -277,4 +286,290 @@ test('a host fact cannot be built from tool output or dialogue context', async (
       `${kind} must not become a host fact`,
     )
   }
+})
+
+/** Drive a response to the point where it owns a renderer generation. */
+async function withPlayingResponse(): Promise<{
+  readonly session: RealtimeSession
+  readonly actions: string[]
+  readonly generation: PlaybackGeneration
+}> {
+  const {session, actions} = makeSession({
+    // Two ids per generation, plus a recovery item for the tests that reconnect.
+    ids: ['generation-1', 'utterance-1', 'recovery-1', 'generation-2', 'utterance-2'],
+  })
+  await session.connect({tools: []})
+  await session.deliverHostItem({
+    kind: 'progress',
+    host_item_id: 'host-1',
+    event_id: 'progress:1',
+    content: '第一步。',
+    call_id: null,
+  })
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'resp-1'})
+  await session.accept({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'resp-1',
+    pcm: new Uint8Array([0, 1, 2, 3]),
+  })
+  session.playbackStarted('utterance-1', 1)
+  const generation = session.currentGeneration
+  if (generation === null) throw new Error('the response should own a generation')
+  return {session, actions, generation}
+}
+
+test('a deferred preempt fence is spent by expiring it, and only once', async () => {
+  // `hostPreempt` cancels the provider but leaves the audio playing. Expiring is where that debt is
+  // settled: an alert fence, so the renderer says it was interrupted rather than just stopping.
+  const {session, actions, generation} = await withPlayingResponse()
+  assert.equal(await session.hostPreempt(), true)
+  assert.equal(session.providerTurnPhase('resp-1'), 'cancel_requested')
+  assert.equal(session.currentGeneration, generation, 'the audio is still playing')
+
+  assert.equal(session.expireHostPreempt(generation), true)
+  assert.equal(session.currentGeneration, null, 'the fence has now landed')
+  assert.ok(actions.includes('alert:utterance-1:1'), 'the renderer is told it was interrupted')
+  // The deferral is spent. Clearing it is what stops the *next* generation being fenced by a debt
+  // that was already settled, so that is what has to be observable.
+  assert.equal(session.providerTurnPhase('resp-1'), 'cancel_requested')
+  assert.equal(session.expireHostPreempt(generation), false)
+
+  // The preempted response keeps the provider slot until its own terminal, so a replacement cannot
+  // start before that arrives.
+  await session.accept({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'resp-1',
+    status: 'cancelled',
+    reason: 'host_preempt',
+  })
+  // The fence it just landed is still unreported, so the foreground is not idle. Delivering
+  // preemptively is the path that does not wait for the renderer, which is the point of it.
+  await session.deliverPreemptiveHostResponse({
+    kind: 'host_fact',
+    item: {
+      kind: 'progress',
+      host_item_id: 'host-2',
+      event_id: 'progress:2',
+      content: '第二步。',
+      call_id: null,
+    },
+    task_summary: null,
+    origin_spoken: false,
+  })
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'resp-2'})
+  await session.accept({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'resp-2',
+    pcm: new Uint8Array([4, 5]),
+  })
+  const replacement = session.currentGeneration
+  assert.notEqual(replacement, null, 'a new response opened a new generation')
+  assert.equal(session.expireHostPreempt(replacement), false, 'the spent debt cannot fence again')
+  assert.equal(session.currentGeneration, replacement, 'the new generation survives')
+})
+
+test('an expired preempt leaves no deferral for the terminal to act on', async () => {
+  // Not a discriminating test, and kept for the record of why. `acceptTerminal` branches on
+  // `defer_playback_fence`, so a deferral left set after the fence landed looks dangerous -- but
+  // that branch also requires the current generation to belong to this response, and the fence
+  // already removed it. Both paths therefore reach the same state, and clearing the flag is
+  // hygiene rather than behavior. Left as a regression check on the *sequence*, not the flag.
+  const {session, generation} = await withPlayingResponse()
+  await session.hostPreempt()
+  assert.equal(session.expireHostPreempt(generation), true)
+
+  await session.accept({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'resp-1',
+    status: 'cancelled',
+    reason: 'host_preempt',
+  })
+  await session.deliverPreemptiveHostResponse({
+    kind: 'host_fact',
+    item: {
+      kind: 'progress',
+      host_item_id: 'host-2',
+      event_id: 'progress:2',
+      content: '第二步。',
+      call_id: null,
+    },
+    task_summary: null,
+    origin_spoken: false,
+  })
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'resp-2'})
+  await session.accept({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'resp-2',
+    pcm: new Uint8Array([6, 7]),
+  })
+  const replacement = session.currentGeneration
+  assert.notEqual(replacement, null)
+
+  // resp-1's terminal already arrived; a stale deferral on it cannot reach resp-2's generation.
+  assert.equal(session.currentGeneration, replacement, 'the replacement is untouched')
+  assert.equal(session.providerTurnPhase('resp-2'), 'active')
+})
+
+test('expiring a preempt for a generation that is not current does not fence anything', async () => {
+  const {session, generation} = await withPlayingResponse()
+  await session.hostPreempt()
+
+  const other: PlaybackGeneration = {...generation, generation_id: 'other', utterance_id: 'other'}
+  // The deferral is still consumed -- it named this response -- but no fence lands on a generation
+  // the preempt was not aimed at.
+  assert.equal(session.expireHostPreempt(other), true)
+  assert.equal(session.currentGeneration, generation, 'the wrong generation was left alone')
+})
+
+test('expiring with no preempt outstanding is refused', async () => {
+  const {session} = await withPlayingResponse()
+  assert.equal(session.expireHostPreempt(null), false)
+  assert.equal(session.expireHostPreempt(session.currentGeneration), false)
+})
+
+test('a Guard handoff generation can be alert-fenced exactly once', async () => {
+  const {session, actions, generation} = await withPlayingResponse()
+  await session.reconnectForGuard({tools: [], oldGeneration: generation})
+  // The retained generation is still playing under the new provider session.
+  assert.equal(session.currentGeneration, generation)
+
+  assert.equal(session.alertGuardHandoff(generation), true)
+  assert.ok(actions.includes('alert:utterance-1:1'), 'the retained generation is alert-fenced')
+  assert.equal(session.alertGuardHandoff(generation), false, 'the handoff is spent')
+})
+
+test('alerting a generation that was never handed off is refused', async () => {
+  const {session, generation} = await withPlayingResponse()
+  assert.equal(session.alertGuardHandoff(generation), false, 'no handoff is in progress')
+})
+
+test('a Guard handoff alert names one exact generation, not whichever is retained', async () => {
+  // The retained generation is the one thing that survives the handoff, so alerting must match it
+  // exactly rather than accepting any generation while a handoff happens to be live.
+  const {session, generation} = await withPlayingResponse()
+  await session.reconnectForGuard({tools: [], oldGeneration: generation})
+
+  const other: PlaybackGeneration = {...generation, generation_id: 'other', utterance_id: 'other'}
+  assert.equal(session.alertGuardHandoff(other), false, 'a different generation is not it')
+  assert.equal(session.currentGeneration, generation, 'and nothing was fenced')
+  assert.equal(session.alertGuardHandoff(generation), true, 'the real one still works')
+})
+
+test('retiring an unaccountable clear frees the slot without inventing a delivery', async () => {
+  // The renderer cleared something the session cannot account for. Retiring must not produce a
+  // completion: nobody knows whether, or how much of it, was heard.
+  const deliveries: PlaybackCompletion[] = []
+  const actions: string[] = []
+  const ids = ['generation-1', 'utterance-1']
+  let index = 0
+  const idFactory = (): string => {
+    const value = ids[index]
+    if (value === undefined) throw new Error('test id sequence exhausted')
+    index += 1
+    return value
+  }
+  const playback = new PlaybackRegistry({idFactory, onFrame: noop, onClear: noop})
+  const session = new RealtimeSession({
+    provider: {
+      connect: () => Promise.resolve({epoch: 1}),
+      injectHostItem: (item: HostContextItem) =>
+        Promise.resolve({session_epoch: 1, host_item_id: item.host_item_id}),
+      createResponse: () => Promise.resolve(),
+      cancelResponse: (responseId: string) => {
+        actions.push(`cancel:${responseId}`)
+        return Promise.resolve()
+      },
+      close: () => Promise.resolve(),
+    },
+    playback,
+    idFactory,
+    clock: new VirtualClock(),
+    onDelivery: completion => {
+      deliveries.push(completion)
+    },
+    onDiagnostic: noop,
+  })
+  await session.connect({tools: []})
+  await session.deliverHostItem({
+    kind: 'progress',
+    host_item_id: 'host-1',
+    event_id: 'progress:1',
+    content: '在跑。',
+    call_id: null,
+  })
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'resp-1'})
+  await session.accept({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'resp-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+  const generation = session.currentGeneration
+  if (generation === null) throw new Error('the response should own a generation')
+  await session.localSpeechOnset('local-1')
+
+  assert.equal(session.retirePlaybackClearUnknown(generation), true)
+  assert.deepEqual(deliveries, [], 'no delivery evidence may be fabricated')
+  assert.equal(session.retirePlaybackClearUnknown(generation), false, 'already retired')
+})
+
+test('waiting for a stale hold returns at once when no hold is active', async () => {
+  const {session} = makeSession()
+  await session.connect({tools: []})
+  assert.equal(await session.waitForStaleHold(10), false)
+})
+
+test('waiting for a stale hold sleeps past the deadline, then the release succeeds', async () => {
+  // The wait is bounded by the injected clock, so a wrong premise fails in milliseconds rather than
+  // hanging the suite.
+  const clock = new VirtualClock()
+  const ids = ['generation-1']
+  let index = 0
+  const session = new RealtimeSession({
+    provider: {
+      connect: () => Promise.resolve({epoch: 1}),
+      injectHostItem: (item: HostContextItem) =>
+        Promise.resolve({session_epoch: 1, host_item_id: item.host_item_id}),
+      createResponse: () => Promise.resolve(),
+      cancelResponse: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+    },
+    playback: new PlaybackRegistry({
+      idFactory: () => ids[index++] ?? 'extra',
+      onFrame: noop,
+      onClear: noop,
+    }),
+    idFactory: () => 'host-1',
+    clock,
+    onDiagnostic: noop,
+  })
+  await session.connect({tools: []})
+  await session.accept({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: null,
+  })
+
+  const waiting = session.waitForStaleHold(10)
+  // The wait must sleep *past* the deadline, not to it: the release comparison is strict, so waking
+  // exactly on 10 would find the hold not yet stale and the caller would spin. Advancing to the
+  // deadline itself must therefore leave the wait pending.
+  clock.advanceTo(10)
+  const pending = await Promise.race([
+    waiting.then(() => 'woke'),
+    Promise.resolve('still waiting'),
+  ])
+  assert.equal(pending, 'still waiting', 'waking exactly on the deadline would be too early')
+  assert.equal(session.releaseStaleUserHold(10), false, 'and the release agrees it is not stale')
+
+  clock.advanceTo(10.05)
+  assert.equal(await waiting, true)
+  assert.equal(session.releaseStaleUserHold(10), true, 'the deadline has now passed')
+  assert.equal(session.floor.state, 'idle')
 })

@@ -1079,6 +1079,92 @@ export class RealtimeSession {
     return eventIds
   }
 
+  /**
+   * Spend a deferred preempt fence, now that the audio it was waiting on is done.
+   *
+   * `hostPreempt` deferred fencing the renderer so a clause could finish. This is where that debt
+   * is settled: pass the generation the preempt was aimed at, or `null` when the preempt never got
+   * one because the response had not yet opened playback.
+   */
+  expireHostPreempt(generation: PlaybackGeneration | null): boolean {
+    const responseId = this.#hostPreemptResponseId
+    if (responseId === null) {
+      // No response was preempted, so the only thing left to settle is a pending pre-start preempt,
+      // and only when there is nothing audible to wait for.
+      if (generation !== null || !this.#hostPreemptPending) return false
+      this.#hostPreemptPending = false
+      if (this.#playback.current === null) this.#playback.fenceCurrent({alert: true})
+      this.#state.advanceSnapshot()
+      return true
+    }
+    const turn = this.#state.providerTurn(responseId)
+    if (turn?.defer_playback_fence !== true) return false
+    turn.defer_playback_fence = false
+    this.#hostPreemptResponseId = null
+    const current = this.#playback.current
+    let fenced: PlaybackGeneration | null = null
+    if (generation !== null && current !== null && sameGeneration(current, generation)) {
+      // Alert-fenced, not silently fenced: the user was interrupted mid-utterance and the renderer
+      // has to say so rather than just stopping.
+      fenced = this.#playback.fenceCurrent({alert: true})
+    } else if (generation === null && this.#hostPreemptPending && current === null) {
+      this.#playback.fenceCurrent({alert: true})
+    }
+    this.#hostPreemptPending = false
+    if (fenced !== null && fenced.session_epoch === this.sessionEpoch) {
+      this.#markLocallyFenced(fenced.response_id)
+    }
+    this.#markResponseInterrupted(responseId)
+    this.#state.advanceSnapshot()
+    return true
+  }
+
+  /** Alert-fence the exact renderer generation retained for a Guard handoff. */
+  alertGuardHandoff(generation: PlaybackGeneration): boolean {
+    // The exact-match check is not currently reachable as a failure -- only one generation can be
+    // current, and a live handoff retains that one -- but it states the contract the caller relies
+    // on, and a second concurrent generation would make it load-bearing.
+    if (
+      this.#guardHandoffGeneration === null
+      || !sameGeneration(this.#guardHandoffGeneration, generation)
+    ) {
+      return false
+    }
+    const current = this.#playback.current
+    if (current !== null && sameGeneration(current, generation)) {
+      if (!this.#playback.alertFenceGeneration(generation)) return false
+    } else if (current === null) {
+      this.#playback.fenceCurrent({alert: true})
+    } else {
+      // Something else is playing, so this generation is no longer the one to alert about.
+      return false
+    }
+    this.#guardHandoffGeneration = null
+    this.#floor = this.#floor.onSpeakEnd(generation.utterance_id)
+    this.#state.advanceSnapshot()
+    return true
+  }
+
+  /**
+   * Release an exactly-identified fenced generation without inventing delivery evidence.
+   *
+   * The renderer reported a clear for a generation the session cannot account for. Retiring it frees
+   * the slot; what it must not do is produce a completion, because nobody knows whether or how much
+   * of it was heard.
+   */
+  retirePlaybackClearUnknown(generation: PlaybackGeneration): boolean {
+    if (!this.#playback.retireClearUnknown(generation)) return false
+    if (
+      this.#guardHandoffGeneration !== null
+      && sameGeneration(this.#guardHandoffGeneration, generation)
+    ) {
+      this.#guardHandoffGeneration = null
+    }
+    this.#floor = this.#floor.onSpeakEnd(generation.utterance_id)
+    this.#state.advanceSnapshot()
+    return true
+  }
+
   // ---------------------------------------------------------------------------
   // Playback acknowledgement
   // ---------------------------------------------------------------------------
@@ -1366,6 +1452,22 @@ export class RealtimeSession {
    * Checked at each host-item delivery attempt. The deadline is measured from when the speech
    * started, not from when this is asked, so repeated asking cannot postpone it.
    */
+  /**
+   * Sleep on the injected clock until the active user hold turns stale.
+   *
+   * Returns false at once when no hold is active. The small margin past the deadline keeps the
+   * release comparison strict on a real clock, where waking exactly on it would race.
+   */
+  async waitForStaleHold(maxHoldSeconds: number): Promise<boolean> {
+    if (this.#floor.state !== 'user_speaking' || this.#userHoldSince === null) return false
+    const remaining = this.#userHoldSince + maxHoldSeconds - this.#clock.now()
+    // The margin is for a real clock, where waking exactly on the deadline races the strict
+    // comparison in `releaseStaleUserHold` and the caller would spin. A virtual clock cannot show
+    // that, so no fixture can pin it.
+    if (remaining > 0) await this.#clock.sleep(remaining + 0.05)
+    return true
+  }
+
   releaseStaleUserHold(maxHoldSeconds: number): boolean {
     if (this.#floor.state !== 'user_speaking' || this.#userHoldSince === null) return false
     if (this.#clock.now() - this.#userHoldSince <= maxHoldSeconds) return false

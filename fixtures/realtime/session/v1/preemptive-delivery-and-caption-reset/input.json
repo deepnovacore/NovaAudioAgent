@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "ids": ["generation-1", "utterance-1"],
+  "steps": [
+    {"kind": "connect", "tools": 1},
+
+    {"kind": "deliver_host_item", "item": {
+      "kind": "progress", "host_item_id": "host-1", "event_id": "progress:1",
+      "content": "第一步做完了。", "call_id": null}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-1"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_audio_delta", "session_epoch": 1, "response_id": "resp-1",
+      "pcm": {"pcm_base64": "AAECAw=="}}},
+    {"kind": "caption_for", "accepted": null, "event": {
+      "kind": "response_transcript_delta", "session_epoch": 1, "response_id": "resp-1",
+      "text": "第一步"}},
+    {"kind": "caption_for", "accepted": null, "event": {
+      "kind": "user_transcript_delta", "session_epoch": 1, "item_id": "item-a",
+      "text": "等一下"}},
+    {"kind": "playback_started", "utterance_id": "utterance-1", "generation_epoch": 1},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-1",
+      "status": "completed", "reason": "stop"}},
+
+    {"kind": "reset_captions"},
+
+    {
+      "kind": "deliver_preemptive_host_response",
+      "confirmation_timeout": 0.75,
+      "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact", "task_summary": null, "origin_spoken": false,
+        "item": {"kind": "final", "host_item_id": "host-2", "event_id": "final:1",
+                 "content": "全部做完了。", "call_id": null}
+      }
+    },
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-2"}}
+  ]
+}

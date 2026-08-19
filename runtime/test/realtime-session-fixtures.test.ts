@@ -6,6 +6,7 @@ import { canonicalJson } from '../src/canonical-json.js'
 import {
   loadSessionFixture,
   sessionFixtureJsonSchema,
+  sessionFixtureStepSchema,
   type SessionFixture,
 } from '../src/realtime/session-fixtures.js'
 import { runSessionFixture } from './session-fixture-host.js'
@@ -59,6 +60,24 @@ test('every scenario says what it covers and observes every step it scripts', as
       )
     }
   }
+})
+
+test('every step kind the contract allows is exercised by some scenario', async () => {
+  // A step kind in the contract that no scenario sends is a hole that does not announce itself:
+  // `playback_stopped` sat unported behind exactly this gap while every golden passed. The
+  // contract is the list of things this harness claims to cover, so it has to be covered.
+  const declared = new Set(
+    sessionFixtureStepSchema.options.map(option => option.shape.kind.value),
+  )
+  const used = new Set<string>()
+  for (const fixture of await loadAll()) {
+    for (const step of fixture.input.steps) used.add(step.kind)
+  }
+  assert.deepEqual(
+    [...declared].filter(kind => !used.has(kind)).sort(),
+    [],
+    'these step kinds are in the contract but no scenario sends one',
+  )
 })
 
 test('a scenario declares the synthetic capabilities it uses, and no others', async () => {

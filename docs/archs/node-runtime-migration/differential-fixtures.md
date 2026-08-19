@@ -1,7 +1,7 @@
 # Nova Audio Agent Node Differential Fixture Contract
 
 Status: v1 schema plus Python and Node runners active; twenty Python-exported core scenarios match.
-A second family covers the realtime session at the provider-frame level: twenty-five scenarios,
+A second family covers the realtime session at the provider-frame level: twenty-six scenarios,
 matching on both legs.
 
 ## Purpose
@@ -324,6 +324,23 @@ a hole in the set, and the difference matters.
 contract and in the Python oracle from the start, and no scenario sent one, so the whole
 renderer-initiated stop path -- which cancels the provider, not just the renderer -- was unported and
 every golden still passed. Grep the step union against the scenarios when adding either.
+
+**Some mutations are genuinely undetectable, and saying so is part of the result.** Three of the
+thirty-odd swept against the port could not be made to fail by any honest test, and each is worth
+knowing rather than papering over:
+
+- Leaving `defer_playback_fence` set after an expired preempt looks dangerous, because
+  `accept`'s terminal branch reads it -- but that branch also requires the current generation to
+  belong to the same response, and the fence already removed it. Both paths reach the same state.
+- Accepting any generation in `alertGuardHandoff` rather than the exact retained one is
+  unreachable while only one generation can be current and a handoff retains that one.
+- The 0.05s margin in `waitForStaleHold` exists for a real clock, where waking exactly on a
+  deadline races a strict comparison. A virtual clock advances to an exact instant, so it cannot
+  express the race.
+
+Write the test that proves undetectability if you can, and otherwise record the reasoning next to
+the code. An undetectable mutation is a claim about the shape of the state machine, and the next
+person should not have to re-derive it.
 
 **Sweep the port too, not only the oracle.** Once `accept` existed in TypeScript, seventeen
 mutations of it were swept the same way; sixteen were caught immediately and the seventeenth found a
