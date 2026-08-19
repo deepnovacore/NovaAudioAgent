@@ -1800,6 +1800,42 @@
                 "properties": {
                   "kind": {
                     "type": "string",
+                    "const": "advance_clock"
+                  },
+                  "to": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "kind",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "release_stale_user_hold"
+                  },
+                  "max_hold_s": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "kind",
+                  "max_hold_s"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
                     "const": "reconnect_for_guard"
                   },
                   "tools": {
@@ -2291,6 +2327,10 @@
               "state": {
                 "type": "object",
                 "properties": {
+                  "clock": {
+                    "type": "number",
+                    "minimum": 0
+                  },
                   "session_epoch": {
                     "type": "integer",
                     "minimum": 0,
@@ -2537,6 +2577,7 @@
                   }
                 },
                 "required": [
+                  "clock",
                   "session_epoch",
                   "user_input_revision",
                   "active_provider_response_id",

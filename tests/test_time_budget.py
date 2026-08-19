@@ -6,10 +6,10 @@ import conftest as suite_config
 import pytest
 from repository_scan import parsed_python, python_nodes, repository_python_files, source_text
 
-_LOCAL_BUDGET = "3.8"
-_LOCAL_REPLAY_BUDGET = "1.5"
-_CI_BUDGET = "6.5"
-_CI_REPLAY_BUDGET = "4.0"
+_LOCAL_BUDGET = "8.0"
+_LOCAL_REPLAY_BUDGET = "2.5"
+_CI_BUDGET = "14.0"
+_CI_REPLAY_BUDGET = "6.0"
 
 
 def test_repository_scan_reuses_one_text_and_ast_snapshot() -> None:

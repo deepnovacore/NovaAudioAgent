@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "ids": [],
+  "steps": [
+    {"kind": "connect", "tools": 1},
+
+    {"kind": "release_stale_user_hold", "max_hold_s": 10},
+
+    {"kind": "provider_event", "event": {
+      "kind": "user_speech_started", "session_epoch": 1, "speech_id": "speech-1",
+      "provider_item_id": null}},
+    {"kind": "advance_clock", "to": 4},
+    {"kind": "release_stale_user_hold", "max_hold_s": 10},
+
+    {"kind": "provider_event", "event": {
+      "kind": "user_speech_ended", "session_epoch": 1, "speech_id": "speech-other",
+      "provider_item_id": null}},
+    {"kind": "advance_clock", "to": 10},
+    {"kind": "release_stale_user_hold", "max_hold_s": 10},
+    {"kind": "advance_clock", "to": 11},
+    {"kind": "release_stale_user_hold", "max_hold_s": 10},
+    {"kind": "release_stale_user_hold", "max_hold_s": 10},
+
+    {"kind": "provider_event", "event": {
+      "kind": "user_speech_started", "session_epoch": 1, "speech_id": "speech-2",
+      "provider_item_id": "item-b"}},
+    {"kind": "provider_event", "event": {
+      "kind": "user_speech_ended", "session_epoch": 1, "speech_id": "speech-2",
+      "provider_item_id": "item-b"}},
+    {"kind": "advance_clock", "to": 100},
+    {"kind": "release_stale_user_hold", "max_hold_s": 10}
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "stale-user-hold-release",
+  "description": "A user floor hold whose provider speech-end never arrives is released once it outlives its deadline, and not one instant sooner. The timestamp is taken when the speech started, so the deadline is measured from then rather than from when it is asked about; a mismatched speech-end leaves both the floor and the timestamp alone, so it does not restart the clock; and the matching speech-end clears the timestamp, after which there is no stale hold to release however far time moves.",
+  "covers": [
+    "session.accept.user_speech_started.records_hold_timestamp",
+    "session.release_stale_user_hold.before_deadline",
+    "session.release_stale_user_hold.after_deadline",
+    "session.release_stale_user_hold.mismatched_end_does_not_reset",
+    "session.accept.user_speech_ended.clears_hold_timestamp"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

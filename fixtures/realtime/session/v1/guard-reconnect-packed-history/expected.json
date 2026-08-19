@@ -15,6 +15,7 @@
       "diagnostics": [],
       "fence_interruption": null,
       "state": {
+        "clock": 0.0,
         "session_epoch": 1,
         "user_input_revision": 0,
         "active_provider_response_id": null,
@@ -60,6 +61,7 @@
       "diagnostics": [],
       "fence_interruption": null,
       "state": {
+        "clock": 0.0,
         "session_epoch": 1,
         "user_input_revision": 0,
         "active_provider_response_id": null,
@@ -101,6 +103,7 @@
       "diagnostics": [],
       "fence_interruption": null,
       "state": {
+        "clock": 0.0,
         "session_epoch": 1,
         "user_input_revision": 0,
         "active_provider_response_id": "resp-1",
@@ -151,6 +154,7 @@
       "diagnostics": [],
       "fence_interruption": null,
       "state": {
+        "clock": 0.0,
         "session_epoch": 1,
         "user_input_revision": 0,
         "active_provider_response_id": "resp-1",
@@ -200,6 +204,7 @@
       "diagnostics": [],
       "fence_interruption": null,
       "state": {
+        "clock": 0.0,
         "session_epoch": 1,
         "user_input_revision": 0,
         "active_provider_response_id": "resp-1",
@@ -254,6 +259,7 @@
       "diagnostics": [],
       "fence_interruption": null,
       "state": {
+        "clock": 0.0,
         "session_epoch": 2,
         "user_input_revision": 0,
         "active_provider_response_id": null,
@@ -303,6 +309,7 @@
       "diagnostics": [],
       "fence_interruption": null,
       "state": {
+        "clock": 0.0,
         "session_epoch": 2,
         "user_input_revision": 0,
         "active_provider_response_id": null,
@@ -372,6 +379,7 @@
       "diagnostics": [],
       "fence_interruption": null,
       "state": {
+        "clock": 0.0,
         "session_epoch": 2,
         "user_input_revision": 0,
         "active_provider_response_id": null,

@@ -148,6 +148,22 @@ already enforced at the desktop boundary where Python enforces it.
 outbound check never fires for audio that came through the desktop boundary. It stays as
 defence-in-depth.
 
+### Pre-existing: the Codex progress end-to-end suite is load-sensitive
+
+`tests/test_e2e_codex_progress_status.py` fails under machine load and passes idle, with the
+failure count varying run to run (five to seven of fifty-four). Its `_settle` helper yields to the
+event loop a fixed forty times and waits for background tasks to have finished; under load they
+have not, so `final_items` is empty where the test expects one.
+
+**This predates the migration.** Reproduced identically at `f452077` in `../codex-multi-workspace`,
+so it is neither caused by the Node port nor by the split time budgets. Left alone deliberately:
+fixing it means replacing a fixed yield count with a condition to wait on, which is a change to a
+suite this migration is not otherwise touching. It is recorded here so the next person does not
+spend the time again concluding it is their fault.
+
+Deterministic-phase budget overruns have the same cause and the same tell: re-measure idle before
+believing either.
+
 ### Porting hazards
 
 - `runtime.py` reaches every field of `memory/structured.py` through `getattr` with model-supplied

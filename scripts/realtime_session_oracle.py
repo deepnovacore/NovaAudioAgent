@@ -273,10 +273,13 @@ def _result_record(value: Any) -> Any:
 def _observed_state(
     session: RealtimeSession,
     *,
+    clock: VirtualClock,
     response_ids: Sequence[str],
     event_ids: Sequence[str],
 ) -> dict[str, Any]:
     return {
+        # A hold deadline is relative to the clock, so the clock is part of the observation.
+        "clock": clock.now(),
         "session_epoch": session.session_epoch,
         "user_input_revision": session.user_input_revision,
         "active_provider_response_id": session.active_provider_response_id,
@@ -363,6 +366,7 @@ def _mentioned_ids(steps: Sequence[Mapping[str, Any]]) -> tuple[list[str], list[
 async def _apply_step(
     session: RealtimeSession,
     step: Mapping[str, Any],
+    clock: VirtualClock,
 ) -> Any:
     kind = step["kind"]
     if kind == "connect":
@@ -428,6 +432,11 @@ async def _apply_step(
             history=tuple(_build_recovery_turn(turn) for turn in step["history"]),
             history_mode=step["history_mode"],
         )
+    if kind == "advance_clock":
+        clock.advance_to(step["to"])
+        return None
+    if kind == "release_stale_user_hold":
+        return session.release_stale_user_hold(step["max_hold_s"])
     if kind == "reset_captions":
         return session.reset_captions()
     raise FixtureError(f"unsupported step kind: {kind}")
@@ -471,6 +480,7 @@ async def run_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
         ),
     )
     provider = RecordingProvider(actions)
+    clock = VirtualClock()
 
     def record_delivery(completion: PlaybackCompletion) -> None:
         deliveries.append(completion)
@@ -481,7 +491,7 @@ async def run_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
         id_factory=ids,
         on_spoken=spoken.append,
         on_delivery=record_delivery,
-        clock=VirtualClock(),
+        clock=clock,
     )
 
     observations: list[dict[str, Any]] = []
@@ -489,7 +499,7 @@ async def run_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
         marks = (len(actions), len(frames), len(alerts), len(deliveries), len(spoken))
         captured = io.StringIO()
         with contextlib.redirect_stdout(captured):
-            result = await _apply_step(session, step)
+            result = await _apply_step(session, step, clock)
         # Reading the fence interruption clears it, but nothing else in the session ever reads
         # that field, so taking it once per step costs no fidelity and covers every path that
         # sets it.
@@ -517,7 +527,12 @@ async def run_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
                     "session_epoch": interruption.session_epoch,
                     "event_ids": list(interruption.event_ids),
                 },
-                "state": _observed_state(session, response_ids=response_ids, event_ids=event_ids),
+                "state": _observed_state(
+                    session,
+                    clock=clock,
+                    response_ids=response_ids,
+                    event_ids=event_ids,
+                ),
             }
         )
 
@@ -578,6 +593,8 @@ def _validate(fixture: Mapping[str, Any], directory: Path, *halves: str) -> None
 
 
 def load_fixture(directory: Path) -> dict[str, Any]:
+    if not (directory / "expected.json").is_file():
+        raise FixtureError(f"{directory.name} has no golden; run export for it first")
     fixture = {
         name: json.loads((directory / f"{name}.json").read_text(encoding="utf-8"))
         for name in ("manifest", "input", "expected")
@@ -620,12 +637,15 @@ async def check_fixtures(directories: Sequence[Path]) -> list[str]:
 
 
 async def export_fixtures(directories: Sequence[Path]) -> None:
+    """Rewrite every golden from a fresh run.
+
+    Only the manifest and input are validated. Validating the existing golden would deadlock the
+    one case export exists for: a contract that gained a field leaves every committed golden
+    invalid, and the command that regenerates them must not be blocked by the files it is about to
+    replace. The rewritten goldens are validated by the next `check`.
+    """
     for directory in directories:
-        fixture = (
-            load_fixture(directory)
-            if (directory / "expected.json").is_file()
-            else load_input(directory)
-        )
+        fixture = load_input(directory)
         actual = await run_fixture(fixture)
         target = directory / "expected.json"
         temporary = target.with_suffix(".json.tmp")

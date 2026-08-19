@@ -297,6 +297,24 @@ export const sessionFixtureStepSchema = z.discriminatedUnion('kind', [
   }).strict(),
   z.object({kind: z.literal('reset_captions')}).strict(),
   /**
+   * Move the virtual clock forward.
+   *
+   * Only the user-hold deadline reads the clock, so most scenarios never need this. Time cannot
+   * move backwards, which both clocks enforce.
+   */
+  z.object({kind: z.literal('advance_clock'), to: z.number().finite().positive()}).strict(),
+  /**
+   * Ask whether a user floor hold has outlived its deadline, releasing it if so.
+   *
+   * This is the only read path for the hold timestamp, and production calls it at every host-item
+   * delivery attempt. Without a step for it, a port could set or clear that timestamp wrongly and
+   * still match every golden.
+   */
+  z.object({
+    kind: z.literal('release_stale_user_hold'),
+    max_hold_s: z.number().finite().positive(),
+  }).strict(),
+  /**
    * Replace provider authority while retaining one exact renderer generation.
    *
    * `old_generation` names the generation to keep; `"current"` is the one the session holds, which
@@ -392,6 +410,8 @@ const snapshotRecordSchema = z.object({
 }).strict()
 
 const observedStateSchema = z.object({
+  /** The virtual clock. A hold deadline is relative to it, so it belongs in the golden. */
+  clock: z.number().finite().nonnegative(),
   session_epoch: z.number().int().nonnegative(),
   user_input_revision: z.number().int().nonnegative(),
   active_provider_response_id: identifier.nullable(),
