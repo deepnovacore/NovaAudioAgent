@@ -28,8 +28,15 @@ class WebSocketQwenSocket implements QwenSocket {
     socket.on('message', (data: RawData, isBinary: boolean) => {
       // The Qwen realtime protocol is JSON text; audio arrives base64 inside it.
       if (isBinary) return
+      // Overflow is terminal. Letting frames back in once the consumer drains below
+      // the bound would defer the failure indefinitely: a peer sending at the drain
+      // rate would keep receive() succeeding and the adapter would never observe the
+      // overflow or reconnect.
+      if (this.#failure !== undefined) return
       if (this.#inbound.length >= MAX_QWEN_INBOUND_BACKLOG) {
+        this.#inbound.length = 0
         this.#fail(new Error('qwen inbound backlog overflowed'))
+        this.#socket.terminate()
         return
       }
       this.#inbound.push(textOf(data))

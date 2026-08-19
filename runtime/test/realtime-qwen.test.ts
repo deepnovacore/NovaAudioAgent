@@ -485,3 +485,173 @@ test('close is idempotent and releases pending confirmations', async () => {
   await adapter.close()
   await assert.rejects(pending)
 })
+
+/** Await with a deadline, so a regression fails fast instead of hanging the suite. */
+async function within<T>(work: Promise<T>, milliseconds: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), milliseconds)
+  })
+  try {
+    return await Promise.race([work, expiry])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+/** Spin the macrotask queue until a condition holds, or fail rather than hang. */
+async function until(condition: () => boolean, turns = 200): Promise<void> {
+  for (let turn = 0; turn < turns; turn += 1) {
+    if (condition()) return
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  throw new Error('condition never became true')
+}
+
+/** A socket whose sends can be held open, to order writes against a reconnect. */
+function blockableSocket(initial: Record<string, unknown>[] = []) {
+  const inbound: (Record<string, unknown> | null)[] = [...initial]
+  const sent: Record<string, unknown>[] = []
+  const gates: (() => void)[] = []
+  let wake: (() => void) | undefined
+  let blocking = false
+  let received = 0
+  return {
+    sent,
+    get received() { return received },
+    get parked() { return gates.length },
+    releaseAll() { for (const gate of gates.splice(0)) gate() },
+    block() { blocking = true },
+    unblock() { blocking = false },
+    push(frame: Record<string, unknown>) { inbound.push(frame); wake?.(); wake = undefined },
+    socket: {
+      send(payload: string) {
+        const record = (): void => { sent.push(JSON.parse(payload) as Record<string, unknown>) }
+        if (!blocking) {
+          record()
+          return Promise.resolve()
+        }
+        return new Promise<void>(resolve => gates.push(() => { record(); resolve() }))
+      },
+      async receive() {
+        while (inbound.length === 0) {
+          await new Promise<void>(resolve => { wake = resolve })
+        }
+        const next = inbound.shift()
+        received += 1
+        if (next === null || next === undefined) throw new QwenSocketClosedError()
+        return JSON.stringify(next)
+      },
+      close: () => Promise.resolve(),
+    } satisfies QwenSocket,
+  }
+}
+
+test('a write queued on a closed session never lands on its replacement', async () => {
+  // The write chain outlives a connection. A frame queued behind a slow send must
+  // not be delivered to the next session, ahead of that session's own
+  // session.update, which would inject stale host context into it.
+  const first = blockableSocket([...handshake])
+  const second = blockableSocket([...handshake])
+  let dial = 0
+  const adapter = new QwenAudioRealtimeAdapter({
+    url: 'wss://example.invalid/realtime',
+    apiKey: 'k',
+    model: 'm',
+    voice: 'v',
+    idFactory: ids(),
+    connector: () => {
+      dial += 1
+      return Promise.resolve(dial === 1 ? first.socket : second.socket)
+    },
+  })
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+
+  first.block()
+  // Block on createResponse rather than sendAudio: sendAudio checks ownership and
+  // returns early once the socket is detached, so it never parks and the race
+  // cannot be staged through it.
+  const blocked = adapter.createResponse({
+    kind: 'host_fact',
+    item: {
+      kind: 'final',
+      host_item_id: 'live-item',
+      event_id: 'ev-live',
+      content: '当前会话',
+      call_id: null,
+    },
+    task_summary: null,
+    origin_spoken: false,
+  }, signal)
+  // The write must actually be parked on the gate before anything else happens,
+  // otherwise it runs after close() and the ordering under test never occurs.
+  await until(() => first.parked === 1)
+
+  const injection = adapter.injectHostItem({
+    kind: 'progress',
+    host_item_id: 'stale-host-item',
+    event_id: 'ev-stale',
+    content: '旧会话进度',
+    call_id: null,
+  }, {confirmationTimeout: 0.05, asUserActivation: false, signal})
+  const settled = Promise.allSettled([blocked, injection])
+
+  await adapter.close()
+  // Start the replacement handshake but do not await it yet: its session.update is
+  // queued behind the still-blocked writes. Releasing the old send now runs the
+  // stale injection while this.#socket already points at the replacement, which is
+  // exactly the ordering that delivered one session's host item into another.
+  const reconnected = adapter.connect({tools: [], signal})
+  // Release only once the replacement socket is actually installed. Releasing
+  // earlier makes the stale write fail with "not connected" and the race is missed,
+  // which is what made an earlier version of this test vacuous.
+  await until(() => second.received >= 1)
+  first.unblock()
+  first.releaseAll()
+  await within(reconnected, 5_000, 'the replacement handshake')
+  await within(settled, 5_000, 'the old session writes to settle')
+
+  const kinds = second.sent.map(frame => frame.type)
+  assert.deepEqual(kinds, ['session.update'],
+    'the replacement session must see only its own handshake')
+  assert.doesNotMatch(JSON.stringify(second.sent), /stale-host-item/u)
+})
+
+test('a reconnected session exposes its own events, not the previous sentinel', async () => {
+  // close() enqueues a terminal null to release any consumer. If connect() did not
+  // discard it, the reconnected stream would report done on its first iteration and
+  // the session would look permanently silent.
+  const first = scriptedSocket([...handshake])
+  const second = scriptedSocket([...handshake])
+  let dial = 0
+  const adapter = new QwenAudioRealtimeAdapter({
+    url: 'wss://example.invalid/realtime',
+    apiKey: 'k',
+    model: 'm',
+    voice: 'v',
+    idFactory: ids(),
+    connector: () => {
+      dial += 1
+      return Promise.resolve(dial === 1 ? first.socket : second.socket)
+    },
+  })
+  const signal = new AbortController().signal
+
+  // Connect and close without ever consuming events, leaving the sentinel queued.
+  await adapter.connect({tools: [], signal})
+  await adapter.close()
+
+  const identity = await adapter.connect({tools: [], signal})
+  assert.equal(identity.epoch, 2)
+  const stop = new AbortController()
+  second.push({type: 'response.created', response: {id: 'resp-after-reconnect'}})
+
+  const events = await collect(adapter, stop.signal, 1)
+  assert.deepEqual(events, [{
+    session_epoch: 2,
+    kind: 'response_started',
+    response_id: 'resp-after-reconnect',
+  }])
+  stop.abort()
+})

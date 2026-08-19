@@ -267,6 +267,11 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     }
     this.#epoch += 1
     this.#readySocket = socket
+    // Drop anything the previous session left behind, including its terminal null.
+    // Otherwise a reconnect on the same adapter hands the new consumer the old
+    // sentinel and events() reports done on its first iteration -- a session that
+    // looks permanently silent.
+    this.#queue.length = 0
     return {epoch: this.#epoch, provider_session_id: providerSessionId}
   }
 
@@ -278,14 +283,15 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       throw new TypeError('audio frame is too large')
     }
     if (signal.aborted) return
+    const owner = this.#socket
     await this.#serialized(async () => {
       if (this.#epoch < 1) throw new QwenRealtimeError('qwen realtime is not connected')
-      const socket = this.#socket
-      // A socket that is not the ready socket belongs to a superseded connection;
-      // dropping its audio silently matches Python rather than surfacing a fault.
-      if (socket === undefined || socket !== this.#readySocket) return
+      // Bound to the connection that enqueued it, then re-checked: a socket that is
+      // no longer the ready socket belongs to a superseded connection, and dropping
+      // its audio silently matches Python rather than surfacing a fault.
+      if (owner === undefined || owner !== this.#socket || owner !== this.#readySocket) return
       try {
-        await socket.send(encodeJson({
+        await owner.send(encodeJson({
           event_id: this.#idFactory(),
           type: 'input_audio_buffer.append',
           audio: Buffer.from(pcm).toString('base64'),
@@ -718,13 +724,23 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
   }
 
   async #sendJson(payload: Record<string, JsonValue>, eventIdOverride?: string): Promise<void> {
-    if (this.#socket === undefined) throw new QwenRealtimeError('qwen realtime is not connected')
+    const owner = this.#socket
+    if (owner === undefined) throw new QwenRealtimeError('qwen realtime is not connected')
     const frame = {event_id: eventIdOverride ?? this.#idFactory(), ...payload}
     await this.#serialized(async () => {
-      const socket = this.#socket
-      if (socket === undefined) throw new QwenRealtimeError('qwen realtime is not connected')
-      await socket.send(encodeJson(frame))
+      // The write chain outlives a connection, so the owning socket is captured at
+      // enqueue time. Reading this.#socket here instead would let a frame queued
+      // behind a slow send land on a replacement session -- injecting one session's
+      // host context into another, ahead of its own session.update.
+      this.#requireOwner(owner)
+      await owner.send(encodeJson(frame))
     })
+  }
+
+  #requireOwner(owner: QwenSocket): void {
+    if (this.#socket !== owner) {
+      throw new QwenRealtimeError('qwen realtime connection was replaced')
+    }
   }
 
   async #receiveJson(socket: QwenSocket): Promise<Readonly<Record<string, JsonValue>>> {
