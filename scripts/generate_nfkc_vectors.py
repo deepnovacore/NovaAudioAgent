@@ -5,11 +5,11 @@ bundled into ICU. Those versions differ, and `realtime/recall.py` runs the resul
 lexical scoring, so a divergence changes which memories a model is shown. Vendoring a
 normalization table is the fallback; this script establishes whether it is needed.
 
-Two decisions are baked in. The vectors pin the whole `NFKC -> casefold-equivalent` pipeline
-rather than NFKC alone, because `recall.py` applies `str.lower()` to the result and Python's
-full lowercase and JavaScript's `toLowerCase` are not identical for every input. And the set
-includes code points assigned only in Unicode 16.0, which are `Cn` to CPython 15.0.0 -- those
-are where a version skew would surface first.
+Two decisions are baked in. The vectors pin the whole `NFKC -> lower()` pipeline rather than NFKC
+alone, because `recall.py` lowercases the result and the two runtimes' case mapping diverges on a
+*different* set of code points than their normalization does -- twenty-seven versus thirty-six, same
+root cause. And the set includes code points assigned only in Unicode 16.0, which are `Cn` to
+CPython 15.0.0: both divergences live there and nowhere else.
 
     uv run python scripts/generate_nfkc_vectors.py --export
     uv run python scripts/generate_nfkc_vectors.py check
@@ -75,6 +75,11 @@ CASES: tuple[tuple[str, str], ...] = (
     ("unicode-16-symbols", "\U0001cc00\U0001ccf0"),
     ("unicode-16-outlined-digits", "\U0001ccf0\U0001ccf1\U0001ccf9"),
     ("unicode-16-outlined-letters", "\U0001ccd6\U0001ccd7\U0001ccf9"),
+    # Assigned in 16.0 as uppercase letters, so ICU lowercases them and this database does not.
+    # A different mechanism from the decompositions above, and it reaches the same tokenizer.
+    ("unicode-16-uppercase-garay", "\U00010d50\U00010d51\U00010d5f"),
+    ("unicode-16-uppercase-latin", "\ua7cb\ua7cc\ua7da\ua7dc"),
+    ("unicode-16-uppercase-cyrillic", "\u1c89"),
     ("unicode-16-ol-onal", "\U0001e5f0"),
     ("unicode-16-egyptian", "\U00013460"),
     # Astral pairs and lone-surrogate-adjacent shapes, which UTF-16 handling can split.

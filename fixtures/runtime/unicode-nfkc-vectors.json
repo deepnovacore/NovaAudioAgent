@@ -653,6 +653,52 @@
     },
     {
       "categories": [
+        "Cn",
+        "Cn",
+        "Cn"
+      ],
+      "input": "𐵐𐵑𐵟",
+      "name": "unicode-16-uppercase-garay",
+      "nfkc": "𐵐𐵑𐵟",
+      "nfkc_code_points": [
+        68944,
+        68945,
+        68959
+      ],
+      "nfkc_lower": "𐵐𐵑𐵟"
+    },
+    {
+      "categories": [
+        "Cn",
+        "Cn",
+        "Cn",
+        "Cn"
+      ],
+      "input": "ꟋꟌꟚꟜ",
+      "name": "unicode-16-uppercase-latin",
+      "nfkc": "ꟋꟌꟚꟜ",
+      "nfkc_code_points": [
+        42955,
+        42956,
+        42970,
+        42972
+      ],
+      "nfkc_lower": "ꟋꟌꟚꟜ"
+    },
+    {
+      "categories": [
+        "Cn"
+      ],
+      "input": "Ᲊ",
+      "name": "unicode-16-uppercase-cyrillic",
+      "nfkc": "Ᲊ",
+      "nfkc_code_points": [
+        7305
+      ],
+      "nfkc_lower": "Ᲊ"
+    },
+    {
+      "categories": [
         "Cn"
       ],
       "input": "𞗰",
