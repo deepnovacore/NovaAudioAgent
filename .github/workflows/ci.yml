@@ -16,7 +16,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.os == 'windows-latest' }}
     env:
-      NOVA_AUDIO_AGENT_TEST_TIME_BUDGET: "7.5"
+      NOVA_AUDIO_AGENT_TEST_TIME_BUDGET: "6.5"
+      NOVA_AUDIO_AGENT_FIXTURE_REPLAY_BUDGET: "4.0"
     steps:
       - uses: actions/checkout@v4
         with:

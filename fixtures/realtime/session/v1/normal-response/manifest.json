@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "normal-response",
+  "description": "A host-requested response runs to completion: it takes the provider slot, opens a renderer generation on its first audio, accumulates a transcript, and reports itself spoken once the renderer acknowledges playback.",
+  "covers": [
+    "session.accept.response_started",
+    "session.accept.response_audio_delta",
+    "session.accept.response_transcript_final",
+    "session.accept.response_terminal.completed",
+    "session.host_delivery",
+    "session.playback_acknowledgement"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

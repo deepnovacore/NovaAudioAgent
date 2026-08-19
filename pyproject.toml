@@ -63,6 +63,7 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
     "real_time: exercises OS/process integration and is excluded from the deterministic <3.5s budget",
+    "fixture_replay: replays committed fixtures through real production code; deterministic compute, accounted against its own budget rather than the per-test one",
 ]
 
 [tool.ruff]

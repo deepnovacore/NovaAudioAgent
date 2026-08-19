@@ -1,0 +1,2429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "number",
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "covers": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "clock": {
+          "type": "string",
+          "const": "virtual"
+        },
+        "requires": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "pcm_fixture"
+            ]
+          }
+        },
+        "canonicalization": {
+          "type": "string",
+          "const": "exact"
+        },
+        "node_parity": {
+          "type": "string",
+          "enum": [
+            "checked",
+            "pending-session-port"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "description",
+        "covers",
+        "clock",
+        "requires",
+        "canonicalization",
+        "node_parity"
+      ],
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "number",
+          "const": 1
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "steps": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "connect"
+                  },
+                  "tools": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "kind",
+                  "tools"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "reconnect"
+                  },
+                  "tools": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "kind",
+                  "tools"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "provider_event"
+                  },
+                  "event": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_speech_started"
+                          },
+                          "speech_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "provider_item_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "speech_id",
+                          "provider_item_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_speech_ended"
+                          },
+                          "speech_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "provider_item_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "speech_id",
+                          "provider_item_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_transcript_delta"
+                          },
+                          "item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "item_id",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_transcript_final"
+                          },
+                          "item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "item_id",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_transcript_failed"
+                          },
+                          "item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "item_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_started"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_audio_delta"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "pcm": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "pcm_base64": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                                  }
+                                },
+                                "required": [
+                                  "pcm_base64"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "pcm_fill": {
+                                    "type": "object",
+                                    "properties": {
+                                      "byte": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 255
+                                      },
+                                      "length": {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      }
+                                    },
+                                    "required": [
+                                      "byte",
+                                      "length"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "required": [
+                                  "pcm_fill"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "pcm"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_transcript_delta"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_transcript_final"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "tool_call_ready"
+                          },
+                          "call_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "arguments": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          "response_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "call_id",
+                          "item_id",
+                          "name",
+                          "arguments",
+                          "response_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "item_confirmed"
+                          },
+                          "host_item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "provider_item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "host_item_id",
+                          "provider_item_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_terminal"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "completed",
+                              "cancelled",
+                              "failed"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "status",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_cancel_rejected"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "cancel_request_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "reason": {
+                            "type": "string",
+                            "const": "no_active_response"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "cancel_request_id",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "provider_error"
+                          },
+                          "code": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "recoverable": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "code",
+                          "recoverable"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "event"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "caption_for"
+                  },
+                  "event": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_speech_started"
+                          },
+                          "speech_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "provider_item_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "speech_id",
+                          "provider_item_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_speech_ended"
+                          },
+                          "speech_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "provider_item_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "speech_id",
+                          "provider_item_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_transcript_delta"
+                          },
+                          "item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "item_id",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_transcript_final"
+                          },
+                          "item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "item_id",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "user_transcript_failed"
+                          },
+                          "item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "item_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_started"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_audio_delta"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "pcm": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "pcm_base64": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                                  }
+                                },
+                                "required": [
+                                  "pcm_base64"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "pcm_fill": {
+                                    "type": "object",
+                                    "properties": {
+                                      "byte": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 255
+                                      },
+                                      "length": {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      }
+                                    },
+                                    "required": [
+                                      "byte",
+                                      "length"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "required": [
+                                  "pcm_fill"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "pcm"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_transcript_delta"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_transcript_final"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "tool_call_ready"
+                          },
+                          "call_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "arguments": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          "response_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "call_id",
+                          "item_id",
+                          "name",
+                          "arguments",
+                          "response_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "item_confirmed"
+                          },
+                          "host_item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "provider_item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "host_item_id",
+                          "provider_item_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_terminal"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "completed",
+                              "cancelled",
+                              "failed"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "status",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "response_cancel_rejected"
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "cancel_request_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "reason": {
+                            "type": "string",
+                            "const": "no_active_response"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "response_id",
+                          "cancel_request_id",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "provider_error"
+                          },
+                          "code": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "recoverable": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "kind",
+                          "code",
+                          "recoverable"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "accepted": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "event",
+                  "accepted"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "deliver_host_item"
+                  },
+                  "item": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "progress",
+                          "final",
+                          "recovery",
+                          "dialogue_context",
+                          "tool_output"
+                        ]
+                      },
+                      "host_item_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "event_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "content": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "call_id": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "host_item_id",
+                      "event_id",
+                      "content",
+                      "call_id"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "kind",
+                  "item"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "deliver_host_response"
+                  },
+                  "intent": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "host_fact",
+                          "tool_result",
+                          "delegation_acknowledgement"
+                        ]
+                      },
+                      "item": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "progress",
+                              "final",
+                              "recovery",
+                              "dialogue_context",
+                              "tool_output"
+                            ]
+                          },
+                          "host_item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "event_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "content": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "call_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "host_item_id",
+                          "event_id",
+                          "content",
+                          "call_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "task_summary": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "origin_spoken": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "item",
+                      "task_summary",
+                      "origin_spoken"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "as_user_activation": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "intent",
+                  "as_user_activation"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "deliver_preemptive_host_response"
+                  },
+                  "intent": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "host_fact",
+                          "tool_result",
+                          "delegation_acknowledgement"
+                        ]
+                      },
+                      "item": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "progress",
+                              "final",
+                              "recovery",
+                              "dialogue_context",
+                              "tool_output"
+                            ]
+                          },
+                          "host_item_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "event_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "content": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "call_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "host_item_id",
+                          "event_id",
+                          "content",
+                          "call_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "task_summary": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "origin_spoken": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "item",
+                      "task_summary",
+                      "origin_spoken"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "confirmation_timeout": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "as_user_activation": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "intent",
+                  "confirmation_timeout",
+                  "as_user_activation"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "inject_tool_output"
+                  },
+                  "item": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "progress",
+                          "final",
+                          "recovery",
+                          "dialogue_context",
+                          "tool_output"
+                        ]
+                      },
+                      "host_item_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "event_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "content": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "call_id": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "host_item_id",
+                      "event_id",
+                      "content",
+                      "call_id"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "kind",
+                  "item"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "request_tool_continuation"
+                  },
+                  "intents": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "host_fact",
+                            "tool_result",
+                            "delegation_acknowledgement"
+                          ]
+                        },
+                        "item": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "progress",
+                                "final",
+                                "recovery",
+                                "dialogue_context",
+                                "tool_output"
+                              ]
+                            },
+                            "host_item_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "event_id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "content": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "call_id": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "host_item_id",
+                            "event_id",
+                            "content",
+                            "call_id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "task_summary": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "origin_spoken": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "item",
+                        "task_summary",
+                        "origin_spoken"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "origin_spoken": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "intents",
+                  "origin_spoken"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "arm_next_response_fence"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "local_speech_onset"
+                  },
+                  "speech_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "speech_id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "host_preempt"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "playback_started"
+                  },
+                  "utterance_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "generation_epoch": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "kind",
+                  "utterance_id",
+                  "generation_epoch"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "playback_done"
+                  },
+                  "utterance_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "generation_epoch": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "played_ms": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "utterance_id",
+                  "generation_epoch",
+                  "played_ms"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "complete_playback"
+                  },
+                  "utterance_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "generation_epoch": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "played_ms": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "utterance_id",
+                  "generation_epoch",
+                  "played_ms"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "playback_cleared"
+                  },
+                  "utterance_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "generation_epoch": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "played_ms": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "utterance_id",
+                  "generation_epoch",
+                  "played_ms"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "playback_stopped"
+                  },
+                  "utterance_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "generation_epoch": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "played_ms": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "utterance_id",
+                  "generation_epoch",
+                  "played_ms"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "reset_captions"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "ids",
+        "steps"
+      ],
+      "additionalProperties": false
+    },
+    "expected": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "number",
+          "const": 1
+        },
+        "observations": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "step": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "requested",
+                      "retryable",
+                      "rejected"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "accepted": {
+                        "type": "boolean"
+                      },
+                      "injection_epoch": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "accepted",
+                      "injection_epoch"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "session_epoch": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "response_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "utterance_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "generation_epoch": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "disposition": {
+                        "type": "string",
+                        "enum": [
+                          "spoken",
+                          "interrupted",
+                          "suppressed"
+                        ]
+                      },
+                      "started": {
+                        "type": "boolean"
+                      },
+                      "played_ms": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "session_epoch",
+                      "response_id",
+                      "utterance_id",
+                      "generation_epoch",
+                      "text",
+                      "disposition",
+                      "started",
+                      "played_ms"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "assistant"
+                        ]
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "final": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "text",
+                      "final"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "frames": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "utterance_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "generation_epoch": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "sequence": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "pcm_base64": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                    }
+                  },
+                  "required": [
+                    "utterance_id",
+                    "generation_epoch",
+                    "sequence",
+                    "pcm_base64"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "alerts": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "deliveries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "session_epoch": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "response_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "utterance_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "generation_epoch": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "disposition": {
+                      "type": "string",
+                      "enum": [
+                        "spoken",
+                        "interrupted",
+                        "suppressed"
+                      ]
+                    },
+                    "started": {
+                      "type": "boolean"
+                    },
+                    "played_ms": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "session_epoch",
+                    "response_id",
+                    "utterance_id",
+                    "generation_epoch",
+                    "text",
+                    "disposition",
+                    "started",
+                    "played_ms"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "spoken": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "diagnostics": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "fence_interruption": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "session_epoch": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "event_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "session_epoch",
+                      "event_ids"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "object",
+                "properties": {
+                  "session_epoch": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "user_input_revision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "active_provider_response_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider_idle": {
+                    "type": "boolean"
+                  },
+                  "foreground_idle": {
+                    "type": "boolean"
+                  },
+                  "current_generation": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "generation_epoch": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "generation_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "utterance_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "response_id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "session_epoch",
+                          "generation_epoch",
+                          "generation_id",
+                          "utterance_id",
+                          "response_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "floor_state": {
+                    "type": "string",
+                    "enum": [
+                      "idle",
+                      "user_speaking",
+                      "agent_speaking"
+                    ]
+                  },
+                  "user_caption": {
+                    "type": "string"
+                  },
+                  "assistant_caption": {
+                    "type": "string"
+                  },
+                  "responses": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "phase": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "cancel_requested",
+                                "completed",
+                                "cancelled",
+                                "failed"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "was_fenced": {
+                          "type": "boolean"
+                        },
+                        "user_input_revision": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "has_spoken": {
+                          "type": "boolean"
+                        },
+                        "event_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "required": [
+                        "phase",
+                        "was_fenced",
+                        "user_input_revision",
+                        "has_spoken",
+                        "event_ids"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "host_events_deduplicated": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "snapshot": {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "active_delegates": {
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "summary": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "running",
+                                    "completed",
+                                    "failed",
+                                    "unknown"
+                                  ]
+                                },
+                                "channel": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "progress_summary": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "internal_activity": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "elapsed": {
+                                  "type": "number",
+                                  "minimum": 0
+                                }
+                              },
+                              "required": [
+                                "summary",
+                                "state",
+                                "channel",
+                                "progress_summary",
+                                "internal_activity",
+                                "elapsed"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      },
+                      "spoken_event_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "interrupted_event_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "version",
+                      "active_delegates",
+                      "spoken_event_ids",
+                      "interrupted_event_ids"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "session_epoch",
+                  "user_input_revision",
+                  "active_provider_response_id",
+                  "provider_idle",
+                  "foreground_idle",
+                  "current_generation",
+                  "floor_state",
+                  "user_caption",
+                  "assistant_caption",
+                  "responses",
+                  "host_events_deduplicated",
+                  "snapshot"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "step",
+              "kind",
+              "result",
+              "actions",
+              "frames",
+              "alerts",
+              "deliveries",
+              "spoken",
+              "diagnostics",
+              "fence_interruption",
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "observations"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "manifest",
+    "input",
+    "expected"
+  ],
+  "additionalProperties": false
+}

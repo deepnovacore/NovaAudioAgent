@@ -15,6 +15,10 @@ from scripts.runtime_fixture_oracle import (
     run_fixture,
 )
 
+# Replaying every committed fixture through the real Runtime is deterministic compute that grows
+# with the fixture set, so it is charged to the replay budget rather than the per-test one.
+pytestmark = pytest.mark.fixture_replay
+
 
 @pytest.mark.asyncio
 async def test_python_oracle_matches_all_committed_node_runtime_fixtures() -> None:
