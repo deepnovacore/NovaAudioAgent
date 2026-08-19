@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "ids": [],
+  "steps": [
+    {"kind": "connect", "tools": 1},
+    {"kind": "inject_tool_output", "item": {
+      "kind": "tool_output", "host_item_id": "host-1", "event_id": "background:d-1",
+      "content": "已接手。", "call_id": "call-1"}},
+    {"kind": "request_tool_continuation", "origin_spoken": true, "intents": [
+      {"kind": "delegation_acknowledgement", "task_summary": "跑测试", "origin_spoken": true,
+       "item": {"kind": "tool_output", "host_item_id": "host-1", "event_id": "background:d-1",
+                "content": "已接手。", "call_id": "call-1"}}]},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-1"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_audio_delta", "session_epoch": 1, "response_id": "resp-1",
+      "pcm": {"pcm_base64": "AAECAw=="}}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_transcript_final", "session_epoch": 1, "response_id": "resp-1",
+      "text": "好的，我来跑测试。"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-1",
+      "status": "completed", "reason": "stop"}}
+  ]
+}

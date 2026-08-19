@@ -35,6 +35,7 @@ if str(REPOSITORY_ROOT / "src") not in sys.path:
 
 from nova_audio_agent.canonical_json import canonical_json  # noqa: E402
 from nova_audio_agent.clock import VirtualClock  # noqa: E402
+from nova_audio_agent.realtime.history import RecoveryTurn  # noqa: E402
 from nova_audio_agent.realtime.playback import (  # noqa: E402
     PlaybackCompletion,
     PlaybackFrame,
@@ -416,9 +417,32 @@ async def _apply_step(
         return await session.playback_stopped(
             step["utterance_id"], step["generation_epoch"], step["played_ms"]
         )
+    if kind == "reconnect_for_guard":
+        generation = session.current_generation
+        if generation is None:
+            raise FixtureError("reconnect_for_guard needs a generation to retain")
+        return await session.reconnect_for_guard(
+            tools=_tools(step["tools"]),
+            old_generation=generation,
+            confirmation_timeout=step["confirmation_timeout"],
+            history=tuple(_build_recovery_turn(turn) for turn in step["history"]),
+            history_mode=step["history_mode"],
+        )
     if kind == "reset_captions":
         return session.reset_captions()
     raise FixtureError(f"unsupported step kind: {kind}")
+
+
+def _build_recovery_turn(spec: Mapping[str, Any]) -> RecoveryTurn:
+    return RecoveryTurn(
+        sequence=spec["sequence"],
+        role=spec["role"],
+        text=spec["text"],
+        delivery=spec["delivery"],
+        played_ms=spec["played_ms"],
+        trust=spec["trust"],
+        source=spec["source"],
+    )
 
 
 def _tools(count: int) -> tuple[dict[str, object], ...]:
@@ -507,9 +531,50 @@ async def run_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def fixture_directories(root: Path = FIXTURE_ROOT) -> list[Path]:
-    return sorted(
-        path for path in root.iterdir() if path.is_dir() and (path / "manifest.json").is_file()
+    """Every scenario directory, refusing to skip one that is merely missing its manifest.
+
+    The Node leg enumerates the same directories and fails on one it cannot load, so skipping here
+    would let a half-authored scenario be checked by neither leg while both builds stayed green.
+    """
+    directories = sorted(path for path in root.iterdir() if path.is_dir())
+    unloadable = [path.name for path in directories if not (path / "manifest.json").is_file()]
+    if unloadable:
+        raise FixtureError(f"scenario directories without a manifest: {', '.join(unloadable)}")
+    return directories
+
+
+def _schema(*halves: str) -> dict[str, Any]:
+    """The committed schema, narrowed to the halves a caller actually has.
+
+    The first export of a scenario has no golden yet, but its manifest and input must still be
+    validated: a typo that only `check` would catch could otherwise be exported first and then read
+    as a behavior change. Narrowing the one committed schema keeps a single source of truth rather
+    than a second, laxer one for the export path.
+    """
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    return {
+        "$schema": schema["$schema"],
+        "type": "object",
+        "properties": {half: schema["properties"][half] for half in halves},
+        "required": list(halves),
+        "additionalProperties": False,
+    }
+
+
+def _validate(fixture: Mapping[str, Any], directory: Path, *halves: str) -> None:
+    errors = sorted(
+        Draft202012Validator(_schema(*halves)).iter_errors(fixture),
+        key=lambda error: list(error.absolute_path),
     )
+    if errors:
+        rendered = "; ".join(
+            f"{'/'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message}"
+            for error in errors[:5]
+        )
+        raise FixtureError(f"{directory.name} does not match the committed schema -- {rendered}")
+    if fixture["manifest"]["id"] != directory.name:
+        raise FixtureError("fixture manifest id must match its directory")
+    _validate_requires(fixture)
 
 
 def load_fixture(directory: Path) -> dict[str, Any]:
@@ -517,11 +582,7 @@ def load_fixture(directory: Path) -> dict[str, Any]:
         name: json.loads((directory / f"{name}.json").read_text(encoding="utf-8"))
         for name in ("manifest", "input", "expected")
     }
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-    Draft202012Validator(schema).validate(fixture)
-    if fixture["manifest"]["id"] != directory.name:
-        raise FixtureError("fixture manifest id must match its directory")
-    _validate_requires(fixture)
+    _validate(fixture, directory, "manifest", "input", "expected")
     return fixture
 
 
@@ -531,9 +592,7 @@ def load_input(directory: Path) -> dict[str, Any]:
         name: json.loads((directory / f"{name}.json").read_text(encoding="utf-8"))
         for name in ("manifest", "input")
     }
-    if fixture["manifest"]["id"] != directory.name:
-        raise FixtureError("fixture manifest id must match its directory")
-    _validate_requires(fixture)
+    _validate(fixture, directory, "manifest", "input")
     return fixture
 
 
@@ -610,15 +669,19 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     # Take an explicit argv so an embedding test runner's own arguments cannot leak in.
     args = _parse_args(argv)
-    directories = args.directories or fixture_directories()
-    if not directories:
-        print("no session fixtures found", file=sys.stderr)
+    try:
+        directories = args.directories or fixture_directories()
+        if not directories:
+            print("no session fixtures found", file=sys.stderr)
+            return 1
+        if args.command == "export":
+            asyncio.run(export_fixtures(directories))
+            print(f"exported {len(directories)} scenario(s)")
+            return 0
+        mismatches = asyncio.run(check_fixtures(directories))
+    except FixtureError as error:
+        print(f"malformed fixture: {error}", file=sys.stderr)
         return 1
-    if args.command == "export":
-        asyncio.run(export_fixtures(directories))
-        print(f"exported {len(directories)} scenario(s)")
-        return 0
-    mismatches = asyncio.run(check_fixtures(directories))
     if mismatches:
         print(f"Python session fixture mismatches: {', '.join(mismatches)}", file=sys.stderr)
         return 1

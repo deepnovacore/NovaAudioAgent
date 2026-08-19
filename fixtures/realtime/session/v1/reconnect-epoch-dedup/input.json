@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "ids": ["host-recovery-1"],
+  "steps": [
+    {"kind": "connect", "tools": 2},
+
+    {
+      "kind": "deliver_host_response",
+      "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact", "task_summary": null, "origin_spoken": false,
+        "item": {"kind": "progress", "host_item_id": "host-1", "event_id": "progress:completed",
+                 "content": "第一步做完了。", "call_id": null}
+      }
+    },
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-1"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-1",
+      "status": "completed", "reason": "stop"}},
+
+    {
+      "kind": "deliver_host_response",
+      "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact", "task_summary": null, "origin_spoken": false,
+        "item": {"kind": "progress", "host_item_id": "host-2", "event_id": "progress:pending",
+                 "content": "第二步在跑。", "call_id": null}
+      }
+    },
+
+    {"kind": "provider_event", "event": {
+      "kind": "user_transcript_final", "session_epoch": 1, "item_id": "item-a",
+      "text": "帮我跑一下测试"}},
+    {"kind": "provider_event", "event": {
+      "kind": "user_transcript_final", "session_epoch": 1, "item_id": "item-a",
+      "text": "帮我跑一下测试"}},
+
+    {"kind": "reconnect", "tools": 2},
+
+    {"kind": "provider_event", "event": {
+      "kind": "user_transcript_final", "session_epoch": 2, "item_id": "item-a",
+      "text": "帮我跑一下测试"}},
+    {"kind": "provider_event", "event": {
+      "kind": "user_transcript_final", "session_epoch": 1, "item_id": "item-b",
+      "text": "旧世代的事件"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-old"}}
+  ]
+}

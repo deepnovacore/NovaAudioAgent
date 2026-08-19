@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "premap-audio-foreign-response",
+  "description": "The pre-map audio buffer belongs to one response at a time. A second response's delta is refused while another response's audio is buffered, and a response_started for that second response discards the buffer rather than adopting it. The first response then starts with nothing left to flush.",
+  "covers": [
+    "session.accept.response_audio_delta.foreign_pending_response",
+    "session.accept.response_started.foreign_pending_audio",
+    "session.accept.premap_audio.discarded_on_foreign_start"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

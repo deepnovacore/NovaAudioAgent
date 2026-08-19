@@ -109,12 +109,16 @@ test('normalized provider events reject malformed identities, text, JSON and PCM
     response_id: 'response-1',
     pcm: new Uint8Array([0]),
   }), /PCM16/u)
-  assert.throws(() => realtimeProviderEventSchema.parse({
+  // Inbound audio is bounded by alignment, not by size: `ResponseAudioDelta.__post_init__`
+  // accepts any aligned length, and the playback registry splits an oversized delta into
+  // MAX_PLAYBACK_FRAME_BYTES frames. Refusing it here would make that split unreachable from the
+  // provider path and would narrow the accepted domain on one leg only.
+  assert.doesNotThrow(() => realtimeProviderEventSchema.parse({
     kind: 'response_audio_delta',
     session_epoch: 1,
     response_id: 'response-1',
     pcm: new Uint8Array(MAX_REALTIME_PCM_BYTES + 2),
-  }), /exceeds/u)
+  }))
   assert.throws(() => realtimeProviderEventSchema.parse({
     kind: 'tool_call_ready',
     session_epoch: 1,

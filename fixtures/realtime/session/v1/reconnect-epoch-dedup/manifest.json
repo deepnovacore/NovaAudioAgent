@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "reconnect-epoch-dedup",
+  "description": "A reconnect starts a new provider session, and an item id from the old one no longer satisfies a dedup check: the same transcript item counts again and advances the input revision, while an event still carrying the old epoch is refused outright. Host event answers are treated by whether their response happened, not by epoch: a response that completed keeps its event answered across the reconnect, and one still pending has its answer withdrawn, because a response that never happened must be answerable again.",
+  "covers": [
+    "session.accept.session_epoch_mismatch",
+    "session.reconnect",
+    "session.reconnect.recovery_item",
+    "session.reconnect.abandon_pending_responses",
+    "session.accept.user_transcript_final.dedup",
+    "session.host_event_dedup_survives_reconnect"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

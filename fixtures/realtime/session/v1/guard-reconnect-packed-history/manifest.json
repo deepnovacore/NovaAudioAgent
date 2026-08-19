@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "guard-reconnect-packed-history",
+  "description": "A Guard handoff replaces provider authority while retaining one exact renderer generation, and recovers the conversation as packed dialogue context. The retained generation keeps playing: the point of this path is that the user hears no gap while the provider session underneath them is replaced.",
+  "covers": [
+    "session.reconnect_for_guard",
+    "session.reconnect_for_guard.packed_history",
+    "session.reconnect_for_guard.retained_generation",
+    "session.packed_history_content"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

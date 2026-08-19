@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "armed-fence-turn-conflict",
+  "description": "An armed pre-start fence and an already-recorded turn for the same response cannot both exist: the source calls that shape a provider protocol violation. The session rejects it loudly -- a diagnostic, a cancel, and the turn marked cancel_requested -- rather than killing the session or letting the response through.",
+  "covers": [
+    "session.accept.response_started.armed_fence_turn_conflict",
+    "session.arm_next_response_fence",
+    "session.diagnostics"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

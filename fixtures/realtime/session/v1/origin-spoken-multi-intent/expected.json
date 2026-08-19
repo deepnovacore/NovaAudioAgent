@@ -1,0 +1,326 @@
+{
+  "schema_version": 1,
+  "observations": [
+    {
+      "step": 0,
+      "kind": "connect",
+      "result": null,
+      "actions": [
+        "connect:1"
+      ],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": null,
+        "provider_idle": true,
+        "foreground_idle": true,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "",
+        "assistant_caption": "",
+        "responses": {
+          "resp-1": {
+            "phase": null,
+            "was_fenced": false,
+            "user_input_revision": null,
+            "has_spoken": false,
+            "event_ids": []
+          }
+        },
+        "host_events_deduplicated": [],
+        "snapshot": {
+          "version": 1,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 1,
+      "kind": "inject_tool_output",
+      "result": true,
+      "actions": [
+        "inject:host-1"
+      ],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": null,
+        "provider_idle": true,
+        "foreground_idle": true,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "",
+        "assistant_caption": "",
+        "responses": {
+          "resp-1": {
+            "phase": null,
+            "was_fenced": false,
+            "user_input_revision": null,
+            "has_spoken": false,
+            "event_ids": []
+          }
+        },
+        "host_events_deduplicated": [],
+        "snapshot": {
+          "version": 2,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 2,
+      "kind": "inject_tool_output",
+      "result": true,
+      "actions": [
+        "inject:host-2"
+      ],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": null,
+        "provider_idle": true,
+        "foreground_idle": true,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "",
+        "assistant_caption": "",
+        "responses": {
+          "resp-1": {
+            "phase": null,
+            "was_fenced": false,
+            "user_input_revision": null,
+            "has_spoken": false,
+            "event_ids": []
+          }
+        },
+        "host_events_deduplicated": [],
+        "snapshot": {
+          "version": 3,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 3,
+      "kind": "request_tool_continuation",
+      "result": "requested",
+      "actions": [
+        "create_response:delegation_acknowledgement"
+      ],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": null,
+        "provider_idle": false,
+        "foreground_idle": false,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "",
+        "assistant_caption": "",
+        "responses": {
+          "resp-1": {
+            "phase": null,
+            "was_fenced": false,
+            "user_input_revision": null,
+            "has_spoken": false,
+            "event_ids": []
+          }
+        },
+        "host_events_deduplicated": [
+          "background:d-1",
+          "background:d-2"
+        ],
+        "snapshot": {
+          "version": 4,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 4,
+      "kind": "provider_event",
+      "result": true,
+      "actions": [],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": "resp-1",
+        "provider_idle": false,
+        "foreground_idle": false,
+        "current_generation": null,
+        "floor_state": "idle",
+        "user_caption": "",
+        "assistant_caption": "",
+        "responses": {
+          "resp-1": {
+            "phase": "active",
+            "was_fenced": false,
+            "user_input_revision": 0,
+            "has_spoken": false,
+            "event_ids": [
+              "background:d-1",
+              "background:d-2"
+            ]
+          }
+        },
+        "host_events_deduplicated": [
+          "background:d-1",
+          "background:d-2"
+        ],
+        "snapshot": {
+          "version": 4,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 5,
+      "kind": "provider_event",
+      "result": true,
+      "actions": [],
+      "frames": [
+        {
+          "utterance_id": "utterance-1",
+          "generation_epoch": 1,
+          "sequence": 0,
+          "pcm_base64": "AAECAw=="
+        }
+      ],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": "resp-1",
+        "provider_idle": false,
+        "foreground_idle": false,
+        "current_generation": {
+          "session_epoch": 1,
+          "generation_epoch": 1,
+          "generation_id": "generation-1",
+          "utterance_id": "utterance-1",
+          "response_id": "resp-1"
+        },
+        "floor_state": "idle",
+        "user_caption": "",
+        "assistant_caption": "",
+        "responses": {
+          "resp-1": {
+            "phase": "active",
+            "was_fenced": false,
+            "user_input_revision": 0,
+            "has_spoken": true,
+            "event_ids": [
+              "background:d-1",
+              "background:d-2"
+            ]
+          }
+        },
+        "host_events_deduplicated": [
+          "background:d-1",
+          "background:d-2"
+        ],
+        "snapshot": {
+          "version": 4,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    },
+    {
+      "step": 6,
+      "kind": "provider_event",
+      "result": true,
+      "actions": [],
+      "frames": [],
+      "alerts": [],
+      "deliveries": [],
+      "spoken": [],
+      "diagnostics": [],
+      "fence_interruption": null,
+      "state": {
+        "session_epoch": 1,
+        "user_input_revision": 0,
+        "active_provider_response_id": null,
+        "provider_idle": true,
+        "foreground_idle": false,
+        "current_generation": {
+          "session_epoch": 1,
+          "generation_epoch": 1,
+          "generation_id": "generation-1",
+          "utterance_id": "utterance-1",
+          "response_id": "resp-1"
+        },
+        "floor_state": "idle",
+        "user_caption": "",
+        "assistant_caption": "",
+        "responses": {
+          "resp-1": {
+            "phase": "completed",
+            "was_fenced": false,
+            "user_input_revision": 0,
+            "has_spoken": true,
+            "event_ids": [
+              "background:d-1",
+              "background:d-2"
+            ]
+          }
+        },
+        "host_events_deduplicated": [
+          "background:d-1",
+          "background:d-2"
+        ],
+        "snapshot": {
+          "version": 4,
+          "active_delegates": [],
+          "spoken_event_ids": [],
+          "interrupted_event_ids": []
+        }
+      }
+    }
+  ]
+}

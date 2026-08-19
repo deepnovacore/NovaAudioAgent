@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "ids": [],
+  "steps": [
+    {"kind": "connect", "tools": 3},
+
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-provider"}},
+    {"kind": "provider_event", "event": {
+      "kind": "tool_call_ready", "session_epoch": 1, "call_id": "call-1", "item_id": "item-1",
+      "name": "codex__status", "arguments": {}, "response_id": "resp-provider"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-provider",
+      "status": "completed", "reason": "stop"}},
+
+    {
+      "kind": "deliver_host_response",
+      "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact",
+        "task_summary": null,
+        "origin_spoken": false,
+        "item": {
+          "kind": "progress",
+          "host_item_id": "host-1",
+          "event_id": "progress:1",
+          "content": "第一步做完了。",
+          "call_id": null
+        }
+      }
+    },
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-host"}},
+    {"kind": "provider_event", "event": {
+      "kind": "tool_call_ready", "session_epoch": 1, "call_id": "call-2", "item_id": "item-2",
+      "name": "codex__run", "arguments": {"prompt": "继续"}, "response_id": "resp-host"}},
+    {"kind": "provider_event", "event": {
+      "kind": "tool_call_ready", "session_epoch": 1, "call_id": "call-3", "item_id": "item-3",
+      "name": "codex__run", "arguments": {"prompt": "继续"}, "response_id": null}}
+  ]
+}

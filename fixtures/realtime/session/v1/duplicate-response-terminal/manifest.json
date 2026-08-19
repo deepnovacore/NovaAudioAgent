@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "duplicate-response-terminal",
+  "description": "A terminal is applied once. A repeat of the same terminal is refused, and so is a contradictory one arriving after it: a completed turn cannot be reopened as failed. A provider that retransmits, or a reconnect that replays, must not deliver the utterance twice or change how it was recorded.",
+  "covers": [
+    "session.accept.response_terminal.idempotent",
+    "session.accept.response_terminal.contradictory_status_refused",
+    "session.playback_acknowledgement"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

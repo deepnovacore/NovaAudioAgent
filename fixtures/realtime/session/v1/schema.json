@@ -1794,6 +1794,153 @@
                   "kind"
                 ],
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "reconnect_for_guard"
+                  },
+                  "tools": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "old_generation": {
+                    "type": "string",
+                    "const": "current"
+                  },
+                  "confirmation_timeout": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "history": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "sequence": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "role": {
+                              "type": "string",
+                              "const": "user"
+                            },
+                            "text": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "delivery": {
+                              "type": "string",
+                              "const": "user_final"
+                            },
+                            "played_ms": {
+                              "type": "null"
+                            },
+                            "trust": {
+                              "type": "string",
+                              "const": "trusted_user"
+                            },
+                            "source": {
+                              "type": "string",
+                              "const": "conversation"
+                            }
+                          },
+                          "required": [
+                            "sequence",
+                            "role",
+                            "text",
+                            "delivery",
+                            "played_ms",
+                            "trust",
+                            "source"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "sequence": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "role": {
+                              "type": "string",
+                              "const": "assistant"
+                            },
+                            "text": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "delivery": {
+                              "type": "string",
+                              "const": "spoken"
+                            },
+                            "played_ms": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "trust": {
+                              "type": "string",
+                              "const": "trusted_system"
+                            },
+                            "source": {
+                              "type": "string",
+                              "const": "conversation"
+                            }
+                          },
+                          "required": [
+                            "sequence",
+                            "role",
+                            "text",
+                            "delivery",
+                            "played_ms",
+                            "trust",
+                            "source"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "history_mode": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "packed"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "tools",
+                  "old_generation",
+                  "confirmation_timeout",
+                  "history",
+                  "history_mode"
+                ],
+                "additionalProperties": false
               }
             ]
           }
@@ -1842,6 +1989,16 @@
                       "requested",
                       "retryable",
                       "rejected"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "empty",
+                      "packed",
+                      "degraded",
+                      "uncertain"
                     ]
                   },
                   {

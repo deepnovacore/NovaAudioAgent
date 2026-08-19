@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "host-response-refuses-tool-call",
+  "description": "A tool call on a host-created response is refused, while the same call on a provider-initiated response is authorized. A host response narrates a fact the host already injected; it never authorizes a new tool. The refusal also applies when the provider omits the response id and the session falls back to the response holding the slot.",
+  "covers": [
+    "session.accept.tool_call_ready.host_response_refused",
+    "session.accept.tool_call_ready.provider_response_authorized",
+    "session.accept.tool_call_ready.response_id_fallback"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

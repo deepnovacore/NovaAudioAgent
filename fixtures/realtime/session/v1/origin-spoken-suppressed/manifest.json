@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "origin-spoken-suppressed",
+  "description": "A continuation whose pending intent asserts the origin turn already voiced the acknowledgement is suppressed, provided the user input it answers is still current. The host's played-origin proof owns audible acknowledgement, so the provider's own attempt is refused frame by frame and its terminal releases authority without ever reaching the renderer.",
+  "covers": [
+    "session.request_tool_continuation.origin_spoken",
+    "session.accept.response_started.suppressed",
+    "session.accept.response_audio_delta.suppressed",
+    "session.accept.response_transcript_final.suppressed",
+    "session.accept.response_terminal.suppressed_completed"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

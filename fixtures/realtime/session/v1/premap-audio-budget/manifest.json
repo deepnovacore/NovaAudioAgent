@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "premap-audio-budget",
+  "description": "Audio arriving before its response_started buffers against a 64 KiB pre-map budget, which is checked in two distinct places: once before the turn is recorded, where an oversized first delta is refused without recording anything, and once after, where an accumulated overflow discards the whole buffer. A response can buffer again after either refusal, and the surviving buffer flushes when the response finally starts.",
+  "covers": [
+    "session.accept.premap_audio.buffer",
+    "session.accept.premap_audio.budget_before_turn",
+    "session.accept.premap_audio.budget_after_turn",
+    "session.accept.premap_audio.flush_on_start",
+    "session.accept.response_audio_delta.unbounded_delta"
+  ],
+  "clock": "virtual",
+  "requires": ["pcm_fixture"],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

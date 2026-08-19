@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "ids": [],
+  "steps": [
+    {"kind": "connect", "tools": 1},
+    {
+      "kind": "deliver_host_response",
+      "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact", "task_summary": null, "origin_spoken": false,
+        "item": {"kind": "progress", "host_item_id": "host-1", "event_id": "progress:1",
+                 "content": "第一步做完了。", "call_id": null}
+      }
+    },
+    {"kind": "provider_event", "event": {
+      "kind": "user_speech_started", "session_epoch": 1, "speech_id": "speech-1",
+      "provider_item_id": "item-a"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-1"}},
+    {"kind": "provider_event", "event": {
+      "kind": "user_speech_ended", "session_epoch": 1, "speech_id": "speech-1",
+      "provider_item_id": "item-a"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-1",
+      "status": "cancelled", "reason": "client_cancelled"}}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "response-started-under-user-floor",
+  "description": "A response that starts while the user holds the floor is refused on that ground alone, with no earlier audio to have fenced it first. This is the guard the ordinary barge-in ordering hides: when a delta arrives first, the delta's own floor check fences the response and the start is then refused for being fenced, so only a start with nothing before it can tell the two apart.",
+  "covers": [
+    "session.accept.response_started.user_speaking_first_signal",
+    "session.fence_pending_response.retains_provider_slot"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

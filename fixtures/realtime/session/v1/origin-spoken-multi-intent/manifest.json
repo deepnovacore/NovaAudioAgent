@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "origin-spoken-multi-intent",
+  "description": "One voiced confirmation cannot stand in for a whole batch. A continuation carrying two tool outputs does not inherit origin_spoken even when the caller asks for it, so the merged provider intent is unsuppressed and the response is audible.",
+  "covers": [
+    "session.merge_continuation_intents.origin_spoken_single_only",
+    "session.request_tool_continuation.batch"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "ids": [],
+  "steps": [
+    {"kind": "connect", "tools": 1},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-a"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-b"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-b"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_audio_delta", "session_epoch": 1, "response_id": "resp-b",
+      "pcm": {"pcm_base64": "AAE="}}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-a",
+      "status": "completed", "reason": "stop"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-b"}}
+  ]
+}

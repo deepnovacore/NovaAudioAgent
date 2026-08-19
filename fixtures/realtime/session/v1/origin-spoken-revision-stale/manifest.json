@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "origin-spoken-revision-stale",
+  "description": "The same origin-spoken continuation is NOT suppressed once newer user input has arrived. The proof that the origin turn was already voiced belongs to the world that turn answered; a new user turn makes it stale, and the provider's acknowledgement becomes the only one the user will hear.",
+  "covers": [
+    "session.accept.response_started.origin_spoken_revision_stale",
+    "session.accept.user_transcript_final",
+    "session.user_input_revision"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

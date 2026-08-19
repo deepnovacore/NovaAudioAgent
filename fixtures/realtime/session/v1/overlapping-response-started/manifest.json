@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "overlapping-response-started",
+  "description": "A second response_started while another response owns the provider slot is refused and the newcomer is fenced locally. Being fenced is durable: the same response is refused again after the slot is free, and its audio is refused too, so a provider that reuses an id cannot reclaim a turn the session already gave up on.",
+  "covers": [
+    "session.accept.response_started.slot_owned",
+    "session.accept.response_started.locally_fenced",
+    "session.accept.response_audio_delta.fenced_turn"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

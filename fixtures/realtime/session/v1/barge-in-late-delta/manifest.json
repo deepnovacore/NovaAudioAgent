@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "barge-in-late-delta",
+  "description": "A local barge-in fences the audible generation and cancels the active response, and a delta that was already in flight from that response is refused. The local energy detector never takes the user_speaking floor: floor ownership belongs to provider VAD, because a local id would overwrite the provider speech id and the matching provider end could no longer release the floor.",
+  "covers": [
+    "session.local_speech_onset",
+    "session.fence_and_cancel_active_response",
+    "session.accept.response_audio_delta.fenced_turn",
+    "session.accept.response_terminal.cancelled",
+    "session.playback_generation_fence"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

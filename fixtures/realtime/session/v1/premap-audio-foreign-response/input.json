@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "ids": [],
+  "steps": [
+    {"kind": "connect", "tools": 1},
+    {
+      "kind": "deliver_host_response",
+      "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact",
+        "task_summary": null,
+        "origin_spoken": false,
+        "item": {
+          "kind": "progress",
+          "host_item_id": "host-1",
+          "event_id": "progress:1",
+          "content": "查到了。",
+          "call_id": null
+        }
+      }
+    },
+    {"kind": "provider_event", "event": {
+      "kind": "response_audio_delta", "session_epoch": 1, "response_id": "resp-x",
+      "pcm": {"pcm_base64": "AAECAw=="}}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_audio_delta", "session_epoch": 1, "response_id": "resp-y",
+      "pcm": {"pcm_base64": "BAUGBw=="}}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-y"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-x"}}
+  ]
+}

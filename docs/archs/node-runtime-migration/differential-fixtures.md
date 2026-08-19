@@ -1,7 +1,9 @@
 # Nova Audio Agent Node Differential Fixture Contract
 
-Status: v1 schema plus Python and Node runners active; twenty Python-exported core scenarios match,
-with provider-frame coverage still open as of 2026-08-19.
+Status: v1 schema plus Python and Node runners active; twenty Python-exported core scenarios match.
+A second family covers the realtime session at the provider-frame level: sixteen scenarios, Python
+exported and checked, with the Node leg checking the contract but not yet the goldens, because the
+reducer that has to satisfy them is not ported yet.
 
 ## Purpose
 
@@ -259,6 +261,47 @@ The core vertical slice is not complete until it includes at least:
 
 Provider fixture families are added before each transport is considered ported. Real-provider and
 hardware tests remain separate because their nondeterminism would make them unsuitable goldens.
+
+## The Session Family
+
+`fixtures/realtime/session/v1/<scenario>/` drives one layer below the core fixtures. A scenario is
+a sequence of normalized provider events and host actions applied to a real `RealtimeSession`, and
+the golden records, per step: what the session returned, the calls it made on the provider, the
+playback effects it produced, the state a caller can observe afterwards, and any diagnostic it
+printed. Its schema is generated from `runtime/src/realtime/session-fixtures.ts` into
+`fixtures/realtime/session/v1/schema.json` by `npm run fixtures:schema:session`, and the Python
+oracle validates every fixture against those same bytes.
+
+Three properties of this family differ from the core one, each for a reason:
+
+The session is driven **directly**, not through `RealtimeProviderSession`. That layer already drops
+events whose epoch does not match, so a fixture routed through it could never reach the session's
+own epoch guard.
+
+One **id sequence** is shared by the session and the playback registry, as in production, and a run
+that leaves an id unconsumed or asks for one past the end fails. Both mean the two runtimes
+disagree about how much they allocate. In practice this guard is as load-bearing as the goldens: a
+guard removed by mistake usually shows up first as a generation the scenario never declared.
+
+`node_parity` in each manifest says whether the Node leg checks that scenario's golden. While it
+reads `pending-session-port`, only Python does, and a Node test fails the moment a
+`RealtimeSession` is exported while any marker survives. A green build that checks nothing must not
+read as parity.
+
+### Validating the set
+
+A fixture set is only worth what it can distinguish. The way to check that is to remove one guard
+from the Python session, run `check`, and confirm a named scenario goes red -- not to read the
+scenarios and judge them plausible. Seventeen guards were swept this way when the family landed;
+two were found to be indistinguishable and scenarios were added for them:
+
+- `response_started` under the user floor was shadowed. When a delta arrives first, the delta's own
+  floor check fences the response and the start is then refused for being *fenced*, so only a start
+  with nothing before it separates the two guards.
+- No scenario sent a duplicate terminal, so terminal idempotence was unpinned.
+
+Do this again for any guard added later. A guard no scenario can distinguish is either dead code or
+a hole in the set, and the difference matters.
 
 ## Review Rules
 

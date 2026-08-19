@@ -165,13 +165,20 @@ export const userTranscriptFinalSchema = sessionEvent(
 export const responseStartedSchema = sessionEvent(z.literal('response_started'), {
   response_id: realtimeIdentifierSchema,
 })
+/**
+ * Inbound provider audio is bounded by alignment, not by size.
+ *
+ * `ResponseAudioDelta.__post_init__` requires only non-empty PCM16 alignment, and the playback
+ * registry is built for larger deltas: it splits one into `MAX_PLAYBACK_FRAME_BYTES` frames. A
+ * size bound here would make that split unreachable from the provider path and would refuse audio
+ * the oracle accepts -- narrowing the accepted domain on one leg only. `MAX_REALTIME_PCM_BYTES`
+ * still bounds what we *send*, which is a different direction with its own reason.
+ */
 export const responseAudioDeltaSchema = sessionEvent(z.literal('response_audio_delta'), {
   response_id: realtimeIdentifierSchema,
   pcm: z.instanceof(Uint8Array)
     .refine(value => value.byteLength > 0 && value.byteLength % 2 === 0,
-      'pcm must be non-empty aligned PCM16 bytes')
-    .refine(value => value.byteLength <= MAX_REALTIME_PCM_BYTES,
-      `pcm exceeds ${MAX_REALTIME_PCM_BYTES} bytes`),
+      'pcm must be non-empty aligned PCM16 bytes'),
 })
 export const responseTranscriptDeltaSchema = sessionEvent(
   z.literal('response_transcript_delta'),

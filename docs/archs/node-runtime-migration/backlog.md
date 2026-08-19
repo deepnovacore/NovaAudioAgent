@@ -105,6 +105,49 @@ once:
 - The service-layer continuation batch-abandon loop and the urgent-owner assignment each exist
   twice. One code path in Node.
 
+### Corrected divergences in the ported session ledgers
+
+The ledgers landed by `a7687f1` were gated by hand-written Node expectations rather than a
+Python-exported golden, and six of those expectations described behavior the oracle does not have.
+None would have been caught by reading the Python; all six were fixed and each is now pinned by a
+test that fails when the fix is reverted.
+
+1. `openProviderTurn` rebuilt the entry on every call. `_record_provider_turn` returns an
+   already-recorded turn untouched, so a port of `_mark_locally_fenced` -- which is exactly
+   `_record_provider_turn(id).locally_fenced = True` -- would have revived a `cancel_requested` or
+   terminal turn as `active`, and re-dated a stale turn against the current input revision.
+2. Eviction was insertion-ordered. Python touches `move_to_end` on every access, so eviction is
+   oldest-*touched* first. A JavaScript `Map` reproduces `OrderedDict` here: `delete` + `set` is
+   `move_to_end` and the first key is the eviction candidate.
+3. `_responded_event_ids` is keyed by bare event id, not by `(epoch, id)`: a host event the host
+   already answered stays answered across a reconnect, because the host owns that identity. It also
+   needs withdrawal, which the epoch ledger could not express, and its bound is enforced by a
+   separate prune step rather than on record.
+4. Appending a spoken or interrupted event id published a snapshot version of its own. Callers
+   append a whole response's ids in a loop and publish once, so the version was counting how many
+   ids a response happened to carry.
+5. `beginEpoch` cleared captions, which `connect` does not; captions are reset by the layer above.
+6. `truncateCaption` kept a caption's *first* 160 code points. `caption_for` bounds with
+   `[-MAX_CAPTION_CHARS:]`, keeping the newest end, because a caption accumulates from deltas and
+   the display has to follow what is being said now. The progress-summary bound runs the other way
+   (`[:PROGRESS_SUMMARY_LIMIT]`), which is what makes the mistake easy; both directions are now
+   pinned by tests that build strings of distinct code points.
+
+### Corrected divergence in the inbound provider audio domain
+
+`responseAudioDeltaSchema` refused a provider audio delta larger than 64 KiB.
+`ResponseAudioDelta.__post_init__` requires only non-empty PCM16 alignment, and
+`PlaybackRegistry.push_audio` is built for larger deltas: it splits one into
+`MAX_PLAYBACK_FRAME_BYTES` frames, a loop that only ever runs above that size. The Node bound
+narrowed the accepted domain on one leg and made both that split and the session's pre-map budget
+check-before-the-turn-is-recorded unreachable from the provider path. It is removed; the bound on
+what we *send* stays, which is a different direction with its own reason, and is in any case
+already enforced at the desktop boundary where Python enforces it.
+
+`MAX_DESKTOP_PCM_BYTES` equals `MAX_PLAYBACK_FRAME_BYTES` on both legs, so the adapter-level
+outbound check never fires for audio that came through the desktop boundary. It stays as
+defence-in-depth.
+
 ### Porting hazards
 
 - `runtime.py` reaches every field of `memory/structured.py` through `getattr` with model-supplied

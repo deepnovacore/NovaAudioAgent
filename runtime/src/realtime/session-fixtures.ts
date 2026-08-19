@@ -194,6 +194,35 @@ export const fixtureHostIntentSchema = z.object({
   origin_spoken: z.boolean(),
 }).strict()
 
+/**
+ * One recovered conversation turn, in the only two shapes `RecoveryTurn` accepts.
+ *
+ * A user turn is a final transcript from a trusted user and never carries a played duration; an
+ * assistant turn was spoken by a trusted system and may. Encoding that as a union on `role` rather
+ * than as free fields means a malformed recovery turn cannot be written into a fixture at all,
+ * instead of being rejected only once Python constructs it.
+ */
+const recoveryTurnSchema = z.discriminatedUnion('role', [
+  z.object({
+    sequence: z.number().int().positive(),
+    role: z.literal('user'),
+    text: z.string().min(1),
+    delivery: z.literal('user_final'),
+    played_ms: z.null(),
+    trust: z.literal('trusted_user'),
+    source: z.literal('conversation'),
+  }).strict(),
+  z.object({
+    sequence: z.number().int().positive(),
+    role: z.literal('assistant'),
+    text: z.string().min(1),
+    delivery: z.literal('spoken'),
+    played_ms: z.number().int().nonnegative().nullable(),
+    trust: z.literal('trusted_system'),
+    source: z.literal('conversation'),
+  }).strict(),
+])
+
 // ---------------------------------------------------------------------------
 // input: steps
 // ---------------------------------------------------------------------------
@@ -267,6 +296,21 @@ export const sessionFixtureStepSchema = z.discriminatedUnion('kind', [
     played_ms: z.number().int().nonnegative().nullable(),
   }).strict(),
   z.object({kind: z.literal('reset_captions')}).strict(),
+  /**
+   * Replace provider authority while retaining one exact renderer generation.
+   *
+   * `old_generation` names the generation to keep; `"current"` is the one the session holds, which
+   * is what a Guard handoff always passes. The return value distinguishes five recovery outcomes,
+   * so a scenario pins which one a given history produced.
+   */
+  z.object({
+    kind: z.literal('reconnect_for_guard'),
+    tools: z.number().int().nonnegative(),
+    old_generation: z.literal('current'),
+    confirmation_timeout: z.number().finite().positive().nullable(),
+    history: z.array(recoveryTurnSchema),
+    history_mode: z.enum(['none', 'packed']),
+  }).strict(),
 ])
 
 export const sessionFixtureInputSchema = z.object({
@@ -369,6 +413,7 @@ const stepResultSchema = z.union([
   z.null(),
   z.boolean(),
   z.enum(['requested', 'retryable', 'rejected']),
+  z.enum(['none', 'empty', 'packed', 'degraded', 'uncertain']),
   deliveryRecordSchema,
   completionRecordSchema,
   captionRecordSchema,

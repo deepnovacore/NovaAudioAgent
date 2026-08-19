@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "started-while-user-speaking",
+  "description": "A response that starts while the user is speaking is refused and its pending intent is fenced, and so is its audio. The user holds the floor, so the host's queued utterance loses its turn rather than talking over them.",
+  "covers": [
+    "session.accept.response_started.user_speaking",
+    "session.accept.response_audio_delta.user_speaking",
+    "session.accept.user_speech_started",
+    "session.fence_pending_response"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

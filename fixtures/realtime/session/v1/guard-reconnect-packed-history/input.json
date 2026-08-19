@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "ids": [
+    "generation-1",
+    "utterance-1",
+    "host-dialogue-1",
+    "host-recovery-1"
+  ],
+  "steps": [
+    {
+      "kind": "connect",
+      "tools": 2
+    },
+    {
+      "kind": "deliver_host_response",
+      "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact",
+        "task_summary": null,
+        "origin_spoken": false,
+        "item": {
+          "kind": "progress",
+          "host_item_id": "host-1",
+          "event_id": "progress:1",
+          "content": "在看摄像头。",
+          "call_id": null
+        }
+      }
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "response_started",
+        "session_epoch": 1,
+        "response_id": "resp-1"
+      }
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "response_audio_delta",
+        "session_epoch": 1,
+        "response_id": "resp-1",
+        "pcm": {
+          "pcm_base64": "AAECAw=="
+        }
+      }
+    },
+    {
+      "kind": "playback_started",
+      "utterance_id": "utterance-1",
+      "generation_epoch": 1
+    },
+    {
+      "kind": "reconnect_for_guard",
+      "tools": 2,
+      "old_generation": "current",
+      "confirmation_timeout": 0.5,
+      "history_mode": "packed",
+      "history": [
+        {
+          "sequence": 1,
+          "role": "user",
+          "text": "看一下门口",
+          "delivery": "user_final",
+          "played_ms": null,
+          "trust": "trusted_user",
+          "source": "conversation"
+        },
+        {
+          "sequence": 2,
+          "role": "assistant",
+          "text": "在看摄像头。",
+          "delivery": "spoken",
+          "played_ms": 620,
+          "trust": "trusted_system",
+          "source": "conversation"
+        }
+      ]
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "response_audio_delta",
+        "session_epoch": 1,
+        "response_id": "resp-1",
+        "pcm": {
+          "pcm_base64": "BAUGBw=="
+        }
+      }
+    },
+    {
+      "kind": "complete_playback",
+      "utterance_id": "utterance-1",
+      "generation_epoch": 1,
+      "played_ms": 900
+    }
+  ]
+}

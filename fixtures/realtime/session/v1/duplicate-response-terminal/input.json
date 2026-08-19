@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "ids": ["generation-1", "utterance-1"],
+  "steps": [
+    {"kind": "connect", "tools": 1},
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-1"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_audio_delta", "session_epoch": 1, "response_id": "resp-1",
+      "pcm": {"pcm_base64": "AAECAw=="}}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_transcript_final", "session_epoch": 1, "response_id": "resp-1",
+      "text": "做完了。"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-1",
+      "status": "completed", "reason": "stop"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-1",
+      "status": "completed", "reason": "stop"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-1",
+      "status": "failed", "reason": "late_contradiction"}},
+    {"kind": "playback_started", "utterance_id": "utterance-1", "generation_epoch": 1},
+    {"kind": "complete_playback", "utterance_id": "utterance-1", "generation_epoch": 1,
+     "played_ms": 300}
+  ]
+}
