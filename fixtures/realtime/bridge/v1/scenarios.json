@@ -1,0 +1,2795 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "name": "a-transcript-becomes-the-origin-for-later-calls",
+      "covers": [
+        "bridge.accept_user_transcript",
+        "bridge.origin_from_transcript"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "ingest_refs": [
+          "conversation:1"
+        ],
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_user_transcript",
+          "text": "编译一下运行时"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "compile the runtime"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a-call-with-no-evidence-at-all-is-refused",
+      "covers": [
+        "bridge.missing_origin_ref"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {},
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "compile the runtime"
+          }
+        }
+      ]
+    },
+    {
+      "name": "an-explicit-origin-outranks-the-provider-and-the-transcript",
+      "covers": [
+        "bridge.origin_precedence"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "ingest_refs": [
+          "conversation:1"
+        ],
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-2"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-3"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_user_transcript",
+          "text": "编译一下"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "one",
+            "origin_ref": "conversation:99"
+          },
+          "origin_ref": "conversation:7"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "two",
+            "origin_ref": "conversation:99"
+          }
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "three"
+          }
+        }
+      ]
+    },
+    {
+      "name": "the-provider-origin-ref-never-reaches-the-executor",
+      "covers": [
+        "bridge.origin_ref_stripped"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "compile",
+            "origin_ref": "conversation:1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a-name-the-compiler-never-bound-is-simply-unknown",
+      "covers": [
+        "bridge.unknown_tool"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {},
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "no_such_tool",
+          "arguments": {}
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "worker_sim__no_such_op",
+          "arguments": {}
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "worker_sim_start",
+          "arguments": {}
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-4",
+          "name": "WORKER_SIM__START",
+          "arguments": {}
+        }
+      ]
+    },
+    {
+      "name": "a-sync-result-op-holds-the-protocol-open-with-a-pending-result",
+      "covers": [
+        "bridge.sync_result",
+        "bridge.r105"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__status",
+          "arguments": {},
+          "origin_ref": "conversation:1"
+        }
+      ]
+    },
+    {
+      "name": "a-suggest-channel-start-is-ambient-and-its-stop-is-not",
+      "covers": [
+        "bridge.r128_ambient_start"
+      ],
+      "manifests": [
+        {
+          "name": "ambient_sim",
+          "policy": {
+            "channel": "ambient_sim",
+            "priority": 40,
+            "wake": "fast",
+            "typical_latency": 3.0,
+            "compress_watermark": 8,
+            "suggest": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "open an ambient window",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "condition"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "stop",
+              "description": "close the ambient window",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "probe",
+              "description": "read the ambient window state",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "deadline_budget": 5.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "ambient_sim__start",
+          "arguments": {
+            "condition": "when the build finishes"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "ambient_sim__stop",
+          "arguments": {},
+          "origin_ref": "conversation:1"
+        }
+      ]
+    },
+    {
+      "name": "a-runtime-rejection-is-reported-as-such",
+      "covers": [
+        "bridge.runtime_rejected"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": false,
+            "delegate_id": null
+          },
+          {
+            "accepted": true,
+            "delegate_id": null
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "one"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "two"
+          },
+          "origin_ref": "conversation:1"
+        }
+      ]
+    },
+    {
+      "name": "every-scalar-type-in-the-published-schema-is-enforced",
+      "covers": [
+        "bridge.valid_params"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-2"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-3"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "retries": 2,
+            "ratio": 0.5,
+            "verbose": true,
+            "tags": [
+              "a"
+            ],
+            "extra": {
+              "k": "v"
+            },
+            "label": "abc"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "retries": 1
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "sideways"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-4",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "surprise": 1
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-5",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "retries": 1.5
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-6",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "retries": true
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-7",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "verbose": "yes"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-8",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "tags": "a"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-9",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "extra": []
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-10",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "label": "a"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-11",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "label": "abcdefg"
+          },
+          "origin_ref": "conversation:1"
+        }
+      ],
+      "allow_unconsumed": true
+    },
+    {
+      "name": "a-structured-update-completes-inline",
+      "covers": [
+        "bridge.update_binding"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "update_results": [
+          true,
+          false
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "update_intent",
+          "arguments": {
+            "objective_hypothesis": "compile and report"
+          }
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "update_intent",
+          "arguments": {
+            "uncertainty": 0.4,
+            "constraints": [
+              "no network"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "an-update-with-a-field-the-schema-forbids-never-reaches-the-reducer",
+      "covers": [
+        "bridge.update_validation",
+        "bridge.min_properties_unenforced"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "update_results": [
+          false
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "update_intent",
+          "arguments": {
+            "revision": 7
+          }
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "update_intent",
+          "arguments": {}
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "update_intent",
+          "arguments": {
+            "uncertainty": "high"
+          }
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-4",
+          "name": "update_intent",
+          "arguments": {
+            "constraints": "no network"
+          }
+        }
+      ]
+    },
+    {
+      "name": "recall-is-fulfilled-inline-with-telemetry",
+      "covers": [
+        "bridge.recall_inline",
+        "bridge.recall_telemetry"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "include_memory_recall": true,
+      "memory": [
+        {
+          "channel": "conversation",
+          "ts": 1.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "compile the runtime please"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 2.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "text": "compilation finished with no errors"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 3.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "how did that go"
+          }
+        }
+      ],
+      "runtime": {},
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "memory__recall",
+          "arguments": {
+            "query": "compile",
+            "scope": "recent"
+          },
+          "origin_ref": "conversation:3"
+        },
+        {
+          "kind": "advance_clock",
+          "to": 0.25
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "memory__recall",
+          "arguments": {
+            "query": "nothing matches this",
+            "scope": "recent"
+          },
+          "origin_ref": "conversation:3"
+        }
+      ]
+    },
+    {
+      "name": "recall-refuses-a-blank-query-and-an-unusable-origin",
+      "covers": [
+        "bridge.recall_refusals"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "include_memory_recall": true,
+      "memory": [
+        {
+          "channel": "conversation",
+          "ts": 1.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "compile the runtime please"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 2.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "text": "compilation finished with no errors"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 3.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "how did that go"
+          }
+        }
+      ],
+      "runtime": {},
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "memory__recall",
+          "arguments": {
+            "query": "   ",
+            "scope": "recent"
+          },
+          "origin_ref": "conversation:3"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "memory__recall",
+          "arguments": {
+            "query": "compile",
+            "scope": "recent"
+          }
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "memory__recall",
+          "arguments": {
+            "query": "compile",
+            "scope": "sideways"
+          },
+          "origin_ref": "conversation:3"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-4",
+          "name": "memory__recall",
+          "arguments": {
+            "scope": "recent"
+          },
+          "origin_ref": "conversation:3"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-5",
+          "name": "memory__recall",
+          "arguments": {
+            "query": "compile",
+            "scope": "recent"
+          },
+          "origin_ref": "conversation:999"
+        }
+      ]
+    },
+    {
+      "name": "the-task-summary-comes-from-the-first-field-that-has-one",
+      "covers": [
+        "bridge.task_summary"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        },
+        {
+          "name": "ambient_sim",
+          "policy": {
+            "channel": "ambient_sim",
+            "priority": 40,
+            "wake": "fast",
+            "typical_latency": 3.0,
+            "compress_watermark": 8,
+            "suggest": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "open an ambient window",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "condition"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "stop",
+              "description": "close the ambient window",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "probe",
+              "description": "read the ambient window state",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "deadline_budget": 5.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-2"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-3"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-4"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "  compile the runtime  "
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "ambient_sim__start",
+          "arguments": {
+            "condition": "when the build finishes"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "ambient_sim__stop",
+          "arguments": {},
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-4",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译编译"
+          },
+          "origin_ref": "conversation:1"
+        }
+      ],
+      "allow_unconsumed": true
+    },
+    {
+      "name": "a-whitespace-only-summary-is-refused-before-dispatch",
+      "covers": [
+        "bridge.empty_summary"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {},
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "   "
+          },
+          "origin_ref": "conversation:1"
+        }
+      ]
+    },
+    {
+      "name": "telemetry-counts-the-hits-the-model-actually-received",
+      "covers": [
+        "bridge.recall_telemetry_from_bytes"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "include_memory_recall": true,
+      "memory": [
+        {
+          "channel": "conversation",
+          "ts": 1.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "text": "compile xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx item1"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 2.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "text": "compile xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx item2"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 3.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "text": "compile xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx item3"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 4.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "text": "compile xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx item4"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 5.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "text": "compile xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx item5"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 6.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "text": "compile xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx item6"
+          }
+        },
+        {
+          "channel": "conversation",
+          "ts": 99.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "how did that go"
+          }
+        }
+      ],
+      "runtime": {},
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "memory__recall",
+          "arguments": {
+            "query": "compile",
+            "scope": "recent"
+          },
+          "origin_ref": "conversation:7"
+        }
+      ]
+    },
+    {
+      "name": "an-empty-origin-string-is-no-origin-at-all",
+      "covers": [
+        "bridge.empty_origin_ref"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {},
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "compile"
+          },
+          "origin_ref": ""
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "compile",
+            "origin_ref": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "the-summary-is-cut-in-code-points-not-utf16-units",
+      "covers": [
+        "bridge.summary_code_points"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__start",
+          "arguments": {
+            "work_order": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          },
+          "origin_ref": "conversation:1"
+        }
+      ]
+    },
+    {
+      "name": "the-summary-prefers-work-order-then-task-then-condition",
+      "covers": [
+        "bridge.summary_field_order"
+      ],
+      "manifests": [
+        {
+          "name": "param_sim",
+          "policy": {
+            "channel": "param_sim",
+            "priority": 45,
+            "wake": "fast",
+            "typical_latency": 4.0,
+            "compress_watermark": 8
+          },
+          "ops": [
+            {
+              "name": "act",
+              "description": "accept every summary-bearing field at once",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string"
+                  },
+                  "task": {
+                    "type": "string"
+                  },
+                  "condition": {
+                    "type": "string"
+                  },
+                  "other": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            },
+            {
+              "name": "look",
+              "description": "the readonly verification path every manifest needs",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "deadline_budget": 5.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-2"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-3"
+          },
+          {
+            "accepted": true,
+            "delegate_id": "d-4"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "param_sim__act",
+          "arguments": {
+            "work_order": "from work order",
+            "task": "from task",
+            "condition": "from condition"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "param_sim__act",
+          "arguments": {
+            "task": "from task",
+            "condition": "from condition"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "param_sim__act",
+          "arguments": {
+            "condition": "from condition"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-4",
+          "name": "param_sim__act",
+          "arguments": {
+            "other": "ignored"
+          },
+          "origin_ref": "conversation:1"
+        }
+      ]
+    },
+    {
+      "name": "a-length-bound-counts-code-points-not-utf16-units",
+      "covers": [
+        "bridge.length_bound_code_points"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {
+        "dispatch_results": [
+          {
+            "accepted": true,
+            "delegate_id": "d-1"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "label": "😀😀😀😀😀😀"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "label": "😀😀😀😀😀😀😀"
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "label": "😀"
+          },
+          "origin_ref": "conversation:1"
+        }
+      ],
+      "allow_unconsumed": true
+    },
+    {
+      "name": "an-object-where-an-array-is-declared-is-refused",
+      "covers": [
+        "bridge.array_is_not_object"
+      ],
+      "manifests": [
+        {
+          "name": "worker_sim",
+          "policy": {
+            "channel": "worker_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "start",
+              "description": "begin a unit of work",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "work_order": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "work_order"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 30.0
+            },
+            {
+              "name": "status",
+              "description": "read current status",
+              "params": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              },
+              "readonly": true,
+              "sync_result": true,
+              "deadline_budget": 5.0
+            },
+            {
+              "name": "configure",
+              "description": "exercise every scalar type in validation",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "slow"
+                    ]
+                  },
+                  "retries": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "verbose": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array"
+                  },
+                  "extra": {
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 6
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "deadline_budget": 10.0
+            }
+          ]
+        }
+      ],
+      "runtime": {},
+      "steps": [
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-1",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "tags": {}
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-2",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "tags": null
+          },
+          "origin_ref": "conversation:1"
+        },
+        {
+          "kind": "accept_tool_call",
+          "call_id": "call-3",
+          "name": "worker_sim__configure",
+          "arguments": {
+            "mode": "fast",
+            "extra": null
+          },
+          "origin_ref": "conversation:1"
+        }
+      ]
+    }
+  ]
+}

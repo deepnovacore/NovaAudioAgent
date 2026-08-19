@@ -33,6 +33,7 @@ import {
   type Delegate,
   type DelegateRequest,
   type ExecutorManifest,
+  type UpdateSpec,
   type FastBrainOutput,
 } from './ports.js'
 import {
@@ -94,6 +95,21 @@ export interface ModelCall {
   readonly channel?: string
   readonly compression_items?: readonly MemoryItem[]
   readonly context_view?: ContextView
+}
+
+/** What `#dispatch` decided, so an external caller learns the delegate id and the model path the wake. */
+interface DelegateAdmission {
+  readonly accepted: boolean
+  readonly delegate_id: string | null
+  readonly problem: string | null
+  readonly wake: WakeReason | null
+}
+
+/** The oracle's `RuntimeDispatchResult`. Only `accepted` and `delegate_id` cross the bridge. */
+export interface RuntimeDispatchResult {
+  readonly accepted: boolean
+  readonly delegate_id: string | null
+  readonly problem: string | null
 }
 
 export class CoreRuntime {
@@ -461,33 +477,70 @@ export class CoreRuntime {
     }
 
     if (parsed.action.act === 'delegate') {
-      return this.#dispatch(parsed.action.delegate, reason, job?.visibleRefs)
+      return this.#dispatch(parsed.action.delegate, reason, job?.visibleRefs).wake
     } else if (parsed.action.act === 'update') {
-      const result = applyStructuredUpdate(
-        this.memory.structured,
-        parsed.action.update.target,
-        parsed.action.update.delta,
-      )
-      if (result.ok) {
-        this.memory.structured = result.state
-      } else {
-        const content: Record<string, JsonValue> = {
-          error: 'update_rejected',
-          target: parsed.action.update.target,
-          reason: result.reason,
-        }
-        if (result.unknown !== undefined) content.unknown = [...result.unknown]
-        if (result.fields !== undefined) content.fields = [...result.fields]
-        this.#appendMemory(CONVERSATION_CHANNEL, {
-          ts: this.appliedEvents.at(-1)?.ts ?? 0,
-          trust: 'trusted_system',
-          priority: reason.priority,
-          content,
-          outcome: 'failed',
-        })
-      }
+      this.#updateStructured(parsed.action.update, reason)
     }
     return null
+  }
+
+  /**
+   * Admit one already-normalized external proposal without awaiting its worker.
+   *
+   * The model's own dispatches arrive through `consumeFastBrain` with the visible refs of the call
+   * that produced them. An external proposal has no such call, so the refs are compiled fresh here:
+   * the oracle passes a newly compiled view for exactly this reason, and skipping it would let a
+   * caller cite a memory item that has aged out of the recent window -- the one check that turns
+   * "may only reference what it has actually seen" into something enforceable.
+   */
+  dispatchExternal(request: DelegateRequest, reason: WakeReason): RuntimeDispatchResult {
+    const admission = this.#dispatch(request, reason, this.#visibleMemoryRefs())
+    return {
+      accepted: admission.accepted,
+      delegate_id: admission.delegate_id,
+      problem: admission.problem,
+    }
+  }
+
+  /**
+   * Route an external update through the sole structured-state writer.
+   *
+   * Deliberately the same writer the model's updates go through, so an external proposal cannot get
+   * a laxer path into Structured State than a model one. The return value says whether it applied;
+   * a rejection is recorded as a failed observation either way.
+   */
+  updateExternal(spec: UpdateSpec, reason: WakeReason): boolean {
+    return this.#updateStructured(spec, reason)
+  }
+
+  /**
+   * Apply `act=update`, the sole writer of Structured State.
+   *
+   * A rejected update is recorded as a failed observation rather than raised: letting one
+   * hallucinated field throw out of `apply` would kill the loop. Nothing is waiting on it either --
+   * no work was dispatched -- so this deliberately does not wake.
+   */
+  #updateStructured(spec: UpdateSpec, reason: WakeReason): boolean {
+    const result = applyStructuredUpdate(this.memory.structured, spec.target, spec.delta)
+    if (result.ok) {
+      this.memory.structured = result.state
+      return true
+    }
+    const content: Record<string, JsonValue> = {
+      error: 'update_rejected',
+      target: spec.target,
+      reason: result.reason,
+    }
+    if (result.unknown !== undefined) content.unknown = [...result.unknown]
+    if (result.fields !== undefined) content.fields = [...result.fields]
+    this.#appendMemory(CONVERSATION_CHANNEL, {
+      ts: this.appliedEvents.at(-1)?.ts ?? 0,
+      trust: 'trusted_system',
+      priority: reason.priority,
+      content,
+      outcome: 'failed',
+    })
+    return false
   }
 
   activeDelegates(): readonly Delegate[] {
@@ -512,19 +565,19 @@ export class CoreRuntime {
     request: DelegateRequest,
     reason: WakeReason,
     visibleRefs?: ReadonlySet<string>,
-  ): WakeReason | null {
+  ): DelegateAdmission {
     const result = delegateRequestSchema.safeParse(request)
-    if (!result.success) return this.#rejectDelegate(request, 'invalid_delegate_request', reason)
+    if (!result.success) return this.#refuseDelegate(request, 'invalid_delegate_request', reason)
     const parsed = result.data
     const manifest = this.#manifests.get(parsed.executor)
-    if (manifest === undefined) return this.#rejectDelegate(parsed, 'unknown_executor', reason)
+    if (manifest === undefined) return this.#refuseDelegate(parsed, 'unknown_executor', reason)
     const operation = manifest.ops.find(candidate => candidate.name === parsed.op)
-    if (operation === undefined) return this.#rejectDelegate(parsed, 'unknown_operation', reason)
+    if (operation === undefined) return this.#refuseDelegate(parsed, 'unknown_operation', reason)
     const duplicate = [...this.#inFlight.values()].find(delegate => (
       sameDelegateRequest(delegate, parsed)
     ))
     if (duplicate !== undefined) {
-      return this.#rejectDelegate(
+      return this.#refuseDelegate(
         parsed,
         `${duplicate.delegate_id} is already performing the same request`,
         reason,
@@ -543,7 +596,7 @@ export class CoreRuntime {
         if (this.#handoffSeen.has(unresolved.delegate_id) && !this.#retainRoutingHistory) {
           this.#reclaimRouting(unresolved.delegate_id)
         }
-        return this.#rejectDelegate(
+        return this.#refuseDelegate(
           parsed,
           `${unresolved.delegate_id} stopped at unknown; verify before retrying`,
           reason,
@@ -551,7 +604,7 @@ export class CoreRuntime {
       }
     }
     const originProblem = this.#originProblem(parsed.origin_ref, visibleRefs)
-    if (originProblem !== null) return this.#rejectDelegate(parsed, originProblem, reason)
+    if (originProblem !== null) return this.#refuseDelegate(parsed, originProblem, reason)
     const dispatchedAt = this.appliedEvents.at(-1)?.ts ?? 0
     const delegate = delegateSchema.parse({
       ...parsed,
@@ -571,7 +624,7 @@ export class CoreRuntime {
     this.#jobSequence += 1
     this.executorEffects.push({kind: 'dispatch', delegate})
     this.#onExecutorDispatch?.(this.#dispatches.length - 1, delegate)
-    return null
+    return {accepted: true, delegate_id: delegate.delegate_id, problem: null, wake: null}
   }
 
   #applyHandoff(event: Extract<EventRecord, {kind: 'handoff'}>): Delegate | undefined {
@@ -1171,14 +1224,19 @@ export class CoreRuntime {
     return this.#refuse(content, reason)
   }
 
-  #rejectDelegate(request: DelegateRequest, problem: string, reason: WakeReason): WakeReason | null {
-    return this.#refuse({
+  #refuseDelegate(
+    request: DelegateRequest,
+    problem: string,
+    reason: WakeReason,
+  ): DelegateAdmission {
+    const wake = this.#refuse({
       error: 'delegate_rejected',
       problem,
       executor: boundedModelText(request.executor),
       op: boundedModelText(request.op),
       origin_ref: boundedModelText(request.origin_ref),
     }, reason)
+    return {accepted: false, delegate_id: null, problem, wake}
   }
 
   #reclaimRouting(delegateId: string): void {

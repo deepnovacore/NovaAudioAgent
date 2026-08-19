@@ -357,6 +357,60 @@ is the shape of gap to expect from a port sweep: not a missing guard, but a scen
 tell two implementations apart. `node runtime/scripts/diff-session-fixture.mjs <id>` prints the first
 diverging step and field.
 
+## The Confirmation Family
+
+`fixtures/realtime/confirmation/v1/` pins two surfaces through
+`scripts/project_confirmation_oracle.py`. The classifier's verdict for each of 52 phrasings is a
+security boundary: it decides whether a spoken sentence authorized changing which workspace the agent
+operates in. The controller's sequence of outcomes over 12 scripted conversations is what stops a
+confirmation being replayed or answered by the wrong utterance.
+
+Two things the scenarios deliberately do *not* pin, because pinning them would measure the harness
+rather than the controller:
+
+- **Timer firing.** A step moves the clock without letting anything scheduled run, and the scenarios
+  call `expire()` explicitly. Python's virtual clock needs its runtime loop to wake a sleeper and
+  Node's does not, so a step that advanced time *and* drained the loop would compare two schedulers.
+- **`claim_confirmed(None)`.** Passing a null operation matches the controller's own null authority and
+  reports success. That cannot happen in production, where the one caller is typed to a real operation,
+  so the harness refuses it rather than encoding the artefact in a golden.
+
+The check order in `classify_confirmation` is also unobservable, and that is recorded rather than
+worked around: no confirmable phrase contains a refusal, so swapping the two checks changes nothing.
+The safety rests on that property of the *sets*, so both legs assert it over the module's own exported
+lists. Adding a phrase that breaks it fails those tests, which is the moment the order becomes real.
+
+## The Bridge Family
+
+`fixtures/realtime/bridge/v1/` pins 21 scenarios through `scripts/realtime_bridge_oracle.py`. The
+bridge is the only route by which a provider's tool calls and user transcripts reach the reducer, so
+what it admits, refuses, and dispatches is the authorization boundary for model-proposed work.
+
+Two shape decisions worth copying into later families:
+
+- **Executor manifests are carried in the fixture, not hardcoded in either leg.** Two registries would
+  be two things to keep in step; one JSON document parsed twice cannot drift.
+- **The runtime is a scripted double on both legs**, recording every call it receives. A real runtime
+  would make the fixture measure the reducer, and an acceptance that dispatched the *wrong* request
+  would otherwise look identical to a correct one.
+
+Three guards survive a mutation sweep undetected, and each is recorded as redundant rather than patched
+around:
+
+| Guard | Why nothing distinguishes it |
+|---|---|
+| `additionalProperties: false` | A name absent from `properties` has no schema, so the per-value check refuses it anyway. |
+| The recall origin pre-check | `compile_memory_recall` validates the origin more strictly, and both paths produce the same refusal with the same absent telemetry. |
+| `canonical_json` for tool-output bodies | The bodies are built in code with keys that already happen to be sorted, so `JSON.stringify` agrees. |
+
+All three are kept because the oracle keeps them; removing one would be a structural divergence for no
+behavioral gain. Each has a test stating the property directly, so the redundancy does not have to be
+rediscovered by the next sweep.
+
+Two branches no compiled schema can reach are tested directly rather than through a fixture: an
+unrecognised schema `type` (the compiler emits only six), and a clock that moved backwards (neither
+virtual clock permits it, but a real one adjusted under the process can).
+
 ## Review Rules
 
 - Fixture changes require a short explanation of the intended semantic change.

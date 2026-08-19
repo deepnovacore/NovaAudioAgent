@@ -1212,3 +1212,159 @@ test('speech is still consumed when the action is rejected', () => {
   assert.ok(conversation.some(item => item.content.text === '在处理'))
   assert.ok(conversation.some(item => item.content.error === 'multiple_actions'))
 })
+
+/**
+ * The external-admission surface.
+ *
+ * `dispatchExternal` and `updateExternal` exist so a caller that is not the model -- the realtime
+ * bridge -- can propose work without inventing a second path into the reducer. What makes them safe
+ * is that they are *not* a shortcut: they reach the same guards a model dispatch reaches, and they
+ * compile the visible-reference set themselves rather than inheriting one.
+ */
+const externalManifest = executorManifestSchema.parse({
+  name: 'ext_sim',
+  policy: handoffPolicySchema.parse({
+    channel: 'ext_sim',
+    priority: 50,
+    wake: 'fast',
+    typical_latency: 5,
+    compress_watermark: 8,
+  }),
+  ops: [
+    {name: 'act', description: 'do the thing', params: {}, deadline_budget: 5},
+    {name: 'look', description: 'read the thing', params: {}, readonly: true, deadline_budget: 5},
+  ],
+})
+
+function externalRuntime(): CoreRuntime {
+  // No model slots wired: these tests are about the admission guards, and applying a user_input event
+  // would wake a slot that has no port behind it. Evidence is appended straight to the blackboard,
+  // which is the same state the visible-reference set is compiled from.
+  return new CoreRuntime({manifests: [externalManifest], ids: new MonotonicIdFactory()})
+}
+
+function appendTurn(runtime: CoreRuntime, ts: number, text: string): string {
+  const item = runtime.memory.append('conversation', {
+    ts,
+    trust: 'trusted_user',
+    priority: 100,
+    content: {text},
+  })
+  return `${item.channel}:${item.seq}`
+}
+
+const externalReason = wakeReasonSchema.parse({
+  kind: 'realtime_tool',
+  priority: 100,
+  routing_class: 'user_awaited',
+})
+
+test('an external dispatch reaches the same guards a model dispatch reaches', () => {
+  const runtime = externalRuntime()
+  const originRef = appendTurn(runtime, 1, 'do the thing')
+
+  const first = runtime.dispatchExternal(
+    {executor: 'ext_sim', op: 'act', request: {}, origin_ref: originRef},
+    externalReason,
+  )
+  assert.equal(first.accepted, true)
+  assert.ok(first.delegate_id, 'an acceptance must be correlated with the work it started')
+
+  // The duplicate guard is not bypassed by coming in externally.
+  const duplicate = runtime.dispatchExternal(
+    {executor: 'ext_sim', op: 'act', request: {}, origin_ref: originRef},
+    externalReason,
+  )
+  assert.equal(duplicate.accepted, false)
+  assert.equal(duplicate.delegate_id, null)
+  assert.match(duplicate.problem ?? '', /already performing/u)
+
+  // And neither is the unknown-executor guard.
+  for (const [request, expected] of [
+    [{executor: 'nope', op: 'act', request: {}, origin_ref: originRef}, 'unknown_executor'],
+    [{executor: 'ext_sim', op: 'nope', request: {}, origin_ref: originRef}, 'unknown_operation'],
+  ] as const) {
+    const rejected = runtime.dispatchExternal(request, externalReason)
+    assert.equal(rejected.accepted, false)
+    assert.equal(rejected.problem, expected)
+  }
+})
+
+test('an external dispatch may only cite evidence that is still visible', () => {
+  // The check that turns "may only reference what it has actually seen" into something enforceable.
+  // A model dispatch inherits the visible set from the call that produced it; an external one has no
+  // such call, so it compiles the set fresh -- and without that, a reference aged out of the recent
+  // window would still be accepted.
+  const runtime = externalRuntime()
+  // RECENT_LIMIT is 5, so eight turns push the earliest out of the window.
+  const refs = Array.from({length: 8}, (_, index) => (
+    appendTurn(runtime, index + 1, `turn ${index + 1}`)
+  ))
+  const aged = runtime.dispatchExternal(
+    {executor: 'ext_sim', op: 'act', request: {}, origin_ref: refs[0]!},
+    externalReason,
+  )
+  assert.equal(aged.accepted, false)
+  assert.equal(aged.problem, 'origin_not_visible', 'the item exists but is no longer visible')
+
+  const current = runtime.dispatchExternal(
+    {executor: 'ext_sim', op: 'act', request: {}, origin_ref: refs.at(-1)!},
+    externalReason,
+  )
+  assert.equal(current.accepted, true, 'a visible reference is still admitted')
+})
+
+test('an external dispatch distinguishes a malformed reference from a missing item', () => {
+  const runtime = externalRuntime()
+  for (const [reference, expected] of [
+    ['not a ref', 'invalid_origin_ref'],
+    ['conversation:999', 'origin_not_found'],
+  ] as const) {
+    const rejected = runtime.dispatchExternal(
+      {executor: 'ext_sim', op: 'act', request: {}, origin_ref: reference},
+      externalReason,
+    )
+    assert.equal(rejected.accepted, false)
+    assert.equal(rejected.problem, expected)
+  }
+})
+
+test('an external update goes through the sole structured-state writer', () => {
+  const runtime = externalRuntime()
+  const before = runtime.memory.structured.intent.revision
+  assert.equal(
+    runtime.updateExternal({target: 'intent', delta: {uncertainty: 0.4}}, externalReason),
+    true,
+  )
+  assert.equal(runtime.memory.structured.intent.uncertainty, 0.4)
+  assert.equal(
+    runtime.memory.structured.intent.revision,
+    before + 1,
+    'the spine increments revision; a caller cannot supply it',
+  )
+
+  // A field absent from the delta is left alone: overwrite by field, never reset the structure.
+  runtime.updateExternal({target: 'intent', delta: {objective_hypothesis: 'compile'}}, externalReason)
+  assert.equal(runtime.memory.structured.intent.uncertainty, 0.4)
+  assert.equal(runtime.memory.structured.intent.objective_hypothesis, 'compile')
+})
+
+test('a rejected external update is recorded as a failed observation, not raised', () => {
+  // Letting one bad field throw out of the writer would kill the loop. Nothing is waiting on it
+  // either -- no work was dispatched -- so it records and returns rather than waking.
+  const runtime = externalRuntime()
+  const before = runtime.memory.channels.get('conversation')?.items.length ?? 0
+  assert.equal(
+    runtime.updateExternal({target: 'intent', delta: {revision: 7}}, externalReason),
+    false,
+    'revision is not a field a caller may set',
+  )
+  const items = runtime.memory.channels.get('conversation')?.items ?? []
+  assert.equal(items.length, before + 1)
+  const recorded = items.at(-1)!
+  assert.equal(recorded.outcome, 'failed')
+  assert.equal(recorded.content.error, 'update_rejected')
+  assert.equal(recorded.content.target, 'intent')
+  // The structure is untouched.
+  assert.equal(runtime.memory.structured.intent.revision, 0)
+})

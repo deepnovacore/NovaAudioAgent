@@ -188,6 +188,34 @@ through both pipelines, plus 261,282 adjacent pairs drawn from every unassigned 
 be a real script. Zero divergences. If a future CPython adopts Unicode 16.0, the "host alone does not
 agree" tests fail and the holdback can be deleted rather than carried indefinitely.
 
+### Corrected in the port: a length bound counted the wrong unit
+
+`_valid_value` enforces `minLength` and `maxLength` with Python's `len()`, which counts code points.
+The first Node port used `String.prototype.length`, which counts UTF-16 units. They agree for BMP text
+and diverge for anything astral, so a 300-emoji argument -- 300 code points, 600 units -- was admitted
+by the oracle and refused by Node against a `maxLength` of 400.
+
+The failure a user would have seen is a tool that works on one host and not the other for input the
+published schema says is fine. Caught by the golden rather than by review: the reasoning in the
+first-draft comment (*"matching what `len()` counts for the BMP text these bounds describe"*) was
+confidently wrong, and only a scenario carrying astral characters could show it.
+
+A scenario now pins the bound from both sides -- six astral characters inside a bound of six, seven
+outside it, and one against a minimum of two -- so the unit can never be quietly changed back.
+
+### Implemented once in Node: the structured-state writer
+
+`update_external` and the model's `act=update` both route through `_update_structured` in the oracle,
+so an external proposal cannot get a laxer path into Structured State than a model one. The first Node
+port had the update applied inline inside `consumeFastBrain`, with no external entry point at all.
+Extracting it was a precondition for the bridge, and the extraction is the shared writer rather than a
+second copy.
+
+The one behavioral difference worth knowing: the oracle timestamps a rejected update with
+`clock.now()` and Node uses the last applied event's `ts`. For the model path they are the same
+instant. For an external update arriving between events they can differ, and Node's is the more
+defensible reading -- the observation belongs to the state the reducer is in, not to wall-clock time.
+
 ### Deliberate divergence: the confirmation expiry timer is always armed
 
 `ProjectConfirmationController._schedule_expiry` calls `asyncio.get_running_loop()` and returns

@@ -1,10 +1,15 @@
 import type { Clock } from './clock.js'
 import type { EventInput, EventRecord, JsonValue } from './events.js'
 import type { IdFactory } from './ids.js'
-import { CONVERSATION_CHANNEL } from './memory.js'
-import type { Delegate, ExecutorManifest } from './ports.js'
-import { CoreRuntime, type ModelCall } from './runtime.js'
-import { SLOTS, type Slot } from './slots.js'
+import { CONVERSATION_CHANNEL, type Memory } from './memory.js'
+import type {
+  Delegate,
+  DelegateRequest,
+  ExecutorManifest,
+  UpdateSpec,
+} from './ports.js'
+import { CoreRuntime, type ModelCall, type RuntimeDispatchResult } from './runtime.js'
+import { SLOTS, type Slot, type WakeReason } from './slots.js'
 
 export interface ModelPort {
   complete(call: ModelCall, signal: AbortSignal): Promise<unknown>
@@ -139,6 +144,43 @@ export class CausalRuntime {
     })
     this.#notifyWork()
     return applied
+  }
+
+  /** The clock the runtime schedules against, so a caller measures the same time it does. */
+  get clock(): Clock {
+    return this.#clock
+  }
+
+  /** The executor adapters, by manifest name. Read-only: wiring happens at construction. */
+  get executors(): ReadonlyMap<string, ExecutorAdapter> {
+    return this.#executors
+  }
+
+  /** The blackboard. Recall projects from it, so it has to be the same instance the reducer writes. */
+  get memory(): Memory {
+    return this.core.memory
+  }
+
+  /**
+   * Admit one already-normalized external proposal without awaiting its worker.
+   *
+   * Reaches the reducer directly rather than through an event, which is what lets a caller learn the
+   * delegate id synchronously -- an accepted proposal has to be correlated with the work it started
+   * before the next turn, and an event round trip would not have produced the id yet.
+   */
+  dispatchExternal(request: DelegateRequest, reason: WakeReason): RuntimeDispatchResult {
+    if (this.#state === 'closed') return {accepted: false, delegate_id: null, problem: 'closed'}
+    const admission = this.core.dispatchExternal(request, reason)
+    if (admission.accepted) this.#notifyWork()
+    return admission
+  }
+
+  /** Route an external update through the reducer's sole structured-state writer. */
+  updateExternal(spec: UpdateSpec, reason: WakeReason): boolean {
+    if (this.#state === 'closed') return false
+    const accepted = this.core.updateExternal(spec, reason)
+    this.#notifyWork()
+    return accepted
   }
 
   observe(observer: RuntimeObserver): () => void {
