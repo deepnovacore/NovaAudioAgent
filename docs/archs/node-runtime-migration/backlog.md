@@ -265,6 +265,26 @@ Two lessons, both about the harness rather than the code:
   file rather than the service. Five projection mutations were invisible to it. The parity test now
   drives `projectRuntimeEvent` and reads what was queued.
 
+### The desktop wire needed an integer-literal check the oracle gets for free
+
+`_plain_positive_integer` refuses a non-`int`, and `json.loads` turns `1.0` into a float -- so a
+renderer sending `{"generation_epoch": 1.0}` is refused by Python. JavaScript cannot tell `1.0` from
+`1` after parsing, so the first Node port accepted it: the same bytes, accepted by one runtime and
+refused by the other, which is exactly the interoperability failure this format exists to prevent.
+
+The audio header's numeric fields are now checked against the header *text* before the parsed values
+are read, because parsing is what destroys the spelling. Only the two integer fields, since the
+identifier is a string and may legitimately contain a decimal point -- which the fixture covers.
+
+The encode side of the same divergence is *not* expressible in a shared JSON fixture: `1.0` in the
+fixture reaches JavaScript as `1`. A Node test states it directly instead, for both the epoch and the
+sequence.
+
+Family coverage: 22 of 23 mutations detected. The survivor is the `headerSize < 2` check, which is
+redundant with the JSON parse -- a one-byte header fails to parse and produces the same message. Kept
+because the oracle keeps it, and because it refuses before decoding, which a cheaper future header
+format would still want.
+
 ### Found while porting reconnect: an acknowledgement never reached `delivered`
 
 `_finish_semantic_acknowledgement` was not ported. Without it an acknowledgement bound to a

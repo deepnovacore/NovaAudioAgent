@@ -1,0 +1,251 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "encode-minimal",
+      "bytes": "4e4f564100387b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
+    },
+    {
+      "name": "encode-larger-sequence",
+      "bytes": "4e4f564100447b227574746572616e63655f6964223a227574746572616e63652d3432222c2267656e65726174696f6e5f65706f6368223a372c2273657175656e6365223a313233347d00010203"
+    },
+    {
+      "name": "encode-pcm-containing-magic",
+      "bytes": "4e4f564100387b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d4e4f5641"
+    },
+    {
+      "name": "encode-non-ascii-identifier",
+      "bytes": "4e4f564100437b227574746572616e63655f6964223a225c75386265645c75393766332d31222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
+    },
+    {
+      "name": "encode-astral-identifier",
+      "bytes": "4e4f564100437b227574746572616e63655f6964223a22752d5c75643833645c7564653030222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
+    },
+    {
+      "name": "roundtrip-minimal",
+      "bytes": "4e4f564100387b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "roundtrip-non-ascii",
+      "bytes": "4e4f564100437b227574746572616e63655f6964223a225c75386265645c75393766332d31222c2267656e65726174696f6e5f65706f6368223a332c2273657175656e6365223a397d00010203",
+      "utterance_id": "语音-1",
+      "generation_epoch": 3,
+      "sequence": 9,
+      "pcm": "00010203"
+    },
+    {
+      "name": "roundtrip-pcm-with-magic",
+      "bytes": "4e4f564100387b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d4e4f56410001",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "4e4f56410001"
+    },
+    {
+      "name": "encode-empty-pcm",
+      "error": "desktop audio must be aligned PCM16 bytes"
+    },
+    {
+      "name": "encode-odd-pcm",
+      "error": "desktop audio must be aligned PCM16 bytes"
+    },
+    {
+      "name": "encode-blank-identifier",
+      "error": "desktop identity is invalid"
+    },
+    {
+      "name": "encode-empty-identifier",
+      "error": "desktop identity is invalid"
+    },
+    {
+      "name": "encode-oversized-identifier",
+      "error": "desktop identity is invalid"
+    },
+    {
+      "name": "encode-zero-epoch",
+      "error": "desktop generation is invalid"
+    },
+    {
+      "name": "encode-negative-sequence",
+      "error": "desktop audio sequence is invalid"
+    },
+    {
+      "name": "decode-too-short",
+      "error": "desktop audio frame is invalid"
+    },
+    {
+      "name": "decode-bad-magic",
+      "error": "desktop audio frame has invalid magic"
+    },
+    {
+      "name": "decode-header-size-zero",
+      "error": "desktop audio header is invalid"
+    },
+    {
+      "name": "decode-header-size-one",
+      "error": "desktop audio header is invalid"
+    },
+    {
+      "name": "decode-header-oversized",
+      "error": "desktop audio header is invalid"
+    },
+    {
+      "name": "decode-truncated",
+      "error": "desktop audio frame is truncated"
+    },
+    {
+      "name": "decode-header-not-json",
+      "error": "desktop audio header is invalid"
+    },
+    {
+      "name": "decode-header-missing-fields",
+      "error": "desktop utterance_id is invalid"
+    },
+    {
+      "name": "encode-identifier-with-padding",
+      "bytes": "4e4f5641003c7b227574746572616e63655f6964223a222020752d312020222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
+    },
+    {
+      "name": "roundtrip-identifier-with-padding",
+      "bytes": "4e4f5641003a7b227574746572616e63655f6964223a2220752d3120222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001",
+      "utterance_id": " u-1 ",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "clear-identifier-with-padding",
+      "text": "{\"type\":\"playback.clear\",\"utterance_id\":\" u-1 \",\"generation_epoch\":2}"
+    },
+    {
+      "name": "decode-float-epoch",
+      "error": "desktop generation_epoch is invalid"
+    },
+    {
+      "name": "decode-float-sequence",
+      "error": "desktop sequence is invalid"
+    },
+    {
+      "name": "decode-exponential-epoch",
+      "error": "desktop generation_epoch is invalid"
+    },
+    {
+      "name": "decode-identifier-with-dot",
+      "utterance_id": "u.1.0",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "decode-spaced-header",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "decode-header-size-one-valid-json-byte",
+      "error": "desktop audio header is invalid"
+    },
+    {
+      "name": "input-pcm-aligned",
+      "bytes": "00010203"
+    },
+    {
+      "name": "input-pcm-empty",
+      "error": "desktop input must be aligned PCM16 bytes"
+    },
+    {
+      "name": "input-pcm-odd",
+      "error": "desktop input must be aligned PCM16 bytes"
+    },
+    {
+      "name": "clear-message",
+      "text": "{\"type\":\"playback.clear\",\"utterance_id\":\"u-1\",\"generation_epoch\":4}"
+    },
+    {
+      "name": "clear-non-ascii",
+      "text": "{\"type\":\"playback.clear\",\"utterance_id\":\"\\u8bed\\u97f3\",\"generation_epoch\":4}"
+    },
+    {
+      "name": "clear-zero-epoch",
+      "error": "desktop generation is invalid"
+    },
+    {
+      "name": "alert-with-identity",
+      "text": "{\"type\":\"playback.alert\",\"utterance_id\":\"u-1\",\"generation_epoch\":2}"
+    },
+    {
+      "name": "alert-without-identity",
+      "text": "{\"type\":\"playback.alert\"}"
+    },
+    {
+      "name": "alert-half-identity-utterance",
+      "error": "desktop alert identity must be complete"
+    },
+    {
+      "name": "alert-half-identity-epoch",
+      "error": "desktop alert identity must be complete"
+    },
+    {
+      "name": "terminal-message",
+      "text": "{\"type\":\"playback.terminal\",\"utterance_id\":\"u-1\",\"generation_epoch\":9}"
+    },
+    {
+      "name": "codex-state-idle",
+      "text": "{\"type\":\"codex.state\",\"state\":\"idle\"}"
+    },
+    {
+      "name": "codex-state-running",
+      "text": "{\"type\":\"codex.state\",\"state\":\"running\"}"
+    },
+    {
+      "name": "codex-state-invalid",
+      "error": "desktop Codex state is invalid"
+    },
+    {
+      "name": "project-empty",
+      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":null,\"session_title\":null,\"pending_confirmation\":false}"
+    },
+    {
+      "name": "project-named",
+      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":\"研究项目\",\"session_title\":\"上次的会话\",\"pending_confirmation\":true}"
+    },
+    {
+      "name": "project-empty-name",
+      "error": "desktop Codex project view is invalid"
+    },
+    {
+      "name": "project-oversized-name",
+      "error": "desktop Codex project view is invalid"
+    },
+    {
+      "name": "project-at-name-bound",
+      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"session_title\":null,\"pending_confirmation\":false}"
+    },
+    {
+      "name": "caption-user-partial",
+      "text": "{\"type\":\"caption\",\"role\":\"user\",\"text\":\"编译一下\",\"final\":false,\"sequence\":1}"
+    },
+    {
+      "name": "caption-assistant-final",
+      "text": "{\"type\":\"caption\",\"role\":\"assistant\",\"text\":\"好，开始编译。\",\"final\":true,\"sequence\":2}"
+    },
+    {
+      "name": "caption-blank",
+      "text": "{\"type\":\"caption\",\"role\":\"user\",\"text\":\"\",\"final\":true,\"sequence\":3}"
+    },
+    {
+      "name": "caption-astral",
+      "text": "{\"type\":\"caption\",\"role\":\"user\",\"text\":\"😀\",\"final\":false,\"sequence\":4}"
+    },
+    {
+      "name": "caption-quotes-and-escapes",
+      "text": "{\"type\":\"caption\",\"role\":\"user\",\"text\":\"he said \\\"hi\\\"\\nand \\\\ left\",\"final\":true,\"sequence\":5}"
+    }
+  ]
+}

@@ -1,0 +1,361 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "encode-minimal",
+      "kind": "encode_audio",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "encode-larger-sequence",
+      "kind": "encode_audio",
+      "utterance_id": "utterance-42",
+      "generation_epoch": 7,
+      "sequence": 1234,
+      "pcm": "00010203"
+    },
+    {
+      "name": "encode-pcm-containing-magic",
+      "kind": "encode_audio",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "4e4f5641"
+    },
+    {
+      "name": "encode-non-ascii-identifier",
+      "kind": "encode_audio",
+      "utterance_id": "语音-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "encode-astral-identifier",
+      "kind": "encode_audio",
+      "utterance_id": "u-😀",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "roundtrip-minimal",
+      "kind": "roundtrip_audio",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "roundtrip-non-ascii",
+      "kind": "roundtrip_audio",
+      "utterance_id": "语音-1",
+      "generation_epoch": 3,
+      "sequence": 9,
+      "pcm": "00010203"
+    },
+    {
+      "name": "roundtrip-pcm-with-magic",
+      "kind": "roundtrip_audio",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "4e4f56410001"
+    },
+    {
+      "name": "encode-empty-pcm",
+      "kind": "encode_audio",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": ""
+    },
+    {
+      "name": "encode-odd-pcm",
+      "kind": "encode_audio",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "000102"
+    },
+    {
+      "name": "encode-blank-identifier",
+      "kind": "encode_audio",
+      "utterance_id": "   ",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "encode-empty-identifier",
+      "kind": "encode_audio",
+      "utterance_id": "",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "encode-oversized-identifier",
+      "kind": "encode_audio",
+      "utterance_id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "encode-zero-epoch",
+      "kind": "encode_audio",
+      "utterance_id": "u-1",
+      "generation_epoch": 0,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "encode-negative-sequence",
+      "kind": "encode_audio",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": -1,
+      "pcm": "0001"
+    },
+    {
+      "name": "decode-too-short",
+      "kind": "decode_audio",
+      "bytes": "4e4f"
+    },
+    {
+      "name": "decode-bad-magic",
+      "kind": "decode_audio",
+      "bytes": "4e4f564200027b7d"
+    },
+    {
+      "name": "decode-header-size-zero",
+      "kind": "decode_audio",
+      "bytes": "4e4f56410000"
+    },
+    {
+      "name": "decode-header-size-one",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641000141"
+    },
+    {
+      "name": "decode-header-oversized",
+      "kind": "decode_audio",
+      "bytes": "4e4f564108017b7d"
+    },
+    {
+      "name": "decode-truncated",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641000a7b7d"
+    },
+    {
+      "name": "decode-header-not-json",
+      "kind": "decode_audio",
+      "bytes": "4e4f564100046e6f7065"
+    },
+    {
+      "name": "decode-header-missing-fields",
+      "kind": "decode_audio",
+      "bytes": "4e4f564100027b7d"
+    },
+    {
+      "name": "encode-identifier-with-padding",
+      "kind": "encode_audio",
+      "utterance_id": "  u-1  ",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "roundtrip-identifier-with-padding",
+      "kind": "roundtrip_audio",
+      "utterance_id": " u-1 ",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "clear-identifier-with-padding",
+      "kind": "playback_clear",
+      "utterance_id": " u-1 ",
+      "generation_epoch": 2
+    },
+    {
+      "name": "decode-float-epoch",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641003a7b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312e302c2273657175656e6365223a307d0001"
+    },
+    {
+      "name": "decode-float-sequence",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641003a7b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a302e307d0001"
+    },
+    {
+      "name": "decode-exponential-epoch",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641003a7b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a3165302c2273657175656e6365223a307d0001"
+    },
+    {
+      "name": "decode-identifier-with-dot",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641003a7b227574746572616e63655f6964223a22752e312e30222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
+    },
+    {
+      "name": "decode-spaced-header",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641003e7b227574746572616e63655f6964223a2022752d31222c202267656e65726174696f6e5f65706f636822203a20312c202273657175656e6365223a20307d0001"
+    },
+    {
+      "name": "decode-header-size-one-valid-json-byte",
+      "kind": "decode_audio",
+      "bytes": "4e4f564100017b0001"
+    },
+    {
+      "name": "input-pcm-aligned",
+      "kind": "validate_input_pcm",
+      "pcm": "00010203"
+    },
+    {
+      "name": "input-pcm-empty",
+      "kind": "validate_input_pcm",
+      "pcm": ""
+    },
+    {
+      "name": "input-pcm-odd",
+      "kind": "validate_input_pcm",
+      "pcm": "000102"
+    },
+    {
+      "name": "clear-message",
+      "kind": "playback_clear",
+      "utterance_id": "u-1",
+      "generation_epoch": 4
+    },
+    {
+      "name": "clear-non-ascii",
+      "kind": "playback_clear",
+      "utterance_id": "语音",
+      "generation_epoch": 4
+    },
+    {
+      "name": "clear-zero-epoch",
+      "kind": "playback_clear",
+      "utterance_id": "u-1",
+      "generation_epoch": 0
+    },
+    {
+      "name": "alert-with-identity",
+      "kind": "playback_alert",
+      "utterance_id": "u-1",
+      "generation_epoch": 2
+    },
+    {
+      "name": "alert-without-identity",
+      "kind": "playback_alert"
+    },
+    {
+      "name": "alert-half-identity-utterance",
+      "kind": "playback_alert",
+      "utterance_id": "u-1"
+    },
+    {
+      "name": "alert-half-identity-epoch",
+      "kind": "playback_alert",
+      "generation_epoch": 2
+    },
+    {
+      "name": "terminal-message",
+      "kind": "playback_terminal",
+      "utterance_id": "u-1",
+      "generation_epoch": 9
+    },
+    {
+      "name": "codex-state-idle",
+      "kind": "codex_state",
+      "state": "idle"
+    },
+    {
+      "name": "codex-state-running",
+      "kind": "codex_state",
+      "state": "running"
+    },
+    {
+      "name": "codex-state-invalid",
+      "kind": "codex_state",
+      "state": "sideways"
+    },
+    {
+      "name": "project-empty",
+      "kind": "codex_project",
+      "pending_confirmation": false
+    },
+    {
+      "name": "project-named",
+      "kind": "codex_project",
+      "workspace_display_name": "研究项目",
+      "session_title": "上次的会话",
+      "pending_confirmation": true
+    },
+    {
+      "name": "project-empty-name",
+      "kind": "codex_project",
+      "workspace_display_name": "",
+      "pending_confirmation": false
+    },
+    {
+      "name": "project-oversized-name",
+      "kind": "codex_project",
+      "workspace_display_name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "pending_confirmation": false
+    },
+    {
+      "name": "project-at-name-bound",
+      "kind": "codex_project",
+      "workspace_display_name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "pending_confirmation": false
+    },
+    {
+      "name": "caption-user-partial",
+      "kind": "caption",
+      "role": "user",
+      "text": "编译一下",
+      "final": false,
+      "sequence": 1
+    },
+    {
+      "name": "caption-assistant-final",
+      "kind": "caption",
+      "role": "assistant",
+      "text": "好，开始编译。",
+      "final": true,
+      "sequence": 2
+    },
+    {
+      "name": "caption-blank",
+      "kind": "caption",
+      "role": "user",
+      "text": "",
+      "final": true,
+      "sequence": 3
+    },
+    {
+      "name": "caption-astral",
+      "kind": "caption",
+      "role": "user",
+      "text": "😀",
+      "final": false,
+      "sequence": 4
+    },
+    {
+      "name": "caption-quotes-and-escapes",
+      "kind": "caption",
+      "role": "user",
+      "text": "he said \"hi\"\nand \\ left",
+      "final": true,
+      "sequence": 5
+    }
+  ]
+}
