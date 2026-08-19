@@ -13,6 +13,10 @@ call from the model happens to omit one field — at which point no assertion wo
 
 from __future__ import annotations
 
+import math
+
+import pytest
+
 from nova_audio_agent.clock import VirtualClock
 from nova_audio_agent.events import UserInput
 from nova_audio_agent.memory import (
@@ -192,6 +196,16 @@ async def test_a_bool_is_not_a_number_even_though_python_says_it_is() -> None:
     verbatim into the next view: the model would read back a field where "uncertainty = True".
     """
     runtime, _ = await _run(_update("intent", uncertainty=True))
+
+    assert runtime.memory.structured.intent.uncertainty == 0.4
+    assert runtime.memory.channels[CONVERSATION_CHANNEL].items[-1].content["fields"] == [
+        "uncertainty"
+    ]
+
+
+@pytest.mark.parametrize("value", (math.nan, math.inf, -math.inf, 10**400))
+async def test_non_finite_or_non_binary64_numbers_are_rejected(value: int | float) -> None:
+    runtime, _ = await _run(_update("intent", uncertainty=value))
 
     assert runtime.memory.structured.intent.uncertainty == 0.4
     assert runtime.memory.channels[CONVERSATION_CHANNEL].items[-1].content["fields"] == [

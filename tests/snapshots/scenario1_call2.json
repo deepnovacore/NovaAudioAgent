@@ -67,7 +67,7 @@
       "eta": 5.75,
       "origin_ref": "conversation:1",
       "routing_class": "user_awaited",
-      "what": "slow_sim.set_light(brightness=30, room='客厅')"
+      "what": "slow_sim.set_light({\"brightness\":30,\"room\":\"客厅\"})"
     }
   ],
   "now": 1.0,

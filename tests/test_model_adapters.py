@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 
+import pytest
+
 from nova_audio_agent.context_view import ContextView, compile_context_view
 from nova_audio_agent.executors.codex_live import CODEX_LIVE_MANIFEST
 from nova_audio_agent.executors.sims import SlowSim
@@ -262,6 +264,41 @@ async def test_bad_tool_json_becomes_a_contract_failure_without_echoing_argument
         ContractFailureDelta(code="invalid_tool_arguments", tool_name="slow_sim__set_light")
     ]
     assert "do-not-copy" not in repr(deltas)
+
+
+@pytest.mark.parametrize(
+    "raw_number",
+    [
+        "NaN",
+        "Infinity",
+        "1e400",
+        "1" + ("0" * 400),
+    ],
+)
+async def test_tool_json_rejects_numbers_outside_finite_binary64(raw_number: str) -> None:
+    gateway = _Gateway(
+        deltas=(
+            GatewayToolCallDelta(
+                index=0,
+                name="slow_sim__set_light",
+                arguments=(
+                    '{"room":"客厅","brightness":30,"origin_ref":"conversation:1",'
+                    f'"nested":{{"bad":{raw_number}}}}}'
+                ),
+            ),
+        )
+    )
+    brain = GatewayFastBrain(
+        gateway,
+        model="qwen-max",
+        tools=compile_tool_schema((SlowSim().manifest,)),
+    )
+
+    deltas = [delta async for delta in brain.call(_view())]
+
+    assert deltas == [
+        ContractFailureDelta(code="invalid_tool_arguments", tool_name="slow_sim__set_light")
+    ]
 
 
 async def test_missing_origin_ref_is_a_contract_failure() -> None:

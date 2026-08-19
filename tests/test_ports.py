@@ -418,15 +418,15 @@ async def test_a_bad_return_value_is_an_unknown_too_not_only_a_raised_exception(
     - `_handoff_event` used to run **outside** the guard (inside the spawn lambda), so these two
       cases could take down the loop without even raising — they blow up at the conversion step, and the try didn't cover that.
 
-    `content["exception"]` asserts the **concrete type**, not "there was some error": that string
-    is the only evidence this bug leaves behind — once normalized into "something went wrong" there's no way to tell which one blew up.
+    `content["exception"]` asserts the stable cross-language contract classification. The malformed
+    value itself and language-specific conversion error stay out of durable Memory.
     """
     cases = (
-        (None, "AttributeError"),  # reads `.outcome`
+        (None, "ExecutorContractError"),
         (
             Handoff(outcome="ok", trust=[], content={}),
-            "TypeError",
-        ),  # unhashable trust looked up in the allowlist
+            "ExecutorContractError",
+        ),
     )
     for handed_in, expected in cases:
         memory = await _run_dispatching(_WrongSim(handed_in))
@@ -434,6 +434,7 @@ async def test_a_bad_return_value_is_an_unknown_too_not_only_a_raised_exception(
         (result,) = memory.channels["slow_sim"].items
         assert result.outcome == "unknown"  # Runtime runs to completion, and leaves a record
         assert result.content["exception"] == expected
+        assert result.content["detail"] == "invalid_executor_output"
         assert (
             result.refs[0] == "conversation:1"
         )  # identity is still bound from the dispatch record, not read from that bad return value
@@ -461,7 +462,8 @@ async def test_a_content_that_cannot_be_recorded_never_reaches_the_channel() -> 
 
     (result,) = memory.channels["slow_sim"].items
     assert result.outcome == "unknown"
-    assert result.content["exception"] == "ValueError"
+    assert result.content["exception"] == "ExecutorContractError"
+    assert result.content["detail"] == "invalid_executor_output"
     # The channel isn't poisoned: compile a view again at a different instant, and it still compiles fine.
     assert compile_context_view(memory, floor="idle", now=99.0).channels
 

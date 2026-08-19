@@ -60,6 +60,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from nova_audio_agent.canonical_json import canonical_json
 from nova_audio_agent.floor import FloorState
 from nova_audio_agent.memory import (
     CONVERSATION_CHANNEL,
@@ -357,6 +358,5 @@ def _compile_in_flight(delegate: Delegate, memory: Memory) -> InFlight:
 
 
 def _describe(delegate: Delegate) -> str:
-    """A one-line description of "what task was dispatched". Params are sorted by key name — otherwise the same task could get written up two different ways."""
-    params = ", ".join(f"{key}={delegate.request[key]!r}" for key in sorted(delegate.request))
-    return f"{delegate.executor}.{delegate.op}({params})"
+    """Render a task with the same unambiguous request bytes in Python and Node."""
+    return f"{delegate.executor}.{delegate.op}({canonical_json(delegate.request)})"

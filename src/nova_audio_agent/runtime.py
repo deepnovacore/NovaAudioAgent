@@ -188,7 +188,12 @@ def _shaped_like(current: Any, value: Any) -> bool:
         # otherwise slip in, leaving a mutable hole inside a frozen shell.
         return isinstance(value, list | tuple) and all(isinstance(item, str) for item in value)
     if isinstance(current, int | float):
-        return isinstance(value, int | float) and not isinstance(value, bool)
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            return False
+        try:
+            return math.isfinite(float(value))
+        except OverflowError:
+            return False
     return False
 
 
@@ -631,6 +636,7 @@ class Runtime:
         on_attention_decision: Callable[[AttentionDecision], None] | None = None,
         suggestion_cooldown: float = DEFAULT_COOLDOWN,
         fresh_window: float = FRESH_WINDOW,
+        delegate_id_factory: Callable[[], str] | None = None,
     ) -> None:
         self.clock = clock
         self.memory = memory
@@ -659,6 +665,7 @@ class Runtime:
         self._job_seq = 0
         self._utterance_seq = 0
         self._delegate_seq = 0
+        self._delegate_id_factory = delegate_id_factory
         self._failure: BaseException | None = None
         self._work_ready = asyncio.Event()
         self._observers: list[EventObserver] = []
@@ -1831,13 +1838,17 @@ class Runtime:
         adapter = self.executors[request.executor]
         op = adapter.manifest.op(request.op)
         assert op is not None  # `_reject_reason` already verified it.
-        self._delegate_seq += 1
+        if self._delegate_id_factory is None:
+            self._delegate_seq += 1
+            delegate_id = f"d-{self._delegate_seq}"
+        else:
+            delegate_id = self._delegate_id_factory()
         delegate = bind_delegate(
             request,
             wake_reason=reason,
             op=op,
             now=self.clock.now(),
-            delegate_id=f"d-{self._delegate_seq}",
+            delegate_id=delegate_id,
         )
         self.delegates.dispatch(delegate)
         self.post(Deadline(delegate_id=delegate.delegate_id), delay=op.deadline_budget)
@@ -2131,6 +2142,10 @@ _EXECUTOR_TRUST = frozenset({"trusted_system", "untrusted_external"})
 _DEFINITE_OUTCOMES = frozenset({"ok", "failed"})
 
 
+class ExecutorContractError(ValueError):
+    """Stable, payload-free classification for an unrecordable adapter result."""
+
+
 def _executor_trust(declared: Trust) -> Trust:
     """Allow external sourcing but prevent an executor from impersonating the user.
 
@@ -2167,10 +2182,9 @@ async def _dispatch_guarded(
 
     Guard the entire conversion from adapter return value to event, not only the
     `await`. Earlier code placed `_handoff_event` outside the guard, allowing malformed
-    non-raising results to crash the loop: `None` raises while reading `.outcome`, and
-    an unhashable trust value raises during allowlist membership. Both are adapter
-    contract violations. A `Literal` provides no runtime enforcement (R41), so valid
-    values cannot be assumed.
+    non-raising results to crash the loop. Conversion failures receive one stable,
+    payload-free `ExecutorContractError` classification so language-specific exception
+    text and malformed values never become durable evidence.
 
     This does not risk swallowing spine defects. `_handoff_event` reads only values
     supplied by the adapter and four identity fields bound by the spine. Those
@@ -2185,22 +2199,31 @@ async def _dispatch_guarded(
         # Give the executor its own copy so in-place mutation cannot alter the
         # ledger's deduplication key.
         handoff = await adapter.dispatch(delegate.op, dict(delegate.request), ctx)
-        return _handoff_event(handoff, delegate)
     except Exception as failure:
-        # Every field in this spine-created value is valid, so `_handoff_event` cannot
-        # fail on it. Reuse the same constructor rather than duplicating identity.
-        return _handoff_event(
-            Handoff(
-                outcome="unknown",
-                trust="trusted_system",
-                content={
-                    "error": "adapter_raised",
-                    "exception": type(failure).__name__,
-                    "detail": str(failure),
-                },
-            ),
-            delegate,
-        )
+        return _adapter_failure_event(failure, delegate)
+    try:
+        return _handoff_event(handoff, delegate)
+    except Exception:
+        # Conversion errors are contract failures, not a safe place to retain or
+        # stringify the adapter-authored value.
+        return _adapter_failure_event(ExecutorContractError("invalid_executor_output"), delegate)
+
+
+def _adapter_failure_event(failure: Exception, delegate: Delegate) -> HandoffEvent:
+    # Every field in this spine-created value is valid, so `_handoff_event` cannot
+    # fail on it. Reuse the same constructor rather than duplicating identity.
+    return _handoff_event(
+        Handoff(
+            outcome="unknown",
+            trust="trusted_system",
+            content={
+                "error": "adapter_raised",
+                "exception": type(failure).__name__,
+                "detail": str(failure),
+            },
+        ),
+        delegate,
+    )
 
 
 def _handoff_event(handoff: Handoff, delegate: Delegate) -> HandoffEvent:

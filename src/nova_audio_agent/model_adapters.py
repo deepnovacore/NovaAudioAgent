@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import AsyncIterator, Sequence
 from types import MappingProxyType
 from typing import Any
@@ -125,7 +126,11 @@ def _decode_tool_call(
         arguments = json.loads(raw_arguments)
     except (json.JSONDecodeError, TypeError):
         return ContractFailureDelta(code="invalid_tool_arguments", tool_name=name)
-    if not isinstance(arguments, dict) or not all(isinstance(key, str) for key in arguments):
+    if (
+        not isinstance(arguments, dict)
+        or not all(isinstance(key, str) for key in arguments)
+        or not _is_finite_binary64_json(arguments)
+    ):
         return ContractFailureDelta(code="invalid_tool_arguments", tool_name=name)
     if binding.kind == "update":
         assert binding.target is not None
@@ -136,6 +141,23 @@ def _decode_tool_call(
             )
         )
     return _decode_delegate(binding, name, arguments)
+
+
+def _is_finite_binary64_json(value: object) -> bool:
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return True
+    if isinstance(value, int | float):
+        try:
+            return math.isfinite(float(value))
+        except OverflowError:
+            return False
+    if isinstance(value, list):
+        return all(_is_finite_binary64_json(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _is_finite_binary64_json(item) for key, item in value.items()
+        )
+    return False
 
 
 def _decode_delegate(

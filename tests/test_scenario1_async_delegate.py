@@ -100,7 +100,7 @@ async def test_a_second_user_input_is_served_while_the_delegate_is_still_in_flig
     in_flight = brain.views[1].in_flight  # the world **seen** by the second call
     assert [delegate.delegate_id for delegate in in_flight] == ["d-1"]
     assert in_flight[0].origin_ref == "conversation:1"
-    assert in_flight[0].what == "slow_sim.set_light(brightness=30, room='客厅')"
+    assert in_flight[0].what == 'slow_sim.set_light({"brightness":30,"room":"客厅"})'
     assert (
         in_flight[0].routing_class == "user_awaited"
     )  # inherited along the causal chain from that user input

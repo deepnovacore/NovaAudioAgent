@@ -419,13 +419,13 @@ def validate_origin_ref(ref: MemoryRef, *, memory: Memory, view: ContextView) ->
     """
     try:
         channel, seq = parse_ref(ref)
-    except ValueError as problem:
-        return str(problem)
+    except ValueError:
+        return "invalid_origin_ref"
 
     stored = memory.channels.get(channel)
     if stored is None or not any(item.seq == seq for item in stored.items):
-        return f"origin_ref 指向的条目不存在：{ref}"
+        return "origin_not_found"
 
     if not any(item.ref == ref for channel_view in view.channels for item in channel_view.recent):
-        return f"origin_ref 不在这次调用看到的上下文里：{ref}"
+        return "origin_not_visible"
     return None

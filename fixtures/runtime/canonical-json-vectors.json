@@ -1,0 +1,53 @@
+[
+  {
+    "id": "number-format-boundaries",
+    "value": {
+      "negative_zero": -0.0,
+      "small": 1e-7,
+      "fixed_lower": 0.000001,
+      "large": 100000000000000000000,
+      "scientific_upper": 1e21
+    },
+    "canonical": "{\"fixed_lower\":0.000001,\"large\":100000000000000000000,\"negative_zero\":0,\"scientific_upper\":1e+21,\"small\":1e-7}"
+  },
+  {
+    "id": "binary64-roundtrip",
+    "value": {
+      "unsafe_integer": 9007199254740993,
+      "large_shortest_integer": 33754475922659622912,
+      "fraction": 333333333.33333329,
+      "min_subnormal": 5e-324,
+      "max": 1.7976931348623157e308
+    },
+    "canonical": "{\"fraction\":333333333.3333333,\"large_shortest_integer\":33754475922659623000,\"max\":1.7976931348623157e+308,\"min_subnormal\":5e-324,\"unsafe_integer\":9007199254740992}"
+  },
+  {
+    "id": "code-point-key-order",
+    "value": {
+      "10": 10,
+      "2": 2,
+      "A": 1,
+      "_": 2,
+      "a": 3,
+      "𐀀": 4,
+      "": 5
+    },
+    "canonical": "{\"10\":10,\"2\":2,\"A\":1,\"_\":2,\"a\":3,\"\":5,\"𐀀\":4}"
+  },
+  {
+    "id": "strings-and-arrays",
+    "value": {
+      "values": [true, null, false],
+      "text": "line\n\"quoted\"\\slash\t"
+    },
+    "canonical": "{\"text\":\"line\\n\\\"quoted\\\"\\\\slash\\t\",\"values\":[true,null,false]}"
+  },
+  {
+    "id": "lone-surrogates",
+    "value": {
+      "high": "\ud800",
+      "low": "\udfff"
+    },
+    "canonical": "{\"high\":\"\\ud800\",\"low\":\"\\udfff\"}"
+  }
+]

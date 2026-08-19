@@ -155,6 +155,35 @@ def test_host_private_delegate_capability_is_absent_from_context() -> None:
     assert "object at" not in view.in_flight[0].what
 
 
+def test_in_flight_description_uses_language_neutral_canonical_json() -> None:
+    delegate = Delegate(
+        delegate_id="canonical-request",
+        executor="slow_sim",
+        op="set_light",
+        request={
+            "both": "a'\"b",
+            "control": "line\nbreak",
+            "nested": {"2": 2, "10": 10, "float": 1.0, "negative_zero": -0.0},
+            "single": "a'b",
+            "unicode": chr(0x2028),
+        },
+        origin_ref="conversation:1",
+        deadline=10.0,
+        routing_class="user_awaited",
+        dispatched_at=1.0,
+    )
+    memory = Memory(policies=(SLOW_SIM_POLICY,))
+
+    view = compile_context_view(memory, floor="idle", now=1.0, in_flight=(delegate,))
+
+    expected = (
+        'slow_sim.set_light({"both":"a\'\\"b","control":"line\\nbreak",'
+        '"nested":{"10":10,"2":2,"float":1,"negative_zero":0},'
+        '"single":"a\'b","unicode":"' + chr(0x2028) + '"})'
+    )
+    assert view.in_flight[0].what == expected
+
+
 def test_channels_view_reads_the_summary_slot_not_the_raw_log() -> None:
     """The output of compression lands in channel.summary; ContextView reads it (the writer arrives in Phase C)."""
     memory = _loaded_memory()
