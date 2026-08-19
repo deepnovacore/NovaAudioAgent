@@ -1,0 +1,663 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "name": "lexical-match-ranks-by-score-then-recency",
+      "view": {
+        "state": "ok",
+        "scope": "recent",
+        "raw_scanned": 3,
+        "searched_count": 3,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:2",
+            "channel": "conversation",
+            "ts": 2.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "compiling the runtime tests now"
+          },
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_user",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "please compile the runtime"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"compiling the runtime tests now\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":2.0},{\"channel\":\"conversation\",\"evidence\":\"please compile the runtime\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_user\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":3,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":3,\"state\":\"ok\"}"
+        },
+        {
+          "max_chars": 400,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"compiling the runtime tests now\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":2.0}],\"omitted\":1,\"raw_scanned\":3,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":3,\"state\":\"ok\"}"
+        },
+        {
+          "max_chars": 200,
+          "encoded": "{\"hits\":[],\"omitted\":2,\"raw_scanned\":3,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":3,\"state\":\"ok\"}"
+        },
+        {
+          "max_chars": 40,
+          "error": "max_chars is too small for the recall envelope"
+        }
+      ]
+    },
+    {
+      "name": "recency-fallback-when-nothing-matches",
+      "view": {
+        "state": "ok",
+        "scope": "recent",
+        "raw_scanned": 2,
+        "searched_count": 2,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:2",
+            "channel": "conversation",
+            "ts": 2.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "recency_fallback",
+            "evidence": "second thing"
+          },
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_user",
+            "outcome": null,
+            "match": "recency_fallback",
+            "evidence": "first thing"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"second thing\",\"match\":\"recency_fallback\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":2.0},{\"channel\":\"conversation\",\"evidence\":\"first thing\",\"match\":\"recency_fallback\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_user\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":2,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":2,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "cjk-bigram-tokenization",
+      "view": {
+        "state": "ok",
+        "scope": "recent",
+        "raw_scanned": 3,
+        "searched_count": 3,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_user",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "帮我编译测试"
+          },
+          {
+            "ref": "conversation:2",
+            "channel": "conversation",
+            "ts": 2.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "正在编译"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"帮我编译测试\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_user\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"正在编译\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":2.0}],\"omitted\":0,\"raw_scanned\":3,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":3,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "fullwidth-query-matches-halfwidth-memory",
+      "view": {
+        "state": "ok",
+        "scope": "recent",
+        "raw_scanned": 1,
+        "searched_count": 1,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "compile finished ok"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"compile finished ok\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":1,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":1,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "cutoff-excludes-the-asking-turn-and-after",
+      "view": {
+        "state": "ok",
+        "scope": "recent",
+        "raw_scanned": 1,
+        "searched_count": 1,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "secret before the cutoff"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"secret before the cutoff\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":1,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":1,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "any-scope-reads-every-channel",
+      "view": {
+        "state": "ok",
+        "scope": "any",
+        "raw_scanned": 3,
+        "searched_count": 3,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "search:1",
+            "channel": "search",
+            "ts": 1.7,
+            "trust": "untrusted_external",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "搜索结果：status three（example.com）：a search snippet about status"
+          },
+          {
+            "ref": "codex:1",
+            "channel": "codex",
+            "ts": 1.5,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Codex 报告任务完成：status two from codex"
+          },
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "status one"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"search\",\"evidence\":\"搜索结果：status three（example.com）：a search snippet about status\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"search:1\",\"trust\":\"untrusted_external\",\"ts\":1.7},{\"channel\":\"codex\",\"evidence\":\"Codex 报告任务完成：status two from codex\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"codex:1\",\"trust\":\"trusted_system\",\"ts\":1.5},{\"channel\":\"conversation\",\"evidence\":\"status one\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":3,\"scan_truncated\":false,\"scope\":\"any\",\"searched_count\":3,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "recent-scope-bounds-each-channel-to-five",
+      "view": {
+        "state": "ok",
+        "scope": "recent",
+        "raw_scanned": 10,
+        "searched_count": 10,
+        "scan_truncated": false,
+        "omitted": 5,
+        "hits": [
+          {
+            "ref": "conversation:8",
+            "channel": "conversation",
+            "ts": 8.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "item 8"
+          },
+          {
+            "ref": "codex:7",
+            "channel": "codex",
+            "ts": 7.5,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Codex 报告任务完成：codex item 7"
+          },
+          {
+            "ref": "conversation:7",
+            "channel": "conversation",
+            "ts": 7.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "item 7"
+          },
+          {
+            "ref": "codex:6",
+            "channel": "codex",
+            "ts": 6.5,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Codex 报告任务完成：codex item 6"
+          },
+          {
+            "ref": "conversation:6",
+            "channel": "conversation",
+            "ts": 6.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "item 6"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"item 8\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:8\",\"trust\":\"trusted_system\",\"ts\":8.0},{\"channel\":\"codex\",\"evidence\":\"Codex 报告任务完成：codex item 7\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"codex:7\",\"trust\":\"trusted_system\",\"ts\":7.5},{\"channel\":\"conversation\",\"evidence\":\"item 7\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:7\",\"trust\":\"trusted_system\",\"ts\":7.0},{\"channel\":\"codex\",\"evidence\":\"Codex 报告任务完成：codex item 6\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"codex:6\",\"trust\":\"trusted_system\",\"ts\":6.5},{\"channel\":\"conversation\",\"evidence\":\"item 6\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:6\",\"trust\":\"trusted_system\",\"ts\":6.0}],\"omitted\":5,\"raw_scanned\":10,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":10,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "tie-break-by-channel-name-then-sequence",
+      "view": {
+        "state": "ok",
+        "scope": "any",
+        "raw_scanned": 3,
+        "searched_count": 3,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "codex:1",
+            "channel": "codex",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Codex 报告任务完成：same score here"
+          },
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "same score here"
+          },
+          {
+            "ref": "search:1",
+            "channel": "search",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "搜索结果：same score here（example.com）：same score here too"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"codex\",\"evidence\":\"Codex 报告任务完成：same score here\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"codex:1\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"same score here\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"search\",\"evidence\":\"搜索结果：same score here（example.com）：same score here too\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"search:1\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":3,\"scan_truncated\":false,\"scope\":\"any\",\"searched_count\":3,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "origin-must-be-a-trusted-user-turn",
+      "error": {
+        "kind": "origin",
+        "message": "before_ref must name an existing trusted user conversation item"
+      }
+    },
+    {
+      "name": "origin-must-exist",
+      "error": {
+        "kind": "origin",
+        "message": "before_ref must name an existing trusted user conversation item"
+      }
+    },
+    {
+      "name": "origin-must-be-the-conversation-channel",
+      "error": {
+        "kind": "origin",
+        "message": "before_ref must name an existing trusted user conversation item"
+      }
+    },
+    {
+      "name": "single-character-tokens-do-not-count",
+      "view": {
+        "state": "ok",
+        "scope": "recent",
+        "raw_scanned": 1,
+        "searched_count": 1,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "recency_fallback",
+            "evidence": "a b c d e"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"a b c d e\",\"match\":\"recency_fallback\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":1,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":1,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "unicode-16-outlined-digit-must-not-tokenize-as-ascii",
+      "view": {
+        "state": "ok",
+        "scope": "recent",
+        "raw_scanned": 1,
+        "searched_count": 1,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "recency_fallback",
+            "evidence": "build 01 finished"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"build 01 finished\",\"match\":\"recency_fallback\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":1,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":1,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "empty-when-no-item-has-safe-evidence",
+      "view": {
+        "state": "empty",
+        "scope": "recent",
+        "raw_scanned": 0,
+        "searched_count": 0,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": []
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[],\"omitted\":0,\"raw_scanned\":0,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":0,\"state\":\"empty\"}"
+        }
+      ]
+    },
+    {
+      "name": "channel-tie-break-is-code-point-not-locale",
+      "view": {
+        "state": "ok",
+        "scope": "any",
+        "raw_scanned": 2,
+        "searched_count": 2,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "Zed:1",
+            "channel": "Zed",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Zed 报告：same score here"
+          },
+          {
+            "ref": "aardvark:1",
+            "channel": "aardvark",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "aardvark 报告：same score here"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：same score here\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:1\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"aardvark\",\"evidence\":\"aardvark 报告：same score here\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"aardvark:1\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":2,\"scan_truncated\":false,\"scope\":\"any\",\"searched_count\":2,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "lexical-tie-break-takes-the-earlier-sequence",
+      "view": {
+        "state": "ok",
+        "scope": "any",
+        "raw_scanned": 3,
+        "searched_count": 3,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "identical text"
+          },
+          {
+            "ref": "conversation:2",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "identical text"
+          },
+          {
+            "ref": "conversation:3",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "identical text"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"identical text\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"identical text\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"identical text\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:3\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":3,\"scan_truncated\":false,\"scope\":\"any\",\"searched_count\":3,\"state\":\"ok\"}"
+        },
+        {
+          "max_chars": 250,
+          "encoded": "{\"hits\":[],\"omitted\":3,\"raw_scanned\":3,\"scan_truncated\":false,\"scope\":\"any\",\"searched_count\":3,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "budget-counts-code-points-not-utf16-units",
+      "view": {
+        "state": "ok",
+        "scope": "recent",
+        "raw_scanned": 2,
+        "searched_count": 2,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:2",
+            "channel": "conversation",
+            "ts": 2.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "compile 😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁"
+          },
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "compile 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"compile 😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":2.0},{\"channel\":\"conversation\",\"evidence\":\"compile 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":2,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":2,\"state\":\"ok\"}"
+        },
+        {
+          "max_chars": 330,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"compile 😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":2.0}],\"omitted\":1,\"raw_scanned\":2,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":2,\"state\":\"ok\"}"
+        },
+        {
+          "max_chars": 300,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"compile 😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁😁\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":2.0}],\"omitted\":1,\"raw_scanned\":2,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":2,\"state\":\"ok\"}"
+        },
+        {
+          "max_chars": 260,
+          "encoded": "{\"hits\":[],\"omitted\":2,\"raw_scanned\":2,\"scan_truncated\":false,\"scope\":\"recent\",\"searched_count\":2,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "empty-evidence-is-not-a-candidate",
+      "view": {
+        "state": "ok",
+        "scope": "any",
+        "raw_scanned": 4,
+        "searched_count": 1,
+        "scan_truncated": false,
+        "omitted": 0,
+        "hits": [
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "recency_fallback",
+            "evidence": "real evidence here"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"real evidence here\",\"match\":\"recency_fallback\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":0,\"raw_scanned\":4,\"scan_truncated\":false,\"scope\":\"any\",\"searched_count\":1,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "any-scope-truncation-selects-by-code-point-order",
+      "view": {
+        "state": "ok",
+        "scope": "any",
+        "raw_scanned": 500,
+        "searched_count": 500,
+        "scan_truncated": true,
+        "omitted": 495,
+        "hits": [
+          {
+            "ref": "Zed:1",
+            "channel": "Zed",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Zed 报告：scan target 0"
+          },
+          {
+            "ref": "Zed:2",
+            "channel": "Zed",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Zed 报告：scan target 1"
+          },
+          {
+            "ref": "Zed:3",
+            "channel": "Zed",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Zed 报告：scan target 2"
+          },
+          {
+            "ref": "Zed:4",
+            "channel": "Zed",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Zed 报告：scan target 3"
+          },
+          {
+            "ref": "Zed:5",
+            "channel": "Zed",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": "ok",
+            "match": "lexical",
+            "evidence": "Zed 报告：scan target 4"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 0\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:1\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 1\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:2\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 2\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:3\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 3\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:4\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 4\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:5\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":495,\"raw_scanned\":500,\"scan_truncated\":true,\"scope\":\"any\",\"searched_count\":500,\"state\":\"ok\"}"
+        }
+      ]
+    }
+  ]
+}
