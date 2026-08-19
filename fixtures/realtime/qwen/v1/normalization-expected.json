@@ -1,0 +1,227 @@
+{
+  "scenarios": {
+    "error-allowlisted-append-param": [
+      {
+        "code": "x.input_audio_buffer.append",
+        "kind": "provider_error",
+        "recoverable": false,
+        "session_epoch": 1
+      }
+    ],
+    "error-idle-timeout-recoverable": [
+      {
+        "code": "response_idle_timeout",
+        "kind": "provider_error",
+        "recoverable": true,
+        "session_epoch": 1
+      }
+    ],
+    "error-missing-code": [
+      {
+        "code": "None",
+        "kind": "provider_error",
+        "recoverable": false,
+        "session_epoch": 1
+      }
+    ],
+    "error-param-not-allowlisted": [
+      {
+        "code": "bad.unknown_param",
+        "kind": "provider_error",
+        "recoverable": false,
+        "session_epoch": 1
+      }
+    ],
+    "error-sanitized-code-with-allowlisted-param": [
+      {
+        "code": "rate_limit_exceeded.session.update",
+        "kind": "provider_error",
+        "recoverable": false,
+        "session_epoch": 1
+      }
+    ],
+    "frame-without-type-is-malformed": [
+      {
+        "code": "protocol_error",
+        "kind": "provider_error",
+        "recoverable": false,
+        "session_epoch": 1
+      }
+    ],
+    "non-canonical-base64-audio": [
+      {
+        "code": "protocol_error",
+        "kind": "provider_error",
+        "recoverable": false,
+        "session_epoch": 1
+      }
+    ],
+    "orphan-speech-end-is-protocol-error": [
+      {
+        "code": "protocol_error",
+        "kind": "provider_error",
+        "recoverable": false,
+        "session_epoch": 1
+      }
+    ],
+    "response-lifecycle": [
+      {
+        "kind": "response_started",
+        "response_id": "resp-1",
+        "session_epoch": 1
+      },
+      {
+        "kind": "response_audio_delta",
+        "pcm": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "response_id": "resp-1",
+        "session_epoch": 1
+      },
+      {
+        "kind": "response_transcript_delta",
+        "response_id": "resp-1",
+        "session_epoch": 1,
+        "text": "嗯"
+      },
+      {
+        "kind": "response_transcript_delta",
+        "response_id": "resp-1",
+        "session_epoch": 1,
+        "text": ""
+      },
+      {
+        "kind": "response_transcript_final",
+        "response_id": "resp-1",
+        "session_epoch": 1,
+        "text": "嗯好"
+      },
+      {
+        "kind": "response_transcript_final",
+        "response_id": "resp-1",
+        "session_epoch": 1,
+        "text": "文本"
+      },
+      {
+        "kind": "response_terminal",
+        "reason": "completed",
+        "response_id": "resp-1",
+        "session_epoch": 1,
+        "status": "completed"
+      },
+      {
+        "code": "disconnected",
+        "kind": "provider_error",
+        "recoverable": true,
+        "session_epoch": 1
+      }
+    ],
+    "speech-and-transcript": [
+      {
+        "kind": "user_speech_started",
+        "provider_item_id": "item-a",
+        "session_epoch": 1,
+        "speech_id": "id-2"
+      },
+      {
+        "kind": "user_speech_ended",
+        "provider_item_id": "item-a",
+        "session_epoch": 1,
+        "speech_id": "id-2"
+      },
+      {
+        "item_id": "item-a",
+        "kind": "user_transcript_final",
+        "session_epoch": 1,
+        "text": "你好"
+      },
+      {
+        "item_id": "item-b",
+        "kind": "user_transcript_failed",
+        "session_epoch": 1
+      },
+      {
+        "code": "disconnected",
+        "kind": "provider_error",
+        "recoverable": true,
+        "session_epoch": 1
+      }
+    ],
+    "terminal-cancelled": [
+      {
+        "kind": "response_terminal",
+        "reason": "cancelled",
+        "response_id": "resp-3",
+        "session_epoch": 1,
+        "status": "cancelled"
+      },
+      {
+        "code": "disconnected",
+        "kind": "provider_error",
+        "recoverable": true,
+        "session_epoch": 1
+      }
+    ],
+    "terminal-failed-with-reason": [
+      {
+        "kind": "response_terminal",
+        "reason": "upstream",
+        "response_id": "resp-2",
+        "session_epoch": 1,
+        "status": "failed"
+      },
+      {
+        "code": "disconnected",
+        "kind": "provider_error",
+        "recoverable": true,
+        "session_epoch": 1
+      }
+    ],
+    "tool-calls": [
+      {
+        "arguments": {
+          "n": 1.5,
+          "query": "x"
+        },
+        "call_id": "call-1",
+        "item_id": "item-b",
+        "kind": "tool_call_ready",
+        "name": "memory__recall",
+        "response_id": "resp-1",
+        "session_epoch": 1
+      },
+      {
+        "arguments": {},
+        "call_id": "call-2",
+        "item_id": "item-c",
+        "kind": "tool_call_ready",
+        "name": "search__web",
+        "response_id": null,
+        "session_epoch": 1
+      },
+      {
+        "code": "disconnected",
+        "kind": "provider_error",
+        "recoverable": true,
+        "session_epoch": 1
+      }
+    ],
+    "unknown-frame-ignored": [
+      {
+        "kind": "response_started",
+        "response_id": "resp-4",
+        "session_epoch": 1
+      },
+      {
+        "code": "disconnected",
+        "kind": "provider_error",
+        "recoverable": true,
+        "session_epoch": 1
+      }
+    ]
+  },
+  "schema_version": 1
+}

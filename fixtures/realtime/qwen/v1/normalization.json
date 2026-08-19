@@ -1,0 +1,249 @@
+{
+  "schema_version": 1,
+  "description": "Qwen Audio Realtime frame normalization, replayed through each runtime's public events() path over a scripted socket. Expected output is exported by the Python adapter and matched byte for byte by Node after canonical JSON serialization.",
+  "handshake": [
+    {
+      "type": "session.created",
+      "session": {
+        "id": "sess-1"
+      }
+    },
+    {
+      "type": "session.updated",
+      "session": {
+        "id": "sess-1"
+      }
+    }
+  ],
+  "id_prefix": "id-",
+  "scenarios": [
+    {
+      "id": "speech-and-transcript",
+      "covers": "One user utterance start/end pair sharing a host-allocated speech id, then a final and a failed transcription.",
+      "frames": [
+        {
+          "type": "input_audio_buffer.speech_started",
+          "item_id": "item-a"
+        },
+        {
+          "type": "input_audio_buffer.speech_stopped",
+          "item_id": "item-a"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.completed",
+          "item_id": "item-a",
+          "transcript": "你好"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.failed",
+          "item_id": "item-b"
+        }
+      ]
+    },
+    {
+      "id": "response-lifecycle",
+      "covers": "A full assistant response: start, audio, transcript deltas including an empty one, both final text shapes, terminal.",
+      "frames": [
+        {
+          "type": "response.created",
+          "response": {
+            "id": "resp-1"
+          }
+        },
+        {
+          "type": "response.audio.delta",
+          "response_id": "resp-1",
+          "delta": "AQIDBA=="
+        },
+        {
+          "type": "response.audio_transcript.delta",
+          "response_id": "resp-1",
+          "delta": "嗯"
+        },
+        {
+          "type": "response.text.delta",
+          "response_id": "resp-1",
+          "delta": ""
+        },
+        {
+          "type": "response.audio_transcript.done",
+          "response_id": "resp-1",
+          "transcript": "嗯好"
+        },
+        {
+          "type": "response.output_text.done",
+          "response_id": "resp-1",
+          "text": "文本"
+        },
+        {
+          "type": "response.done",
+          "response": {
+            "id": "resp-1",
+            "status": "completed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tool-calls",
+      "covers": "Two tool calls, one correlated to a response and one without, with a fractional argument value.",
+      "frames": [
+        {
+          "type": "response.function_call_arguments.done",
+          "call_id": "call-1",
+          "item_id": "item-b",
+          "name": "memory__recall",
+          "arguments": "{\"query\":\"x\",\"n\":1.5}",
+          "response_id": "resp-1"
+        },
+        {
+          "type": "response.function_call_arguments.done",
+          "call_id": "call-2",
+          "item_id": "item-c",
+          "name": "search__web",
+          "arguments": "{}"
+        }
+      ]
+    },
+    {
+      "id": "terminal-failed-with-reason",
+      "covers": "A failed terminal whose status_details.reason replaces the bare status string.",
+      "frames": [
+        {
+          "type": "response.done",
+          "response": {
+            "id": "resp-2",
+            "status": "failed",
+            "status_details": {
+              "reason": "upstream"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "terminal-cancelled",
+      "covers": "A cancelled terminal with no status_details falls back to the status as the reason.",
+      "frames": [
+        {
+          "type": "response.done",
+          "response": {
+            "id": "resp-3",
+            "status": "cancelled"
+          }
+        }
+      ]
+    },
+    {
+      "id": "unknown-frame-ignored",
+      "covers": "An unrecognised provider frame is dropped without disturbing the next real event.",
+      "frames": [
+        {
+          "type": "some.unknown.event",
+          "ignored": true
+        },
+        {
+          "type": "response.created",
+          "response": {
+            "id": "resp-4"
+          }
+        }
+      ]
+    },
+    {
+      "id": "error-idle-timeout-recoverable",
+      "covers": "response_idle_timeout is the one provider error code marked recoverable.",
+      "frames": [
+        {
+          "type": "error",
+          "error": {
+            "code": "response_idle_timeout"
+          }
+        }
+      ]
+    },
+    {
+      "id": "error-sanitized-code-with-allowlisted-param",
+      "covers": "A code with characters outside [A-Za-z0-9_.-] is sanitized and qualified by an allowlisted param.",
+      "frames": [
+        {
+          "type": "error",
+          "error": {
+            "code": "rate limit/exceeded",
+            "param": "session.update"
+          }
+        }
+      ]
+    },
+    {
+      "id": "error-param-not-allowlisted",
+      "covers": "A param outside the allowlist collapses to unknown_param rather than echoing provider text.",
+      "frames": [
+        {
+          "type": "error",
+          "error": {
+            "code": "bad",
+            "param": "not.in.allowlist"
+          }
+        }
+      ]
+    },
+    {
+      "id": "error-missing-code",
+      "covers": "An error object with no code stringifies the missing value rather than inventing one.",
+      "frames": [
+        {
+          "type": "error",
+          "error": {
+            "message": "no code field"
+          }
+        }
+      ]
+    },
+    {
+      "id": "error-allowlisted-append-param",
+      "covers": "An allowlisted param is preserved verbatim in the compound code.",
+      "frames": [
+        {
+          "type": "error",
+          "error": {
+            "code": "x",
+            "param": "input_audio_buffer.append"
+          }
+        }
+      ]
+    },
+    {
+      "id": "orphan-speech-end-is-protocol-error",
+      "covers": "A speech end with no matching start is a bounded protocol failure that stops the stream.",
+      "frames": [
+        {
+          "type": "input_audio_buffer.speech_stopped",
+          "item_id": "orphan"
+        }
+      ]
+    },
+    {
+      "id": "non-canonical-base64-audio",
+      "covers": "An audio delta that is not canonical base64 is refused instead of silently repaired.",
+      "frames": [
+        {
+          "type": "response.audio.delta",
+          "response_id": "resp-1",
+          "delta": "not!base64"
+        }
+      ]
+    },
+    {
+      "id": "frame-without-type-is-malformed",
+      "covers": "A frame lacking a string type is malformed for this protocol.",
+      "frames": [
+        {
+          "session": {
+            "id": "sess-1"
+          }
+        }
+      ]
+    }
+  ]
+}
