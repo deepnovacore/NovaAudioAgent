@@ -258,7 +258,7 @@ believing either.
   | Python site | Dependency | Node porting note |
   |---|---|---|
   | `ports.py` category check | `unicodedata.category` | Done: pinned table |
-  | `executors/watcher.py`, `executors/codex_projects.py` (×2), `executors/codex_app_server.py`, `realtime/project_confirmation.py` | `unicodedata.category` | Reuse the pinned table; never `\p{...}` |
+  | `executors/watcher.py`, `executors/codex_projects.py` (×2), `executors/codex_app_server.py`, `realtime/project_confirmation.py` | `unicodedata.category` | Reuse the pinned table; never `\p{...}`. `isPunctuationCategory`/`hasPunctuationCategory` now cover P* alongside C*; the generator takes a list of category prefixes, so a further one is an entry in `TABLES` and nothing else |
   | `executors/search.py` | `category in {"Cc","Cf"}` | Needs a pinned Cc/Cf subset, not the whole C set |
   | `realtime/recall.py`, `executors/codex_projects.py`, `executors/codex.py`, `executors/codex_transport.py`, `executors/codex_app_server.py` (×2) | `unicodedata.normalize` NFC/NFKC | **Resolved, and neither option was needed.** See "The NFKC gap, measured" below. |
   | `executors/codex.py` | `str.isprintable()` | No JavaScript equivalent. Python's rule is "not Cc, Cf, Cs, Co, Cn, Zl, Zp, or Zs except U+0020". Must be reimplemented explicitly against the pinned table, not approximated. |

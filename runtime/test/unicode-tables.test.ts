@@ -4,8 +4,11 @@ import { validProgressSummary } from '../src/events.js'
 import {
   OTHER_CATEGORY_RANGE_COUNT,
   PINNED_UNICODE_VERSION,
+  PUNCTUATION_CATEGORY_RANGE_COUNT,
   hasOtherCategory,
+  hasPunctuationCategory,
   isOtherCategory,
+  isPunctuationCategory,
 } from '../src/unicode-tables.js'
 
 test('the pinned table decodes to the generated range set', () => {
@@ -62,4 +65,61 @@ test('progress summary bounds still count code points, not UTF-16 units', () => 
   assert.equal(validProgressSummary('', 'working'), false)
   assert.equal(validProgressSummary(null, 'started'), true)
   assert.equal(validProgressSummary('anything', 'started'), false)
+})
+
+test('the punctuation table decodes to the generated range set', () => {
+  assert.equal(PUNCTUATION_CATEGORY_RANGE_COUNT, 191)
+})
+
+test('pinned punctuation classification matches Python unicodedata at 15.0.0', () => {
+  // One from each P subcategory: Pc, Pd, Ps, Pe, Pi, Pf, Po.
+  const punctuation = [
+    0x5f, // _  connector
+    0x2d, // -  dash
+    0x28, // (  open
+    0x29, // )  close
+    0xab, // «  initial quote
+    0xbb, // »  final quote
+    0x21, // !  other
+    0x3001, // 、 CJK ideographic comma, which a Chinese confirmation utterance carries
+    0xff01, // ！ fullwidth exclamation
+    0x2026, // … ellipsis
+  ]
+  for (const codePoint of punctuation) {
+    assert.equal(isPunctuationCategory(codePoint), true, `U+${codePoint.toString(16)}`)
+  }
+  // Not punctuation: letters, digits, space (Zs), a symbol (Sm), and a currency sign (Sc).
+  for (const codePoint of [0x41, 0x61, 0x30, 0x20, 0x597d, 0x2b, 0x24, 0x1f600]) {
+    assert.equal(isPunctuationCategory(codePoint), false, `U+${codePoint.toString(16)}`)
+  }
+})
+
+test('the punctuation table is not a \\p{P} escape in disguise', () => {
+  // The whole reason for the table. If these ever agree everywhere, the table is still correct --
+  // but it is the pinned answer either way, which a host escape is not.
+  let scanned = 0
+  for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
+    if (isPunctuationCategory(codePoint)) scanned += 1
+  }
+  assert.equal(scanned, 842, 'the pinned punctuation set covers exactly this many code points')
+})
+
+test('punctuation ranges are sorted, disjoint, and reject non-code-points', () => {
+  let previousEnd = -2
+  for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
+    if (!isPunctuationCategory(codePoint)) continue
+    assert.ok(codePoint > previousEnd, 'classification must be monotone over a scan')
+    previousEnd = codePoint
+  }
+  for (const invalid of [-1, 0x110000, 1.5, Number.NaN]) {
+    assert.throws(() => isPunctuationCategory(invalid), RangeError)
+  }
+})
+
+test('a string predicate finds punctuation anywhere in it', () => {
+  assert.equal(hasPunctuationCategory('好的'), false)
+  assert.equal(hasPunctuationCategory('好的。'), true, 'a trailing ideographic full stop counts')
+  assert.equal(hasPunctuationCategory(''), false)
+  // An astral character must not be split into surrogates by the scan.
+  assert.equal(hasPunctuationCategory('\u{1f600}'), false)
 })

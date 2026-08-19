@@ -39,12 +39,28 @@ def test_this_interpreter_still_carries_the_pinned_unicode_version() -> None:
     )
 
 
-def test_the_generated_node_table_declares_the_same_pin() -> None:
+@pytest.mark.parametrize("prefix", ["C", "P"])
+def test_the_generated_node_table_declares_the_same_pin(prefix: str) -> None:
+    # Each table records its own range and code-point counts, and both are re-derived here rather
+    # than trusted: a table generated against a different interpreter would otherwise pass.
     source = GENERATED_TABLE.read_text(encoding="utf-8")
     assert f"export const PINNED_UNICODE_VERSION = '{PINNED_UNICODE_VERSION}'" in source
-    declared = re.search(r"^// (\d+) ranges covering (\d+) code points", source, re.MULTILINE)
-    assert declared is not None, "the generated header must record its range count"
-    assert int(declared.group(1)) == _range_count_for_this_interpreter()
+    declared = re.search(
+        rf"^// {prefix}\*: .*\n(?://.*\n)*?// (\d+) ranges covering (\d+) code points",
+        source,
+        re.MULTILINE,
+    )
+    assert declared is not None, f"the generated {prefix}* header must record its counts"
+    ranges, covered = _ranges_for_this_interpreter(prefix)
+    assert int(declared.group(1)) == ranges
+    assert int(declared.group(2)) == covered
+
+
+def test_the_punctuation_table_covers_what_confirmation_matching_strips() -> None:
+    # `project_confirmation.py` strips P* and C* before matching, so the Node port needs the same
+    # answer for the characters a Chinese confirmation utterance actually carries.
+    for character in "。，、！？：；（）「」『』——…":
+        assert unicodedata.category(character).startswith("P"), character
 
 
 def test_code_points_assigned_after_the_pin_are_still_rejected() -> None:
@@ -74,12 +90,16 @@ def test_progress_summary_contract_is_stable(summary: object, phase: str, expect
     assert valid_progress_summary(summary, phase=phase) is expected
 
 
-def _range_count_for_this_interpreter() -> int:
-    count = 0
+def _ranges_for_this_interpreter(prefix: str) -> tuple[int, int]:
+    """The range count and covered code-point count this interpreter would generate."""
+    ranges = 0
+    covered = 0
     inside = False
     for code_point in range(0x110000):
-        is_other = unicodedata.category(chr(code_point)).startswith("C")
-        if is_other and not inside:
-            count += 1
-        inside = is_other
-    return count
+        matches = unicodedata.category(chr(code_point)).startswith(prefix)
+        if matches:
+            covered += 1
+            if not inside:
+                ranges += 1
+        inside = matches
+    return ranges, covered

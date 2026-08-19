@@ -1,55 +1,73 @@
-"""Generate the Node runtime's pinned Unicode general-category tables.
+"""Emit Unicode general-category tables pinned to the version CPython bundles.
 
-Python classifies characters with the Unicode database bundled into CPython, and
-V8 classifies them with the Unicode database bundled into ICU. Those versions are
-not the same and drift with every release, so ``unicodedata.category(c)`` and
-``/\\p{C}/u`` disagree about any code point assigned between them. CPython 3.12
-carries Unicode 15.0.0; Node 24 with ICU 77 carries Unicode 16.0. U+1CC00,
-U+1E5D0, and U+10D40 are ``Cn`` (unassigned) to Python and assigned symbols to
-Node, so a progress summary containing one is dropped by Python and recorded by
-Node.
+Python classifies characters with the database compiled into CPython; V8 resolves `\\p{...}`
+against the one compiled into ICU. Those versions differ and drift with every release, so any
+predicate that reads a runtime's ambient tables makes the committed fixtures fragile against an
+interpreter or ICU upgrade. These tables replace those escapes.
 
-Committed fixtures are the permanent oracle for this migration, so a predicate
-that reads either runtime's ambient Unicode tables makes those fixtures fragile
-against an ICU or CPython upgrade. This script emits the ranges once, from the
-version Python currently pins, into a generated TypeScript module the Node
-runtime consults instead of a ``\\p{...}`` escape.
-
-Run from the repository root:
+Each category prefix gets its own table. Adding one means adding an entry to ``TABLES`` and nothing
+else; the encoding, the lookup, and the drift tests are shared.
 
     uv run python scripts/generate_unicode_tables.py
-
-``tests/test_unicode_tables.py`` fails if CPython's Unicode version stops matching
-the pinned one, so an interpreter upgrade becomes an explicit decision rather than
-a silent behavior change.
 """
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 
-PINNED_UNICODE_VERSION = "15.0.0"
-
-TARGET = Path("runtime/src/unicode-tables.ts")
 GENERATOR = "scripts/generate_unicode_tables.py"
+PINNED_UNICODE_VERSION = unicodedata.unidata_version
+TARGET = Path(__file__).resolve().parents[1] / "runtime" / "src" / "unicode-tables.ts"
 
 
-def other_category_ranges() -> list[tuple[int, int]]:
-    """Inclusive code-point ranges whose general category starts with ``C``.
+@dataclass(frozen=True, slots=True)
+class Table:
+    """One category prefix, and the names its lookup functions get."""
 
-    That is Cc, Cf, Cs, Co, and Cn: control, format, surrogate, private use, and
-    unassigned. It is the set Python's ``valid_progress_summary`` rejects.
-    """
+    prefix: str
+    constant: str
+    count_export: str
+    code_point_predicate: str
+    string_predicate: str
+    categories: str
+    purpose: str
+
+
+TABLES: tuple[Table, ...] = (
+    Table(
+        prefix="C",
+        constant="ENCODED_OTHER_CATEGORY_RANGES",
+        count_export="OTHER_CATEGORY_RANGE_COUNT",
+        code_point_predicate="isOtherCategory",
+        string_predicate="hasOtherCategory",
+        categories="Cc, Cf, Cs, Co, Cn",
+        purpose="control, format, surrogate, private use, and unassigned -- the set "
+        "`valid_progress_summary` rejects",
+    ),
+    Table(
+        prefix="P",
+        constant="ENCODED_PUNCTUATION_CATEGORY_RANGES",
+        count_export="PUNCTUATION_CATEGORY_RANGE_COUNT",
+        code_point_predicate="isPunctuationCategory",
+        string_predicate="hasPunctuationCategory",
+        categories="Pc, Pd, Ps, Pe, Pi, Pf, Po",
+        purpose="every kind of punctuation -- the set `realtime/project_confirmation.py` strips "
+        "before matching a confirmation utterance",
+    ),
+)
+
+
+def category_ranges(prefix: str) -> list[tuple[int, int]]:
+    """Inclusive code-point ranges whose general category starts with ``prefix``."""
     ranges: list[tuple[int, int]] = []
     start: int | None = None
     for code_point in range(0x110000):
-        is_other = unicodedata.category(chr(code_point)).startswith("C")
-        if is_other and start is None:
+        matches = unicodedata.category(chr(code_point)).startswith(prefix)
+        if matches and start is None:
             start = code_point
-        elif not is_other and start is not None:
+        elif not matches and start is not None:
             ranges.append((start, code_point - 1))
             start = None
     if start is not None:
@@ -58,12 +76,7 @@ def other_category_ranges() -> list[tuple[int, int]]:
 
 
 def encode(ranges: list[tuple[int, int]]) -> str:
-    """Encode as base-36 delta pairs so the payload stays small and format-stable.
-
-    A TypeScript array literal of 712 ranges would be reflowed by any formatter
-    change and would make the drift diff unreadable. One string of
-    ``gap.length`` pairs is stable, and the runtime expands it once at module load.
-    """
+    """Encode as `gapFromPreviousEnd.rangeLength` hex pairs, which keeps the file reviewable."""
     parts: list[str] = []
     previous_end = -1
     for start, end in ranges:
@@ -72,29 +85,64 @@ def encode(ranges: list[tuple[int, int]]) -> str:
     return ",".join(parts)
 
 
-def render(ranges: list[tuple[int, int]]) -> str:
+def render_table(table: Table, ranges: list[tuple[int, int]]) -> str:
     encoded = encode(ranges)
     lines = [encoded[index : index + 96] for index in range(0, len(encoded), 96)]
     body = "\n".join(f"  + '{line}'" for line in lines)
     covered = sum(end - start + 1 for start, end in ranges)
-    return f"""// GENERATED FILE -- do not edit by hand.
+    return f"""
+// {table.prefix}*: {table.categories}.
+// {table.purpose}.
+// {len(ranges)} ranges covering {covered} code points.
+const {table.constant} = ''
+{body}
+
+const {table.prefix}_RANGES = decodeRanges({table.constant})
+
+export const {table.count_export} = {table.prefix}_RANGES.starts.length
+
+/**
+ * Whether one code point's Unicode {PINNED_UNICODE_VERSION} general category starts with \
+{table.prefix}.
+ *
+ * Equivalent to Python `unicodedata.category(chr(cp)).startswith('{table.prefix}')` at the pinned
+ * version, and deliberately NOT equivalent to `/\\p{{{table.prefix}}}/u`, which tracks whatever
+ * Unicode version the host ICU carries.
+ */
+export function {table.code_point_predicate}(codePoint: number): boolean {{
+  return contains({table.prefix}_RANGES, codePoint)
+}}
+
+/** Whether any character in the string is in a {table.prefix} category at the pinned version. */
+export function {table.string_predicate}(value: string): boolean {{
+  for (const character of value) {{
+    if ({table.code_point_predicate}(character.codePointAt(0)!)) return true
+  }}
+  return false
+}}
+"""
+
+
+def render(tables: tuple[tuple[Table, list[tuple[int, int]]], ...]) -> str:
+    header = f"""// GENERATED FILE -- do not edit by hand.
 // Regenerate with: uv run python {GENERATOR}
 //
-// Unicode general categories starting with C (Cc, Cf, Cs, Co, Cn) pinned to
-// Unicode {PINNED_UNICODE_VERSION}, the version CPython bundles and therefore the version every
-// committed fixture was exported against. V8 resolves /\\p{{C}}/u against ICU's
-// Unicode version instead, which is newer and classifies recently assigned code
-// points differently, so this table replaces that escape. See {GENERATOR}.
+// Unicode general-category tables pinned to Unicode {PINNED_UNICODE_VERSION}, the version CPython
+// bundles and therefore the version every committed fixture was exported against. V8 resolves
+// `\\p{{...}}` against ICU's Unicode version instead, which is newer and classifies recently
+// assigned code points differently, so these tables replace those escapes. See {GENERATOR}.
 //
-// {len(ranges)} ranges covering {covered} code points, encoded as base-36-free
-// hex `gapFromPreviousEnd.rangeLength` pairs.
+// Ranges are encoded as `gapFromPreviousEnd.rangeLength` hex pairs, which keeps a table that covers
+// most of the code space to a few lines of reviewable diff.
 
 export const PINNED_UNICODE_VERSION = '{PINNED_UNICODE_VERSION}'
 
-const ENCODED_OTHER_CATEGORY_RANGES = ''
-{body}
+interface Ranges {{
+  readonly starts: Int32Array
+  readonly ends: Int32Array
+}}
 
-function decodeRanges(encoded: string): {{starts: Int32Array, ends: Int32Array}} {{
+function decodeRanges(encoded: string): Ranges {{
   const pairs = encoded.split(',')
   const starts = new Int32Array(pairs.length)
   const ends = new Int32Array(pairs.length)
@@ -110,57 +158,31 @@ function decodeRanges(encoded: string): {{starts: Int32Array, ends: Int32Array}}
   return {{starts, ends}}
 }}
 
-const {{starts: RANGE_STARTS, ends: RANGE_ENDS}} = decodeRanges(ENCODED_OTHER_CATEGORY_RANGES)
-
-export const OTHER_CATEGORY_RANGE_COUNT = RANGE_STARTS.length
-
-/**
- * Whether one code point's Unicode {PINNED_UNICODE_VERSION} general category starts with C.
- *
- * Equivalent to Python `unicodedata.category(chr(cp)).startswith('C')` at the
- * pinned version, and deliberately NOT equivalent to `/\\p{{C}}/u`, which tracks
- * whatever Unicode version the host ICU carries.
- */
-export function isOtherCategory(codePoint: number): boolean {{
+function contains(ranges: Ranges, codePoint: number): boolean {{
   if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {{
     throw new RangeError(`not a Unicode code point: ${{codePoint}}`)
   }}
   let low = 0
-  let high = RANGE_STARTS.length - 1
+  let high = ranges.starts.length - 1
   while (low <= high) {{
     const middle = (low + high) >> 1
-    if (codePoint < RANGE_STARTS[middle]!) high = middle - 1
-    else if (codePoint > RANGE_ENDS[middle]!) low = middle + 1
+    if (codePoint < ranges.starts[middle]!) high = middle - 1
+    else if (codePoint > ranges.ends[middle]!) low = middle + 1
     else return true
   }}
   return false
 }}
-
-/** Whether any character in the string is in a C category at the pinned version. */
-export function hasOtherCategory(value: string): boolean {{
-  for (const character of value) {{
-    if (isOtherCategory(character.codePointAt(0)!)) return true
-  }}
-  return false
-}}
 """
+    return header + "".join(render_table(table, ranges) for table, ranges in tables)
 
 
 def main() -> int:
-    if unicodedata.unidata_version != PINNED_UNICODE_VERSION:
-        print(
-            f"refusing to generate: this interpreter carries Unicode "
-            f"{unicodedata.unidata_version}, not the pinned {PINNED_UNICODE_VERSION}. "
-            f"Changing the pin changes what every committed fixture means, so make "
-            f"that an explicit decision.",
-            file=sys.stderr,
-        )
-        return 1
-    ranges = other_category_ranges()
-    target = Path(TARGET)
-    target.write_text(render(ranges), encoding="utf-8")
-    print(f"wrote {target} with {len(ranges)} ranges at Unicode {PINNED_UNICODE_VERSION}")
-    subprocess.run(["npx", "eslint", "--fix", "src/unicode-tables.ts"], cwd="runtime", check=False)
+    tables = tuple((table, category_ranges(table.prefix)) for table in TABLES)
+    TARGET.write_text(render(tables), encoding="utf-8")
+    for table, ranges in tables:
+        covered = sum(end - start + 1 for start, end in ranges)
+        print(f"{table.prefix}*: {len(ranges)} ranges, {covered} code points")
+    print(f"wrote {TARGET.relative_to(Path.cwd())} at Unicode {PINNED_UNICODE_VERSION}")
     return 0
 
 

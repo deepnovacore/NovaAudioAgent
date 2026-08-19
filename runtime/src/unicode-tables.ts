@@ -1,17 +1,55 @@
 // GENERATED FILE -- do not edit by hand.
 // Regenerate with: uv run python scripts/generate_unicode_tables.py
 //
-// Unicode general categories starting with C (Cc, Cf, Cs, Co, Cn) pinned to
-// Unicode 15.0.0, the version CPython bundles and therefore the version every
-// committed fixture was exported against. V8 resolves /\p{C}/u against ICU's
-// Unicode version instead, which is newer and classifies recently assigned code
-// points differently, so this table replaces that escape. See scripts/generate_unicode_tables.py.
+// Unicode general-category tables pinned to Unicode 15.0.0, the version CPython
+// bundles and therefore the version every committed fixture was exported against. V8 resolves
+// `\p{...}` against ICU's Unicode version instead, which is newer and classifies recently
+// assigned code points differently, so these tables replace those escapes. See scripts/generate_unicode_tables.py.
 //
-// 712 ranges covering 965096 code points, encoded as base-36-free
-// hex `gapFromPreviousEnd.rangeLength` pairs.
+// Ranges are encoded as `gapFromPreviousEnd.rangeLength` hex pairs, which keeps a table that covers
+// most of the code space to a few lines of reviewable diff.
 
 export const PINNED_UNICODE_VERSION = '15.0.0'
 
+interface Ranges {
+  readonly starts: Int32Array
+  readonly ends: Int32Array
+}
+
+function decodeRanges(encoded: string): Ranges {
+  const pairs = encoded.split(',')
+  const starts = new Int32Array(pairs.length)
+  const ends = new Int32Array(pairs.length)
+  let previousEnd = -1
+  pairs.forEach((pair, index) => {
+    const separator = pair.indexOf('.')
+    const start = previousEnd + 1 + Number.parseInt(pair.slice(0, separator), 16)
+    const end = start + Number.parseInt(pair.slice(separator + 1), 16)
+    starts[index] = start
+    ends[index] = end
+    previousEnd = end
+  })
+  return {starts, ends}
+}
+
+function contains(ranges: Ranges, codePoint: number): boolean {
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+    throw new RangeError(`not a Unicode code point: ${codePoint}`)
+  }
+  let low = 0
+  let high = ranges.starts.length - 1
+  while (low <= high) {
+    const middle = (low + high) >> 1
+    if (codePoint < ranges.starts[middle]!) high = middle - 1
+    else if (codePoint > ranges.ends[middle]!) low = middle + 1
+    else return true
+  }
+  return false
+}
+
+// C*: Cc, Cf, Cs, Co, Cn.
+// control, format, surrogate, private use, and unassigned -- the set `valid_progress_summary` rejects.
+// 712 ranges covering 965096 code points.
 const ENCODED_OTHER_CATEGORY_RANGES = ''
   + '0.1f,5f.20,d.0,2ca.1,6.3,7.0,1.0,14.0,18d.0,26.1,32.1,3.0,37.7,1b.3,6.10,16.0,c0.0,30.1,3b.1,65.'
   + 'd,3b.1,31.1,f.0,1c.1,1.0,b.4,1f.8,4a.0,a1.0,8.1,2.1,16.0,7.0,1.2,4.1,9.1,2.1,4.7,1.3,2.0,5.1,19.'
@@ -49,52 +87,63 @@ const ENCODED_OTHER_CATEGORY_RANGES = ''
   + '.7,a.5,28.7,1e.1,2.4d,154.b,e.1,d.2,9.6,2e.0,7.7,e.3,9.6,9.6,93.0,37.24,a.405,a6e0.1f,103a.5,de.'
   + '1,1682.d,1d31.c1e,21e.5e1,134b.4,1060.add4f,f0.2fe0f'
 
-function decodeRanges(encoded: string): {starts: Int32Array, ends: Int32Array} {
-  const pairs = encoded.split(',')
-  const starts = new Int32Array(pairs.length)
-  const ends = new Int32Array(pairs.length)
-  let previousEnd = -1
-  pairs.forEach((pair, index) => {
-    const separator = pair.indexOf('.')
-    const start = previousEnd + 1 + Number.parseInt(pair.slice(0, separator), 16)
-    const end = start + Number.parseInt(pair.slice(separator + 1), 16)
-    starts[index] = start
-    ends[index] = end
-    previousEnd = end
-  })
-  return {starts, ends}
-}
+const C_RANGES = decodeRanges(ENCODED_OTHER_CATEGORY_RANGES)
 
-const {starts: RANGE_STARTS, ends: RANGE_ENDS} = decodeRanges(ENCODED_OTHER_CATEGORY_RANGES)
-
-export const OTHER_CATEGORY_RANGE_COUNT = RANGE_STARTS.length
+export const OTHER_CATEGORY_RANGE_COUNT = C_RANGES.starts.length
 
 /**
  * Whether one code point's Unicode 15.0.0 general category starts with C.
  *
- * Equivalent to Python `unicodedata.category(chr(cp)).startswith('C')` at the
- * pinned version, and deliberately NOT equivalent to `/\p{C}/u`, which tracks
- * whatever Unicode version the host ICU carries.
+ * Equivalent to Python `unicodedata.category(chr(cp)).startswith('C')` at the pinned
+ * version, and deliberately NOT equivalent to `/\p{C}/u`, which tracks whatever
+ * Unicode version the host ICU carries.
  */
 export function isOtherCategory(codePoint: number): boolean {
-  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
-    throw new RangeError(`not a Unicode code point: ${codePoint}`)
-  }
-  let low = 0
-  let high = RANGE_STARTS.length - 1
-  while (low <= high) {
-    const middle = (low + high) >> 1
-    if (codePoint < RANGE_STARTS[middle]!) high = middle - 1
-    else if (codePoint > RANGE_ENDS[middle]!) low = middle + 1
-    else return true
-  }
-  return false
+  return contains(C_RANGES, codePoint)
 }
 
 /** Whether any character in the string is in a C category at the pinned version. */
 export function hasOtherCategory(value: string): boolean {
   for (const character of value) {
     if (isOtherCategory(character.codePointAt(0)!)) return true
+  }
+  return false
+}
+
+// P*: Pc, Pd, Ps, Pe, Pi, Pf, Po.
+// every kind of punctuation -- the set `realtime/project_confirmation.py` strips before matching a confirmation utterance.
+// 191 ranges covering 842 code points.
+const ENCODED_PUNCTUATION_CATEGORY_RANGES = ''
+  + '21.2,1.5,1.3,a.1,3.1,1a.2,1.0,1b.0,1.0,23.0,5.0,3.0,a.1,3.0,3.0,2be.0,8.0,1d2.5,29.1,33.0,1.0,2.'
+  + '0,2.0,2c.1,14.1,1.1,d.0,1.2,4a.3,66.0,2b.d,e9.2,36.e,1f.0,105.1,a.0,8c.0,78.0,79.0,186.0,c.0,16f'
+  + '.0,5a.0,a.1,a8.e,1.0,25.3,47.0,4a.4,4.1,6f.5,ab.0,264.8,97.0,26d.0,2c.1,4e.2,47.1,9d.2,1.2,25.a,'
+  + '139.1,d8.1,80.6,1.5,ac.6,1c.1,7d.3,3b.4,3e.1,40.7,b.0,33c.17,8.13,1.c,1.b,1e.1,e.1,279.3,1d.1,43'
+  + 'd.d,4f.1,1f.9,193.15,3f.3,20.1,2fb.3,1.1,70.0,8f.2e,1.1f,2.b,1a3.2,4.9,2.b,10.0,c.0,62.0,5a.0,74'
+  + '02.1,10d.2,63.0,a.0,73.5,17c.3,56.1,28.2,1.0,31.1,2f.0,61.c,10.1,7c.3,7e.1,10.1,f9.0,5152.1,d0.9'
+  + ',16.22,1.d,1.0,4.0,1.1,95.2,1.5,1.3,a.1,3.1,1a.2,1.0,1b.0,1.0,1.6,19a.2,29c.0,30.0,19e.0,2e7.0,c'
+  + '7.0,1f.0,110.8,26.0,70.6,42.6,59.3,310.0,a7.4,2c.3,bd.6,6d.1,1.3,7e.3,30.1,4f.3,4.0,d.0,1.2,58.5'
+  + ',6b.0,1a1.4,a.1,1.0,68.0,fa.16,69.2,1c.c,4c.0,82.2,fc.0,108.2,9b.0,5c.7,53.2,1.4,5d.9,137.4,2a.1'
+  + ',285.1,4a.c,af.0,470.4,b7c.1,3a7b.1,85.0,41.4,8.0,352.3,147.0,4cbc.0,1de7.4,ed2.1'
+
+const P_RANGES = decodeRanges(ENCODED_PUNCTUATION_CATEGORY_RANGES)
+
+export const PUNCTUATION_CATEGORY_RANGE_COUNT = P_RANGES.starts.length
+
+/**
+ * Whether one code point's Unicode 15.0.0 general category starts with P.
+ *
+ * Equivalent to Python `unicodedata.category(chr(cp)).startswith('P')` at the pinned
+ * version, and deliberately NOT equivalent to `/\p{P}/u`, which tracks whatever
+ * Unicode version the host ICU carries.
+ */
+export function isPunctuationCategory(codePoint: number): boolean {
+  return contains(P_RANGES, codePoint)
+}
+
+/** Whether any character in the string is in a P category at the pinned version. */
+export function hasPunctuationCategory(value: string): boolean {
+  for (const character of value) {
+    if (isPunctuationCategory(character.codePointAt(0)!)) return true
   }
   return false
 }
