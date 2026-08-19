@@ -1,0 +1,331 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "name": "higher-priority-is-delivered-first",
+      "covers": [
+        "service.queue_priority"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "low",
+          "priority": 30,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "high",
+          "priority": 90,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "mid",
+          "priority": 50,
+          "preemptive": false
+        },
+        {
+          "kind": "drain"
+        }
+      ]
+    },
+    {
+      "name": "equal-priority-keeps-insertion-order",
+      "covers": [
+        "service.queue_fifo_within_priority"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "first",
+          "priority": 50,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "second",
+          "priority": 50,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "third",
+          "priority": 50,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "fourth",
+          "priority": 50,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "fifth",
+          "priority": 50,
+          "preemptive": false
+        },
+        {
+          "kind": "drain"
+        }
+      ]
+    },
+    {
+      "name": "a-preemptive-item-outranks-an-ordinary-one-of-equal-priority",
+      "covers": [
+        "service.queue_preemptive_tiebreak"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "ordinary",
+          "priority": 85,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "preemptive",
+          "priority": 85,
+          "preemptive": true
+        },
+        {
+          "kind": "drain"
+        }
+      ]
+    },
+    {
+      "name": "priority-outranks-preemptiveness",
+      "covers": [
+        "service.queue_priority_dominates"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "preemptive_low",
+          "priority": 80,
+          "preemptive": true
+        },
+        {
+          "kind": "queue",
+          "event_id": "ordinary_high",
+          "priority": 95,
+          "preemptive": false
+        },
+        {
+          "kind": "drain"
+        }
+      ]
+    },
+    {
+      "name": "nothing-the-host-says-outranks-the-user",
+      "covers": [
+        "service.priority_clamp"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "clamped",
+          "priority": 100,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "way_over",
+          "priority": 10000,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "just_under",
+          "priority": 99,
+          "preemptive": false
+        },
+        {
+          "kind": "drain"
+        }
+      ]
+    },
+    {
+      "name": "the-armed-preempt-priority-tracks-what-is-still-queued",
+      "covers": [
+        "service.armed_preempt"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "ordinary",
+          "priority": 90,
+          "preemptive": false
+        },
+        {
+          "kind": "pop"
+        },
+        {
+          "kind": "queue",
+          "event_id": "weak_preempt",
+          "priority": 60,
+          "preemptive": true
+        },
+        {
+          "kind": "queue",
+          "event_id": "strong_preempt",
+          "priority": 95,
+          "preemptive": true
+        },
+        {
+          "kind": "queue",
+          "event_id": "mid_preempt",
+          "priority": 85,
+          "preemptive": true
+        },
+        {
+          "kind": "pop"
+        },
+        {
+          "kind": "pop"
+        },
+        {
+          "kind": "pop"
+        }
+      ]
+    },
+    {
+      "name": "an-ordinary-item-never-arms-a-preempt",
+      "covers": [
+        "service.armed_preempt_requires_preemptive"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "high_ordinary",
+          "priority": 99,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "also_ordinary",
+          "priority": 95,
+          "preemptive": false
+        },
+        {
+          "kind": "drain"
+        }
+      ]
+    },
+    {
+      "name": "a-guard-activation-authority-rides-with-its-item",
+      "covers": [
+        "service.guard_activation_authority"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "final:d-1",
+          "priority": 90,
+          "preemptive": true,
+          "guard_delegate_id": "d-1",
+          "source_epoch": 3
+        },
+        {
+          "kind": "queue",
+          "event_id": "observation:d-1:7",
+          "priority": 90,
+          "preemptive": true,
+          "guard_delegate_id": "d-1"
+        },
+        {
+          "kind": "drain"
+        }
+      ]
+    },
+    {
+      "name": "a-semantic-event-id-rides-with-its-item",
+      "covers": [
+        "service.semantic_event_id"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "final:d-2",
+          "priority": 50,
+          "preemptive": false,
+          "semantic_event_id": "ack-1"
+        },
+        {
+          "kind": "queue",
+          "event_id": "plain",
+          "priority": 50,
+          "preemptive": false
+        },
+        {
+          "kind": "drain"
+        }
+      ]
+    },
+    {
+      "name": "popping-an-empty-queue-yields-nothing",
+      "covers": [
+        "service.empty_queue"
+      ],
+      "steps": [
+        {
+          "kind": "pop"
+        },
+        {
+          "kind": "drain"
+        },
+        {
+          "kind": "pop"
+        }
+      ]
+    },
+    {
+      "name": "interleaved-queueing-and-popping-keeps-the-order-stable",
+      "covers": [
+        "service.queue_interleaved"
+      ],
+      "steps": [
+        {
+          "kind": "queue",
+          "event_id": "a",
+          "priority": 50,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "b",
+          "priority": 70,
+          "preemptive": false
+        },
+        {
+          "kind": "pop"
+        },
+        {
+          "kind": "queue",
+          "event_id": "c",
+          "priority": 60,
+          "preemptive": false
+        },
+        {
+          "kind": "queue",
+          "event_id": "d",
+          "priority": 70,
+          "preemptive": false
+        },
+        {
+          "kind": "pop"
+        },
+        {
+          "kind": "queue",
+          "event_id": "e",
+          "priority": 50,
+          "preemptive": false
+        },
+        {
+          "kind": "drain"
+        }
+      ]
+    }
+  ]
+}

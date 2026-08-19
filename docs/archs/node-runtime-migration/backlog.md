@@ -188,6 +188,24 @@ through both pipelines, plus 261,282 adjacent pairs drawn from every unassigned 
 be a real script. Zero divergences. If a future CPython adopts Unicode 16.0, the "host alone does not
 agree" tests fail and the holdback can be deleted rather than carried indefinitely.
 
+### Coupling the family split did not predict: delivery reaches Guard
+
+The service port was planned in three batches, with Guard (family L) and project confirmation (family
+I) deferred because both are gated -- `controlled_guard_reconnect=False` and
+`project_confirmation is None`. That holds for the *features*, but not for the call graph:
+`_delivery_pass` calls `_maybe_preempt_locked` and `_flush_host_items_locked` calls
+`_guard_overlap_allowed`, both family L.
+
+They are reachable only when a host item is queued `preemptive`, which happens only when an executor
+manifest's policy priority is at or above `PREEMPT_MIN_PRIORITY` (80). No core-path scenario configures
+one, so the paths are structurally inert -- but inert is not absent, and a port that silently took the
+inert branch would be indistinguishable from a correct one.
+
+The Node port therefore reaches an explicit `NotYetPortedError` at each of those two points rather
+than returning the inert answer. A scenario that gets there fails with a name. This is the reason the
+delivery path can be landed before Guard at all, and the reason a future Guard scenario cannot
+accidentally pass against the unported code.
+
 ### Corrected in the port: nullish coalescing is not Python truthiness
 
 The bridge picks a task summary from the first of `work_order`, `task`, `condition` that has

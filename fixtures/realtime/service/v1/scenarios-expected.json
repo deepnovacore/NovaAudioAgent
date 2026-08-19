@@ -1,0 +1,1019 @@
+{
+  "schema_version": 1,
+  "constants": {
+    "preempt_min_priority": 80,
+    "user_priority": 100
+  },
+  "scenarios": [
+    {
+      "name": "higher-priority-is-delivered-first",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 30
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "low",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 90
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "high",
+              "seq": 2
+            },
+            {
+              "event_id": "low",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "queue",
+          "result": {
+            "seq": 3,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "high",
+              "seq": 2
+            },
+            {
+              "event_id": "mid",
+              "seq": 3
+            },
+            {
+              "event_id": "low",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 3,
+          "kind": "drain",
+          "result": [
+            {
+              "event_id": "high",
+              "priority": 90,
+              "preemptive": false,
+              "seq": 2
+            },
+            {
+              "event_id": "mid",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 3
+            },
+            {
+              "event_id": "low",
+              "priority": 30,
+              "preemptive": false,
+              "seq": 1
+            }
+          ],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "equal-priority-keeps-insertion-order",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "first",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "first",
+              "seq": 1
+            },
+            {
+              "event_id": "second",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "queue",
+          "result": {
+            "seq": 3,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "first",
+              "seq": 1
+            },
+            {
+              "event_id": "second",
+              "seq": 2
+            },
+            {
+              "event_id": "third",
+              "seq": 3
+            }
+          ]
+        },
+        {
+          "step": 3,
+          "kind": "queue",
+          "result": {
+            "seq": 4,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "first",
+              "seq": 1
+            },
+            {
+              "event_id": "second",
+              "seq": 2
+            },
+            {
+              "event_id": "third",
+              "seq": 3
+            },
+            {
+              "event_id": "fourth",
+              "seq": 4
+            }
+          ]
+        },
+        {
+          "step": 4,
+          "kind": "queue",
+          "result": {
+            "seq": 5,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "first",
+              "seq": 1
+            },
+            {
+              "event_id": "second",
+              "seq": 2
+            },
+            {
+              "event_id": "third",
+              "seq": 3
+            },
+            {
+              "event_id": "fourth",
+              "seq": 4
+            },
+            {
+              "event_id": "fifth",
+              "seq": 5
+            }
+          ]
+        },
+        {
+          "step": 5,
+          "kind": "drain",
+          "result": [
+            {
+              "event_id": "first",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 1
+            },
+            {
+              "event_id": "second",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 2
+            },
+            {
+              "event_id": "third",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 3
+            },
+            {
+              "event_id": "fourth",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 4
+            },
+            {
+              "event_id": "fifth",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 5
+            }
+          ],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "a-preemptive-item-outranks-an-ordinary-one-of-equal-priority",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 85
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "ordinary",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 85
+          },
+          "armed_preempt_priority": 85,
+          "eligible_preempt": true,
+          "queued_order": [
+            {
+              "event_id": "preemptive",
+              "seq": 2
+            },
+            {
+              "event_id": "ordinary",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "drain",
+          "result": [
+            {
+              "event_id": "preemptive",
+              "priority": 85,
+              "preemptive": true,
+              "seq": 2
+            },
+            {
+              "event_id": "ordinary",
+              "priority": 85,
+              "preemptive": false,
+              "seq": 1
+            }
+          ],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "priority-outranks-preemptiveness",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 80
+          },
+          "armed_preempt_priority": 80,
+          "eligible_preempt": true,
+          "queued_order": [
+            {
+              "event_id": "preemptive_low",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 95
+          },
+          "armed_preempt_priority": 80,
+          "eligible_preempt": true,
+          "queued_order": [
+            {
+              "event_id": "ordinary_high",
+              "seq": 2
+            },
+            {
+              "event_id": "preemptive_low",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "drain",
+          "result": [
+            {
+              "event_id": "ordinary_high",
+              "priority": 95,
+              "preemptive": false,
+              "seq": 2
+            },
+            {
+              "event_id": "preemptive_low",
+              "priority": 80,
+              "preemptive": true,
+              "seq": 1
+            }
+          ],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "nothing-the-host-says-outranks-the-user",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 99
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "clamped",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 99
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "clamped",
+              "seq": 1
+            },
+            {
+              "event_id": "way_over",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "queue",
+          "result": {
+            "seq": 3,
+            "effective_priority": 99
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "clamped",
+              "seq": 1
+            },
+            {
+              "event_id": "way_over",
+              "seq": 2
+            },
+            {
+              "event_id": "just_under",
+              "seq": 3
+            }
+          ]
+        },
+        {
+          "step": 3,
+          "kind": "drain",
+          "result": [
+            {
+              "event_id": "clamped",
+              "priority": 99,
+              "preemptive": false,
+              "seq": 1
+            },
+            {
+              "event_id": "way_over",
+              "priority": 99,
+              "preemptive": false,
+              "seq": 2
+            },
+            {
+              "event_id": "just_under",
+              "priority": 99,
+              "preemptive": false,
+              "seq": 3
+            }
+          ],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "the-armed-preempt-priority-tracks-what-is-still-queued",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 90
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "ordinary",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "pop",
+          "result": {
+            "event_id": "ordinary",
+            "priority": 90,
+            "preemptive": false,
+            "seq": 1
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        },
+        {
+          "step": 2,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 60
+          },
+          "armed_preempt_priority": 60,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "weak_preempt",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 3,
+          "kind": "queue",
+          "result": {
+            "seq": 3,
+            "effective_priority": 95
+          },
+          "armed_preempt_priority": 95,
+          "eligible_preempt": true,
+          "queued_order": [
+            {
+              "event_id": "strong_preempt",
+              "seq": 3
+            },
+            {
+              "event_id": "weak_preempt",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 4,
+          "kind": "queue",
+          "result": {
+            "seq": 4,
+            "effective_priority": 85
+          },
+          "armed_preempt_priority": 95,
+          "eligible_preempt": true,
+          "queued_order": [
+            {
+              "event_id": "strong_preempt",
+              "seq": 3
+            },
+            {
+              "event_id": "mid_preempt",
+              "seq": 4
+            },
+            {
+              "event_id": "weak_preempt",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 5,
+          "kind": "pop",
+          "result": {
+            "event_id": "strong_preempt",
+            "priority": 95,
+            "preemptive": true,
+            "seq": 3
+          },
+          "armed_preempt_priority": 85,
+          "eligible_preempt": true,
+          "queued_order": [
+            {
+              "event_id": "mid_preempt",
+              "seq": 4
+            },
+            {
+              "event_id": "weak_preempt",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 6,
+          "kind": "pop",
+          "result": {
+            "event_id": "mid_preempt",
+            "priority": 85,
+            "preemptive": true,
+            "seq": 4
+          },
+          "armed_preempt_priority": 60,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "weak_preempt",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 7,
+          "kind": "pop",
+          "result": {
+            "event_id": "weak_preempt",
+            "priority": 60,
+            "preemptive": true,
+            "seq": 2
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "an-ordinary-item-never-arms-a-preempt",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 99
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "high_ordinary",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 95
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "high_ordinary",
+              "seq": 1
+            },
+            {
+              "event_id": "also_ordinary",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "drain",
+          "result": [
+            {
+              "event_id": "high_ordinary",
+              "priority": 99,
+              "preemptive": false,
+              "seq": 1
+            },
+            {
+              "event_id": "also_ordinary",
+              "priority": 95,
+              "preemptive": false,
+              "seq": 2
+            }
+          ],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "a-guard-activation-authority-rides-with-its-item",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 90
+          },
+          "armed_preempt_priority": 90,
+          "eligible_preempt": true,
+          "queued_order": [
+            {
+              "event_id": "final:d-1",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 90
+          },
+          "armed_preempt_priority": 90,
+          "eligible_preempt": true,
+          "queued_order": [
+            {
+              "event_id": "final:d-1",
+              "seq": 1
+            },
+            {
+              "event_id": "observation:d-1:7",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "drain",
+          "result": [
+            {
+              "event_id": "final:d-1",
+              "priority": 90,
+              "preemptive": true,
+              "seq": 1
+            },
+            {
+              "event_id": "observation:d-1:7",
+              "priority": 90,
+              "preemptive": true,
+              "seq": 2
+            }
+          ],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "a-semantic-event-id-rides-with-its-item",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "final:d-2",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "final:d-2",
+              "seq": 1
+            },
+            {
+              "event_id": "plain",
+              "seq": 2
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "drain",
+          "result": [
+            {
+              "event_id": "final:d-2",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 1
+            },
+            {
+              "event_id": "plain",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 2
+            }
+          ],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "popping-an-empty-queue-yields-nothing",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "pop",
+          "result": null,
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        },
+        {
+          "step": 1,
+          "kind": "drain",
+          "result": [],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        },
+        {
+          "step": 2,
+          "kind": "pop",
+          "result": null,
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    },
+    {
+      "name": "interleaved-queueing-and-popping-keeps-the-order-stable",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "queue",
+          "result": {
+            "seq": 1,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "a",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "kind": "queue",
+          "result": {
+            "seq": 2,
+            "effective_priority": 70
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "b",
+              "seq": 2
+            },
+            {
+              "event_id": "a",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "kind": "pop",
+          "result": {
+            "event_id": "b",
+            "priority": 70,
+            "preemptive": false,
+            "seq": 2
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "a",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 3,
+          "kind": "queue",
+          "result": {
+            "seq": 3,
+            "effective_priority": 60
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "c",
+              "seq": 3
+            },
+            {
+              "event_id": "a",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 4,
+          "kind": "queue",
+          "result": {
+            "seq": 4,
+            "effective_priority": 70
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "d",
+              "seq": 4
+            },
+            {
+              "event_id": "c",
+              "seq": 3
+            },
+            {
+              "event_id": "a",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 5,
+          "kind": "pop",
+          "result": {
+            "event_id": "d",
+            "priority": 70,
+            "preemptive": false,
+            "seq": 4
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "c",
+              "seq": 3
+            },
+            {
+              "event_id": "a",
+              "seq": 1
+            }
+          ]
+        },
+        {
+          "step": 6,
+          "kind": "queue",
+          "result": {
+            "seq": 5,
+            "effective_priority": 50
+          },
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": [
+            {
+              "event_id": "c",
+              "seq": 3
+            },
+            {
+              "event_id": "a",
+              "seq": 1
+            },
+            {
+              "event_id": "e",
+              "seq": 5
+            }
+          ]
+        },
+        {
+          "step": 7,
+          "kind": "drain",
+          "result": [
+            {
+              "event_id": "c",
+              "priority": 60,
+              "preemptive": false,
+              "seq": 3
+            },
+            {
+              "event_id": "a",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 1
+            },
+            {
+              "event_id": "e",
+              "priority": 50,
+              "preemptive": false,
+              "seq": 5
+            }
+          ],
+          "armed_preempt_priority": null,
+          "eligible_preempt": false,
+          "queued_order": []
+        }
+      ]
+    }
+  ]
+}
