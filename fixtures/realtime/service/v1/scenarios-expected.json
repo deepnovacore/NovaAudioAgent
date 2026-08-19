@@ -1015,5 +1015,179 @@
         }
       ]
     }
+  ],
+  "projections": [
+    {
+      "name": "deadline-wording",
+      "content": "Codex 的委派任务超时，未能确认结果。"
+    },
+    {
+      "name": "deadline-wording-generic",
+      "content": "watch 的委派任务超时，未能确认结果。"
+    },
+    {
+      "name": "progress-started",
+      "content": "Codex 已开始处理这个任务。"
+    },
+    {
+      "name": "progress-summary-plain",
+      "summary": "running the test suite",
+      "content": "Codex 正在执行：running the test suite（已进行12秒）"
+    },
+    {
+      "name": "progress-summary-markdown",
+      "summary": "running pytest on everything",
+      "content": "Codex 正在执行：running pytest on everything（已进行3秒）"
+    },
+    {
+      "name": "progress-elapsed-0-0",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行0秒）"
+    },
+    {
+      "name": "progress-elapsed-0-4",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行0秒）"
+    },
+    {
+      "name": "progress-elapsed-0-5",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行0秒）"
+    },
+    {
+      "name": "progress-elapsed-0-6",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行1秒）"
+    },
+    {
+      "name": "progress-elapsed-1-4",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行1秒）"
+    },
+    {
+      "name": "progress-elapsed-1-5",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行2秒）"
+    },
+    {
+      "name": "progress-elapsed-2-5",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行2秒）"
+    },
+    {
+      "name": "progress-elapsed-3-5",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行4秒）"
+    },
+    {
+      "name": "progress-elapsed-7-5",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行8秒）"
+    },
+    {
+      "name": "progress-elapsed-12-5",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行12秒）"
+    },
+    {
+      "name": "progress-elapsed-59-5",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行60秒）"
+    },
+    {
+      "name": "progress-elapsed-60-5",
+      "summary": "still going",
+      "content": "Codex 正在执行：still going（已进行60秒）"
+    },
+    {
+      "name": "progress-steps",
+      "content": "Codex 仍在处理这个任务，目前已推进 42 个步骤。"
+    },
+    {
+      "name": "final-codex-ok",
+      "content": "Codex 任务未能确认完成（no_final_message）"
+    },
+    {
+      "name": "final-codex-failed",
+      "content": "Codex 任务未能确认完成（no_final_message）"
+    },
+    {
+      "name": "final-generic-ok",
+      "content": "watch 报告命中：构建完成了"
+    },
+    {
+      "name": "final-generic-failed",
+      "content": "watch 任务失败（watch_failed）"
+    },
+    {
+      "name": "hit-priority-40-hit",
+      "priority": 55,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-40-miss",
+      "priority": 40,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-50-hit",
+      "priority": 55,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-50-miss",
+      "priority": 50,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-55-hit",
+      "priority": 55,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-55-miss",
+      "priority": 55,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-60-hit",
+      "priority": 60,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-60-miss",
+      "priority": 60,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-79-hit",
+      "priority": 79,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-79-miss",
+      "priority": 79,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-80-hit",
+      "priority": 80,
+      "preemptive": true
+    },
+    {
+      "name": "hit-priority-80-miss",
+      "priority": 80,
+      "preemptive": false
+    },
+    {
+      "name": "hit-priority-90-hit",
+      "priority": 90,
+      "preemptive": true
+    },
+    {
+      "name": "hit-priority-90-miss",
+      "priority": 90,
+      "preemptive": false
+    }
   ]
 }

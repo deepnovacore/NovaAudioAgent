@@ -129,6 +129,21 @@ export class CoreRuntime {
   readonly #terminationKind = new Map<string, 'handoff' | 'deadline'>()
   readonly #terminationOutcome = new Map<string, 'ok' | 'unknown' | 'failed'>()
   readonly #handoffSeen = new Set<string>()
+  /**
+   * What the event currently being applied did to a delegate, for the observer that runs next.
+   *
+   * The oracle keeps the same one-slot claim and compares it to the event by *object identity*. That
+   * is unavailable here: the observer is handed a `structuredClone`, so the object it sees is never
+   * the one that set the claim. The queue sequence is the faithful substitute -- every applied event
+   * in one runtime carries a unique one, and the observer runs synchronously between `apply` and the
+   * next `apply`, so a matching sequence means the same event and nothing else can have intervened.
+   *
+   * (The oracle rejected sequence comparison for its own version, on the grounds that a
+   * hand-constructed `Deadline` defaults to `seq=-1` and two of them compare equal. That is about
+   * events built in a test, not about events that went through the queue.)
+   */
+  #eventClaim: {readonly seq: number; readonly delegate: Delegate} | undefined
+  #eventDeadlineTermination: {readonly seq: number; readonly delegateId: string} | undefined
   readonly #fencedDelegates = new Set<string>()
   readonly #retainRoutingHistory: boolean
   readonly #freshWindow: number
@@ -372,11 +387,15 @@ export class CoreRuntime {
       }
       case 'handoff': {
         const delegate = this.#applyHandoff(event)
+        if (delegate !== undefined) this.#eventClaim = {seq: event.seq, delegate}
         target = this.#handoffTarget(event, delegate)
         break
       }
       case 'deadline': {
         const delegate = this.#applyDeadline(event)
+        if (delegate !== undefined) {
+          this.#eventDeadlineTermination = {seq: event.seq, delegateId: delegate.delegate_id}
+        }
         target = delegate === undefined ? null : this.#resultTarget(delegate, event.kind)
         break
       }
@@ -541,6 +560,51 @@ export class CoreRuntime {
       outcome: 'failed',
     })
     return false
+  }
+
+  /**
+   * The delegate a handoff event claimed, if this exact event claimed one.
+   *
+   * A handoff that claimed nothing -- a duplicate, or one for a delegate already settled -- returns
+   * undefined even when an earlier handoff left a claim behind, which is the whole point of matching
+   * the sequence rather than just reading the slot.
+   */
+  claimedHandoff(seq: number): Delegate | undefined {
+    return this.#eventClaim?.seq === seq ? this.#eventClaim.delegate : undefined
+  }
+
+  /**
+   * Whether this exact deadline event is the one that terminated its delegate.
+   *
+   * Not "is it still in flight": the four-step termination already removed it from the in-flight
+   * table inside `apply`, so a later deadline for the same delegate would look identical. And not
+   * "was it terminated by a deadline at some point", which stays true for a second deadline and would
+   * announce the same timeout twice.
+   */
+  terminatedByDeadline(seq: number, delegateId: string): boolean {
+    return this.#eventDeadlineTermination?.seq === seq
+      && this.#eventDeadlineTermination.delegateId === delegateId
+  }
+
+  /**
+   * The delegate from either table, whether or not it is still in flight.
+   *
+   * A late handoff needs the values bound at dispatch time, so a terminated delegate has to stay
+   * findable.
+   */
+  delegateFor(delegateId: string): Delegate | undefined {
+    return this.#inFlight.get(delegateId) ?? this.#routableDelegates.get(delegateId)
+  }
+
+  /**
+   * The delegate only if it is still in flight.
+   *
+   * The difference from `delegateFor` is the whole distinction between "this run is live" and "this
+   * run happened": a progress or observation event for a settled delegate describes a run that is
+   * over, and projecting it would report activity that has stopped.
+   */
+  inFlightDelegate(delegateId: string): Delegate | undefined {
+    return this.#inFlight.get(delegateId)
   }
 
   activeDelegates(): readonly Delegate[] {

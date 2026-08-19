@@ -183,6 +183,26 @@ export class CausalRuntime {
     return accepted
   }
 
+  /** The delegate a handoff claimed, for an observer projecting that exact event. */
+  claimedHandoff(seq: number): Delegate | undefined {
+    return this.core.claimedHandoff(seq)
+  }
+
+  /** Whether this exact deadline terminated its delegate. */
+  terminatedByDeadline(seq: number, delegateId: string): boolean {
+    return this.core.terminatedByDeadline(seq, delegateId)
+  }
+
+  /** The delegate from either table, whether or not it is still in flight. */
+  delegateFor(delegateId: string): Delegate | undefined {
+    return this.core.delegateFor(delegateId)
+  }
+
+  /** The delegate only if it is still in flight. */
+  inFlightDelegate(delegateId: string): Delegate | undefined {
+    return this.core.inFlightDelegate(delegateId)
+  }
+
   observe(observer: RuntimeObserver): () => void {
     this.#observers.add(observer)
     return () => this.#observers.delete(observer)

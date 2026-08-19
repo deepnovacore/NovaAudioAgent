@@ -16,7 +16,7 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import { VirtualClock } from '../src/clock.js'
-import type { JsonValue } from '../src/events.js'
+import type { EventRecord, JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
 import { RealtimeRuntimeBridge } from '../src/realtime/bridge.js'
@@ -27,7 +27,12 @@ import {
   RealtimeService,
   type ServiceProvider,
 } from '../src/realtime/service.js'
-import { PREEMPT_MIN_PRIORITY, type QueuedHostResponse } from '../src/realtime/service-state.js'
+import {
+  MAX_HOST_FACT_CHARS,
+  PREEMPT_MIN_PRIORITY,
+  type QueuedHostResponse,
+} from '../src/realtime/service-state.js'
+import { SPEECH_FINAL_LIMIT } from '../src/realtime/speech-prep.js'
 import { RealtimeSession, type SessionProvider } from '../src/realtime/session.js'
 import { PlaybackRegistry } from '../src/playback.js'
 import { compileToolSchema } from '../src/tool-schema.js'
@@ -185,13 +190,6 @@ test('an unported family fails by name rather than behaving as if it were off', 
   // project runtime events looks exactly like one with no events to project. Each entry point still
   // waiting on a family is listed, so this test is the record of what is missing.
   const service = queueOnlyService()
-  assert.throws(() => service.projectRuntimeEvent({}, {
-    kind: 'test',
-    priority: 50,
-    routing_class: 'user_awaited',
-    origin: null,
-    selected_suggestion: null,
-  }), NotYetPortedError, 'family O: runtime event projection')
   await assert.rejects(
     () => service.handleEvent({
       kind: 'response_cancel_rejected',
@@ -298,6 +296,10 @@ function queueOnlyOptions(): ConstructorParameters<typeof RealtimeService>[0] {
       clock,
       executors,
       observe: () => unsubscribeNothing,
+      claimedHandoff: () => undefined,
+      terminatedByDeadline: () => false,
+      delegateFor: () => undefined,
+      inFlightDelegate: () => undefined,
       // Never resolves: the runtime loop outlives every test here, and resolving it would look like
       // the loop ending, which the service treats as a failure.
       serve: () => new Promise<void>(() => undefined),
@@ -664,6 +666,13 @@ function pipelineService(options: {
     onDiagnostic: () => undefined,
   })
   const scripted = options.toolResult ?? {accepted: true, delegateId: 'd-1'}
+  const pipelineDelegate = {
+    delegate_id: 'd-1',
+    executor: 'codex',
+    op: 'start',
+    origin_ref: 'conversation:1',
+    routing_class: 'user_awaited',
+  }
   let ingested = 0
   const service = new RealtimeService({
     provider,
@@ -671,6 +680,12 @@ function pipelineService(options: {
       clock,
       executors,
       observe: () => unsubscribeNothing,
+      // A live delegate, so a projected progress event reaches the decisions this fixture is for
+      // rather than being refused at the in-flight check.
+      claimedHandoff: () => pipelineDelegate,
+      terminatedByDeadline: () => true,
+      delegateFor: () => pipelineDelegate,
+      inFlightDelegate: () => pipelineDelegate,
       serve: (signal: AbortSignal) => new Promise<void>(resolve => {
         signal.addEventListener('abort', () => resolve(), {once: true})
       }),
@@ -1100,4 +1115,1109 @@ test('a provider close that never settles does not block shutdown', async () => 
     true,
     'a transport that would not close has to be named',
   )
+})
+
+/**
+ * The projection's spoken text, against the Python-exported golden.
+ *
+ * What a user hears is the part where two runtimes that both "work" can still differ: the wording, the
+ * elapsed-seconds rendering, and the priority a hit is queued at. Exercised through the same helpers
+ * the projection uses rather than through a whole assembled service, which would be measuring the
+ * provider and session instead.
+ */
+interface Projection {
+  readonly name: string
+  readonly kind: string
+  readonly display_name: string
+  readonly summary?: string
+  readonly elapsed?: number
+  readonly internal_activity?: number
+  readonly outcome?: string
+  readonly content?: Readonly<Record<string, JsonValue>>
+  readonly manifest_priority?: number
+  readonly hit?: boolean
+}
+
+const projectionDocument = JSON.parse(
+  readFileSync(resolve(fixtureRoot, 'scenarios.json'), 'utf8'),
+) as {readonly projections: readonly Projection[]}
+const projectionGolden = JSON.parse(
+  readFileSync(resolve(fixtureRoot, 'scenarios-expected.json'), 'utf8'),
+) as {readonly projections: readonly Record<string, unknown>[]}
+
+/**
+ * Run one projection *through the service*, and report what the user would get.
+ *
+ * Deliberately not a reimplementation of the formatting. A test that restated the wording would agree
+ * with itself no matter what the service did -- which is exactly what an earlier version of this file
+ * did, and a mutation sweep found five projection changes it could not see.
+ */
+function runProjection(spec: Projection): Record<string, unknown> {
+  const channel = spec.display_name === 'Codex' ? 'codex' : spec.display_name
+  const priority = spec.manifest_priority ?? 50
+  const {service, queuedItems} = projectionService({
+    delegate: {executor: channel, op: 'start', routing_class: 'user_awaited'},
+    priority,
+  })
+  switch (spec.kind) {
+    case 'deadline':
+      service.projectRuntimeEvent({
+        kind: 'deadline',
+        seq: 1,
+        ts: 1,
+        payload: {delegate_id: 'd-1'},
+      })
+      return {name: spec.name, content: queuedItems()[0]?.intent.item.content ?? null}
+    case 'progress_started':
+      service.projectRuntimeEvent({
+        kind: 'progress',
+        seq: 1,
+        ts: 1,
+        payload: {
+          channel,
+          delegate_id: 'd-1',
+          op: 'start',
+          phase: 'started',
+          internal_activity: 0,
+          elapsed: 0,
+          summary: null,
+        },
+      })
+      return {name: spec.name, content: queuedItems()[0]?.intent.item.content ?? null}
+    case 'progress_summary': {
+      service.projectRuntimeEvent({
+        kind: 'progress',
+        seq: 1,
+        ts: 1,
+        payload: {
+          channel,
+          delegate_id: 'd-1',
+          op: 'start',
+          phase: 'working',
+          internal_activity: 1,
+          elapsed: spec.elapsed!,
+          summary: spec.summary!,
+        },
+      })
+      const content = queuedItems()[0]?.intent.item.content ?? null
+      // The prepared summary is what the sentence carries, recovered from it rather than recomputed.
+      const summary = content === null
+        ? null
+        : content.slice(content.indexOf('：') + 1, content.lastIndexOf('（'))
+      return {name: spec.name, summary, content}
+    }
+    case 'progress_steps':
+      service.projectRuntimeEvent({
+        kind: 'progress',
+        seq: 1,
+        ts: 1,
+        payload: {
+          channel,
+          delegate_id: 'd-1',
+          op: 'start',
+          phase: 'working',
+          internal_activity: spec.internal_activity!,
+          elapsed: 1,
+          summary: null,
+        },
+      })
+      return {name: spec.name, content: queuedItems()[0]?.intent.item.content ?? null}
+    case 'final_codex':
+    case 'final_generic':
+      service.projectRuntimeEvent({
+        kind: 'handoff',
+        seq: 1,
+        ts: 1,
+        payload: {
+          channel,
+          delegate_id: 'd-1',
+          origin_ref: 'conversation:1',
+          outcome: spec.outcome as 'ok' | 'failed',
+          trust: 'trusted_system',
+          content: spec.content!,
+          refs: [],
+        },
+      })
+      return {name: spec.name, content: queuedItems()[0]?.intent.item.content ?? null}
+    case 'hit_priority': {
+      service.projectRuntimeEvent({
+        kind: 'handoff',
+        seq: 1,
+        ts: 1,
+        payload: {
+          channel,
+          delegate_id: 'd-1',
+          origin_ref: 'conversation:1',
+          outcome: 'ok',
+          trust: 'trusted_system',
+          content: spec.hit === true ? {hit: true, observation: 'x'} : {summary: 'x'},
+          refs: [],
+        },
+      })
+      const queued = queuedItems()[0]
+      return {
+        name: spec.name,
+        priority: queued?.priority ?? null,
+        preemptive: queued?.preemptive ?? null,
+      }
+    }
+    default:
+      throw new Error(`unsupported projection kind: ${spec.kind}`)
+  }
+}
+
+test('every projection matches the Python-exported golden', () => {
+  const divergent: string[] = []
+  for (const [index, spec] of projectionDocument.projections.entries()) {
+    const actual = runProjection(spec)
+    const expected = projectionGolden.projections[index]
+    if (canonicalJson(actual) !== canonicalJson(expected)) {
+      divergent.push(
+        `${spec.name}: python=${canonicalJson(expected)} node=${canonicalJson(actual)}`,
+      )
+    }
+  }
+  assert.deepEqual(divergent, [], 'projected text or priority differs from the oracle')
+})
+
+/**
+ * The projection driven through a real service.
+ *
+ * The golden above covers the *text*; these cover the decisions around it -- what gets queued at all,
+ * and what is deliberately silent. Both are behaviour a user notices: the first as the agent saying
+ * nothing, the second as the agent repeating itself.
+ */
+function projectionService(options: {
+  readonly delegate?: {readonly executor: string; readonly op: string; readonly routing_class: string}
+  readonly suggest?: boolean
+  readonly priority?: number
+  readonly progressViaSurrogate?: boolean
+  readonly syncResultOps?: boolean
+  /** What the runtime's lookups return. Each default is the permissive answer, so a test that needs a
+   * guard to fire says so explicitly rather than relying on a double that happens to refuse. */
+  readonly claims?: boolean
+  readonly terminates?: boolean
+  readonly inFlight?: boolean
+  readonly delegateOverride?: Partial<{
+    readonly executor: string
+    readonly op: string
+    readonly origin_ref: string
+    readonly routing_class: string
+  }>
+} = {}): {
+  readonly service: RealtimeService
+  readonly queued: () => readonly string[]
+  readonly queuedItems: () => readonly QueuedHostResponse[]
+} {
+  const delegate = options.delegate ?? {
+    executor: 'codex',
+    op: 'start',
+    routing_class: 'user_awaited',
+  }
+  const manifest = executorManifestSchema.parse({
+    name: delegate.executor,
+    policy: {
+      channel: delegate.executor,
+      priority: options.priority ?? 50,
+      wake: 'fast',
+      typical_latency: 5,
+      compress_watermark: 8,
+      suggest: options.suggest ?? false,
+      progress_via_surrogate: options.progressViaSurrogate ?? false,
+    },
+    ops: [
+      {
+        name: 'start',
+        description: 'begin work',
+        params: {type: 'object', properties: {}, additionalProperties: false},
+        sync_result: false,
+        deadline_budget: 30,
+      },
+      {
+        name: 'stop',
+        description: 'stop work',
+        params: {type: 'object', properties: {}, additionalProperties: false},
+        deadline_budget: 5,
+      },
+      {
+        name: 'look',
+        description: 'readonly',
+        params: {type: 'object', properties: {}, additionalProperties: false},
+        readonly: true,
+        sync_result: options.syncResultOps ?? false,
+        deadline_budget: 5,
+      },
+    ],
+  })
+  const full = {
+    delegate_id: 'd-1',
+    executor: delegate.executor,
+    op: delegate.op,
+    origin_ref: 'conversation:1',
+    routing_class: delegate.routing_class,
+    ...options.delegateOverride,
+  }
+  const clock = new VirtualClock()
+  const memory = new Memory({policies: [manifest.policy]})
+  const executors = new Map([[manifest.name, {manifest}]])
+  let ids = 0
+  const nextId = (): string => `id-${++ids}`
+  const service = new RealtimeService({
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      events: () => emptyStream(),
+      close: () => Promise.resolve(),
+    },
+    runtime: {
+      clock,
+      executors,
+      observe: () => unsubscribeNothing,
+      serve: () => new Promise<void>(() => undefined),
+      claimedHandoff: () => (options.claims ?? true) ? full : undefined,
+      terminatedByDeadline: () => options.terminates ?? true,
+      delegateFor: () => full,
+      inFlightDelegate: () => (options.inFlight ?? true) ? full : undefined,
+    },
+    tools: compileToolSchema([manifest]),
+    session: new RealtimeSession({
+      provider: {
+        connect: () => Promise.resolve({epoch: 1}),
+        injectHostItem: (item) => Promise.resolve({
+          session_epoch: 1,
+          host_item_id: item.host_item_id,
+        }),
+        createResponse: () => Promise.resolve(),
+        cancelResponse: () => Promise.resolve(),
+        close: () => Promise.resolve(),
+      },
+      playback: new PlaybackRegistry({
+        idFactory: nextId,
+        onFrame: () => undefined,
+        onClear: () => undefined,
+      }),
+      idFactory: nextId,
+      clock,
+      onDiagnostic: () => undefined,
+    }),
+    bridge: new RealtimeRuntimeBridge({
+      runtime: {
+        clock,
+        memory,
+        executors,
+        ingestUserInput: () => Promise.reject(new Error('unused')),
+        updateExternal: () => true,
+        dispatchExternal: () => ({accepted: true, delegate_id: 'd-1'}),
+      },
+      tools: compileToolSchema([manifest]),
+      idFactory: nextId,
+    }),
+    idFactory: nextId,
+    onDiagnostic: () => undefined,
+  })
+  return {
+    service,
+    queued: () => service.queuedHostItems().map(item => item.intent.item.content),
+    queuedItems: () => service.queuedHostItems(),
+  }
+}
+
+function progressEvent(input: {
+  readonly seq: number
+  readonly summary: string | null
+  readonly activity: number
+  readonly elapsed?: number
+}): EventRecord {
+  return {
+    kind: 'progress',
+    seq: input.seq,
+    ts: input.seq,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: 'start',
+      phase: 'working',
+      internal_activity: input.activity,
+      elapsed: input.elapsed ?? 1,
+      summary: input.summary,
+    },
+  }
+}
+
+test('an executor repeating the same progress summary does not make the agent repeat itself', () => {
+  // The same-summary skip. An executor that reports identical progress every few seconds would
+  // otherwise have the agent say the same sentence over and over.
+  const {service, queued} = projectionService()
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: 'running tests', activity: 1}))
+  assert.equal(queued().length, 1, 'the first one is worth saying')
+  service.projectRuntimeEvent(progressEvent({seq: 2, summary: 'running tests', activity: 2}))
+  assert.equal(queued().length, 1, 'the identical repeat is not')
+  service.projectRuntimeEvent(progressEvent({seq: 3, summary: 'linting', activity: 3}))
+  assert.equal(queued().length, 2, 'but a changed summary is')
+  service.projectRuntimeEvent(progressEvent({seq: 4, summary: 'running tests', activity: 4}))
+  assert.equal(queued().length, 3, 'and so is going back to an earlier one')
+})
+
+test('a summary-less progress event is never deduped by the summary mechanism', () => {
+  // Those keep the field template, which changes with the step count, so suppressing them by summary
+  // would suppress genuinely different sentences.
+  const {service, queued} = projectionService()
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: null, activity: 1}))
+  service.projectRuntimeEvent(progressEvent({seq: 2, summary: null, activity: 2}))
+  assert.equal(queued().length, 2)
+})
+
+test('a settled delegate leaves no dedup residue for the next run of its id', () => {
+  // Otherwise a later delegate reusing the id would inherit a summary it never produced, and its first
+  // genuine progress report would be silently swallowed.
+  const {service, queued} = projectionService()
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: 'running tests', activity: 1}))
+  assert.equal(queued().length, 1)
+  service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 2,
+    ts: 2,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {},
+      refs: [],
+    },
+  })
+  const afterHandoff = queued().length
+  // The same summary again, from a new run of the same id, has to be spoken.
+  service.projectRuntimeEvent(progressEvent({seq: 3, summary: 'running tests', activity: 1}))
+  assert.equal(
+    queued().length,
+    afterHandoff + 1,
+    'the settled delegate must not suppress the next run',
+  )
+})
+
+test('a suggestion handoff nobody selected is not announced', () => {
+  // It is a proposal the Surrogate never chose. Announcing it would tell the user about something they
+  // were not offered.
+  const {service, queued} = projectionService({
+    suggest: true,
+    delegate: {executor: 'codex', op: 'start', routing_class: 'ambient'},
+  })
+  service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {summary: 'something happened'},
+      refs: [],
+    },
+  })
+  assert.deepEqual(queued(), [], 'silent')
+
+  // A user-awaited one on the same suggest channel is a direct handoff and does get announced.
+  const direct = projectionService({
+    suggest: true,
+    delegate: {executor: 'codex', op: 'start', routing_class: 'user_awaited'},
+  })
+  direct.service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {summary: 'something happened'},
+      refs: [],
+    },
+  })
+  assert.equal(direct.queued().length, 1)
+})
+
+test('a successful monitor stop is not announced twice', () => {
+  // The stop tool's own continuation is the single spoken confirmation. Both terminal handoffs stay
+  // authoritative in Memory, but projecting either duplicates it -- and projecting both produced
+  // three lines.
+  const {service, queued} = projectionService({
+    delegate: {executor: 'watch', op: 'stop', routing_class: 'user_awaited'},
+  })
+  service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'watch',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {stopped: true},
+      refs: [],
+    },
+  })
+  assert.deepEqual(queued(), [], 'silent')
+
+  // A stop that did not succeed is still worth saying.
+  const failed = projectionService({
+    delegate: {executor: 'watch', op: 'stop', routing_class: 'user_awaited'},
+  })
+  failed.service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'watch',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'failed',
+      trust: 'trusted_system',
+      content: {error: 'could_not_stop'},
+      refs: [],
+    },
+  })
+  assert.equal(failed.queued().length, 1)
+})
+
+test('a handoff that claimed nothing is not projected against an earlier claim', () => {
+  // A duplicate handoff, or one for a delegate already settled, claims nothing. Projecting it against
+  // whatever the previous handoff claimed would announce the same completion twice.
+  const {service, queued} = projectionService({claims: false})
+  service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {summary: 'done'},
+      refs: [],
+    },
+  })
+  assert.deepEqual(queued(), [])
+})
+
+test('a handoff on a channel the delegate does not belong to is not projected', () => {
+  // All the claim proves is that *a* delegate was claimed. If its executor differs, the handoff
+  // describes a different run and projecting it would attribute one executor's result to another.
+  const {service, queued} = projectionService({
+    delegateOverride: {executor: 'watch'},
+  })
+  service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {summary: 'done'},
+      refs: [],
+    },
+  })
+  assert.deepEqual(queued(), [])
+})
+
+test('only the deadline that terminated a delegate announces its timeout', () => {
+  // Not "was terminated by a deadline at some point": a second deadline for the same delegate would
+  // otherwise announce the same timeout again.
+  const {service, queued} = projectionService({terminates: false})
+  service.projectRuntimeEvent({kind: 'deadline', seq: 1, ts: 1, payload: {delegate_id: 'd-1'}})
+  assert.deepEqual(queued(), [])
+
+  const terminating = projectionService({terminates: true})
+  terminating.service.projectRuntimeEvent({
+    kind: 'deadline',
+    seq: 1,
+    ts: 1,
+    payload: {delegate_id: 'd-1'},
+  })
+  assert.equal(terminating.queued().length, 1)
+})
+
+test('a timed-out delegate is unknown, not failed', () => {
+  // A deadline says nobody knows what happened. Telling the model it failed is a claim the host cannot
+  // support, and the model would then narrate a failure that may not have occurred.
+  const {service} = projectionService()
+  service.projectRuntimeEvent({kind: 'deadline', seq: 1, ts: 1, payload: {delegate_id: 'd-1'}})
+  assert.equal(service.session.delegateState('d-1'), 'unknown')
+})
+
+test('a sync-result op resolves its own timeout rather than announcing one', () => {
+  // Its waiting tool call carries the result, so a spoken timeout would be a second, contradictory
+  // account of the same event.
+  const {service, queued} = projectionService({
+    delegate: {executor: 'codex', op: 'look', routing_class: 'user_awaited'},
+    syncResultOps: true,
+  })
+  service.projectRuntimeEvent({kind: 'deadline', seq: 1, ts: 1, payload: {delegate_id: 'd-1'}})
+  assert.deepEqual(queued(), [])
+})
+
+test('an observation is matched to the exact run it belongs to', () => {
+  // All four fields, not just the delegate id: a differing channel, op, or origin describes a
+  // different run, and projecting it would attribute one executor's finding to another's task.
+  for (const override of [
+    {executor: 'watch'},
+    {op: 'stop'},
+    {origin_ref: 'conversation:99'},
+  ]) {
+    const {service, queued} = projectionService({delegateOverride: override})
+    service.projectRuntimeEvent({
+      kind: 'observation',
+      seq: 1,
+      ts: 1,
+      payload: {
+        channel: 'codex',
+        delegate_id: 'd-1',
+        op: 'start',
+        origin_ref: 'conversation:1',
+        trust: 'trusted_system',
+        content: {hit: true, observation: 'found it'},
+        refs: [],
+      },
+    })
+    assert.deepEqual(queued(), [], JSON.stringify(override))
+  }
+  // And the matching one is projected.
+  const {service, queued} = projectionService()
+  service.projectRuntimeEvent({
+    kind: 'observation',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: 'start',
+      origin_ref: 'conversation:1',
+      trust: 'trusted_system',
+      content: {hit: true, observation: 'found it'},
+      refs: [],
+    },
+  })
+  assert.equal(queued().length, 1)
+})
+
+test('an observation is only worth interrupting for when it is a hit', () => {
+  // A heartbeat or a miss registers delegate state and stops there. Announcing every observation would
+  // turn a monitor into a narrator.
+  const {service, queued} = projectionService()
+  service.projectRuntimeEvent({
+    kind: 'observation',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: 'start',
+      origin_ref: 'conversation:1',
+      trust: 'trusted_system',
+      content: {hit: false, observation: 'nothing yet'},
+      refs: [],
+    },
+  })
+  assert.deepEqual(queued(), [])
+  assert.equal(service.session.delegateState('d-1'), 'running', 'state still registered')
+})
+
+test('an ambient hit is the Surrogate to arbitrate, not the host to announce', () => {
+  const {service, queued} = projectionService({
+    suggest: true,
+    delegate: {executor: 'codex', op: 'start', routing_class: 'ambient'},
+  })
+  service.projectRuntimeEvent({
+    kind: 'observation',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: 'start',
+      origin_ref: 'conversation:1',
+      trust: 'trusted_system',
+      content: {hit: true, observation: 'found it'},
+      refs: [],
+    },
+  })
+  assert.deepEqual(queued(), [])
+
+  // A user-awaited hit on the same suggest channel is announced.
+  const awaited = projectionService({
+    suggest: true,
+    delegate: {executor: 'codex', op: 'start', routing_class: 'user_awaited'},
+  })
+  awaited.service.projectRuntimeEvent({
+    kind: 'observation',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: 'start',
+      origin_ref: 'conversation:1',
+      trust: 'trusted_system',
+      content: {hit: true, observation: 'found it'},
+      refs: [],
+    },
+  })
+  assert.equal(awaited.queued().length, 1)
+})
+
+test('an observation hit outranks routine announcements without reaching the preempt band', () => {
+  for (const [priority, expected] of [[40, 55], [55, 55], [60, 60], [90, 90]] as const) {
+    const {service, queuedItems} = projectionService({priority})
+    service.projectRuntimeEvent({
+      kind: 'observation',
+      seq: 1,
+      ts: 1,
+      payload: {
+        channel: 'codex',
+        delegate_id: 'd-1',
+        op: 'start',
+        origin_ref: 'conversation:1',
+        trust: 'trusted_system',
+        content: {hit: true, observation: 'found it'},
+        refs: [],
+      },
+    })
+    assert.equal(queuedItems()[0]?.priority, expected, `manifest priority ${priority}`)
+    assert.equal(
+      queuedItems()[0]?.preemptive,
+      priority >= PREEMPT_MIN_PRIORITY,
+      `preemptive at ${priority}`,
+    )
+  }
+})
+
+test('a progress event for a delegate that is no longer in flight is not projected', () => {
+  // It describes a run that is over. Reporting it would tell the user work is progressing that has
+  // already stopped.
+  const {service, queued} = projectionService({inFlight: false})
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: 'running tests', activity: 1}))
+  assert.deepEqual(queued(), [])
+})
+
+test('a progress event whose shape the runtime dropped is revalidated here', () => {
+  // Observers receive events unconditionally, including ones the runtime validator dropped from
+  // Memory, so the shape is checked again rather than trusted.
+  const malformed: readonly EventRecord[] = [
+    // `started` must carry zero activity.
+    {
+      kind: 'progress',
+      seq: 1,
+      ts: 1,
+      payload: {
+        channel: 'codex',
+        delegate_id: 'd-1',
+        op: 'start',
+        phase: 'started',
+        internal_activity: 3,
+        elapsed: 1,
+        summary: null,
+      },
+    },
+    // `working` must carry at least one step.
+    {
+      kind: 'progress',
+      seq: 2,
+      ts: 2,
+      payload: {
+        channel: 'codex',
+        delegate_id: 'd-1',
+        op: 'start',
+        phase: 'working',
+        internal_activity: 0,
+        elapsed: 1,
+        summary: null,
+      },
+    },
+    // An op the delegate is not running.
+    {
+      kind: 'progress',
+      seq: 3,
+      ts: 3,
+      payload: {
+        channel: 'codex',
+        delegate_id: 'd-1',
+        op: 'stop',
+        phase: 'working',
+        internal_activity: 1,
+        elapsed: 1,
+        summary: null,
+      },
+    },
+  ]
+  for (const event of malformed) {
+    const {service, queued} = projectionService()
+    service.projectRuntimeEvent(event)
+    assert.deepEqual(queued(), [], JSON.stringify(event.payload))
+  }
+})
+
+test('a surrogate-reported channel does not also speak its own working progress', () => {
+  // The Surrogate is already narrating it; the host doing so too is the same fact twice.
+  const {service, queued} = projectionService({progressViaSurrogate: true})
+  service.projectRuntimeEvent(progressEvent({seq: 1, summary: 'running tests', activity: 1}))
+  assert.deepEqual(queued(), [], 'working is silent')
+
+  // `started` still speaks, because that is a transition rather than progress.
+  service.projectRuntimeEvent({
+    kind: 'progress',
+    seq: 2,
+    ts: 2,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: 'start',
+      phase: 'started',
+      internal_activity: 0,
+      elapsed: 0,
+      summary: null,
+    },
+  })
+  assert.equal(queued().length, 1)
+})
+
+test('a host fact is already bounded by speech preparation before the outer cap', () => {
+  // `MAX_HOST_FACT_CHARS` is a backstop rather than the operative limit: every speech view is cut to
+  // `SPEECH_FINAL_LIMIT` (600) first, so the 3000 cap is unreachable through this path and a mutation
+  // removing it is correctly undetectable. Both legs agree at 600, which is what this pins -- the cap
+  // is kept because the oracle keeps it, and because a future view that skipped preparation would need
+  // it.
+  const {service, queuedItems} = projectionService({
+    delegate: {executor: 'watch', op: 'start', routing_class: 'user_awaited'},
+  })
+  service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'watch',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {hit: true, observation: '很'.repeat(8_000)},
+      refs: [],
+    },
+  })
+  const content = queuedItems()[0]?.intent.item.content ?? ''
+  assert.equal([...content].length, SPEECH_FINAL_LIMIT, 'bounded by speech preparation')
+  assert.ok([...content].length < MAX_HOST_FACT_CHARS, 'well inside the outer cap')
+})
+
+test('a progress event with an empty op is refused', () => {
+  // Part of the CP1 revalidation. Redundant as the code stands -- the in-flight match immediately
+  // after compares the op against the delegate's, and no delegate has an empty one -- so a mutation
+  // removing it is correctly undetectable. Kept because the oracle keeps it, and asserted here so the
+  // redundancy is recorded rather than rediscovered by the next sweep.
+  const {service, queued} = projectionService()
+  service.projectRuntimeEvent({
+    kind: 'progress',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: '',
+      phase: 'working',
+      internal_activity: 1,
+      elapsed: 1,
+      summary: null,
+    },
+  })
+  assert.deepEqual(queued(), [])
+})
+
+test('a started fact is suppressed when the acknowledgement already said it', async () => {
+  // The delegation acknowledgement continuation has already told the user the task was accepted. A
+  // spoken started fact right after would say the same thing twice -- while the delegate state
+  // registration still has to happen, because the renderer depends on it.
+  const {service} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-item-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+  // The admission created the acknowledgement this suppression depends on.
+  assert.equal(service.toolCallAcceptances()[0]?.acceptance.delegate_id, 'd-1')
+
+  const before = service.pendingHostItemCount
+  service.projectRuntimeEvent({
+    kind: 'progress',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: 'start',
+      phase: 'started',
+      internal_activity: 0,
+      elapsed: 0,
+      summary: null,
+    },
+  })
+  assert.equal(service.pendingHostItemCount, before, 'nothing queued: it was already said')
+  assert.equal(service.session.delegateState('d-1'), 'running', 'but state is still registered')
+})
+
+/**
+ * Two user turns and two responses, which is the smallest shape that can tell binding order apart.
+ *
+ * With one of each, oldest-first and newest-first produce the same answer -- which is why the earlier
+ * version of this suite could not see a mutation that reversed it.
+ */
+async function twoTurns(service: RealtimeService): Promise<void> {
+  for (const index of [1, 2]) {
+    await service.handleEvent({
+      kind: 'user_speech_started',
+      session_epoch: 1,
+      speech_id: `speech-${index}`,
+      provider_item_id: `user-item-${index}`,
+    })
+    await service.handleEvent({
+      kind: 'user_speech_ended',
+      session_epoch: 1,
+      speech_id: `speech-${index}`,
+      provider_item_id: `user-item-${index}`,
+    })
+  }
+}
+
+test('responses claim user turns oldest first', () => {
+  // Responses and user turns pair up in order. A response that grabbed the newer item would leave the
+  // older one for a later response that did not cause it, and every tool call after that would cite
+  // the wrong turn.
+  return (async (): Promise<void> => {
+    const {service} = pipelineService()
+    await service.connect()
+    await twoTurns(service)
+    assert.equal(service.unboundUserOriginCountForTest, 2)
+
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+    assert.equal(service.unboundUserOriginCountForTest, 1, 'one claimed')
+    assert.deepEqual(service.boundOriginsForTest, [['1:r-1', 'user-item-1']], 'the oldest')
+
+    await service.handleEvent({
+      kind: 'response_terminal',
+      session_epoch: 1,
+      response_id: 'r-1',
+      status: 'completed',
+      reason: '',
+    })
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
+    assert.deepEqual(service.boundOriginsForTest, [
+      ['1:r-1', 'user-item-1'],
+      ['1:r-2', 'user-item-2'],
+    ], 'the second response gets the second turn')
+  })()
+})
+
+test('a continuation batch speaks before a later one, whatever finished first', async () => {
+  // FIFO is why the agent narrates work in the order it was asked for. Two batches are the smallest
+  // shape that can tell it from last-in-first-out.
+  const {service, actions} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'first task',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'first task'},
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  const afterFirst = actions.filter(action => action.startsWith('create_response')).length
+  assert.equal(afterFirst, 1, 'the first batch asked for its turn')
+  assert.equal(
+    service.continuationOrderForTest[0],
+    '1:r-1',
+    'and it is still at the head, waiting to be bound',
+  )
+})
+
+test('only one continuation turn is in flight at a time', async () => {
+  // Otherwise the agent talks over itself. The check looks at every batch, not just the head, because
+  // a batch can still be speaking after its key has left the front of the queue.
+  const {service, actions} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'first task',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'first task'},
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  const requested = actions.filter(action => action.startsWith('create_response')).length
+  // Driving again must not ask for a second turn while the first is outstanding.
+  await service.driveContinuations()
+  await service.driveContinuations()
+  assert.equal(
+    actions.filter(action => action.startsWith('create_response')).length,
+    requested,
+    'no second turn while one is outstanding',
+  )
+})
+
+test('a user speaking blocks a continuation request', async () => {
+  // The user outranks anything the agent wants to say, so a batch that became ready mid-utterance
+  // waits rather than interrupting.
+  const {service, actions} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'first task',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'first task'},
+    response_id: 'r-1',
+  })
+  // The user starts speaking before the originating response ends.
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-3',
+    provider_item_id: 'user-item-3',
+  })
+  const before = actions.filter(action => action.startsWith('create_response')).length
+  await service.driveContinuations()
+  assert.equal(
+    actions.filter(action => action.startsWith('create_response')).length,
+    before,
+    'nothing requested while the user holds the floor',
+  )
+})
+
+test('a terminal for a different response does not close the bound batch', async () => {
+  // A terminal says nothing about a batch it was not speaking. Closing on any terminal would mark work
+  // spoken that the user never heard.
+  const {service} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'first task',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'first task'},
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  // The continuation turn starts, binding the batch to r-2.
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
+  assert.deepEqual(service.continuationOrderForTest, ['1:r-1'], 'still open')
+
+  // A terminal for an unrelated response must not close it.
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-99',
+    status: 'completed',
+    reason: '',
+  })
+  assert.deepEqual(service.continuationOrderForTest, ['1:r-1'], 'still open')
+
+  // The one it was bound to does.
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-2',
+    status: 'completed',
+    reason: '',
+  })
+  assert.deepEqual(service.continuationOrderForTest, [], 'closed by its own terminal')
 })

@@ -327,5 +327,262 @@
         }
       ]
     }
+  ],
+  "projections": [
+    {
+      "name": "deadline-wording",
+      "kind": "deadline",
+      "display_name": "Codex"
+    },
+    {
+      "name": "deadline-wording-generic",
+      "kind": "deadline",
+      "display_name": "watch"
+    },
+    {
+      "name": "progress-started",
+      "kind": "progress_started",
+      "display_name": "Codex"
+    },
+    {
+      "name": "progress-summary-plain",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "running the test suite",
+      "elapsed": 12.0
+    },
+    {
+      "name": "progress-summary-markdown",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "running `pytest` on **everything**",
+      "elapsed": 3.0
+    },
+    {
+      "name": "progress-elapsed-0-0",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 0.0
+    },
+    {
+      "name": "progress-elapsed-0-4",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 0.4
+    },
+    {
+      "name": "progress-elapsed-0-5",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 0.5
+    },
+    {
+      "name": "progress-elapsed-0-6",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 0.6
+    },
+    {
+      "name": "progress-elapsed-1-4",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 1.4
+    },
+    {
+      "name": "progress-elapsed-1-5",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 1.5
+    },
+    {
+      "name": "progress-elapsed-2-5",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 2.5
+    },
+    {
+      "name": "progress-elapsed-3-5",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 3.5
+    },
+    {
+      "name": "progress-elapsed-7-5",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 7.5
+    },
+    {
+      "name": "progress-elapsed-12-5",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 12.5
+    },
+    {
+      "name": "progress-elapsed-59-5",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 59.5
+    },
+    {
+      "name": "progress-elapsed-60-5",
+      "kind": "progress_summary",
+      "display_name": "Codex",
+      "summary": "still going",
+      "elapsed": 60.5
+    },
+    {
+      "name": "progress-steps",
+      "kind": "progress_steps",
+      "display_name": "Codex",
+      "internal_activity": 42
+    },
+    {
+      "name": "final-codex-ok",
+      "kind": "final_codex",
+      "display_name": "Codex",
+      "outcome": "ok",
+      "content": {
+        "summary": "编译完成，没有错误。",
+        "classification": "completed"
+      }
+    },
+    {
+      "name": "final-codex-failed",
+      "kind": "final_codex",
+      "display_name": "Codex",
+      "outcome": "failed",
+      "content": {
+        "error": "build_failed"
+      }
+    },
+    {
+      "name": "final-generic-ok",
+      "kind": "final_generic",
+      "display_name": "watch",
+      "outcome": "ok",
+      "content": {
+        "hit": true,
+        "observation": "构建完成了"
+      }
+    },
+    {
+      "name": "final-generic-failed",
+      "kind": "final_generic",
+      "display_name": "watch",
+      "outcome": "failed",
+      "content": {
+        "error": "watch_failed"
+      }
+    },
+    {
+      "name": "hit-priority-40-hit",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 40,
+      "hit": true
+    },
+    {
+      "name": "hit-priority-40-miss",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 40,
+      "hit": false
+    },
+    {
+      "name": "hit-priority-50-hit",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 50,
+      "hit": true
+    },
+    {
+      "name": "hit-priority-50-miss",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 50,
+      "hit": false
+    },
+    {
+      "name": "hit-priority-55-hit",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 55,
+      "hit": true
+    },
+    {
+      "name": "hit-priority-55-miss",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 55,
+      "hit": false
+    },
+    {
+      "name": "hit-priority-60-hit",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 60,
+      "hit": true
+    },
+    {
+      "name": "hit-priority-60-miss",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 60,
+      "hit": false
+    },
+    {
+      "name": "hit-priority-79-hit",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 79,
+      "hit": true
+    },
+    {
+      "name": "hit-priority-79-miss",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 79,
+      "hit": false
+    },
+    {
+      "name": "hit-priority-80-hit",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 80,
+      "hit": true
+    },
+    {
+      "name": "hit-priority-80-miss",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 80,
+      "hit": false
+    },
+    {
+      "name": "hit-priority-90-hit",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 90,
+      "hit": true
+    },
+    {
+      "name": "hit-priority-90-miss",
+      "kind": "hit_priority",
+      "display_name": "watch",
+      "manifest_priority": 90,
+      "hit": false
+    }
   ]
 }

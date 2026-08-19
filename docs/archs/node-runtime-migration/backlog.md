@@ -242,6 +242,41 @@ be stopped from out here. And `close` waits with a bounded grace period, logging
 
 Both were verified by reverting each fix and watching a named test go red.
 
+### Retracted: the continuation sweep in commit 03d9843 was not measured
+
+That commit claims "twenty-one mutations swept, twenty-one detected". The claim is void. The sweep
+script wrapped each test run in `timeout 90`, and `timeout` does not exist on this machine (no
+coreutils, no `gtimeout`) -- so every run exited 127 with no output, and the script read "no result" as
+"detected, the suite hung". It never ran the suite at all.
+
+Re-measured without it, the continuation-drive mutation set stands at **6 of 14 detected**. What
+survives is not a defect in the port but a hole in the scenario set: the undetected mutations need two
+concurrent continuation batches, a turn in `cancel_requested`, a fenced turn, a `retryable` continuation
+request, or a sync-pending member -- none of which the current fixtures produce. A second tool call in
+the obvious place lands on the continuation turn itself rather than opening a second batch, so this
+needs session-level fixtures rather than another event in sequence.
+
+Two lessons, both about the harness rather than the code:
+
+- **A sweep that cannot distinguish "tool missing" from "mutation detected" is worse than no sweep**,
+  because it reports the reassuring answer. Any future sweep script must fail loudly when its own
+  tooling is absent, and must read the test count rather than the absence of output.
+- The same run also found that the projection golden was exercising a *reimplementation* in the test
+  file rather than the service. Five projection mutations were invisible to it. The parity test now
+  drives `projectRuntimeEvent` and reads what was queued.
+
+### Measured coverage, and the guards nothing distinguishes
+
+Family O (runtime event projection) is at 20 of 22. The two survivors are redundant by construction and
+recorded as such rather than patched around:
+
+| Guard | Why nothing distinguishes it |
+|---|---|
+| `MAX_HOST_FACT_CHARS` on a projected fact | Every speech view is already cut to `SPEECH_FINAL_LIMIT` (600), so the 3000 cap is unreachable through this path. |
+| The empty-`op` check in progress revalidation | The in-flight match immediately after compares the op against the delegate's, and no delegate has an empty one. |
+
+Both are kept because the oracle keeps them, and each has a test stating the property directly.
+
 ### Coupling the family split did not predict: delivery reaches Guard
 
 The service port was planned in three batches, with Guard (family L) and project confirmation (family

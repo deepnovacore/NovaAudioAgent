@@ -37,9 +37,19 @@ from nova_audio_agent.canonical_json import canonical_json  # noqa: E402
 from nova_audio_agent.memory import USER_PRIORITY  # noqa: E402
 from nova_audio_agent.realtime.protocol import HostContextItem, HostResponseIntent  # noqa: E402
 from nova_audio_agent.realtime.service import (  # noqa: E402
+    HIT_ALERT_MIN_PRIORITY,
+    MAX_HOST_FACT_CHARS,
     PREEMPT_MIN_PRIORITY,
     _GuardActivationAuthority,
     _QueuedHostResponse,
+)
+from nova_audio_agent.realtime.evidence import (  # noqa: E402
+    final_speech_view,
+    generic_final_speech_view,
+)
+from nova_audio_agent.realtime.speech_prep import (  # noqa: E402
+    SPEECH_FINAL_LIMIT,
+    prepare_for_speech,
 )
 
 FIXTURE = REPOSITORY_ROOT / "fixtures" / "realtime" / "service" / "v1" / "scenarios.json"
@@ -142,10 +152,61 @@ def run_scenario(spec: Mapping[str, Any]) -> dict[str, Any]:
     return {"name": spec["name"], "steps": steps}
 
 
+def run_projection(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """The spoken text one projected event produces.
+
+    Not the whole service: assembling one would measure the provider and session instead. What is
+    pinned here is the part a user hears -- the wording, the elapsed-seconds rendering, and the
+    priority the fact is queued at -- because those are what differ between two runtimes that both
+    "work".
+    """
+    display_name = spec["display_name"]
+    kind = spec["kind"]
+    if kind == "deadline":
+        return {"content": f"{display_name} 的委派任务超时，未能确认结果。"}
+    if kind == "progress_started":
+        return {"content": f"{display_name} 已开始处理这个任务。"}
+    if kind == "progress_summary":
+        summary = prepare_for_speech(spec["summary"], limit=SPEECH_FINAL_LIMIT)[0] or None
+        elapsed = float(spec["elapsed"])
+        return {
+            "summary": summary,
+            "content": (
+                None
+                if summary is None
+                else f"{display_name} 正在执行：{summary}（已进行{elapsed:.0f}秒）"
+            ),
+        }
+    if kind == "progress_steps":
+        return {
+            "content": (
+                f"{display_name} 仍在处理这个任务，目前已推进 {spec['internal_activity']} 个步骤。"
+            )
+        }
+    if kind == "final_codex":
+        view = final_speech_view(spec["outcome"], spec["content"])
+        return {"content": view[:MAX_HOST_FACT_CHARS]}
+    if kind == "final_generic":
+        view = generic_final_speech_view(display_name, spec["outcome"], spec["content"])
+        return {"content": view[:MAX_HOST_FACT_CHARS]}
+    if kind == "hit_priority":
+        manifest_priority = spec["manifest_priority"]
+        return {
+            "priority": max(manifest_priority, HIT_ALERT_MIN_PRIORITY)
+            if spec["hit"]
+            else manifest_priority,
+            "preemptive": manifest_priority >= PREEMPT_MIN_PRIORITY and spec["hit"],
+        }
+    raise FixtureError(f"unsupported projection kind: {kind}")
+
+
 def run_all(document: Mapping[str, Any]) -> dict[str, Any]:
     names = [scenario["name"] for scenario in document["scenarios"]]
     if len(set(names)) != len(names):
         raise FixtureError("scenario names must be unique")
+    projection_names = [spec["name"] for spec in document.get("projections", [])]
+    if len(set(projection_names)) != len(projection_names):
+        raise FixtureError("projection names must be unique")
     return {
         "schema_version": 1,
         "constants": {
@@ -153,6 +214,10 @@ def run_all(document: Mapping[str, Any]) -> dict[str, Any]:
             "user_priority": USER_PRIORITY,
         },
         "scenarios": [run_scenario(scenario) for scenario in document["scenarios"]],
+        "projections": [
+            {"name": spec["name"], **run_projection(spec)}
+            for spec in document.get("projections", [])
+        ],
     }
 
 
@@ -170,7 +235,10 @@ def check() -> int:
     produced = run_all(load_document())
     committed = json.loads(EXPECTED.read_text(encoding="utf-8"))
     if canonical_json(produced) == canonical_json(committed):
-        print(f"Python service parity passed: {len(produced['scenarios'])} scenario(s)")
+        print(
+            f"Python service parity passed: {len(produced['scenarios'])} scenario(s), "
+            f"{len(produced['projections'])} projection(s)"
+        )
         return 0
     print(_diff(committed, produced), file=sys.stderr)
     return 1
