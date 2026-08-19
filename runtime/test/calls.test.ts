@@ -203,3 +203,119 @@ test('the Surrogate table is captured before the call, not after it', async () =
   assert.deepEqual(record.offered, ['s-1', 's-2'])
   assert.ok(!record.offered.includes('s-3-arrived-late'))
 })
+
+/** Records Floor traffic so a stranded reservation is visible. */
+function floorRecorder() {
+  const opened: string[] = []
+  const closed: string[] = []
+  return {
+    opened,
+    closed,
+    openFloor: (utteranceId: string) => { opened.push(utteranceId); return true },
+    closeFloor: (utteranceId: string) => { closed.push(utteranceId) },
+  }
+}
+
+test('a throwing sink still releases the Floor and preserves the cause', async () => {
+  // Once speak_start is posted and the Floor reserved, a stranded reservation makes every
+  // later equal-or-lower-priority utterance defer forever against a stale utterance.
+  const floor = floorRecorder()
+  const boom = new Error('transport died mid-utterance')
+  await assert.rejects(runFastBrainCall(scripted([
+    {kind: 'text', text: '第一块'},
+    {kind: 'text', text: '第二块'},
+  ]), {
+    view,
+    reason,
+    utteranceId: 'u-1',
+    sink: {emit: () => { throw boom }, end: () => undefined},
+    openFloor: floor.openFloor,
+    closeFloor: floor.closeFloor,
+  }), (error: unknown) => error === boom)
+
+  assert.deepEqual(floor.opened, ['u-1'])
+  assert.deepEqual(floor.closed, ['u-1'], 'the reservation must not be stranded')
+})
+
+test('a sink whose end throws still releases the Floor', async () => {
+  const floor = floorRecorder()
+  const boom = new Error('end failed')
+  await assert.rejects(runFastBrainCall(scripted([{kind: 'text', text: '话'}]), {
+    view,
+    reason,
+    utteranceId: 'u-2',
+    sink: {emit: () => undefined, end: () => { throw boom }},
+    openFloor: floor.openFloor,
+    closeFloor: floor.closeFloor,
+  }), (error: unknown) => error === boom)
+  assert.deepEqual(floor.closed, ['u-2'])
+})
+
+test('a stream that rejects after the first chunk still releases the Floor', async () => {
+  const floor = floorRecorder()
+  const boom = new Error('provider hung up')
+  const failing = {
+    async *call(): AsyncIterable<FastBrainDelta> {
+      await Promise.resolve()
+      yield {kind: 'text', text: '开头'}
+      throw boom
+    },
+  }
+  await assert.rejects(runFastBrainCall(failing, {
+    view,
+    reason,
+    utteranceId: 'u-3',
+    sink: {emit: () => undefined, end: () => undefined},
+    openFloor: floor.openFloor,
+    closeFloor: floor.closeFloor,
+  }), (error: unknown) => error === boom)
+  assert.deepEqual(floor.closed, ['u-3'])
+})
+
+test('a failure before any text never opens or closes the Floor', async () => {
+  const floor = floorRecorder()
+  const failing = {
+    async *call(): AsyncIterable<FastBrainDelta> {
+      await Promise.resolve()
+      throw new Error('died before speaking')
+    },
+  }
+  await assert.rejects(runFastBrainCall(failing, {
+    view,
+    reason,
+    utteranceId: 'u-4',
+    sink: {emit: () => undefined, end: () => undefined},
+    openFloor: floor.openFloor,
+    closeFloor: floor.closeFloor,
+  }))
+  assert.deepEqual(floor.opened, [])
+  assert.deepEqual(floor.closed, [], 'nothing to release when nothing was reserved')
+})
+
+test('a deferred utterance releases nothing, because it reserved nothing', async () => {
+  const opened: string[] = []
+  const closed: string[] = []
+  await runFastBrainCall(scripted([{kind: 'text', text: '被压下'}]), {
+    view,
+    reason,
+    utteranceId: 'u-5',
+    sink: {emit: () => { throw new Error('a deferred utterance must not be emitted') },
+      end: () => undefined},
+    openFloor: utteranceId => { opened.push(utteranceId); return false },
+    closeFloor: utteranceId => { closed.push(utteranceId) },
+  })
+  assert.deepEqual(opened, ['u-5'])
+  assert.deepEqual(closed, [])
+})
+
+test('a Floor release that itself fails does not mask the original cause', async () => {
+  const boom = new Error('the real problem')
+  await assert.rejects(runFastBrainCall(scripted([{kind: 'text', text: '话'}]), {
+    view,
+    reason,
+    utteranceId: 'u-6',
+    sink: {emit: () => { throw boom }, end: () => undefined},
+    openFloor: () => true,
+    closeFloor: () => { throw new Error('release also failed') },
+  }), (error: unknown) => error === boom)
+})

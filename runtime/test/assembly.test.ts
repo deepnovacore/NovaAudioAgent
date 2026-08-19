@@ -196,3 +196,61 @@ test('a delegating answer dispatches to the simulator and records its handoff', 
   // No speech was produced, so no Floor turn was spent.
   assert.ok(!applied.some(event => event.kind === 'speak_start'))
 })
+
+test('a malformed tool call beside a valid delegate dispatches nothing', async () => {
+  // The fold must carry contract failures through, or an unknown tool name becomes a way
+  // to smuggle work past the contract gate.
+  const gateway = new ScriptedGateway([
+    {kind: 'tool_call', index: 0, name: 'nope__missing', arguments: '{}'},
+    {kind: 'tool_call', index: 1, name: 'fast_sim__set_light',
+      arguments: '{"room":"客厅","brightness":30,"origin_ref":"conversation:1"}'},
+  ])
+  const assembly = buildAssembly({
+    settings: settings(), gateway, sink: NULL_SPEECH_SINK, ids: new MonotonicIdFactory(),
+  })
+  const stop = new AbortController()
+  const applied: EventRecord[] = []
+  assembly.runtime.observe(event => applied.push(event))
+  const serving = assembly.runtime.serve(stop.signal)
+
+  await assembly.runtime.ingestUserInput({text: '把客厅调到30'})
+  await waitFor(() => applied.some(event => event.kind === 'model_done'))
+  // Give any dispatch a real chance to land before asserting it did not.
+  await new Promise(resolve => setTimeout(resolve, 150))
+  stop.abort()
+  await serving
+
+  assert.ok(!applied.some(event => event.kind === 'handoff'), 'nothing may be dispatched')
+  const conversation = assembly.runtime.core.memory.channels.get('conversation')?.items ?? []
+  const refusal = conversation.at(-1)
+  assert.equal(refusal?.content.error, 'model_contract_failure')
+  assert.equal(refusal?.content.code, 'unknown_tool')
+})
+
+test('two valid delegates in one turn dispatch neither', async () => {
+  // Executing one of two would produce "one of your requests was handled; guess which".
+  const gateway = new ScriptedGateway([
+    {kind: 'tool_call', index: 0, name: 'fast_sim__set_light',
+      arguments: '{"room":"客厅","brightness":30,"origin_ref":"conversation:1"}'},
+    {kind: 'tool_call', index: 1, name: 'fast_sim__set_light',
+      arguments: '{"room":"卧室","brightness":10,"origin_ref":"conversation:1"}'},
+  ])
+  const assembly = buildAssembly({
+    settings: settings(), gateway, sink: NULL_SPEECH_SINK, ids: new MonotonicIdFactory(),
+  })
+  const stop = new AbortController()
+  const applied: EventRecord[] = []
+  assembly.runtime.observe(event => applied.push(event))
+  const serving = assembly.runtime.serve(stop.signal)
+
+  await assembly.runtime.ingestUserInput({text: '客厅30卧室10'})
+  await waitFor(() => applied.some(event => event.kind === 'model_done'))
+  await new Promise(resolve => setTimeout(resolve, 150))
+  stop.abort()
+  await serving
+
+  assert.ok(!applied.some(event => event.kind === 'handoff'))
+  const refusal = (assembly.runtime.core.memory.channels.get('conversation')?.items ?? []).at(-1)
+  assert.equal(refusal?.content.error, 'multiple_actions')
+  assert.equal(refusal?.content.count, 2)
+})

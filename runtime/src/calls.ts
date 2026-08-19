@@ -106,39 +106,56 @@ export async function runFastBrainCall(
   // undefined means this call has not produced a single character yet.
   let speaking: boolean | undefined
 
-  for await (const delta of fastbrain.call(
-    options.view,
-    ...(options.signal === undefined ? [] : [options.signal]),
-  )) {
-    if (delta.kind === 'text') {
-      // An empty delta does not count as speaking. The provider's first chunk often
-      // carries only a role; treating it as the first token would burn a Floor turn and
-      // the preempt path would cut off someone else's utterance for not one word.
-      if (delta.text.length === 0) continue
-      // Arbitration happens the instant the first character arrives, before it enters
-      // the sink. Asking "should I be speaking?" after the words are out is meaningless,
-      // and asking at stream start is too early: it is not yet known whether there is
-      // anything to say this turn. The compound assignment only fires while `speaking`
-      // is still undefined, so the Floor is consulted exactly once per call.
-      speaking ??= options.openFloor(options.utteranceId, options.reason.priority)
-      // Forward first, record second. That order IS "no buffering": `said` is the copy
-      // kept for the conversation channel, not a queue for the output device.
-      if (speaking) options.sink.emit(options.utteranceId, delta.text)
-      // A deferred utterance is still collected in full: the whole thing goes into the
-      // suggestion pool, and the stream will not yield tool calls until it is drained.
-      said.push(delta.text)
-      continue
+  // The Floor must be released on every exit path, not only the normal one. Once
+  // openFloor has posted speak_start and reserved the Floor, a throwing sink or a
+  // rejecting iterator would otherwise strand that reservation: the trace keeps an
+  // unmatched speak_start and every later equal-or-lower-priority utterance defers
+  // forever against a stale active utterance. The oracle has this same gap -- its
+  // `close_floor` also sits after the loop with no try/finally -- so this is a
+  // deliberate repair rather than a reproduction.
+  let opened = false
+  try {
+    for await (const delta of fastbrain.call(
+      options.view,
+      ...(options.signal === undefined ? [] : [options.signal]),
+    )) {
+      if (delta.kind === 'text') {
+        // An empty delta does not count as speaking. The provider's first chunk often
+        // carries only a role; treating it as the first token would burn a Floor turn and
+        // the preempt path would cut off someone else's utterance for not one word.
+        if (delta.text.length === 0) continue
+        // Arbitration happens the instant the first character arrives, before it enters
+        // the sink. Asking "should I be speaking?" after the words are out is meaningless,
+        // and asking at stream start is too early: it is not yet known whether there is
+        // anything to say this turn. The compound assignment only fires while `speaking`
+        // is still undefined, so the Floor is consulted exactly once per call.
+        speaking ??= options.openFloor(options.utteranceId, options.reason.priority)
+        opened ||= speaking
+        // Forward first, record second. That order IS "no buffering": `said` is the copy
+        // kept for the conversation channel, not a queue for the output device.
+        if (speaking) options.sink.emit(options.utteranceId, delta.text)
+        // A deferred utterance is still collected in full: the whole thing goes into the
+        // suggestion pool, and the stream will not yield tool calls until it is drained.
+        said.push(delta.text)
+        continue
+      }
+      if (delta.kind === 'action') {
+        actions.push(delta.action)
+        continue
+      }
+      contractFailures.push({code: delta.code, tool_name: delta.tool_name})
     }
-    if (delta.kind === 'action') {
-      actions.push(delta.action)
-      continue
+    if (opened) options.sink.end(options.utteranceId)
+  } finally {
+    // Release before the original failure propagates, and never let a failing release
+    // replace the cause the caller needs to see.
+    if (opened) {
+      try {
+        options.closeFloor(options.utteranceId)
+      } catch {
+        // A Floor release that itself fails must not mask the stream or sink error.
+      }
     }
-    contractFailures.push({code: delta.code, tool_name: delta.tool_name})
-  }
-
-  if (speaking === true) {
-    options.sink.end(options.utteranceId)
-    options.closeFloor(options.utteranceId)
   }
 
   return {

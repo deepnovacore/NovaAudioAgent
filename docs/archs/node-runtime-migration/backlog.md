@@ -140,6 +140,16 @@ once:
   those fields are typed `float` and therefore deterministic, and the media age keeps
   Python's `.1f` half-even rounding, which `toFixed` does not implement. All three are
   pinned by exported vectors.
+- Floor release on a failing stream or sink. `calls.py` calls `close_floor` after its
+  streaming loop with no `try/finally`, so a sink that raises mid-utterance, or a provider
+  iterator that rejects after the first chunk, leaves `speak_start` posted and the Floor
+  reserved with no matching `speak_end`. Every later equal-or-lower-priority utterance then
+  defers forever against a stale active utterance, and the trace keeps an unmatched event.
+  The Node port repairs this: release happens in a `finally`, only when the Floor was
+  actually acquired, and a release that itself fails never masks the original cause. Six
+  tests cover emit, end, iterator, pre-speech, deferred, and failing-release paths. This is
+  a deliberate departure -- the oracle has the same gap -- and it is listed here so the
+  Python side can be fixed too if it outlives the migration.
 - Unicode database version skew. Python classifies and normalizes characters with the database
   bundled into CPython; V8 does so with the database bundled into ICU. Those versions differ and
   drift with every release. Measured on the development machine: CPython 3.12.11 carries Unicode
