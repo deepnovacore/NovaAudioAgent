@@ -1,7 +1,16 @@
+/**
+ * Executor manifests used only by the committed fixtures.
+ *
+ * These are NOT the ported simulators: `sims.ts` carries those, with the ops the oracle's
+ * `executors/sims.py` declares. This manifest exists to give the fixture scenarios the
+ * exact ops they were exported against, including a sensitive-parameter op that the real
+ * simulators do not have. Keeping the two apart is why the names differ.
+ */
+
 import { handoffPolicySchema } from './memory.js'
 import { executorManifestSchema } from './ports.js'
 
-export const slowSimManifest = executorManifestSchema.parse({
+export const fixtureSlowSimManifest = executorManifestSchema.parse({
   name: 'slow_sim',
   policy: handoffPolicySchema.parse({
     channel: 'slow_sim',
@@ -32,4 +41,4 @@ export const slowSimManifest = executorManifestSchema.parse({
   }],
 })
 
-export const fixtureManifestRegistry = [slowSimManifest] as const
+export const fixtureManifestRegistry = [fixtureSlowSimManifest] as const

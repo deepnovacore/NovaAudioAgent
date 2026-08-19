@@ -7,7 +7,7 @@ import { RealClock } from '../src/clock.js'
 import type { EventRecord } from '../src/events.js'
 import { MonotonicIdFactory } from '../src/ids.js'
 import { executorManifestSchema } from '../src/ports.js'
-import { slowSimManifest } from '../src/sim.js'
+import { fixtureSlowSimManifest } from '../src/sim.js'
 
 interface Deferred<T> {
   readonly promise: Promise<T>
@@ -40,7 +40,7 @@ test('async model and executor completions re-enter through the causal event que
     },
   }
   const adapter: ExecutorAdapter = {
-    manifest: slowSimManifest,
+    manifest: fixtureSlowSimManifest,
     dispatch: () => executorResult.promise,
   }
   const runtime = new CausalRuntime({
@@ -184,10 +184,10 @@ test('realtime ingestion resolves its applied MemoryRef and observers see applie
 
 test('compressor calls receive the frozen channel snapshot they summarize', async () => {
   const manifest = executorManifestSchema.parse({
-    ...slowSimManifest,
+    ...fixtureSlowSimManifest,
     name: 'compress_sim',
     policy: {
-      ...slowSimManifest.policy,
+      ...fixtureSlowSimManifest.policy,
       channel: 'compress_sim',
       wake: 'none',
       compress_watermark: 1,
