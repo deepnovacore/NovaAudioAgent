@@ -185,14 +185,26 @@ Implementation checkpoint, 2026-08-19:
   `RealtimeSession`; desktop microphone audio remains deliberately unwired until the first real
   provider adapter lands.
 
-Stage 1 status, 2026-08-19: not accepted. Two items remain.
+Stage 1 status, 2026-08-19: one item remains.
 
-- Production desktop assembly does not instantiate `CausalRuntime`. `desktop-entry.ts` starts the
-  authenticated WebSocket, answers `desktop.ready` and `codex.state:idle`, and drops every other
-  frame. No renderer traffic reaches the runtime.
-- The GUI-capable Electron utility-process smoke is environment-blocked: `_RegisterApplication` has
-  no WindowServer session in this headless macOS sandbox. `npm run smoke:node-backend --workspace
-  @nova-audio-agent/ambient-orb` is ready to run on a real desktop session.
+- Production desktop assembly now instantiates `CausalRuntime`. `assembly.ts` turns settings into a
+  serving runtime: one model gateway, the three model ports, the configured executor adapters, and
+  the causal loop. The FastBrain port streams and opens the Floor at its first non-empty chunk
+  through `CoreRuntime.openFloor`, matching the oracle rather than deciding after the fold.
+  `desktop-service.ts` owns startup and shutdown order, and `desktop-entry.ts` builds the runtime
+  before announcing readiness so a configuration failure exits the process instead of handing a
+  renderer a backend that cannot answer. End-to-end tests drive the real serving loop and the real
+  loopback WebSocket: a user turn produces streamed speech that reaches the sink in order, opens and
+  closes the Floor, and lands in the conversation channel; a delegating turn dispatches to a
+  simulator whose handoff carries a core-bound `origin_ref`.
+- STILL OPEN: the GUI-capable Electron utility-process smoke is environment-blocked.
+  `_RegisterApplication` has no WindowServer session in this headless macOS sandbox. Run
+  `npm run smoke:node-backend --workspace @nova-audio-agent/ambient-orb` on a real desktop session;
+  it is not recorded as passing until someone does.
+
+Desktop microphone audio and renderer control frames are still not routed into the runtime. That
+belongs with the realtime session port in Stage 2, not here: a placeholder that consumes PCM without
+a provider would be a milestone that looks like progress and is not.
 
 Review fixes landed on the foundation, each with its own gate: the reducer no longer derives its
 types from the fixture contract (`effects.ts` and `fixture-host.ts` split out, proven byte-identical
