@@ -148,6 +148,17 @@
       "pcm": "0001"
     },
     {
+      "name": "decode-duplicate-epoch-last-integer",
+      "utterance_id": "u-1",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
+      "name": "decode-duplicate-epoch-last-float",
+      "error": "desktop generation_epoch is invalid"
+    },
+    {
       "name": "decode-header-size-one-valid-json-byte",
       "error": "desktop audio header is invalid"
     },
@@ -426,6 +437,43 @@
     {
       "name": "clock-pong-negative",
       "error": "desktop t_render_ms is invalid"
+    },
+    {
+      "name": "duplicate-epoch-last-is-integer",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 1
+      }
+    },
+    {
+      "name": "duplicate-epoch-last-is-float",
+      "error": "desktop playback generation is invalid"
+    },
+    {
+      "name": "duplicate-played-ms-last-is-integer",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 1,
+        "played_ms": 40
+      }
+    },
+    {
+      "name": "epoch-name-inside-another-key",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 1
+      }
+    },
+    {
+      "name": "epoch-name-inside-a-string-value",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "x \"generation_epoch\": 1.5 y",
+        "generation_epoch": 1
+      }
     },
     {
       "name": "oversized-frame",

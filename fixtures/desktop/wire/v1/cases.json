@@ -209,6 +209,16 @@
       "bytes": "4e4f5641003e7b227574746572616e63655f6964223a2022752d31222c202267656e65726174696f6e5f65706f636822203a20312c202273657175656e6365223a20307d0001"
     },
     {
+      "name": "decode-duplicate-epoch-last-integer",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641004f7b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312e352c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
+    },
+    {
+      "name": "decode-duplicate-epoch-last-float",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641004f7b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312c2267656e65726174696f6e5f65706f6368223a312e352c2273657175656e6365223a307d0001"
+    },
+    {
       "name": "decode-header-size-one-valid-json-byte",
       "kind": "decode_audio",
       "bytes": "4e4f564100017b0001"
@@ -554,6 +564,36 @@
       "kind": "parse_client",
       "authenticated": true,
       "raw": "{\"type\":\"clock.pong\",\"ping_id\":\"ping-0\",\"t_render_ms\":-0.5}"
+    },
+    {
+      "name": "duplicate-epoch-last-is-integer",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_epoch\":1.5,\"generation_epoch\":1}"
+    },
+    {
+      "name": "duplicate-epoch-last-is-float",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_epoch\":1,\"generation_epoch\":1.5}"
+    },
+    {
+      "name": "duplicate-played-ms-last-is-integer",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_epoch\":1,\"played_ms\":1.5,\"played_ms\":40}"
+    },
+    {
+      "name": "epoch-name-inside-another-key",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"my_generation_epoch\":1.5,\"generation_epoch\":1}"
+    },
+    {
+      "name": "epoch-name-inside-a-string-value",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"x \\\"generation_epoch\\\": 1.5 y\",\"generation_epoch\":1}"
     },
     {
       "name": "oversized-frame",

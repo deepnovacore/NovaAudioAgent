@@ -101,7 +101,11 @@ export function decodeAudioFrame(raw: Uint8Array): PlaybackFrame {
   // `json.loads` turns `1.0` into a float and `type(value) is not int` then refuses it; JavaScript
   // turns both `1` and `1.0` into the same number, so a renderer sending `1.0` would be accepted here
   // and refused there. Checked before the fields are read so the two runtimes refuse the same bytes.
-  requireIntegerLiterals(headerText, ['generation_epoch', 'sequence'])
+  requireIntegerLiterals(
+    headerText,
+    ['generation_epoch', 'sequence'],
+    field => new DesktopProtocolError(`desktop ${field} is invalid`),
+  )
   // Copied, not referenced: a subarray keeps the whole received buffer alive, and this frame outlives
   // the read that produced it.
   const pcm = new Uint8Array(raw.subarray(split))
@@ -240,21 +244,30 @@ export function deliveryToEvent(completion: PlaybackCompletion): {
 }
 
 /**
- * Refuse a header whose numeric fields are not written as integers.
+ * Refuse a document whose named fields are not written as integers.
  *
- * `1.0` and `1` are the same value in JavaScript and different types in Python, so this is the one
- * place the difference has to be recovered from the bytes rather than the parse. Only the two integer
- * fields are checked; the identifier is a string and may legitimately contain a decimal point.
+ * The spelling has to come from the text because parsing destroys it: `json.loads` makes `1.0` a float
+ * and the oracle's `type(value) is not int` then refuses it, while `JSON.parse` cannot tell `1.0` from
+ * `1`. Without this the same bytes are accepted by one runtime and refused by the other.
+ *
+ * The *last* occurrence is the one checked, because that is the value a JSON parser keeps for a
+ * duplicated key -- `{"a":1.5,"a":1}` is accepted by both parsers as `1`, so checking the first
+ * occurrence would refuse a document the oracle admits. A field name embedded in another key or inside
+ * a string value cannot match, because the pattern requires the quote immediately before the name.
  */
-function requireIntegerLiterals(headerText: string, fields: readonly string[]): void {
+export function requireIntegerLiterals(
+  text: string,
+  fields: readonly string[],
+  onInvalid: (field: string) => Error,
+): void {
   for (const field of fields) {
-    // Whitespace-tolerant, because a header this reader did not write may carry any legal JSON spacing.
-    const pattern = new RegExp(`"${field}"\\s*:\\s*([^,}\\s]+)`, 'u')
-    const match = pattern.exec(headerText)
-    if (match === null) continue
-    if (!/^-?\d+$/u.test(match[1] ?? '')) {
-      throw new DesktopProtocolError(`desktop ${field} is invalid`)
-    }
+    const pattern = new RegExp(`"${field}"\\s*:\\s*([^,}\\s]+)`, 'gu')
+    let literal: string | undefined
+    for (const match of text.matchAll(pattern)) literal = match[1]
+    if (literal === undefined) continue
+    // `null` is a legal value wherever a field is optional; it is not a number at all.
+    if (literal === 'null') continue
+    if (!/^-?\d+$/u.test(literal)) throw onInvalid(field)
   }
 }
 

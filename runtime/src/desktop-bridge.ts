@@ -27,6 +27,7 @@ import {
   playbackAlertMessage,
   playbackClearMessage,
   playbackTerminalMessage,
+  requireIntegerLiterals,
   validateInputPcm,
   type PublicProjectView,
 } from './desktop-wire.js'
@@ -584,7 +585,13 @@ export function parseClientMessage(
   // The integer fields' literal spelling has to come from the text, because parsing destroys it:
   // Python's `json.loads` makes `2.0` a float and `type(value) is not int` refuses it, while JavaScript
   // cannot tell `2.0` from `2`. Without this the same frame is accepted here and refused there.
-  requireIntegerLiterals(raw, ['generation_epoch', 'played_ms'])
+  // Only the fields the oracle type-checks as `int`. `t_render_ms` is deliberately absent: it accepts
+  // an int or a float there and coerces with `float()`, so both spellings are legal input.
+  requireIntegerLiterals(raw, ['generation_epoch', 'played_ms'], field => new DesktopProtocolError(
+    field === 'generation_epoch'
+      ? 'desktop playback generation is invalid'
+      : 'desktop playback played_ms is invalid',
+  ))
 
   const kind = value.type
   if (kind === 'speech.onset') {
@@ -646,29 +653,7 @@ export function parseClientMessage(
 
 const MAX_DESKTOP_JSON_BYTES = 16 * 1_024
 
-/**
- * Refuse a frame whose integer fields are not written as integers.
- *
- * Only the fields the oracle type-checks as `int`. `t_render_ms` is deliberately absent: the oracle
- * accepts an int or a float there and coerces with `float()`, so both spellings are legal.
- */
-function requireIntegerLiterals(text: string, fields: readonly string[]): void {
-  for (const field of fields) {
-    const pattern = new RegExp(`"${field}"\\s*:\\s*([^,}\\s]+)`, 'u')
-    const match = pattern.exec(text)
-    if (match === null) continue
-    const literal = match[1] ?? ''
-    // `null` is a legal value for `played_ms`, meaning "not reported".
-    if (literal === 'null') continue
-    if (!/^-?\d+$/u.test(literal)) {
-      throw new DesktopProtocolError(
-        field === 'generation_epoch'
-          ? 'desktop playback generation is invalid'
-          : 'desktop playback played_ms is invalid',
-      )
-    }
-  }
-}
+
 
 function readRenderTimestamp(
   value: Record<string, unknown>,
