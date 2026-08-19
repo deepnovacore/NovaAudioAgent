@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "description": "Executor manifests compiled into provider function schemas. Expected output is exported by Python tool_schema.compile_tool_schema and matched byte for byte by the Node port.",
+  "scenarios": [
+    {
+      "id": "structured-updates-only",
+      "include_memory_recall": false,
+      "manifests": [],
+      "covers": "Only the three structured-update tools; no executors and no recall."
+    },
+    {
+      "id": "with-memory-recall",
+      "include_memory_recall": true,
+      "manifests": [],
+      "covers": "The memory__recall query tool and its enum-bounded scope parameter."
+    },
+    {
+      "id": "one-executor",
+      "include_memory_recall": false,
+      "manifests": [
+        {
+          "name": "slow_sim",
+          "policy": {
+            "channel": "slow_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "set_light",
+              "description": "设置灯光亮度",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "brightness": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "brightness"
+                ]
+              }
+            },
+            {
+              "name": "read_state",
+              "description": "只读查询当前状态",
+              "params": {
+                "type": "object",
+                "properties": {}
+              },
+              "readonly": true
+            },
+            {
+              "name": "set_credential",
+              "description": "带敏感参数的写操作",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string"
+                  },
+                  "token": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "token"
+                ],
+                "additionalProperties": true
+              },
+              "sensitive_params": [
+                "token"
+              ]
+            },
+            {
+              "name": "sync_probe",
+              "description": "同步返回结果的只读复核",
+              "params": {
+                "type": "object",
+                "properties": {}
+              },
+              "readonly": true,
+              "sync_result": true
+            }
+          ]
+        }
+      ],
+      "covers": "Wire-name mangling, injected origin_ref, required-list append, additionalProperties default versus an explicit manifest value, sensitive params, sync_result, and readonly ops."
+    },
+    {
+      "id": "two-executors-with-recall",
+      "include_memory_recall": true,
+      "manifests": [
+        {
+          "name": "slow_sim",
+          "policy": {
+            "channel": "slow_sim",
+            "priority": 50,
+            "wake": "fast",
+            "typical_latency": 5.0,
+            "compress_watermark": 8,
+            "progress_via_surrogate": true
+          },
+          "ops": [
+            {
+              "name": "set_light",
+              "description": "设置灯光亮度",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "brightness": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "brightness"
+                ]
+              }
+            },
+            {
+              "name": "read_state",
+              "description": "只读查询当前状态",
+              "params": {
+                "type": "object",
+                "properties": {}
+              },
+              "readonly": true
+            },
+            {
+              "name": "set_credential",
+              "description": "带敏感参数的写操作",
+              "params": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string"
+                  },
+                  "token": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "token"
+                ],
+                "additionalProperties": true
+              },
+              "sensitive_params": [
+                "token"
+              ]
+            },
+            {
+              "name": "sync_probe",
+              "description": "同步返回结果的只读复核",
+              "params": {
+                "type": "object",
+                "properties": {}
+              },
+              "readonly": true,
+              "sync_result": true
+            }
+          ]
+        },
+        {
+          "name": "fast-sim_2",
+          "policy": {
+            "channel": "fast-sim_2",
+            "priority": 10,
+            "wake": "surrogate",
+            "typical_latency": 5.0,
+            "compress_watermark": 8
+          },
+          "ops": [
+            {
+              "name": "peek",
+              "description": "名字里带短划线和数字的 executor",
+              "params": {
+                "type": "object",
+                "properties": {}
+              },
+              "readonly": true
+            }
+          ]
+        }
+      ],
+      "covers": "Ordering across several manifests plus dash and digit characters in a name."
+    }
+  ]
+}

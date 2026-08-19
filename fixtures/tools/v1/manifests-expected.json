@@ -1,0 +1,886 @@
+{
+  "scenarios": {
+    "one-executor": {
+      "binding_order": [
+        "update_intent",
+        "update_goal",
+        "update_authorization",
+        "slow_sim__set_light",
+        "slow_sim__read_state",
+        "slow_sim__set_credential",
+        "slow_sim__sync_probe"
+      ],
+      "bindings": {
+        "slow_sim__read_state": {
+          "executor": "slow_sim",
+          "kind": "delegate",
+          "logical_name": "slow_sim.read_state",
+          "op": "read_state",
+          "sync_result": false,
+          "target": null
+        },
+        "slow_sim__set_credential": {
+          "executor": "slow_sim",
+          "kind": "delegate",
+          "logical_name": "slow_sim.set_credential",
+          "op": "set_credential",
+          "sync_result": false,
+          "target": null
+        },
+        "slow_sim__set_light": {
+          "executor": "slow_sim",
+          "kind": "delegate",
+          "logical_name": "slow_sim.set_light",
+          "op": "set_light",
+          "sync_result": false,
+          "target": null
+        },
+        "slow_sim__sync_probe": {
+          "executor": "slow_sim",
+          "kind": "delegate",
+          "logical_name": "slow_sim.sync_probe",
+          "op": "sync_probe",
+          "sync_result": true,
+          "target": null
+        },
+        "update_authorization": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.authorization",
+          "op": null,
+          "sync_result": false,
+          "target": "authorization"
+        },
+        "update_goal": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.goal",
+          "op": null,
+          "sync_result": false,
+          "target": "goal"
+        },
+        "update_intent": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.intent",
+          "op": null,
+          "sync_result": false,
+          "target": "intent"
+        }
+      },
+      "schemas": [
+        {
+          "function": {
+            "description": "按字段更新 intent；只传本轮确实变化的字段",
+            "name": "update_intent",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "constraints": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "objective_hypothesis": {
+                  "type": "string"
+                },
+                "uncertainty": {
+                  "type": "number"
+                },
+                "unresolved_questions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "按字段更新 goal；只传本轮确实变化的字段",
+            "name": "update_goal",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "acceptance_criteria": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "accepted",
+                    "superseded"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "按字段更新 authorization；只传本轮确实变化的字段",
+            "name": "update_authorization",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "allow": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "deny": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "evidence_refs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "设置灯光亮度",
+            "name": "slow_sim__set_light",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "brightness": {
+                  "type": "integer"
+                },
+                "origin_ref": {
+                  "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "brightness",
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "只读查询当前状态",
+            "name": "slow_sim__read_state",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "origin_ref": {
+                  "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "带敏感参数的写操作",
+            "name": "slow_sim__set_credential",
+            "parameters": {
+              "additionalProperties": true,
+              "properties": {
+                "mode": {
+                  "type": "string"
+                },
+                "origin_ref": {
+                  "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+                  "type": "string"
+                },
+                "token": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "token",
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "同步返回结果的只读复核",
+            "name": "slow_sim__sync_probe",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "origin_ref": {
+                  "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ]
+    },
+    "structured-updates-only": {
+      "binding_order": [
+        "update_intent",
+        "update_goal",
+        "update_authorization"
+      ],
+      "bindings": {
+        "update_authorization": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.authorization",
+          "op": null,
+          "sync_result": false,
+          "target": "authorization"
+        },
+        "update_goal": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.goal",
+          "op": null,
+          "sync_result": false,
+          "target": "goal"
+        },
+        "update_intent": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.intent",
+          "op": null,
+          "sync_result": false,
+          "target": "intent"
+        }
+      },
+      "schemas": [
+        {
+          "function": {
+            "description": "按字段更新 intent；只传本轮确实变化的字段",
+            "name": "update_intent",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "constraints": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "objective_hypothesis": {
+                  "type": "string"
+                },
+                "uncertainty": {
+                  "type": "number"
+                },
+                "unresolved_questions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "按字段更新 goal；只传本轮确实变化的字段",
+            "name": "update_goal",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "acceptance_criteria": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "accepted",
+                    "superseded"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "按字段更新 authorization；只传本轮确实变化的字段",
+            "name": "update_authorization",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "allow": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "deny": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "evidence_refs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ]
+    },
+    "two-executors-with-recall": {
+      "binding_order": [
+        "update_intent",
+        "update_goal",
+        "update_authorization",
+        "memory__recall",
+        "slow_sim__set_light",
+        "slow_sim__read_state",
+        "slow_sim__set_credential",
+        "slow_sim__sync_probe",
+        "fast-sim_2__peek"
+      ],
+      "bindings": {
+        "fast-sim_2__peek": {
+          "executor": "fast-sim_2",
+          "kind": "delegate",
+          "logical_name": "fast-sim_2.peek",
+          "op": "peek",
+          "sync_result": false,
+          "target": null
+        },
+        "memory__recall": {
+          "executor": null,
+          "kind": "query",
+          "logical_name": "memory.recall",
+          "op": null,
+          "sync_result": false,
+          "target": null
+        },
+        "slow_sim__read_state": {
+          "executor": "slow_sim",
+          "kind": "delegate",
+          "logical_name": "slow_sim.read_state",
+          "op": "read_state",
+          "sync_result": false,
+          "target": null
+        },
+        "slow_sim__set_credential": {
+          "executor": "slow_sim",
+          "kind": "delegate",
+          "logical_name": "slow_sim.set_credential",
+          "op": "set_credential",
+          "sync_result": false,
+          "target": null
+        },
+        "slow_sim__set_light": {
+          "executor": "slow_sim",
+          "kind": "delegate",
+          "logical_name": "slow_sim.set_light",
+          "op": "set_light",
+          "sync_result": false,
+          "target": null
+        },
+        "slow_sim__sync_probe": {
+          "executor": "slow_sim",
+          "kind": "delegate",
+          "logical_name": "slow_sim.sync_probe",
+          "op": "sync_probe",
+          "sync_result": true,
+          "target": null
+        },
+        "update_authorization": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.authorization",
+          "op": null,
+          "sync_result": false,
+          "target": "authorization"
+        },
+        "update_goal": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.goal",
+          "op": null,
+          "sync_result": false,
+          "target": "goal"
+        },
+        "update_intent": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.intent",
+          "op": null,
+          "sync_result": false,
+          "target": "intent"
+        }
+      },
+      "schemas": [
+        {
+          "function": {
+            "description": "按字段更新 intent；只传本轮确实变化的字段",
+            "name": "update_intent",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "constraints": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "objective_hypothesis": {
+                  "type": "string"
+                },
+                "uncertainty": {
+                  "type": "number"
+                },
+                "unresolved_questions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "按字段更新 goal；只传本轮确实变化的字段",
+            "name": "update_goal",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "acceptance_criteria": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "accepted",
+                    "superseded"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "按字段更新 authorization；只传本轮确实变化的字段",
+            "name": "update_authorization",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "allow": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "deny": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "evidence_refs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "从当前会话的历史记忆中查找与用户问题相关的证据",
+            "name": "memory__recall",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "query": {
+                  "description": "用户当前问题中需要回想的事实或结果",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "scope": {
+                  "description": "recent 优先最近记录；any 在当前会话记忆内扩大查找",
+                  "enum": [
+                    "recent",
+                    "any"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query",
+                "scope"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "设置灯光亮度",
+            "name": "slow_sim__set_light",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "brightness": {
+                  "type": "integer"
+                },
+                "origin_ref": {
+                  "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "brightness",
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "只读查询当前状态",
+            "name": "slow_sim__read_state",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "origin_ref": {
+                  "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "带敏感参数的写操作",
+            "name": "slow_sim__set_credential",
+            "parameters": {
+              "additionalProperties": true,
+              "properties": {
+                "mode": {
+                  "type": "string"
+                },
+                "origin_ref": {
+                  "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+                  "type": "string"
+                },
+                "token": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "token",
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "同步返回结果的只读复核",
+            "name": "slow_sim__sync_probe",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "origin_ref": {
+                  "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "名字里带短划线和数字的 executor",
+            "name": "fast-sim_2__peek",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "origin_ref": {
+                  "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ]
+    },
+    "with-memory-recall": {
+      "binding_order": [
+        "update_intent",
+        "update_goal",
+        "update_authorization",
+        "memory__recall"
+      ],
+      "bindings": {
+        "memory__recall": {
+          "executor": null,
+          "kind": "query",
+          "logical_name": "memory.recall",
+          "op": null,
+          "sync_result": false,
+          "target": null
+        },
+        "update_authorization": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.authorization",
+          "op": null,
+          "sync_result": false,
+          "target": "authorization"
+        },
+        "update_goal": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.goal",
+          "op": null,
+          "sync_result": false,
+          "target": "goal"
+        },
+        "update_intent": {
+          "executor": null,
+          "kind": "update",
+          "logical_name": "update.intent",
+          "op": null,
+          "sync_result": false,
+          "target": "intent"
+        }
+      },
+      "schemas": [
+        {
+          "function": {
+            "description": "按字段更新 intent；只传本轮确实变化的字段",
+            "name": "update_intent",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "constraints": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "objective_hypothesis": {
+                  "type": "string"
+                },
+                "uncertainty": {
+                  "type": "number"
+                },
+                "unresolved_questions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "按字段更新 goal；只传本轮确实变化的字段",
+            "name": "update_goal",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "acceptance_criteria": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "accepted",
+                    "superseded"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "按字段更新 authorization；只传本轮确实变化的字段",
+            "name": "update_authorization",
+            "parameters": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "allow": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "deny": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "evidence_refs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "function"
+        },
+        {
+          "function": {
+            "description": "从当前会话的历史记忆中查找与用户问题相关的证据",
+            "name": "memory__recall",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "query": {
+                  "description": "用户当前问题中需要回想的事实或结果",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "scope": {
+                  "description": "recent 优先最近记录；any 在当前会话记忆内扩大查找",
+                  "enum": [
+                    "recent",
+                    "any"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query",
+                "scope"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "schema_version": 1
+}
