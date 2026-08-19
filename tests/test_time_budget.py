@@ -18,12 +18,12 @@ def test_repository_scan_reuses_one_text_and_ast_snapshot() -> None:
     assert parsed_python(runtime).body
 
 
-def test_ci_budget_is_7_5_seconds_while_local_default_stays_3_5_seconds() -> None:
+def test_ci_budget_is_7_5_seconds_while_local_default_stays_4_5_seconds() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     conftest_source = Path("tests/conftest.py").read_text(encoding="utf-8")
 
     assert 'NOVA_AUDIO_AGENT_TEST_TIME_BUDGET: "7.5"' in workflow
-    assert 'os.environ.get("NOVA_AUDIO_AGENT_TEST_TIME_BUDGET", "3.5")' in conftest_source
+    assert 'os.environ.get("NOVA_AUDIO_AGENT_TEST_TIME_BUDGET", "4.5")' in conftest_source
 
 
 def test_configured_budget_keeps_headroom_but_rejects_a_larger_regression(
@@ -33,7 +33,7 @@ def test_configured_budget_keeps_headroom_but_rejects_a_larger_regression(
 
     # The default pin must not defeat the documented slow-machine override.
     if "NOVA_AUDIO_AGENT_TEST_TIME_BUDGET" not in os.environ:
-        assert suite_config._BUDGET == 3.5
+        assert suite_config._BUDGET == 4.5
 
     monkeypatch.setattr(suite_config, "_BUDGET", 3.0)
     monkeypatch.setattr(suite_config, "_test_elapsed", 0.0)
