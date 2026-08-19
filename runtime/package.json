@@ -1,0 +1,40 @@
+{
+  "name": "@nova-audio-agent/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./desktop": {
+      "types": "./dist/src/desktop.d.ts",
+      "default": "./dist/src/desktop.js"
+    }
+  },
+  "bin": {
+    "nova-audio-agent-node": "./dist/src/cli.js"
+  },
+  "files": [
+    "dist/src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "demo": "npm run build && node dist/src/cli.js demo",
+    "fixtures:check": "npm run build && node dist/src/cli.js fixture check",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test",
+    "test": "npm run build && node --test dist/test/*.test.js"
+  },
+  "dependencies": {
+    "ws": "8.21.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
+  }
+}

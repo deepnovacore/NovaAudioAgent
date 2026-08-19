@@ -40,18 +40,18 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: desktop/ambient-orb
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: desktop/ambient-orb/package-lock.json
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@11.6.0
       - run: npm ci
-      - run: npm test
+      - run: npm run check
+      - run: npm run test:runtime
+      - run: npm run test:desktop
       - run: npm run build
 
   package:
@@ -70,16 +70,14 @@ jobs:
             script: package:win
             artifact: ambient-orb-win
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: desktop/ambient-orb
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: desktop/ambient-orb/package-lock.json
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@11.6.0
       - run: npm ci
       - run: npm run ${{ matrix.script }}
       - uses: actions/upload-artifact@v4

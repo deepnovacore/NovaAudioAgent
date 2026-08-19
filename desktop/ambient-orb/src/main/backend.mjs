@@ -1,6 +1,6 @@
 import { createServer } from 'node:net'
 import { timingSafeEqual } from 'node:crypto'
-import { posix, win32 } from 'node:path'
+import { isAbsolute, posix, resolve, win32 } from 'node:path'
 
 const MAX_READINESS_BYTES = 4096
 const TOKEN_PATTERN = /^[a-f0-9]{32}$/
@@ -77,8 +77,33 @@ export function fallbackPython(platform = process.platform) {
   return platform === 'win32' ? 'python' : 'python3'
 }
 
+export function selectedBackend(env = process.env) {
+  const value = env?.NOVA_AUDIO_AGENT_BACKEND ?? 'python'
+  if (value !== 'python' && value !== 'node') {
+    throw new Error('NOVA_AUDIO_AGENT_BACKEND must be python or node')
+  }
+  return value
+}
+
+export function nodeRuntimeEntry({ isPackaged, appPath, packageRoot }) {
+  if (typeof appPath !== 'string' || !isAbsolute(appPath)) {
+    throw new Error('absolute Electron app path is required')
+  }
+  if (typeof packageRoot !== 'string' || !isAbsolute(packageRoot)) {
+    throw new Error('absolute desktop package root is required')
+  }
+  return isPackaged
+    ? resolve(
+      appPath,
+      'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
+    )
+    : resolve(packageRoot, '../../runtime/dist/src/desktop-entry.js')
+}
+
 export function backendLaunchSpec({
+  backend = 'python',
   python,
+  nodeEntry,
   workspace,
   token,
   readyEndpoint,
@@ -86,7 +111,13 @@ export function backendLaunchSpec({
   settings,
   decryptedSecrets,
 }) {
-  if (typeof python !== 'string' || !python) throw new Error('python is required')
+  if (backend !== 'python' && backend !== 'node') throw new Error('backend kind is invalid')
+  if (backend === 'python' && (typeof python !== 'string' || !python)) {
+    throw new Error('python is required')
+  }
+  if (backend === 'node' && (typeof nodeEntry !== 'string' || !isAbsolute(nodeEntry))) {
+    throw new Error('absolute Node runtime entry is required')
+  }
   if (typeof workspace !== 'string' || !workspace) throw new Error('workspace is required')
   if (!TOKEN_PATTERN.test(token)) throw new Error('128-bit token is required')
   const endpointMatch = typeof readyEndpoint === 'string'
@@ -107,6 +138,7 @@ export function backendLaunchSpec({
     ...parentEnv,
     NOVA_AUDIO_AGENT_DESKTOP_TOKEN: token,
     NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT: readyEndpoint,
+    NOVA_AUDIO_AGENT_BACKEND: backend,
     NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
     NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
     NOVA_AUDIO_AGENT_PROACTIVITY_PRESET: proactivity,
@@ -135,12 +167,21 @@ export function backendLaunchSpec({
       if (trimmed && !CONTROL_CHARACTERS.test(trimmed)) env[envName] = trimmed
     }
   }
-  return {
-    command: python,
-    argv: ['-m', 'nova_audio_agent.realtime.desktop'],
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  }
+  return backend === 'node'
+    ? {
+      kind: 'node',
+      entry: nodeEntry,
+      argv: [],
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+    : {
+      kind: 'python',
+      command: python,
+      argv: ['-m', 'nova_audio_agent.realtime.desktop'],
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }
 }
 
 export function parseReadiness(raw, token) {
@@ -314,6 +355,7 @@ export function watchBackendExit(child, { closeReadiness, onExit }) {
   const die = reason => {
     if (dead) return
     dead = true
+    exitedBackends.add(child)
     closeReadiness(new Error(reason))
     onExit(reason)
   }
@@ -326,6 +368,7 @@ export function watchBackendExit(child, { closeReadiness, onExit }) {
 // One drain per child, so a quit that re-enters (or a readiness timeout racing
 // the quit) joins the sequence already in flight instead of starting a new one.
 const drains = new WeakMap()
+const exitedBackends = new WeakSet()
 
 /**
  * Shut the backend down on the stdin-EOF sentinel, escalating only if it hangs.
@@ -350,9 +393,14 @@ export function shutdownBackend(
   const started = drains.get(child)
   if (started) return started
   const drained = new Promise(resolve => {
+    const utility = typeof child.postMessage === 'function'
     // `!= null` deliberately: a live child reports null for both, so anything
     // else means it is already gone and nothing should wait out the grace.
-    if (child.exitCode != null || child.signalCode != null) {
+    if (
+      child.exitCode != null
+      || child.signalCode != null
+      || (utility && exitedBackends.has(child))
+    ) {
       resolve()
       return
     }
@@ -361,6 +409,7 @@ export function shutdownBackend(
     const finish = () => {
       if (settled) return
       settled = true
+      exitedBackends.add(child)
       clearTimeout(timer)
       resolve()
     }
@@ -369,10 +418,12 @@ export function shutdownBackend(
     // A destroyed/non-writable stdin throws ERR_STREAM_DESTROYED asynchronously
     // on end() — outside this promise, so it would surface as an uncaught
     // exception during quit instead of failing the shutdown gracefully.
-    if (child.stdin && child.stdin.writable && !child.stdin.destroyed) child.stdin.end()
-    if (platform !== 'win32') child.kill('SIGTERM')
+    if (utility) child.postMessage({ type: 'nova.shutdown' })
+    else if (child.stdin && child.stdin.writable && !child.stdin.destroyed) child.stdin.end()
+    if (!utility && platform !== 'win32') child.kill('SIGTERM')
     timer = setTimeout(() => {
-      child.kill('SIGKILL')
+      if (utility) child.kill()
+      else child.kill('SIGKILL')
       finish()
     }, graceMs)
     // 'exit' can fire synchronously above (reachable with test doubles), in

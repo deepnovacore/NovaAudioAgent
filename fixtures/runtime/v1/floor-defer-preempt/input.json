@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "initial_clock": 0,
+  "id_sequences": {"delegate": []},
+  "configuration": {
+    "proactivity_preset": "balanced",
+    "enabled_executors": []
+  },
+  "stimuli": [
+    {"at": 0, "kind": "floor_user_start", "speech_id": "speech-1"},
+    {"at": 1, "kind": "user_input", "text": "do not interrupt me"},
+    {"at": 2, "kind": "floor_user_end", "speech_id": "speech-1"},
+    {
+      "at": 3,
+      "kind": "floor_agent_start",
+      "utterance_id": "ambient-utterance",
+      "priority": 50
+    },
+    {"at": 4, "kind": "user_input", "text": "this is urgent"},
+    {
+      "at": 5,
+      "kind": "floor_agent_end",
+      "utterance_id": "ambient-utterance"
+    }
+  ],
+  "ports": {
+    "fastbrain": [
+      {
+        "delay": 0,
+        "output": {
+          "speak": {"act": "say", "text": "Deferred response."},
+          "action": {"act": "none"}
+        }
+      },
+      {
+        "delay": 0,
+        "output": {
+          "speak": {"act": "say", "text": "Urgent response."},
+          "action": {"act": "none"}
+        }
+      }
+    ],
+    "surrogate": [],
+    "compressor": []
+  }
+}

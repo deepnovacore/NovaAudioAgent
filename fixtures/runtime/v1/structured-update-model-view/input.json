@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "initial_clock": 0,
+  "id_sequences": {"delegate": []},
+  "configuration": {
+    "proactivity_preset": "balanced",
+    "enabled_executors": ["slow_sim"]
+  },
+  "stimuli": [
+    {"at": 0, "kind": "user_input", "text": "Remember the quiet-light goal."},
+    {"at": 1, "kind": "user_input", "text": "Do not let the model set revision."}
+  ],
+  "ports": {
+    "fastbrain": [
+      {
+        "delay": 0,
+        "output": {
+          "speak": {"act": "none"},
+          "action": {
+            "act": "update",
+            "update": {
+              "target": "intent",
+              "delta": {
+                "objective_hypothesis": "keep the room quiet and dim",
+                "constraints": ["do not speak loudly"],
+                "uncertainty": 0.25
+              }
+            }
+          }
+        }
+      },
+      {
+        "delay": 0,
+        "output": {
+          "speak": {"act": "none"},
+          "action": {
+            "act": "update",
+            "update": {
+              "target": "intent",
+              "delta": {"revision": 99}
+            }
+          }
+        }
+      }
+    ],
+    "surrogate": [],
+    "compressor": []
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "model_views": [],
+  "applied_events": [],
+  "memory": {
+    "channels": {
+      "conversation": []
+    },
+    "structured": {
+      "intent": {
+        "objective_hypothesis": "",
+        "constraints": [],
+        "unresolved_questions": [],
+        "uncertainty": 1.0,
+        "revision": 0
+      },
+      "goal": {
+        "objective": "",
+        "acceptance_criteria": [],
+        "status": "accepted",
+        "revision": 0
+      },
+      "authorization": {
+        "allow": [],
+        "deny": [],
+        "evidence_refs": [],
+        "revision": 0
+      }
+    },
+    "summaries": {
+      "conversation": null
+    }
+  },
+  "delegates": [],
+  "suggestions": [],
+  "floor_decisions": [],
+  "outbound_desktop": [
+    {
+      "kind": "audio_frame",
+      "data": {
+        "utterance_id": "utterance-old",
+        "generation_epoch": 1,
+        "sequence": 0,
+        "pcm_base64": "AAE="
+      }
+    },
+    {
+      "kind": "audio_clear",
+      "data": {
+        "utterance_id": "utterance-old",
+        "generation_epoch": 1
+      }
+    },
+    {
+      "kind": "audio_frame",
+      "data": {
+        "utterance_id": "utterance-new",
+        "generation_epoch": 2,
+        "sequence": 0,
+        "pcm_base64": "AgM="
+      }
+    }
+  ],
+  "executor_effects": [],
+  "playback_effects": [
+    {
+      "kind": "open",
+      "generation": {
+        "session_epoch": 1,
+        "generation_epoch": 1,
+        "generation_id": "generation-old",
+        "utterance_id": "utterance-old",
+        "response_id": "reused"
+      }
+    },
+    {
+      "kind": "ack",
+      "ack": "started",
+      "utterance_id": "utterance-old",
+      "generation_epoch": 1,
+      "accepted": true,
+      "completion": null
+    },
+    {
+      "kind": "open",
+      "generation": {
+        "session_epoch": 2,
+        "generation_epoch": 2,
+        "generation_id": "generation-new",
+        "utterance_id": "utterance-new",
+        "response_id": "reused"
+      }
+    },
+    {
+      "kind": "ack",
+      "ack": "cleared",
+      "utterance_id": "utterance-old",
+      "generation_epoch": 1,
+      "accepted": true,
+      "completion": {
+        "session_epoch": 1,
+        "response_id": "reused",
+        "utterance_id": "utterance-old",
+        "generation_epoch": 1,
+        "text": "old response",
+        "disposition": "interrupted",
+        "started": true,
+        "played_ms": 350
+      }
+    },
+    {
+      "kind": "ack",
+      "ack": "done",
+      "utterance_id": "utterance-old",
+      "generation_epoch": 1,
+      "accepted": false,
+      "completion": null
+    },
+    {
+      "kind": "ack",
+      "ack": "done",
+      "utterance_id": "utterance-new",
+      "generation_epoch": 2,
+      "accepted": true,
+      "completion": {
+        "session_epoch": 2,
+        "response_id": "reused",
+        "utterance_id": "utterance-new",
+        "generation_epoch": 2,
+        "text": "new response",
+        "disposition": "spoken",
+        "started": false,
+        "played_ms": 20
+      }
+    }
+  ],
+  "diagnostics": []
+}

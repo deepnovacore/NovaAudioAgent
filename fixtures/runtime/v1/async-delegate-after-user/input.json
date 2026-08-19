@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "initial_clock": 0,
+  "id_sequences": {"delegate": ["d-1"]},
+  "configuration": {
+    "proactivity_preset": "balanced",
+    "enabled_executors": ["slow_sim"]
+  },
+  "stimuli": [
+    {"at": 0, "kind": "user_input", "text": "dim the light"},
+    {"at": 1, "kind": "user_input", "text": "what should I watch tonight?"},
+    {
+      "at": 2,
+      "kind": "executor_complete",
+      "dispatch_index": 0,
+      "outcome": "ok",
+      "trust": "trusted_system",
+      "content": {"brightness": 30},
+      "refs": []
+    }
+  ],
+  "ports": {
+    "fastbrain": [
+      {
+        "delay": 0,
+        "output": {
+          "speak": {"act": "say", "text": "On it."},
+          "action": {
+            "act": "delegate",
+            "delegate": {
+              "executor": "slow_sim",
+              "op": "set_light",
+              "request": {"brightness": 30},
+              "origin_ref": "conversation:1"
+            }
+          }
+        }
+      },
+      {
+        "delay": 0,
+        "output": {
+          "speak": {"act": "say", "text": "Let's pick a film while the light changes."},
+          "action": {"act": "none"}
+        }
+      },
+      {
+        "delay": 0,
+        "output": {
+          "speak": {"act": "none"},
+          "action": {"act": "none"}
+        }
+      }
+    ],
+    "surrogate": [],
+    "compressor": []
+  }
+}

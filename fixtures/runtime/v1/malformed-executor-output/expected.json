@@ -1,0 +1,291 @@
+{
+  "schema_version": 1,
+  "model_views": [
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 0.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "dim the light"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "name": "slow_sim",
+            "summary": null,
+            "recent": [],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [],
+        "affordances": [],
+        "floor": "idle",
+        "now": 0,
+        "trigger_kind": "user_input"
+      }
+    },
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 0.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "dim the light"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "name": "slow_sim",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "slow_sim",
+                "seq": 1,
+                "ts": 0.0,
+                "trust": "trusted_system",
+                "priority": 50,
+                "content": {
+                  "error": "adapter_raised",
+                  "exception": "ExecutorContractError",
+                  "detail": "invalid_executor_output"
+                },
+                "outcome": "unknown",
+                "refs": [
+                  "conversation:1"
+                ]
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [],
+        "affordances": [
+          {
+            "source": "channel_update",
+            "ref": "slow_sim:1",
+            "content": {
+              "channel": "slow_sim",
+              "ts": 0.0,
+              "outcome": "unknown",
+              "observation": {
+                "error": "adapter_raised",
+                "exception": "ExecutorContractError",
+                "detail": "invalid_executor_output"
+              }
+            },
+            "conclusive": null
+          }
+        ],
+        "floor": "idle",
+        "now": 0,
+        "trigger_kind": "handoff"
+      }
+    }
+  ],
+  "applied_events": [
+    {
+      "seq": 1,
+      "ts": 0.0,
+      "kind": "user_input",
+      "payload": {
+        "text": "dim the light"
+      }
+    },
+    {
+      "seq": 2,
+      "ts": 0.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-1"
+      }
+    },
+    {
+      "seq": 4,
+      "ts": 0.0,
+      "kind": "handoff",
+      "payload": {
+        "channel": "slow_sim",
+        "delegate_id": "d-1",
+        "origin_ref": "conversation:1",
+        "outcome": "unknown",
+        "trust": "trusted_system",
+        "content": {
+          "error": "adapter_raised",
+          "exception": "ExecutorContractError",
+          "detail": "invalid_executor_output"
+        },
+        "refs": []
+      }
+    },
+    {
+      "seq": 5,
+      "ts": 0.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-3"
+      }
+    },
+    {
+      "seq": 3,
+      "ts": 5.0,
+      "kind": "deadline",
+      "payload": {
+        "delegate_id": "d-1"
+      }
+    }
+  ],
+  "memory": {
+    "channels": {
+      "conversation": [
+        {
+          "channel": "conversation",
+          "seq": 1,
+          "ts": 0.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "dim the light"
+          },
+          "outcome": null,
+          "refs": []
+        }
+      ],
+      "slow_sim": [
+        {
+          "channel": "slow_sim",
+          "seq": 1,
+          "ts": 0.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "error": "adapter_raised",
+            "exception": "ExecutorContractError",
+            "detail": "invalid_executor_output"
+          },
+          "outcome": "unknown",
+          "refs": [
+            "conversation:1"
+          ]
+        }
+      ]
+    },
+    "structured": {
+      "intent": {
+        "objective_hypothesis": "",
+        "constraints": [],
+        "unresolved_questions": [],
+        "uncertainty": 1.0,
+        "revision": 0
+      },
+      "goal": {
+        "objective": "",
+        "acceptance_criteria": [],
+        "status": "accepted",
+        "revision": 0
+      },
+      "authorization": {
+        "allow": [],
+        "deny": [],
+        "evidence_refs": [],
+        "revision": 0
+      }
+    },
+    "summaries": {
+      "conversation": null,
+      "slow_sim": null
+    }
+  },
+  "delegates": [],
+  "suggestions": [],
+  "floor_decisions": [],
+  "outbound_desktop": [],
+  "executor_effects": [
+    {
+      "kind": "dispatch",
+      "delegate": {
+        "executor": "slow_sim",
+        "op": "set_light",
+        "request": {
+          "brightness": 30
+        },
+        "origin_ref": "conversation:1",
+        "delegate_id": "d-1",
+        "deadline": 5.0,
+        "routing_class": "user_awaited",
+        "dispatched_at": 0
+      }
+    }
+  ],
+  "diagnostics": []
+}

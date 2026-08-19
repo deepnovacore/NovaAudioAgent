@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "surrogate-invented-selection",
+  "description": "A Surrogate-selected ID that was never offered is refused and cannot wake FastBrain.",
+  "covers": ["surrogate.offered_membership", "runtime.progress", "suggestions.withdraw"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

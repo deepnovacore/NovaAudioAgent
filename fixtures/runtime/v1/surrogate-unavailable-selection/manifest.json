@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "surrogate-unavailable-selection",
+  "description": "A progress suggestion withdrawn by completion while Surrogate is in flight cannot wake FastBrain.",
+  "covers": ["surrogate.current_availability", "runtime.progress", "suggestions.withdraw"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

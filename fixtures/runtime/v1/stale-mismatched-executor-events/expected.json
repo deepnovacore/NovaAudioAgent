@@ -1,0 +1,345 @@
+{
+  "schema_version": 1,
+  "model_views": [
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 0.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "dim the light"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "name": "slow_sim",
+            "summary": null,
+            "recent": [],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [],
+        "affordances": [],
+        "floor": "idle",
+        "now": 0,
+        "trigger_kind": "user_input"
+      }
+    },
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 0.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "dim the light"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "name": "slow_sim",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "slow_sim",
+                "seq": 1,
+                "ts": 2.0,
+                "trust": "trusted_system",
+                "priority": 50,
+                "content": {
+                  "state": "done"
+                },
+                "outcome": "ok",
+                "refs": [
+                  "conversation:1"
+                ]
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [],
+        "affordances": [
+          {
+            "source": "channel_update",
+            "ref": "slow_sim:1",
+            "content": {
+              "channel": "slow_sim",
+              "ts": 2.0,
+              "outcome": "ok",
+              "observation": {
+                "state": "done"
+              }
+            },
+            "conclusive": null
+          }
+        ],
+        "floor": "idle",
+        "now": 2,
+        "trigger_kind": "handoff"
+      }
+    }
+  ],
+  "applied_events": [
+    {
+      "seq": 1,
+      "ts": 0.0,
+      "kind": "user_input",
+      "payload": {
+        "text": "dim the light"
+      }
+    },
+    {
+      "seq": 2,
+      "ts": 0.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-1"
+      }
+    },
+    {
+      "seq": 4,
+      "ts": 1.0,
+      "kind": "progress",
+      "payload": {
+        "channel": "slow_sim",
+        "delegate_id": "wrong-delegate",
+        "op": "set_light",
+        "phase": "working",
+        "internal_activity": 1,
+        "elapsed": 1,
+        "summary": "must be ignored"
+      }
+    },
+    {
+      "seq": 5,
+      "ts": 1.25,
+      "kind": "observation",
+      "payload": {
+        "channel": "slow_sim",
+        "delegate_id": "wrong-delegate",
+        "op": "set_light",
+        "origin_ref": "conversation:1",
+        "trust": "trusted_system",
+        "content": {
+          "hit": true,
+          "state": "wrong"
+        },
+        "refs": []
+      }
+    },
+    {
+      "seq": 6,
+      "ts": 2.0,
+      "kind": "handoff",
+      "payload": {
+        "channel": "slow_sim",
+        "delegate_id": "delegate-z",
+        "origin_ref": "conversation:1",
+        "outcome": "ok",
+        "trust": "trusted_system",
+        "content": {
+          "state": "done"
+        },
+        "refs": []
+      }
+    },
+    {
+      "seq": 7,
+      "ts": 2.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-3"
+      }
+    },
+    {
+      "seq": 8,
+      "ts": 3.0,
+      "kind": "progress",
+      "payload": {
+        "channel": "slow_sim",
+        "delegate_id": "delegate-z",
+        "op": "set_light",
+        "phase": "working",
+        "internal_activity": 2,
+        "elapsed": 3,
+        "summary": "too late"
+      }
+    },
+    {
+      "seq": 9,
+      "ts": 3.25,
+      "kind": "observation",
+      "payload": {
+        "channel": "slow_sim",
+        "delegate_id": "delegate-z",
+        "op": "set_light",
+        "origin_ref": "conversation:1",
+        "trust": "trusted_system",
+        "content": {
+          "hit": true,
+          "state": "late"
+        },
+        "refs": []
+      }
+    },
+    {
+      "seq": 3,
+      "ts": 5.0,
+      "kind": "deadline",
+      "payload": {
+        "delegate_id": "delegate-z"
+      }
+    }
+  ],
+  "memory": {
+    "channels": {
+      "conversation": [
+        {
+          "channel": "conversation",
+          "seq": 1,
+          "ts": 0.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "dim the light"
+          },
+          "outcome": null,
+          "refs": []
+        }
+      ],
+      "slow_sim": [
+        {
+          "channel": "slow_sim",
+          "seq": 1,
+          "ts": 2.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "state": "done"
+          },
+          "outcome": "ok",
+          "refs": [
+            "conversation:1"
+          ]
+        }
+      ]
+    },
+    "structured": {
+      "intent": {
+        "objective_hypothesis": "",
+        "constraints": [],
+        "unresolved_questions": [],
+        "uncertainty": 1.0,
+        "revision": 0
+      },
+      "goal": {
+        "objective": "",
+        "acceptance_criteria": [],
+        "status": "accepted",
+        "revision": 0
+      },
+      "authorization": {
+        "allow": [],
+        "deny": [],
+        "evidence_refs": [],
+        "revision": 0
+      }
+    },
+    "summaries": {
+      "conversation": null,
+      "slow_sim": null
+    }
+  },
+  "delegates": [],
+  "suggestions": [],
+  "floor_decisions": [],
+  "outbound_desktop": [],
+  "executor_effects": [
+    {
+      "kind": "dispatch",
+      "delegate": {
+        "executor": "slow_sim",
+        "op": "set_light",
+        "request": {
+          "brightness": 30
+        },
+        "origin_ref": "conversation:1",
+        "delegate_id": "delegate-z",
+        "deadline": 5.0,
+        "routing_class": "user_awaited",
+        "dispatched_at": 0
+      }
+    }
+  ],
+  "diagnostics": []
+}

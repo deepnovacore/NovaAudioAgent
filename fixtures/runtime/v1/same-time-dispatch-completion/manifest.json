@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "same-time-dispatch-completion",
+  "description": "Declared same-time stimuli bind a delegate before its immediate completion.",
+  "covers": ["fixtures.stimulus_order", "runtime.zero_latency_completion"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "floor-defer-preempt",
+  "description": "User speech defers model speech into the pool while a higher-priority user wake preempts lower-priority agent speech.",
+  "covers": ["floor.defer", "floor.preempt", "suggestions.deferred_speech"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

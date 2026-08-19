@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "malformed-fastbrain-output",
+  "description": "Malformed FastBrain output produces one bounded compensation attempt.",
+  "covers": ["runtime.model_contract", "runtime.compensation", "slots.model_done"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

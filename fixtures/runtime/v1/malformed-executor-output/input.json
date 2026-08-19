@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "initial_clock": 0,
+  "id_sequences": {"delegate": ["d-1"]},
+  "configuration": {
+    "proactivity_preset": "balanced",
+    "enabled_executors": ["slow_sim"]
+  },
+  "stimuli": [
+    {"at": 0, "kind": "user_input", "text": "dim the light"}
+  ],
+  "ports": {
+    "fastbrain": [
+      {
+        "delay": 0,
+        "output": {
+          "speak": {"act": "none"},
+          "action": {
+            "act": "delegate",
+            "delegate": {
+              "executor": "slow_sim",
+              "op": "set_light",
+              "request": {"brightness": 30},
+              "origin_ref": "conversation:1"
+            }
+          }
+        }
+      },
+      {
+        "delay": 0,
+        "output": {
+          "speak": {"act": "none"},
+          "action": {"act": "none"}
+        }
+      }
+    ],
+    "surrogate": [],
+    "compressor": [],
+    "executors": {
+      "slow_sim": [
+        {"delay": 0, "output": null}
+      ]
+    }
+  }
+}

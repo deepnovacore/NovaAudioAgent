@@ -6,6 +6,7 @@
   "main": "src/main/main.mjs",
   "scripts": {
     "test": "node --test",
+    "smoke:node-backend": "npm run build && electron scripts/utility-runtime-smoke.mjs",
     "icons": "node scripts/make-icons.mjs",
     "build": "node scripts/make-icons.mjs --if-missing && node scripts/build.mjs",
     "start": "npm run build && electron .",
@@ -13,8 +14,12 @@
     "package:win": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never",
     "package:linux": "npm run build && electron-builder --config electron-builder.yml --linux AppImage deb --publish never"
   },
+  "dependencies": {
+    "@nova-audio-agent/runtime": "0.1.0"
+  },
   "devDependencies": {
     "electron": "43.2.0",
-    "electron-builder": "26.15.7"
+    "electron-builder": "26.15.7",
+    "ws": "8.21.3"
   }
 }

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "deadline-handoff-wins",
+  "description": "A handoff at the exact deadline instant is applied before the deadline.",
+  "covers": ["events.ordering", "runtime.deadline"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

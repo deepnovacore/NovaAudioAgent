@@ -10,7 +10,9 @@ import {
   backendLaunchSpec,
   createReadinessListener,
   fallbackPython,
+  nodeRuntimeEntry,
   parseReadiness,
+  selectedBackend,
   shutdownBackend,
   venvPython,
   watchBackendExit,
@@ -108,6 +110,59 @@ test('passes token only through environment and dials back over loopback', () =>
   assert.deepEqual(spec.stdio, ['pipe', 'pipe', 'pipe'])
   assert.equal(spec.stdio.length, 3)
   assert.equal(JSON.stringify(spec.argv).includes(TOKEN), false)
+  assert.equal(spec.kind, 'python')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_BACKEND, 'python')
+})
+
+test('backend selection defaults to Python and accepts only the explicit Node switch', () => {
+  assert.equal(selectedBackend({}), 'python')
+  assert.equal(selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'python' }), 'python')
+  assert.equal(selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'node' }), 'node')
+  assert.throws(
+    () => selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'private-invalid-value' }),
+    error => !error.message.includes('private-invalid-value'),
+  )
+})
+
+test('Node launch uses the compiled utility-process entry and no writable stdin', () => {
+  const nodeEntry = '/repo/runtime/dist/src/desktop-entry.js'
+  const spec = backendLaunchSpec({
+    backend: 'node',
+    nodeEntry,
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: { PATH: '/usr/bin' },
+  })
+
+  assert.equal(spec.kind, 'node')
+  assert.equal(spec.entry, nodeEntry)
+  assert.deepEqual(spec.argv, [])
+  assert.deepEqual(spec.stdio, ['ignore', 'pipe', 'pipe'])
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_BACKEND, 'node')
+  assert.equal(JSON.stringify(spec).includes(TOKEN), true)
+  assert.equal(JSON.stringify(spec.argv).includes(TOKEN), false)
+  assert.throws(() => backendLaunchSpec({
+    backend: 'node',
+    nodeEntry: 'relative-entry.js',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+  }), /absolute Node runtime entry/)
+})
+
+test('runtime entry resolves inside the workspace for dev and the asar for packages', () => {
+  assert.equal(nodeRuntimeEntry({
+    isPackaged: false,
+    appPath: '/repo/desktop/ambient-orb',
+    packageRoot: '/repo/desktop/ambient-orb',
+  }), '/repo/runtime/dist/src/desktop-entry.js')
+  assert.equal(nodeRuntimeEntry({
+    isPackaged: true,
+    appPath: '/Applications/Nova.app/Contents/Resources/app.asar',
+    packageRoot: '/unused/desktop',
+  }), '/Applications/Nova.app/Contents/Resources/app.asar/node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js')
 })
 
 test('launch spec strips a stale inherited readiness pipe', () => {
@@ -612,6 +667,40 @@ test('shutdown on win32 relies on the stdin sentinel instead of a signal', async
   assert.deepEqual(child.calls, ['stdin.end'])
   await drained
   assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGKILL'])
+})
+
+test('utility-process shutdown requests a drain over its parent port before killing', async () => {
+  const child = fakeChild()
+  child.pid = 42
+  delete child.stdin
+  child.postMessage = message => child.calls.push(`post:${message.type}`)
+  child.kill = () => {
+    child.calls.push('kill')
+    return true
+  }
+
+  const drained = shutdownBackend(child, { graceMs: 30_000, platform: 'darwin' })
+  assert.deepEqual(child.calls, ['post:nova.shutdown'])
+
+  child.pid = undefined
+  child.exitCode = 0
+  child.emit('exit', 0)
+  await drained
+  assert.deepEqual(child.calls, ['post:nova.shutdown'])
+})
+
+test('a utility process still spawning is stopped instead of mistaken for an exited child', async () => {
+  const child = fakeChild()
+  child.pid = undefined
+  delete child.stdin
+  child.postMessage = message => child.calls.push(`post:${message.type}`)
+  child.kill = () => {
+    child.calls.push('kill')
+    return true
+  }
+
+  await shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+  assert.deepEqual(child.calls, ['post:nova.shutdown', 'kill'])
 })
 
 test('a backend that drains inside the grace window is never force killed', async () => {

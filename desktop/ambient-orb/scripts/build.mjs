@@ -17,7 +17,24 @@ const scripts = [
   'src/renderer/state.mjs',
   'src/renderer/orb-visual.mjs',
   'src/renderer/settings.mjs',
+  'scripts/utility-runtime-smoke.mjs',
 ]
+
+const runtimeEntry = resolve(root, '../../runtime/dist/src/desktop-entry.js')
+const npmCli = process.env.npm_execpath
+assert.ok(npmCli, 'npm_execpath is required to build the runtime workspace')
+const runtimeBuild = spawnSync(process.execPath, [
+  npmCli,
+  'run',
+  'build',
+  '--workspace',
+  '@nova-audio-agent/runtime',
+], {
+  cwd: root,
+  encoding: 'utf8',
+})
+assert.equal(runtimeBuild.status, 0, runtimeBuild.stderr)
+await readFile(runtimeEntry, 'utf8')
 
 for (const file of scripts) {
   const result = spawnSync(process.execPath, ['--check', resolve(root, file)], {

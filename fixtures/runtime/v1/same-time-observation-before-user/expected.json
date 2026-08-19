@@ -1,0 +1,590 @@
+{
+  "schema_version": 1,
+  "model_views": [
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 0.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "watch the light"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "name": "slow_sim",
+            "summary": null,
+            "recent": [],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [],
+        "affordances": [],
+        "floor": "idle",
+        "now": 0,
+        "trigger_kind": "user_input"
+      }
+    },
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 0.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "watch the light"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "name": "slow_sim",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "slow_sim",
+                "seq": 1,
+                "ts": 1.0,
+                "trust": "trusted_system",
+                "priority": 50,
+                "content": {
+                  "hit": true,
+                  "state": "changing"
+                },
+                "outcome": null,
+                "refs": [
+                  "conversation:1"
+                ]
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [
+          {
+            "delegate_id": "d-1",
+            "what": "slow_sim.set_light({\"brightness\":30})",
+            "origin_ref": "conversation:1",
+            "dispatched_at": 0,
+            "eta": 5.0,
+            "deadline": 5.0,
+            "routing_class": "user_awaited"
+          }
+        ],
+        "affordances": [
+          {
+            "source": "channel_update",
+            "ref": "slow_sim:1",
+            "content": {
+              "channel": "slow_sim",
+              "ts": 1.0,
+              "outcome": null,
+              "observation": {
+                "hit": true,
+                "state": "changing"
+              }
+            },
+            "conclusive": null
+          }
+        ],
+        "floor": "idle",
+        "now": 1,
+        "trigger_kind": "observation"
+      }
+    },
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 0.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "watch the light"
+                },
+                "outcome": null,
+                "refs": []
+              },
+              {
+                "channel": "conversation",
+                "seq": 2,
+                "ts": 1.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "what is happening now?"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "name": "slow_sim",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "slow_sim",
+                "seq": 1,
+                "ts": 1.0,
+                "trust": "trusted_system",
+                "priority": 50,
+                "content": {
+                  "hit": true,
+                  "state": "changing"
+                },
+                "outcome": null,
+                "refs": [
+                  "conversation:1"
+                ]
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [
+          {
+            "delegate_id": "d-1",
+            "what": "slow_sim.set_light({\"brightness\":30})",
+            "origin_ref": "conversation:1",
+            "dispatched_at": 0,
+            "eta": 5.0,
+            "deadline": 5.0,
+            "routing_class": "user_awaited"
+          }
+        ],
+        "affordances": [
+          {
+            "source": "channel_update",
+            "ref": "slow_sim:1",
+            "content": {
+              "channel": "slow_sim",
+              "ts": 1.0,
+              "outcome": null,
+              "observation": {
+                "hit": true,
+                "state": "changing"
+              }
+            },
+            "conclusive": null
+          }
+        ],
+        "floor": "idle",
+        "now": 1,
+        "trigger_kind": "user_input"
+      }
+    },
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 0.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "watch the light"
+                },
+                "outcome": null,
+                "refs": []
+              },
+              {
+                "channel": "conversation",
+                "seq": 2,
+                "ts": 1.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "what is happening now?"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "name": "slow_sim",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "slow_sim",
+                "seq": 1,
+                "ts": 1.0,
+                "trust": "trusted_system",
+                "priority": 50,
+                "content": {
+                  "hit": true,
+                  "state": "changing"
+                },
+                "outcome": null,
+                "refs": [
+                  "conversation:1"
+                ]
+              },
+              {
+                "channel": "slow_sim",
+                "seq": 2,
+                "ts": 2.0,
+                "trust": "trusted_system",
+                "priority": 50,
+                "content": {
+                  "state": "done"
+                },
+                "outcome": "ok",
+                "refs": [
+                  "conversation:1"
+                ]
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [],
+        "affordances": [
+          {
+            "source": "channel_update",
+            "ref": "slow_sim:2",
+            "content": {
+              "channel": "slow_sim",
+              "ts": 2.0,
+              "outcome": "ok",
+              "observation": {
+                "state": "done"
+              }
+            },
+            "conclusive": null
+          }
+        ],
+        "floor": "idle",
+        "now": 2,
+        "trigger_kind": "handoff"
+      }
+    }
+  ],
+  "applied_events": [
+    {
+      "seq": 1,
+      "ts": 0.0,
+      "kind": "user_input",
+      "payload": {
+        "text": "watch the light"
+      }
+    },
+    {
+      "seq": 2,
+      "ts": 0.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-1"
+      }
+    },
+    {
+      "seq": 4,
+      "ts": 1.0,
+      "kind": "observation",
+      "payload": {
+        "channel": "slow_sim",
+        "delegate_id": "d-1",
+        "op": "set_light",
+        "origin_ref": "conversation:1",
+        "trust": "trusted_system",
+        "content": {
+          "hit": true,
+          "state": "changing"
+        },
+        "refs": []
+      }
+    },
+    {
+      "seq": 5,
+      "ts": 1.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-3"
+      }
+    },
+    {
+      "seq": 6,
+      "ts": 1.0,
+      "kind": "user_input",
+      "payload": {
+        "text": "what is happening now?"
+      }
+    },
+    {
+      "seq": 7,
+      "ts": 1.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-4"
+      }
+    },
+    {
+      "seq": 8,
+      "ts": 2.0,
+      "kind": "handoff",
+      "payload": {
+        "channel": "slow_sim",
+        "delegate_id": "d-1",
+        "origin_ref": "conversation:1",
+        "outcome": "ok",
+        "trust": "trusted_system",
+        "content": {
+          "state": "done"
+        },
+        "refs": []
+      }
+    },
+    {
+      "seq": 9,
+      "ts": 2.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-5"
+      }
+    },
+    {
+      "seq": 3,
+      "ts": 5.0,
+      "kind": "deadline",
+      "payload": {
+        "delegate_id": "d-1"
+      }
+    }
+  ],
+  "memory": {
+    "channels": {
+      "conversation": [
+        {
+          "channel": "conversation",
+          "seq": 1,
+          "ts": 0.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "watch the light"
+          },
+          "outcome": null,
+          "refs": []
+        },
+        {
+          "channel": "conversation",
+          "seq": 2,
+          "ts": 1.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "what is happening now?"
+          },
+          "outcome": null,
+          "refs": []
+        }
+      ],
+      "slow_sim": [
+        {
+          "channel": "slow_sim",
+          "seq": 1,
+          "ts": 1.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "hit": true,
+            "state": "changing"
+          },
+          "outcome": null,
+          "refs": [
+            "conversation:1"
+          ]
+        },
+        {
+          "channel": "slow_sim",
+          "seq": 2,
+          "ts": 2.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "state": "done"
+          },
+          "outcome": "ok",
+          "refs": [
+            "conversation:1"
+          ]
+        }
+      ]
+    },
+    "structured": {
+      "intent": {
+        "objective_hypothesis": "",
+        "constraints": [],
+        "unresolved_questions": [],
+        "uncertainty": 1.0,
+        "revision": 0
+      },
+      "goal": {
+        "objective": "",
+        "acceptance_criteria": [],
+        "status": "accepted",
+        "revision": 0
+      },
+      "authorization": {
+        "allow": [],
+        "deny": [],
+        "evidence_refs": [],
+        "revision": 0
+      }
+    },
+    "summaries": {
+      "conversation": null,
+      "slow_sim": null
+    }
+  },
+  "delegates": [],
+  "suggestions": [],
+  "floor_decisions": [],
+  "outbound_desktop": [],
+  "executor_effects": [
+    {
+      "kind": "dispatch",
+      "delegate": {
+        "executor": "slow_sim",
+        "op": "set_light",
+        "request": {
+          "brightness": 30
+        },
+        "origin_ref": "conversation:1",
+        "delegate_id": "d-1",
+        "deadline": 5.0,
+        "routing_class": "user_awaited",
+        "dispatched_at": 0
+      }
+    }
+  ],
+  "diagnostics": []
+}

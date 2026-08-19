@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "same-time-observation-before-user",
+  "description": "An executor observation declared before same-time user ingress is fully drained first in both runners.",
+  "covers": ["fixtures.stimulus_order", "runtime.observation", "runtime.user_input"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

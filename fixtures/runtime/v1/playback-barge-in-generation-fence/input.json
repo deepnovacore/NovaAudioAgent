@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "initial_clock": 0,
+  "id_sequences": {
+    "delegate": [],
+    "playback": ["generation-old", "utterance-old", "generation-new", "utterance-new"]
+  },
+  "configuration": {
+    "proactivity_preset": "balanced",
+    "enabled_executors": []
+  },
+  "stimuli": [
+    {"at": 0, "kind": "playback_open", "session_epoch": 1, "response_id": "reused"},
+    {"at": 0, "kind": "playback_audio", "session_epoch": 1, "response_id": "reused", "pcm_base64": "AAE="},
+    {"at": 0, "kind": "playback_transcript", "session_epoch": 1, "response_id": "reused", "text": "old response"},
+    {"at": 0, "kind": "playback_start", "utterance_id": "utterance-old", "generation_epoch": 1},
+    {"at": 0, "kind": "floor_user_start", "speech_id": "barge-in"},
+    {"at": 0, "kind": "playback_fence_current", "alert": false},
+    {"at": 0, "kind": "playback_audio", "session_epoch": 1, "response_id": "reused", "pcm_base64": "BAU="},
+    {"at": 0, "kind": "playback_open", "session_epoch": 2, "response_id": "reused"},
+    {"at": 0, "kind": "playback_audio", "session_epoch": 2, "response_id": "reused", "pcm_base64": "AgM="},
+    {"at": 0, "kind": "playback_transcript", "session_epoch": 2, "response_id": "reused", "text": "new response"},
+    {"at": 0, "kind": "playback_terminal", "session_epoch": 2, "response_id": "reused", "disposition": "spoken"},
+    {"at": 0, "kind": "playback_cleared", "utterance_id": "utterance-old", "generation_epoch": 1, "played_ms": 350},
+    {"at": 0, "kind": "playback_done", "utterance_id": "utterance-old", "generation_epoch": 1, "played_ms": 350},
+    {"at": 0, "kind": "playback_done", "utterance_id": "utterance-new", "generation_epoch": 2, "played_ms": 20},
+    {"at": 0, "kind": "floor_user_end", "speech_id": "barge-in"}
+  ],
+  "ports": {
+    "fastbrain": [],
+    "surrogate": [],
+    "compressor": []
+  }
+}

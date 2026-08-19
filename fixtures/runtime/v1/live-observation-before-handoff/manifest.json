@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "live-observation-before-handoff",
+  "description": "A correlated observation wakes the awaited chain without terminating its delegate before the final handoff.",
+  "covers": ["runtime.observation", "runtime.delegate_correlation", "runtime.awaited_routing"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

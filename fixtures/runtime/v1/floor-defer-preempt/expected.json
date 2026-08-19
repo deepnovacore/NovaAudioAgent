@@ -1,0 +1,288 @@
+{
+  "schema_version": 1,
+  "model_views": [
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 1.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "do not interrupt me"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [],
+        "affordances": [],
+        "floor": "user_speaking",
+        "now": 1,
+        "trigger_kind": "user_input"
+      }
+    },
+    {
+      "slot": "fast",
+      "view": {
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 1.0,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "accepted",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        },
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 1.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "do not interrupt me"
+                },
+                "outcome": null,
+                "refs": []
+              },
+              {
+                "channel": "conversation",
+                "seq": 2,
+                "ts": 4.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "this is urgent"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "in_flight": [],
+        "affordances": [
+          {
+            "source": "suggestion",
+            "ref": "s-1",
+            "content": {
+              "kind": "notify",
+              "salience": 100.0,
+              "evidence_refs": [],
+              "suggestion": {
+                "text": "Deferred response.",
+                "utterance_id": "u-1"
+              }
+            },
+            "conclusive": null
+          }
+        ],
+        "floor": "agent_speaking",
+        "now": 4,
+        "trigger_kind": "user_input"
+      }
+    }
+  ],
+  "applied_events": [
+    {
+      "seq": 1,
+      "ts": 1.0,
+      "kind": "user_input",
+      "payload": {
+        "text": "do not interrupt me"
+      }
+    },
+    {
+      "seq": 2,
+      "ts": 1.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-1"
+      }
+    },
+    {
+      "seq": 3,
+      "ts": 4.0,
+      "kind": "user_input",
+      "payload": {
+        "text": "this is urgent"
+      }
+    },
+    {
+      "seq": 4,
+      "ts": 4.0,
+      "kind": "speak_start",
+      "payload": {
+        "utterance_id": "u-2",
+        "priority": 100
+      }
+    },
+    {
+      "seq": 5,
+      "ts": 4.0,
+      "kind": "speak_end",
+      "payload": {
+        "utterance_id": "u-2"
+      }
+    },
+    {
+      "seq": 6,
+      "ts": 4.0,
+      "kind": "model_done",
+      "payload": {
+        "slot": "fast",
+        "job_id": "job-2"
+      }
+    }
+  ],
+  "memory": {
+    "channels": {
+      "conversation": [
+        {
+          "channel": "conversation",
+          "seq": 1,
+          "ts": 1.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "do not interrupt me"
+          },
+          "outcome": null,
+          "refs": []
+        },
+        {
+          "channel": "conversation",
+          "seq": 2,
+          "ts": 4.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "this is urgent"
+          },
+          "outcome": null,
+          "refs": []
+        },
+        {
+          "channel": "conversation",
+          "seq": 3,
+          "ts": 4,
+          "trust": "trusted_system",
+          "priority": 100,
+          "content": {
+            "text": "Urgent response.",
+            "utterance_id": "u-2"
+          },
+          "outcome": null,
+          "refs": []
+        }
+      ]
+    },
+    "structured": {
+      "intent": {
+        "objective_hypothesis": "",
+        "constraints": [],
+        "unresolved_questions": [],
+        "uncertainty": 1.0,
+        "revision": 0
+      },
+      "goal": {
+        "objective": "",
+        "acceptance_criteria": [],
+        "status": "accepted",
+        "revision": 0
+      },
+      "authorization": {
+        "allow": [],
+        "deny": [],
+        "evidence_refs": [],
+        "revision": 0
+      }
+    },
+    "summaries": {
+      "conversation": null
+    }
+  },
+  "delegates": [],
+  "suggestions": [
+    {
+      "id": "s-1",
+      "origin": "fast_brain",
+      "kind": "notify",
+      "content": {
+        "text": "Deferred response.",
+        "utterance_id": "u-1"
+      },
+      "evidence_refs": [],
+      "salience": 100.0,
+      "cooldown_until": 0.0,
+      "expires_at": null,
+      "status": "pending"
+    }
+  ],
+  "floor_decisions": [
+    {
+      "event_seq": 2,
+      "priority": 100,
+      "decision": "defer"
+    },
+    {
+      "event_seq": 6,
+      "priority": 100,
+      "decision": "preempt"
+    }
+  ],
+  "outbound_desktop": [],
+  "executor_effects": [],
+  "diagnostics": []
+}

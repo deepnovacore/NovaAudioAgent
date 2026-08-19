@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "initial_clock": 0,
+  "id_sequences": {"delegate": []},
+  "configuration": {
+    "proactivity_preset": "balanced",
+    "enabled_executors": ["slow_sim"]
+  },
+  "stimuli": [{"at": 0, "kind": "user_input", "text": "hello"}],
+  "ports": {
+    "fastbrain": [
+      {
+        "delay": 0,
+        "output": {"invalid": true, "raw_output": "fixture-private-model-output-sentinel"}
+      },
+      {
+        "delay": 0,
+        "output": {"still_invalid": true, "raw_output": "fixture-private-model-output-sentinel"}
+      }
+    ],
+    "surrogate": [],
+    "compressor": []
+  }
+}

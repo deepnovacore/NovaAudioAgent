@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "advance-clock-host-before-model",
+  "description": "Host ingress declared at an explicit clock target supersedes an older model action due at that same instant.",
+  "covers": ["clock.advance", "events.ordering", "runtime.stale_model"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

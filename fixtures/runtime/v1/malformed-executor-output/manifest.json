@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "malformed-executor-output",
+  "description": "A malformed non-raising executor result becomes one payload-free unknown handoff and a bounded follow-up.",
+  "covers": ["ports.executor", "runtime.executor_guard", "trace.raw_payload_hygiene"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

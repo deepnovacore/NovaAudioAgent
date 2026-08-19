@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "invalid-origin-delegate",
+  "description": "A non-empty malformed origin reaches host dispatch validation and becomes a bounded delegate rejection.",
+  "covers": ["ports.fastbrain", "runtime.delegate_rejection", "memory.origin_ref"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

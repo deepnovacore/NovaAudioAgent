@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "playback-barge-in-generation-fence",
+  "description": "A user barge-in fences the old renderer generation while a reused provider response ID remains isolated in the replacement session.",
+  "covers": ["playback.generation", "playback.clear_ack", "runtime.barge_in"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

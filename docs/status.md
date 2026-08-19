@@ -19,4 +19,4 @@ Known open work includes broader live-provider soak testing, first-run verificat
 and Linux desktop builds on real hardware, native echo cancellation on those platforms, installer
 signing, and expanding public examples without weakening the runtime invariants. Standalone
 packaging gaps and the planned Node runtime migration are tracked in
-[`2026-08-18-node-runtime-migration-backlog.md`](archs/2026-08-18-node-runtime-migration-backlog.md).
+[`node-runtime-migration/backlog.md`](archs/node-runtime-migration/backlog.md).

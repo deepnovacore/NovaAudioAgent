@@ -12,6 +12,7 @@ import {
   screen,
   systemPreferences,
   Tray,
+  utilityProcess,
 } from 'electron'
 import { randomBytes } from 'node:crypto'
 import { rename, unlink, writeFile } from 'node:fs/promises'
@@ -24,6 +25,8 @@ import {
   backendLaunchSpec,
   createReadinessListener,
   fallbackPython,
+  nodeRuntimeEntry,
+  selectedBackend,
   shutdownBackend,
   venvPython,
   watchBackendExit,
@@ -342,6 +345,7 @@ function decryptSecretsForSpawn(settings, codec) {
 async function launchBackend() {
   const token = randomBytes(16).toString('hex')
   const workspace = process.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || process.cwd()
+  const backendKind = selectedBackend(process.env)
   // The listener owns the handshake, so it must be bound before the backend can
   // dial it; the readiness timeout still kills a backend that never arrives.
   const listener = createReadinessListener({
@@ -354,7 +358,13 @@ async function launchBackend() {
   try {
     const decryptedSecrets = decryptSecretsForSpawn(currentSettings, secretCodec)
     const spec = backendLaunchSpec({
+      backend: backendKind,
       python: pythonExecutable(),
+      nodeEntry: nodeRuntimeEntry({
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        packageRoot,
+      }),
       workspace,
       token,
       readyEndpoint: await listener.endpoint,
@@ -362,15 +372,24 @@ async function launchBackend() {
       settings: currentSettings,
       decryptedSecrets,
     })
-    backend = spawn(spec.command, spec.argv, {
-      cwd: workspace,
-      env: spec.env,
-      stdio: spec.stdio,
-    })
-    backend.stderr.on('data', chunk => {
+    if (spec.kind === 'node') {
+      backend = utilityProcess.fork(spec.entry, spec.argv, {
+        cwd: workspace,
+        env: spec.env,
+        stdio: spec.stdio,
+        serviceName: 'Nova Audio Agent Runtime',
+      })
+    } else {
+      backend = spawn(spec.command, spec.argv, {
+        cwd: workspace,
+        env: spec.env,
+        stdio: spec.stdio,
+      })
+    }
+    backend.stderr?.on('data', chunk => {
       console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
     })
-    backend.stdout.on('data', chunk => {
+    backend.stdout?.on('data', chunk => {
       console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
     })
     // Covers both deaths: the child that exits, and the child that never started

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "surrogate-silent-progress",
+  "description": "A silent Surrogate verdict withdraws its transient progress suggestion without waking FastBrain.",
+  "covers": ["surrogate.silent", "runtime.progress", "suggestions.withdraw"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

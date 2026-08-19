@@ -196,6 +196,11 @@ test('THIRD_PARTY_NOTICES.md and LICENSES/** ship in files for every platform', 
   assert.ok(config.files.includes('LICENSES/**/*'), 'expected LICENSES/**/* in files')
 })
 
+test('the packaged desktop declares the compiled Node runtime as a production dependency', async () => {
+  const pkg = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf8'))
+  assert.equal(pkg.dependencies['@nova-audio-agent/runtime'], '0.1.0')
+})
+
 test('every package: script disables publishing explicitly', async () => {
   const pkg = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf8'))
   const packageScripts = Object.entries(pkg.scripts).filter(([name]) => name.startsWith('package:'))

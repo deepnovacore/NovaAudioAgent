@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "async-delegate-after-user",
+  "description": "FastBrain speaks and delegates, serves a later user turn while work remains active, then consumes the original handoff.",
+  "covers": ["runtime.async_delegate", "runtime.speak_and_act", "slots.pending"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}
