@@ -5,7 +5,7 @@ import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { canonicalJson } from './canonical-json.js'
 import { loadRuntimeFixture, type RuntimeFixture } from './fixtures.js'
-import { runRuntimeFixture } from './runtime.js'
+import { runRuntimeFixture } from './fixture-host.js'
 import { fixtureManifestRegistry } from './sim.js'
 
 export interface CliIo {

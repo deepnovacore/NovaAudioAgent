@@ -11,7 +11,7 @@ import {
 } from '../src/fixtures.js'
 import { handoffPolicySchema } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
-import { runRuntimeFixture } from '../src/runtime.js'
+import { runRuntimeFixture } from '../src/fixture-host.js'
 import { canonicalJson } from '../src/trace.js'
 
 const fixtureParent = resolve(

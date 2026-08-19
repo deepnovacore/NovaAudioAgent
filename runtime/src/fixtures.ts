@@ -12,6 +12,13 @@ import { memoryItemSchema, structuredStateSchema } from './memory.js'
 import {
   delegateSchema,
 } from './ports.js'
+import {
+  desktopEffectSchema,
+  diagnosticSchema,
+  executorEffectSchema,
+  floorDecisionRecordSchema,
+  playbackEffectSchema,
+} from './effects.js'
 
 export const fixtureManifestSchema = z.object({
   schema_version: z.literal(1),
@@ -258,59 +265,6 @@ export const fixtureSuggestionSchema = z.object({
   expires_at: z.number().finite().nullable(),
   status: z.enum(['pending', 'fired', 'withdrawn', 'expired']),
 }).strict()
-
-export const floorDecisionRecordSchema = z.object({
-  event_seq: z.number().int().nonnegative(),
-  priority: z.number().int(),
-  decision: z.enum(['allow', 'preempt', 'defer']),
-}).strict()
-
-export const desktopEffectSchema = z.object({
-  kind: z.string().min(1),
-  data: z.record(z.string(), jsonValueSchema),
-}).strict()
-
-export const executorEffectSchema = z.discriminatedUnion('kind', [
-  z.object({kind: z.literal('dispatch'), delegate: delegateSchema}).strict(),
-  z.object({kind: z.literal('cancel'), delegate_id: z.string().min(1)}).strict(),
-])
-
-export const diagnosticSchema = z.object({
-  code: z.string().min(1),
-  message: z.string().optional(),
-  details: z.record(z.string(), jsonValueSchema).optional(),
-}).strict()
-
-export const playbackGenerationSchema = z.object({
-  session_epoch: z.number().int().positive(),
-  generation_epoch: z.number().int().positive(),
-  generation_id: z.string().min(1),
-  utterance_id: z.string().min(1),
-  response_id: z.string().min(1),
-}).strict()
-
-export const playbackCompletionSchema = z.object({
-  session_epoch: z.number().int().positive(),
-  response_id: z.string().min(1),
-  utterance_id: z.string().min(1),
-  generation_epoch: z.number().int().positive(),
-  text: z.string(),
-  disposition: z.enum(['spoken', 'interrupted', 'suppressed']),
-  started: z.boolean(),
-  played_ms: z.number().int().nonnegative().nullable(),
-}).strict()
-
-export const playbackEffectSchema = z.discriminatedUnion('kind', [
-  z.object({kind: z.literal('open'), generation: playbackGenerationSchema}).strict(),
-  z.object({
-    kind: z.literal('ack'),
-    ack: z.enum(['started', 'cleared', 'done']),
-    utterance_id: z.string().min(1),
-    generation_epoch: z.number().int().positive(),
-    accepted: z.boolean(),
-    completion: playbackCompletionSchema.nullable(),
-  }).strict(),
-])
 
 export const fixtureModelViewSchema = z.object({
   slot: z.enum(['fast', 'surrogate.watch']),
