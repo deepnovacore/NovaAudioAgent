@@ -297,6 +297,12 @@ export class RealtimeSession {
     const {oldGeneration} = options
     const historyMode = options.historyMode ?? 'none'
     const confirmationTimeout = options.confirmationTimeout ?? null
+    // Checked before any state is touched: this method closes the provider session, so a caller
+    // whose input is malformed must get an error rather than an irreversible handoff. The type
+    // annotation is not enough -- a value reaching here from JSON is unchecked at runtime.
+    if (historyMode !== 'none' && historyMode !== 'packed') {
+      throw new TypeError(`unknown Guard history recovery arm: ${String(historyMode)}`)
+    }
     if (oldGeneration.session_epoch !== this.sessionEpoch) {
       throw new TypeError('guard handoff generation must belong to the current session')
     }
@@ -1138,6 +1144,74 @@ export class RealtimeSession {
     this.#onDelivery(completion)
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
     return true
+  }
+
+  /**
+   * The renderer stopped playing on its own account.
+   *
+   * Distinct from `playbackCleared`, which acknowledges a stop the session asked for. Here the
+   * renderer decided, so the session has to catch up: fence the generation, record the partial
+   * delivery, release the floor, and -- the part that matters -- cancel the provider if it is still
+   * generating for this response. Without that last step audio would keep arriving for something
+   * nobody is playing.
+   */
+  async playbackStopped(
+    utteranceId: string,
+    generationEpoch: number,
+    playedMs: number | null = null,
+  ): Promise<boolean> {
+    const current = this.#playback.current
+    // Only the generation actually on the renderer can be stopped by it; a stale report names one
+    // that has already been replaced.
+    if (
+      current?.utterance_id !== utteranceId
+      || current.generation_epoch !== generationEpoch
+    ) {
+      return false
+    }
+    const generation = this.#playback.fenceCurrent()
+    if (generation === null) return false
+    if (generation.session_epoch === this.sessionEpoch) {
+      this.#markLocallyFenced(generation.response_id)
+      this.#markResponseInterrupted(generation.response_id)
+      this.#state.advanceSnapshot()
+    }
+    const completion = this.#playback.recordCleared(utteranceId, generationEpoch, playedMs)
+    if (completion !== null) {
+      this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
+      this.#onDelivery(completion)
+    }
+    this.#floor = this.#floor.onSpeakEnd(utteranceId)
+    if (
+      generation.session_epoch === this.sessionEpoch
+      && this.#providerResponseId === generation.response_id
+    ) {
+      this.#state.openProviderTurn(generation.response_id).phase = 'cancel_requested'
+      await this.#provider.cancelResponse(generation.response_id)
+    }
+    return true
+  }
+
+  // ---------------------------------------------------------------------------
+  // Delegates
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Record or update one delegate's session view.
+   *
+   * The session holds this because a reconnect has to tell the new provider what work is still
+   * running; without it the recovery item would claim no active work and the model would lose the
+   * context for anything it is asked about next.
+   */
+  registerDelegate(
+    delegateId: string,
+    update: Parameters<RealtimeSessionState['registerDelegate']>[1],
+  ): void {
+    this.#state.registerDelegate(delegateId, update)
+  }
+
+  delegateState(delegateId: string): string | undefined {
+    return this.#state.delegateState(delegateId)
   }
 
   // ---------------------------------------------------------------------------

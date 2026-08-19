@@ -98,8 +98,18 @@ class RecordingProvider implements SessionProvider {
   }
 }
 
-/** Python's `repr` for a float: an integral value keeps its `.0`, others print shortest. */
+/**
+ * Python's `repr` for a float.
+ *
+ * An integral value keeps its `.0`, but only while Python prints it in positional form: past 1e16
+ * it switches to exponent notation, which carries no `.0`, and JavaScript switches at 1e21. Between
+ * those two the spellings differ regardless, so anything at or above 1e16 is refused rather than
+ * guessed at -- a fixture needing such a timeout would have to pin the spelling with a vector.
+ */
 function formatPythonRepr(value: number): string {
+  if (!Number.isFinite(value) || Math.abs(value) >= 1e16) {
+    throw new Error(`confirmation timeout is outside the proven repr range: ${value}`)
+  }
   return Number.isInteger(value) ? `${value}.0` : `${value}`
 }
 
@@ -273,6 +283,8 @@ async function applyStep(
       return session.completePlayback(step.utterance_id, step.generation_epoch, step.played_ms)
     case 'playback_cleared':
       return session.playbackCleared(step.utterance_id, step.generation_epoch, step.played_ms)
+    case 'playback_stopped':
+      return session.playbackStopped(step.utterance_id, step.generation_epoch, step.played_ms)
     case 'advance_clock':
       clock.advanceTo(step.to)
       return null

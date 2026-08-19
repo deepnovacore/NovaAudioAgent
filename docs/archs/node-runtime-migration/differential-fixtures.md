@@ -1,7 +1,7 @@
 # Nova Audio Agent Node Differential Fixture Contract
 
 Status: v1 schema plus Python and Node runners active; twenty Python-exported core scenarios match.
-A second family covers the realtime session at the provider-frame level: twenty-four scenarios,
+A second family covers the realtime session at the provider-frame level: twenty-five scenarios,
 matching on both legs.
 
 ## Purpose
@@ -319,6 +319,11 @@ makes the contract as load-bearing here as the bytes.
 
 Do this again for any guard added later. A guard no scenario can distinguish is either dead code or
 a hole in the set, and the difference matters.
+
+**A step kind the schema allows but no scenario uses is a hole.** `playback_stopped` was in the
+contract and in the Python oracle from the start, and no scenario sent one, so the whole
+renderer-initiated stop path -- which cancels the provider, not just the renderer -- was unported and
+every golden still passed. Grep the step union against the scenarios when adding either.
 
 **Sweep the port too, not only the oracle.** Once `accept` existed in TypeScript, seventeen
 mutations of it were swept the same way; sixteen were caught immediately and the seventeenth found a

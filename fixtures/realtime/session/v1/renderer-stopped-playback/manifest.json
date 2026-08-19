@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "renderer-stopped-playback",
+  "description": "The renderer stops of its own accord while the provider is still generating. Unlike an acknowledged clear, the session did not ask for this, so it has to catch up: fence the generation, record the partial delivery, release the floor, and cancel the provider -- otherwise audio keeps arriving for something nobody is playing. A stop naming a generation that is not current is refused instead, since it describes a generation already replaced.",
+  "covers": [
+    "session.playback_stopped.cancels_active_response",
+    "session.playback_stopped.records_partial_delivery",
+    "session.playback_stopped.stale_generation_refused",
+    "session.playback_stopped.releases_floor"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "checked"
+}
