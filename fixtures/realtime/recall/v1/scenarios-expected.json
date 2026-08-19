@@ -658,6 +658,134 @@
           "encoded": "{\"hits\":[{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 0\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:1\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 1\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:2\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 2\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:3\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 3\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:4\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"Zed\",\"evidence\":\"Zed 报告：scan target 4\",\"match\":\"lexical\",\"outcome\":\"ok\",\"ref\":\"Zed:5\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":495,\"raw_scanned\":500,\"scan_truncated\":true,\"scope\":\"any\",\"searched_count\":500,\"state\":\"ok\"}"
         }
       ]
+    },
+    {
+      "name": "any-scope-ceiling-drops-the-oldest-sequence",
+      "view": {
+        "state": "ok",
+        "scope": "any",
+        "raw_scanned": 500,
+        "searched_count": 500,
+        "scan_truncated": true,
+        "omitted": 495,
+        "hits": [
+          {
+            "ref": "conversation:2",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "ceiling target 1"
+          },
+          {
+            "ref": "conversation:3",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "ceiling target 2"
+          },
+          {
+            "ref": "conversation:4",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "ceiling target 3"
+          },
+          {
+            "ref": "conversation:5",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "ceiling target 4"
+          },
+          {
+            "ref": "conversation:6",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "ceiling target 5"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"ceiling target 1\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"ceiling target 2\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:3\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"ceiling target 3\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:4\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"ceiling target 4\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:5\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"ceiling target 5\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:6\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":495,\"raw_scanned\":500,\"scan_truncated\":true,\"scope\":\"any\",\"searched_count\":500,\"state\":\"ok\"}"
+        }
+      ]
+    },
+    {
+      "name": "any-scope-at-exactly-the-ceiling-is-not-truncated",
+      "view": {
+        "state": "ok",
+        "scope": "any",
+        "raw_scanned": 500,
+        "searched_count": 500,
+        "scan_truncated": false,
+        "omitted": 495,
+        "hits": [
+          {
+            "ref": "conversation:1",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "boundary target 0"
+          },
+          {
+            "ref": "conversation:2",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "boundary target 1"
+          },
+          {
+            "ref": "conversation:3",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "boundary target 2"
+          },
+          {
+            "ref": "conversation:4",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "boundary target 3"
+          },
+          {
+            "ref": "conversation:5",
+            "channel": "conversation",
+            "ts": 1.0,
+            "trust": "trusted_system",
+            "outcome": null,
+            "match": "lexical",
+            "evidence": "boundary target 4"
+          }
+        ]
+      },
+      "encodings": [
+        {
+          "max_chars": 3000,
+          "encoded": "{\"hits\":[{\"channel\":\"conversation\",\"evidence\":\"boundary target 0\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:1\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"boundary target 1\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:2\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"boundary target 2\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:3\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"boundary target 3\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:4\",\"trust\":\"trusted_system\",\"ts\":1.0},{\"channel\":\"conversation\",\"evidence\":\"boundary target 4\",\"match\":\"lexical\",\"outcome\":null,\"ref\":\"conversation:5\",\"trust\":\"trusted_system\",\"ts\":1.0}],\"omitted\":495,\"raw_scanned\":500,\"scan_truncated\":false,\"scope\":\"any\",\"searched_count\":500,\"state\":\"ok\"}"
+        }
+      ]
     }
   ]
 }

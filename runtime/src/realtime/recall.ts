@@ -52,6 +52,33 @@ const ASCII_TOKEN = /[a-z0-9]+/gu
  */
 const CJK_RUN = /[㐀-䶿一-鿿豈-﫿]+/gu
 
+/**
+ * Strip leading and trailing whitespace the way Python's `str.strip()` does.
+ *
+ * `String.prototype.trim` strips a wider set: it removes U+FEFF, which Python's `str.strip()` keeps
+ * because the zero-width no-break space is a format character rather than whitespace. A query of
+ * just a BOM is therefore non-empty to the oracle and empty to `trim`, which changes whether recall
+ * runs at all.
+ *
+ * Python strips a code point when `str.isspace()` is true, which is the Unicode whitespace property
+ * plus a handful of separators. The pinned category table does not carry Z*, so the set is spelled
+ * out: `trim`'s set minus U+FEFF is exactly it.
+ */
+function stripLikePython(text: string): string {
+  const characters = [...text]
+  let start = 0
+  let end = characters.length
+  while (start < end && isPythonSpace(characters[start]!)) start += 1
+  while (end > start && isPythonSpace(characters[end - 1]!)) end -= 1
+  return characters.slice(start, end).join('')
+}
+
+function isPythonSpace(character: string): boolean {
+  // U+FEFF is whitespace to `trim` and not to `str.isspace()`, which is the whole divergence.
+  if (character === '\ufeff') return false
+  return character.trim() === ''
+}
+
 /** The recall cutoff is not an accepted trusted-user conversation item. */
 export class RecallOriginError extends Error {}
 
@@ -90,8 +117,11 @@ export function compileMemoryRecall(
     readonly beforeRef: MemoryRef
   },
 ): RecallView {
-  const query = options.query.trim()
-  if (query.length === 0 || query.length > MAX_QUERY_CHARS) {
+  const query = stripLikePython(options.query)
+  // Code points, as Python's `len` counts: 512 astral characters are 1024 UTF-16 units, and
+  // measuring those would reject a query the oracle accepts.
+  const queryLength = [...query].length
+  if (queryLength === 0 || queryLength > MAX_QUERY_CHARS) {
     throw new RangeError(`query must contain 1 to ${MAX_QUERY_CHARS} characters`)
   }
   if (options.scope !== 'recent' && options.scope !== 'any') {
@@ -197,7 +227,12 @@ export function encodeMemoryRecall(
  *
  * Built by hand rather than via `canonicalJson` because the oracle uses `json.dumps` with
  * `sort_keys=True`, and this text is what a model reads: it has to be byte-identical, including the
- * key order and the absence of spaces.
+ * key order and the absence of spaces. Verified against Python across control characters, U+007F,
+ * U+00A0, U+2028, NUL, quotes, backslashes, CJK and astral characters -- identical on all of them.
+ *
+ * Lone surrogates are the one case where matching the oracle would be wrong. `json.dumps` with
+ * `ensure_ascii=False` embeds a lone surrogate raw, producing a string that cannot be encoded as
+ * UTF-8 at all, so those bytes could never reach a provider. This encoder refuses them instead.
  */
 function encodeRecallPayload(
   view: RecallView,
@@ -205,6 +240,9 @@ function encodeRecallPayload(
   removed: number,
 ): string {
   const encodedHits = hits.map(hit => {
+    requireWellFormed(hit.evidence, 'evidence')
+    requireWellFormed(hit.channel, 'channel')
+    requireWellFormed(hit.ref, 'ref')
     const fields: readonly (readonly [string, string])[] = [
       ['channel', JSON.stringify(hit.channel)],
       ['evidence', JSON.stringify(hit.evidence)],
@@ -229,14 +267,49 @@ function encodeRecallPayload(
 }
 
 /**
+ * Refuse text that cannot survive being encoded.
+ *
+ * A lone surrogate is not a valid scalar value, so an envelope containing one cannot be sent as
+ * UTF-8. The oracle would embed it raw and fail at the transport instead; failing here names the
+ * field, which is more use to a caller.
+ */
+function requireWellFormed(value: string, field: string): void {
+  // `String.prototype.isWellFormed` is ES2024 and this project targets earlier; the regex says the
+  // same thing -- a high surrogate not followed by a low one, or a low one not preceded by a high.
+  if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value)) {
+    throw new RangeError(`recall ${field} contains a lone surrogate and cannot be encoded`)
+  }
+}
+
+/**
+ * The range where a float's `json.dumps` spelling is reproducible in JavaScript.
+ *
+ * Below 1e16 Python writes positional notation and JavaScript agrees digit for digit. At and above
+ * it Python switches to `1e+16` while JavaScript stays positional until 1e21, and their exponent
+ * spellings differ anyway (`1e-07` versus `1e-7`). Rather than reimplement `repr`, this module
+ * refuses that range: a timestamp there is a bug in the caller, not a formatting question.
+ */
+const MAX_REPRODUCIBLE_MAGNITUDE = 1e16
+
+/**
  * A timestamp as `json.dumps` writes a Python float.
  *
  * `ts` is typed `float` in the oracle, so an integral value spells `1.0` there where JavaScript
  * would write `1`. The counts beside it are `int` and spell the same in both, which is why they use
- * `encodeCount` instead -- getting this backwards makes every envelope differ.
+ * `encodeCount` instead -- getting this backwards made every envelope differ.
+ *
+ * Negative zero is refused rather than encoded: Python writes `-0.0` where JavaScript writes `0`,
+ * and a negative-zero timestamp has no meaning to preserve.
  */
 function encodeTimestamp(value: number): string {
-  if (!Number.isFinite(value)) throw new RangeError(`recall cannot encode ${value}`)
+  if (!Number.isFinite(value) || Math.abs(value) >= MAX_REPRODUCIBLE_MAGNITUDE) {
+    throw new RangeError(`recall cannot reproduce this timestamp's Python spelling: ${value}`)
+  }
+  if (Object.is(value, -0)) throw new RangeError('recall cannot encode a negative-zero timestamp')
+  // A small magnitude can still render exponentially in JavaScript, where Python pads the exponent.
+  if (String(value).includes('e')) {
+    throw new RangeError(`recall cannot reproduce this timestamp's Python spelling: ${value}`)
+  }
   return Number.isInteger(value) ? `${value}.0` : `${value}`
 }
 
