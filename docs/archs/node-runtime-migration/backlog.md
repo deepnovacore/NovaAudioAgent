@@ -117,6 +117,20 @@ once:
   Node env contract from one schema; do not copy either inconsistency.
 - Snapshot re-homing (the runtime scorecard reads test snapshots by filename, and two snapshots
   are hand-authored) is tracked in the parity matrix.
+- Floor arbitration timing across a streaming call. `calls.py` consults the Floor at the
+  **first non-empty text chunk** of a FastBrain stream, deliberately: at stream start it is
+  not yet known whether there is anything to say, and a `(none, delegate)` turn would burn a
+  Floor turn while the `preempt` path would cut off someone else's utterance for not one
+  word. Node's `CoreRuntime` currently decides at `model_done`, when the whole output is
+  known, because that is what a scripted fixture supplies. In a deterministic fixture the two
+  are indistinguishable -- nothing changes between "first chunk" and "output complete" -- so
+  none of the committed scenarios can see the difference. In production the Floor **does**
+  change mid-stream: a user can start speaking while the model is still emitting. The two
+  must be reconciled before the desktop assembly serves real traffic. `runtime/src/calls.ts`
+  ports the streaming boundary with its invariants and tests; wiring it into the reducer, so
+  the Floor is consulted once at the first chunk rather than at completion, is the open work.
+  Until then, treat the assembly as fixture-faithful but not production-faithful on this
+  point.
 - Unicode database version skew. Python classifies and normalizes characters with the database
   bundled into CPython; V8 does so with the database bundled into ICU. Those versions differ and
   drift with every release. Measured on the development machine: CPython 3.12.11 carries Unicode

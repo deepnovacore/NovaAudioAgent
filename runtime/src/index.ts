@@ -1,4 +1,5 @@
 export * from './causal-runtime.js'
+export * from './calls.js'
 export * from './clock.js'
 export * from './cli.js'
 export * from './config.js'
