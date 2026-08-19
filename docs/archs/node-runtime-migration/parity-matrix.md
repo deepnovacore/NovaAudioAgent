@@ -34,30 +34,40 @@ Fill this table on `rewrite/node-typescript-runtime` before changing runtime beh
 Any baseline failure must be recorded with an owner and disposition. Do not encode accidental
 failure output as a golden fixture.
 
-Current checkpoint, 2026-08-19. Gates measured on this machine: `npm run check` clean, 186 runtime
-tests, 299 Electron tests, Ruff clean over 241 files, 2,782 pytest cases with exit 0, runtime
-fixture parity exact for 20 scenarios in both directions, and Qwen normalization parity exact for 14
-scenarios in both directions.
+Current checkpoint, 2026-08-19. Gates measured on this machine: `npm run check` clean, 273
+runtime tests, 299 Electron tests, Ruff clean, 2,800 pytest cases with exit 0, and five parity
+suites exact in both directions -- 20 runtime fixtures, 18 Qwen normalization scenarios, 7
+prompt-render scenarios plus float and `.1f` vectors, 4 tool-schema scenarios, 5 gateway
+request bodies, and 3 compressor prompts. `npm run runtime:smoke:qwen` passes against the live
+DashScope endpoint.
 
-The deterministic-phase budget was raised from 3.5s to 4.5s because the Python fixture oracle replays
-the real `Runtime` over every committed fixture and costs about 0.44s; the pre-migration phase was
-3.244s and straddled the old bar. CI keeps its 7.5s override.
+Porting progress by Python production line count: about 6,600 ported, about 23,000 remaining,
+6,600 retired or out of scope (Home Assistant, AutoGLM, the evals, the Volcengine benchmark).
+The Node runtime is 9,700 lines of source and 7,200 of tests, so the port is denser than the
+line ratio suggests.
 
-Landed since the previous checkpoint: the reducer no longer depends on the fixture contract
-(`effects.ts` and `fixture-host.ts` split out, verified byte-identical across all 20 fixtures);
-progress-summary classification is pinned to Unicode 15.0.0 instead of reading each runtime's own
-database; the desktop boundary no longer dies on renderer disconnect, no longer hands out PCM views
-aliasing a pooled buffer, and bounds its readiness handshake; `CausalRuntime.serve` no longer starves
-the macrotask queue; a thrown consumption no longer wedges a model slot; and one code-point
-comparator now orders every identity.
+Stage 1 has one blocker left: the GUI-capable Electron utility-process smoke, which needs a
+WindowServer session this environment does not have. Run
+`npm run smoke:node-backend --workspace @nova-audio-agent/ambient-orb` on a real desktop
+session; it is not recorded as passing until someone does. The production assembly now
+instantiates `CausalRuntime` and serves a renderer over the real transport.
 
-The Qwen Audio Realtime adapter and its WebSocket transport are ported, and
-`npm run runtime:smoke:qwen` passes against the live DashScope endpoint: connect, host-item
-confirmation, response creation, audio deltas, transcript final, terminal.
+Fifteen defects were found and fixed across five Codex adversarial review passes plus this
+work's own oracle differentials. The ones worth remembering as a class: prompt bytes diverged
+on ordinary values until every prompt-bound serialization was routed through
+`canonical_json.prompt_json`; Unicode classification diverged until it was pinned to one
+version; and three defects were latent in the Python oracle itself rather than introduced by
+the port -- an unreachable recoverable-disconnect branch, a Floor reservation stranded by a
+throwing sink, and an unbounded event queue. Each is recorded in the backlog with its
+disposition.
 
-Still not Stage 1 acceptance. Production desktop assembly does not yet instantiate `CausalRuntime`,
-so the runtime serves no renderer traffic. The Electron utility-process smoke remains
-environment-blocked without a WindowServer session. Neither is recorded as passing.
+What remains is not more of the same. The two largest files, `realtime/service.py` (3,441
+lines) and the `accept` reducer inside `realtime/session.py` (1,584), are single coupled state
+machines rather than separable layers: they share a dozen fields and call into each other, so
+they cannot be sliced into independently gateable units the way the model and prompt layers
+could. They need to be ported as coherent wholes against a purpose-built provider-frame
+fixture set. `runtime/src/realtime/session-state.ts` ports the state half of `session.py` as
+the foundation that work will build on.
 
 ## Core Runtime
 
