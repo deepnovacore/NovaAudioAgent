@@ -1,4 +1,12 @@
-"""Production prompt contracts and the sole ContextView text renderer."""
+"""Production prompt contracts and the sole ContextView text renderer.
+
+Rendered content object keys are sorted by code point. Python dicts preserve
+insertion order, JavaScript hoists integer-like keys ahead of string keys, and JSON
+parsing discards insertion order outright, so an unsorted render cannot be
+reproduced by the Node port of this module. Sorting makes these model-visible bytes
+language-neutral rather than hiding the difference behind fixture normalization,
+matching the choice already made for ContextView ``in_flight.what``.
+"""
 
 from __future__ import annotations
 
@@ -152,7 +160,7 @@ def render_context_snapshot(
             lines.append(
                 f"- t={item['ts']} {channel['name']}:{item['seq']}"
                 f" ({item['trust']}){outcome} "
-                f"{json.dumps(content, ensure_ascii=False)}"
+                f"{json.dumps(content, ensure_ascii=False, sort_keys=True)}"
             )
         lines.append("")
 
@@ -194,7 +202,7 @@ def _affordance_line(item: Mapping[str, Any], *, live_projection: bool = False) 
     source = item["source"]
     if source == "probe":
         verdict = "能判定" if item["conclusive"] else "不足以判定"
-        unknown = json.dumps(content["unknown"], ensure_ascii=False)
+        unknown = json.dumps(content["unknown"], ensure_ascii=False, sort_keys=True)
         return (
             f"- [只读复核] {content['executor']}.{content['op']}："
             f"{verdict}那条不确定的结果（{item['ref']}：{unknown}）"
@@ -203,7 +211,7 @@ def _affordance_line(item: Mapping[str, Any], *, live_projection: bool = False) 
         mark = " **（代理已选择；请用自己的话表达）**" if content.get("selected") else ""
         return (
             f"- [{content['kind']} {item['ref']}] "
-            f"{json.dumps(content['suggestion'], ensure_ascii=False)}{mark}"
+            f"{json.dumps(content['suggestion'], ensure_ascii=False, sort_keys=True)}{mark}"
         )
     if source == "unresolved_question":
         return f"- [未决问题 {item['ref']}] {content['question']}"
@@ -212,7 +220,7 @@ def _affordance_line(item: Mapping[str, Any], *, live_projection: bool = False) 
         observation = _project_live_progress(observation)
     return (
         f"- [{content['channel']} 通道 t={content['ts']} 刚有动静] "
-        f"{json.dumps(observation, ensure_ascii=False)}"
+        f"{json.dumps(observation, ensure_ascii=False, sort_keys=True)}"
     )
 
 

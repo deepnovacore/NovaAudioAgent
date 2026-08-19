@@ -1,0 +1,412 @@
+{
+  "schema_version": 1,
+  "description": "ContextView prompt-rendering scenarios. Expected output is exported by Python's prompting.render_context_snapshot and matched byte for byte by the Node port.",
+  "scenarios": [
+    {
+      "id": "empty-view",
+      "covers": "No in-flight work, no channels, no affordances: every '（无）' fallback fires.",
+      "view": {
+        "now": 0,
+        "floor": "idle",
+        "trigger_kind": null,
+        "in_flight": [],
+        "channels": [],
+        "affordances": [],
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 0.5,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "unset",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "populated-view",
+      "covers": "In-flight delegate, a channel with summary and items, and every structured field set.",
+      "view": {
+        "now": 12.5,
+        "floor": "agent_speaking",
+        "trigger_kind": "user_input",
+        "in_flight": [
+          {
+            "delegate_id": "d-1",
+            "what": "slow_sim.set_light({\"brightness\":30})",
+            "origin_ref": "conversation:1",
+            "dispatched_at": 1.0,
+            "eta": 6.0,
+            "deadline": 11.0,
+            "routing_class": "user_awaited"
+          }
+        ],
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": "更早说过要安静",
+            "omitted": 2,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 1.0,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "把灯调暗"
+                },
+                "outcome": null,
+                "refs": []
+              },
+              {
+                "channel": "conversation",
+                "seq": 2,
+                "ts": 2.0,
+                "trust": "trusted_system",
+                "priority": 100,
+                "content": {
+                  "text": "好的",
+                  "utterance_id": "u-1"
+                },
+                "outcome": "ok",
+                "refs": []
+              }
+            ]
+          }
+        ],
+        "affordances": [
+          {
+            "source": "suggestion",
+            "ref": "s-1",
+            "conclusive": null,
+            "content": {
+              "kind": "notify",
+              "suggestion": {
+                "text": "灯已调暗"
+              },
+              "selected": true
+            }
+          },
+          {
+            "source": "unresolved_question",
+            "ref": "q-1",
+            "conclusive": null,
+            "content": {
+              "question": "要多暗？"
+            }
+          },
+          {
+            "source": "probe",
+            "ref": "slow_sim:3",
+            "conclusive": true,
+            "content": {
+              "executor": "slow_sim",
+              "op": "set_light",
+              "unknown": {
+                "error": "deadline_exceeded"
+              }
+            }
+          },
+          {
+            "source": "channel_update",
+            "ref": "codex:4",
+            "conclusive": null,
+            "content": {
+              "channel": "codex",
+              "ts": 9.0,
+              "observation": {
+                "op": "run",
+                "phase": "working",
+                "summary": "编译中"
+              }
+            }
+          }
+        ],
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "把房间调暗",
+            "constraints": [
+              "不要大声"
+            ],
+            "unresolved_questions": [
+              "要多暗"
+            ],
+            "uncertainty": 0.25,
+            "revision": 1
+          },
+          "goal": {
+            "objective": "调暗灯光",
+            "acceptance_criteria": [
+              "亮度<=30"
+            ],
+            "status": "active",
+            "revision": 1
+          },
+          "authorization": {
+            "allow": [
+              "slow_sim.set_light"
+            ],
+            "deny": [
+              "camera"
+            ],
+            "evidence_refs": [
+              "conversation:1"
+            ],
+            "revision": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "integer-like-content-keys",
+      "covers": "Content whose keys are integer-like strings. Python renders dict insertion order; JavaScript hoists integer-like keys ahead of string keys, so this is the case a naive port gets wrong.",
+      "view": {
+        "now": 3,
+        "floor": "idle",
+        "trigger_kind": null,
+        "in_flight": [],
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "omitted": 0,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 1.0,
+                "trust": "trusted_system",
+                "priority": 100,
+                "content": {
+                  "10": "ten",
+                  "2": "two",
+                  "b": 1,
+                  "a": 2
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ]
+          }
+        ],
+        "affordances": [],
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 0.5,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "unset",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "live-progress-projection",
+      "covers": "include_trigger rewrites run/status progress content into spoken-form status, both in channel items and in a channel_update affordance.",
+      "view": {
+        "now": 20,
+        "floor": "idle",
+        "trigger_kind": "progress",
+        "in_flight": [],
+        "channels": [
+          {
+            "name": "codex",
+            "summary": null,
+            "omitted": 0,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 5.0,
+                "trust": "trusted_system",
+                "priority": 100,
+                "content": {
+                  "op": "run",
+                  "phase": "started"
+                },
+                "outcome": null,
+                "refs": []
+              },
+              {
+                "channel": "conversation",
+                "seq": 2,
+                "ts": 6.0,
+                "trust": "trusted_system",
+                "priority": 100,
+                "content": {
+                  "op": "run",
+                  "phase": "working",
+                  "summary": "跑测试"
+                },
+                "outcome": null,
+                "refs": []
+              },
+              {
+                "channel": "conversation",
+                "seq": 3,
+                "ts": 7.0,
+                "trust": "trusted_system",
+                "priority": 100,
+                "content": {
+                  "op": "status",
+                  "state": "running"
+                },
+                "outcome": null,
+                "refs": []
+              },
+              {
+                "channel": "conversation",
+                "seq": 4,
+                "ts": 8.0,
+                "trust": "trusted_system",
+                "priority": 100,
+                "content": {
+                  "op": "status",
+                  "state": "weird"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ]
+          }
+        ],
+        "affordances": [
+          {
+            "source": "channel_update",
+            "ref": "codex:2",
+            "conclusive": null,
+            "content": {
+              "channel": "codex",
+              "ts": 6.0,
+              "observation": {
+                "op": "run",
+                "phase": "working",
+                "summary": "跑测试"
+              }
+            }
+          }
+        ],
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 0.5,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "unset",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "unicode-and-escapes",
+      "covers": "Non-ASCII stays literal under ensure_ascii=False; quotes, backslashes, and newlines escape.",
+      "view": {
+        "now": 1,
+        "floor": "user_speaking",
+        "trigger_kind": null,
+        "in_flight": [],
+        "channels": [
+          {
+            "name": "conversation",
+            "summary": null,
+            "omitted": 0,
+            "recent": [
+              {
+                "channel": "conversation",
+                "seq": 1,
+                "ts": 0.5,
+                "trust": "trusted_user",
+                "priority": 100,
+                "content": {
+                  "text": "他说\"客厅\"\\路径\n换行",
+                  "emoji": "😀"
+                },
+                "outcome": null,
+                "refs": []
+              }
+            ]
+          }
+        ],
+        "affordances": [],
+        "structured": {
+          "intent": {
+            "objective_hypothesis": "",
+            "constraints": [],
+            "unresolved_questions": [],
+            "uncertainty": 0.5,
+            "revision": 0
+          },
+          "goal": {
+            "objective": "",
+            "acceptance_criteria": [],
+            "status": "unset",
+            "revision": 0
+          },
+          "authorization": {
+            "allow": [],
+            "deny": [],
+            "evidence_refs": [],
+            "revision": 0
+          }
+        }
+      }
+    }
+  ],
+  "float_vectors": [
+    0.0,
+    -0.0,
+    1.0,
+    12.5,
+    0.1,
+    0.25,
+    1000000000000000.0,
+    1e+16,
+    1e+21,
+    0.0001,
+    1e-05,
+    1e-07,
+    1.5e-07,
+    1e+100,
+    0.3333333333333333,
+    123456789.5,
+    9007199254740992.0
+  ]
+}

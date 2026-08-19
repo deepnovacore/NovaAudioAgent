@@ -1,0 +1,93 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { test } from 'node:test'
+import type { ContextView } from '../src/context-view.js'
+import {
+  COMPRESSOR_SYSTEM,
+  FASTBRAIN_LIVE_SYSTEM,
+  FASTBRAIN_SYSTEM,
+  SURROGATE_SYSTEM,
+  pythonFloat,
+  renderContextSnapshot,
+} from '../src/prompting.js'
+
+const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/prompting/v1')
+
+function loadJson<T>(name: string): T {
+  return JSON.parse(readFileSync(resolve(fixtureRoot, name), 'utf8')) as T
+}
+
+interface Fixture {
+  readonly schema_version: number
+  readonly scenarios: readonly {
+    readonly id: string
+    readonly covers: string
+    readonly view: ContextView
+  }[]
+}
+
+interface Golden {
+  readonly schema_version: number
+  readonly float_renderings: Readonly<Record<string, string>>
+  readonly systems: Readonly<Record<string, string>>
+  readonly rendered: Readonly<Record<string, {readonly plain: string, readonly with_trigger: string}>>
+}
+
+test('every system prompt is character-identical to the Python oracle', () => {
+  const golden = loadJson<Golden>('context-views-expected.json')
+  assert.equal(FASTBRAIN_SYSTEM, golden.systems.fastbrain)
+  assert.equal(FASTBRAIN_LIVE_SYSTEM, golden.systems.fastbrain_live)
+  assert.equal(SURROGATE_SYSTEM, golden.systems.surrogate)
+  assert.equal(COMPRESSOR_SYSTEM, golden.systems.compressor)
+  // Guard the premise: an empty golden would compare equal to an empty constant.
+  assert.ok(FASTBRAIN_SYSTEM.split('\n').length >= 15)
+  assert.ok(FASTBRAIN_LIVE_SYSTEM.split('\n').length >= 30)
+})
+
+test('rendered ContextViews match the Python oracle byte for byte', () => {
+  const fixture = loadJson<Fixture>('context-views.json')
+  const golden = loadJson<Golden>('context-views-expected.json')
+  assert.equal(fixture.schema_version, golden.schema_version)
+  assert.ok(fixture.scenarios.length > 0)
+  assert.deepEqual(
+    fixture.scenarios.map(scenario => scenario.id).sort(),
+    Object.keys(golden.rendered).sort(),
+  )
+
+  for (const scenario of fixture.scenarios) {
+    const expected = golden.rendered[scenario.id]
+    assert.ok(expected !== undefined, scenario.id)
+    assert.equal(
+      renderContextSnapshot(scenario.view, false),
+      expected.plain,
+      `${scenario.id} (plain): ${scenario.covers}`,
+    )
+    assert.equal(
+      renderContextSnapshot(scenario.view, true),
+      expected.with_trigger,
+      `${scenario.id} (with_trigger): ${scenario.covers}`,
+    )
+  }
+})
+
+
+test('Python str(float) is reproduced for every prompt timestamp boundary', () => {
+  // Python switches to exponential at 1e16 and below 1e-4 and pads the exponent to two
+  // digits; JavaScript switches at 1e21 and 1e-7 and does not pad. Every rendered
+  // timestamp goes through this, so the boundaries are pinned by the oracle.
+  const golden = loadJson<Golden>('context-views-expected.json')
+  const vectors = loadJson<{readonly float_vectors: readonly number[]}>('context-views.json')
+  assert.ok(vectors.float_vectors.length >= 15)
+
+  for (const value of vectors.float_vectors) {
+    // The golden is keyed by Python repr(); look the rendering up by its value.
+    const rendered = pythonFloat(value)
+    const matches = Object.entries(golden.float_renderings)
+      .filter(([key]) => Number(key) === value && (key.startsWith('-') === (Object.is(value, -0)
+        || value < 0)))
+      .map(([, expected]) => expected)
+    assert.ok(matches.length > 0, `no golden rendering for ${String(value)}`)
+    assert.equal(rendered, matches[0], `pythonFloat(${String(value)})`)
+  }
+})
