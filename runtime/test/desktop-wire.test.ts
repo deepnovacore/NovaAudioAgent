@@ -27,6 +27,7 @@ import {
   playbackTerminalMessage,
   validateInputPcm,
 } from '../src/desktop-wire.js'
+import { parseClientMessage } from '../src/desktop-bridge.js'
 import type { PlaybackCompletion } from '../src/playback.js'
 import type { CodexState } from '../src/realtime/service-state.js'
 
@@ -47,6 +48,9 @@ interface Case {
   readonly role?: string
   readonly text?: string
   readonly final?: boolean
+  readonly raw?: string
+  readonly token?: string
+  readonly authenticated?: boolean
 }
 
 const document = JSON.parse(readFileSync(resolve(fixtureRoot, 'cases.json'), 'utf8')) as {
@@ -128,6 +132,13 @@ function runCase(spec: Case): Record<string, unknown> {
             pending_confirmation: spec.pending_confirmation!,
           }),
         }
+      case 'parse_client': {
+        const command = parseClientMessage(spec.raw!, {
+          expectedToken: spec.token ?? '0'.repeat(32),
+          authenticated: spec.authenticated!,
+        })
+        return {command: command.kind, payload: {...command.payload}}
+      }
       case 'caption':
         return {
           text: captionMessage(

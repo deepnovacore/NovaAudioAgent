@@ -39,6 +39,7 @@ from nova_audio_agent.realtime.desktop import (  # noqa: E402
     decode_audio_frame,
     encode_audio_frame,
     playback_alert_message,
+    parse_client_message,
     playback_clear_message,
     playback_terminal_message,
     validate_input_pcm,
@@ -123,6 +124,13 @@ def run_case(spec: Mapping[str, Any]) -> dict[str, Any]:
                     )
                 )
             }
+        if kind == "parse_client":
+            command = parse_client_message(
+                spec["raw"],
+                expected_token=spec.get("token", "0" * 32),
+                authenticated=spec["authenticated"],
+            )
+            return {"command": command.kind, "payload": dict(command.payload)}
         if kind == "caption":
             return {
                 "text": caption_message(

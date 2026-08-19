@@ -265,6 +265,27 @@ Two lessons, both about the harness rather than the code:
   file rather than the service. Five projection mutations were invisible to it. The parity test now
   drives `projectRuntimeEvent` and reads what was queued.
 
+### The control frame needed the same integer-literal check as the audio header
+
+`{"generation_epoch": 2.0}` on a `playback.done` frame was accepted by the Node port and refused by the
+oracle, for the same reason as the audio header: `json.loads` makes it a float and JavaScript cannot
+tell it from `2` after parsing. The check now covers the control frame's `generation_epoch` and
+`played_ms`, with `null` allowed for the latter because "not reported" is a legal value.
+
+`t_render_ms` is deliberately excluded: the oracle accepts an int or a float there and coerces with
+`float()`, so both spellings are legal input.
+
+### Measured coverage: the desktop socket bridge is 22 of 23
+
+The bridge's queue structure is `asyncio.Queue` in the oracle and arrays here, so its tests are
+Node-only -- a shared golden would compare two schedulers rather than two behaviours. The wire format
+those queues carry is what the 90-case golden pins.
+
+The one survivor: making `onCodexProject`'s dedup identity-based instead of value-based. The delivery
+sync immediately after performs the same value comparison, so the outer check is a duplicate and cannot
+be distinguished. Both are value-based deliberately -- the service rebuilds the view object on every
+change, and identity would make every publish look new -- and a test states that directly.
+
 ### The desktop wire needed an integer-literal check the oracle gets for free
 
 `_plain_positive_integer` refuses a non-`int`, and `json.loads` turns `1.0` into a float -- so a

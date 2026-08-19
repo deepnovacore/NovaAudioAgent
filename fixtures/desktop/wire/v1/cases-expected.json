@@ -246,6 +246,190 @@
     {
       "name": "caption-quotes-and-escapes",
       "text": "{\"type\":\"caption\",\"role\":\"user\",\"text\":\"he said \\\"hi\\\"\\nand \\\\ left\",\"final\":true,\"sequence\":5}"
+    },
+    {
+      "name": "hello-valid",
+      "command": "authenticated",
+      "payload": {}
+    },
+    {
+      "name": "hello-wrong-token",
+      "error": "desktop authentication failed"
+    },
+    {
+      "name": "hello-short-token",
+      "error": "desktop authentication failed"
+    },
+    {
+      "name": "hello-no-token",
+      "error": "desktop authentication failed"
+    },
+    {
+      "name": "hello-wrong-type",
+      "error": "desktop authentication failed"
+    },
+    {
+      "name": "authenticated-frame-before-auth",
+      "error": "desktop authentication failed"
+    },
+    {
+      "name": "not-json",
+      "error": "desktop control frame is invalid JSON"
+    },
+    {
+      "name": "json-array",
+      "error": "desktop control frame has no type"
+    },
+    {
+      "name": "no-type",
+      "error": "desktop control frame has no type"
+    },
+    {
+      "name": "unsupported-type",
+      "error": "desktop control frame type is unsupported"
+    },
+    {
+      "name": "speech-onset",
+      "command": "speech_onset",
+      "payload": {
+        "speech_id": "s-1"
+      }
+    },
+    {
+      "name": "speech-onset-with-timestamp",
+      "command": "speech_onset",
+      "payload": {
+        "speech_id": "s-1",
+        "t_render_ms": 12.5
+      }
+    },
+    {
+      "name": "speech-onset-integer-timestamp",
+      "command": "speech_onset",
+      "payload": {
+        "speech_id": "s-1",
+        "t_render_ms": 12.0
+      }
+    },
+    {
+      "name": "speech-onset-negative-timestamp",
+      "error": "desktop t_render_ms is invalid"
+    },
+    {
+      "name": "speech-onset-string-timestamp",
+      "error": "desktop t_render_ms is invalid"
+    },
+    {
+      "name": "speech-onset-blank-id",
+      "error": "desktop speech_id is invalid"
+    },
+    {
+      "name": "playback-started",
+      "command": "playback_started",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 2
+      }
+    },
+    {
+      "name": "playback-started-ignores-played-ms",
+      "command": "playback_started",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 2
+      }
+    },
+    {
+      "name": "playback-done",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 2,
+        "played_ms": 40
+      }
+    },
+    {
+      "name": "playback-done-null-played-ms",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 2
+      }
+    },
+    {
+      "name": "playback-done-negative-played-ms",
+      "error": "desktop playback played_ms is invalid"
+    },
+    {
+      "name": "playback-done-float-played-ms",
+      "error": "desktop playback played_ms is invalid"
+    },
+    {
+      "name": "playback-stopped",
+      "command": "playback_stopped",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 2
+      }
+    },
+    {
+      "name": "playback-cleared",
+      "command": "playback_cleared",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 2
+      }
+    },
+    {
+      "name": "playback-zero-epoch",
+      "error": "desktop playback generation is invalid"
+    },
+    {
+      "name": "playback-float-epoch",
+      "error": "desktop playback generation is invalid"
+    },
+    {
+      "name": "playback-missing-epoch",
+      "error": "desktop playback generation is invalid"
+    },
+    {
+      "name": "memory-board-request",
+      "command": "memory_board_request",
+      "payload": {
+        "request_id": "req-1"
+      }
+    },
+    {
+      "name": "memory-board-no-id",
+      "error": "desktop request_id is invalid"
+    },
+    {
+      "name": "clock-pong",
+      "command": "clock_pong",
+      "payload": {
+        "ping_id": "ping-0",
+        "t_render_ms": 18.25
+      }
+    },
+    {
+      "name": "clock-pong-integer",
+      "command": "clock_pong",
+      "payload": {
+        "ping_id": "ping-0",
+        "t_render_ms": 18.0
+      }
+    },
+    {
+      "name": "clock-pong-missing-timestamp",
+      "error": "desktop t_render_ms is invalid"
+    },
+    {
+      "name": "clock-pong-negative",
+      "error": "desktop t_render_ms is invalid"
+    },
+    {
+      "name": "oversized-frame",
+      "error": "desktop control frame is too large"
     }
   ]
 }
