@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "armed-prestart-fence-start",
+  "description": "An armed pre-start fence catches a response the session has never seen before: the fence exists precisely because the response id is not known yet. The fenced response keeps the provider slot until its own terminal, so a Guard cannot open a second inference while this cancellation is in flight -- but holding the slot is not authority, so a final transcript from it is still refused, which is the only place those two questions come apart. Its terminal then releases authority for a response that never spoke.",
+  "covers": [
+    "session.accept.response_started.armed_fence_unknown_turn",
+    "session.fence_pending_response.consumes_armed_receipt",
+    "session.fence_pending_response.retains_slot_without_authority",
+    "session.accept.response_transcript_final.fenced_slot_owner",
+    "session.accept.response_terminal.unspoken_authority_release"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

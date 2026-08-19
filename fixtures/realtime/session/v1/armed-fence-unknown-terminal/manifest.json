@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "armed-fence-unknown-terminal",
+  "description": "A terminal is the first thing the session ever hears about a response, while a pre-start fence is armed. That terminal consumes the fence and releases the fenced pending's inference slot, so the next response starts unfenced and with no queued intent behind it. Without an armed fence an unknown terminal must not touch a live pending response at all.",
+  "covers": [
+    "session.accept.response_terminal.unknown_turn_consumes_armed_fence",
+    "session.pop_fenced_pending"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

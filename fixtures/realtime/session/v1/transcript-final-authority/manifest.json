@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "transcript-final-authority",
+  "description": "A final transcript is accepted only from a response the session actually owns. One belonging to a fenced turn is refused, and so is one for a response the session has never heard of, because a transcript it cannot attribute is not evidence about anything. The response holding the provider slot has its transcript cached, which is what the renderer later reads back as spoken text.",
+  "covers": [
+    "session.accept.response_transcript_final.fenced_turn",
+    "session.accept.response_transcript_final.unattributable",
+    "session.accept.response_transcript_final.cached_for_slot_owner"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

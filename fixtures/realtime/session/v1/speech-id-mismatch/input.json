@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "ids": [],
+  "steps": [
+    {"kind": "connect", "tools": 1},
+    {"kind": "provider_event", "event": {
+      "kind": "user_speech_started", "session_epoch": 1, "speech_id": "speech-1",
+      "provider_item_id": null}},
+    {"kind": "provider_event", "event": {
+      "kind": "user_speech_ended", "session_epoch": 1, "speech_id": "speech-2",
+      "provider_item_id": "item-wrong"}},
+    {"kind": "provider_event", "event": {
+      "kind": "user_speech_ended", "session_epoch": 1, "speech_id": "speech-1",
+      "provider_item_id": "item-a"}},
+    {"kind": "provider_event", "event": {
+      "kind": "user_transcript_final", "session_epoch": 1, "item_id": "item-a",
+      "text": "帮我看一下"}}
+  ]
+}

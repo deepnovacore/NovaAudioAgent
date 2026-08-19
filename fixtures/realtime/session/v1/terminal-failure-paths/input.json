@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "ids": ["generation-1", "utterance-1"],
+  "steps": [
+    {"kind": "connect", "tools": 1},
+    {"kind": "deliver_host_response", "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact", "task_summary": null, "origin_spoken": false,
+        "item": {"kind": "progress", "host_item_id": "host-1", "event_id": "progress:1",
+                 "content": "第一步。", "call_id": null}
+      }
+    },
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-1"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-1",
+      "status": "failed", "reason": "provider_error"}},
+
+    {"kind": "deliver_host_response", "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact", "task_summary": null, "origin_spoken": false,
+        "item": {"kind": "progress", "host_item_id": "host-2", "event_id": "progress:2",
+                 "content": "第二步。", "call_id": null}
+      }
+    },
+    {"kind": "provider_event", "event": {
+      "kind": "response_started", "session_epoch": 1, "response_id": "resp-2"}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_audio_delta", "session_epoch": 1, "response_id": "resp-2",
+      "pcm": {"pcm_base64": "AAECAw=="}}},
+    {"kind": "provider_event", "event": {
+      "kind": "response_terminal", "session_epoch": 1, "response_id": "resp-2",
+      "status": "failed", "reason": "provider_error"}},
+    {"kind": "playback_cleared", "utterance_id": "utterance-1", "generation_epoch": 1,
+     "played_ms": 60},
+    {"kind": "playback_done", "utterance_id": "utterance-1", "generation_epoch": 1,
+     "played_ms": 60}
+  ]
+}

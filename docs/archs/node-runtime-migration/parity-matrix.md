@@ -109,7 +109,7 @@ Scorecard and demo caveats:
 | Session history and recovery | history/session tests | Fixture parity | Reconnect state and replay decisions match |
 | Memory recall and board projection | recall/memory-board tests | Fixture parity | Same bounded visible content |
 | Telemetry and trace redaction | telemetry/evidence tests | Node unit tests | No credentials or raw protected payloads |
-| Provider-neutral contract and lifecycle | realtime protocol/session tests | Zod and Node lifecycle tests for host items, events, PCM, epoch, reconnect, and close; 16 Python-exported provider-frame session scenarios, Python leg checked | Shared contract is used by both production adapters; the session reducer is not ported, so the Node leg checks the fixture contract and not yet the goldens |
+| Provider-neutral contract and lifecycle | realtime protocol/session tests | Zod and Node lifecycle tests for host items, events, PCM, epoch, reconnect, and close; 23 Python-exported provider-frame session scenarios, Python leg checked | Shared contract is used by both production adapters; the session reducer is not ported, so the Node leg checks the fixture contract and not yet the goldens |
 | Qwen provider protocol | realtime Qwen tests | 18 Python-exported normalization scenarios plus real-loopback transport tests; live smoke passing | Session, playback fencing, and recovery still required above the adapter |
 | Volcengine ASR/TTS/Ark/protocol | Volcengine component/provider tests | Provider-frame fixtures plus live smoke | All deterministic cases green |
 | Streaming VAD | Volcengine VAD tests | LiveKit local VAD waveform fixtures plus native-binding startup tests | Equivalent segmentation tolerances documented on every release platform |

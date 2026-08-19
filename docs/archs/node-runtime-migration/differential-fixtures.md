@@ -1,9 +1,9 @@
 # Nova Audio Agent Node Differential Fixture Contract
 
 Status: v1 schema plus Python and Node runners active; twenty Python-exported core scenarios match.
-A second family covers the realtime session at the provider-frame level: sixteen scenarios, Python
-exported and checked, with the Node leg checking the contract but not yet the goldens, because the
-reducer that has to satisfy them is not ported yet.
+A second family covers the realtime session at the provider-frame level: twenty-three scenarios,
+Python exported and checked, with the Node leg checking the contract but not yet the goldens,
+because the reducer that has to satisfy them is not ported yet.
 
 ## Purpose
 
@@ -291,14 +291,32 @@ read as parity.
 ### Validating the set
 
 A fixture set is only worth what it can distinguish. The way to check that is to remove one guard
-from the Python session, run `check`, and confirm a named scenario goes red -- not to read the
-scenarios and judge them plausible. Seventeen guards were swept this way when the family landed;
-two were found to be indistinguishable and scenarios were added for them:
+from the Python session, run `check`, and confirm a *named* scenario goes red -- not to read the
+scenarios and judge them plausible. Thirty-eight mutations across every branch of `accept` and its
+immediate helpers are currently detected, none undetected. Getting there took two rounds, and the
+second round is the instructive one: an initial sweep of seventeen hand-picked guards found two
+holes, and sweeping the *remaining* branches found ten more. Picking which guards to sweep is where
+the judgement fails; sweep all of them.
 
-- `response_started` under the user floor was shadowed. When a delta arrives first, the delta's own
-  floor check fences the response and the start is then refused for being *fenced*, so only a start
-  with nothing before it separates the two guards.
-- No scenario sent a duplicate terminal, so terminal idempotence was unpinned.
+The recurring reason a guard was indistinguishable is that another guard reached the same verdict
+first, so removing either left the golden unchanged:
+
+- `response_started` under the user floor is shadowed when a delta arrives first, because the
+  delta's own floor check fences the response and the start is then refused for being *fenced*.
+  Only a start with nothing before it separates the two.
+- A final transcript from a fenced turn and one from an unattributable response both refuse. They
+  come apart only for a response that is fenced *and* holds the provider slot, which is exactly
+  what a consumed pre-start fence produces -- holding the slot is not authority.
+- The two non-completed terminal paths differ only in whether the renderer is holding this
+  response's generation, so a scenario needs both a failure with no generation and one with its own
+  generation current.
+
+Two mechanical gaps rather than shadowing: nothing sent a duplicate terminal, and nothing sent a
+mismatched speech id, so terminal idempotence and floor-release identity were both unpinned.
+
+Seven of the thirty-eight detections come from the id-sequence contract rather than from a golden:
+a removed guard usually first shows up as a playback generation the scenario never declared. That
+makes the contract as load-bearing here as the bytes.
 
 Do this again for any guard added later. A guard no scenario can distinguish is either dead code or
 a hole in the set, and the difference matters.

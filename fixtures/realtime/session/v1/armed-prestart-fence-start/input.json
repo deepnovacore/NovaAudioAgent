@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "ids": [],
+  "steps": [
+    {
+      "kind": "connect",
+      "tools": 1
+    },
+    {
+      "kind": "deliver_host_response",
+      "as_user_activation": false,
+      "intent": {
+        "kind": "host_fact",
+        "task_summary": null,
+        "origin_spoken": false,
+        "item": {
+          "kind": "progress",
+          "host_item_id": "host-1",
+          "event_id": "progress:1",
+          "content": "在编译。",
+          "call_id": null
+        }
+      }
+    },
+    {
+      "kind": "arm_next_response_fence"
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "response_started",
+        "session_epoch": 1,
+        "response_id": "resp-1"
+      }
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "response_transcript_final",
+        "session_epoch": 1,
+        "response_id": "resp-1",
+        "text": "被 fence 掉但还占着槽位的那句"
+      }
+    },
+    {
+      "kind": "provider_event",
+      "event": {
+        "kind": "response_terminal",
+        "session_epoch": 1,
+        "response_id": "resp-1",
+        "status": "cancelled",
+        "reason": "client_cancelled"
+      }
+    }
+  ]
+}

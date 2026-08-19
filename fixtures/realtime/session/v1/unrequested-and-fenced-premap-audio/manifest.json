@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "unrequested-and-fenced-premap-audio",
+  "description": "Audio for a response nobody asked for is refused outright: with nothing pending there is no intent for it to belong to, so there is nothing to buffer it against. Once a response is pending and a pre-start fence is armed, the same delta is refused for a different reason and takes the fence with it.",
+  "covers": [
+    "session.accept.response_audio_delta.no_pending_response",
+    "session.accept.response_audio_delta.armed_fence_unknown_turn"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

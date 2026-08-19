@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "speech-id-mismatch",
+  "description": "Only the speech that took the floor can release it: an end carrying a different speech id leaves the floor untouched and is refused on exactly that ground. The matching end also reveals the turn's real provider item id, and renaming the turn rather than recording a second one is what keeps the following transcript final from counting the same utterance twice.",
+  "covers": [
+    "session.accept.user_speech_ended.speech_id_mismatch",
+    "session.accept.user_speech_ended.renames_provisional_turn",
+    "session.accept.user_transcript_final.renamed_turn_does_not_recount"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "terminal-failure-paths",
+  "description": "A failed terminal takes one of two paths depending on whether the renderer is holding its generation. With nothing on the renderer, authority is simply released for a response that never spoke. With its own generation current, the generation is fenced and the response is recorded as both fenced and interrupted, so a late frame from it cannot escape and the event it was answering is not left looking answered.",
+  "covers": [
+    "session.accept.response_terminal.failed_without_generation",
+    "session.accept.response_terminal.failed_fences_current_generation",
+    "session.mark_response_interrupted"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}

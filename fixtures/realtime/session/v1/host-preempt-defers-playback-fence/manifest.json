@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "host-preempt-defers-playback-fence",
+  "description": "A host preempt cancels the active response but defers fencing the renderer, so the audio already queued keeps playing while the provider stops generating. The response's own terminal then honours that deferral: instead of fencing, it marks the current generation provider-terminal as interrupted, which lets the renderer finish what it has and report back rather than being cut mid-word.",
+  "covers": [
+    "session.host_preempt.defers_playback_fence",
+    "session.accept.response_terminal.defer_playback_fence",
+    "session.playback_acknowledgement.interrupted"
+  ],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact",
+  "node_parity": "pending-session-port"
+}
