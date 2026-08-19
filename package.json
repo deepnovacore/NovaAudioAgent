@@ -15,14 +15,15 @@
     "build": "npm run build --workspaces --if-present",
     "check": "npm run typecheck --workspace @nova-audio-agent/runtime && npm run lint --workspace @nova-audio-agent/runtime",
     "fixtures:schema": "npm run build --workspace @nova-audio-agent/runtime && node runtime/scripts/generate-fixture-schema.mjs",
-    "runtime:demo": "npm run demo --workspace @nova-audio-agent/runtime",
-    "runtime:fixtures": "npm run fixtures:check --workspace @nova-audio-agent/runtime",
-    "test": "npm run test:runtime && npm run test:desktop",
-    "test:runtime": "npm test --workspace @nova-audio-agent/runtime",
-    "test:desktop": "npm test --workspace @nova-audio-agent/ambient-orb",
+    "package:linux": "npm run package:linux --workspace @nova-audio-agent/ambient-orb",
     "package:mac": "npm run package:mac --workspace @nova-audio-agent/ambient-orb",
     "package:win": "npm run package:win --workspace @nova-audio-agent/ambient-orb",
-    "package:linux": "npm run package:linux --workspace @nova-audio-agent/ambient-orb"
+    "runtime:demo": "npm run demo --workspace @nova-audio-agent/runtime",
+    "runtime:fixtures": "npm run fixtures:check --workspace @nova-audio-agent/runtime",
+    "runtime:smoke:qwen": "npm run smoke:qwen --workspace @nova-audio-agent/runtime",
+    "test": "npm run test:runtime && npm run test:desktop",
+    "test:desktop": "npm test --workspace @nova-audio-agent/ambient-orb",
+    "test:runtime": "npm test --workspace @nova-audio-agent/runtime"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
