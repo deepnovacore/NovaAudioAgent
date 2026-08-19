@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { hasOtherCategory } from './unicode-tables.js'
 
 export const EVENT_KINDS = [
   'user_input',
@@ -46,7 +47,10 @@ export function validProgressSummary(summary: unknown, phase: string): boolean {
   const characters = [...summary]
   return characters.length >= 1
     && characters.length <= PROGRESS_SUMMARY_LIMIT
-    && characters.every(character => !/\p{C}/u.test(character))
+    // Pinned Unicode 15.0.0 rather than /\p{C}/u, which resolves against the
+    // host ICU's newer Unicode version and would classify recently assigned code
+    // points differently from the Python oracle that exported every fixture.
+    && !hasOtherCategory(summary)
 }
 
 const eventRecord = <Kind extends z.ZodLiteral<string>, Payload extends z.ZodType>(
