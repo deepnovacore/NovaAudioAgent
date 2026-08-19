@@ -188,6 +188,23 @@ through both pipelines, plus 261,282 adjacent pairs drawn from every unassigned 
 be a real script. Zero divergences. If a future CPython adopts Unicode 16.0, the "host alone does not
 agree" tests fail and the holdback can be deleted rather than carried indefinitely.
 
+### Deliberate divergence: the confirmation expiry timer is always armed
+
+`ProjectConfirmationController._schedule_expiry` calls `asyncio.get_running_loop()` and returns
+silently when there is none, so a proposal prepared outside a loop is never collected: past its
+deadline `pending` reports false while `_proposal` is still set, and no expiry observer ever fires.
+That is an artefact of how Python discovers its loop, not a decision -- nothing in the source says a
+controller without a scheduler should behave differently -- and it leaves stale state reachable by
+anything that inspects the controller directly rather than through `pending`.
+
+The Node port always arms the timer. In production both are inside a loop, so the two agree; the
+difference is only visible to a synchronous caller, which is why the committed scenarios use a step
+that moves the clock without running anything and call `expire()` explicitly. Pinning the timer
+would have pinned each runtime's scheduler rather than the controller.
+
+If Python outlives the migration, `_schedule_expiry` should either arm unconditionally or the
+no-loop case should clear the proposal rather than retain it.
+
 ### Pre-existing: the Codex progress end-to-end suite is load-sensitive
 
 `tests/test_e2e_codex_progress_status.py` fails under machine load and passes idle, with the

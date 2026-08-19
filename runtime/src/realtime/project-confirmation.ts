@@ -212,8 +212,14 @@ export class ProjectConfirmationController {
       this.expire()
       return false
     }
-    if (!Number.isInteger(input.epoch) || input.epoch < 1) return false
-    if (input.itemId === '') return false
+    // Type-checked, not just value-checked. The reservation key is built by interpolation, so a
+    // numeric `7` and the string `'7'` would produce the same key -- letting a malformed reservation
+    // be answered by an unrelated transcript, which is the spoken-authorization boundary itself.
+    // The oracle rejects a non-string item id outright, and so must this.
+    if (typeof input.epoch !== 'number' || !Number.isInteger(input.epoch) || input.epoch < 1) {
+      return false
+    }
+    if (typeof input.itemId !== 'string' || input.itemId === '') return false
     const key = reservationKey(input.epoch, input.itemId)
     if (this.#reserved !== null) return this.#reserved === key
     this.#reserved = key
@@ -232,7 +238,7 @@ export class ProjectConfirmationController {
     readonly text: string
   }): ConfirmationOutcome {
     const proposal = this.#proposal
-    if (proposal === null || this.#reserved !== reservationKey(input.epoch, input.itemId)) {
+    if (proposal === null || !this.#isReserved(input.epoch, input.itemId)) {
       return outcome('ignored')
     }
     if (this.#isExpired(proposal)) {
@@ -288,10 +294,7 @@ export class ProjectConfirmationController {
 
   /** Transcription failed, so the answer is unknowable and the operation is cancelled. */
   failTranscript(input: {readonly epoch: number; readonly itemId: string}): ConfirmationOutcome {
-    if (
-      this.#proposal === null
-      || this.#reserved !== reservationKey(input.epoch, input.itemId)
-    ) {
+    if (this.#proposal === null || !this.#isReserved(input.epoch, input.itemId)) {
       return outcome('ignored')
     }
     this.#clearAll()
@@ -326,6 +329,18 @@ export class ProjectConfirmationController {
     return true
   }
 
+  /**
+   * Whether this exact item holds the reservation.
+   *
+   * Types are checked here too, not only where the reservation is taken: an unreserved caller
+   * passing a number must not match a string reservation of the same digits.
+   */
+  #isReserved(epoch: unknown, itemId: unknown): boolean {
+    if (typeof epoch !== 'number' || !Number.isInteger(epoch)) return false
+    if (typeof itemId !== 'string') return false
+    return this.#reserved === reservationKey(epoch, itemId)
+  }
+
   #isExpired(proposal: ProjectProposal): boolean {
     // `>=` so the instant of expiry is expired, matching the oracle.
     return this.#clock.now() >= proposal.expires_at
@@ -341,6 +356,15 @@ export class ProjectConfirmationController {
     abort?.abort()
   }
 
+  /**
+   * Start the deadline timer.
+   *
+   * A deliberate divergence from the oracle, which schedules nothing when `prepare` is called
+   * outside a running asyncio loop -- a proposal made there is never collected, and its `_proposal`
+   * is retained after the deadline even though `pending` reports false. That is an artefact of how
+   * Python discovers its loop rather than a decision, and it leaves stale authority reachable by
+   * anything that inspects state directly. Here the timer is always armed.
+   */
   #scheduleExpiry(proposal: ProjectProposal): void {
     this.#expiryAbort?.abort()
     const abort = new AbortController()
@@ -496,7 +520,10 @@ function validatePrepared(input: {
   if (input.action !== 'create' && input.action !== 'select' && input.action !== 'resume') {
     throw new TypeError('invalid project action')
   }
-  if (input.workspace_display_name === '') {
+  // Typed *and* non-empty, in that order, because this runs before any state moves. A caller
+  // handing over a number would otherwise produce a proposal whose prompt names workspace `42`, and
+  // would replace whatever real proposal was pending. The oracle checks the type; so must this.
+  if (typeof input.workspace_display_name !== 'string' || input.workspace_display_name === '') {
     throw new TypeError('workspace display name is required')
   }
   for (const value of [
@@ -507,9 +534,14 @@ function validatePrepared(input: {
   ]) {
     // An empty string is not a missing value: it would name a workspace or Session that is not
     // there, so it is rejected rather than coerced to null.
-    if (value !== null && value === '') throw new TypeError('invalid project proposal field')
+    if (value === null) continue
+    if (typeof value !== 'string' || value === '') {
+      throw new TypeError('invalid project proposal field')
+    }
   }
-  if (input.origin_ref === '') throw new TypeError('origin ref is required')
+  if (typeof input.origin_ref !== 'string' || input.origin_ref === '') {
+    throw new TypeError('origin ref is required')
+  }
   // What each action needs resolved before a user can meaningfully confirm it. Resuming is the
   // strictest: there is no way to confirm continuing a Session whose identity is unknown.
   if (input.action === 'select' && input.workspace_id === null) {

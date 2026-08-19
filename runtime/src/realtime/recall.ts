@@ -55,15 +55,25 @@ const CJK_RUN = /[㐀-䶿一-鿿豈-﫿]+/gu
 /**
  * Strip leading and trailing whitespace the way Python's `str.strip()` does.
  *
- * `String.prototype.trim` strips a wider set: it removes U+FEFF, which Python's `str.strip()` keeps
- * because the zero-width no-break space is a format character rather than whitespace. A query of
- * just a BOM is therefore non-empty to the oracle and empty to `trim`, which changes whether recall
- * runs at all.
+ * `trim()` and `str.isspace()` are not the same predicate, and they differ in *both* directions.
+ * Measured across every non-surrogate code point, exactly six disagree:
  *
- * Python strips a code point when `str.isspace()` is true, which is the Unicode whitespace property
- * plus a handful of separators. The pinned category table does not carry Z*, so the set is spelled
- * out: `trim`'s set minus U+FEFF is exactly it.
+ * - U+001C..U+001F and U+0085 are whitespace to Python and not to `trim`, so `trim` would leave
+ *   them attached -- changing the query's length and its first token.
+ * - U+FEFF is whitespace to `trim` and not to Python, so `trim` would strip a character the oracle
+ *   counts, and a query of just a BOM would be empty here and non-empty there.
+ *
+ * Six code points is small enough to name, and naming them is what makes this checkable: a test
+ * derives the same set from the two predicates rather than trusting this list.
  */
+const PYTHON_ONLY_SPACE: ReadonlySet<string> = new Set([
+  '\u001c',
+  '\u001d',
+  '\u001e',
+  '\u001f',
+  '\u0085',
+])
+
 function stripLikePython(text: string): string {
   const characters = [...text]
   let start = 0
@@ -74,9 +84,8 @@ function stripLikePython(text: string): string {
 }
 
 function isPythonSpace(character: string): boolean {
-  // U+FEFF is whitespace to `trim` and not to `str.isspace()`, which is the whole divergence.
   if (character === '\ufeff') return false
-  return character.trim() === ''
+  return PYTHON_ONLY_SPACE.has(character) || character.trim() === ''
 }
 
 /** The recall cutoff is not an accepted trusted-user conversation item. */

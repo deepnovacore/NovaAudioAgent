@@ -404,3 +404,70 @@ test('evidence needing JSON escaping is escaped as json.dumps escapes it', () =>
   assert.ok(encoded.includes('\u4e2d\u6587'))
   assert.ok(!encoded.includes('\\u4e2d'))
 })
+
+test('the python-only whitespace list is exactly what the two predicates disagree about', () => {
+  // Derived rather than trusted. Python strips a code point when `str.isspace()` is true; the only
+  // way to reproduce that from JavaScript is `trim()` plus the code points it misses, minus the one
+  // it adds. If a future engine changes `trim`, this fails instead of the strip silently drifting.
+  const trimStrips = (codePoint: number): boolean => String.fromCodePoint(codePoint).trim() === ''
+  // Python's `str.isspace()` set, measured against CPython 15.0.0.
+  const pythonSpace = new Set([
+    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+    0x85, 0xa0, 0x1680,
+    0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a,
+    0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+  ])
+
+  const pythonOnly: number[] = []
+  const trimOnly: number[] = []
+  for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) continue
+    const inPython = pythonSpace.has(codePoint)
+    const inTrim = trimStrips(codePoint)
+    if (inPython && !inTrim) pythonOnly.push(codePoint)
+    if (inTrim && !inPython) trimOnly.push(codePoint)
+  }
+  assert.deepEqual(pythonOnly, [0x1c, 0x1d, 0x1e, 0x1f, 0x85])
+  assert.deepEqual(trimOnly, [0xfeff])
+})
+
+test('recall strips what Python strips, in both directions', () => {
+  // The five Python-only code points would otherwise stay attached, changing the query length and
+  // its first token; U+FEFF would otherwise be removed, making a BOM-only query empty here and
+  // non-empty in the oracle.
+  const memory = new Memory()
+  memory.append('conversation', {
+    ts: 1,
+    trust: 'trusted_system',
+    priority: 50,
+    content: {text: 'compile the runtime'},
+  })
+  memory.append('conversation', {
+    ts: 2,
+    trust: 'trusted_user',
+    priority: 100,
+    content: {text: 'asking'},
+  })
+  const beforeRef = makeMemoryRef('conversation', 2)
+  const baseline = compileMemoryRecall(memory, {query: 'compile', scope: 'recent', beforeRef})
+  assert.equal(baseline.hits.length, 1, 'the premise: the bare query matches')
+
+  for (const space of ['\u001c', '\u001d', '\u001e', '\u001f', '\u0085']) {
+    const wrapped = compileMemoryRecall(memory, {
+      query: `${space}compile${space}`,
+      scope: 'recent',
+      beforeRef,
+    })
+    assert.equal(
+      wrapped.hits.length,
+      1,
+      `U+${space.codePointAt(0)!.toString(16)} must be stripped like Python does`,
+    )
+  }
+  // And the bound counts the stripped query: 512 plus surrounding Python-whitespace is still fine.
+  assert.doesNotThrow(() => compileMemoryRecall(memory, {
+    query: `\u001c${'x'.repeat(512)}\u0085`,
+    scope: 'recent',
+    beforeRef,
+  }))
+})

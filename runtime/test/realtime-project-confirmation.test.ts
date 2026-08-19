@@ -14,6 +14,7 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import { VirtualClock } from '../src/clock.js'
+import { isOtherCategory, isPunctuationCategory } from '../src/unicode-tables.js'
 import {
   CONFIRMATION_LEADING,
   CONFIRMATION_NEGATIVE,
@@ -402,4 +403,155 @@ test('the longest matching filler is stripped, not the shortest', () => {
   assert.equal(classifyConfirmation('好的确认'), 'confirm')
   assert.equal(classifyConfirmation('嗯嗯可以'), 'confirm')
   assert.equal(classifyConfirmation('那就执行吧'), 'confirm')
+})
+
+test('the utterance filter drops exactly the code points the oracle drops', () => {
+  // `str.isspace()` and `trim()` disagree on six code points -- U+001C..U+001F, U+0085, U+FEFF -- so
+  // the whitespace test alone is not equivalent. All six are category C, and the control-character
+  // filter beside it catches every one, which is why the *combined* filter agrees everywhere. That
+  // is an argument, so it is checked over the whole code space rather than asserted.
+  // The disagreement runs both ways: five are whitespace to Python and not to `trim`, and U+FEFF is
+  // the reverse. Every one of them is category C, which is what makes the combined filter agree.
+  for (const codePoint of [0x1c, 0x1d, 0x1e, 0x1f, 0x85]) {
+    const character = String.fromCodePoint(codePoint)
+    assert.notEqual(character.trim(), '', `U+${codePoint.toString(16)} is not whitespace to trim`)
+    assert.equal(isOtherCategory(codePoint), true, 'but the control filter catches it')
+  }
+  assert.equal('\ufeff'.trim(), '', 'U+FEFF is whitespace to trim and not to Python')
+  assert.equal(isOtherCategory(0xfeff), true, 'and the control filter catches it too')
+
+  // And the property that matters: a character survives the filter here exactly when it survives it
+  // in the oracle. Anything that did not would change what a user is understood to have said.
+  let surviving = 0
+  for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) continue
+    const character = String.fromCodePoint(codePoint)
+    const dropped = character.trim() === ''
+      || isPunctuationCategory(codePoint)
+      || isOtherCategory(codePoint)
+    if (!dropped) surviving += 1
+  }
+  // Measured against CPython 15.0.0 across every non-surrogate code point.
+  assert.equal(surviving, 148155, 'the surviving set must match the oracle exactly')
+})
+
+test('whitespace and punctuation inside an utterance do not change its verdict', () => {
+  // The filter is what lets a user say "确认。" or "确 认" and be understood. These are the forms the
+  // six divergent code points appear in, so they exercise the argument above end to end.
+  for (const separator of ['', ' ', '\u00a0', '\u3000', '\u001c', '\u0085', '\ufeff', '。', '，']) {
+    assert.equal(
+      classifyConfirmation(`确${separator}认`),
+      'confirm',
+      `separator U+${(separator.codePointAt(0) ?? 0).toString(16)}`,
+    )
+  }
+  // And the same for a cancellation, which is matched as a substring rather than exactly.
+  assert.equal(classifyConfirmation('取\u3000消'), 'cancel')
+})
+
+test('a numeric item id cannot manufacture a reservation match', () => {
+  // The reservation key is built by interpolation, so `7` and `'7'` produce the same string. Without
+  // a type check that lets a malformed reservation be answered by an unrelated transcript -- which is
+  // the spoken-authorization boundary itself, not a formatting detail. The oracle rejects a
+  // non-string item id outright.
+  const controller = new ProjectConfirmationController({
+    clock: new VirtualClock(),
+    idFactory: () => 'nonce-1',
+  })
+  const proposal = {
+    action: 'create' as const,
+    workspace_display_name: '研究项目',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: null,
+    origin_ref: 'conversation:1',
+  }
+  controller.prepare(proposal)
+
+  // Reserving with a number is refused, so the later string cannot answer it.
+  assert.equal(controller.reserveUserItem({epoch: 1, itemId: 7 as unknown as string}), false)
+  const afterNumeric = controller.acceptTranscript({epoch: 1, itemId: '7', text: '确认'})
+  assert.equal(afterNumeric.kind, 'ignored')
+  assert.equal(afterNumeric.operation, null, 'no authority may be granted')
+
+  // And the reverse: a real string reservation is not answerable by the number.
+  const second = new ProjectConfirmationController({
+    clock: new VirtualClock(),
+    idFactory: () => 'nonce-1',
+  })
+  second.prepare(proposal)
+  assert.equal(second.reserveUserItem({epoch: 1, itemId: '7'}), true)
+  assert.equal(
+    second.acceptTranscript({epoch: 1, itemId: 7 as unknown as string, text: '确认'}).kind,
+    'ignored',
+  )
+  assert.equal(
+    second.failTranscript({epoch: 1, itemId: 7 as unknown as string}).kind,
+    'ignored',
+    'the failure path shares the same key construction',
+  )
+  // The ordinary path still works, so the check is not simply refusing everything.
+  assert.equal(second.acceptTranscript({epoch: 1, itemId: '7', text: '确认'}).kind, 'confirmed')
+})
+
+test('a non-integer or non-positive epoch cannot reserve', () => {
+  const controller = new ProjectConfirmationController({
+    clock: new VirtualClock(),
+    idFactory: () => 'nonce-1',
+  })
+  controller.prepare({
+    action: 'create',
+    workspace_display_name: '研究项目',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: null,
+    origin_ref: 'conversation:1',
+  })
+  for (const epoch of [0, -1, 1.5, Number.NaN, '1' as unknown as number]) {
+    assert.equal(
+      controller.reserveUserItem({epoch, itemId: 'item-a'}),
+      false,
+      `epoch=${String(epoch)}`,
+    )
+  }
+  assert.equal(controller.reserveUserItem({epoch: 1, itemId: 'item-a'}), true)
+})
+
+test('a proposal field of the wrong type is refused before any state moves', () => {
+  // `prepare` replaces whatever proposal is pending, so a malformed call must fail before it does
+  // anything -- otherwise a bad ingress could displace a real proposal, or produce commit authority
+  // for a workspace descriptor that is a number.
+  const controller = new ProjectConfirmationController({
+    clock: new VirtualClock(),
+    idFactory: () => 'nonce-1',
+  })
+  const valid = {
+    action: 'create' as const,
+    workspace_display_name: '研究项目',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: null,
+    origin_ref: 'conversation:1',
+  }
+  const first = controller.prepare(valid)
+  assert.equal(controller.pending, true)
+
+  const malformed = [
+    {...valid, workspace_display_name: 42 as unknown as string},
+    {...valid, workspace_id: 7 as unknown as string},
+    {...valid, session_title: 8 as unknown as string},
+    {...valid, session_id: 9 as unknown as string},
+    {...valid, work_order: 10 as unknown as string},
+    {...valid, origin_ref: 11 as unknown as string},
+    {...valid, action: 'delete' as unknown as 'create'},
+  ]
+  for (const input of malformed) {
+    assert.throws(() => controller.prepare(input), TypeError, JSON.stringify(input.action))
+  }
+  // The original proposal is untouched: nothing consumed a nonce or replaced it.
+  assert.equal(controller.view.workspace_display_name, first.workspace_display_name)
+  assert.equal(controller.pending, true)
 })
