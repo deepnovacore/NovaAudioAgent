@@ -1,0 +1,136 @@
+{
+  "requests": {
+    "complete-json-object": {
+      "messages": [
+        {
+          "content": "代理系统提示",
+          "role": "system"
+        },
+        {
+          "content": "只回 JSON",
+          "role": "user"
+        }
+      ],
+      "model": "qwen-flash",
+      "response_format": {
+        "type": "json_object"
+      }
+    },
+    "complete-plain": {
+      "messages": [
+        {
+          "content": "压缩系统提示",
+          "role": "system"
+        },
+        {
+          "content": "压缩这些内容",
+          "role": "user"
+        }
+      ],
+      "model": "qwen-flash"
+    },
+    "stream-text-only": {
+      "messages": [
+        {
+          "content": "系统提示",
+          "role": "system"
+        },
+        {
+          "content": "用户上下文\n第二行",
+          "role": "user"
+        }
+      ],
+      "model": "qwen3-vl-plus",
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      }
+    },
+    "stream-with-images": {
+      "messages": [
+        {
+          "content": "系统提示",
+          "role": "system"
+        },
+        {
+          "content": [
+            {
+              "text": "看这两张图",
+              "type": "text"
+            },
+            {
+              "text": "[media:1]",
+              "type": "text"
+            },
+            {
+              "image_url": {
+                "url": "data:image/png;base64,iVBORw0KGgo="
+              },
+              "type": "image_url"
+            },
+            {
+              "text": "[media:2]",
+              "type": "text"
+            },
+            {
+              "image_url": {
+                "url": "data:image/jpeg;base64,/9j/4A=="
+              },
+              "type": "image_url"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": "qwen3-vl-plus",
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      }
+    },
+    "stream-with-tools": {
+      "messages": [
+        {
+          "content": "系统提示",
+          "role": "system"
+        },
+        {
+          "content": "带工具",
+          "role": "user"
+        }
+      ],
+      "model": "qwen3-vl-plus",
+      "parallel_tool_calls": false,
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      },
+      "tools": [
+        {
+          "function": {
+            "description": "设置灯光亮度",
+            "name": "slow_sim__set_light",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "brightness": {
+                  "type": "integer"
+                },
+                "origin_ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "brightness",
+                "origin_ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "schema_version": 1
+}

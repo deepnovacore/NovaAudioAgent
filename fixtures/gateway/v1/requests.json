@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "description": "Model-gateway request bodies. Expected output is captured from the Python gateway with a recording client and matched byte for byte by the Node port, which builds the same body with fetch instead of the openai SDK.",
+  "scenarios": [
+    {
+      "id": "stream-text-only",
+      "mode": "stream",
+      "model": "qwen3-vl-plus",
+      "system": "系统提示",
+      "prompt": "用户上下文\n第二行",
+      "covers": "No tools and no images: stream flags and message shape only."
+    },
+    {
+      "id": "stream-with-tools",
+      "mode": "stream",
+      "model": "qwen3-vl-plus",
+      "system": "系统提示",
+      "prompt": "带工具",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "slow_sim__set_light",
+            "description": "设置灯光亮度",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "brightness": {
+                  "type": "integer"
+                },
+                "origin_ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "brightness",
+                "origin_ref"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "covers": "tools present adds parallel_tool_calls=false."
+    },
+    {
+      "id": "stream-with-images",
+      "mode": "stream",
+      "model": "qwen3-vl-plus",
+      "system": "系统提示",
+      "prompt": "看这两张图",
+      "images": [
+        {
+          "ref": "media:1",
+          "media_type": "image/png",
+          "payload_base64": "iVBORw0KGgo="
+        },
+        {
+          "ref": "media:2",
+          "media_type": "image/jpeg",
+          "payload_base64": "/9j/4A=="
+        }
+      ],
+      "covers": "Each image is preceded by its own [ref] text part, so emission order stops carrying the ref binding."
+    },
+    {
+      "id": "complete-plain",
+      "mode": "complete",
+      "model": "qwen-flash",
+      "system": "压缩系统提示",
+      "prompt": "压缩这些内容",
+      "covers": "No response_format when no schema is supplied."
+    },
+    {
+      "id": "complete-json-object",
+      "mode": "complete",
+      "model": "qwen-flash",
+      "system": "代理系统提示",
+      "prompt": "只回 JSON",
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "speak": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "speak"
+        ],
+        "additionalProperties": false
+      },
+      "covers": "A json_schema switches response_format to json_object; the schema itself never travels to the provider."
+    }
+  ]
+}
