@@ -34,21 +34,30 @@ Fill this table on `rewrite/node-typescript-runtime` before changing runtime beh
 Any baseline failure must be recorded with an owner and disposition. Do not encode accidental
 failure output as a golden fixture.
 
-Current checkpoint: 147 runtime tests and 299 Electron tests pass. The latest full Python run
-completed all 2,764 test cases but returned failure because the deterministic phase took 3.605
-seconds against its 3.500-second budget. Twenty Python-exported fixtures match Node by canonical
-bytes. The compiled desktop transport, model/executor job sequencing, three single-flight slots, speech/Floor
-event order, stale-action fencing, malformed-output compensation, and reclaimable delegate routing
-are active. Cross-source fixture order, scripted delegate IDs, preset cooldown, negative executor
-correlation, Surrogate refusal paths, Floor defer/preempt, and an executable deterministic Node CLI
-are now pinned. Every FastBrain and Surrogate `ContextView` is included in expected fixture output,
-including the structured-update model view. This is a core parity claim for those twenty scenarios,
-not Stage 1 acceptance:
-deadline request redaction, playback generation/barge-in fencing, malformed executor output, and
-model-output/raw-prompt trace hygiene are covered. `CausalRuntime` owns asynchronous completion and
-bounded cancellation in Node tests, but production desktop/model/provider assembly does not yet
-instantiate it. The Electron utility-process smoke is also environment-blocked in the current
-headless macOS sandbox.
+Current checkpoint, 2026-08-19. Gates measured on this machine: `npm run check` clean, 186 runtime
+tests, 299 Electron tests, Ruff clean over 241 files, 2,782 pytest cases with exit 0, runtime
+fixture parity exact for 20 scenarios in both directions, and Qwen normalization parity exact for 14
+scenarios in both directions.
+
+The deterministic-phase budget was raised from 3.5s to 4.5s because the Python fixture oracle replays
+the real `Runtime` over every committed fixture and costs about 0.44s; the pre-migration phase was
+3.244s and straddled the old bar. CI keeps its 7.5s override.
+
+Landed since the previous checkpoint: the reducer no longer depends on the fixture contract
+(`effects.ts` and `fixture-host.ts` split out, verified byte-identical across all 20 fixtures);
+progress-summary classification is pinned to Unicode 15.0.0 instead of reading each runtime's own
+database; the desktop boundary no longer dies on renderer disconnect, no longer hands out PCM views
+aliasing a pooled buffer, and bounds its readiness handshake; `CausalRuntime.serve` no longer starves
+the macrotask queue; a thrown consumption no longer wedges a model slot; and one code-point
+comparator now orders every identity.
+
+The Qwen Audio Realtime adapter and its WebSocket transport are ported, and
+`npm run runtime:smoke:qwen` passes against the live DashScope endpoint: connect, host-item
+confirmation, response creation, audio deltas, transcript final, terminal.
+
+Still not Stage 1 acceptance. Production desktop assembly does not yet instantiate `CausalRuntime`,
+so the runtime serves no renderer traffic. The Electron utility-process smoke remains
+environment-blocked without a WindowServer session. Neither is recorded as passing.
 
 ## Core Runtime
 
@@ -91,7 +100,7 @@ Scorecard and demo caveats:
 | Memory recall and board projection | recall/memory-board tests | Fixture parity | Same bounded visible content |
 | Telemetry and trace redaction | telemetry/evidence tests | Node unit tests | No credentials or raw protected payloads |
 | Provider-neutral contract and lifecycle | realtime protocol/session tests | Zod and Node lifecycle tests for host items, events, PCM, epoch, reconnect, and close | Shared contract is used by both production adapters; full session parity remains required |
-| Qwen provider protocol | realtime Qwen tests | Provider-frame fixtures plus live smoke | All deterministic cases green |
+| Qwen provider protocol | realtime Qwen tests | 14 Python-exported normalization scenarios plus 8 real-loopback transport tests; live smoke passing | Session, playback fencing, and recovery still required above the adapter |
 | Volcengine ASR/TTS/Ark/protocol | Volcengine component/provider tests | Provider-frame fixtures plus live smoke | All deterministic cases green |
 | Streaming VAD | Volcengine VAD tests | LiveKit local VAD waveform fixtures plus native-binding startup tests | Equivalent segmentation tolerances documented on every release platform |
 | Audio end-of-turn detection | turn handling, endpointing, interruption, and backchannel tests | LiveKit `TurnDetector` stream fixtures plus microphone acceptance | Local `v1-mini` is proven through a real inference executor; missing executor/native inference is explicit and bounded, never accepted via the positive default |

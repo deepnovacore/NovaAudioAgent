@@ -185,6 +185,25 @@ Implementation checkpoint, 2026-08-19:
   `RealtimeSession`; desktop microphone audio remains deliberately unwired until the first real
   provider adapter lands.
 
+Stage 1 status, 2026-08-19: not accepted. Two items remain.
+
+- Production desktop assembly does not instantiate `CausalRuntime`. `desktop-entry.ts` starts the
+  authenticated WebSocket, answers `desktop.ready` and `codex.state:idle`, and drops every other
+  frame. No renderer traffic reaches the runtime.
+- The GUI-capable Electron utility-process smoke is environment-blocked: `_RegisterApplication` has
+  no WindowServer session in this headless macOS sandbox. `npm run smoke:node-backend --workspace
+  @nova-audio-agent/ambient-orb` is ready to run on a real desktop session.
+
+Review fixes landed on the foundation, each with its own gate: the reducer no longer derives its
+types from the fixture contract (`effects.ts` and `fixture-host.ts` split out, proven byte-identical
+across all 20 fixtures rather than by a passing suite); progress-summary classification is pinned to
+Unicode 15.0.0 because CPython and ICU disagree about recently assigned code points; renderer
+disconnect no longer shuts the runtime down, which had diverged from Python and broke window reload;
+received PCM is copied rather than aliasing a `ws` pool buffer; the readiness handshake is bounded;
+`CausalRuntime.serve` yields to the macrotask queue so a saturated event queue cannot starve socket
+reads; a thrown consumption releases its model slot instead of wedging it; and one code-point
+comparator orders every identity.
+
 ### 2. Realtime voice and desktop behavior
 
 Port the shared realtime session and service behavior before provider transports. Then port Qwen
@@ -204,6 +223,24 @@ Stage acceptance:
 - Qwen and Volcengine each pass a separately gated live smoke test.
 - Real microphone/speaker tests confirm echo cancellation, barge-in, clear/done fencing, and no
   stale assistant captions after interruption.
+
+Stage 2 progress, 2026-08-19: the Qwen Audio Realtime adapter and its bounded WebSocket transport
+are ported. The wire protocol, the Chinese session instructions, the host-item wording and role
+split, the one-pending-cancel-per-epoch rule, and the provider error taxonomy are reproduced from
+the Python adapter and pinned by 14 Python-exported normalization scenarios matched on canonical
+bytes. `npm run runtime:smoke:qwen` passes against the live DashScope endpoint.
+
+Two departures from Python are deliberate and documented in code. A transport close now yields the
+recoverable `disconnected` provider error: Python reaches that branch only on `EOFError`, which its
+own test doubles raise, while a real `websockets` peer close raises `ConnectionClosed` that its
+receiver does not catch, leaving the documented reconnect path unreachable in production. And
+`injectHostItem` rejects a non-positive confirmation timeout, which the neutral session layer would
+otherwise let through.
+
+Still required above the adapter: the shared realtime session and service behavior, playback
+generation fencing wired to a provider, history recovery, caption ordering, memory-board projection,
+telemetry, and controlled Guard activation. Desktop microphone audio stays unwired until that
+assembly exists.
 
 ### LiveKit voice endpointing decision
 

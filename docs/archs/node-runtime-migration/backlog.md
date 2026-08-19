@@ -68,26 +68,15 @@ Ruff format check, Python build, CLI help, Electron build, and production npm au
 The execution environment used for this pass exposes `.git` read-only, so the documented backup
 branch and commits remain an operator step; tracked source remains recoverable from `f452077`.
 
-The current checkpoint has 147 passing runtime tests and 299 passing Electron tests. The latest full
-Python run completed all 2,764 cases, but its deterministic phase took 3.605 seconds and tripped the
-3.500-second performance budget, so the Python suite gate is not currently recorded as green. The
-Node implementation includes typed Memory, ContextView, Floor, suggestion and three-slot job state
-machines, reclaimable host-bound delegate routing, the reducer, exact canonical traces, abortable
-virtual time, an asynchronous task-owning `CausalRuntime`, a Python-default backend switch, and the
-compiled authenticated desktop entry. Twenty host-level fixtures are explicitly Python-exported
-and match Node by canonical bytes through a shared generated schema and number/string conformance
-vectors. The Node CLI now runs
-fixture verification and deterministic demos. It does not claim Stage 1 acceptance:
-the playback generation state machine and a barge-in/replacement-session fixture are now included,
-and malformed executor output now has a payload-free, language-neutral contract failure fixture.
-The safety fixtures pin deadline request redaction and the absence of malformed model raw output,
-while the trace writer rejects raw-prompt fields before writing. Provider-neutral realtime Zod
-contracts and a shared provider-session lifecycle now pin epoch monotonicity, stale-event rejection,
-PCM16 bounds, host-item confirmation correlation, reconnect, and close. Stage 1 is still not
-accepted: the GUI-capable Electron utility-process smoke is environment-blocked, and production
-desktop/model/provider assembly does not yet instantiate `CausalRuntime`. Desktop audio stays
-unwired until the first real provider adapter exists; a placeholder that silently consumes PCM is
-not an acceptable milestone.
+The current checkpoint has 186 passing runtime tests, 299 passing Electron tests, 2,782 passing
+pytest cases with exit 0, and Ruff clean over 241 files. Twenty runtime fixtures and fourteen Qwen
+normalization scenarios are Python-exported and matched by Node on canonical bytes, in both
+directions. The Qwen Audio Realtime adapter, its bounded WebSocket transport, and a live DashScope
+smoke are landed. Review fixes since the foundation landed are listed in the parity matrix
+checkpoint. Stage 1 acceptance is still open on two counts: production desktop assembly does not
+instantiate `CausalRuntime`, so no renderer traffic is served, and the Electron utility-process
+smoke stays environment-blocked. Desktop audio remains unwired above the adapter; a placeholder that
+silently consumes PCM is not an acceptable milestone.
 
 In-place Python refactors were considered and rejected: Python is the behavioral oracle and is
 scheduled for removal, so duplication found by the audit is not cleaned up in Python. It becomes
