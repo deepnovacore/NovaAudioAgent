@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "description": "Memory items handed to the compressor. Expected prompt is exported by Python model_adapters.GatewayCompressor and matched byte for byte by Node.",
+  "scenarios": [
+    {
+      "id": "sorted-keys-and-float-ts",
+      "covers": "Integer-like content keys sort by code point and ts keeps its decimal point, the two properties a naive JSON.stringify port loses.",
+      "items": [
+        {
+          "channel": "conversation",
+          "seq": 1,
+          "ts": 1.0,
+          "trust": "trusted_user",
+          "priority": 100,
+          "content": {
+            "text": "把灯调暗",
+            "2": "two",
+            "10": "ten"
+          },
+          "outcome": null,
+          "refs": []
+        },
+        {
+          "channel": "slow_sim",
+          "seq": 3,
+          "ts": 12.0,
+          "trust": "trusted_system",
+          "priority": 50,
+          "content": {
+            "op": "set_light",
+            "brightness": 30
+          },
+          "outcome": "ok",
+          "refs": [
+            "conversation:1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "empty",
+      "covers": "No items renders an empty JSON array rather than an empty string.",
+      "items": []
+    },
+    {
+      "id": "nested-and-unicode",
+      "covers": "Nested objects, arrays, escapes, and non-ASCII left literal.",
+      "items": [
+        {
+          "channel": "codex",
+          "seq": 7,
+          "ts": 0.5,
+          "trust": "untrusted_external",
+          "priority": 30,
+          "content": {
+            "nested": {
+              "b": [
+                1,
+                2.5,
+                null,
+                true
+              ],
+              "a": "他说\"客厅\""
+            },
+            "emoji": "😀"
+          },
+          "outcome": "failed",
+          "refs": [
+            "codex:6",
+            "conversation:2"
+          ]
+        }
+      ]
+    }
+  ]
+}

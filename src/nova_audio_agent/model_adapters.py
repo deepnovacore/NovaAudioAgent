@@ -232,6 +232,10 @@ class GatewayCompressor:
                 for item in items
             ],
             ensure_ascii=False,
+            # Sorted for the same reason prompting.py sorts: JavaScript hoists
+            # integer-like keys and JSON parsing discards insertion order, so an
+            # unsorted compressor prompt is not reproducible by the Node port.
+            sort_keys=True,
         )
         response = await self._gateway.complete(
             model=self._model,

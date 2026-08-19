@@ -1,0 +1,8 @@
+{
+  "prompts": {
+    "empty": "[]",
+    "nested-and-unicode": "[{\"content\": {\"emoji\": \"😀\", \"nested\": {\"a\": \"他说\\\"客厅\\\"\", \"b\": [1, 2.5, null, true]}}, \"outcome\": \"failed\", \"ref\": \"codex:7\", \"refs\": [\"codex:6\", \"conversation:2\"], \"trust\": \"untrusted_external\", \"ts\": 0.5}]",
+    "sorted-keys-and-float-ts": "[{\"content\": {\"10\": \"ten\", \"2\": \"two\", \"text\": \"把灯调暗\"}, \"outcome\": null, \"ref\": \"conversation:1\", \"refs\": [], \"trust\": \"trusted_user\", \"ts\": 1.0}, {\"content\": {\"brightness\": 30, \"op\": \"set_light\"}, \"outcome\": \"ok\", \"ref\": \"slow_sim:3\", \"refs\": [\"conversation:1\"], \"trust\": \"trusted_system\", \"ts\": 12.0}]"
+  },
+  "schema_version": 1
+}
