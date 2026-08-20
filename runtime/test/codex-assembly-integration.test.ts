@@ -57,7 +57,7 @@ class IntegrationTransport implements CodexAppServerTransport {
   ): Promise<TransportOutcome> {
     assert.equal(input.workOrder, 'compile the runtime')
     this.calls.push('run')
-    observer.onThreadReady?.()
+    observer.onThreadReady?.('thread-fake')
     observer.onTurnStartWritten?.()
     observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
     this.runEntered?.()

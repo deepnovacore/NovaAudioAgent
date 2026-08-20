@@ -72,6 +72,21 @@ test('a cold run follows the app-server handshake and returns bounded internal c
   })
 })
 
+test('thread-ready observer receives the exact app-server thread identity after binding', async () => {
+  const owner = new MemoryAppServerOwner([], {threadId: 'thread-boundary-exact'})
+  const transport = createTransport({spawn: async () => owner})
+  const readyArguments: unknown[][] = []
+
+  const result = await transport.run(
+    {workOrder: 'bind the durable session identity'},
+    {onThreadReady: (...args: unknown[]) => { readyArguments.push(args) }},
+    {expiresAtMs: Date.now() + 5000},
+  )
+
+  assert.equal(result.classification, 'completed')
+  assert.deepEqual(readyArguments, [['thread-boundary-exact']])
+})
+
 test('steer writes while turn/start response is delayed and reverse response order stays correlated', async () => {
   const methods: string[] = []
   const owner = new MemoryAppServerOwner(methods, {delayTurnStart: true})

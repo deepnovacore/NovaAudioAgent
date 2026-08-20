@@ -80,7 +80,7 @@ class LiveTransport implements CodexAppServerTransport {
     this.calls.push('run')
     this.workOrders.push(input.workOrder)
     if (this.runAction !== null) return await this.runAction(observer, deadline) as TransportOutcome
-    observer.onThreadReady?.()
+    observer.onThreadReady?.('thread-fake')
     observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
     return COMPLETE_OUTCOME
   }
@@ -414,7 +414,7 @@ test('live progress is forwarded, retained only while running, and callback fail
   const entered = deferred<void>()
   const transport = new LiveTransport()
   transport.runAction = async observer => {
-    observer.onThreadReady?.()
+    observer.onThreadReady?.('thread-fake')
     markTurnStartWritten(observer)
     observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
     observer.onProgress?.({phase: 'working', internal_activity: 3, elapsed: 2, summary: '正在写测试。'})
@@ -463,7 +463,7 @@ test('late observer callbacks cannot resurrect progress, process state, or steer
   await adapter.dispatch('run', {work_order: 'first'}, context('run', {}))
   const before = adapter.status
   const late = retained as TransportObserver | null
-  late?.onThreadReady?.()
+  late?.onThreadReady?.('thread-fake')
   late?.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
   late?.onProgress?.({phase: 'working', internal_activity: 2, elapsed: 3, summary: 'late'})
   const status = await adapter.dispatch('status', {}, context('status', {}))
@@ -482,7 +482,7 @@ test('live steer is available only for a bound turn and maps written uncertainty
   const writerDrained = deferred<TransportObserver>()
   const transport = new LiveTransport()
   transport.runAction = async observer => {
-    observer.onThreadReady?.()
+    observer.onThreadReady?.('thread-fake')
     markTurnStartWritten(observer)
     writerDrained.resolve(observer)
     return await release.promise
@@ -685,7 +685,7 @@ test('uncertain live settlement and close never invent process exit or transport
   // This fails if the adapter claims tree-gone facts absent from Task-6B TransportOutcome.
   const transport = new LiveTransport()
   transport.runAction = observer => {
-    observer.onThreadReady?.()
+    observer.onThreadReady?.('thread-fake')
     observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
     return Promise.resolve({
       classification: 'uncertain', code: 'transport_lost',

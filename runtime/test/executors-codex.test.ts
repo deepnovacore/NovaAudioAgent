@@ -71,7 +71,7 @@ class ScriptedTransport implements CodexAppServerTransport {
     this.deadlines.push(_deadline)
     this.workOrders.push(input.workOrder)
     if (this.runAction !== null) return await this.runAction(observer, _deadline) as TransportOutcome
-    observer.onThreadReady?.()
+    observer.onThreadReady?.('thread-fake')
     observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
     return this.outcome as TransportOutcome
   }
@@ -280,7 +280,7 @@ test('ordinary status, busy rejection, and one absolute deadline follow the acti
   const started = deferred<void>()
   const transport = new ScriptedTransport()
   transport.runAction = async observer => {
-    observer.onThreadReady?.()
+    observer.onThreadReady?.('thread-fake')
     observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
     started.resolve()
     return await release.promise
@@ -584,7 +584,7 @@ test('ordinary cancellation waits for transport settlement, rethrows, and releas
   const entered = deferred<void>()
   const transport = new ScriptedTransport()
   transport.runAction = async (observer, deadline) => {
-    observer.onThreadReady?.()
+    observer.onThreadReady?.('thread-fake')
     observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
     entered.resolve()
     await new Promise<void>(resolve => {

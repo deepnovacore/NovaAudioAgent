@@ -97,7 +97,7 @@ export interface SteerInput { readonly instruction: string }
 
 export interface TransportObserver {
   readonly onProgress?: (progress: ExecutorProgress) => void
-  readonly onThreadReady?: () => void
+  readonly onThreadReady?: (threadId: string) => void
   readonly onTurnStartWritten?: () => void
   readonly onTurnBound?: () => void
 }
@@ -378,7 +378,9 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       session.projection = projection
       session.completion = deferred<TurnCompletion>()
       this.#bindThread(projection, session.threadResponse)
-      try { observer.onThreadReady?.() } catch { /* advisory */ }
+      const threadId = projection.threadId
+      if (threadId === null) throw new CodexTransportError('unsupported_protocol')
+      try { observer.onThreadReady?.(threadId) } catch { /* advisory */ }
       await this.#scheduler.yieldIo()
       const turnResponse = await this.#requestPreparedWithin(
         session,
