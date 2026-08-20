@@ -475,6 +475,10 @@ export class RealtimeService {
     await this.#provider.sendAudio(pcm)
   }
 
+  async localSpeechOnset(speechId: string): Promise<void> {
+    await this.session.localSpeechOnset(speechId)
+  }
+
   async waitStopped(): Promise<void> {
     await Promise.allSettled(this.#tasks)
   }
