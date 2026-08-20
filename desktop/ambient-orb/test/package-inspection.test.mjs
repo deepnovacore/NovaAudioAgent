@@ -275,6 +275,13 @@ test('actual configured graph derives camera and runtime from config plus instal
   ))
   assert.ok(result.includedFiles.includes('node_modules/ws/package.json'))
   assert.ok(result.includedFiles.includes('node_modules/zod/package.json'))
+  for (const fixture of [
+    'assets/demos/cat-sofa-guard/cat-sofa-guard.mp4',
+    'assets/demos/cat-sofa-guard/first.png',
+    'assets/demos/cat-sofa-guard/last.png',
+  ]) {
+    assert.equal(result.includedFiles.includes(fixture), false, fixture)
+  }
   assert.deepEqual(result.productionDependencies, ['@nova-audio-agent/runtime'])
   assert.equal(result.forbidden.length, 0)
 })

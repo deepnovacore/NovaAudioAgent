@@ -127,9 +127,9 @@ Scorecard and demo caveats:
 | Codex app-server lifecycle | app-server/transport/runtime tests | Node fake-process integration tests | Run/steer/cancel ordering preserved |
 | Codex progress and recall | progress status/recall evals | Fixture parity plus gated live eval | Correlation and memory behavior match |
 | Process tree ownership | process-tree/preflight tests | Cross-platform integration and hardware tests | Windows Job Object equivalent verified |
-| Camera snapshot | camera/vision tests | Node adapter and disabled/shared production-assembly integration; Chromium capture integration remains pending | Same evidence and media-ref contract |
-| Watch/Guard lifecycle | watcher/watch-alert tests | Fixture parity plus shared source/store, gateway-image, Guard-only restart, and assembly lifecycle tests; Chromium camera integration remains pending | Wake, evidence, and stop semantics match |
-| Local video fixture input | vision smoke/eval tests | Chromium/WebCodecs test assets | No Python/OpenCV/system ffmpeg required |
+| Camera snapshot | camera/vision tests | Node adapter plus authenticated desktop protocol, Chromium controller, fixed-route harness, and injected production composition; this host returned the explicit `chromium_codec_unavailable` external gate before decode | Same evidence and media-ref contract; supported-host Chromium decode still requires release evidence |
+| Watch/Guard lifecycle | watcher/watch-alert tests | Fixture parity plus shared source/store, gateway-image, Guard-only restart, assembly lifecycle, and injected desktop/source composition; real Chromium capture remains behind the explicit host capability gate | Wake, evidence, and stop semantics match |
+| Local video fixture input | vision smoke/eval tests | Exact cat-sofa asset authority and a fixed `nova://orb/camera-source` HTMLVideoElement/OffscreenCanvas harness; package inspection excludes all demo media | No Python/OpenCV/system ffmpeg required; supported-host Chromium visual/range result remains a release gate |
 | Home Assistant | HA unit/smoke tests | Retired-capability error tests | Source/config/docs removed at cleanup |
 | AutoGLM | AutoGLM protocol/transport/smoke tests | Retired-capability error tests | Source/config/docs/submodule removed |
 | GPT-live Tetris evaluation family | `evals/live_tetris.py`, `evals/trajectory.py`, gptlive tests and script | Retired: deleted by the approved pre-migration cleanup (see backlog) | `evals/tetris_artifact.py` stays with the codex-progress row |

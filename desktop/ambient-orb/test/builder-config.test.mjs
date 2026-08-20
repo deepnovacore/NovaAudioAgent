@@ -32,6 +32,10 @@ const EXPECTED_BUILD_SCRIPTS = [
   'src/renderer/settings.mjs',
   'scripts/utility-runtime-smoke.mjs',
   'scripts/inspect-package.mjs',
+  'scripts/camera-file-integration.mjs',
+  'scripts/camera-file-integration-contract.mjs',
+  'scripts/camera-file-integration-renderer.mjs',
+  'scripts/camera-file-integration-mutations.mjs',
   'scripts/build-contract.mjs',
 ]
 
@@ -293,9 +297,16 @@ test('renderer CSP catches widening camera media beyond the exact same origin', 
   assert.doesNotMatch(directives['media-src'].join(' '), /file:|data:|blob:|https?:/u)
 })
 
-test('desktop build executes syntax checks for both camera main and renderer modules', async () => {
+test('desktop build executes syntax checks for production camera and integration runner modules', async () => {
   assert.equal(typeof checkJavaScriptFiles, 'function')
-  for (const malformed of ['src/main/camera-source.mjs', 'src/renderer/camera.mjs']) {
+  for (const malformed of [
+    'src/main/camera-source.mjs',
+    'src/renderer/camera.mjs',
+    'scripts/camera-file-integration.mjs',
+    'scripts/camera-file-integration-contract.mjs',
+    'scripts/camera-file-integration-renderer.mjs',
+    'scripts/camera-file-integration-mutations.mjs',
+  ]) {
     const temporary = await mkdtemp(resolve(tmpdir(), 'nova-camera-build-check-'))
     try {
       for (const file of EXPECTED_BUILD_SCRIPTS) {
@@ -319,4 +330,12 @@ test('desktop build executes syntax checks for both camera main and renderer mod
       await rm(temporary, { recursive: true, force: true })
     }
   }
+})
+
+test('the dedicated camera-file script builds runtime before launching pinned Electron', async () => {
+  const pkg = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf8'))
+  assert.equal(
+    pkg.scripts['test:camera-file'],
+    'npm run build --workspace @nova-audio-agent/runtime && electron scripts/camera-file-integration.mjs',
+  )
 })

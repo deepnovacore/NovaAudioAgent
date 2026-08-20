@@ -6,6 +6,8 @@
   "main": "src/main/main.mjs",
   "scripts": {
     "test": "node --test",
+    "test:camera-file": "npm run build --workspace @nova-audio-agent/runtime && electron scripts/camera-file-integration.mjs",
+    "test:camera-file:mutations": "node scripts/camera-file-integration-mutations.mjs",
     "smoke:node-backend": "npm run build && electron scripts/utility-runtime-smoke.mjs",
     "icons": "node scripts/make-icons.mjs",
     "build": "node scripts/make-icons.mjs --if-missing && node scripts/build.mjs",

@@ -19,6 +19,10 @@ const BUILD_JAVASCRIPT_FILES = Object.freeze([
   'src/renderer/settings.mjs',
   'scripts/utility-runtime-smoke.mjs',
   'scripts/inspect-package.mjs',
+  'scripts/camera-file-integration.mjs',
+  'scripts/camera-file-integration-contract.mjs',
+  'scripts/camera-file-integration-renderer.mjs',
+  'scripts/camera-file-integration-mutations.mjs',
   'scripts/build-contract.mjs',
 ])
 
