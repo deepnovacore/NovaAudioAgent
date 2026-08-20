@@ -664,15 +664,18 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       const spawnTimer = setTimeout(abortSpawn, Math.max(0, deadline.expiresAtMs - Date.now()))
       deadline.signal?.addEventListener('abort', abortSpawn, {once: true})
       this.#spawnControllers.add(spawnController)
+      let spawnWaiterReleased = false
+      const releaseSpawnWaiter = (): void => {
+        if (spawnWaiterReleased) return
+        spawnWaiterReleased = true
+        clearTimeout(spawnTimer)
+        deadline.signal?.removeEventListener('abort', abortSpawn)
+        this.#spawnControllers.delete(spawnController)
+      }
       const spawnWork = Promise.resolve().then(() => this.#processFactory.spawn(spec, {
         signal: spawnController.signal,
         expiresAtMs: deadline.expiresAtMs,
       }))
-      void spawnWork.finally(() => {
-        clearTimeout(spawnTimer)
-        deadline.signal?.removeEventListener('abort', abortSpawn)
-        this.#spawnControllers.delete(spawnController)
-      }).catch(() => undefined)
       try {
         owner = await runWithin(spawnWork, deadline, 'adapter_timeout')
       } catch (error) {
@@ -694,6 +697,10 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
           throw safe
         }
         throw safe
+      } finally {
+        // The deadline timer and caller listener belong to this waiter, not the raw spawn
+        // ownership continuation. Late owner/rejection cleanup remains tracked separately.
+        releaseSpawnWaiter()
       }
     } catch (error) {
       const safe = safeTransportError(error, 'spawn_failed')

@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/require-await -- deterministic fakes implement async host contracts */
 /* eslint-disable @typescript-eslint/no-empty-function -- inert fake callbacks model blocked/no-op resources */
 import assert from 'node:assert/strict'
+import {spawn as spawnChild} from 'node:child_process'
 import {PassThrough, Writable} from 'node:stream'
 import {test} from 'node:test'
+import {fileURLToPath} from 'node:url'
 
 import * as runtime from '../src/index.js'
 import {OwnedCodexAppServerTransport} from '../src/codex-app-server-transport.js'
@@ -1157,6 +1159,119 @@ test('close-driven indefinitely pending spawn keeps credentials across bounded r
     assert.equal(spawnCount, 1)
   }
   assert.equal(await transport.prewarm({expiresAtMs: Date.now() + 100}), null)
+})
+
+test('close releases the never-settling spawn deadline handle instead of pinning a child process', async () => {
+  const fixture = fileURLToPath(new URL(
+    './fixtures/codex/pending-spawn-handle-child.js',
+    import.meta.url,
+  ))
+  const startedAt = Date.now()
+  const child = spawnChild(process.execPath, [fixture], {
+    cwd: process.cwd(),
+    env: {PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? ''},
+    shell: false,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  child.stdout.on('data', (chunk: string) => { stdout += chunk })
+  child.stderr.on('data', (chunk: string) => { stderr += chunk })
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    const hardTimer = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error('pending-spawn handle fixture exceeded hard deadline'))
+    }, 15_000)
+    child.once('error', error => {
+      clearTimeout(hardTimer)
+      reject(error)
+    })
+    child.once('exit', code => {
+      clearTimeout(hardTimer)
+      resolve(code)
+    })
+  })
+  const elapsedMs = Date.now() - startedAt
+  assert.equal(exitCode, 0, stderr)
+  assert.equal(elapsedMs < runtime.CODEX_TREE_GRACE_MS + 3000, true, `child exit took ${elapsedMs} ms`)
+  const result = JSON.parse(stdout) as Record<string, unknown>
+  assert.equal(result.runCode, 'transport_lost')
+  assert.equal(result.closeCode, 'transport_lost')
+})
+
+test('close explicitly detaches every spawn waiter abort listener while raw ownership remains pending', async () => {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- exact prototype method is restored in finally
+  const originalAdd = AbortSignal.prototype.addEventListener
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- exact prototype method is restored in finally
+  const originalRemove = AbortSignal.prototype.removeEventListener
+  type AbortListener = Parameters<AbortSignal['addEventListener']>[1]
+  type AddAbortOptions = Parameters<AbortSignal['addEventListener']>[2]
+  type RemoveAbortOptions = Parameters<AbortSignal['removeEventListener']>[2]
+  const active = new Map<AbortSignal, Set<AbortListener>>()
+  Object.defineProperty(AbortSignal.prototype, 'addEventListener', {
+    configurable: true,
+    value: function (
+      this: AbortSignal,
+      type: string,
+      listener: AbortListener,
+      options?: AddAbortOptions,
+    ): void {
+      if (type === 'abort') {
+        const listeners = active.get(this) ?? new Set<AbortListener>()
+        listeners.add(listener)
+        active.set(this, listeners)
+      }
+      originalAdd.call(this, type, listener, options)
+    },
+  })
+  Object.defineProperty(AbortSignal.prototype, 'removeEventListener', {
+    configurable: true,
+    value: function (
+      this: AbortSignal,
+      type: string,
+      listener: AbortListener,
+      options?: RemoveAbortOptions,
+    ): void {
+      if (type === 'abort') active.get(this)?.delete(listener)
+      originalRemove.call(this, type, listener, options)
+    },
+  })
+
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const owner = new MemoryAppServerOwner([])
+  const transport = createTransport({spawn: async () => {
+    entered.resolve()
+    await release.promise
+    return owner
+  }})
+  try {
+    const running = transport.run(
+      {workOrder: 'detach the waiter but retain raw ownership'},
+      {},
+      {expiresAtMs: Date.now() + 60_000},
+    )
+    await entered.promise
+    const closing = transport.close()
+    assert.equal((await running).code, 'transport_lost')
+    await assert.rejects(
+      within(closing, runtime.CODEX_TREE_GRACE_MS + 1000, 'listener-detach close'),
+      (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+    )
+    assert.equal([...active.values()].reduce((total, listeners) => total + listeners.size, 0), 0)
+  } finally {
+    release.resolve()
+    await settleUntil(() => owner.disposed, 'listener-detach late owner cleanup')
+    Object.defineProperty(AbortSignal.prototype, 'addEventListener', {
+      configurable: true, value: originalAdd,
+    })
+    Object.defineProperty(AbortSignal.prototype, 'removeEventListener', {
+      configurable: true, value: originalRemove,
+    })
+  }
 })
 
 test('close-driven explicit spawn rejection releases credentials only after rejection', async () => {
