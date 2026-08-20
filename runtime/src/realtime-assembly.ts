@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly } from './assembly.js'
+import { canonicalJson } from './canonical-json.js'
+import type { JsonValue } from './events.js'
 import {
   PlaybackRegistry,
   type PlaybackCompletion,
@@ -149,21 +151,28 @@ export class RealtimeAssembly {
       if (this.#state === 'starting') this.#state = 'new'
       throw error
     }
+    if (this.#state !== 'starting') {
+      throw new AssemblyError('realtime assembly start was abandoned by stop')
+    }
     try {
       await this.service.start()
     } catch (error) {
-      await this.#cleanupWithinGrace(
-        () => this.core.stop(),
-        'assembly_core_stop_abandoned',
-      )
-      if (this.#state === 'starting') this.#state = 'new'
+      if (this.#state === 'starting') {
+        await this.#cleanupWithinGrace(
+          () => this.core.stop(),
+          'assembly_core_stop_abandoned',
+        )
+        if (this.#state === 'starting') this.#state = 'new'
+      }
       throw error
     }
     if (this.#state === 'starting') this.#state = 'started'
   }
 
   async #stopAfter(starting: Promise<void> | null): Promise<void> {
-    if (starting !== null) await starting.catch(() => undefined)
+    if (starting !== null) {
+      await this.#settleWithinGrace(starting, 'assembly_start_abandoned')
+    }
 
     let firstFailure: {readonly error: unknown} | null = null
     const service = await this.#cleanupWithinGrace(
@@ -192,6 +201,13 @@ export class RealtimeAssembly {
     } catch (error) {
       return {kind: 'rejected', error}
     }
+    return this.#settleWithinGrace(work, abandonedDiagnostic)
+  }
+
+  async #settleWithinGrace(
+    work: Promise<void>,
+    abandonedDiagnostic: string,
+  ): Promise<CleanupResult> {
     const settled: Promise<CleanupResult> = work.then(
       () => ({kind: 'resolved'}),
       (error: unknown) => ({kind: 'rejected', error}),
@@ -222,7 +238,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   const provider = options.provider
   const providerSession = new RealtimeProviderSession(provider)
   const providerTools = options.providerToolView?.(core.tools) ?? core.tools
-  validateProviderToolView(core.tools, providerTools)
+  const providerSchemas = validateProviderToolView(core.tools, providerTools)
   const idFactory = options.idFactory ?? (() => `nova_${randomUUID().replaceAll('-', '')}`)
   const onDiagnostic = options.onDiagnostic ?? (line => { console.log(line) })
   const playback = new PlaybackRegistry({
@@ -249,7 +265,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     provider: providerSession,
     runtime: core.runtime,
     tools: core.tools,
-    providerSchemas: providerTools.schemas,
+    providerSchemas,
     session,
     bridge,
     idFactory,
@@ -293,7 +309,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
 function validateProviderToolView(
   full: CompiledTools,
   provider: unknown,
-): asserts provider is CompiledTools {
+): readonly Readonly<Record<string, JsonValue>>[] {
   if (!isUnknownObject(provider) || !('bindings' in provider) || !('schemas' in provider)) {
     throw new AssemblyError('provider tool view contains a malformed schema')
   }
@@ -303,23 +319,50 @@ function validateProviderToolView(
   if (!Array.isArray(provider.schemas)) {
     throw new AssemblyError('provider tool view contains a malformed schema')
   }
-  const fullNames = new Set<string>()
+  const fullByName = new Map<string, string>()
   for (const schema of full.schemas) {
-    const name = validFunctionSchemaName(schema)
-    if (name === null) throw new AssemblyError('core tool view contains a malformed schema')
-    fullNames.add(name)
+    const snapshot = snapshotJsonObject(schema)
+    if (snapshot === null) throw new AssemblyError('core tool view contains a malformed schema')
+    const name = validFunctionSchemaName(snapshot)
+    if (name === null || fullByName.has(name)) {
+      throw new AssemblyError('core tool view contains a malformed schema')
+    }
+    let canonical: string
+    try {
+      canonical = canonicalJson(snapshot)
+    } catch {
+      throw new AssemblyError('core tool view contains a malformed schema')
+    }
+    fullByName.set(name, canonical)
   }
   const providerNames = new Set<string>()
+  const providerSchemas: Readonly<Record<string, JsonValue>>[] = []
   for (const schema of provider.schemas) {
-    const name = validFunctionSchemaName(schema)
+    const snapshot = snapshotJsonObject(schema)
+    if (snapshot === null) {
+      throw new AssemblyError('provider tool view contains a malformed schema')
+    }
+    const name = validFunctionSchemaName(snapshot)
     if (name === null || providerNames.has(name)) {
       throw new AssemblyError('provider tool view contains a malformed schema')
     }
     providerNames.add(name)
-    if (!fullNames.has(name)) {
+    const fullCanonical = fullByName.get(name)
+    if (fullCanonical === undefined) {
       throw new AssemblyError('provider tool view contains an unknown schema')
     }
+    let providerCanonical: string
+    try {
+      providerCanonical = canonicalJson(snapshot)
+    } catch {
+      throw new AssemblyError('provider tool view contains a malformed schema')
+    }
+    if (providerCanonical !== fullCanonical) {
+      throw new AssemblyError('provider tool view schema must match core schema')
+    }
+    providerSchemas.push(snapshot)
   }
+  return providerSchemas
 }
 
 function validFunctionSchemaName(schema: unknown): string | null {
@@ -331,10 +374,79 @@ function validFunctionSchemaName(schema: unknown): string | null {
   if (typeof name !== 'string' || name.length === 0) return null
   if (typeof description !== 'string' || description.length === 0) return null
   if (!isUnknownObject(parameters) || parameters.type !== 'object') return null
+  if (!isUnknownObject(parameters.properties)) return null
   return name
 }
 
 function isUnknownObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function snapshotJsonObject(value: unknown): Readonly<Record<string, JsonValue>> | null {
+  const snapshot = snapshotJsonValue(value, new Set<object>())
+  return isJsonObject(snapshot) ? snapshot : null
+}
+
+function snapshotJsonValue(value: unknown, ancestors: Set<object>): JsonValue | undefined {
+  if (
+    value === null
+    || typeof value === 'string'
+    || typeof value === 'boolean'
+    || (typeof value === 'number' && Number.isFinite(value))
+  ) return value
+  if (typeof value !== 'object' || ancestors.has(value)) return undefined
+
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) {
+      const keys = Reflect.ownKeys(value)
+      if (keys.some(key => key !== 'length' && (
+        typeof key !== 'string' || !isCanonicalArrayIndex(key, value.length)
+      ))) return undefined
+      const snapshot: JsonValue[] = []
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+        if (descriptor === undefined || !('value' in descriptor)) return undefined
+        const item = snapshotJsonValue(descriptor.value, ancestors)
+        if (item === undefined) return undefined
+        snapshot.push(item)
+      }
+      return snapshot
+    }
+
+    const prototype: unknown = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return undefined
+    const snapshot: Record<string, JsonValue> = {}
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== 'string') return undefined
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined || !descriptor.enumerable || !('value' in descriptor)) {
+        return undefined
+      }
+      const field = snapshotJsonValue(descriptor.value, ancestors)
+      if (field === undefined) return undefined
+      Object.defineProperty(snapshot, key, {
+        configurable: true,
+        enumerable: true,
+        value: field,
+        writable: true,
+      })
+    }
+    return snapshot
+  } catch {
+    return undefined
+  } finally {
+    ancestors.delete(value)
+  }
+}
+
+function isCanonicalArrayIndex(key: string, length: number): boolean {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) return false
+  const index = Number(key)
+  return Number.isSafeInteger(index) && index >= 0 && index < length && String(index) === key
+}
+
+function isJsonObject(value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 

@@ -242,14 +242,6 @@ class AbortAwareProvider implements RealtimeProvider {
   }
 }
 
-function schemaName(schema: Readonly<Record<string, JsonValue>>): string {
-  const declaration = schema.function
-  assert.ok(typeof declaration === 'object' && declaration !== null && !Array.isArray(declaration))
-  const name = declaration.name
-  if (typeof name !== 'string') throw new Error('schema name is not a string')
-  return name
-}
-
 test('one provider session supports the realtime session connect and reconnect contract', async () => {
   // Mutation caught: RealtimeSession calling terminal close()+connect() instead of the shared
   // provider-session reconnect path closes the only provider owner and makes the second epoch fail.
@@ -348,18 +340,28 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
 
 test('provider tool view narrows schemas without copying host authority', async () => {
   // Mutations caught: defaulting to an empty view, passing full schemas after narrowing, accepting a
-  // copied binding map, or reading untrusted schema names into an error all fail literal assertions.
+  // copied binding map, retaining a caller-mutable view, or reading untrusted schema names into an
+  // error all fail literal assertions.
   const core = realCore()
   const provider = new AbortAwareProvider()
-  const selected = core.tools.schemas.slice(0, 2)
+  const canonicalSelection = core.tools.schemas.slice(0, 2)
+  const selected = structuredClone(canonicalSelection)
   const realtime = buildRealtimeAssembly({
     core,
     provider,
     providerToolView: tools => ({schemas: selected, bindings: tools.bindings}),
     onDiagnostic: () => undefined,
   })
+  const selectedDeclaration = selected[0]?.function
+  assert.ok(
+    typeof selectedDeclaration === 'object'
+      && selectedDeclaration !== null
+      && !Array.isArray(selectedDeclaration),
+  )
+  const mutableSelectedDeclaration = selectedDeclaration as Record<string, JsonValue>
+  mutableSelectedDeclaration.description = 'mutated after factory construction'
   await settleNamed('narrowed provider start', realtime.start())
-  assert.deepEqual(provider.connectedTools[0]?.map(schemaName), selected.map(schemaName))
+  assert.deepEqual(provider.connectedTools[0], canonicalSelection)
   assert.equal(realtime.tools, core.tools)
   assert.equal(realtime.service.internals.tools.bindings, core.tools.bindings)
   await settleNamed('narrowed provider stop', realtime.stop())
@@ -407,6 +409,58 @@ test('provider tool view narrows schemas without copying host authority', async 
     error => error instanceof AssemblyError
       && error.message === 'provider tool view contains an unknown schema',
   )
+})
+
+test('provider tool view rejects deep non-JSON, malformed, and altered known schemas', () => {
+  // Mutations caught: shallow name-only validation accepts every case below and defers failure to a
+  // lower layer; comparing object identity instead of behavior also rejects the exact clone above.
+  const core = realCore()
+  const cloneFirstSchema = (): Record<string, unknown> => (
+    structuredClone(core.tools.schemas[0]!)
+  )
+  const declarationOf = (schema: Record<string, unknown>): Record<string, unknown> => {
+    const declaration = schema.function
+    assert.ok(typeof declaration === 'object' && declaration !== null && !Array.isArray(declaration))
+    return declaration as Record<string, unknown>
+  }
+  const parametersOf = (schema: Record<string, unknown>): Record<string, unknown> => {
+    const parameters = declarationOf(schema).parameters
+    assert.ok(typeof parameters === 'object' && parameters !== null && !Array.isArray(parameters))
+    return parameters as Record<string, unknown>
+  }
+  const expectRejected = (
+    schema: Record<string, unknown>,
+    message: 'provider tool view contains a malformed schema'
+      | 'provider tool view schema must match core schema',
+  ): void => {
+    assert.throws(
+      () => buildRealtimeAssembly({
+        core,
+        provider: new AbortAwareProvider(),
+        providerToolView: tools => ({
+          schemas: [schema] as unknown as CompiledTools['schemas'],
+          bindings: tools.bindings,
+        }),
+      }),
+      error => error instanceof AssemblyError && error.message === message,
+    )
+  }
+
+  const nonJson = cloneFirstSchema()
+  parametersOf(nonJson).non_json_value = undefined
+  expectRejected(nonJson, 'provider tool view contains a malformed schema')
+
+  const malformedNestedParameters = cloneFirstSchema()
+  parametersOf(malformedNestedParameters).properties = []
+  expectRejected(malformedNestedParameters, 'provider tool view contains a malformed schema')
+
+  const alteredDescription = cloneFirstSchema()
+  declarationOf(alteredDescription).description = 'credential-shaped altered description'
+  expectRejected(alteredDescription, 'provider tool view schema must match core schema')
+
+  const alteredParameters = cloneFirstSchema()
+  parametersOf(alteredParameters).required = []
+  expectRejected(alteredParameters, 'provider tool view schema must match core schema')
 })
 
 test('callbacks route once through the single playback, session, bridge, and service graph', async () => {
@@ -596,8 +650,8 @@ test('service start failure rolls core back, preserves the primary error, and re
 })
 
 test('stop during start waits, then closes service before core', async () => {
-  // Mutation caught: independent start/stop paths either stop core before the provider owner or let
-  // stop return while core start is still held.
+  // Mutation caught: independent start/stop paths either activate service after stop owns the
+  // lifecycle, stop core before the provider owner, or let stop return while core start is held.
   const actions: string[] = []
   const coreStart = deferred<void>()
   const frame = new RecordingFrameSource(actions)
@@ -617,9 +671,131 @@ test('stop during start waits, then closes service before core', async () => {
   assert.equal(frame.stops, 0)
 
   coreStart.resolve(undefined)
-  await settleNamed('start before overlapping stop', starting)
+  await assert.rejects(
+    settleNamed('abandoned overlapping start', starting),
+    error => error instanceof AssemblyError
+      && error.message === 'realtime assembly start was abandoned by stop',
+  )
   await settleNamed('overlapping stop', stopping)
+  assert.equal(provider.connectCalls, 0)
   assert.ok(actions.indexOf('provider:close') < actions.indexOf('core:stop'))
+})
+
+test('never-settling start has bounded shutdown with stable ordered cleanup diagnostics', async () => {
+  // Mutations caught: directly awaiting the in-flight start blocks forever; skipping either grace
+  // or reversing service/core cleanup changes the bounded result, literals, or action order.
+  assert.equal(REALTIME_ASSEMBLY_SHUTDOWN_GRACE_MS, 1_000)
+  const actions: string[] = []
+  const diagnostics: string[] = []
+  const heldCoreStart = deferred<void>()
+  const frame = new RecordingFrameSource(actions)
+  frame.startSteps.push(() => heldCoreStart.promise)
+  const core = realCore(frame)
+  const originalCoreStop = core.stop.bind(core)
+  Object.defineProperty(core, 'stop', {
+    configurable: true,
+    value: (): Promise<void> => {
+      actions.push('assembly:core-stop-call')
+      return originalCoreStop()
+    },
+  })
+  const provider = new AbortAwareProvider(actions)
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider,
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+
+  const starting = realtime.start()
+  await waitNamed('never-settling core start entry', () => frame.starts === 1)
+  const stopping = realtime.stop()
+  try {
+    await settleNamed('bounded stop behind never-settling start', stopping, 2_750)
+    assert.equal(provider.closeCalls, 1)
+    assert.ok(
+      actions.indexOf('provider:close') < actions.indexOf('assembly:core-stop-call'),
+      'service close must be attempted before core stop',
+    )
+    assert.deepEqual(diagnostics, [
+      '[realtime-diagnostic] assembly_start_abandoned',
+      '[realtime-diagnostic] assembly_core_stop_abandoned',
+    ])
+  } finally {
+    heldCoreStart.reject(new Error('release never-settling start after bounded assertion'))
+    await settleNamed(
+      'never-settling start cleanup observation',
+      Promise.allSettled([starting, stopping]),
+      1_500,
+    )
+  }
+})
+
+test('late resolving and rejecting starts are observed without activating service after stop', async () => {
+  // Mutations caught: removing the post-core ownership check connects the provider and starts the
+  // runtime after stop; dropping rejection observation turns the late failure into an unhandled one.
+  const makeHeldAssembly = () => {
+    const heldCoreStart = deferred<void>()
+    const frame = new RecordingFrameSource()
+    frame.startSteps.push(() => heldCoreStart.promise)
+    const core = realCore(frame)
+    const originalServe = core.runtime.serve.bind(core.runtime)
+    let serveCalls = 0
+    Object.defineProperty(core.runtime, 'serve', {
+      configurable: true,
+      value: (signal: AbortSignal): Promise<void> => {
+        serveCalls += 1
+        return originalServe(signal)
+      },
+    })
+    const provider = new AbortAwareProvider()
+    const realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+    return {heldCoreStart, frame, provider, realtime, serveCalls: () => serveCalls}
+  }
+  const resolving = makeHeldAssembly()
+  const rejecting = makeHeldAssembly()
+  const lateFailure = new Error('late core start failure')
+  const resolvingStart = resolving.realtime.start()
+  const rejectingStart = rejecting.realtime.start()
+  await waitNamed('late resolving start entry', () => resolving.frame.starts === 1)
+  await waitNamed('late rejecting start entry', () => rejecting.frame.starts === 1)
+  const resolvingStop = resolving.realtime.stop()
+  const rejectingStop = rejecting.realtime.stop()
+  let released = false
+  try {
+    await settleNamed(
+      'parallel bounded stops before late starts settle',
+      Promise.all([resolvingStop, rejectingStop]),
+      2_750,
+    )
+    resolving.heldCoreStart.resolve(undefined)
+    rejecting.heldCoreStart.reject(lateFailure)
+    released = true
+
+    await assert.rejects(
+      settleNamed('late resolving start observation', resolvingStart),
+      error => error instanceof AssemblyError
+        && error.message === 'realtime assembly start was abandoned by stop',
+    )
+    await assert.rejects(
+      settleNamed('late rejecting start observation', rejectingStart),
+      error => error === lateFailure,
+    )
+    await waitNamed('late resolving core cleanup', () => resolving.frame.stops === 1)
+    assert.equal(resolving.provider.connectCalls, 0)
+    assert.equal(rejecting.provider.connectCalls, 0)
+    assert.equal(resolving.serveCalls(), 0)
+    assert.equal(rejecting.serveCalls(), 0)
+  } finally {
+    if (!released) {
+      resolving.heldCoreStart.resolve(undefined)
+      rejecting.heldCoreStart.reject(lateFailure)
+    }
+    await settleNamed(
+      'late start final observation',
+      Promise.allSettled([resolvingStart, rejectingStart, resolvingStop, rejectingStop]),
+      3_500,
+    )
+  }
 })
 
 test('service close failure still stops core and preserves the first actual failure', async () => {
