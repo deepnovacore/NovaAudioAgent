@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { AssemblyError, NULL_SPEECH_SINK, buildAssembly } from '../src/assembly.js'
-import { RealClock } from '../src/clock.js'
+import { RealClock, VirtualClock } from '../src/clock.js'
 import { settingsSchema, type Settings } from '../src/config.js'
+import type { ExecutorDispatchContext } from '../src/causal-runtime.js'
 import type { EventRecord } from '../src/events.js'
+import { CamAdapter } from '../src/executors/camera.js'
+import { DisabledFrameSource } from '../src/executors/frame-source.js'
+import type { SearchTransport } from '../src/executors/search.js'
+import { WatchAdapter, type Frame, type FrameSource } from '../src/executors/watcher.js'
 import { MonotonicIdFactory } from '../src/ids.js'
+import { MediaStore } from '../src/media-store.js'
 import type {
   CompleteRequest,
   GatewayCompletion,
@@ -13,13 +19,68 @@ import type {
   StreamRequest,
 } from '../src/model-gateway.js'
 import type { SpeechSink } from '../src/calls.js'
+import { delegateSchema } from '../src/ports.js'
 
 function settings(overrides: Partial<Settings> = {}): Settings {
   return settingsSchema.parse({
     executors: ['fast_sim'],
     model_api_key: 'assembly-test-key',
+    tavily_api_key: 'tavily-test-key',
     ...overrides,
   })
+}
+
+class ScriptedSearchTransport implements SearchTransport {
+  readonly queries: {readonly query: string; readonly maxResults: number}[] = []
+
+  search(query: string, options: {readonly maxResults: number}): Promise<Record<string, unknown>> {
+    this.queries.push({query, maxResults: options.maxResults})
+    return Promise.resolve({
+      request_id: 'search-request-1',
+      results: [{
+        title: 'Nova',
+        content: 'An audio agent',
+        url: 'https://example.com/nova',
+      }],
+    })
+  }
+}
+
+class ScriptedFrameSource implements FrameSource {
+  starts = 0
+  stops = 0
+  restarts = 0
+  failNextStart = false
+  failNextStop = false
+
+  constructor(readonly frame: Frame | null) {}
+
+  start(): Promise<void> {
+    this.starts += 1
+    if (this.failNextStart) {
+      this.failNextStart = false
+      return Promise.reject(new Error('start failed'))
+    }
+    return Promise.resolve()
+  }
+
+  stop(): Promise<void> {
+    this.stops += 1
+    if (this.failNextStop) {
+      this.failNextStop = false
+      return Promise.reject(new Error('stop failed'))
+    }
+    return Promise.resolve()
+  }
+
+  restart(): Promise<void> {
+    this.restarts += 1
+    return Promise.resolve()
+  }
+
+  snapshot(): Promise<Frame | null> {
+    return Promise.resolve(this.frame)
+  }
 }
 
 /** A gateway whose stream and completion answers are scripted per model name. */
@@ -29,6 +90,7 @@ class ScriptedGateway implements ModelGateway {
   constructor(
     private readonly deltas: readonly GatewayDelta[],
     private readonly answers: Readonly<Record<string, string>> = {},
+    private readonly onComplete?: (request: CompleteRequest) => void,
   ) {}
 
   async *stream(request: StreamRequest): AsyncIterable<GatewayDelta> {
@@ -41,6 +103,7 @@ class ScriptedGateway implements ModelGateway {
 
   complete(request: CompleteRequest): Promise<GatewayCompletion> {
     this.completed.push(request)
+    this.onComplete?.(request)
     return Promise.resolve({text: this.answers[request.model] ?? ''})
   }
 }
@@ -89,13 +152,41 @@ test('a missing model credential is refused without echoing configuration', () =
   )
 })
 
-test('the compiled tool schema advertises exactly the configured executors', () => {
+test('model credential validation wins when both production credentials are absent', () => {
+  assert.throws(
+    () => buildAssembly({
+      settings: settings({model_api_key: null, tavily_api_key: null}),
+    }),
+    (error: unknown) => error instanceof AssemblyError
+      && error.message === '缺少 NOVA_AUDIO_AGENT_MODEL_API_KEY',
+  )
+})
+
+test('production search requires Tavily without exposing credential values', () => {
+  assert.throws(
+    () => buildAssembly({settings: settings({tavily_api_key: null})}),
+    (error: unknown) => {
+      assert.ok(error instanceof AssemblyError)
+      assert.match(error.message, /TAVILY_API_KEY/u)
+      assert.doesNotMatch(error.message, /tavily-test-key/u)
+      return true
+    },
+  )
+})
+
+test('the compiled tool schema advertises always-on adapters before configured executors', () => {
   const assembly = buildAssembly({
     settings: settings({executors: ['fast_sim', 'slow_sim']}),
     gateway: new ScriptedGateway([]),
   })
-  assert.deepEqual(assembly.manifests.map(manifest => manifest.name), ['fast_sim', 'slow_sim'])
+  assert.deepEqual(assembly.manifests.map(manifest => manifest.name), [
+    'search', 'cam', 'watch', 'guard', 'fast_sim', 'slow_sim',
+  ])
   const names = [...assembly.tools.bindings.keys()]
+  assert.ok(names.includes('search__search'))
+  assert.ok(names.includes('cam__snapshot'))
+  assert.ok(names.includes('watch__start'))
+  assert.ok(names.includes('guard__status'))
   assert.ok(names.includes('fast_sim__set_light'))
   assert.ok(names.includes('slow_sim__get_state'))
   // The three structured-update tools are always present.
@@ -103,6 +194,177 @@ test('the compiled tool schema advertises exactly the configured executors', () 
   // memory__recall is opt-in.
   assert.ok(!names.includes('memory__recall'))
 })
+
+test('search and camera dispatch through the real runtime and shared media store', async () => {
+  const searchTransport = new ScriptedSearchTransport()
+  const frame: Frame = {
+    payload: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+    media_type: 'image/jpeg',
+    width: 2,
+    height: 2,
+    captured_at: 7,
+  }
+  const frameSource = new ScriptedFrameSource(frame)
+  const mediaStore = new MediaStore(1_024, {idFactory: () => 'assembly-frame'})
+  const assembly = buildAssembly({
+    settings: settings(),
+    gateway: new ScriptedGateway([]),
+    searchTransport,
+    frameSource,
+    mediaStore,
+  })
+  const origin = assembly.runtime.memory.append('conversation', {
+    ts: 0,
+    trust: 'trusted_user',
+    priority: 100,
+    content: {text: 'search and look'},
+  })
+  const originRef = `${origin.channel}:${origin.seq}`
+  const reason = {
+    kind: 'realtime_tool', priority: 100, routing_class: 'user_awaited' as const,
+    origin: null, selected_suggestion: null,
+  }
+  const events: EventRecord[] = []
+  assembly.runtime.observe(event => events.push(event))
+  const stop = new AbortController()
+  const serving = assembly.runtime.serve(stop.signal)
+
+  assert.equal(assembly.runtime.dispatchExternal({
+    executor: 'search', op: 'search', request: {query: 'Nova', k: 1}, origin_ref: originRef,
+  }, reason).accepted, true)
+  await waitFor(() => events.some(event => event.kind === 'handoff'
+    && event.payload.channel === 'search'))
+  assert.deepEqual(searchTransport.queries, [{query: 'Nova', maxResults: 1}])
+
+  assert.equal(assembly.runtime.dispatchExternal({
+    executor: 'cam', op: 'snapshot', request: {}, origin_ref: originRef,
+  }, reason).accepted, true)
+  await waitFor(() => events.some(event => event.kind === 'handoff'
+    && event.payload.channel === 'cam'))
+  stop.abort()
+  await serving
+
+  assert.equal(assembly.mediaStore, mediaStore)
+  assert.equal(assembly.frameSource, frameSource)
+  assert.equal(mediaStore.peek('media:assembly-frame')?.captured_at, 7)
+})
+
+test('camera, watch, and guard share capture while only Guard prepares a restartable source', async () => {
+  const clock = new VirtualClock()
+  const source = new ScriptedFrameSource({
+    payload: new Uint8Array([1, 2, 3]),
+    media_type: 'image/png',
+    width: 3,
+    height: 1,
+    captured_at: 11,
+  })
+  const store = new MediaStore(1_024, {
+    idFactory: (() => {
+      let id = 0
+      return () => `shared-${++id}`
+    })(),
+  })
+  const gateway = new ScriptedGateway(
+    [],
+    {'fast-model': '{"hit": true, "observation": "motion"}'},
+    () => { setImmediate(() => clock.advanceTo(clock.now() + 31)) },
+  )
+  const assembly = buildAssembly({
+    settings: settings({fast_model: 'fast-model', watch_model: '\u001c'}),
+    gateway,
+    searchTransport: new ScriptedSearchTransport(),
+    frameSource: source,
+    mediaStore: store,
+    clock,
+  })
+
+  assert.ok(assembly.runtime.executors.get('cam') instanceof CamAdapter)
+  const watch = assembly.runtime.executors.get('watch')
+  const guard = assembly.runtime.executors.get('guard')
+  assert.ok(watch instanceof WatchAdapter)
+  assert.ok(guard instanceof WatchAdapter)
+
+  await watch.dispatch('start', {condition: 'motion', duration_s: 30}, watchContext('watch', clock))
+  assert.equal(source.restarts, 0, 'Watch must not reset a shared file-like source')
+  await guard.dispatch('start', {condition: 'motion', duration_s: 30}, watchContext('guard', clock))
+  assert.equal(source.restarts, 1, 'Guard prepares a restartable source once per observation')
+
+  assert.equal(gateway.completed.length, 2)
+  assert.deepEqual(gateway.completed.map(request => request.model), ['fast-model', 'fast-model'])
+  assert.deepEqual(gateway.completed[0]?.images, [{
+    ref: 'watch-frame', media_type: 'image/png', payload: new Uint8Array([1, 2, 3]),
+  }])
+  assert.equal(store.size, 2, 'both Watch adapters persist hits into the assembly store')
+})
+
+test('assembly owns an idempotent retryable frame-source lifecycle', async () => {
+  const source = new ScriptedFrameSource(null)
+  const assembly = buildAssembly({
+    settings: settings(),
+    gateway: new ScriptedGateway([]),
+    searchTransport: new ScriptedSearchTransport(),
+    frameSource: source,
+  })
+
+  source.failNextStart = true
+  await assert.rejects(assembly.start(), /start failed/u)
+  await assembly.start()
+  await assembly.start()
+  assert.equal(source.starts, 2, 'a failed start is retried and a successful start is idempotent')
+
+  source.failNextStop = true
+  await assert.rejects(assembly.stop(), /stop failed/u)
+  await assembly.stop()
+  await assembly.stop()
+  assert.equal(source.stops, 2, 'a failed stop remains started and is retried')
+})
+
+test('the default disabled source reports unavailable capture and has a no-op lifecycle', async () => {
+  const clock = new VirtualClock()
+  const assembly = buildAssembly({
+    settings: settings(),
+    gateway: new ScriptedGateway([]),
+    searchTransport: new ScriptedSearchTransport(),
+    clock,
+  })
+  assert.ok(assembly.frameSource instanceof DisabledFrameSource)
+  const cam = assembly.runtime.executors.get('cam')
+  const watch = assembly.runtime.executors.get('watch')
+  assert.ok(cam instanceof CamAdapter)
+  assert.ok(watch instanceof WatchAdapter)
+  const cameraHandoff = await cam.dispatch('snapshot', {}, watchContext('cam', clock))
+  assert.equal(cameraHandoff.outcome, 'unknown')
+  assert.equal(cameraHandoff.content.error, 'capture_unavailable')
+  const watchHandoff = await watch.dispatch(
+    'start', {condition: 'motion'}, watchContext('watch', clock),
+  )
+  assert.equal(watchHandoff.outcome, 'unknown')
+  assert.equal(watchHandoff.content.error, 'capture_unavailable')
+
+  const source = assembly.frameSource
+  await source.start()
+  await source.start()
+  assert.equal(await source.snapshot(), null)
+  await source.stop()
+  await source.stop()
+})
+
+function watchContext(
+  executor: 'cam' | 'watch' | 'guard',
+  clock: VirtualClock,
+): ExecutorDispatchContext {
+  return {
+    clock,
+    delegate: delegateSchema.parse({
+      delegate_id: `${executor}-assembly`, executor, op: 'start', request: {},
+      origin_ref: 'conversation:1', deadline: clock.now() + 30,
+      routing_class: 'user_awaited', dispatched_at: clock.now(),
+    }),
+    signal: new AbortController().signal,
+    progress: () => undefined,
+    observe: () => undefined,
+  }
+}
 
 test('a duplicate supplied adapter is rejected', () => {
   const assembly = buildAssembly({settings: settings(), gateway: new ScriptedGateway([])})

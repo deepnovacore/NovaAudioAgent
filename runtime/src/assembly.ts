@@ -27,7 +27,22 @@ import {
 } from './model-adapters.js'
 import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from './model-gateway.js'
 import { runFastBrainCall, runSurrogateCall, type SpeechSink } from './calls.js'
+import { CamAdapter } from './executors/camera.js'
+import { DisabledFrameSource } from './executors/frame-source.js'
+import {
+  SearchAdapter,
+  TavilyTransport,
+  type SearchTransport,
+} from './executors/search.js'
+import {
+  GUARD_MANIFEST,
+  WATCH_MANIFEST,
+  WatchAdapter,
+  type FrameSource,
+} from './executors/watcher.js'
+import { MediaStore } from './media-store.js'
 import type { ExecutorManifest } from './ports.js'
+import { stripLikePython } from './python-text.js'
 import { buildSimulator, simManifestRegistry } from './sims.js'
 import { compileToolSchema, type CompiledTools } from './tool-schema.js'
 import type { ModelCall } from './runtime.js'
@@ -56,6 +71,11 @@ export interface AssemblyOptions {
   readonly media?: MediaSelector
   /** Extra adapters beyond the simulators, keyed by the manifest name they serve. */
   readonly executors?: readonly ExecutorAdapter[]
+  /** Test/host seam below SearchAdapter; production constructs TavilyTransport. */
+  readonly searchTransport?: SearchTransport
+  /** Host capture seam; production is disabled until the desktop capture task wires one. */
+  readonly frameSource?: FrameSource
+  readonly mediaStore?: MediaStore
   readonly includeMemoryRecall?: boolean
 }
 
@@ -64,6 +84,10 @@ export interface Assembly {
   readonly gateway: ModelGateway
   readonly tools: CompiledTools
   readonly manifests: readonly ExecutorManifest[]
+  readonly mediaStore: MediaStore
+  readonly frameSource: FrameSource
+  start(): Promise<void>
+  stop(): Promise<void>
 }
 
 /**
@@ -109,6 +133,22 @@ function requireApiKey(settings: Settings): string {
   return key
 }
 
+function requireTavilyApiKey(settings: Settings): string {
+  const key = settings.tavily_api_key
+  if (key === null || key.trim().length === 0) {
+    throw new AssemblyError('缺少 TAVILY_API_KEY')
+  }
+  return key
+}
+
+interface RestartableFrameSource extends FrameSource {
+  restart(): Promise<void>
+}
+
+function isRestartable(source: FrameSource): source is RestartableFrameSource {
+  return 'restart' in source && typeof source.restart === 'function'
+}
+
 /**
  * Build the runtime the desktop entry serves.
  *
@@ -121,17 +161,47 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const ids = options.ids ?? new MonotonicIdFactory()
   const sink = options.sink ?? NULL_SPEECH_SINK
 
-  const executors = resolveExecutors(settings, options.executors ?? [])
-  const manifests = executors.map(adapter => adapter.manifest)
-  const tools = compileToolSchema(manifests, {
-    includeMemoryRecall: options.includeMemoryRecall ?? false,
-  })
-
+  // Preserve Python's validation order: the model credential is checked before
+  // Tavily when neither production transport is injected.
   const gateway = options.gateway ?? new OpenAIModelGateway({
     baseUrl: settings.model_base_url,
     apiKey: requireApiKey(settings),
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
+  })
+  const searchTransport = options.searchTransport
+    ?? new TavilyTransport(requireTavilyApiKey(settings))
+  const mediaStore = options.mediaStore ?? new MediaStore()
+  const frameSource = options.frameSource ?? new DisabledFrameSource()
+  const captureEnabled = !(frameSource instanceof DisabledFrameSource)
+  const watchModel = stripLikePython(settings.watch_model ?? '') || settings.fast_model
+
+  const search = new SearchAdapter(searchTransport)
+  const camera = new CamAdapter(frameSource, mediaStore)
+  const watch = new WatchAdapter({
+    manifest: WATCH_MANIFEST,
+    source: frameSource,
+    gateway,
+    mediaStore,
+    model: watchModel,
+    captureEnabled,
+  })
+  const guard = new WatchAdapter({
+    manifest: GUARD_MANIFEST,
+    source: frameSource,
+    gateway,
+    mediaStore,
+    model: watchModel,
+    captureEnabled,
+    ...(isRestartable(frameSource)
+      ? {prepareObservation: () => frameSource.restart()}
+      : {}),
+  })
+  const configuredExecutors = resolveExecutors(settings, options.executors ?? [])
+  const executors = [search, camera, watch, guard, ...configuredExecutors]
+  const manifests = executors.map(adapter => adapter.manifest)
+  const tools = compileToolSchema(manifests, {
+    includeMemoryRecall: options.includeMemoryRecall ?? false,
   })
 
   const fastBrain = new GatewayFastBrain({
@@ -208,7 +278,25 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     freshWindow: proactivity.fresh_window,
   })
 
-  return {runtime: holder.runtime, gateway, tools, manifests}
+  let started = false
+  return {
+    runtime: holder.runtime,
+    gateway,
+    tools,
+    manifests,
+    mediaStore,
+    frameSource,
+    async start(): Promise<void> {
+      if (started) return
+      await frameSource.start()
+      started = true
+    },
+    async stop(): Promise<void> {
+      if (!started) return
+      await frameSource.stop()
+      started = false
+    },
+  }
 }
 
 /**

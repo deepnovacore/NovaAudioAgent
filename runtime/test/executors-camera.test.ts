@@ -29,7 +29,11 @@ const frame: Frame = {
 }
 
 function sourceFor(value: Frame | null): FrameSource {
-  return {snapshot: () => Promise.resolve(value)}
+  return {
+    start: () => Promise.resolve(),
+    stop: () => Promise.resolve(),
+    snapshot: () => Promise.resolve(value),
+  }
 }
 
 test('camera is a registry adapter with the Python snapshot manifest', () => {
@@ -113,6 +117,8 @@ test('camera reports a missing frame and CameraError as unavailable capture', as
 
   assert.deepEqual(await new CamAdapter(sourceFor(null), new MediaStore()).dispatch('snapshot', {}, context()), unavailable)
   const cameraErrorSource: FrameSource = {
+    start: () => Promise.resolve(),
+    stop: () => Promise.resolve(),
     snapshot: () => Promise.reject(new CameraError('camera is offline')),
   }
   assert.deepEqual(
@@ -128,7 +134,11 @@ test('camera classifies rejected storage and unexpected boundary errors', async 
     outcome: 'failed', trust: 'untrusted_external', content: {error: 'media_store_rejected', op: 'snapshot'},
   })
 
-  const explodingSource: FrameSource = {snapshot: () => Promise.reject(new Error('private detail'))}
+  const explodingSource: FrameSource = {
+    start: () => Promise.resolve(),
+    stop: () => Promise.resolve(),
+    snapshot: () => Promise.reject(new Error('private detail')),
+  }
   assert.deepEqual(await new CamAdapter(explodingSource, new MediaStore()).dispatch('snapshot', {}, context()), {
     outcome: 'unknown', trust: 'untrusted_external', content: {error: 'adapter_exception', op: 'snapshot'},
   })

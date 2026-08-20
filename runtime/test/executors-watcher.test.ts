@@ -152,6 +152,8 @@ function frameSource(
   const pattern = options.pattern
   let step = 0
   return {
+    start: () => Promise.resolve(),
+    stop: () => Promise.resolve(),
     snapshot: (): Promise<Frame> => {
       if (pattern !== undefined) {
         const fails = pattern[step] ?? false

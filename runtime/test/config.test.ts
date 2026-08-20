@@ -77,3 +77,8 @@ test('configuration failures never echo secret values', () => {
   assert.equal(message.includes(secret), false)
   assert.match(message, /BACKEND/u)
 })
+
+test('the unprefixed Tavily credential is preserved for production assembly', () => {
+  const configured = loadSettings({TAVILY_API_KEY: '  tavily-test-key  '})
+  assert.equal(configured.tavily_api_key, 'tavily-test-key')
+})

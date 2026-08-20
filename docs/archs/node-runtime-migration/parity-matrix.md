@@ -122,13 +122,13 @@ Scorecard and demo caveats:
 | Behavior | Current ownership | Node evidence | Retirement gate |
 |---|---|---|---|
 | Fast/slow simulators | sim tests | Node tests and core fixtures | First vertical slice green |
-| Search trust, errors, and redaction | search executor/smoke tests | Node HTTP unit tests plus optional live smoke | Same trust and safe error behavior |
+| Search trust, errors, and redaction | search executor/smoke tests | Node HTTP unit tests plus real production-assembly dispatch with opaque evidence refs; optional live smoke | Same trust and safe error behavior |
 | Codex JSONL and protocol parsing | Codex JSONL/protocol tests | Node parser fixtures | Exact accepted/rejected messages |
 | Codex app-server lifecycle | app-server/transport/runtime tests | Node fake-process integration tests | Run/steer/cancel ordering preserved |
 | Codex progress and recall | progress status/recall evals | Fixture parity plus gated live eval | Correlation and memory behavior match |
 | Process tree ownership | process-tree/preflight tests | Cross-platform integration and hardware tests | Windows Job Object equivalent verified |
-| Camera snapshot | camera/vision tests | Chromium capture integration | Same evidence and media-ref contract |
-| Watch/Guard lifecycle | watcher/watch-alert tests | Fixture parity plus camera integration | Wake, evidence, and stop semantics match |
+| Camera snapshot | camera/vision tests | Node adapter and disabled/shared production-assembly integration; Chromium capture integration remains pending | Same evidence and media-ref contract |
+| Watch/Guard lifecycle | watcher/watch-alert tests | Fixture parity plus shared source/store, gateway-image, Guard-only restart, and assembly lifecycle tests; Chromium camera integration remains pending | Wake, evidence, and stop semantics match |
 | Local video fixture input | vision smoke/eval tests | Chromium/WebCodecs test assets | No Python/OpenCV/system ffmpeg required |
 | Home Assistant | HA unit/smoke tests | Retired-capability error tests | Source/config/docs removed at cleanup |
 | AutoGLM | AutoGLM protocol/transport/smoke tests | Retired-capability error tests | Source/config/docs/submodule removed |

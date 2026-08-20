@@ -56,7 +56,9 @@ function connect(port: number): Promise<WebSocket> {
 
 test('the desktop service serves a renderer over the real transport', async () => {
   const assembly = buildAssembly({
-    settings: settingsSchema.parse({executors: ['fast_sim'], model_api_key: 'k'}),
+    settings: settingsSchema.parse({
+      executors: ['fast_sim'], model_api_key: 'k', tavily_api_key: 'search-k',
+    }),
     gateway: new ScriptedGateway([{kind: 'text', text: '在的'}]),
     ids: new MonotonicIdFactory(),
   })
@@ -112,7 +114,9 @@ test('the desktop service serves a renderer over the real transport', async () =
 
 test('shutdown closes the transport before draining, and is idempotent', async () => {
   const assembly = buildAssembly({
-    settings: settingsSchema.parse({executors: ['fast_sim'], model_api_key: 'k'}),
+    settings: settingsSchema.parse({
+      executors: ['fast_sim'], model_api_key: 'k', tavily_api_key: 'search-k',
+    }),
     gateway: new ScriptedGateway([]),
     ids: new MonotonicIdFactory(),
   })
@@ -135,7 +139,9 @@ test('shutdown closes the transport before draining, and is idempotent', async (
 
 test('a readiness failure still tears the service down', async () => {
   const assembly = buildAssembly({
-    settings: settingsSchema.parse({executors: ['fast_sim'], model_api_key: 'k'}),
+    settings: settingsSchema.parse({
+      executors: ['fast_sim'], model_api_key: 'k', tavily_api_key: 'search-k',
+    }),
     gateway: new ScriptedGateway([]),
     ids: new MonotonicIdFactory(),
   })

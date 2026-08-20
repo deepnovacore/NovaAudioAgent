@@ -112,6 +112,10 @@ export interface Frame {
 }
 
 export interface FrameSource {
+  /** Acquire capture resources. Assembly calls this once before serving. */
+  start(): Promise<void>
+  /** Release capture resources. Assembly calls this while shutting down. */
+  stop(): Promise<void>
   /**
    * `null` is "no frame this time", not an error -- a disabled camera reports it every sample.
    * Mirrors `Frame | None` in the oracle (watcher.py:257); the sampling loop treats a null and a

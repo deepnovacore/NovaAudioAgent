@@ -36,7 +36,10 @@ export const memoryItemSchema = z.object({
   priority: z.number().int(),
   content: jsonObjectSchema,
   outcome: outcomeSchema.nullable().default(null),
-  refs: z.array(memoryRefSchema).default([]),
+  // Executor evidence refs (for example web.search://evidence/...) intentionally
+  // coexist with canonical MemoryRefs here. Only origin_ref is required to be
+  // parseable; Python's MemoryItem stores the remaining refs as opaque strings.
+  refs: z.array(z.string()).default([]),
 }).strict()
 
 export type MemoryItem = z.infer<typeof memoryItemSchema>
@@ -111,7 +114,7 @@ export interface AppendMemoryItem {
   readonly priority: number
   readonly content: Readonly<Record<string, JsonValue>>
   readonly outcome?: z.infer<typeof outcomeSchema> | null
-  readonly refs?: readonly MemoryRef[]
+  readonly refs?: readonly string[]
 }
 
 export class Channel {

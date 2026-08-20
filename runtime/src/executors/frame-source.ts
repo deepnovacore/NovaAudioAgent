@@ -19,6 +19,14 @@ import type { Frame, FrameSource } from './watcher.js'
  * capture would make a window look like it was monitoring something.
  */
 export class DisabledFrameSource implements FrameSource {
+  start(): Promise<void> {
+    return Promise.resolve()
+  }
+
+  stop(): Promise<void> {
+    return Promise.resolve()
+  }
+
   snapshot(): Promise<Frame | null> {
     return Promise.resolve(null)
   }
