@@ -106,6 +106,11 @@ function markTurnStartWritten(observer: TransportObserver): void {
   extended.onTurnStartWritten?.()
 }
 
+function markTurnBound(observer: TransportObserver): void {
+  const extended = observer as TransportObserver & {onTurnBound?: () => void}
+  extended.onTurnBound?.()
+}
+
 function context(
   op: string,
   request: Readonly<Record<string, JsonValue>>,
@@ -393,12 +398,12 @@ test('live steer is available only for a bound turn and maps written uncertainty
   // This fails if steer waits behind run, leaks instructions, or ignores the transport written boundary.
   const release = deferred<TransportOutcome>()
   const entered = deferred<void>()
+  const writerDrained = deferred<TransportObserver>()
   const transport = new LiveTransport()
   transport.runAction = async observer => {
     observer.onThreadReady?.()
     markTurnStartWritten(observer)
-    observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
-    entered.resolve()
+    writerDrained.resolve(observer)
     return await release.promise
   }
   transport.steerResults.push(
@@ -413,6 +418,15 @@ test('live steer is available only for a bound turn and maps written uncertainty
   assert.deepEqual(transport.instructions, [])
 
   const run = adapter.dispatch('run', {work_order: 'work'}, context('run', {}))
+  const observer = await writerDrained.promise
+  const writtenOnly = await adapter.dispatch(
+    'steer', {instruction: 'between drain and bind'}, context('steer', {}),
+  )
+  assert.equal(writtenOnly.content.code, 'no_active_turn')
+  assert.deepEqual(transport.instructions, [])
+  markTurnBound(observer)
+  observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
+  entered.resolve()
   await entered.promise
   const results = []
   for (const instruction of [' one ', 'two', 'three', 'four']) {
@@ -442,6 +456,7 @@ test('two concurrent bound steers reach transport and retain their own response 
   const transport = new LiveTransport()
   transport.runAction = async observer => {
     markTurnStartWritten(observer)
+    markTurnBound(observer)
     runEntered.resolve()
     return await runRelease.promise
   }
@@ -466,6 +481,32 @@ test('two concurrent bound steers reach transport and retain their own response 
   await run
 })
 
+test('turn-bound before local drain admits steer but remains authoritative side-effect evidence', async () => {
+  // A valid turn/started notification can beat the local drain callback; retry must stay unsafe.
+  const release = deferred<void>()
+  const bound = deferred<void>()
+  const transport = new LiveTransport()
+  transport.runAction = async observer => {
+    markTurnBound(observer)
+    bound.resolve()
+    await release.promise
+    return {classification: 'refused', code: 'preflight_failed', turnStartWritten: false, completion: null}
+  }
+  const adapter = new CodexLiveAdapter(transport)
+  const running = adapter.dispatch('run', {work_order: 'work'}, context('run', {}))
+  await bound.promise
+
+  const steer = await adapter.dispatch('steer', {instruction: 'bound'}, context('steer', {}))
+  assert.equal(steer.outcome, 'ok')
+  release.resolve()
+  const result = await running
+
+  assert.deepEqual([result.outcome, result.trust, result.content.code], [
+    'unknown', 'untrusted_external', 'invalid_worker_result',
+  ])
+  assert.equal(adapter.status.state, 'running')
+})
+
 test('live invalid and throwing steer results become fixed transport loss without instruction leak', async () => {
   // This fails if an exception/result payload becomes public or if an invalid result is optimistic success.
   const release = deferred<TransportOutcome>()
@@ -473,6 +514,7 @@ test('live invalid and throwing steer results become fixed transport loss withou
   const transport = new LiveTransport()
   transport.runAction = async observer => {
     markTurnStartWritten(observer)
+    markTurnBound(observer)
     observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
     entered.resolve()
     return await release.promise
@@ -500,6 +542,7 @@ test('live steer preserves only a safely observed written boundary', async () =>
   const transport = new LiveTransport()
   transport.runAction = async observer => {
     markTurnStartWritten(observer)
+    markTurnBound(observer)
     entered.resolve()
     return await release.promise
   }
@@ -529,6 +572,7 @@ test('live deadline retains a late written steer result but not a pre-write one'
   const transport = new LiveTransport()
   transport.runAction = async observer => {
     markTurnStartWritten(observer)
+    markTurnBound(observer)
     runEntered.resolve()
     return await runRelease.promise
   }
@@ -682,4 +726,61 @@ test('live close permanently rejects run and steer without touching transport or
   assert.deepEqual(steer.content, {error: 'closed', op: 'steer'})
   assert.equal(adapter.status, before)
   assert.deepEqual(transport.calls, ['close'])
+})
+
+test('live close aborts, joins, and fences every in-flight steer result', async () => {
+  // This fails if close owns only warm/run tasks and a late steer can still report accepted.
+  const runEntered = deferred<void>()
+  const steerEntered = deferred<void>()
+  const runRelease = deferred<void>()
+  const steerAbortObserved = deferred<void>()
+  const steerCleanupRelease = deferred<void>()
+  let steerDeadline: TransportDeadline | null = null
+  const transport = new LiveTransport()
+  transport.runAction = async (observer, deadline) => {
+    markTurnStartWritten(observer)
+    markTurnBound(observer)
+    runEntered.resolve()
+    deadline.signal?.addEventListener('abort', () => { runRelease.resolve() }, {once: true})
+    await runRelease.promise
+    return {classification: 'uncertain', code: 'transport_lost', turnStartWritten: true, completion: null}
+  }
+  transport.steerAction = async (_input, deadline) => {
+    steerDeadline = deadline
+    steerEntered.resolve()
+    deadline.signal?.addEventListener('abort', () => { steerAbortObserved.resolve() }, {once: true})
+    await steerAbortObserved.promise
+    await steerCleanupRelease.promise
+    return {code: 'accepted', written: true}
+  }
+  const adapter = new CodexLiveAdapter(transport)
+  const running = adapter.dispatch('run', {work_order: 'work'}, context('run', {}))
+  void running.catch(() => undefined)
+  await runEntered.promise
+  const steering = adapter.dispatch('steer', {instruction: 'late'}, context('steer', {}))
+  await steerEntered.promise
+
+  const closing = adapter.close()
+  const closeOrAbort = await Promise.race([
+    closing.then(() => 'closed' as const),
+    steerAbortObserved.promise.then(() => 'aborted' as const),
+    yieldImmediate().then(() => 'stalled' as const),
+  ])
+  if (closeOrAbort === 'stalled') steerAbortObserved.resolve()
+  let closeSettled = false
+  void closing.then(() => { closeSettled = true })
+  await yieldImmediate()
+  const observedDeadline = steerDeadline as TransportDeadline | null
+  const steerWasAborted = observedDeadline?.signal?.aborted ?? false
+  const closeSettledBeforeRelease = closeSettled
+  steerCleanupRelease.resolve()
+  await closing
+  const steer = await steering
+  await running.catch(() => undefined)
+
+  assert.equal(closeOrAbort, 'aborted')
+  assert.equal(closeSettledBeforeRelease, false)
+  assert.equal(steerWasAborted, true)
+  assert.deepEqual(steer.content, {error: 'closed', op: 'steer'})
+  assert.equal(transport.instructions.length, 1)
 })

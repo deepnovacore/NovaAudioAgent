@@ -42,6 +42,8 @@ export class CodexLiveAdapter implements ExecutorAdapter {
   #closed = false
   #runController: AbortController | null = null
   #runTask: Promise<ExecutorHandoff> | null = null
+  readonly #steerControllers = new Set<AbortController>()
+  readonly #steerTasks = new Set<Promise<ExecutorHandoff>>()
   #closePromise: Promise<void> | null = null
 
   constructor(transport: CodexAppServerTransport, scheduler?: CodexAdapterScheduler) {
@@ -92,7 +94,7 @@ export class CodexLiveAdapter implements ExecutorAdapter {
     if (op === 'steer') {
       const instruction = admitted.value.instruction
       if (typeof instruction !== 'string') return failureHandoff('invalid_params', op)
-      return await this.#steer(instruction, context)
+      return await this.#dispatchSteer(instruction, context)
     }
     const workOrder = admitted.value.work_order
     if (typeof workOrder !== 'string') return failureHandoff('invalid_params', op)
@@ -170,7 +172,9 @@ export class CodexLiveAdapter implements ExecutorAdapter {
   async #close(): Promise<void> {
     this.#runController?.abort()
     this.#prewarmController?.abort()
+    for (const controller of this.#steerControllers) controller.abort()
     const warming = this.#prewarmTask
+    const steering = [...this.#steerTasks]
     const closingTransport = this.#core.transport.close('shutdown')
     void closingTransport.catch(() => undefined)
     if (warming !== null) await warming
@@ -181,9 +185,35 @@ export class CodexLiveAdapter implements ExecutorAdapter {
     try {
       const running = this.#runTask
       if (running !== null) await running.catch(() => undefined)
+      await Promise.all(steering.map(task => task.catch(() => undefined)))
       await closingTransport
     } finally {
       this.#core.setPrewarm('cold')
+    }
+  }
+
+  async #dispatchSteer(
+    instruction: string,
+    context: ExecutorDispatchContext,
+  ): Promise<ExecutorHandoff> {
+    const controller = new AbortController()
+    const onAbort = (): void => { controller.abort() }
+    if (context.signal.aborted) controller.abort()
+    else context.signal.addEventListener('abort', onAbort, {once: true})
+    this.#steerControllers.add(controller)
+    const work = this.#steer(instruction, {...context, signal: controller.signal})
+    this.#steerTasks.add(work)
+    try {
+      const result = await work
+      if (this.#closed && !context.signal.aborted) return failureHandoff('closed', 'steer')
+      return result
+    } catch (error) {
+      if (this.#closed && !context.signal.aborted) return failureHandoff('closed', 'steer')
+      throw error
+    } finally {
+      context.signal.removeEventListener('abort', onAbort)
+      this.#steerControllers.delete(controller)
+      this.#steerTasks.delete(work)
     }
   }
 

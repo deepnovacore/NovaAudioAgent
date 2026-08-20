@@ -1004,6 +1004,38 @@ test('turn-start writer drain emits one advisory latch and pre-drain failure emi
   assert.equal(outcome.turnStartWritten, true)
 })
 
+test('turn-bound is exact when activePair appears and remains independent from writer drain', async () => {
+  // The server may publish turn/started before the local writer-drain callback runs.
+  const order: string[] = []
+  let boundPairs = 0
+  const owner = new MemoryAppServerOwner([], {delayTurnStart: true})
+  const transport = createTransport({spawn: async () => owner})
+  const observer = {
+    onTurnStartWritten: () => { order.push('written') },
+    onTurnBound: () => {
+      order.push('bound')
+      boundPairs += 1
+      throw new Error('advisory turn-bound callback must not own the worker')
+    },
+  } as TransportObserver & {readonly onTurnBound: () => void}
+  const running = transport.run(
+    {workOrder: 'separate writer and bound latches'},
+    observer,
+    {expiresAtMs: Date.now() + 5000},
+  )
+  await owner.turnStartReceived.promise
+  await settleUntil(() => order.length === 2, 'writer/bound observer latches')
+
+  assert.deepEqual(order, ['bound', 'written'])
+  assert.equal(boundPairs, 1)
+  assert.deepEqual(await transport.steer(
+    {instruction: 'bound correction'},
+    {expiresAtMs: Date.now() + 5000},
+  ), {code: 'accepted', written: true})
+  owner.completeDelayedTurn()
+  assert.equal((await running).classification, 'completed')
+})
+
 test('a post-start transport failure latches turn history for later stale steer', async () => {
   const owner = new MemoryAppServerOwner([], {delayTurnStart: true})
   const transport = createTransport({spawn: async () => owner})

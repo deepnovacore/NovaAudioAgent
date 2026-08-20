@@ -99,6 +99,7 @@ export interface TransportObserver {
   readonly onProgress?: (progress: ExecutorProgress) => void
   readonly onThreadReady?: () => void
   readonly onTurnStartWritten?: () => void
+  readonly onTurnBound?: () => void
 }
 
 export interface TransportOutcome {
@@ -355,12 +356,16 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       }
       session.used = true
       session.warm = false
-      const progress = observer.onProgress === undefined
+      const progress = observer.onProgress === undefined && observer.onTurnBound === undefined
         ? undefined
         : (value: ExecutorProgress): void => {
+          if (value.phase === 'started') {
+            try { observer.onTurnBound?.() } catch { /* advisory */ }
+          }
+          if (observer.onProgress === undefined) return
           const summary = value.summary === null ? null : this.#sanitizeText(value.summary, 240).text
           try {
-            observer.onProgress?.(Object.freeze({...value, summary: summary === '' ? null : summary}))
+            observer.onProgress(Object.freeze({...value, summary: summary === '' ? null : summary}))
           } catch {
             // Advisory progress never owns the worker.
           }

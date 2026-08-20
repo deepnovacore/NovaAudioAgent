@@ -60,6 +60,7 @@ const UNCERTAIN_CODES: ReadonlySet<string> = new Set([
   'stderr_too_large',
   'transport_lost',
   'turn_failed',
+  'unsupported_protocol',
   'unexpected_server_request',
 ])
 const ADAPTER_CLEANUP_GRACE_SECONDS = 6
@@ -189,6 +190,10 @@ export class CodexAdapterCore {
       onTurnStartWritten: (): void => {
         if (!observerOpen || this.#runToken !== runToken || sideEffectSeen) return
         sideEffectSeen = true
+      },
+      onTurnBound: (): void => {
+        if (!observerOpen || this.#runToken !== runToken) return
+        sideEffectSeen = true
         try { options.onTurnBound?.() } catch { /* advisory state never owns the worker */ }
       },
     }
@@ -229,11 +234,19 @@ export class CodexAdapterCore {
           deadline,
         )
       } catch (error) {
-        this.#settle(sequence, startedAt, context.clock.now(), processStarted, preflightPassed, null)
+        if (
+          (error instanceof AdapterDeadlineError || error instanceof AdapterAbortError)
+          && readWrittenBoundary(error.lateValue, 'turnStartWritten') === true
+        ) sideEffectSeen = true
+        this.#settle(
+          sequence,
+          startedAt,
+          context.clock.now(),
+          processStarted || sideEffectSeen,
+          preflightPassed,
+          null,
+        )
         if (context.signal.aborted) throw abortError()
-        if (error instanceof AdapterDeadlineError && readWrittenBoundary(
-          error.lateValue, 'turnStartWritten',
-        ) === true) sideEffectSeen = true
         const afterStart = sideEffectSeen
         const code = safePreflightExceptionCode(
           error,
@@ -249,8 +262,9 @@ export class CodexAdapterCore {
         )
       }
 
-      const admitted = validateOutcome(rawOutcome)
+      let admitted = validateOutcome(rawOutcome)
       if (readWrittenBoundary(rawOutcome, 'turnStartWritten') === true) sideEffectSeen = true
+      if (admitted !== null && sideEffectSeen && !admitted.turnStartWritten) admitted = null
       const written = sideEffectSeen
       const evidence = admitted?.classification === 'completed'
         ? createCompletionEvidence(admitted)
@@ -463,6 +477,7 @@ async function awaitCodexPhase<T>(start: () => Promise<T>, deadline: RunDeadline
       if (error instanceof AdapterDeadlineError) {
         throw new AdapterDeadlineError(late.state === 'fulfilled' ? late.value : undefined)
       }
+      throw new AdapterAbortError(late.state === 'fulfilled' ? late.value : undefined)
     }
     throw error
   } finally {
@@ -687,6 +702,10 @@ function sameKeys(value: Readonly<Record<string, unknown>>, expected: readonly s
 class InvalidPreflightError extends Error {}
 export class AdapterDeadlineError extends Error {
   constructor(readonly lateValue?: unknown) { super('Codex adapter deadline exceeded') }
+}
+class AdapterAbortError extends Error {
+  override readonly name = 'AbortError'
+  constructor(readonly lateValue?: unknown) { super('Codex adapter dispatch cancelled') }
 }
 export class CodexAdapterClosedError extends Error {}
 

@@ -345,7 +345,8 @@ test('ordinary deadline retains a late writer-drain outcome as external uncertai
       turnStartWritten: true, completion: null,
     }
   }
-  const running = new CodexAdapter(transport).dispatch(
+  const adapter = new CodexAdapter(transport)
+  const running = adapter.dispatch(
     'run', {work_order: 'written near deadline'}, contextFor('run', {}, {clock}),
   )
   await entered.promise
@@ -355,6 +356,30 @@ test('ordinary deadline retains a late writer-drain outcome as external uncertai
   assert.deepEqual([handoff.outcome, handoff.trust, handoff.content.code], [
     'unknown', 'untrusted_external', 'adapter_timeout',
   ])
+  assert.deepEqual(adapter.status, {
+    state: 'running', run_sequence: 1, started_at: 7, finished_at: null, elapsed: 540,
+    process_running: true, process_exited: false, terminal: null, exit_code: null,
+    preflight: 'passed', prewarm: 'cold',
+  })
+})
+
+test('ordinary accepts the real 6B post-write unsupported-protocol uncertainty pair', async () => {
+  // Task-6B's malformed-after-turn real-child path returns this exact typed outcome.
+  const transport = new ScriptedTransport()
+  transport.outcome = {
+    classification: 'uncertain', code: 'unsupported_protocol',
+    turnStartWritten: true, completion: null,
+  }
+
+  const adapter = new CodexAdapter(transport)
+  const handoff = await adapter.dispatch(
+    'run', {work_order: 'typed 6B outcome'}, contextFor('run', {}),
+  )
+
+  assert.deepEqual([handoff.outcome, handoff.trust, handoff.content.code], [
+    'unknown', 'untrusted_external', 'unsupported_protocol',
+  ])
+  assert.equal(adapter.status.process_exited, false)
 })
 
 test('ordinary side effects use writer drain rather than started progress guesses', async () => {
