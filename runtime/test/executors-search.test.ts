@@ -18,6 +18,10 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
+import type { ExecutorAdapter, ExecutorDispatchContext } from '../src/causal-runtime.js'
+import { VirtualClock } from '../src/clock.js'
+import type { JsonValue } from '../src/events.js'
+import { delegateSchema } from '../src/ports.js'
 import { stripLikePython } from '../src/python-text.js'
 import {
   SearchAdapter,
@@ -46,7 +50,7 @@ interface Case {
     readonly kind: string
     readonly value: unknown
   }[]
-  readonly request?: Record<string, unknown>
+  readonly request?: Readonly<Record<string, JsonValue>>
   readonly ref_kind?: string
   readonly op?: string
   readonly now?: number
@@ -96,6 +100,37 @@ class ScriptedTransport implements SearchTransport {
   }
 }
 
+function executorContext(
+  clock: VirtualClock,
+  options: {readonly delegateId?: string} = {},
+): ExecutorDispatchContext {
+  return {
+    clock,
+    delegate: delegateSchema.parse({
+      delegate_id: options.delegateId ?? 'd-1', executor: 'search', op: 'search', request: {},
+      origin_ref: 'conversation:1', deadline: 10, routing_class: 'user_awaited',
+      dispatched_at: 0,
+    }),
+    signal: new AbortController().signal,
+    progress: () => undefined,
+    observe: () => undefined,
+  }
+}
+
+test('search is a registry adapter and accepts the registry request context', async () => {
+  // This fails if Search reintroduces either its mutable request/context look-alikes or its missing
+  // manifest: the runtime registry must be able to own this adapter directly.
+  const adapter: ExecutorAdapter = new SearchAdapter(new ScriptedTransport({
+    name: 'contract', kind: 'dispatch', response: {
+      results: [{title: 'A', content: 'body', url: 'https://a.example.com/'}],
+    },
+  }))
+  const request: Readonly<Record<string, JsonValue>> = {query: 'q', k: 1}
+  const handoff = await adapter.dispatch('search', request, executorContext(new VirtualClock()))
+  assert.equal(adapter.manifest.name, 'search')
+  assert.equal(handoff.outcome, 'ok')
+})
+
 async function runCase(spec: Case): Promise<Record<string, unknown>> {
   switch (spec.kind) {
     case 'canonical_url':
@@ -121,11 +156,10 @@ async function runCase(spec: Case): Promise<Record<string, unknown>> {
       const adapter = new SearchAdapter(new ScriptedTransport(spec))
       const handoff = await adapter.dispatch(
         spec.op ?? 'search',
-        {...(spec.request ?? {query: 'q', k: 3})},
-        {
-          delegate: {delegate_id: spec.delegate_id ?? 'd-1'},
-          clock: {now: () => spec.now ?? 1},
-        },
+        spec.request ?? {query: 'q', k: 3},
+        executorContext(new VirtualClock(spec.now ?? 1), {
+          ...(spec.delegate_id === undefined ? {} : {delegateId: spec.delegate_id}),
+        }),
       )
       return {
         outcome: handoff.outcome,
@@ -196,12 +230,11 @@ test('a dispatch that succeeds cites every result it returns', async () => {
       ],
     },
   }))
-  const handoff = await adapter.dispatch('search', {query: 'q', k: 2}, {
-    delegate: {delegate_id: 'd-1'},
-    clock: {now: () => 5},
-  })
+  const handoff = await adapter.dispatch(
+    'search', {query: 'q', k: 2}, executorContext(new VirtualClock(5), {delegateId: 'd-1'}),
+  )
   assert.equal(handoff.outcome, 'ok')
-  const results = handoff.content.results as readonly {readonly evidence_ref: string}[]
+  const results = handoff.content.results as unknown as readonly {readonly evidence_ref: string}[]
   assert.equal(handoff.refs.length, results.length + 1, 'the query ref plus one per result')
   for (const result of results) {
     assert.ok(handoff.refs.includes(result.evidence_ref), result.evidence_ref)
@@ -217,10 +250,9 @@ test('a failure carries no provider detail beyond a code', async () => {
       kind: 'dispatch',
       transport_failure: code,
     }))
-    const handoff = await adapter.dispatch('search', {query: 'q', k: 1}, {
-      delegate: {delegate_id: 'd-1'},
-      clock: {now: () => 1},
-    })
+    const handoff = await adapter.dispatch(
+      'search', {query: 'q', k: 1}, executorContext(new VirtualClock(1), {delegateId: 'd-1'}),
+    )
     assert.equal(handoff.content.error, code)
     assert.equal(handoff.trust, 'untrusted_external')
     assert.deepEqual(
@@ -241,10 +273,9 @@ test('an authentication failure does not retry, and a timeout does', async () =>
       kind: 'dispatch',
       transport_failure: code,
     }))
-    const handoff = await adapter.dispatch('search', {query: 'q', k: 1}, {
-      delegate: {delegate_id: 'd-1'},
-      clock: {now: () => 1},
-    })
+    const handoff = await adapter.dispatch(
+      'search', {query: 'q', k: 1}, executorContext(new VirtualClock(1), {delegateId: 'd-1'}),
+    )
     outcomes.set(code, handoff.outcome)
   }
   assert.equal(outcomes.get('authentication'), 'failed')
@@ -448,17 +479,14 @@ test('a lone surrogate is refused rather than digested', () => {
     }),
   })
   return adapter
-    .dispatch('search', {query: 'q', k: 2}, {
-      delegate: {delegate_id: 'd-1'},
-      clock: {now: () => 1},
-    })
+    .dispatch('search', {query: 'q', k: 2}, executorContext(new VirtualClock(1), {delegateId: 'd-1'}))
     .then(handoff => {
       assert.equal(handoff.outcome, 'ok')
-      const results = handoff.content.results as readonly {readonly title: string}[]
+      const results = handoff.content.results as unknown as readonly {readonly title: string}[]
       assert.deepEqual(results.map(result => result.title), ['good'], 'only the encodable one')
       // The rank gap is preserved: the survivor was second in the provider's ordering.
       assert.deepEqual(
-        (handoff.content.results as readonly {readonly rank: number}[]).map(r => r.rank),
+        (handoff.content.results as unknown as readonly {readonly rank: number}[]).map(r => r.rank),
         [2],
       )
     })
@@ -475,4 +503,14 @@ test('the six code points strip and trim disagree about are handled as Python ha
   // And U+FEFF is the reverse.
   assert.equal(stripLikePython('﻿'), '﻿', 'Python keeps the BOM')
   assert.equal('﻿'.trim(), '', 'and trim removes it')
+})
+
+test('search request normalization uses Python strip and code-point length', () => {
+  // A JavaScript trim/code-unit implementation accepts a C0 separator and rejects 512 astral symbols;
+  // Python does the inverse for those two cases.
+  assert.equal(normalizeRequestForTest({query: '\u001c', k: 1}), null)
+  assert.deepEqual(
+    normalizeRequestForTest({query: '😀'.repeat(512), k: 1}),
+    {query: '😀'.repeat(512), maxResults: 1},
+  )
 })

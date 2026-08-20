@@ -28,12 +28,20 @@ export interface ExecutorObservation {
   readonly refs?: readonly string[]
 }
 
+/** An executor's report only; the runtime binds delegate and channel identity. */
+export interface ExecutorHandoff {
+  readonly outcome: 'ok' | 'unknown' | 'failed'
+  readonly trust: 'trusted_user' | 'trusted_system' | 'untrusted_external'
+  readonly content: Readonly<Record<string, JsonValue>>
+  readonly refs?: readonly string[]
+}
+
 export interface ExecutorDispatchContext {
   readonly clock: Clock
   readonly delegate: Delegate
   readonly signal: AbortSignal
   readonly progress: (payload: ExecutorProgress) => void
-  readonly observe: (payload: ExecutorObservation) => void
+  readonly observe?: (payload: ExecutorObservation) => void
 }
 
 export interface ExecutorAdapter {
@@ -42,7 +50,7 @@ export interface ExecutorAdapter {
     op: string,
     request: Readonly<Record<string, JsonValue>>,
     context: ExecutorDispatchContext,
-  ): Promise<unknown>
+  ): Promise<ExecutorHandoff>
 }
 
 export interface CausalRuntimeOptions {

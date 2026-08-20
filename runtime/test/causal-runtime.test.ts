@@ -2,11 +2,17 @@ import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import { setImmediate as yieldToLoop } from 'node:timers/promises'
 import { test } from 'node:test'
-import { CausalRuntime, type ExecutorAdapter, type ModelPort } from '../src/causal-runtime.js'
-import { RealClock } from '../src/clock.js'
+import {
+  CausalRuntime,
+  type ExecutorAdapter,
+  type ExecutorDispatchContext,
+  type ExecutorHandoff,
+  type ModelPort,
+} from '../src/causal-runtime.js'
+import { RealClock, VirtualClock } from '../src/clock.js'
 import type { EventRecord } from '../src/events.js'
 import { MonotonicIdFactory } from '../src/ids.js'
-import { executorManifestSchema } from '../src/ports.js'
+import { delegateSchema, executorManifestSchema } from '../src/ports.js'
 import { fixtureSlowSimManifest } from '../src/sim.js'
 
 interface Deferred<T> {
@@ -28,10 +34,26 @@ async function eventually(predicate: () => boolean): Promise<void> {
   assert.fail('condition did not become true')
 }
 
+test('executor contexts permit direct dispatch without an observation sink', () => {
+  // Watch returns `observation_unavailable` in this deliberate direct-use case; the serving runtime
+  // still supplies observe when it owns dispatch (covered below by its injection boundary).
+  const context: ExecutorDispatchContext = {
+    clock: new VirtualClock(),
+    delegate: delegateSchema.parse({
+      delegate_id: 'direct-context', executor: 'slow_sim', op: 'set_light', request: {},
+      origin_ref: 'conversation:1', deadline: 10, routing_class: 'user_awaited', dispatched_at: 0,
+    }),
+    signal: new AbortController().signal,
+    progress: () => undefined,
+  }
+  assert.equal(context.observe, undefined)
+})
+
 test('async model and executor completions re-enter through the causal event queue', async () => {
   const firstModel = deferred<unknown>()
   const secondModel = deferred<unknown>()
-  const executorResult = deferred<unknown>()
+  const executorResult = deferred<ExecutorHandoff>()
+  let injectedObserve: ExecutorDispatchContext['observe'] = undefined
   const modelCalls: Parameters<ModelPort['complete']>[0][] = []
   const fast: ModelPort = {
     complete: call => {
@@ -41,7 +63,10 @@ test('async model and executor completions re-enter through the causal event que
   }
   const adapter: ExecutorAdapter = {
     manifest: fixtureSlowSimManifest,
-    dispatch: () => executorResult.promise,
+    dispatch: (_op, _request, context) => {
+      injectedObserve = context.observe
+      return executorResult.promise
+    },
   }
   const runtime = new CausalRuntime({
     clock: new RealClock(),
@@ -70,6 +95,8 @@ test('async model and executor completions re-enter through the causal event que
       },
     })
     await eventually(() => runtime.core.executorEffects.length === 1)
+    await eventually(() => injectedObserve !== undefined)
+    assert.equal(typeof injectedObserve, 'function')
     assert.equal(runtime.core.activeDelegates().length, 1)
 
     executorResult.resolve({

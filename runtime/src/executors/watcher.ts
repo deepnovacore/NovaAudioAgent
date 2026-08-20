@@ -18,7 +18,12 @@
 
 import { isOtherCategory } from '../unicode-tables.js'
 import { stripLikePython } from '../python-text.js'
+import type { ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff } from '../causal-runtime.js'
+import type { JsonValue } from '../events.js'
+import { handoffPolicySchema } from '../memory.js'
 import type { MediaRef, MediaStore } from '../media-store.js'
+import type { ModelGateway } from '../model-gateway.js'
+import { executorManifestSchema, opSpecSchema, type ExecutorManifest } from '../ports.js'
 
 export const WATCH_PROGRESS_SUMMARY_TEMPLATE = '仍在监控：{condition}'
 /** Past this many consecutive failures the window gives up rather than burning the whole duration. */
@@ -29,6 +34,57 @@ const MAX_CONDITION_CHARS = 200
 const MAX_OBSERVATION_CHARS = 400
 const DEFAULT_INTERVAL_S = 2.5
 const DEFAULT_DURATION_S = 1_800
+
+const EMPTY_PARAMS: Readonly<Record<string, JsonValue>> = {
+  type: 'object', properties: {}, required: [], additionalProperties: false,
+}
+
+const START = opSpecSchema.parse({
+  name: 'start',
+  description: '重复监控摄像头条件，命中后需观察到两次未命中才会重新布防。',
+  params: {
+    type: 'object',
+    properties: {
+      condition: {type: 'string', minLength: 1, maxLength: MAX_CONDITION_CHARS},
+      interval_s: {type: 'number', minimum: 2, maximum: 30, default: DEFAULT_INTERVAL_S},
+      duration_s: {
+        type: 'number', minimum: 30, maximum: DEFAULT_DURATION_S, default: DEFAULT_DURATION_S,
+        description: '省略时默认持续 1800 秒；仅当用户明确指定更短监控时长时才传入。',
+      },
+    },
+    required: ['condition'],
+    additionalProperties: false,
+  },
+  readonly: true,
+  deadline_budget: 1_860,
+})
+
+const STOP = opSpecSchema.parse({
+  name: 'stop', description: '停止当前监控窗口。', params: EMPTY_PARAMS, readonly: true, deadline_budget: 7,
+})
+
+const STATUS = opSpecSchema.parse({
+  name: 'status', description: '读取当前监控状态。', params: EMPTY_PARAMS,
+  readonly: true, sync_result: true, deadline_budget: 7,
+})
+
+export const WATCH_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
+  name: 'watch',
+  ops: [START, STOP, STATUS],
+  policy: handoffPolicySchema.parse({
+    channel: 'watch', priority: 40, wake: 'surrogate', typical_latency: 300,
+    compress_watermark: 20, suggest: true,
+  }),
+})
+
+export const GUARD_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
+  name: 'guard',
+  ops: [START, STOP, STATUS],
+  policy: handoffPolicySchema.parse({
+    channel: 'guard', priority: 90, wake: 'fast', typical_latency: 300,
+    compress_watermark: 20, suggest: false,
+  }),
+})
 
 export type WatchState = 'idle' | 'armed' | 'cooling' | 'waiting_reset'
 
@@ -64,45 +120,7 @@ export interface FrameSource {
   snapshot(): Promise<Frame | null>
 }
 
-export interface GatewayResponse {
-  readonly text: string
-}
-
-export interface ModelGatewayLike {
-  complete(request: {
-    readonly model: string
-    readonly system: string
-    readonly prompt: string
-    readonly jsonSchema: Record<string, unknown>
-    readonly images: readonly {
-      readonly name: string
-      readonly mediaType: string
-      readonly payload: Uint8Array
-    }[]
-  }): Promise<GatewayResponse>
-}
-
-export interface WatchDispatchContext {
-  readonly clock: {now(): number; sleep(duration: number, signal?: AbortSignal): Promise<void>}
-  readonly observe?: (payload: {
-    readonly trust: string
-    readonly content: Record<string, unknown>
-  }) => void
-  readonly progress?: (payload: {
-    readonly phase: string
-    readonly internal_activity: number
-    readonly elapsed: number
-    readonly summary: string | null
-  }) => void
-}
-
-export interface WatchHandoff {
-  readonly outcome: 'ok' | 'failed' | 'unknown'
-  readonly trust: string
-  readonly content: Record<string, unknown>
-}
-
-const VERDICT_SCHEMA: Record<string, unknown> = {
+const VERDICT_SCHEMA: Readonly<Record<string, JsonValue>> = {
   type: 'object',
   properties: {
     hit: {type: 'boolean'},
@@ -153,41 +171,37 @@ export function parseWatchVerdict(text: string): WatchVerdict {
   return {hit, observation: stripped}
 }
 
-export class WatchAdapter {
-  readonly #manifestName: string
+export class WatchAdapter implements ExecutorAdapter {
+  readonly manifest: ExecutorManifest
   readonly #mediaStore: MediaStore
   readonly #model: string
   readonly #captureEnabled: boolean
   readonly #prepareObservation: (() => Promise<void>) | undefined
   #source: FrameSource
-  #gateway: ModelGatewayLike
+  #gateway: ModelGateway
   #running = false
   #stopRequested = false
   #status: WatchStatus = idleStatus()
 
   constructor(options: {
-    readonly manifestName: string
+    readonly manifest: ExecutorManifest
     readonly source: FrameSource
-    readonly gateway: ModelGatewayLike
+    readonly gateway: ModelGateway
     readonly mediaStore: MediaStore
     readonly model: string
     readonly captureEnabled: boolean
     readonly prepareObservation?: () => Promise<void>
   }) {
-    if (options.manifestName !== 'watch' && options.manifestName !== 'guard') {
+    if (options.manifest.name !== 'watch' && options.manifest.name !== 'guard') {
       throw new TypeError('watch adapter manifest 必须是 watch 或 guard')
     }
-    this.#manifestName = options.manifestName
+    this.manifest = options.manifest
     this.#source = options.source
     this.#gateway = options.gateway
     this.#mediaStore = options.mediaStore
     this.#model = options.model
     this.#captureEnabled = options.captureEnabled
     this.#prepareObservation = options.prepareObservation
-  }
-
-  get manifestName(): string {
-    return this.#manifestName
   }
 
   get status(): WatchStatus {
@@ -202,7 +216,7 @@ export class WatchAdapter {
    */
   configureObservationPorts(options: {
     readonly source: FrameSource
-    readonly gateway: ModelGatewayLike
+    readonly gateway: ModelGateway
   }): void {
     if (this.#running || this.#status.state !== 'idle') {
       throw new Error('watch observation ports can only change while idle')
@@ -213,9 +227,9 @@ export class WatchAdapter {
 
   async dispatch(
     op: string,
-    request: Record<string, unknown>,
-    ctx: WatchDispatchContext,
-  ): Promise<WatchHandoff> {
+    request: Readonly<Record<string, JsonValue>>,
+    ctx: ExecutorDispatchContext,
+  ): Promise<ExecutorHandoff> {
     if (op === 'status') {
       if (Object.keys(request).length > 0) return failure('invalid_params', op)
       return {outcome: 'ok', trust: 'trusted_system', content: this.#statusContent(ctx.clock.now())}
@@ -280,8 +294,8 @@ export class WatchAdapter {
    */
   async #runWindow(
     normalized: NormalizedStart,
-    ctx: WatchDispatchContext,
-  ): Promise<WatchHandoff> {
+    ctx: ExecutorDispatchContext,
+  ): Promise<ExecutorHandoff> {
     const startedAt = this.#status.started_at ?? ctx.clock.now()
     const deadlineAt = startedAt + normalized.durationS
     let captureFailures = 0
@@ -367,8 +381,8 @@ export class WatchAdapter {
     verdict: WatchVerdict,
     frame: Frame,
     normalized: NormalizedStart,
-    ctx: WatchDispatchContext,
-  ): WatchHandoff | null {
+    ctx: ExecutorDispatchContext,
+  ): ExecutorHandoff | null {
     if (verdict.hit && this.#status.state === 'armed') {
       let entryRef: MediaRef
       try {
@@ -421,13 +435,13 @@ export class WatchAdapter {
       system: SYSTEM_PROMPT,
       prompt: `监控条件：${condition}`,
       jsonSchema: VERDICT_SCHEMA,
-      images: [{name: 'watch-frame', mediaType: frame.media_type, payload: frame.payload}],
+      images: [{ref: 'watch-frame', media_type: frame.media_type, payload: frame.payload}],
     })
     return parseWatchVerdict(response.text)
   }
 
   /** Wait for the next sample, or return early because a stop arrived. */
-  async #pauseOrStop(ctx: WatchDispatchContext, delay: number): Promise<boolean> {
+  async #pauseOrStop(ctx: ExecutorDispatchContext, delay: number): Promise<boolean> {
     if (this.#stopRequested) return true
     const abort = new AbortController()
     this.#stopWaiters.add(abort)
@@ -443,7 +457,7 @@ export class WatchAdapter {
 
   readonly #stopWaiters = new Set<AbortController>()
 
-  #statusContent(now: number): Record<string, unknown> {
+  #statusContent(now: number): Record<string, JsonValue> {
     // Recomputed from the clock rather than read from the field: the stored elapsed is only as fresh
     // as the last sample, and a status read between samples would report a stale figure.
     const elapsed = this.#status.started_at === null
@@ -461,7 +475,7 @@ export class WatchAdapter {
   }
 
   /** Whether the window is over, and why. Checked after every await. */
-  #boundaryTerminal(ctx: WatchDispatchContext, durationS: number): WatchHandoff | null {
+  #boundaryTerminal(ctx: ExecutorDispatchContext, durationS: number): ExecutorHandoff | null {
     if (this.#stopRequested) return this.#terminal('stopped')
     const startedAt = this.#status.started_at
     if (startedAt !== null && ctx.clock.now() >= startedAt + durationS) {
@@ -470,7 +484,7 @@ export class WatchAdapter {
     return null
   }
 
-  #transition(ctx: WatchDispatchContext, state: WatchState, resetCount: number): void {
+  #transition(ctx: ExecutorDispatchContext, state: WatchState, resetCount: number): void {
     this.#status = {...this.#status, state, reset_count: resetCount}
     this.#emitLifecycle(ctx, state)
   }
@@ -482,11 +496,11 @@ export class WatchAdapter {
    * not anything the model said about a picture.
    */
   #emitLifecycle(
-    ctx: WatchDispatchContext,
+    ctx: ExecutorDispatchContext,
     state: WatchState,
     options: {readonly includeReset?: boolean} = {},
   ): void {
-    const content: Record<string, unknown> = {
+    const content: Record<string, JsonValue> = {
       state,
       condition: this.#status.condition,
       hit_count: this.#status.hit_count,
@@ -501,7 +515,7 @@ export class WatchAdapter {
    * `hit: false` always: this reports the window closing, not a finding. A terminal that could carry a
    * hit would let the end of a monitoring session be mistaken for the event it was watching for.
    */
-  #terminal(reason: 'stopped' | 'window_elapsed'): WatchHandoff {
+  #terminal(reason: 'stopped' | 'window_elapsed'): ExecutorHandoff {
     return {
       outcome: 'ok',
       trust: 'untrusted_external',
@@ -525,7 +539,7 @@ export class WatchAdapter {
    */
   applyVerdictForTest(
     hit: boolean,
-    ctx: WatchDispatchContext,
+    ctx: ExecutorDispatchContext,
   ): {readonly announced: boolean; readonly status: WatchStatus} {
     if (this.#status.state === 'idle') {
       this.#status = {
@@ -574,7 +588,7 @@ interface NormalizedStart {
  * *unknown* field still refuses, since it means the caller and this adapter disagree about the
  * contract.
  */
-function normalizeStart(request: Record<string, unknown>): NormalizedStart | null {
+function normalizeStart(request: Readonly<Record<string, JsonValue>>): NormalizedStart | null {
   for (const key of Object.keys(request)) {
     if (key !== 'condition' && key !== 'interval_s' && key !== 'duration_s') return null
   }
@@ -635,11 +649,11 @@ function idleStatus(): WatchStatus {
   }
 }
 
-function failure(error: string, op: string): WatchHandoff {
+function failure(error: string, op: string): ExecutorHandoff {
   return {outcome: 'failed', trust: 'trusted_system', content: {error, op}}
 }
 
-function unknown(error: string): WatchHandoff {
+function unknown(error: string): ExecutorHandoff {
   return {outcome: 'unknown', trust: 'untrusted_external', content: {error}}
 }
 

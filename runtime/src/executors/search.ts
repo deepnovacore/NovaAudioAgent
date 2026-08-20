@@ -14,6 +14,10 @@
 
 import { createHash } from 'node:crypto'
 import { compareCodePoints } from '../canonical-json.js'
+import type { ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff } from '../causal-runtime.js'
+import type { JsonValue } from '../events.js'
+import { handoffPolicySchema } from '../memory.js'
+import { executorManifestSchema, opSpecSchema, type ExecutorManifest } from '../ports.js'
 import { pythonFloat } from '../prompting.js'
 import { isWellFormed, stripLikePython } from '../python-text.js'
 import { isOtherCategory } from '../unicode-tables.js'
@@ -28,6 +32,42 @@ const MAX_RESULTS = 5
 const MAX_TITLE_CHARS = 300
 const MAX_SNIPPET_CHARS = 2_000
 const MAX_URL_CHARS = 2_048
+
+export const SEARCH = opSpecSchema.parse({
+  name: 'search',
+  description: '搜索公开网页，返回带来源的标题、摘要和证据引用',
+  params: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string', minLength: 1, maxLength: MAX_QUERY_CHARS, description: '要搜索的简短查询',
+      },
+      k: {
+        type: 'integer', minimum: 1, maximum: MAX_RESULTS, description: '返回结果数量，1 到 5',
+      },
+    },
+    required: ['query', 'k'],
+    additionalProperties: false,
+  },
+  readonly: true,
+  deadline_budget: 10,
+  verifies: ['search'],
+  sync_result: true,
+})
+
+export const SEARCH_POLICY = handoffPolicySchema.parse({
+  channel: 'search',
+  priority: 40,
+  wake: 'surrogate',
+  typical_latency: 3,
+  compress_watermark: 20,
+})
+
+export const SEARCH_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
+  name: 'search',
+  ops: [SEARCH],
+  policy: SEARCH_POLICY,
+})
 
 /** A credential-free transport observation, normalized by the adapter. */
 export class TavilyTransportFailure extends Error {
@@ -164,19 +204,7 @@ async function readBounded(response: Response, limit: number): Promise<Uint8Arra
   return out
 }
 
-export interface SearchDispatchContext {
-  readonly delegate: {readonly delegate_id: string}
-  readonly clock: {now(): number}
-}
-
-export interface SearchHandoff {
-  readonly outcome: 'ok' | 'failed' | 'unknown'
-  readonly trust: 'untrusted_external'
-  readonly content: Record<string, unknown>
-  readonly refs: readonly string[]
-}
-
-export interface SearchResult {
+export type SearchResult = Readonly<Record<string, JsonValue>> & {
   readonly rank: number
   readonly title: string
   readonly source_label: string
@@ -186,7 +214,8 @@ export interface SearchResult {
   readonly evidence_ref: string
 }
 
-export class SearchAdapter {
+export class SearchAdapter implements ExecutorAdapter {
+  readonly manifest = SEARCH_MANIFEST
   readonly #transport: SearchTransport
 
   constructor(transport: SearchTransport) {
@@ -195,9 +224,9 @@ export class SearchAdapter {
 
   async dispatch(
     op: string,
-    request: Record<string, unknown>,
-    ctx: SearchDispatchContext,
-  ): Promise<SearchHandoff> {
+    request: Readonly<Record<string, JsonValue>>,
+    ctx: ExecutorDispatchContext,
+  ): Promise<ExecutorHandoff & {readonly refs: readonly string[]}> {
     if (op !== 'search') return failure('failed', 'unknown_op')
 
     const normalized = normalizeRequest(request)
@@ -265,8 +294,8 @@ function failure(
     readonly queryRef?: string
     readonly fetchedAt?: number
   } = {},
-): SearchHandoff {
-  const content: Record<string, unknown> = {error: code, provider: PROVIDER}
+): ExecutorHandoff & {readonly refs: readonly string[]} {
+  const content: Record<string, JsonValue> = {error: code, provider: PROVIDER}
   if (extra.query !== undefined) content.query = extra.query
   if (extra.queryRef !== undefined) content.query_ref = extra.queryRef
   if (extra.fetchedAt !== undefined) content.fetched_at = extra.fetchedAt
@@ -286,15 +315,15 @@ function failure(
  * behaviour.
  */
 function normalizeRequest(
-  request: Record<string, unknown>,
+  request: Readonly<Record<string, JsonValue>>,
 ): {readonly query: string; readonly maxResults: number} | null {
   const keys = Object.keys(request)
   if (keys.length !== 2 || !keys.includes('query') || !keys.includes('k')) return null
   const rawQuery = request.query
   const rawMax = request.k
   if (typeof rawQuery !== 'string') return null
-  const query = rawQuery.trim()
-  if (query === '' || query.length > MAX_QUERY_CHARS) return null
+  const query = stripLikePython(rawQuery)
+  if (query === '' || [...query].length > MAX_QUERY_CHARS) return null
   // Integer, not float, and not a boolean -- `true` is not one result.
   if (typeof rawMax !== 'number' || !Number.isInteger(rawMax)) return null
   if (rawMax < 1 || rawMax > MAX_RESULTS) return null
@@ -315,7 +344,7 @@ function normalizeResults(
     readonly fetchedAt: number
     readonly maxResults: number
   },
-): readonly SearchResult[] {
+): SearchResult[] {
   if (!Array.isArray(value)) return []
   const results: SearchResult[] = []
   for (const [index, raw] of value.entries()) {

@@ -18,8 +18,14 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import { VirtualClock } from '../src/clock.js'
+import type { ExecutorAdapter, ExecutorDispatchContext } from '../src/causal-runtime.js'
+import type { JsonValue } from '../src/events.js'
 import { MediaStore } from '../src/media-store.js'
+import type { ModelGateway } from '../src/model-gateway.js'
+import { delegateSchema, executorManifestSchema, type ExecutorManifest } from '../src/ports.js'
 import {
+  GUARD_MANIFEST,
+  WATCH_MANIFEST,
   WatchAdapter,
   parseWatchVerdict,
   normalizeStartForTest,
@@ -27,7 +33,6 @@ import {
   printableTextForTest,
   type Frame,
   type FrameSource,
-  type ModelGatewayLike,
 } from '../src/executors/watcher.js'
 
 const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/executors/watcher/v1')
@@ -36,7 +41,7 @@ interface Case {
   readonly name: string
   readonly kind: string
   readonly text?: string
-  readonly request?: Record<string, unknown>
+  readonly request?: Readonly<Record<string, JsonValue>>
   readonly value?: string
   readonly allow_empty?: boolean
   readonly verdicts?: readonly boolean[]
@@ -168,9 +173,10 @@ function frameSource(
 }
 
 /** A gateway that answers with a scripted sequence of verdicts, repeating the last one. */
-function gateway(verdicts: readonly (boolean | 'error' | 'malformed')[]): ModelGatewayLike {
+function gateway(verdicts: readonly (boolean | 'error' | 'malformed')[]): ModelGateway {
   let index = 0
   return {
+    stream: async function *stream() { await Promise.resolve(); yield* [] },
     complete: (): Promise<{readonly text: string}> => {
       const verdict = verdicts[Math.min(index, verdicts.length - 1)]
       index += 1
@@ -190,7 +196,7 @@ interface Harness {
   readonly observations: {readonly trust: string; readonly content: Record<string, unknown>}[]
   readonly progress: {readonly elapsed: number; readonly summary: string | null}[]
   readonly clock: VirtualClock
-  readonly ctx: Parameters<WatchAdapter['dispatch']>[2]
+  readonly ctx: ExecutorDispatchContext
 }
 
 let frameIdSequence = 0
@@ -228,38 +234,101 @@ function harness(options: {
   readonly captureEnabled?: boolean
   readonly manifestName?: string
   readonly withoutObserve?: boolean
+  readonly gateway?: ModelGateway
   readonly mediaStore?: MediaStore
 } = {}): Harness {
   const clock = new VirtualClock()
   const observations: {readonly trust: string; readonly content: Record<string, unknown>}[] = []
   const progress: {readonly elapsed: number; readonly summary: string | null}[] = []
   const adapter = new WatchAdapter({
-    manifestName: options.manifestName ?? 'watch',
+    manifest: manifestFor(options.manifestName ?? 'watch'),
     source: frameSource(
       options.capturePattern === undefined
         ? {failures: options.captureFailures ?? 0}
         : {pattern: options.capturePattern},
     ),
-    gateway: gateway(options.verdicts ?? [false]),
+    gateway: options.gateway ?? gateway(options.verdicts ?? [false]),
     // Distinct ids: a constant factory makes the store's collision retry spin, which is a real
     // hazard the store now refuses rather than a licence for the harness to be lazy.
     mediaStore: options.mediaStore ?? new MediaStore(1_024 * 1_024, {idFactory: nextFrameId}),
     model: 'test-model',
     captureEnabled: options.captureEnabled ?? true,
   })
-  const ctx = {
+  const ctx: ExecutorDispatchContext = {
     clock,
+    delegate: delegateSchema.parse({
+      delegate_id: 'watch-contract', executor: options.manifestName ?? 'watch', op: 'start', request: {},
+      origin_ref: 'conversation:1', deadline: 1_860, routing_class: 'user_awaited',
+      dispatched_at: 0,
+    }),
+    signal: new AbortController().signal,
     ...(options.withoutObserve === true
       ? {}
-      : {observe: (payload: {trust: string; content: Record<string, unknown>}) => {
-        observations.push(payload)
+      : {observe: payload => {
+        observations.push({trust: payload.trust, content: {...payload.content}})
       }}),
-    progress: (payload: {elapsed: number; summary: string | null}) => {
+    progress: payload => {
       progress.push(payload)
     },
   }
   return {adapter, observations, progress, clock, ctx}
 }
+
+function manifestFor(name: string): ExecutorManifest {
+  if (name === 'watch') return WATCH_MANIFEST
+  if (name === 'guard') return GUARD_MANIFEST
+  return executorManifestSchema.parse({
+    ...WATCH_MANIFEST,
+    name,
+    policy: {...WATCH_MANIFEST.policy, channel: name},
+  })
+}
+
+test('watch is a registry adapter and supports the omitted observation contract', async () => {
+  // This fails if Watch retains its private dispatch or gateway types: production supplies the real
+  // runtime context, while direct use without observe must keep the oracle's unknown handoff.
+  const adapter: ExecutorAdapter = new WatchAdapter({
+    manifest: WATCH_MANIFEST,
+    source: frameSource(),
+    gateway: gateway([false]),
+    mediaStore: new MediaStore(),
+    model: 'm',
+    captureEnabled: true,
+  })
+  const handoff = await adapter.dispatch('start', {condition: 'c'}, {
+    clock: new VirtualClock(),
+    delegate: delegateSchema.parse({
+      delegate_id: 'watch-no-observe', executor: 'watch', op: 'start', request: {},
+      origin_ref: 'conversation:1', deadline: 1_860, routing_class: 'user_awaited',
+      dispatched_at: 0,
+    }),
+    signal: new AbortController().signal,
+    progress: () => undefined,
+  })
+  assert.equal(adapter.manifest.name, 'watch')
+  assert.equal(handoff.outcome, 'unknown')
+  assert.equal(handoff.content.error, 'observation_unavailable')
+})
+
+test('watch classification uses the model gateway image contract', async () => {
+  let image: {readonly ref: string; readonly media_type: string; readonly payload: Uint8Array} | undefined
+  const model: ModelGateway = {
+    stream: async function *stream() { await Promise.resolve(); yield* [] },
+    complete: request => {
+      image = request.images?.[0]
+      return Promise.resolve({text: '{"hit": false, "observation": ""}'})
+    },
+  }
+  const {adapter, ctx, clock} = harness({gateway: model})
+  const run = adapter.dispatch('start', {condition: 'c', duration_s: 30}, ctx)
+  await new Promise<void>(resolve => setTimeout(resolve, 5))
+  clock.advanceTo(100)
+  adapter.interruptForTest()
+  await settle(run, clock)
+  assert.equal(image?.ref, 'watch-frame')
+  assert.equal(image?.media_type, 'image/jpeg')
+  assert.deepEqual(image?.payload, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]))
+})
 
 test('status reports the window without needing it to be running', async () => {
   const {adapter, ctx} = harness()
@@ -427,7 +496,7 @@ test('watch and guard are the same logic behind different manifests', () => {
   // and duplicating the monitoring logic to express that would be two things to keep in step.
   for (const name of ['watch', 'guard']) {
     assert.doesNotThrow(() => new WatchAdapter({
-      manifestName: name,
+      manifest: manifestFor(name),
       source: frameSource(),
       gateway: gateway([false]),
       mediaStore: new MediaStore(),
@@ -436,7 +505,7 @@ test('watch and guard are the same logic behind different manifests', () => {
     }))
   }
   assert.throws(() => new WatchAdapter({
-    manifestName: 'other',
+    manifest: manifestFor('other'),
     source: frameSource(),
     gateway: gateway([false]),
     mediaStore: new MediaStore(),
