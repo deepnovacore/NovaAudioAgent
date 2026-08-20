@@ -22,11 +22,7 @@ import { executorManifestSchema } from '../src/ports.js'
 import { RealtimeRuntimeBridge } from '../src/realtime/bridge.js'
 import type { HostContextItem, HostResponseIntent } from '../src/realtime/protocol.js'
 import { ItemDeliveryUncertainError } from '../src/realtime/protocol.js'
-import {
-  NotYetPortedError,
-  RealtimeService,
-  type ServiceProvider,
-} from '../src/realtime/service.js'
+import { RealtimeService, type ServiceProvider } from '../src/realtime/service.js'
 import {
   MAX_HOST_FACT_CHARS,
   PREEMPT_MIN_PRIORITY,
@@ -185,22 +181,19 @@ test('the scenario set exercises all three ordering fields', () => {
   }
 })
 
-test('an unported family fails by name rather than behaving as if it were off', async () => {
-  // Silence here would be indistinguishable from correctness: a service that quietly declined to
-  // project runtime events looks exactly like one with no events to project. Each entry point still
-  // waiting on a family is listed, so this test is the record of what is missing.
+test('a cancel rejection is ignored unless controlled reconnect is enabled', async () => {
+  // Replacing the whole provider session is a heavy remedy for a case that should not happen, so it is
+  // gated. With the gate closed the event is simply consumed: the provider refused a cancel, and the
+  // ordinary alert deadline is what handles that.
   const service = queueOnlyService()
-  await assert.rejects(
-    () => service.handleEvent({
-      kind: 'response_cancel_rejected',
-      session_epoch: 1,
-      response_id: 'r-1',
-      cancel_request_id: 'cancel-1',
-      reason: 'no_active_response',
-    }),
-    NotYetPortedError,
-    'family L: guard cancel rejection',
-  )
+  await service.handleEvent({
+    kind: 'response_cancel_rejected',
+    session_epoch: 1,
+    response_id: 'r-1',
+    cancel_request_id: 'cancel-1',
+    reason: 'no_active_response',
+  })
+  assert.equal(service.stopped, false, 'and it does not take the service down')
 })
 
 test('driving continuations with nothing queued is a no-op, not a refusal', () => {
@@ -2300,10 +2293,15 @@ test('a reconnect requeues an urgent item that was injected but never spoken', a
   const {service, actions} = pipelineService()
   await service.connect()
   service.seedUrgentOwnerForTest({sessionEpoch: 1, eventId: 'final:d-9', responseId: null})
+  const before = service.urgentOwnerForTest?.delivery_token
   await service.reconnectForTest()
   // At the provider, not in the queue: the reconnect's own delivery pass has already flushed it.
   assert.ok(actions.includes('inject:final:d-9'), 'requeued and delivered')
-  assert.equal(service.urgentOwnerForTest, null, 'and the owner is released')
+  // The *old* owner is gone. Delivering into the new session creates a fresh one, which is what keeps
+  // the alert's audio attributable there -- so the check is on identity, not on absence.
+  const after = service.urgentOwnerForTest
+  assert.notEqual(after?.delivery_token, before, 'the dead session\'s owner did not survive')
+  assert.equal(after?.session_epoch, service.session.sessionEpoch, 'and any owner belongs to the new one')
 })
 
 test('a reconnect does not requeue an urgent item that already had a response', async () => {
@@ -2503,5 +2501,311 @@ test('an acknowledgement bound to an unfinished continuation is reopened by the 
     actions.filter(action => action === 'inject:background:d-1').length,
     before + 1,
     'reopened and delivered in the new session',
+  )
+})
+
+/**
+ * Guard preemption: interrupting the agent mid-sentence.
+ *
+ * A Guard alert is the one thing allowed to do it, and interrupting is the hard part — the provider has
+ * to stop, the renderer has to drop the audio already in flight, and the replacement has to start
+ * speaking, with no guarantee any of the three acknowledges. Every step is therefore deadlined, and the
+ * token on each preemption is what stops a deadline belonging to a resolved one from tearing down its
+ * successor.
+ */
+function guardService(options: {readonly controlledReconnect?: boolean} = {}): {
+  readonly service: RealtimeService
+  readonly actions: string[]
+  readonly clock: VirtualClock
+} {
+  // Priority 90 is inside the preemption band, which is what makes a queued item preemptive at all.
+  const manifest = executorManifestSchema.parse({
+    name: 'guard',
+    policy: {
+      channel: 'guard',
+      priority: 90,
+      wake: 'fast',
+      typical_latency: 2,
+      compress_watermark: 8,
+      suggest: false,
+    },
+    ops: [
+      {
+        name: 'start',
+        description: 'watch for something',
+        params: {type: 'object', properties: {}, additionalProperties: false},
+        deadline_budget: 30,
+      },
+      {
+        name: 'look',
+        description: 'readonly',
+        params: {type: 'object', properties: {}, additionalProperties: false},
+        readonly: true,
+        deadline_budget: 5,
+      },
+    ],
+  })
+  const clock = new VirtualClock()
+  const memory = new Memory({policies: [manifest.policy]})
+  const executors = new Map([[manifest.name, {manifest}]])
+  const actions: string[] = []
+  let ids = 0
+  const nextId = (): string => `id-${++ids}`
+  let epoch = 0
+  const provider = {
+    connect: () => {
+      epoch += 1
+      actions.push(`connect:${epoch}`)
+      return Promise.resolve({epoch})
+    },
+    injectHostItem: (item: {readonly host_item_id: string; readonly event_id: string}) => {
+      actions.push(`inject:${item.event_id}`)
+      return Promise.resolve({session_epoch: epoch, host_item_id: item.host_item_id})
+    },
+    createResponse: (intent: {readonly kind: string}) => {
+      actions.push(`create:${intent.kind}`)
+      return Promise.resolve()
+    },
+    cancelResponse: (responseId: string) => {
+      actions.push(`cancel:${responseId}`)
+      return Promise.resolve()
+    },
+    sendAudio: () => Promise.resolve(),
+    events: () => emptyStream(),
+    close: () => Promise.resolve(),
+  }
+  const session = new RealtimeSession({
+    provider,
+    playback: new PlaybackRegistry({
+      idFactory: nextId,
+      onFrame: () => undefined,
+      onClear: (utteranceId, generationEpoch) => {
+        actions.push(`clear:${utteranceId}:${generationEpoch}`)
+      },
+    }),
+    idFactory: nextId,
+    clock,
+    onDiagnostic: () => undefined,
+  })
+  const service = new RealtimeService({
+    provider,
+    runtime: {
+      clock,
+      executors,
+      memory,
+      observe: () => unsubscribeNothing,
+      serve: () => new Promise<void>(() => undefined),
+      claimedHandoff: () => undefined,
+      terminatedByDeadline: () => false,
+      delegateFor: () => undefined,
+      inFlightDelegate: () => undefined,
+    },
+    tools: compileToolSchema([manifest]),
+    session,
+    bridge: new RealtimeRuntimeBridge({
+      runtime: {
+        clock,
+        memory,
+        executors,
+        ingestUserInput: () => Promise.reject(new Error('unused')),
+        updateExternal: () => false,
+        dispatchExternal: () => ({accepted: false, delegate_id: null}),
+      },
+      tools: compileToolSchema([manifest]),
+      idFactory: nextId,
+    }),
+    idFactory: nextId,
+    controlledGuardReconnect: options.controlledReconnect ?? false,
+    onDiagnostic: () => undefined,
+  })
+  return {service, actions, clock}
+}
+
+function guardFact(eventId = 'final:d-guard'): Parameters<RealtimeService['queueHostItem']>[0] {
+  return {
+    kind: 'host_fact',
+    item: {
+      kind: 'final',
+      host_item_id: `host-${eventId}`,
+      event_id: eventId,
+      content: 'the build finished',
+      call_id: null,
+    },
+    task_summary: null,
+    origin_spoken: false,
+  }
+}
+
+test('a preemptive item does not interrupt an idle agent', async () => {
+  // There is nothing to interrupt, so it is delivered the ordinary way. Preempting an idle session
+  // would cancel a turn that does not exist.
+  const {service, actions} = guardService()
+  await service.connect()
+  service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+  await service.flushHostItems()
+  assert.ok(actions.includes('inject:final:d-guard'), 'delivered')
+  assert.equal(
+    actions.some(action => action.startsWith('cancel:')),
+    false,
+    'and nothing was cancelled',
+  )
+})
+
+test('a preemptive item interrupts a speaking agent, and cancels its turn', async () => {
+  const {service, actions} = guardService()
+  await service.connect()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+  service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+  await service.flushHostItems()
+  assert.ok(actions.includes('cancel:r-1'), 'the old turn was cancelled')
+})
+
+test('the alert deadline stops waiting for a provider that will not confirm', async () => {
+  // The provider was asked to stop and has not said it did. Past the deadline the host acts as though
+  // it had — the alternative is the user hearing the old turn continue while an urgent alert waits.
+  const {service, clock} = guardService()
+  await service.connect()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+  service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+  await service.flushHostItems()
+  assert.notEqual(service.guardPreemptionForTest, null, 'a preemption is in flight')
+  assert.equal(service.guardPreemptionForTest?.deadline_fired, false)
+
+  // Past GUARD_ALERT_DEADLINE_S with no terminal from the provider.
+  clock.advanceTo(clock.now() + 1)
+  await new Promise<void>(resolve => setTimeout(resolve, 5))
+  assert.equal(
+    service.guardPreemptionForTest?.deadline_fired ?? 'cleared',
+    true,
+    'the host stopped waiting',
+  )
+})
+
+test('a user speaking revokes the reconnect permit a preemption was holding', async () => {
+  // The preemption borrows the user's authority to interrupt. Once the user is speaking themselves,
+  // that authority is theirs again — so a permit not yet spent is disallowed outright.
+  const {service} = guardService({controlledReconnect: true})
+  await service.connect()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+  service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+  await service.flushHostItems()
+  assert.equal(service.guardPreemptionForTest?.reconnect_disallowed, false)
+
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  assert.equal(
+    service.guardPreemptionForTest?.reconnect_disallowed,
+    true,
+    'the permit is revoked before it can be spent',
+  )
+})
+
+test('a cancel rejection does nothing when controlled reconnect is off', async () => {
+  const {service, actions} = guardService({controlledReconnect: false})
+  await service.connect()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+  service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+  await service.flushHostItems()
+  const connects = actions.filter(action => action.startsWith('connect:')).length
+  await service.handleEvent({
+    kind: 'response_cancel_rejected',
+    session_epoch: 1,
+    response_id: 'r-1',
+    cancel_request_id: 'cancel-1',
+    reason: 'no_active_response',
+  })
+  assert.equal(
+    actions.filter(action => action.startsWith('connect:')).length,
+    connects,
+    'no reconnect: the gate is closed',
+  )
+  assert.equal(service.stopped, false)
+})
+
+test('a cancel rejection with the gate open replaces the provider session', async () => {
+  // The last resort: the provider said it would not stop, and the alert is still waiting. Replacing the
+  // session is heavy, which is why it is gated — but letting the old turn run to completion is worse.
+  const {service, actions} = guardService({controlledReconnect: true})
+  await service.connect()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+  service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+  await service.flushHostItems()
+  const before = actions.filter(action => action.startsWith('connect:')).length
+  await service.handleEvent({
+    kind: 'response_cancel_rejected',
+    session_epoch: 1,
+    response_id: 'r-1',
+    cancel_request_id: 'cancel-1',
+    reason: 'no_active_response',
+  })
+  assert.ok(
+    actions.filter(action => action.startsWith('connect:')).length > before,
+    'the session was replaced',
+  )
+  assert.equal(service.guardPreemptionForTest?.reconnect_permit_consumed, true, 'permit spent')
+})
+
+test('a cancel rejection for a turn that already spoke is ignored', async () => {
+  // Replacing the session under it would lose whatever it said to the user.
+  const {service, actions} = guardService({controlledReconnect: true})
+  await service.connect()
+  service.queueHostItem(guardFact('final:d-other'), {priority: 50})
+  await service.flushHostItems()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+  service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+  await service.flushHostItems()
+  const before = actions.filter(action => action.startsWith('connect:')).length
+  // r-1 carries the delivered fact's event id, so it has produced something.
+  await service.handleEvent({
+    kind: 'response_cancel_rejected',
+    session_epoch: 1,
+    response_id: 'r-1',
+    cancel_request_id: 'cancel-1',
+    reason: 'no_active_response',
+  })
+  assert.equal(
+    actions.filter(action => action.startsWith('connect:')).length,
+    before,
+    'a turn that already spoke is not replaced under',
   )
 })

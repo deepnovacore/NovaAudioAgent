@@ -25,7 +25,7 @@
 
 import type { Clock } from '../clock.js'
 import { validProgressSummary, type EventRecord, type JsonValue } from '../events.js'
-import { USER_PRIORITY } from '../memory.js'
+import { USER_PRIORITY, type MemoryItem } from '../memory.js'
 import type { PlaybackCompletion, PlaybackGeneration } from '../playback.js'
 import type { CompiledTools } from '../tool-schema.js'
 import type { RealtimeRuntimeBridge, ToolAcceptance, ToolCallReady } from './bridge.js'
@@ -35,12 +35,16 @@ import type {
   RealtimeProviderEvent,
 } from './protocol.js'
 import { ItemDeliveryUncertainError } from './protocol.js'
+import { packRecoveryTurns, projectRecoveryTurns, type RecoveryTurn } from './history.js'
 import { RealtimeDeliveryError, type RealtimeSession } from './session.js'
 import { MAX_CONTINUATION_TASK_SUMMARY, type CaptionFrame } from './session-state.js'
 import {
+  GUARD_ALERT_DEADLINE_S,
+  GUARD_CLEAR_ACK_DEADLINE_S,
   HIT_ALERT_MIN_PRIORITY,
   MAX_HOST_FACT_CHARS,
   MAX_PENDING_TOOL_REFUSALS,
+  MAX_TRACKED_ORIGIN_DELIVERY_PROOFS,
   MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS,
   MAX_TRACKED_TOOL_CALLS,
   MAX_UNCERTAIN_DELIVERY_RETRIES,
@@ -101,6 +105,22 @@ export interface ServiceRuntime {
   delegateFor(delegateId: string): DelegateLike | undefined
   /** The delegate only if it is still in flight. */
   inFlightDelegate(delegateId: string): DelegateLike | undefined
+  /** A suggestion by id, for attributing a turn to what it was answering. Optional. */
+  suggestionFor?: (suggestionId: string) => {
+    readonly kind: string
+    readonly evidence_refs: readonly string[]
+  } | null
+  /** Mark a suggestion as actually offered. Optional. */
+  confirmSuggestionSpoken?: (suggestionId: string) => void
+  /**
+   * The blackboard, for the conversation history a replacement provider is seeded with.
+   *
+   * Optional because the history arms are off by default, and a runtime that never reconnects a Guard
+   * has no reason to expose it.
+   */
+  readonly memory?: {
+    readonly channels: ReadonlyMap<string, {readonly items: readonly MemoryItem[]}>
+  }
 }
 
 /** The provider surface the service uses directly: three calls, everything else via the session. */
@@ -137,26 +157,12 @@ export interface RealtimeServiceOptions {
 }
 
 /**
- * A boundary the port has not reached yet.
- *
- * Thrown rather than returning the inert answer, so a scenario that reaches Guard or project
- * confirmation fails with a name instead of quietly behaving as if the feature were off. Silence
- * there would be indistinguishable from correctness.
- */
-/**
  * How long `close` waits for a task that is not responding to its abort signal.
  *
- * Short: every loop here checks the signal at its next suspension point, so a task still running
- * after this is stuck rather than slow, and waiting longer would only delay the diagnostic.
+ * Short: every loop here checks the signal at its next suspension point, so a task still running after
+ * this is stuck rather than slow, and waiting longer would only delay the diagnostic.
  */
 const SHUTDOWN_GRACE_MS = 250
-
-export class NotYetPortedError extends Error {
-  constructor(surface: string) {
-    super(`${surface} is not ported yet (service.py family L/I)`)
-    this.name = 'NotYetPortedError'
-  }
-}
 
 export class RealtimeService {
   readonly session: RealtimeSession
@@ -187,6 +193,10 @@ export class RealtimeService {
   #providerReconnectSourceEpoch: number | null = null
   #guardPreemptionToken = 0
   #guardPreemption: GuardPreemption | null = null
+  /** The in-flight cancel deadline for the current preemption, if one is armed. */
+  #guardAlertAbort: AbortController | null = null
+  /** Per-generation waits for the renderer to confirm a clear, keyed `utterance:epoch`. */
+  readonly #guardClearDeadlines = new Map<string, AbortController>()
 
   readonly #deliveryLock = new Mutex()
   readonly #reconnectLock = new Mutex()
@@ -572,9 +582,6 @@ export class RealtimeService {
    * Every early return here is a reason *not* to interrupt, and they are checked before any Guard
    * state is touched so the ordinary path never reaches the unported arbitration.
    */
-  // The ported guards below are synchronous; the arbitration they gate is unported and throws
-  // before any await. The signature stays async because the ported body will await the session.
-  // eslint-disable-next-line @typescript-eslint/require-await
   async #maybePreemptLocked(): Promise<void> {
     const priority = this.#pendingPreemptPriority
     if (priority === null || priority < PREEMPT_MIN_PRIORITY) return
@@ -587,10 +594,57 @@ export class RealtimeService {
       .sort(compareQueuedHostResponses)
       .at(0)
     if (queued === undefined) return
-    // Reached only by a manifest whose policy priority is at or above the preemption band, which no
-    // core-path scenario configures. Guard arbitration decides what happens next, and it is not
-    // ported -- so this fails by name rather than silently declining to preempt.
-    throw new NotYetPortedError('guard preemption arbitration')
+
+    this.#guardPreemptionToken += 1
+    const preemption: GuardPreemption = {
+      token: this.#guardPreemptionToken,
+      session_epoch: this.session.sessionEpoch,
+      event_id: queued.intent.item.event_id,
+      old_response_id: this.session.activeProviderResponseId,
+      old_generation: this.session.currentGeneration,
+      queued_at: queued.queued_at,
+      cancel_sent: false,
+      deadline_fired: false,
+      replacement_terminal: false,
+      reconnect_permit_consumed: false,
+      reconnect_disallowed: false,
+      reconnect_aborted: false,
+    }
+    this.#guardPreemption = preemption
+    // Armed before the await: the provider may never confirm the cancel, and the deadline is what
+    // stops the alert waiting behind a turn that will not stop.
+    const abort = new AbortController()
+    this.#guardAlertAbort = abort
+    void this.#fireGuardAlertDeadline(preemption)
+    this.#telemetry?.record('guard.preempt_started', {})
+    let preempted: boolean
+    try {
+      preempted = await this.session.hostPreempt()
+    } catch (cause) {
+      // The preemption never happened, so its deadline must not fire against a session that is still
+      // speaking normally.
+      this.#clearGuardPreemption(preemption.token)
+      throw cause
+    }
+    if (!preempted) {
+      this.#clearGuardPreemption(preemption.token)
+      return
+    }
+    // The session may have learned the response id only while preempting -- a turn that was still
+    // starting when the alert arrived.
+    const responseId = this.session.activeProviderResponseId
+    const current = this.#guardPreemption
+    if (
+      responseId !== null
+      && current !== null
+      && current.token === preemption.token
+      && this.session.providerTurnPhase(responseId) === 'cancel_requested'
+    ) {
+      if (current.old_response_id === null) {
+        this.#guardPreemption = {...current, old_response_id: responseId}
+      }
+      this.#recordGuardCancelSent(responseId)
+    }
   }
 
   /**
@@ -610,10 +664,26 @@ export class RealtimeService {
       const userActivation = this.#guardActivationRequired(queued)
       let delivery
       try {
-        if (userActivation || preemptiveOverlap) {
-          throw new NotYetPortedError('guard host-item delivery')
+        if (userActivation) {
+          // A reconnected session will not speak until something user-shaped arrives, so a Guard fact
+          // crossing a reconnect has to carry that activation or it lands in a session that never
+          // responds.
+          delivery = await this.session.deliverHostResponse(queued.intent, {asUserActivation: true})
+        } else if (preemptiveOverlap) {
+          const preemption = this.#guardPreemption
+          // Only a permit-consuming preemption gets a confirmation timeout: it is speaking into a
+          // session created for it, where waiting indefinitely would strand the alert.
+          const confirmationTimeout = preemption !== null
+            && preemption.reconnect_permit_consumed
+            && preemption.event_id === queued.intent.item.event_id
+            ? 0.5
+            : null
+          delivery = confirmationTimeout === null
+            ? await this.session.deliverPreemptiveHostResponse(queued.intent)
+            : await this.session.deliverPreemptiveHostResponse(queued.intent, {confirmationTimeout})
+        } else {
+          delivery = await this.session.deliverHostResponse(queued.intent)
         }
-        delivery = await this.session.deliverHostResponse(queued.intent)
       } catch (cause) {
         // Put it back before propagating: a delivery that threw has not been delivered, and dropping
         // it here would lose a fact the model was supposed to receive.
@@ -621,7 +691,29 @@ export class RealtimeService {
         throw cause
       }
       const delivered = delivery.accepted
+      if (delivered && userActivation) {
+        this.#providerEpochNeedingActivation = null
+        this.#providerReconnectSourceEpoch = null
+      }
       if (queued.preemptive) this.#recomputePreemptPriority()
+      if (
+        delivered
+        && queued.preemptive
+        && !this.#stop.signal.aborted
+        && !this.#providerFailed
+        && delivery.injectionEpoch === this.session.sessionEpoch
+      ) {
+        // The owner is what makes the alert's audio attributable until it is played or cleared.
+        this.#urgentDeliveryToken += 1
+        this.#urgentHostResponseOwner = {
+          delivery_token: this.#urgentDeliveryToken,
+          session_epoch: delivery.injectionEpoch,
+          event_id: queued.intent.item.event_id,
+          queued,
+          response_id: null,
+          generation: null,
+        }
+      }
       if (delivered && queued.semantic_event_id !== null) {
         const acknowledgement = this.#semanticAcknowledgements.get(queued.semantic_event_id)
         if (acknowledgement?.phase === 'queued') acknowledgement.phase = 'requested'
@@ -1050,9 +1142,10 @@ export class RealtimeService {
       this.#userOriginRefs.clear()
       this.#originDeferredToolCalls.length = 0
 
-      if (retryOwner?.session_epoch === oldEpoch) this.#urgentHostResponseOwner = null
+      this.#releaseUrgentHostResponseForEpoch(oldEpoch)
       // An urgent item that was injected but never got a response is the one case worth retrying: it
-      // was delivered into a session that died before speaking it, so the user heard nothing.
+      // was delivered into a session that died before speaking it, so the user heard nothing. One that
+      // *did* get a response was taken up by the provider, and re-queueing would say it twice.
       if (retryOwner?.session_epoch === oldEpoch && retryOwner.response_id === null) {
         this.#requeueHostItem(retryOwner.queued)
       }
@@ -1546,8 +1639,10 @@ export class RealtimeService {
    */
   async handleEvent(event: RealtimeProviderEvent): Promise<void> {
     if (event.kind === 'response_cancel_rejected') {
-      // Guard's to arbitrate: a rejected cancel means the provider kept speaking through a preemption.
-      throw new NotYetPortedError('guard cancel rejection')
+      // The provider kept speaking through a preemption. Guard's to arbitrate, and it does not reach
+      // the session at all: this is about the transport, not the conversation.
+      await this.#handleGuardCancelRejected(event)
+      return
     }
     if (event.kind === 'provider_error') {
       this.#onDiagnostic(
@@ -1580,10 +1675,37 @@ export class RealtimeService {
       }
     }
 
+    // Captured before `accept`, because a terminal is what *removes* the owner's response and the
+    // release below needs to know which owner this terminal belonged to.
+    const terminalOwner = event.kind === 'response_terminal'
+      ? this.#urgentOwnerForResponse(event.session_epoch, event.response_id)
+      : null
+
     const accepted = await this.session.accept(event)
 
-    if (this.#guardPreemption !== null) throw new NotYetPortedError('guard turn tracking')
-    if (this.#urgentHostResponseOwner !== null) throw new NotYetPortedError('urgent owner binding')
+    if (event.kind === 'response_started' || event.kind === 'response_audio_delta') {
+      const preemption = this.#guardPreemption
+      // A turn that was still starting when the alert arrived has only now revealed its id, so the
+      // preemption learns which response it is cancelling here rather than at arbitration time.
+      if (
+        preemption !== null
+        && preemption.session_epoch === event.session_epoch
+        && preemption.old_response_id === null
+        && this.session.activeProviderResponseId === event.response_id
+        && this.session.providerTurnPhase(event.response_id) === 'cancel_requested'
+        && this.session.providerTurnWasFenced(event.response_id)
+      ) {
+        this.#guardPreemption = {...preemption, old_response_id: event.response_id}
+      }
+      this.#recordGuardCancelSent(event.response_id)
+    }
+    // Unconditional, and before the accepted-only work: a fence receipt is destructive to read, so it
+    // has to be consumed on every event or a later one would see a stale interruption.
+    this.#retireFencedPrestartUrgent()
+    if (accepted && (event.kind === 'response_started' || event.kind === 'response_audio_delta')) {
+      this.#bindUrgentHostResponse(event)
+      this.#finishGuardFirstAudio(event)
+    }
 
     if (event.kind === 'response_started' && accepted) {
       // Only for a response with no events yet: one that already has them has been bound, and
@@ -1608,6 +1730,16 @@ export class RealtimeService {
         this.#providerEpochNeedingActivation = null
       }
       this.#providerReconnectSourceEpoch = null
+      const preemption = this.#guardPreemption
+      if (preemption !== null) {
+        // The user speaking is the authority the preemption was borrowing. A permit not yet spent is
+        // now disallowed; one already spent means a reconnect is in flight and has to be abandoned.
+        this.#guardPreemption = {
+          ...preemption,
+          reconnect_disallowed: !preemption.reconnect_permit_consumed,
+          reconnect_aborted: preemption.reconnect_permit_consumed,
+        }
+      }
       // Qwen may finish its function call before emitting this turn's transcript final. Do not let
       // that call bind to provider-authored placeholder text or the previous user turn.
       this.#awaitingUserOrigin = true
@@ -1618,6 +1750,7 @@ export class RealtimeService {
     }
 
     if (event.kind === 'response_terminal' && accepted) {
+      this.#recordGuardCancelTerminal(event)
       const generation = this.session.currentGeneration
       if (
         generation !== null
@@ -1629,6 +1762,15 @@ export class RealtimeService {
       this.#finishSemanticAcknowledgement(event)
       this.#finishContinuation(event)
       this.#finishOrigin(event.response_id)
+      // Released only when the terminal is *not* the current generation: if it is, playback is still
+      // running and the owner is what keeps the alert's audio attributable.
+      if (
+        generation?.session_epoch !== event.session_epoch
+        || generation.response_id !== event.response_id
+      ) {
+        this.#releaseUrgentHostResponse(terminalOwner)
+      }
+      this.#markGuardReplacementTerminal(terminalOwner)
     }
 
     if (event.kind === 'user_transcript_final') {
@@ -2355,6 +2497,749 @@ export class RealtimeService {
     batch.phase = 'ready'
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // Family E: playback acknowledgement.
+  //
+  // The renderer is the only thing that knows whether audio actually reached a person. Everything here
+  // turns its reports into facts the rest of the system can rely on -- and refuses to turn them into
+  // more than that. "The renderer said it played 0 ms" is not evidence the user heard anything.
+  // ---------------------------------------------------------------------------------------------
+
+  playbackStarted(utteranceId: string, generationEpoch: number): boolean {
+    // Read before the call, because starting playback is what makes it current.
+    const generation = this.session.currentGeneration
+    const started = this.session.playbackStarted(utteranceId, generationEpoch)
+    if (
+      started
+      && generation !== null
+      && generation.utterance_id === utteranceId
+      && generation.generation_epoch === generationEpoch
+      && this.#telemetry !== undefined
+    ) {
+      const attribution = this.#playbackAttribution(generation.response_id)
+      if (attribution !== null) this.#telemetry.record('playback.attribution', attribution)
+    }
+    return started
+  }
+
+  /**
+   * What this turn was speaking *about*, when that is unambiguous.
+   *
+   * Only a single suggestion counts: a turn carrying two is answering neither one in particular, and
+   * attributing it to either would be a guess recorded as a fact.
+   */
+  #playbackAttribution(responseId: string): Readonly<Record<string, JsonValue>> | null {
+    const suggestionEvents = this.session.responseEventIds(responseId)
+      .filter(eventId => eventId.startsWith('suggestion:'))
+    if (suggestionEvents.length === 1) {
+      const suggestionId = suggestionEvents[0]!.slice('suggestion:'.length)
+      const suggestion = this.#runtime.suggestionFor?.(suggestionId) ?? null
+      if (suggestion !== null && suggestion.kind === 'selected_progress') {
+        const memoryRef = suggestion.evidence_refs[0]
+        if (memoryRef !== undefined) {
+          return {target: 'selected_progress', memory_ref: memoryRef}
+        }
+      }
+    }
+    for (const state of this.#toolCalls.values()) {
+      if (
+        state.logical_name === 'memory.recall'
+        && state.acceptance.inline_fulfilled
+        && state.continuation_response_id === responseId
+      ) {
+        return {target: 'memory_recall'}
+      }
+    }
+    return null
+  }
+
+  /**
+   * The renderer finished playing a generation.
+   *
+   * The event ids are captured *before* completing, because completion is what clears the generation --
+   * and the suggestion confirmations below need to know what it was carrying.
+   */
+  playbackDone(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean {
+    const generation = this.session.currentGeneration
+    const urgentOwner = this.#urgentOwnerForGeneration(utteranceId, generationEpoch)
+    const eventIds = generation === null
+      ? []
+      : this.session.responseEventIds(generation.response_id)
+    const completion = this.session.completePlayback(utteranceId, generationEpoch, playedMs)
+    if (completion === null) return false
+    this.#recordOriginDeliveryProof(completion)
+    this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
+    for (const eventId of eventIds) {
+      // Confirmed only if it was actually spoken: a suggestion in a turn that was cut off has not been
+      // offered, and marking it fired would stop it ever being offered again.
+      if (eventId.startsWith('suggestion:') && this.session.eventWasSpoken(eventId)) {
+        this.#runtime.confirmSuggestionSpoken?.(eventId.slice('suggestion:'.length))
+      }
+    }
+    this.#releaseUrgentHostResponse(urgentOwner)
+    this.#deliveryReady.set()
+    return true
+  }
+
+  /** The renderer dropped a generation on request. */
+  playbackCleared(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean {
+    const urgentOwner = this.#urgentOwnerForGeneration(utteranceId, generationEpoch)
+    const cleared = this.session.playbackCleared(utteranceId, generationEpoch, playedMs)
+    if (!cleared) return false
+    // The acknowledgement arrived, so the deadline waiting for it has nothing left to retire.
+    this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
+    this.#releaseUrgentHostResponse(urgentOwner)
+    this.#deliveryReady.set()
+    return true
+  }
+
+  /** The renderer stopped playback without being asked -- a device change, or a closed window. */
+  async playbackStopped(
+    utteranceId: string,
+    generationEpoch: number,
+    playedMs: number | null,
+  ): Promise<boolean> {
+    const urgentOwner = this.#urgentOwnerForGeneration(utteranceId, generationEpoch)
+    const stopped = await this.session.playbackStopped(utteranceId, generationEpoch, playedMs)
+    if (!stopped) return false
+    this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
+    this.#releaseUrgentHostResponse(urgentOwner)
+    this.#deliveryReady.set()
+    return true
+  }
+
+  /**
+   * Record that a turn was audibly delivered, if it was.
+   *
+   * `played_ms > 0` when the renderer reported a duration, and otherwise whether it started at all.
+   * Zero milliseconds is not audible: the renderer began and produced no sound, which is exactly the
+   * case where assuming delivery would suppress an acknowledgement the user never heard.
+   *
+   * Only kept when something can still refer to it, and evicted oldest-first among the entries nothing
+   * live points at -- so a bounded ledger never drops the proof a pending acknowledgement is waiting on.
+   */
+  #recordOriginDeliveryProof(completion: PlaybackCompletion): void {
+    const audible = completion.played_ms === null
+      ? completion.started
+      : completion.played_ms > 0
+    if (completion.disposition !== 'spoken' || !audible) return
+    const key = callKey(completion.session_epoch, completion.response_id)
+    if (!this.#originCanReferenceProof(key)) return
+    this.#originDeliveryProofs.delete(key)
+    this.#originDeliveryProofs.set(key, null)
+    this.#pruneOriginDeliveryProofs()
+  }
+
+  /** Whether anything at all refers to this turn. A proof nothing can cite is not worth keeping. */
+  #originCanReferenceProof(key: string): boolean {
+    const {sessionEpoch, id: responseId} = parseCallKey(key)
+    if (this.#originDeferredToolCalls.some(deferred => (
+      deferred.event.session_epoch === sessionEpoch && deferred.response_id === responseId
+    ))) {
+      return true
+    }
+    for (const ledger of [this.#toolCalls, this.#overflowToolCalls]) {
+      for (const state of ledger.values()) {
+        if (
+          state.provider_session_epoch === sessionEpoch
+          && state.provider_response_id === responseId
+        ) {
+          return true
+        }
+      }
+    }
+    if (this.#continuationBatches.has(key)) return true
+    for (const acknowledgement of this.#semanticAcknowledgements.values()) {
+      if (
+        acknowledgement.origin_session_epoch === sessionEpoch
+        && acknowledgement.origin_response_id === responseId
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /** Whether anything *unfinished* refers to it, which is what makes it unsafe to evict. */
+  #originHasNonterminalReference(key: string): boolean {
+    const {sessionEpoch, id: responseId} = parseCallKey(key)
+    if (this.#originDeferredToolCalls.some(deferred => (
+      deferred.event.session_epoch === sessionEpoch && deferred.response_id === responseId
+    ))) {
+      return true
+    }
+    for (const ledger of [this.#toolCalls, this.#overflowToolCalls]) {
+      for (const state of ledger.values()) {
+        if (
+          state.provider_session_epoch === sessionEpoch
+          && state.provider_response_id === responseId
+          && state.final_disposition === null
+        ) {
+          return true
+        }
+      }
+    }
+    const batch = this.#continuationBatches.get(key)
+    if (batch !== undefined && batch.phase !== 'terminal' && batch.phase !== 'abandoned') return true
+    for (const acknowledgement of this.#semanticAcknowledgements.values()) {
+      if (
+        acknowledgement.origin_session_epoch === sessionEpoch
+        && acknowledgement.origin_response_id === responseId
+        && acknowledgement.phase !== 'delivered'
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * Keep the ledger bounded, evicting what nothing unfinished depends on.
+   *
+   * When *everything* is still referenced there is no safe choice, so the newest goes: the older
+   * proofs have waited longer and are likelier to be the one something is about to ask for.
+   */
+  #pruneOriginDeliveryProofs(): void {
+    while (this.#originDeliveryProofs.size > MAX_TRACKED_ORIGIN_DELIVERY_PROOFS) {
+      let evictable: string | undefined
+      for (const key of this.#originDeliveryProofs.keys()) {
+        if (!this.#originHasNonterminalReference(key)) {
+          evictable = key
+          break
+        }
+      }
+      if (evictable === undefined) {
+        const newest = [...this.#originDeliveryProofs.keys()].at(-1)
+        if (newest !== undefined) this.#originDeliveryProofs.delete(newest)
+        return
+      }
+      this.#originDeliveryProofs.delete(evictable)
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Family L: Guard preemption.
+  //
+  // A Guard alert is the one thing allowed to interrupt the agent mid-sentence, and interrupting is
+  // the hard part. The provider has to be told to stop, the renderer has to be told to drop the audio
+  // already in flight, and the replacement has to start speaking -- with no guarantee any of the three
+  // acknowledges. So every step is deadlined: if the provider does not confirm the cancel, the host
+  // stops waiting and speaks anyway; if the renderer does not confirm the clear, the generation is
+  // retired as unknown rather than left pending forever.
+  //
+  // The token is what makes that safe. Each preemption carries one, and every deferred callback checks
+  // it before acting -- so a deadline belonging to a preemption that has already resolved does
+  // nothing, instead of tearing down the one that replaced it.
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * The provider refused to cancel, so take the session away from it.
+   *
+   * The last resort. The provider was asked to stop, said it would not, and the alert is still waiting
+   * -- so the whole provider session is replaced under the preemption rather than letting the old turn
+   * run to completion. Gated behind `controlledGuardReconnect` because it is a heavy remedy for a case
+   * that should not happen.
+   *
+   * `#reconnectLock` before `#deliveryLock`, never the reverse: that order is fixed across this layer,
+   * and this is the one method that holds both.
+   *
+   * Seven conditions have to hold before the permit is spent. Together they say: this rejection is
+   * about *this* preemption, in the current session, for a turn that is still trying to cancel and has
+   * not produced anything yet. Anything else and a reconnect would be discarding a session that is
+   * working.
+   */
+  async #handleGuardCancelRejected(event: {
+    readonly session_epoch: number
+    readonly response_id: string
+  }): Promise<void> {
+    if (!this.#controlledGuardReconnect) return
+    await this.#reconnectLock.run(async () => {
+      await this.#deliveryLock.run(async () => {
+        const preemption = this.#guardPreemption
+        if (
+          preemption?.session_epoch !== event.session_epoch
+          || preemption.session_epoch !== this.session.sessionEpoch
+          || preemption.old_response_id !== event.response_id
+          || preemption.reconnect_permit_consumed
+          || preemption.reconnect_disallowed
+          || this.session.providerTurnPhase(event.response_id) !== 'cancel_requested'
+          // A turn that has already produced events has said something to the user; replacing the
+          // session under it would lose whatever that was.
+          || this.session.responseEventIds(event.response_id).length > 0
+        ) {
+          return
+        }
+        const queued = this.#hostItems
+          .find(candidate => candidate.intent.item.event_id === preemption.event_id)
+        const oldGeneration = preemption.old_generation
+        if (queued === undefined || oldGeneration === null) return
+
+        const spent: GuardPreemption = {
+          ...preemption,
+          cancel_sent: true,
+          reconnect_permit_consumed: true,
+        }
+        this.#guardPreemption = spent
+        if (spent.deadline_fired) {
+          // The alert already fenced the retained renderer generation. Anchor its uncertainty bound
+          // now, before a slow reconnect; ordinary Guard alerts never consume this permit.
+          this.#startGuardClearDeadline(oldGeneration)
+        }
+        const oldEpoch = this.session.sessionEpoch
+        const history = this.#guardRecoveryHistory()
+        try {
+          const historyOutcome = await this.session.reconnectForGuard({
+            tools: structuredClone(this.#providerSchemas),
+            oldGeneration,
+            confirmationTimeout: 0.5,
+            history,
+            historyMode: this.#guardHistoryRecovery,
+          })
+          this.#providerEpochNeedingActivation = this.session.sessionEpoch
+          if (this.#guardHistoryRecovery !== 'none') {
+            this.#telemetry?.record('guard.history_recovery', {
+              arm: this.#guardHistoryRecovery,
+              outcome: historyOutcome,
+              item_count: history.length,
+              pair_count: Math.floor(history.length / 2),
+              character_count: history.reduce((total, turn) => total + turn.text.length, 0),
+            })
+          }
+          this.#awaitingUserOrigin = false
+          this.#userOriginPreexistingResponseId = null
+          this.#unboundUserOriginItems.length = 0
+          this.#responseUserOriginItems.clear()
+          this.#userOriginRefs.clear()
+          this.#originDeferredToolCalls.length = 0
+          this.#releaseUrgentHostResponseForEpoch(oldEpoch)
+          this.#clearCaptions()
+          this.#audioStarted.clear()
+          this.#reconcileToolStateAfterReconnect(oldEpoch)
+          this.#reopenFailedSemanticAcknowledgements()
+          this.#reconcileSemanticAcknowledgementsAfterReconnect()
+          const current = this.#guardPreemption
+          // The world may have moved while reconnecting: a replacement preemption, or a user who
+          // started speaking and revoked the authority this was borrowing.
+          if (current?.token !== spent.token) return
+          if (current.reconnect_aborted) {
+            this.#clearGuardPreemption(current.token)
+            return
+          }
+          this.#guardPreemption = {
+            ...current,
+            session_epoch: this.session.sessionEpoch,
+            old_response_id: null,
+          }
+          await this.#deliverCapturedGuardLocked(queued)
+        } catch (failure) {
+          this.#telemetry?.record('guard.history_recovery_failure', {
+            arm: this.#guardHistoryRecovery,
+            reason: diagnosticName(failure),
+          })
+          this.#onDiagnostic(
+            `[realtime-diagnostic] guard_reconnect_failure type=${diagnosticName(failure)}`,
+          )
+          // A failed reconnect leaves no working provider and no way to speak the alert. Stopping is
+          // the only honest outcome.
+          this.#providerFailed = true
+          this.#stop.abort()
+          this.#deliveryReady.set()
+        }
+      })
+    })
+  }
+
+  /** Recent conversation to hand a replacement provider, so it does not start blank. */
+  #guardRecoveryHistory(): readonly RecoveryTurn[] {
+    if (this.#guardHistoryRecovery === 'none') return []
+    const channel = this.#runtime.memory?.channels.get('conversation')
+    if (channel === undefined) return []
+    const history = projectRecoveryTurns(channel.items, {maxPairs: this.#guardHistoryPairs})
+    if (this.#guardHistoryRecovery === 'packed') return packRecoveryTurns(history).turns
+    return history
+  }
+
+  /**
+   * Deliver the exact Guard captured before the reconnect, independent of heap order.
+   *
+   * Not through the ordinary flush: the item was chosen before the session was replaced, and re-running
+   * the priority comparison now could deliver something else into a session that exists solely to
+   * carry this one. Removed from the heap by identity and re-heapified, rather than popped.
+   */
+  async #deliverCapturedGuardLocked(queued: QueuedHostResponse): Promise<void> {
+    const index = this.#hostItems.indexOf(queued)
+    if (index === -1) return
+    this.#hostItems.splice(index, 1)
+    this.#hostItems.sort(compareQueuedHostResponses)
+    const userActivation = this.#guardActivationRequired(queued)
+    let delivery
+    try {
+      delivery = await this.session.deliverPreemptiveHostResponse(queued.intent, {
+        confirmationTimeout: 0.5,
+        responseAllowed: () => this.#guardResponseIsAllowed(queued.intent.item.event_id),
+        asUserActivation: userActivation,
+      })
+    } catch (cause) {
+      this.#requeueHostItem(queued)
+      throw cause
+    }
+    if (!delivery.accepted) {
+      this.#requeueHostItem(queued)
+      this.#recomputePreemptPriority()
+      return
+    }
+    if (userActivation) {
+      this.#providerEpochNeedingActivation = null
+      this.#providerReconnectSourceEpoch = null
+    }
+    this.#recomputePreemptPriority()
+    if (queued.semantic_event_id !== null) {
+      const acknowledgement = this.#semanticAcknowledgements.get(queued.semantic_event_id)
+      if (acknowledgement?.phase === 'queued') acknowledgement.phase = 'requested'
+    }
+    if (
+      !this.#stop.signal.aborted
+      && !this.#providerFailed
+      && delivery.injectionEpoch === this.session.sessionEpoch
+    ) {
+      this.#urgentDeliveryToken += 1
+      this.#urgentHostResponseOwner = {
+        delivery_token: this.#urgentDeliveryToken,
+        session_epoch: delivery.injectionEpoch,
+        event_id: queued.intent.item.event_id,
+        queued,
+        response_id: null,
+        generation: null,
+      }
+    }
+    this.#telemetry?.record('hostitem.injected', {event_id: queued.intent.item.event_id})
+  }
+
+  /**
+   * Whether the replacement turn may still speak.
+   *
+   * Checked at the moment the provider is about to create it, not when it was requested: a user who
+   * started talking in between has revoked the authority, and an aborted reconnect means the session
+   * this was for is gone.
+   */
+  #guardResponseIsAllowed(eventId: string): boolean {
+    const preemption = this.#guardPreemption
+    return preemption !== null
+      && preemption.event_id === eventId
+      && !preemption.reconnect_aborted
+      && this.session.floor.state !== 'user_speaking'
+  }
+
+  /**
+   * Bind the urgent item to the response now speaking it.
+   *
+   * The owner is created at delivery, before any response exists, so this is where it learns which one
+   * it became. Matched by *event id within the response*, not by timing: another response could start
+   * in the same instant, and binding to the wrong one would mean the alert is later considered spoken
+   * when something else was.
+   */
+  #bindUrgentHostResponse(event: {
+    readonly kind: string
+    readonly session_epoch: number
+    readonly response_id: string
+  }): void {
+    const owner = this.#urgentHostResponseOwner
+    if (owner?.session_epoch !== event.session_epoch) return
+    let bound = owner
+    if (owner.response_id === null) {
+      if (event.kind !== 'response_started') return
+      if (!this.session.responseEventIds(event.response_id).includes(owner.event_id)) return
+      bound = {...owner, response_id: event.response_id}
+    } else if (owner.response_id !== event.response_id) {
+      return
+    }
+    const generation = this.session.currentGeneration
+    if (
+      generation !== null
+      && generation.session_epoch === event.session_epoch
+      && generation.response_id === event.response_id
+    ) {
+      bound = {...bound, generation}
+    }
+    // The token guards against a replacement owner having appeared while this was being computed.
+    if (this.#urgentHostResponseOwner?.delivery_token === bound.delivery_token) {
+      this.#urgentHostResponseOwner = bound
+    }
+  }
+
+  /**
+   * The replacement is audibly speaking, so the preemption is over.
+   *
+   * This is the success path, and it is deliberately the *only* one that reports the switch latency:
+   * the deadline path fires when the provider did not cooperate, and timing that would measure the
+   * timeout rather than the handover.
+   */
+  #finishGuardFirstAudio(event: {
+    readonly session_epoch: number
+    readonly response_id: string
+  }): void {
+    const preemption = this.#guardPreemption
+    const owner = this.#urgentHostResponseOwner
+    const generation = this.session.currentGeneration
+    if (
+      preemption === null
+      || owner === null
+      || generation === null
+      || preemption.event_id !== owner.event_id
+      || preemption.session_epoch !== event.session_epoch
+      || owner.response_id !== event.response_id
+      || generation.session_epoch !== event.session_epoch
+      || generation.response_id !== event.response_id
+    ) {
+      return
+    }
+    const token = preemption.token
+    this.#clearGuardPreemption(token)
+    if (
+      this.#controlledGuardReconnect
+      && preemption.reconnect_permit_consumed
+      && preemption.old_generation !== null
+    ) {
+      this.#startGuardClearDeadline(preemption.old_generation)
+    }
+    this.#telemetry?.record('guard.first_audio_switch', {
+      elapsed_ms: Math.max(0, Math.round((this.#clock.now() - preemption.queued_at) * 1_000)),
+    })
+  }
+
+  /**
+   * Stop waiting for the provider to confirm the cancel.
+   *
+   * The provider was asked to stop and has not said it did. Past the deadline the host acts as though
+   * it had -- the alternative is the user hearing the old turn continue while an urgent alert waits
+   * behind it, which is the failure preemption exists to prevent.
+   */
+  async #fireGuardAlertDeadline(preemption: GuardPreemption): Promise<void> {
+    try {
+      const delay = Math.max(
+        0,
+        preemption.queued_at + GUARD_ALERT_DEADLINE_S - this.#clock.now(),
+      )
+      await this.#clock.sleep(delay, this.#guardAlertAbort?.signal)
+      const current = this.#guardPreemption
+      // Re-read, never trusted: the preemption this timer belongs to may have resolved, been replaced,
+      // or already fired while this was sleeping.
+      if (current?.token !== preemption.token || current.deadline_fired) return
+      if (current.reconnect_aborted) {
+        this.#clearGuardPreemption(current.token)
+        return
+      }
+      const controlledHandoff = current.reconnect_permit_consumed
+      const expired = controlledHandoff && current.old_generation !== null
+        ? this.session.alertGuardHandoff(current.old_generation)
+        : this.session.expireHostPreempt(current.old_generation)
+      if (!expired) return
+      this.#guardPreemption = {...current, deadline_fired: true}
+      if (
+        this.#controlledGuardReconnect
+        && current.reconnect_permit_consumed
+        && current.old_generation !== null
+      ) {
+        this.#startGuardClearDeadline(current.old_generation)
+      }
+      this.#telemetry?.record('guard.alert_deadline_fired', {})
+      // Both halves are done, so nothing is left to wait for.
+      if (current.replacement_terminal) this.#clearGuardPreemption(current.token)
+      this.#deliveryReady.set()
+    } catch (failure) {
+      if (isAbort(failure)) return
+      this.#onDiagnostic(`[realtime-diagnostic] guard_alert_failure type=${diagnosticName(failure)}`)
+    }
+  }
+
+  /**
+   * End a preemption, cancelling its deadline.
+   *
+   * The token argument is how a caller says "only if this is still the one I mean" -- without it, a
+   * late callback would clear a preemption that started after the one it belonged to.
+   */
+  #clearGuardPreemption(token?: number): void {
+    const current = this.#guardPreemption
+    if (current === null || (token !== undefined && current.token !== token)) return
+    this.#guardPreemption = null
+    const abort = this.#guardAlertAbort
+    this.#guardAlertAbort = null
+    abort?.abort()
+  }
+
+  /**
+   * Wait for the renderer to confirm it dropped the cleared audio.
+   *
+   * Keyed by generation and idempotent: the clear can be re-sent, and a second deadline for the same
+   * generation would retire it twice.
+   */
+  #startGuardClearDeadline(generation: PlaybackGeneration): void {
+    const key = `${generation.utterance_id}:${generation.generation_epoch}`
+    if (this.#guardClearDeadlines.has(key)) return
+    const abort = new AbortController()
+    this.#guardClearDeadlines.set(key, abort)
+    void this.#retireGuardClearUnknown(generation, key, abort.signal)
+  }
+
+  /**
+   * Give up on the renderer's clear acknowledgement.
+   *
+   * Retiring the generation as *unknown* rather than cleared is the honest answer: the host does not
+   * know how much of it the user heard, and recording either extreme would be a claim it cannot
+   * support.
+   */
+  async #retireGuardClearUnknown(
+    generation: PlaybackGeneration,
+    key: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      await this.#clock.sleep(GUARD_CLEAR_ACK_DEADLINE_S, signal)
+      if (!this.session.retirePlaybackClearUnknown(generation)) return
+      this.#telemetry?.record('renderer_clear_unknown', {
+        session_epoch: generation.session_epoch,
+        generation_epoch: generation.generation_epoch,
+      })
+      this.#deliveryReady.set()
+    } catch (failure) {
+      if (!isAbort(failure)) throw failure
+    } finally {
+      if (this.#guardClearDeadlines.get(key)?.signal === signal) {
+        this.#guardClearDeadlines.delete(key)
+      }
+    }
+  }
+
+  #cancelGuardClearDeadline(utteranceId: string, generationEpoch: number): void {
+    const key = `${utteranceId}:${generationEpoch}`
+    const abort = this.#guardClearDeadlines.get(key)
+    if (abort === undefined) return
+    this.#guardClearDeadlines.delete(key)
+    abort.abort()
+  }
+
+  /** Record how the cancelled turn actually ended, which is the only measure of whether it worked. */
+  #recordGuardCancelTerminal(event: {
+    readonly session_epoch: number
+    readonly response_id: string
+    readonly status: string
+    readonly reason: string
+  }): void {
+    const preemption = this.#guardPreemption
+    if (
+      preemption?.session_epoch !== event.session_epoch
+      || preemption.old_response_id !== event.response_id
+    ) {
+      return
+    }
+    // Only a client-requested cancellation means the preemption did it. A turn that ended by itself in
+    // the same moment looks identical from outside and is not the same event.
+    const success = event.status === 'cancelled' && event.reason === 'client_cancelled'
+    const reasonCategory = event.status === 'cancelled'
+      ? (success ? 'client_cancelled' : 'other_cancelled')
+      : event.status
+    this.#telemetry?.record('provider.cancel_terminal', {
+      status: event.status,
+      reason_category: reasonCategory,
+      success,
+      elapsed_ms: Math.max(0, Math.round((this.#clock.now() - preemption.queued_at) * 1_000)),
+    })
+  }
+
+  /** Note that the cancel actually reached the provider. Once per preemption. */
+  #recordGuardCancelSent(responseId: string): void {
+    const preemption = this.#guardPreemption
+    if (
+      preemption?.session_epoch !== this.session.sessionEpoch
+      || preemption.old_response_id !== responseId
+      || preemption.cancel_sent
+    ) {
+      return
+    }
+    this.#guardPreemption = {...preemption, cancel_sent: true}
+    this.#telemetry?.record('provider.cancel_sent', {
+      elapsed_ms: Math.max(0, Math.round((this.#clock.now() - preemption.queued_at) * 1_000)),
+    })
+  }
+
+  /**
+   * The replacement turn has ended.
+   *
+   * Half of the two-sided finish: the preemption is over when the replacement has finished *and* the
+   * old turn has been dealt with. Whichever arrives second does the clearing.
+   */
+  #markGuardReplacementTerminal(owner: UrgentHostResponseOwner | null): void {
+    const preemption = this.#guardPreemption
+    if (
+      owner === null
+      || preemption?.event_id !== owner.event_id
+      || preemption.session_epoch !== owner.session_epoch
+    ) {
+      return
+    }
+    const marked = {...preemption, replacement_terminal: true}
+    this.#guardPreemption = marked
+    if (marked.deadline_fired) this.#clearGuardPreemption(marked.token)
+  }
+
+  /**
+   * Release an urgent item that was fenced before it ever started.
+   *
+   * A fence receipt naming it means the provider never began the response carrying it. Holding the
+   * owner would block every later preemption behind one that is never going to speak.
+   */
+  #retireFencedPrestartUrgent(): void {
+    const receipt = this.session.takeFenceInterruption()
+    const owner = this.#urgentHostResponseOwner
+    if (
+      receipt === null
+      || owner?.response_id !== null
+      || owner.session_epoch !== receipt.session_epoch
+      || !receipt.event_ids.includes(owner.event_id)
+    ) {
+      return
+    }
+    this.#releaseUrgentHostResponse(owner)
+  }
+
+  #urgentOwnerForResponse(sessionEpoch: number, responseId: string): UrgentHostResponseOwner | null {
+    const owner = this.#urgentHostResponseOwner
+    if (owner?.session_epoch !== sessionEpoch || owner.response_id !== responseId) return null
+    return owner
+  }
+
+  #urgentOwnerForGeneration(
+    utteranceId: string,
+    generationEpoch: number,
+  ): UrgentHostResponseOwner | null {
+    const generation = this.#urgentHostResponseOwner?.generation
+    if (
+      generation?.utterance_id !== utteranceId
+      || generation.generation_epoch !== generationEpoch
+    ) {
+      return null
+    }
+    return this.#urgentHostResponseOwner
+  }
+
+  /** Release this exact owner. The token is what stops a stale caller releasing its replacement. */
+  #releaseUrgentHostResponse(owner: UrgentHostResponseOwner | null): void {
+    const current = this.#urgentHostResponseOwner
+    if (
+      owner !== null
+      && current !== null
+      && current.delivery_token === owner.delivery_token
+    ) {
+      this.#urgentHostResponseOwner = null
+    }
+  }
+
+  #releaseUrgentHostResponseForEpoch(sessionEpoch: number): void {
+    if (this.#urgentHostResponseOwner?.session_epoch === sessionEpoch) {
+      this.#urgentHostResponseOwner = null
+    }
+  }
+
   /** Read-only views the tests and the desktop layer use. */
   get pendingHostItemCount(): number {
     return this.#hostItems.length
@@ -2466,6 +3351,16 @@ export class RealtimeService {
   /** Each tracked tool call's final disposition, in admission order. */
   get toolCallDispositionsForTest(): readonly (string | null)[] {
     return [...this.#toolCalls.values()].map(state => state.final_disposition)
+  }
+
+  /**
+   * The preemption in flight, if any.
+   *
+   * Its flags are the whole state machine -- whether the cancel was sent, whether the deadline fired,
+   * whether the reconnect permit was spent -- and none of that is visible from outside otherwise.
+   */
+  get guardPreemptionForTest(): GuardPreemption | null {
+    return this.#guardPreemption
   }
 
   /** Which response holds which user turn, in binding order. */
@@ -2770,6 +3665,11 @@ export function formatSeconds(value: number): string {
   if (remainder > 0.5) return `${floor + 1}`
   if (remainder < 0.5) return `${floor}`
   return `${floor % 2 === 0 ? floor : floor + 1}`
+}
+
+/** Whether this rejection is an abort, which is an ordinary cancellation rather than a failure. */
+function isAbort(cause: unknown): boolean {
+  return cause instanceof Error && (cause.name === 'AbortError' || cause.name === 'TimeoutError')
 }
 
 function diagnosticName(cause: unknown): string {
