@@ -21,7 +21,15 @@ const MAX_MP4_BOXES = 4_096
 const EXPECTED_VIDEO = Object.freeze({
   codec: 'h264',
   sampleEntry: 'avc1',
+  profileIdc: 100,
+  profileCompatibility: 0,
+  levelIdc: 31,
+  chromaFormatIdc: 1,
   chromaSubsampling: '4:2:0',
+  separateColourPlaneFlag: 0,
+  bitDepthLuma: 8,
+  bitDepthChroma: 8,
+  pixelFormat: 'yuv420p',
   width: 1280,
   height: 720,
   timescale: 15_360,
@@ -103,7 +111,15 @@ export function inspectLockedCameraMp4(input) {
     const metadata = videoTracks[0]
     if (metadata.codec !== EXPECTED_VIDEO.codec
       || metadata.sampleEntry !== EXPECTED_VIDEO.sampleEntry
+      || metadata.profileIdc !== EXPECTED_VIDEO.profileIdc
+      || metadata.profileCompatibility !== EXPECTED_VIDEO.profileCompatibility
+      || metadata.levelIdc !== EXPECTED_VIDEO.levelIdc
+      || metadata.chromaFormatIdc !== EXPECTED_VIDEO.chromaFormatIdc
       || metadata.chromaSubsampling !== EXPECTED_VIDEO.chromaSubsampling
+      || metadata.separateColourPlaneFlag !== EXPECTED_VIDEO.separateColourPlaneFlag
+      || metadata.bitDepthLuma !== EXPECTED_VIDEO.bitDepthLuma
+      || metadata.bitDepthChroma !== EXPECTED_VIDEO.bitDepthChroma
+      || metadata.pixelFormat !== EXPECTED_VIDEO.pixelFormat
       || metadata.width !== EXPECTED_VIDEO.width
       || metadata.height !== EXPECTED_VIDEO.height
       || metadata.timescale !== EXPECTED_VIDEO.timescale
@@ -195,7 +211,15 @@ function inspectVideoTrack(bytes, track, movieTimescale, state) {
   return {
     codec: 'h264',
     sampleEntry: sampleEntry.type,
-    chromaSubsampling: sampleEntry.chromaFormatIdc === 1 ? '4:2:0' : 'unsupported',
+    profileIdc: sampleEntry.profileIdc,
+    profileCompatibility: sampleEntry.profileCompatibility,
+    levelIdc: sampleEntry.levelIdc,
+    chromaFormatIdc: sampleEntry.chromaFormatIdc,
+    chromaSubsampling: sampleEntry.pixelFormat === 'yuv420p' ? '4:2:0' : 'unsupported',
+    separateColourPlaneFlag: sampleEntry.separateColourPlaneFlag,
+    bitDepthLuma: sampleEntry.bitDepthLuma,
+    bitDepthChroma: sampleEntry.bitDepthChroma,
+    pixelFormat: sampleEntry.pixelFormat,
     width: sampleEntry.width,
     height: sampleEntry.height,
     timescale,
@@ -216,33 +240,72 @@ function readVisualSampleEntry(bytes, stsd, state) {
   const height = readU16(bytes, entry.dataStart + 26)
   const entryChildren = readBoxes(bytes, entry.dataStart + 78, entry.end, state)
   const configuration = requireSingleBox(entryChildren, 'avcC')
-  const chromaFormatIdc = readAvcChromaFormat(bytes, configuration)
-  return {type: entry.type, width, height, chromaFormatIdc}
+  const avc = readAvcConfiguration(bytes, configuration)
+  return {type: entry.type, width, height, ...avc}
 }
 
-function readAvcChromaFormat(bytes, configuration) {
+function readAvcConfiguration(bytes, configuration) {
   requireRange(configuration.dataStart, 8, configuration.end)
   if (bytes[configuration.dataStart] !== 1) throw new Error('invalid AVC config')
-  const profile = bytes[configuration.dataStart + 1]
+  const profileIdc = bytes[configuration.dataStart + 1]
+  const profileCompatibility = bytes[configuration.dataStart + 2]
+  const levelIdc = bytes[configuration.dataStart + 3]
   const spsCount = bytes[configuration.dataStart + 5] & 0x1f
   if (spsCount < 1) throw new Error('missing SPS')
   const spsBytes = readU16(bytes, configuration.dataStart + 6)
   const spsStart = configuration.dataStart + 8
   requireRange(spsStart, spsBytes, configuration.end)
   const sps = bytes.subarray(spsStart, spsStart + spsBytes)
-  if (sps.byteLength < 4 || (sps[0] & 0x1f) !== 7 || sps[1] !== profile) {
+  if (sps.byteLength < 4 || (sps[0] & 0x1f) !== 7
+    || sps[1] !== profileIdc
+    || sps[2] !== profileCompatibility
+    || sps[3] !== levelIdc) {
     throw new Error('invalid SPS')
   }
   const rbsp = removeEmulationPrevention(sps.subarray(1))
   const reader = new BitReader(rbsp)
-  const profileIdc = reader.readBits(8)
-  reader.readBits(8)
-  reader.readBits(8)
+  if (reader.readBits(8) !== profileIdc
+    || reader.readBits(8) !== profileCompatibility
+    || reader.readBits(8) !== levelIdc) throw new Error('invalid SPS')
   reader.readUnsignedExpGolomb()
+  let chromaFormatIdc = 1
+  let separateColourPlaneFlag = 0
+  let bitDepthLumaMinus8 = 0
+  let bitDepthChromaMinus8 = 0
   if (![100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135].includes(profileIdc)) {
-    return 1
+    return {
+      profileIdc,
+      profileCompatibility,
+      levelIdc,
+      chromaFormatIdc,
+      separateColourPlaneFlag,
+      bitDepthLuma: 8,
+      bitDepthChroma: 8,
+      pixelFormat: 'yuv420p',
+    }
   }
-  return reader.readUnsignedExpGolomb()
+  chromaFormatIdc = reader.readUnsignedExpGolomb()
+  if (chromaFormatIdc > 3) throw new Error('invalid SPS')
+  if (chromaFormatIdc === 3) separateColourPlaneFlag = reader.readBits(1)
+  bitDepthLumaMinus8 = reader.readUnsignedExpGolomb()
+  bitDepthChromaMinus8 = reader.readUnsignedExpGolomb()
+  const bitDepthLuma = 8 + bitDepthLumaMinus8
+  const bitDepthChroma = 8 + bitDepthChromaMinus8
+  const pixelFormat = chromaFormatIdc === 1
+    && separateColourPlaneFlag === 0
+    && bitDepthLumaMinus8 === 0
+    && bitDepthChromaMinus8 === 0
+    ? 'yuv420p' : 'unsupported'
+  return {
+    profileIdc,
+    profileCompatibility,
+    levelIdc,
+    chromaFormatIdc,
+    separateColourPlaneFlag,
+    bitDepthLuma,
+    bitDepthChroma,
+    pixelFormat,
+  }
 }
 
 function readSampleTiming(bytes, box) {

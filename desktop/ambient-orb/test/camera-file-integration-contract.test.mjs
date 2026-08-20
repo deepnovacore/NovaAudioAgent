@@ -30,7 +30,15 @@ test('camera file fixture authority verifies the committed cat-sofa bytes', asyn
   assert.equal(verified.height, 720)
   assert.equal(verified.codec, 'h264')
   assert.equal(verified.sampleEntry, 'avc1')
+  assert.equal(verified.profileIdc, 100)
+  assert.equal(verified.profileCompatibility, 0)
+  assert.equal(verified.levelIdc, 31)
+  assert.equal(verified.chromaFormatIdc, 1)
   assert.equal(verified.chromaSubsampling, '4:2:0')
+  assert.equal(verified.separateColourPlaneFlag, 0)
+  assert.equal(verified.bitDepthLuma, 8)
+  assert.equal(verified.bitDepthChroma, 8)
+  assert.equal(verified.pixelFormat, 'yuv420p')
   assert.equal(verified.timescale, 15_360)
   assert.equal(verified.sampleCount, 211)
   assert.equal(verified.frameRate, 30)
@@ -41,16 +49,28 @@ test('camera file fixture authority verifies the committed cat-sofa bytes', asyn
     'assets/demos/cat-sofa-guard/cat-sofa-guard.mp4')
 })
 
-test('locked MP4 parser rejects codec, dimensions, sample count, timing, and malformed boxes', async () => {
+test('locked MP4 parser rejects AVC profile, pixel format, timing, and malformed boxes', async () => {
   assert.equal(typeof cameraFileContract.inspectLockedCameraMp4, 'function')
   const original = new Uint8Array(await readFile(resolve(
     repositoryRoot, CAMERA_FILE_FIXTURE.assetRelative,
   )))
+  assert.deepEqual([...original.subarray(551, 564)], [
+    0x01, 0x64, 0x00, 0x1f, 0xff, 0xe1, 0x00,
+    0x1a, 0x67, 0x64, 0x00, 0x1f, 0xac,
+  ])
   const metadata = cameraFileContract.inspectLockedCameraMp4(original)
   assert.deepEqual(metadata, {
     codec: 'h264',
     sampleEntry: 'avc1',
+    profileIdc: 100,
+    profileCompatibility: 0,
+    levelIdc: 31,
+    chromaFormatIdc: 1,
     chromaSubsampling: '4:2:0',
+    separateColourPlaneFlag: 0,
+    bitDepthLuma: 8,
+    bitDepthChroma: 8,
+    pixelFormat: 'yuv420p',
     width: 1280,
     height: 720,
     timescale: 15_360,
@@ -68,6 +88,23 @@ test('locked MP4 parser rejects codec, dimensions, sample count, timing, and mal
   for (const [label, offset, value] of corruptions) {
     const corrupted = new Uint8Array(original)
     corrupted[offset] = value
+    assert.throws(
+      () => cameraFileContract.inspectLockedCameraMp4(corrupted),
+      /camera fixture invalid/u,
+      label,
+    )
+  }
+
+  const avcCorruptions = [
+    ['profile', [[552, 0x6e], [560, 0x6e]]],
+    ['compatibility', [[553, 0x40], [561, 0x40]]],
+    ['level', [[554, 0x2a], [562, 0x2a]]],
+    ['luma bit depth', [[563, 0xa4]]],
+    ['chroma bit depth', [[563, 0xa8]]],
+  ]
+  for (const [label, patches] of avcCorruptions) {
+    const corrupted = new Uint8Array(original)
+    for (const [offset, value] of patches) corrupted[offset] = value
     assert.throws(
       () => cameraFileContract.inspectLockedCameraMp4(corrupted),
       /camera fixture invalid/u,
