@@ -1,0 +1,163 @@
+/* eslint-disable @typescript-eslint/require-await -- test owner methods implement the async production contract */
+import {spawn, type ChildProcess} from 'node:child_process'
+import {fileURLToPath} from 'node:url'
+import type {Readable, Writable} from 'node:stream'
+
+import type {
+  ApprovedSpawnSpec,
+  CodexProcessOwnerFactory,
+  OwnedCodexProcess,
+} from '../../../src/codex-process-owner.js'
+
+export const FAKE_APP_SERVER_PATH = fileURLToPath(new URL(
+  '../../../../test/fixtures/codex/fake-app-server.mjs',
+  import.meta.url,
+))
+
+export type FakeAppServerScenario =
+  | 'happy-chunks'
+  | 'malformed-after-turn'
+  | 'stdout-overflow'
+  | 'stderr-overflow'
+  | 'delayed-turn'
+  | 'descendant-leader-first'
+  | 'descendant-ignore-term'
+
+export class FakeAppServerOwnerFactory implements CodexProcessOwnerFactory {
+  readonly #scenario: FakeAppServerScenario
+  owner: FakeAppServerOwner | null = null
+
+  constructor(scenario: FakeAppServerScenario) {
+    this.#scenario = scenario
+  }
+
+  async spawn(_spec: ApprovedSpawnSpec): Promise<FakeAppServerOwner> {
+    void _spec
+    const child = spawn(process.execPath, [FAKE_APP_SERVER_PATH, this.#scenario], {
+      cwd: process.cwd(),
+      env: {PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? ''},
+      shell: false,
+      detached: process.platform !== 'win32',
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+      windowsHide: true,
+    })
+    if (child.stdin === null || child.stdout === null || child.stderr === null || child.pid === undefined) {
+      child.kill('SIGKILL')
+      throw new Error('fake owner spawn failed')
+    }
+    const owner = new FakeAppServerOwner(child)
+    this.owner = owner
+    return owner
+  }
+}
+
+export class FakeAppServerOwner implements OwnedCodexProcess {
+  readonly stdin: Writable
+  readonly stdout: Readable
+  readonly stderr: Readable
+  readonly exit: Promise<number | null>
+  readonly pid: number
+  readonly #child: ChildProcess
+  readonly #barriers = new Map<string, (() => void)[]>()
+  readonly #seen = new Set<string>()
+  #stdinClosed = false
+
+  constructor(child: ChildProcess) {
+    if (child.stdin === null || child.stdout === null || child.stderr === null || child.pid === undefined) {
+      throw new Error('invalid fake child')
+    }
+    this.#child = child
+    this.stdin = child.stdin
+    this.stdout = child.stdout
+    this.stderr = child.stderr
+    this.pid = child.pid
+    this.exit = new Promise((resolve, reject) => {
+      child.once('exit', code => { resolve(code) })
+      child.once('error', reject)
+    })
+    void this.exit.catch(() => undefined)
+    child.on('message', message => {
+      if (!plain(message)) return
+      if (message.type === 'barrier' && typeof message.name === 'string') {
+        this.#seen.add(message.name)
+        for (const release of this.#barriers.get(message.name) ?? []) release()
+        this.#barriers.delete(message.name)
+      }
+    })
+  }
+
+  waitForBarrier(name: 'turn_start' | 'descendant_started'): Promise<void> {
+    if (this.#seen.has(name)) return Promise.resolve()
+    return new Promise(resolve => {
+      const waiting = this.#barriers.get(name) ?? []
+      waiting.push(resolve)
+      this.#barriers.set(name, waiting)
+    })
+  }
+
+  release(name: 'turn_start' | 'leader_exit'): void {
+    this.#child.send?.({type: 'release', name})
+  }
+
+  async closeStdin(): Promise<void> {
+    if (this.#stdinClosed) return
+    this.#stdinClosed = true
+    await new Promise<void>(resolve => { this.stdin.end(resolve) })
+  }
+
+  async waitTreeGone(graceMs: number): Promise<boolean> {
+    const deadline = Date.now() + graceMs
+    while (this.#treeAlive()) {
+      if (Date.now() >= deadline) return false
+      await new Promise<void>(resolve => { setTimeout(resolve, 10) })
+    }
+    return await settleWithin(this.exit, Math.max(1, deadline - Date.now()))
+  }
+
+  async terminateTree(): Promise<void> { this.#signal('SIGTERM') }
+  async killTree(): Promise<void> { this.#signal('SIGKILL') }
+
+  async dispose(): Promise<void> {
+    this.stdin.destroy()
+    this.stdout.destroy()
+    this.stderr.destroy()
+    this.#child.disconnect?.()
+  }
+
+  #treeAlive(): boolean {
+    try {
+      process.kill(process.platform === 'win32' ? this.pid : -this.pid, 0)
+      return true
+    } catch (error) {
+      return isErrno(error, 'EPERM')
+    }
+  }
+
+  #signal(signal: NodeJS.Signals): void {
+    try {
+      process.kill(process.platform === 'win32' ? this.pid : -this.pid, signal)
+    } catch (error) {
+      if (!isErrno(error, 'ESRCH')) throw error
+    }
+  }
+}
+
+async function settleWithin(work: Promise<unknown>, milliseconds: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      work.then(() => true, () => true),
+      new Promise<false>(resolve => { timer = setTimeout(() => { resolve(false) }, milliseconds) }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+function plain(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && Reflect.get(error, 'code') === code
+}

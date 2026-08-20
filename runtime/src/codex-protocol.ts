@@ -102,6 +102,22 @@ export class JsonRpcConnection {
     params: Readonly<Record<string, unknown>>,
     options: JsonRpcRequestOptions = {},
   ): Promise<unknown> {
+    return await this.#request(method, () => params, options)
+  }
+
+  async requestPrepared(
+    method: string,
+    prepare: () => Readonly<Record<string, unknown>>,
+    options: JsonRpcRequestOptions = {},
+  ): Promise<unknown> {
+    return await this.#request(method, prepare, options)
+  }
+
+  async #request(
+    method: string,
+    prepare: () => Readonly<Record<string, unknown>>,
+    options: JsonRpcRequestOptions,
+  ): Promise<unknown> {
     this.#raiseIfFailed()
     if (options.signal?.aborted === true) throw abortError()
     let resolveResponse!: (value: unknown) => void
@@ -114,9 +130,16 @@ export class JsonRpcConnection {
     await this.#serializeWrite(async () => {
       this.#raiseIfFailed()
       if (options.signal?.aborted === true) throw abortError()
-      this.#nextId += 1
-      const requestId = this.#nextId
+      let params: Readonly<Record<string, unknown>>
+      try {
+        params = prepare()
+      } catch (error) {
+        if (error instanceof CodexProtocolError) throw error
+        throw new CodexProtocolError('invalid_request')
+      }
+      const requestId = this.#nextId + 1
       const bytes = encodeMessage({method, id: requestId, params})
+      this.#nextId = requestId
       let onAbort: (() => void) | undefined
       const pending: PendingRequest = {
         resolve: resolveResponse,

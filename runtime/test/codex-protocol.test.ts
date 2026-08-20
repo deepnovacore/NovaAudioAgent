@@ -76,6 +76,64 @@ test('requests are compact UTF-8 LF frames and responses may arrive out of order
   connection.end()
 })
 
+test('prepared request parameters are read inside writer order without waiting for responses', async () => {
+  let releaseFirstWrite!: () => void
+  const firstWrite = new Promise<void>(resolve => { releaseFirstWrite = resolve })
+  const writes: Uint8Array[] = []
+  const connection = new JsonRpcConnection({write: bytes => {
+    writes.push(bytes)
+    return writes.length === 1 ? firstWrite : Promise.resolve()
+  }})
+  const candidate: unknown = Reflect.get(connection, 'requestPrepared')
+  const requestPrepared = typeof candidate === 'function'
+    ? (method: string, prepare: () => Readonly<Record<string, unknown>>) => (
+      connection.requestPrepared(method, prepare)
+    )
+    : (
+      method: string,
+      prepare: () => Readonly<Record<string, unknown>>,
+    ) => connection.request(method, prepare())
+
+  const first = connection.request('turn/start', {pair: 'initial'})
+  await settleUntil(() => writes.length === 1, 'blocked first write')
+  let activePair = 'stale'
+  const steer = requestPrepared('turn/steer', () => ({pair: activePair}))
+  activePair = 'current'
+  releaseFirstWrite()
+  await settleUntil(() => writes.length === 2, 'prepared steer write')
+
+  const secondFrame = JSON.parse(decoder.decode(writes[1])) as {params: {pair: string}}
+  assert.equal(secondFrame.params.pair, 'current')
+  await connection.feed(joinBytes([
+    jsonLine({id: 2, result: {turnId: 'turn-1'}}),
+    jsonLine({id: 1, result: {turn: {id: 'turn-1'}}}),
+  ]))
+  assert.deepEqual(await steer, {turnId: 'turn-1'})
+  assert.deepEqual(await first, {turn: {id: 'turn-1'}})
+})
+
+test('a prepared local refusal consumes no id, pending slot, write, or onWritten callback', async () => {
+  const writes: Uint8Array[] = []
+  const marked: number[] = []
+  const connection = new JsonRpcConnection({write: bytes => {
+    writes.push(bytes)
+    return Promise.resolve()
+  }})
+  const refused = connection.requestPrepared('turn/steer', () => {
+    throw new CodexProtocolError('stale_turn')
+  }, {onWritten: id => { marked.push(id) }})
+  assert.equal(await refused.catch(errorCode), 'stale_turn')
+  assert.deepEqual(connection.pendingRequestIds, [])
+  assert.deepEqual(writes, [])
+  assert.deepEqual(marked, [])
+
+  const following = connection.request('config/read', {})
+  await settleUntil(() => writes.length === 1, 'first id after prepared refusal')
+  assert.equal((JSON.parse(decoder.decode(writes[0])) as {id: unknown}).id, 1)
+  await connection.feed(jsonLine({id: 1, result: {safe: true}}))
+  assert.deepEqual(await following, {safe: true})
+})
+
 test('request bytes are bounded exactly and unserializable values are private-safe', async () => {
   const writes: Uint8Array[] = []
   const connection = new JsonRpcConnection({write: bytes => {
