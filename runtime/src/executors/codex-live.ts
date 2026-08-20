@@ -120,10 +120,14 @@ export class CodexLiveAdapter implements ExecutorAdapter {
     let consumedWarmState = false
     try {
       return await this.#core.run(workOrder, context, {
-        prepare: async () => {
+        prepare: async runSignal => {
           const warming = this.#prewarmTask
           if (warming !== null) await warming
-          if (this.#closed) throw new CodexAdapterClosedError()
+          if (
+            runSignal.aborted
+            || context.signal.aborted
+            || this.#closed
+          ) throw new CodexAdapterClosedError()
           consumedWarmState = true
           const ready = this.#core.status.prewarm === 'ready' ? this.#prewarmReport : null
           this.#prewarmReport = null

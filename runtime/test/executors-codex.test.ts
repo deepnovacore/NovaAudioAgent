@@ -557,6 +557,27 @@ test('ordinary rejects contradictory classification and code combinations', asyn
   }
 })
 
+test('ordinary refusal matrix follows only real 6B pre-write paths', async () => {
+  for (const [code, expectedCode] of [
+    ['server_rejected', 'worker_refused'],
+    ['unexpected_server_request', 'worker_refused'],
+    ['resume_unavailable', 'worker_refused'],
+    ['turn_failed', 'invalid_worker_result'],
+    ['missing_terminal', 'invalid_worker_result'],
+    ['nonzero_exit', 'invalid_worker_result'],
+  ] as const) {
+    const transport = new ScriptedTransport()
+    transport.outcome = {classification: 'refused', code, turnStartWritten: false, completion: null}
+    const handoff = await new CodexAdapter(transport).dispatch(
+      'run', {work_order: 'typed refusal'}, contextFor('run', {}),
+    )
+
+    assert.equal(handoff.content.code, expectedCode)
+    assert.equal(handoff.outcome, 'failed')
+    assert.equal(handoff.trust, 'trusted_system')
+  }
+})
+
 test('ordinary cancellation waits for transport settlement, rethrows, and releases busy state', async () => {
   // This fails if cancellation fabricates a handoff or leaves the adapter permanently busy.
   const controller = new AbortController()

@@ -276,6 +276,87 @@ test('live pre-aborted run neither waits for nor consumes shared warm state', as
   assert.deepEqual(transport.calls, ['prewarm'])
 })
 
+test('cancelled warm join cannot consume a report after its cleanup grace expires', async () => {
+  // This fails if a detached prepare continuation mutates the next run's ready generation.
+  const clock = new VirtualClock(7)
+  const entered = deferred<void>()
+  const release = deferred<void>()
+  const transport = new LiveTransport()
+  transport.prewarmAction = async () => {
+    entered.resolve()
+    await release.promise
+    return PREFLIGHT
+  }
+  const adapter = new CodexLiveAdapter(transport, {
+    wallNowMilliseconds: () => 1_000,
+    lifecycleClock: clock,
+  })
+  const warming = adapter.prewarm()
+  await entered.promise
+  const controller = new AbortController()
+  const cancelled = adapter.dispatch(
+    'run', {work_order: 'cancelled join'}, context('run', {}, {clock, signal: controller.signal}),
+  )
+  controller.abort()
+  for (let attempt = 0; attempt < 20 && clock.nextTimerTimestamp() !== 13; attempt += 1) {
+    await yieldImmediate()
+  }
+  assert.equal(clock.nextTimerTimestamp(), 13, 'cleanup grace must replace the run deadline')
+  clock.advanceTo(13)
+  await assert.rejects(cancelled, {name: 'AbortError'})
+
+  release.resolve()
+  await warming
+  assert.equal(adapter.status.prewarm, 'ready')
+  const next = await adapter.dispatch('run', {work_order: 'consume ready'}, context('run', {}, {clock}))
+
+  assert.equal(next.outcome, 'ok')
+  assert.deepEqual(transport.calls, ['prewarm', 'run'])
+  assert.equal(adapter.status.prewarm, 'cold')
+})
+
+test('expired warm join cannot consume a report during its cleanup grace', async () => {
+  // This distinguishes the aggregate deadline signal from the caller cancellation signal.
+  const runClock = new VirtualClock(7)
+  const warmClock = new VirtualClock(7)
+  const entered = deferred<void>()
+  const release = deferred<void>()
+  const transport = new LiveTransport()
+  transport.prewarmAction = async () => {
+    entered.resolve()
+    await release.promise
+    return PREFLIGHT
+  }
+  const adapter = new CodexLiveAdapter(transport, {
+    wallNowMilliseconds: () => 1_000,
+    lifecycleClock: warmClock,
+  })
+  const warming = adapter.prewarm()
+  await entered.promise
+  const expired = adapter.dispatch(
+    'run', {work_order: 'expired join'}, context('run', {}, {clock: runClock}),
+  )
+  runClock.advanceTo(547)
+  for (let attempt = 0; attempt < 20 && runClock.nextTimerTimestamp() !== 553; attempt += 1) {
+    await yieldImmediate()
+  }
+  assert.equal(runClock.nextTimerTimestamp(), 553, 'deadline cleanup grace must be registered')
+  release.resolve()
+  await warming
+  const timeout = await expired
+  assert.deepEqual([timeout.outcome, timeout.trust, timeout.content.code], [
+    'failed', 'trusted_system', 'adapter_timeout',
+  ])
+  assert.equal(adapter.status.prewarm, 'ready')
+  const next = await adapter.dispatch(
+    'run', {work_order: 'consume ready'}, context('run', {}, {clock: runClock}),
+  )
+
+  assert.equal(next.outcome, 'ok')
+  assert.deepEqual(transport.calls, ['prewarm', 'run'])
+  assert.equal(adapter.status.prewarm, 'cold')
+})
+
 test('failed or malformed prewarm is visible then falls back to one lazy preflight', async () => {
   // This fails if a failed warm report is reused or prevents the cold path from recovering.
   for (const warmFailure of [new Error('PRIVATE-WARM-ERROR'), {version: 'bad'}]) {

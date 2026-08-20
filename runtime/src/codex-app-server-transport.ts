@@ -171,6 +171,7 @@ interface Session {
   projection: AppServerTurnProjection | null
   completion: Deferred<TurnCompletion> | null
   unexpectedServerRequest: boolean
+  turnStartAdmitted: boolean
   turnStartWritten: boolean
   initialized: boolean
   warm: boolean
@@ -389,6 +390,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
           if (session!.unexpectedServerRequest) {
             throw new CodexProtocolError('unexpected_server_request')
           }
+          session!.turnStartAdmitted = true
           return {threadId: projection.threadId, input: [{type: 'text', text: workOrder}]}
         },
         deadline,
@@ -814,6 +816,10 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       onNotification: notification => {
         const projection = session.projection
         if (projection === null) return
+        if (isTurnLifecycleNotification(notification.method) && !session.turnStartAdmitted) {
+          this.#failSession(session, new CodexTransportError('unsupported_protocol'))
+          return
+        }
         try {
           const completion = projection.notification(notification.method, notification.params)
           if (completion !== null) session.completion?.resolve(completion)
@@ -925,6 +931,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       projection: null,
       completion: null,
       unexpectedServerRequest: false,
+      turnStartAdmitted: false,
       turnStartWritten: false,
       initialized: false,
       warm: false,
@@ -1640,6 +1647,10 @@ function safeTransportError(error: unknown, fallback: CodexTransportCode): Codex
     }
   }
   return new CodexTransportError(fallback)
+}
+
+function isTurnLifecycleNotification(method: string): boolean {
+  return method === 'turn/started' || method === 'item/completed' || method === 'turn/completed'
 }
 
 const TRANSPORT_CODES: ReadonlySet<CodexTransportCode> = new Set([

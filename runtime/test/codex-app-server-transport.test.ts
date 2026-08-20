@@ -1036,6 +1036,46 @@ test('turn-bound is exact when activePair appears and remains independent from w
   assert.equal((await running).classification, 'completed')
 })
 
+test('phantom turn notifications before turn admission taint without binding or steering', async () => {
+  // Projection installation is not permission for a server to invent a turn before turn/start admission.
+  for (const method of ['turn/started', 'item/completed', 'turn/completed'] as const) {
+    const methods: string[] = []
+    const owner = new MemoryAppServerOwner(methods)
+    let bound = 0
+    let progress = 0
+    const transport = createTransport({spawn: async () => owner}, {
+      scheduler: {
+        clock: {now: () => Date.now(), sleep: async () => {}},
+        yieldIo: async () => {
+          owner.emitPhantomTurn(method)
+          await new Promise<void>(resolve => { setImmediate(resolve) })
+        },
+      },
+    })
+
+    const result = await transport.run(
+      {workOrder: 'reject phantom turn'},
+      {
+        onTurnBound: () => { bound += 1 },
+        onProgress: () => { progress += 1 },
+      },
+      {expiresAtMs: Date.now() + 5000},
+    )
+
+    assert.deepEqual(result, {
+      classification: 'refused', code: 'unsupported_protocol',
+      turnStartWritten: false, completion: null,
+    })
+    assert.equal(methods.includes('turn/start'), false)
+    assert.equal(bound, 0)
+    assert.equal(progress, 0)
+    assert.deepEqual(await transport.steer(
+      {instruction: 'phantom must not bind'},
+      {expiresAtMs: Date.now() + 5000},
+    ), {code: 'no_active_turn', written: false})
+  }
+})
+
 test('a post-start transport failure latches turn history for later stale steer', async () => {
   const owner = new MemoryAppServerOwner([], {delayTurnStart: true})
   const transport = createTransport({spawn: async () => owner})
@@ -2353,6 +2393,28 @@ class MemoryAppServerOwner {
 
   emitStderr(bytes: number): void {
     this.stderr.write(new Uint8Array(bytes))
+  }
+
+  emitPhantomTurn(method: 'turn/started' | 'item/completed' | 'turn/completed'): void {
+    if (method === 'turn/started') {
+      this.#send({method, params: {
+        threadId: this.#options.threadId,
+        turn: {id: 'turn-1', items: [], status: 'inProgress'},
+      }})
+      return
+    }
+    if (method === 'item/completed') {
+      this.#send({method, params: {
+        threadId: this.#options.threadId,
+        turnId: 'turn-1',
+        item: {type: 'agentMessage', text: 'phantom-private'},
+      }})
+      return
+    }
+    this.#send({method, params: {
+      threadId: this.#options.threadId,
+      turn: {id: 'turn-1', status: 'completed', itemsView: 'notLoaded', items: []},
+    }})
   }
 
   emitHostileOversizedStdout(): void {

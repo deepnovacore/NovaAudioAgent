@@ -51,6 +51,25 @@ const TRANSPORT_CODES: ReadonlySet<string> = new Set<CodexTransportCode>([
   'busy',
 ])
 const PREFLIGHT_CODES: ReadonlySet<string> = new Set(PUBLIC_PREFLIGHT_CODES)
+const REFUSED_CODES: ReadonlySet<string> = new Set([
+  'adapter_timeout',
+  'binary_missing',
+  'busy',
+  'credential_missing',
+  'preflight_failed',
+  'preflight_timeout',
+  'resume_unavailable',
+  'sandbox_failed',
+  'server_rejected',
+  'spawn_failed',
+  'stderr_too_large',
+  'transport_lost',
+  'unexpected_server_request',
+  'unsupported_protocol',
+  'unsupported_version',
+  'workspace_invalid',
+  'workspace_root_mismatch',
+])
 const UNCERTAIN_CODES: ReadonlySet<string> = new Set([
   'adapter_timeout',
   'credential_missing',
@@ -138,7 +157,9 @@ export class CodexAdapterCore {
     context: ExecutorDispatchContext,
     options: {
       readonly preflight?: Readonly<Record<string, unknown>>
-      readonly prepare?: () => Promise<Readonly<Record<string, unknown>> | undefined>
+      readonly prepare?: (
+        signal: AbortSignal,
+      ) => Promise<Readonly<Record<string, unknown>> | undefined>
       readonly onTurnBound?: () => void
     } = {},
   ): Promise<ExecutorHandoff> {
@@ -202,7 +223,8 @@ export class CodexAdapterCore {
       try {
         let prepared = options.preflight
         if (options.prepare !== undefined) {
-          prepared = await awaitCodexPhase(options.prepare, deadline)
+          const prepare = options.prepare
+          prepared = await awaitCodexPhase(() => prepare(deadline.controller.signal), deadline)
         }
         if (prepared === undefined) {
           preflight = requirePreflight(await awaitCodexPhase(
@@ -583,7 +605,7 @@ function validateOutcome(value: unknown): ValidatedOutcome | null {
       ) return null
     } else if (snapshot.classification === 'refused') {
       if (
-        snapshot.code === 'completed'
+        !REFUSED_CODES.has(snapshot.code)
         || snapshot.turnStartWritten
         || completion !== null
       ) return null
