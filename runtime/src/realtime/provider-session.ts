@@ -63,14 +63,23 @@ export class RealtimeProviderSession {
     return this.#identity === null ? null : structuredClone(this.#identity)
   }
 
+  connect(options: {
+    readonly tools: readonly Record<string, unknown>[]
+  }, signal?: AbortSignal): Promise<SessionIdentity>
+  connect(tools?: readonly JsonObject[], signal?: AbortSignal): Promise<SessionIdentity>
   async connect(
-    tools: readonly JsonObject[] = [],
+    input: readonly JsonObject[] | {
+      readonly tools: readonly Record<string, unknown>[]
+    } = [],
     signal?: AbortSignal,
   ): Promise<SessionIdentity> {
     if (this.#state === 'closed') throw new Error('realtime provider session is closed')
     if (this.#state !== 'new' && this.#state !== 'disconnected') {
       throw new Error(`realtime provider session cannot connect from ${this.#state}`)
     }
+    const tools: readonly unknown[] = Array.isArray(input)
+      ? input
+      : (input as {readonly tools: readonly Record<string, unknown>[]}).tools
     const parsedTools = tools.map(tool => jsonObjectSchema.parse(tool) as JsonObject)
     const connectionAbort = new AbortController()
     this.#connectionAbort = connectionAbort
@@ -107,7 +116,7 @@ export class RealtimeProviderSession {
   }
 
   async reconnect(
-    tools: readonly JsonObject[] = [],
+    tools: readonly Record<string, unknown>[] = [],
     signal?: AbortSignal,
   ): Promise<SessionIdentity> {
     if (this.#state === 'closed') throw new Error('realtime provider session is closed')
@@ -124,7 +133,7 @@ export class RealtimeProviderSession {
     }
     if (this.#isClosed()) throw new Error('realtime provider session is closed')
     this.#state = 'disconnected'
-    return this.connect(tools, signal)
+    return this.connect({tools}, signal)
   }
 
   async sendAudio(pcm: Uint8Array, signal?: AbortSignal): Promise<void> {

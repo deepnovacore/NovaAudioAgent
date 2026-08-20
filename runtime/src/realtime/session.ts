@@ -60,6 +60,7 @@ export interface SessionProvider {
   connect(options: {readonly tools: readonly Record<string, unknown>[]}): Promise<{
     readonly epoch: number
   }>
+  reconnect?(tools: readonly Record<string, unknown>[]): Promise<{readonly epoch: number}>
   injectHostItem(
     item: HostContextItem,
     options?: {
@@ -274,8 +275,8 @@ export class RealtimeSession {
     this.#floor = new Floor()
     this.#userHoldSince = null
 
-    await this.#provider.close()
-    await this.connect({tools: options.tools})
+    const identity = await this.#replaceProviderSession(options.tools)
+    this.#state.beginEpoch(identity.epoch)
     await this.#injectRecoveryItem(null)
     this.#state.advanceSnapshot()
   }
@@ -358,8 +359,8 @@ export class RealtimeSession {
     this.#userHoldSince = null
     this.#guardHandoffGeneration = oldGeneration
 
-    await this.#provider.close()
-    await this.connect({tools: options.tools})
+    const identity = await this.#replaceProviderSession(options.tools)
+    this.#state.beginEpoch(identity.epoch)
 
     let outcome: 'none' | 'empty' | 'packed' | 'degraded' | 'uncertain' = 'none'
     if (historyMode !== 'none') outcome = 'empty'
@@ -393,6 +394,14 @@ export class RealtimeSession {
     await this.#injectRecoveryItem(confirmationTimeout)
     this.#state.advanceSnapshot()
     return outcome
+  }
+
+  async #replaceProviderSession(
+    tools: readonly Record<string, unknown>[],
+  ): Promise<{readonly epoch: number}> {
+    if (this.#provider.reconnect !== undefined) return this.#provider.reconnect(tools)
+    await this.#provider.close()
+    return this.#provider.connect({tools})
   }
 
   /** The fields that belong to one provider session and none other. */
