@@ -814,12 +814,12 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     const rpc = new JsonRpcConnection({
       write: async bytes => { await writeDrain(owner.stdin, bytes) },
       onNotification: notification => {
-        const projection = session.projection
-        if (projection === null) return
         if (isTurnLifecycleNotification(notification.method) && !session.turnStartAdmitted) {
           this.#failSession(session, new CodexTransportError('unsupported_protocol'))
           return
         }
+        const projection = session.projection
+        if (projection === null) return
         try {
           const completion = projection.notification(notification.method, notification.params)
           if (completion !== null) session.completion?.resolve(completion)

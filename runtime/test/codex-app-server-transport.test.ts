@@ -586,6 +586,37 @@ test('prewarm observes a server request queued behind thread response and cleans
   assert.equal(owner.disposed, true)
 })
 
+test('prewarm taints lifecycle notifications before projection admission and never reuses that child', async () => {
+  for (const method of ['turn/started', 'item/completed', 'turn/completed'] as const) {
+    const owners: MemoryAppServerOwner[] = []
+    const transport = createTransport({spawn: async () => {
+      const owner = new MemoryAppServerOwner([], {threadId: `thread-${owners.length + 1}`})
+      owners.push(owner)
+      return owner
+    }}, {
+      scheduler: {
+        clock: {now: () => Date.now(), sleep: async () => {}},
+        yieldIo: async () => {
+          if (owners.length === 1) owners[0]?.emitPhantomTurn(method)
+          await new Promise<void>(resolve => { setImmediate(resolve) })
+        },
+      },
+    })
+
+    await assert.rejects(
+      transport.prewarm({expiresAtMs: Date.now() + 5000}),
+      (error: unknown) => String(error) === 'CodexTransportError: unsupported_protocol',
+    )
+    assert.equal(owners[0]?.disposed, true)
+    assert.equal((await transport.run(
+      {workOrder: 'fresh after phantom warm child'},
+      {},
+      {expiresAtMs: Date.now() + 5000},
+    )).classification, 'completed')
+    assert.equal(owners.length, 2)
+  }
+})
+
 test('a failed or dead prewarm is discarded and a later prewarm retries with a fresh child', async () => {
   const owners: MemoryAppServerOwner[] = []
   const transport = createTransport({spawn: async () => {
