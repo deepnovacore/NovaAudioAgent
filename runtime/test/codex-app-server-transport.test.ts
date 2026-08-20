@@ -5,8 +5,16 @@ import {PassThrough, Writable} from 'node:stream'
 import {test} from 'node:test'
 
 import * as runtime from '../src/index.js'
-import type {OwnedCodexAppServerTransport} from '../src/codex-app-server-transport.js'
-import type {CodexProcessOwnerFactory} from '../src/codex-process-owner.js'
+import {OwnedCodexAppServerTransport} from '../src/codex-app-server-transport.js'
+import {MAX_STDOUT} from '../src/codex-protocol.js'
+import {
+  hostBinaryForTest,
+  hostCodexHomeForTest,
+  hostWorkspaceForTest,
+  unconfirmedCodexProcessOwnerError,
+  type CodexProcessOwnerFactory,
+  type OwnedCodexProcess,
+} from '../src/codex-process-owner.js'
 import {FakeAppServerOwnerFactory} from './fixtures/codex/fake-app-server-owner.js'
 import {supportedSchemaBundle} from './fixtures/codex/supported-schema-bundle.js'
 
@@ -15,30 +23,12 @@ const encoder = new TextEncoder()
 test('a cold run follows the app-server handshake and returns bounded internal completion', async () => {
   const methods: string[] = []
   const owner = new MemoryAppServerOwner(methods)
-  const module = runtime as unknown as Record<string, unknown>
-  const Transport = typeof module.OwnedCodexAppServerTransport === 'function'
-    ? module.OwnedCodexAppServerTransport as new (options: Record<string, unknown>) => {
-      run(
-        input: Readonly<Record<string, unknown>>,
-        observer: Readonly<Record<string, unknown>>,
-        deadline: Readonly<Record<string, unknown>>,
-      ): Promise<Record<string, unknown>>
-    }
-    : class UnsafeTransport {
-      constructor(options: Record<string, unknown>) { void options }
-      async run(): Promise<Record<string, unknown>> {
-        return {classification: 'refused', code: 'transport_lost', turnStartWritten: false}
-      }
-    }
   const workspace = process.cwd()
-  const transport = new Transport({
+  const transport = new OwnedCodexAppServerTransport({
     config: {
-      binary: (module.hostBinaryForTest as (path: string) => unknown)(process.execPath),
-      workspace: (module.hostWorkspaceForTest as (path: string) => unknown)(workspace),
-      codexHome: (module.hostCodexHomeForTest as (
-        path: string,
-        options: {ephemeral: boolean},
-      ) => unknown)(workspace, {ephemeral: true}),
+      binary: hostBinaryForTest(process.execPath),
+      workspace: hostWorkspaceForTest(workspace),
+      codexHome: hostCodexHomeForTest(workspace, {ephemeral: true}),
       apiKey: 'api-key-sentinel',
       developerInstructions: null,
       resumeThreadId: null,
@@ -46,7 +36,7 @@ test('a cold run follows the app-server handshake and returns bounded internal c
     },
     processFactory: {spawn: async () => owner},
     credentialSnapshotter: {
-      prepare: async () => ({}),
+      prepare: async () => ({} as never),
       environment: () => ({
         PATH: '/safe-path', HOME: '/safe-home', CODEX_HOME: workspace,
         CODEX_API_KEY: 'api-key-sentinel',
@@ -187,6 +177,30 @@ test('preflight is hard-capped and caller cancellation settles before spawn', as
   assert.equal(spawnCount, 0)
 })
 
+test('preflight rejects Codex versions older than the pinned app-server minimum', async () => {
+  const transport = createTransport({spawn: async () => new MemoryAppServerOwner([])}, {
+    preflightRunner: {run: async () => ({...safePreflightReport(), version: '0.144.9'})},
+  })
+  await assert.rejects(
+    transport.preflight({expiresAtMs: Date.now() + 5000}),
+    (error: unknown) => String(error) === 'CodexTransportError: unsupported_version',
+  )
+})
+
+test('preflight rejects a prerelease at the pinned app-server minimum', async () => {
+  for (const version of [
+    '0.145.0-alpha', '0.145.0+build.1', 'v0.145.0', 'codex-cli 0.145.0', 'codex 0.145.0',
+  ]) {
+    const transport = createTransport({spawn: async () => new MemoryAppServerOwner([])}, {
+      preflightRunner: {run: async () => ({...safePreflightReport(), version})},
+    })
+    await assert.rejects(
+      transport.preflight({expiresAtMs: Date.now() + 5000}),
+      (error: unknown) => String(error) === 'CodexTransportError: unsupported_version',
+    )
+  }
+})
+
 test('a spawned process missing a required pipe is refused and disposed before protocol work', async () => {
   let disposed = false
   const invalidOwner = {
@@ -202,7 +216,7 @@ test('a spawned process missing a required pipe is refused and disposed before p
     dispose: async () => { disposed = true },
   }
   const transport = createTransport({
-    spawn: async () => invalidOwner as unknown as runtime.OwnedCodexProcess,
+    spawn: async () => invalidOwner as unknown as OwnedCodexProcess,
   })
   const result = await transport.run(
     {workOrder: 'must-not-reach-protocol'},
@@ -360,6 +374,55 @@ test('a failed or dead prewarm is discarded and a later prewarm retries with a f
   assert.equal(owners.length, 3)
 })
 
+test('stderr-tainted prewarm is cleaned and cannot be reused', async () => {
+  const owners: MemoryAppServerOwner[] = []
+  const transport = createTransport({spawn: async () => {
+    const owner = new MemoryAppServerOwner([], {threadId: `thread-${owners.length + 1}`})
+    owners.push(owner)
+    return owner
+  }}, {
+    scheduler: {
+      clock: {now: () => Date.now(), sleep: async () => {}},
+      yieldIo: async () => {
+        owners.at(-1)?.emitStderr(64 * 1024 + 1)
+        await new Promise<void>(resolve => { setImmediate(resolve) })
+      },
+    },
+  })
+  await assert.rejects(
+    transport.prewarm({expiresAtMs: Date.now() + 5000}),
+    (error: unknown) => String(error) === 'CodexTransportError: stderr_too_large',
+  )
+  assert.equal(owners[0]?.disposed, true)
+})
+
+test('stderr-tainted cold run is refused before turn/start can be written', async () => {
+  const methods: string[] = []
+  const owner = new MemoryAppServerOwner(methods)
+  const transport = createTransport({spawn: async () => owner}, {
+    scheduler: {
+      clock: {now: () => Date.now(), sleep: async () => {}},
+      yieldIo: async () => {
+        owner.emitStderr(64 * 1024 + 1)
+        await new Promise<void>(resolve => { setImmediate(resolve) })
+      },
+    },
+  })
+  const result = await transport.run(
+    {workOrder: 'must not reach tainted child'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  assert.deepEqual(result, {
+    classification: 'refused',
+    code: 'stderr_too_large',
+    turnStartWritten: false,
+    completion: null,
+  })
+  assert.equal(methods.includes('turn/start'), false)
+  assert.equal(owner.disposed, true)
+})
+
 test('stderr overflow after turn drain is uncertain and never exposes stream bytes', async () => {
   const owner = new MemoryAppServerOwner([], {delayTurnStart: true})
   const transport = createTransport({spawn: async () => owner})
@@ -381,6 +444,61 @@ test('stderr overflow after turn drain is uncertain and never exposes stream byt
   assert.equal(result.code, 'stderr_too_large')
   assert.equal(result.turnStartWritten, true)
   assert.equal(JSON.stringify(result).includes('stderr-private'), false)
+})
+
+test('stdout applies pause/resume backpressure and rejects an oversized chunk before copying it', async () => {
+  const owner = new MemoryAppServerOwner([], {delayTurnStart: true})
+  const transport = createTransport({spawn: async () => owner})
+  const running = transport.run(
+    {workOrder: 'bounded stdout copy'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  await owner.turnStartReceived.promise
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  owner.emitHostileOversizedStdout()
+  const result = await running
+  assert.equal(result.code, 'transport_lost')
+  assert.equal(owner.stdoutPauseCalls > 0, true)
+  assert.equal(owner.hostileIteratorRead, false)
+})
+
+test('stdout close without end settles the feed pump instead of waiting for caller deadline', async () => {
+  const owner = new MemoryAppServerOwner([], {delayTurnStart: true})
+  const transport = createTransport({spawn: async () => owner})
+  const running = transport.run(
+    {workOrder: 'close stdout during turn'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  await owner.turnStartReceived.promise
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  owner.stdout.destroy()
+  assert.equal((await running).code, 'transport_lost')
+  assert.equal(owner.disposed, true)
+})
+
+test('stdout close joins a server-request feed blocked on the response writer', async () => {
+  const owner = new MemoryAppServerOwner([], {delayTurnStart: true, holdServerReplyWrite: true})
+  const transport = createTransport({spawn: async () => owner})
+  const running = transport.run(
+    {workOrder: 'blocked feed cleanup'},
+    {},
+    {expiresAtMs: Date.now() + 10_000},
+  )
+  try {
+    await owner.turnStartReceived.promise
+    await new Promise<void>(resolve => { setImmediate(resolve) })
+    owner.emitServerRequest()
+    await owner.serverReplyWriteReceived.promise
+    owner.stdout.destroy()
+    const result = await within(running, 7000, 'blocked feed cleanup')
+    assert.equal(result.code, 'unexpected_server_request')
+    assert.equal(owner.disposed, true)
+  } finally {
+    owner.releaseServerReplyWrite()
+    await transport.close().catch(() => undefined)
+  }
 })
 
 test('turn rejection happens after the writer drain and stays server_rejected', async () => {
@@ -416,6 +534,42 @@ test('work order, API key, workspace, and controls are redacted from progress an
   assert.equal(rendered.includes('\\u0000'), false)
 })
 
+test('plain sentinels and NFC-equivalent developer instructions remain redacted through final projection', async () => {
+  const sentinel = 'ultraviolet mango sentinel'
+  const developerInstructions = 'de\u0301veloper instruction sentinel'
+  const owner = new MemoryAppServerOwner([], {
+    finalText: `${sentinel} déveloper instruction sentinel useful`,
+  })
+  const transport = createTransport({spawn: async () => owner}, {developerInstructions})
+  const result = await transport.run(
+    {workOrder: sentinel},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  const rendered = JSON.stringify(result)
+  assert.equal(rendered.includes(sentinel), false)
+  assert.equal(rendered.includes('déveloper instruction sentinel'), false)
+  assert.equal(rendered.includes('useful'), true)
+})
+
+test('a written steer is registered as sensitive before concurrent final notifications', async () => {
+  const steerSentinel = 'violet kiwi steer sentinel'
+  const owner = new MemoryAppServerOwner([], {delayTurnStart: true, echoSteerInFinal: true})
+  const transport = createTransport({spawn: async () => owner})
+  const running = transport.run(
+    {workOrder: 'ordinary work order'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  await owner.turnStartReceived.promise
+  assert.deepEqual(await transport.steer(
+    {instruction: steerSentinel},
+    {expiresAtMs: Date.now() + 5000},
+  ), {code: 'accepted', written: true})
+  owner.completeDelayedTurn()
+  assert.equal(JSON.stringify(await running).includes(steerSentinel), false)
+})
+
 test('pre-drain write failure is refused while post-drain EOF is uncertain', async () => {
   const preDrain = new MemoryAppServerOwner([], {failTurnWriteBeforeDrain: true})
   const refused = await createTransport({spawn: async () => preDrain}).run(
@@ -440,6 +594,440 @@ test('pre-drain write failure is refused while post-drain EOF is uncertain', asy
   assert.equal(uncertain.classification, 'uncertain')
   assert.equal(uncertain.turnStartWritten, true)
   assert.equal(uncertain.code, 'transport_lost')
+})
+
+test('a post-start transport failure latches turn history for later stale steer', async () => {
+  const owner = new MemoryAppServerOwner([], {delayTurnStart: true})
+  const transport = createTransport({spawn: async () => owner})
+  const running = transport.run(
+    {workOrder: 'start then fail'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  await owner.turnStartReceived.promise
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  owner.abruptExit(7)
+  assert.equal((await running).classification, 'uncertain')
+  assert.deepEqual(await transport.steer(
+    {instruction: 'too late'},
+    {expiresAtMs: Date.now() + 5000},
+  ), {code: 'stale_turn', written: false})
+})
+
+test('interrupt acknowledgement does not close stdin before terminal grace completes', async () => {
+  const owner = new MemoryAppServerOwner([], {delayTurnStart: true})
+  const transport = createTransport({spawn: async () => owner})
+  const running = transport.run(
+    {workOrder: 'interrupt with terminal grace'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  await owner.turnStartReceived.promise
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  const closing = transport.close('cancel')
+  await owner.interruptReceived.promise
+  let closeSettled = false
+  void closing.finally(() => { closeSettled = true })
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(closeSettled, false)
+  assert.equal(owner.stdin.writableEnded, false)
+  owner.completeDelayedTurn()
+  await closing
+  await running
+})
+
+test('late spawn completion is still owned, disposed, and joined by close', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const owner = new MemoryAppServerOwner([])
+  const controller = new AbortController()
+  const transport = createTransport({spawn: async () => {
+    entered.resolve()
+    await release.promise
+    return owner
+  }})
+  const running = transport.run(
+    {workOrder: 'cancel while host spawn is pending'},
+    {},
+    {expiresAtMs: Date.now() + 60_000, signal: controller.signal},
+  )
+  await entered.promise
+  controller.abort()
+  assert.equal((await running).code, 'adapter_timeout')
+  const closing = transport.close()
+  release.resolve()
+  await closing
+  assert.equal(owner.disposed, true)
+  assert.equal(owner.disposeCalls, 1)
+})
+
+test('spawn ownership contract receives cancellation and close joins its settlement', async () => {
+  const entered = testDeferred<void>()
+  let spawnWasAborted = false
+  const controller = new AbortController()
+  const transport = createTransport({spawn: async (_spec, control) => {
+    entered.resolve()
+    await new Promise<void>((_resolve, reject) => {
+      control.signal.addEventListener('abort', () => {
+        spawnWasAborted = true
+        reject(new Error('private abort'))
+      }, {once: true})
+    })
+    throw new Error('unreachable')
+  }})
+  const running = transport.run(
+    {workOrder: 'cancel cooperative spawn'},
+    {},
+    {expiresAtMs: Date.now() + 60_000, signal: controller.signal},
+  )
+  await entered.promise
+  controller.abort()
+  assert.equal((await running).code, 'adapter_timeout')
+  try {
+    assert.equal(spawnWasAborted, true)
+  } finally {
+    await transport.close().catch(() => undefined)
+  }
+})
+
+test('close-driven cooperative spawn cancellation remains transport_lost', async () => {
+  const entered = testDeferred<void>()
+  const transport = createTransport({spawn: async (_spec, control) => {
+    entered.resolve()
+    await new Promise<void>((_resolve, reject) => {
+      control.signal.addEventListener('abort', () => { reject(new Error('private abort')) }, {once: true})
+    })
+    throw new Error('unreachable')
+  }})
+  const running = transport.run(
+    {workOrder: 'close cooperative spawn'},
+    {},
+    {expiresAtMs: Date.now() + 60_000},
+  )
+  await entered.promise
+  const closing = transport.close()
+  assert.deepEqual(await running, {
+    classification: 'refused',
+    code: 'transport_lost',
+    turnStartWritten: false,
+    completion: null,
+  })
+  await closing
+})
+
+test('a non-cooperative spawn is diagnosed as transport loss and its late owner is immediately disposed', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const owner = new MemoryAppServerOwner([])
+  const controller = new AbortController()
+  const transport = createTransport({spawn: async () => {
+    entered.resolve()
+    await release.promise
+    return owner
+  }})
+  const running = transport.run(
+    {workOrder: 'non-cooperative spawn'},
+    {},
+    {expiresAtMs: Date.now() + 60_000, signal: controller.signal},
+  )
+  await entered.promise
+  controller.abort()
+  assert.equal((await running).code, 'adapter_timeout')
+  try {
+    await assert.rejects(
+      within(transport.close(), runtime.CODEX_TREE_GRACE_MS + 1000, 'bounded close'),
+      (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+    )
+  } finally {
+    release.resolve()
+    await settleUntil(() => owner.disposed, 'post-close late owner cleanup')
+  }
+  assert.equal(owner.disposeCalls, 1)
+})
+
+test('a completed late-owner cleanup latches its first stable failure for later close', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const owner = new MemoryAppServerOwner([])
+  const controller = new AbortController()
+  const transport = createTransport({spawn: async () => {
+    entered.resolve()
+    await release.promise
+    return owner
+  }}, {removeEphemeralHome: async () => { throw new Error('private cleanup path') }})
+  const running = transport.run(
+    {workOrder: 'late cleanup failure'},
+    {},
+    {expiresAtMs: Date.now() + 60_000, signal: controller.signal},
+  )
+  await entered.promise
+  controller.abort()
+  assert.equal((await running).code, 'adapter_timeout')
+  release.resolve()
+  await settleUntil(() => owner.disposed, 'late owner cleanup')
+  await assert.rejects(
+    transport.close(),
+    (error: unknown) => String(error) === 'CodexTransportError: credential_missing',
+  )
+})
+
+test('an unconfirmed late owner fail-stops admission and close retries that raw owner', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const owner = new MemoryAppServerOwner([])
+  let treeChecks = 0
+  let killCalls = 0
+  owner.waitTreeGone = async () => {
+    treeChecks += 1
+    return treeChecks > 3
+  }
+  owner.terminateTree = async () => {}
+  owner.killTree = async () => { killCalls += 1 }
+  const controller = new AbortController()
+  let spawnCount = 0
+  let cleanupCount = 0
+  const transport = createTransport({spawn: async () => {
+    spawnCount += 1
+    entered.resolve()
+    await release.promise
+    return owner
+  }}, {removeEphemeralHome: async () => { cleanupCount += 1 }})
+  const running = transport.run(
+    {workOrder: 'late raw owner must remain recoverable'},
+    {},
+    {expiresAtMs: Date.now() + 60_000, signal: controller.signal},
+  )
+  await entered.promise
+  controller.abort()
+  assert.equal((await running).code, 'adapter_timeout')
+  release.resolve()
+  await settleUntil(() => killCalls === 1, 'first late-owner cleanup attempt')
+  assert.equal(cleanupCount, 0)
+
+  assert.equal(await transport.prewarm({expiresAtMs: Date.now() + 5000}), null)
+  assert.deepEqual(await transport.run(
+    {workOrder: 'second child is forbidden after raw cleanup failure'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  ), {
+    classification: 'refused',
+    code: 'busy',
+    turnStartWritten: false,
+    completion: null,
+  })
+  assert.equal(spawnCount, 1)
+
+  await assert.rejects(
+    transport.close(),
+    (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+  )
+  assert.equal(treeChecks, 4)
+  assert.equal(cleanupCount, 1)
+})
+
+test('a supervision-rejected owner keeps credentials until transport close confirms its tree gone', async () => {
+  const owner = new MemoryAppServerOwner([])
+  let treeChecks = 0
+  owner.waitTreeGone = async () => { treeChecks += 1; return true }
+  let cleanupCount = 0
+  const transport = createTransport({
+    spawn: async () => { throw unconfirmedCodexProcessOwnerError(owner) },
+  }, {removeEphemeralHome: async () => { cleanupCount += 1 }})
+
+  const result = await transport.run(
+    {workOrder: 'supervision rejection still owns a live tree'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  assert.deepEqual(result, {
+    classification: 'refused',
+    code: 'transport_lost',
+    turnStartWritten: false,
+    completion: null,
+  })
+  assert.equal(cleanupCount, 0)
+  assert.equal(await transport.prewarm({expiresAtMs: Date.now() + 5000}), null)
+
+  await transport.close()
+  assert.equal(treeChecks, 1)
+  assert.equal(cleanupCount, 1)
+})
+
+test('a late supervision rejection retains its opaque owner and never removes live credentials', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const owner = new MemoryAppServerOwner([])
+  let treeChecks = 0
+  owner.waitTreeGone = async () => { treeChecks += 1; return true }
+  const controller = new AbortController()
+  let spawnCount = 0
+  let cleanupCount = 0
+  const transport = createTransport({spawn: async () => {
+    spawnCount += 1
+    entered.resolve()
+    await release.promise
+    throw unconfirmedCodexProcessOwnerError(owner)
+  }}, {removeEphemeralHome: async () => { cleanupCount += 1 }})
+  const running = transport.run(
+    {workOrder: 'late supervision capability must cross the timeout boundary'},
+    {},
+    {expiresAtMs: Date.now() + 60_000, signal: controller.signal},
+  )
+  await entered.promise
+  controller.abort()
+  assert.equal((await running).code, 'adapter_timeout')
+  release.resolve()
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+
+  assert.equal(cleanupCount, 0)
+  assert.equal(await transport.prewarm({expiresAtMs: Date.now() + 5000}), null)
+  assert.equal(spawnCount, 1)
+  await assert.rejects(
+    transport.close(),
+    (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+  )
+  assert.equal(treeChecks, 1)
+  assert.equal(cleanupCount, 1)
+})
+
+test('close already waiting on a late credential failure reports credential_missing', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const owner = new MemoryAppServerOwner([])
+  const controller = new AbortController()
+  const transport = createTransport({spawn: async () => {
+    entered.resolve()
+    await release.promise
+    return owner
+  }}, {removeEphemeralHome: async () => { throw new Error('private cleanup path') }})
+  const running = transport.run(
+    {workOrder: 'late failure while close waits'},
+    {},
+    {expiresAtMs: Date.now() + 60_000, signal: controller.signal},
+  )
+  await entered.promise
+  controller.abort()
+  assert.equal((await running).code, 'adapter_timeout')
+  const closing = transport.close()
+  release.resolve()
+  await assert.rejects(
+    closing,
+    (error: unknown) => String(error) === 'CodexTransportError: credential_missing',
+  )
+  assert.equal(owner.disposed, true)
+})
+
+test('credential cleanup failure changes success into a stable failure and close rejects', async () => {
+  const owner = new MemoryAppServerOwner([])
+  const transport = createTransport({spawn: async () => owner}, {
+    removeEphemeralHome: async () => { throw new Error('private cleanup path') },
+  })
+  const result = await transport.run(
+    {workOrder: 'cleanup must be part of success'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  assert.equal(result.classification, 'uncertain')
+  assert.equal(result.code, 'credential_missing')
+
+  const warmOwner = new MemoryAppServerOwner([])
+  const warm = createTransport({spawn: async () => warmOwner}, {
+    removeEphemeralHome: async () => { throw new Error('private cleanup path') },
+  })
+  await warm.prewarm({expiresAtMs: Date.now() + 5000})
+  await assert.rejects(
+    warm.close(),
+    (error: unknown) => String(error) === 'CodexTransportError: credential_missing',
+  )
+})
+
+test('credential cleanup failure after a failed run remains observable by close', async () => {
+  const owner = new MemoryAppServerOwner([], {delayTurnStart: true})
+  const transport = createTransport({spawn: async () => owner}, {
+    removeEphemeralHome: async () => { throw new Error('private cleanup path') },
+  })
+  const running = transport.run(
+    {workOrder: 'fail before cleanup'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  await owner.turnStartReceived.promise
+  owner.abruptExit(7)
+  const result = await running
+  assert.equal(result.code, 'transport_lost')
+  await assert.rejects(
+    transport.close(),
+    (error: unknown) => String(error) === 'CodexTransportError: credential_missing',
+  )
+})
+
+test('credential quarantine is not removed until the owned process tree is confirmed gone', async () => {
+  const owner = new MemoryAppServerOwner([])
+  owner.waitTreeGone = async () => false
+  let cleanupCount = 0
+  const transport = createTransport({spawn: async () => owner}, {
+    removeEphemeralHome: async () => { cleanupCount += 1 },
+  })
+  const result = await transport.run(
+    {workOrder: 'tree must be gone before credential removal'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  assert.equal(result.code, 'transport_lost')
+  assert.equal(cleanupCount, 0)
+  await assert.rejects(
+    transport.close(),
+    (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+  )
+})
+
+test('an unconfirmed owned tree fail-stops admission and close retries the same owner', async () => {
+  const firstOwner = new MemoryAppServerOwner([])
+  let treeChecks = 0
+  let killCalls = 0
+  firstOwner.waitTreeGone = async () => {
+    treeChecks += 1
+    return treeChecks > 3
+  }
+  firstOwner.terminateTree = async () => {}
+  firstOwner.killTree = async () => { killCalls += 1 }
+  let spawnCount = 0
+  let cleanupCount = 0
+  const transport = createTransport({spawn: async () => {
+    spawnCount += 1
+    return spawnCount === 1 ? firstOwner : new MemoryAppServerOwner([])
+  }}, {
+    removeEphemeralHome: async () => { cleanupCount += 1 },
+  })
+
+  const first = await transport.run(
+    {workOrder: 'retain the only owner until its tree is gone'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  assert.equal(first.code, 'transport_lost')
+  assert.equal(spawnCount, 1)
+  assert.equal(cleanupCount, 0)
+  assert.equal(killCalls, 1)
+
+  assert.equal(await transport.prewarm({expiresAtMs: Date.now() + 5000}), null)
+  assert.deepEqual(await transport.run(
+    {workOrder: 'a second child must never start'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  ), {
+    classification: 'refused',
+    code: 'busy',
+    turnStartWritten: false,
+    completion: null,
+  })
+  assert.equal(spawnCount, 1)
+
+  await transport.close()
+  assert.equal(spawnCount, 1)
+  assert.equal(treeChecks, 4)
+  assert.equal(cleanupCount, 1)
 })
 
 test('caller cancellation after turn drain is bounded and remains uncertain', async () => {
@@ -471,9 +1059,9 @@ test('credential cancellation joins snapshot work and removes the ephemeral home
   const workspace = process.cwd()
   const transport = new runtime.OwnedCodexAppServerTransport({
     config: {
-      binary: runtime.hostBinaryForTest(process.execPath),
-      workspace: runtime.hostWorkspaceForTest(workspace),
-      codexHome: runtime.hostCodexHomeForTest(workspace, {ephemeral: true}),
+      binary: hostBinaryForTest(process.execPath),
+      workspace: hostWorkspaceForTest(workspace),
+      codexHome: hostCodexHomeForTest(workspace, {ephemeral: true}),
       apiKey: 'api-key-sentinel',
       developerInstructions: null,
       resumeThreadId: null,
@@ -528,9 +1116,9 @@ test('persistent resume uses exact host identity and rejection is pre-effect res
     })
     const transport = new runtime.OwnedCodexAppServerTransport({
       config: {
-        binary: runtime.hostBinaryForTest(process.execPath),
-        workspace: runtime.hostWorkspaceForTest(workspace),
-        codexHome: runtime.hostCodexHomeForTest(workspace, {ephemeral: false}),
+        binary: hostBinaryForTest(process.execPath),
+        workspace: hostWorkspaceForTest(workspace),
+        codexHome: hostCodexHomeForTest(workspace, {ephemeral: false}),
         apiKey: 'api-key-sentinel',
         developerInstructions: 'bounded instructions',
         resumeThreadId: 'durable-thread-1',
@@ -577,30 +1165,43 @@ test('persistent resume uses exact host identity and rejection is pre-effect res
 
 test('the real fake app-server handles arbitrary stdout chunks and barriered steer', async () => {
   const happyFactory = new FakeAppServerOwnerFactory('happy-chunks')
-  const happy = await createTransport(happyFactory).run(
-    {workOrder: 'real fixture work'},
-    {},
-    {expiresAtMs: Date.now() + 10_000},
-  )
-  assert.equal(happy.classification, 'completed')
-  assert.equal(happy.completion?.final_text, 'fixture result')
+  const happyTransport = createTransport(happyFactory)
+  try {
+    const happy = await happyTransport.run(
+      {workOrder: 'real fixture work'},
+      {},
+      {expiresAtMs: Date.now() + 10_000},
+    )
+    assert.equal(happy.classification, 'completed')
+    assert.equal(happy.completion?.final_text, 'fixture result')
+  } finally {
+    await happyTransport.close().catch(() => undefined)
+    await happyFactory.owner?.killTree().catch(() => undefined)
+    await happyFactory.owner?.dispose().catch(() => undefined)
+  }
 
   const delayedFactory = new FakeAppServerOwnerFactory('delayed-turn')
   const delayedTransport = createTransport(delayedFactory)
-  const running = delayedTransport.run(
-    {workOrder: 'barriered fixture work'},
-    {},
-    {expiresAtMs: Date.now() + 10_000},
-  )
-  await settleUntil(() => delayedFactory.owner !== null, 'fake owner spawn')
-  const owner = delayedFactory.owner!
-  await within(owner.waitForBarrier('turn_start'), 5000, 'turn start barrier')
-  assert.deepEqual(await delayedTransport.steer(
-    {instruction: 'barriered steer'},
-    {expiresAtMs: Date.now() + 5000},
-  ), {code: 'accepted', written: true})
-  owner.release('turn_start')
-  assert.equal((await running).classification, 'completed')
+  try {
+    const running = delayedTransport.run(
+      {workOrder: 'barriered fixture work'},
+      {},
+      {expiresAtMs: Date.now() + 10_000},
+    )
+    await settleUntil(() => delayedFactory.owner !== null, 'fake owner spawn')
+    const owner = delayedFactory.owner!
+    await within(owner.waitForBarrier('turn_start'), 5000, 'turn start barrier')
+    assert.deepEqual(await delayedTransport.steer(
+      {instruction: 'barriered steer'},
+      {expiresAtMs: Date.now() + 5000},
+    ), {code: 'accepted', written: true})
+    owner.release('turn_start')
+    assert.equal((await running).classification, 'completed')
+  } finally {
+    await delayedTransport.close().catch(() => undefined)
+    await delayedFactory.owner?.killTree().catch(() => undefined)
+    await delayedFactory.owner?.dispose().catch(() => undefined)
+  }
 })
 
 test('real child malformed and bounded stream failures settle with stable private codes', async () => {
@@ -609,18 +1210,60 @@ test('real child malformed and bounded stream failures settle with stable privat
     ['stdout-overflow', 'transport_lost'],
     ['stderr-overflow', 'stderr_too_large'],
   ] as const) {
-    const transport = createTransport(new FakeAppServerOwnerFactory(scenario))
-    const result = await transport.run(
-      {workOrder: 'real-stream-private-sentinel'},
-      {},
-      {expiresAtMs: Date.now() + 10_000},
-    )
-    assert.equal(result.classification, 'uncertain')
-    assert.equal(result.turnStartWritten, true)
-    assert.equal(result.code, code)
-    assert.equal(JSON.stringify(result).includes('real-stream-private-sentinel'), false)
+    const factory = new FakeAppServerOwnerFactory(scenario)
+    const transport = createTransport(factory)
+    try {
+      const result = await transport.run(
+        {workOrder: 'real-stream-private-sentinel'},
+        {},
+        {expiresAtMs: Date.now() + 10_000},
+      )
+      assert.equal(result.classification, 'uncertain')
+      assert.equal(result.turnStartWritten, true)
+      assert.equal(result.code, code)
+      assert.equal(JSON.stringify(result).includes('real-stream-private-sentinel'), false)
+    } finally {
+      await transport.close().catch(() => undefined)
+      await factory.owner?.killTree().catch(() => undefined)
+      await factory.owner?.dispose().catch(() => undefined)
+    }
   }
 })
+
+for (const evidence of [
+  {scenario: 'duplicate-response', classification: 'refused', code: 'unsupported_protocol', written: false},
+  {scenario: 'unknown-response', classification: 'refused', code: 'unsupported_protocol', written: false},
+  {scenario: 'server-request', classification: 'refused', code: 'unexpected_server_request', written: false},
+  {scenario: 'clean-eof', classification: 'uncertain', code: 'transport_lost', written: true},
+  {scenario: 'pending-eof', classification: 'uncertain', code: 'transport_lost', written: true},
+  {scenario: 'turn-rejection-order', classification: 'uncertain', code: 'server_rejected', written: true},
+] as const) {
+  test(`real child ${evidence.scenario} settles with the first stable boundary result`, async () => {
+    const factory = new FakeAppServerOwnerFactory(evidence.scenario)
+    const transport = createTransport(factory)
+    try {
+      const running = transport.run(
+        {workOrder: 'real-protocol-private-sentinel'},
+        {},
+        {expiresAtMs: Date.now() + 10_000},
+      )
+      if (evidence.scenario === 'clean-eof') {
+        await settleUntil(() => factory.owner !== null, 'clean EOF fake owner spawn')
+        await within(factory.owner!.waitForBarrier('turn_start'), 5000, 'clean EOF post-drain barrier')
+        factory.owner!.release('clean_eof')
+      }
+      const result = await running
+      assert.equal(result.classification, evidence.classification)
+      assert.equal(result.code, evidence.code)
+      assert.equal(result.turnStartWritten, evidence.written)
+      assert.equal(JSON.stringify(result).includes('real-protocol-private-sentinel'), false)
+    } finally {
+      await transport.close().catch(() => undefined)
+      await factory.owner?.killTree().catch(() => undefined)
+      await factory.owner?.dispose().catch(() => undefined)
+    }
+  })
+}
 
 function safePreflightReport(): Record<string, unknown> {
   return {
@@ -642,9 +1285,14 @@ class MemoryAppServerOwner {
   readonly exit: Promise<number | null>
   readonly turnStartReceived = testDeferred<void>()
   readonly initializeReceived = testDeferred<void>()
+  readonly interruptReceived = testDeferred<void>()
+  readonly serverReplyWriteReceived = testDeferred<void>()
   readonly received: {readonly method: string; readonly params: Readonly<Record<string, unknown>>}[] = []
   disposed = false
   disposeCalls = 0
+  stdoutPauseCalls = 0
+  stdoutResumeCalls = 0
+  hostileIteratorRead = false
   #resolveExit!: (code: number | null) => void
   #exited = false
   #buffer = ''
@@ -661,9 +1309,13 @@ class MemoryAppServerOwner {
     readonly rejectResume: boolean
     readonly configWidening: boolean
     readonly bindWorkspace: string | null
+    readonly echoSteerInFinal: boolean
+    readonly holdServerReplyWrite: boolean
   }
   #delayedTurnRequestId: number | undefined
   #heldInitializeRequestId: number | undefined
+  #lastSteer: string | null = null
+  #heldServerReplyWrite: ((error?: Error | null) => void) | null = null
 
   constructor(methods: string[], options: {
     readonly delayTurnStart?: boolean
@@ -677,7 +1329,13 @@ class MemoryAppServerOwner {
     readonly rejectResume?: boolean
     readonly configWidening?: boolean
     readonly bindWorkspace?: string | null
+    readonly echoSteerInFinal?: boolean
+    readonly holdServerReplyWrite?: boolean
   } = {}) {
+    const pause = this.stdout.pause.bind(this.stdout)
+    const resume = this.stdout.resume.bind(this.stdout)
+    this.stdout.pause = () => { this.stdoutPauseCalls += 1; return pause() }
+    this.stdout.resume = () => { this.stdoutResumeCalls += 1; return resume() }
     this.#methods = methods
     this.#options = {
       delayTurnStart: options.delayTurnStart ?? false,
@@ -691,11 +1349,21 @@ class MemoryAppServerOwner {
       rejectResume: options.rejectResume ?? false,
       configWidening: options.configWidening ?? false,
       bindWorkspace: options.bindWorkspace ?? null,
+      echoSteerInFinal: options.echoSteerInFinal ?? false,
+      holdServerReplyWrite: options.holdServerReplyWrite ?? false,
     }
     this.exit = new Promise(resolve => { this.#resolveExit = resolve })
     this.stdin = new Writable({
       write: (chunk: Buffer, _encoding, callback) => {
         this.#accept(chunk)
+        if (
+          this.#options.holdServerReplyWrite
+          && new TextDecoder().decode(chunk).includes('"code":-32601')
+        ) {
+          this.#heldServerReplyWrite = callback
+          this.serverReplyWriteReceived.resolve()
+          return
+        }
         if (
           this.#options.failTurnWriteBeforeDrain
           && new TextDecoder().decode(chunk).includes('"method":"turn/start"')
@@ -720,6 +1388,7 @@ class MemoryAppServerOwner {
   async dispose(): Promise<void> {
     this.disposeCalls += 1
     this.disposed = true
+    if (this.#heldServerReplyWrite !== null) this.stdin.emit('close')
     this.stdin.destroy()
     this.stdout.destroy()
     this.stderr.destroy()
@@ -741,6 +1410,27 @@ class MemoryAppServerOwner {
 
   emitStderr(bytes: number): void {
     this.stderr.write(new Uint8Array(bytes))
+  }
+
+  emitHostileOversizedStdout(): void {
+    const hostile = {
+      byteLength: MAX_STDOUT + 1,
+      [Symbol.iterator]: (): Iterator<number> => {
+        this.hostileIteratorRead = true
+        throw new Error('oversized stdout was copied')
+      },
+    }
+    this.stdout.emit('data', hostile)
+  }
+
+  emitServerRequest(): void {
+    this.#send({id: 901, method: 'private/server-request', params: {secret: 'never public'}})
+  }
+
+  releaseServerReplyWrite(): void {
+    const callback = this.#heldServerReplyWrite
+    this.#heldServerReplyWrite = null
+    callback?.()
   }
 
   abruptExit(code: number | null): void {
@@ -811,10 +1501,15 @@ class MemoryAppServerOwner {
       return
     }
     if (message.method === 'turn/steer') {
+      const input = message.params?.input
+      if (Array.isArray(input) && typeof Reflect.get(input[0] ?? {}, 'text') === 'string') {
+        this.#lastSteer = Reflect.get(input[0] ?? {}, 'text') as string
+      }
       this.#send({id: message.id, result: {turnId: 'turn-1'}})
       return
     }
     if (message.method === 'turn/interrupt') {
+      this.interruptReceived.resolve()
       this.#send({id: message.id, result: {}})
     }
   }
@@ -823,7 +1518,9 @@ class MemoryAppServerOwner {
     this.#send({id: requestId, result: {turn: {id: 'turn-1', items: [], status: 'inProgress'}}})
     this.#send({method: 'item/completed', params: {
       threadId: this.#options.threadId, turnId: 'turn-1',
-      item: {type: 'agentMessage', text: this.#options.finalText},
+      item: {type: 'agentMessage', text: this.#options.echoSteerInFinal && this.#lastSteer !== null
+        ? `${this.#options.finalText} ${this.#lastSteer}`
+        : this.#options.finalText},
     }})
     this.#send({method: 'turn/completed', params: {
       threadId: this.#options.threadId,
@@ -898,16 +1595,22 @@ function createTransport(
     readonly schemaProbe?: {
       generate: (config: unknown, timeoutMs: number) => Promise<Readonly<Record<string, unknown>>>
     }
+    readonly scheduler?: {
+      readonly clock: {now(): number; sleep(milliseconds: number): Promise<void>}
+      yieldIo(): Promise<void>
+    }
+    readonly developerInstructions?: string | null
+    readonly removeEphemeralHome?: () => Promise<void>
   } = {},
 ): OwnedCodexAppServerTransport {
   const workspace = process.cwd()
   return new (runtime.OwnedCodexAppServerTransport)({
     config: {
-      binary: runtime.hostBinaryForTest(process.execPath),
-      workspace: runtime.hostWorkspaceForTest(workspace),
-      codexHome: runtime.hostCodexHomeForTest(workspace, {ephemeral: true}),
+      binary: hostBinaryForTest(process.execPath),
+      workspace: hostWorkspaceForTest(workspace),
+      codexHome: hostCodexHomeForTest(workspace, {ephemeral: true}),
       apiKey: 'api-key-sentinel',
-      developerInstructions: null,
+      developerInstructions: overrides.developerInstructions ?? null,
       resumeThreadId: null,
       persistent: false,
     },
@@ -919,10 +1622,11 @@ function createTransport(
         CODEX_API_KEY: 'api-key-sentinel',
         CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
       }),
-      removeEphemeralHome: async () => {},
+      removeEphemeralHome: overrides.removeEphemeralHome ?? (async () => {}),
     },
     preflightRunner: overrides.preflightRunner ?? {run: async () => safePreflightReport()},
     schemaProbe: overrides.schemaProbe ?? {generate: async () => supportedSchemaBundle()},
+    ...(overrides.scheduler === undefined ? {} : {scheduler: overrides.scheduler}),
   })
 }
 

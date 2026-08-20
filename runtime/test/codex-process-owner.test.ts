@@ -2,21 +2,22 @@
 import assert from 'node:assert/strict'
 import {spawn, type ChildProcess} from 'node:child_process'
 import {EventEmitter} from 'node:events'
-import {realpathSync} from 'node:fs'
+import {existsSync, realpathSync} from 'node:fs'
 import {mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {PassThrough} from 'node:stream'
 import {test} from 'node:test'
 
-import * as runtime from '../src/index.js'
 import {
   CodexProcessOwnerError,
   PosixCodexProcessOwnerFactory,
   approvedCodexSpawnDetails,
   createApprovedCodexSpawnSpec,
+  createApprovedCodexSpawnSpecForTest,
   hostBinaryForTest,
   hostBinaryFromConfig,
+  hostEphemeralCodexHomeFromConfig,
   hostCodexHomeForTest,
   hostWorkspaceForTest,
   hostWorkspaceFromConfig,
@@ -45,21 +46,9 @@ const EXACT_APP_SERVER_ARGV = [
 ] as const
 
 test('the host launch boundary ignores caller argv and parent secrets', () => {
-  const module = runtime as unknown as Record<string, unknown>
-  const build = typeof module.createApprovedCodexSpawnSpecForTest === 'function'
-    ? module.createApprovedCodexSpawnSpecForTest as (input: Record<string, unknown>) => Record<string, unknown>
-    : (input: Record<string, unknown>) => ({
-      ...input,
-      argv: input.argv,
-      environment: process.env,
-      shell: true,
-      detached: false,
-      stdio: 'inherit',
-    })
-
   process.env.NOVA_CODEX_PARENT_SECRET_SENTINEL = 'must-not-cross'
   try {
-    const spec = build({
+    const spec = createApprovedCodexSpawnSpecForTest({
       binary: process.execPath,
       workspace: process.cwd(),
       codexHome: process.cwd(),
@@ -103,6 +92,14 @@ test('host brands reject noncanonical paths, scripts, and values outside the all
     assert.throws(
       () => hostBinaryFromConfig(realpathSync(script), [realpathSync(script)]),
       (error: unknown) => error instanceof CodexProcessOwnerError && error.code === 'spawn_failed',
+    )
+    assert.throws(
+      () => hostEphemeralCodexHomeFromConfig(realpathSync(workspace), [process.cwd()]),
+      (error: unknown) => error instanceof CodexProcessOwnerError && error.code === 'workspace_invalid',
+    )
+    assert.equal(
+      hostEphemeralCodexHomeFromConfig(realpathSync(workspace), [realpathSync(workspace)]) !== undefined,
+      true,
     )
   } finally {
     await rm(root, {recursive: true, force: true})
@@ -157,7 +154,7 @@ test('the POSIX factory performs the exact direct detached spawn', {
       now: () => 0,
     },
   })
-  const owner = await factory.spawn(spec)
+  const owner = await factory.spawn(spec, spawnControl())
   assert.deepEqual(observed, {
     binary: process.execPath,
     argv: [...EXACT_APP_SERVER_ARGV],
@@ -207,11 +204,48 @@ test('POSIX group supervision treats EPERM as alive and never substitutes the le
       PATH: '/safe', HOME: '/home', CODEX_HOME: workspace,
       CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
     },
-  }))
+  }), spawnControl())
   child.emit('exit', 0)
   assert.equal(await owner.waitTreeGone(25), false)
   assert.ok(probes.length >= 2)
   assert.equal(probes.every(target => target === -5151), true)
+})
+
+test('POSIX group liveness propagates non-ESRCH and non-EPERM probe failures', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const child = fakeChild(5252)
+  let probeCount = 0
+  const failure = new Error('private probe failure') as NodeJS.ErrnoException
+  failure.code = 'EIO'
+  const factory = new PosixCodexProcessOwnerFactory({
+    spawn: (() => child) as unknown as typeof spawn,
+    groupOperations: {
+      signal: (_target, selected) => {
+        probeCount += 1
+        if (probeCount === 1) return
+        assert.equal(selected, 0)
+        throw failure
+      },
+      wait: async () => undefined,
+      now: () => 0,
+    },
+  })
+  const workspace = process.cwd()
+  const owner = await factory.spawn(createApprovedCodexSpawnSpec({
+    binary: hostBinaryForTest(process.execPath),
+    workspace: hostWorkspaceForTest(workspace),
+    codexHome: hostCodexHomeForTest(workspace, {ephemeral: true}),
+    environment: {
+      PATH: '/safe', HOME: '/home', CODEX_HOME: workspace,
+      CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
+    },
+  }), spawnControl())
+  await assert.rejects(
+    owner.waitTreeGone(25),
+    (error: unknown) => error instanceof CodexProcessOwnerError && error.code === 'spawn_failed',
+  )
+  child.emit('exit', null)
 })
 
 test('POSIX spawn fails closed when negative-PGID supervision cannot be established', {
@@ -239,10 +273,165 @@ test('POSIX spawn fails closed when negative-PGID supervision cannot be establis
       PATH: '/safe', HOME: '/home', CODEX_HOME: workspace,
       CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
     },
-  })), (caught: unknown) => (
+  }), spawnControl()), (caught: unknown) => (
     caught instanceof CodexProcessOwnerError && caught.code === 'spawn_failed'
   ))
   assert.equal(killed, true)
+})
+
+test('failed POSIX supervision confirms the whole group is gone before spawn rejects', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const child = fakeChild(6262)
+  child.kill = () => { child.emit('exit', null); return true }
+  let firstProbe = true
+  let waitCalls = 0
+  let groupGone = false
+  const factory = new PosixCodexProcessOwnerFactory({
+    spawn: (() => child) as unknown as typeof spawn,
+    groupOperations: {
+      signal: (_target, selected) => {
+        if (firstProbe && selected === 0) {
+          firstProbe = false
+          const error = new Error('private supervision failure') as NodeJS.ErrnoException
+          error.code = 'EINVAL'
+          throw error
+        }
+        if (selected !== 0) return
+        if (waitCalls < 2) return
+        groupGone = true
+        const error = new Error('group gone') as NodeJS.ErrnoException
+        error.code = 'ESRCH'
+        throw error
+      },
+      wait: async () => { waitCalls += 1 },
+      now: () => waitCalls * 10,
+    },
+  })
+  const workspace = process.cwd()
+  await assert.rejects(factory.spawn(createApprovedCodexSpawnSpec({
+    binary: hostBinaryForTest(process.execPath),
+    workspace: hostWorkspaceForTest(workspace),
+    codexHome: hostCodexHomeForTest(workspace, {ephemeral: true}),
+    environment: {
+      PATH: '/safe', HOME: '/home', CODEX_HOME: workspace,
+      CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
+    },
+  }), spawnControl()))
+  assert.equal(groupGone, true)
+  assert.equal(waitCalls >= 2, true)
+})
+
+test('persistent POSIX supervision failure retains the first owner and blocks a second spawn', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const child = fakeChild(6363)
+  let leaderKillCalls = 0
+  child.kill = () => {
+    leaderKillCalls += 1
+    if (leaderKillCalls === 1) child.emit('exit', null)
+    return true
+  }
+  let spawnCalls = 0
+  const error = new Error('persistent private supervision failure') as NodeJS.ErrnoException
+  error.code = 'EIO'
+  const factory = new PosixCodexProcessOwnerFactory({
+    spawn: (() => {
+      spawnCalls += 1
+      return child
+    }) as unknown as typeof spawn,
+    groupOperations: {
+      signal: () => { throw error },
+      wait: async () => undefined,
+      now: () => 0,
+    },
+  })
+  const workspace = process.cwd()
+  const spec = createApprovedCodexSpawnSpec({
+    binary: hostBinaryForTest(process.execPath),
+    workspace: hostWorkspaceForTest(workspace),
+    codexHome: hostCodexHomeForTest(workspace, {ephemeral: true}),
+    environment: {
+      PATH: '/safe', HOME: '/home', CODEX_HOME: workspace,
+      CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
+    },
+  })
+
+  await assert.rejects(factory.spawn(spec, spawnControl()))
+  await assert.rejects(factory.spawn(spec, spawnControl()))
+  assert.equal(spawnCalls, 1)
+  assert.equal(leaderKillCalls >= 2, true)
+})
+
+test('failed POSIX supervision kills an acknowledged real descendant group', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-supervision-fail-'))
+  const readyFile = join(root, 'descendant-ready')
+  let child: ChildProcess | null = null
+  let childPid = 0
+  let failedInitialProbe = false
+  const injectedSpawn = ((
+    _binary: string,
+    _argv: readonly string[],
+    options: Record<string, unknown>,
+  ) => {
+    child = spawn(process.execPath, [FAKE_APP_SERVER_PATH, 'descendant-ignore-term'], {
+      ...options,
+      env: {...options.env as Record<string, string>, NOVA_FAKE_DESCENDANT_READY_FILE: readyFile},
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+    })
+    childPid = child.pid ?? 0
+    const deadline = Date.now() + 5000
+    const waiter = new Int32Array(new SharedArrayBuffer(4))
+    while (!existsSync(readyFile) && Date.now() < deadline) Atomics.wait(waiter, 0, 0, 10)
+    assert.equal(existsSync(readyFile), true, 'grandchild must acknowledge before supervision fails')
+    return child
+  }) as unknown as typeof spawn
+  let groupPid = 0
+  try {
+    const workspace = process.cwd()
+    await assert.rejects(
+      new PosixCodexProcessOwnerFactory({
+        spawn: injectedSpawn,
+        groupOperations: {
+          signal: (target, signal) => {
+            groupPid = target
+            if (!failedInitialProbe && signal === 0) {
+              failedInitialProbe = true
+              const error = new Error('private supervision failure') as NodeJS.ErrnoException
+              error.code = 'EINVAL'
+              throw error
+            }
+            process.kill(target, signal)
+          },
+          wait: async milliseconds => { await new Promise(resolve => setTimeout(resolve, milliseconds)) },
+          now: () => Date.now(),
+        },
+      }).spawn(createApprovedCodexSpawnSpec({
+        binary: hostBinaryForTest(process.execPath),
+        workspace: hostWorkspaceForTest(workspace),
+        codexHome: hostCodexHomeForTest(workspace, {ephemeral: true}),
+        environment: {
+          PATH: '/safe', HOME: '/home', CODEX_HOME: workspace,
+          CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
+        },
+      }), spawnControl()),
+      (error: unknown) => error instanceof CodexProcessOwnerError && error.code === 'spawn_failed',
+    )
+    assert.equal(groupPid < 0, true)
+    assert.throws(
+      () => { process.kill(groupPid, 0) },
+      (error: unknown) => (
+        typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 'ESRCH'
+      ),
+    )
+  } finally {
+    if (childPid > 0) {
+      try { process.kill(-childPid, 'SIGKILL') } catch { /* already gone */ }
+    }
+    await rm(root, {recursive: true, force: true})
+  }
 })
 
 function fakeChild(pid: number): EventEmitter & Record<string, unknown> {
@@ -253,6 +442,10 @@ function fakeChild(pid: number): EventEmitter & Record<string, unknown> {
   child.stderr = new PassThrough()
   child.kill = () => true
   return child
+}
+
+function spawnControl(): {readonly signal: AbortSignal; readonly expiresAtMs: number} {
+  return {signal: new AbortController().signal, expiresAtMs: Date.now() + 5000}
 }
 
 test('a real POSIX leader exit does not hide its SIGTERM-ignoring descendant', {
@@ -269,7 +462,7 @@ test('a real POSIX leader exit does not hide its SIGTERM-ignoring descendant', {
     },
   })
   const factory = new FakeAppServerOwnerFactory('descendant-ignore-term')
-  const owner = await factory.spawn(spec)
+  const owner = await factory.spawn(spec, spawnControl())
   try {
     await bounded(owner.waitForBarrier('descendant_started'), 5000, 'descendant barrier')
     owner.release('leader_exit')
@@ -321,6 +514,7 @@ test('the production POSIX owner reaps a real leader-first process group through
         CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
       },
     }),
+    spawnControl(),
   )
   await bounded(barrier, 5000, 'production owner descendant barrier')
   try {

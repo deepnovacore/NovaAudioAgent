@@ -1,4 +1,4 @@
-import {realpathSync, statSync} from 'node:fs'
+import {lstatSync, realpathSync, statSync} from 'node:fs'
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process'
 import {isAbsolute} from 'node:path'
 import type {Readable, Writable} from 'node:stream'
@@ -18,12 +18,21 @@ export interface ApprovedSpawnSpec { readonly [approvedSpawnBrand]: true }
 interface CodexHomeValue {
   readonly path: string
   readonly ephemeral: boolean
+  identity: EphemeralHomeIdentity | null
+  cleanupPath: string | null
+}
+
+interface EphemeralHomeIdentity {
+  readonly device: bigint
+  readonly inode: bigint
+  readonly uid: number
 }
 
 const binaryValues = new WeakMap<HostBinary, string>()
 const workspaceValues = new WeakMap<HostWorkspace, string>()
 const homeValues = new WeakMap<HostCodexHome, CodexHomeValue>()
 const spawnValues = new WeakMap<ApprovedSpawnSpec, ApprovedSpawnDetails>()
+const unconfirmedOwnerErrors = new WeakMap<CodexProcessOwnerError, OwnedCodexProcess>()
 
 export const CODEX_APP_SERVER_ARGV: readonly string[] = Object.freeze([
   '-a', 'never',
@@ -68,6 +77,19 @@ export class CodexProcessOwnerError extends Error {
   }
 }
 
+export function unconfirmedCodexProcessOwnerError(owner: OwnedCodexProcess): CodexProcessOwnerError {
+  const error = new CodexProcessOwnerError('spawn_failed')
+  unconfirmedOwnerErrors.set(error, owner)
+  return error
+}
+
+export function takeUnconfirmedCodexProcessOwner(error: unknown): OwnedCodexProcess | null {
+  if (!(error instanceof CodexProcessOwnerError)) return null
+  const owner = unconfirmedOwnerErrors.get(error) ?? null
+  unconfirmedOwnerErrors.delete(error)
+  return owner
+}
+
 export function hostBinaryFromConfig(
   configured: string,
   allowlistedCanonicalBinaries: readonly string[],
@@ -90,12 +112,26 @@ export function hostWorkspaceFromConfig(
   return brandWorkspace(canonical)
 }
 
-export function hostCodexHomeFromConfig(
+export function hostEphemeralCodexHomeFromConfig(
   configured: string,
-  options: {readonly ephemeral: boolean},
+  allowlistedCanonicalHomes: readonly string[],
 ): HostCodexHome {
   const canonical = requireCanonicalDirectory(configured, 'workspace_invalid')
-  return brandHome(canonical, options.ephemeral)
+  if (!allowlistedCanonicalHomes.some(candidate => safeCanonicalPath(candidate) === canonical)) {
+    throw new CodexProcessOwnerError('workspace_invalid')
+  }
+  return brandHome(canonical, true)
+}
+
+export function hostPersistentCodexHomeFromConfig(
+  configured: string,
+  allowlistedCanonicalHomes: readonly string[],
+): HostCodexHome {
+  const canonical = requireCanonicalDirectory(configured, 'workspace_invalid')
+  if (!allowlistedCanonicalHomes.some(candidate => safeCanonicalPath(candidate) === canonical)) {
+    throw new CodexProcessOwnerError('workspace_invalid')
+  }
+  return brandHome(canonical, false)
 }
 
 /** Test-only path constructors. They still enforce canonical absolute native paths. */
@@ -130,6 +166,14 @@ export function hostCodexHomeValue(value: HostCodexHome): CodexHomeValue {
   const home = homeValues.get(value)
   if (home === undefined) throw new CodexProcessOwnerError('workspace_invalid')
   return home
+}
+
+/** Internal credential-cleanup capability refresh after creating an approved ephemeral home. */
+export function refreshEphemeralCodexHomeIdentity(value: HostCodexHome): void {
+  const home = homeValues.get(value)
+  if (!home?.ephemeral) throw new CodexProcessOwnerError('workspace_invalid')
+  home.identity = readEphemeralHomeIdentity(home.path)
+  home.cleanupPath = null
 }
 
 interface ApprovedSpawnDetails {
@@ -213,7 +257,12 @@ export interface OwnedCodexProcess {
 }
 
 export interface CodexProcessOwnerFactory {
-  spawn(spec: ApprovedSpawnSpec): Promise<OwnedCodexProcess>
+  spawn(spec: ApprovedSpawnSpec, control: CodexProcessSpawnControl): Promise<OwnedCodexProcess>
+}
+
+export interface CodexProcessSpawnControl {
+  readonly signal: AbortSignal
+  readonly expiresAtMs: number
 }
 
 interface ProcessGroupOperations {
@@ -231,6 +280,7 @@ const DEFAULT_GROUP_OPERATIONS: ProcessGroupOperations = {
 export class PosixCodexProcessOwnerFactory implements CodexProcessOwnerFactory {
   readonly #spawn: typeof spawn
   readonly #groupOperations: ProcessGroupOperations
+  #failedSupervisionOwner: PosixOwnedCodexProcess | null = null
 
   constructor(options: {
     readonly spawn?: typeof spawn
@@ -240,8 +290,20 @@ export class PosixCodexProcessOwnerFactory implements CodexProcessOwnerFactory {
     this.#groupOperations = options.groupOperations ?? DEFAULT_GROUP_OPERATIONS
   }
 
-  async spawn(spec: ApprovedSpawnSpec): Promise<OwnedCodexProcess> {
+  async spawn(spec: ApprovedSpawnSpec, control: CodexProcessSpawnControl): Promise<OwnedCodexProcess> {
     if (process.platform === 'win32') throw new CodexProcessOwnerError('spawn_failed')
+    if (control.signal.aborted || !Number.isFinite(control.expiresAtMs) || control.expiresAtMs <= Date.now()) {
+      throw new CodexProcessOwnerError('spawn_failed')
+    }
+    const failedOwner = this.#failedSupervisionOwner
+    if (failedOwner !== null) {
+      try {
+        await failedOwner.cleanupFailedSupervision()
+        if (this.#failedSupervisionOwner === failedOwner) this.#failedSupervisionOwner = null
+      } catch {
+        throw unconfirmedCodexProcessOwnerError(failedOwner)
+      }
+    }
     const details = approvedCodexSpawnDetails(spec)
     let child: ChildProcessWithoutNullStreams
     try {
@@ -262,8 +324,13 @@ export class PosixCodexProcessOwnerFactory implements CodexProcessOwnerFactory {
     }
     const owner = new PosixOwnedCodexProcess(child, this.#groupOperations)
     if (!owner.verifyGroupSupervision()) {
-      child.kill('SIGKILL')
-      await owner.dispose()
+      this.#failedSupervisionOwner = owner
+      try {
+        await owner.cleanupFailedSupervision()
+        if (this.#failedSupervisionOwner === owner) this.#failedSupervisionOwner = null
+      } catch {
+        throw unconfirmedCodexProcessOwnerError(owner)
+      }
       throw new CodexProcessOwnerError('spawn_failed')
     }
     return owner
@@ -277,11 +344,13 @@ class PosixOwnedCodexProcess implements OwnedCodexProcess {
   readonly exit: Promise<number | null>
   readonly pid: number
   readonly #groupOperations: ProcessGroupOperations
+  readonly #killLeader: () => void
   #stdinClosed = false
   #disposed = false
 
   constructor(child: ChildProcessWithoutNullStreams, groupOperations: ProcessGroupOperations) {
     this.#groupOperations = groupOperations
+    this.#killLeader = () => { child.kill('SIGKILL') }
     this.stdin = child.stdin
     this.stdout = child.stdout
     this.stderr = child.stderr
@@ -339,8 +408,32 @@ class PosixOwnedCodexProcess implements OwnedCodexProcess {
       this.#groupOperations.signal(-this.pid, 0)
       return true
     } catch (error) {
-      return isErrno(error, 'EPERM')
+      if (isErrno(error, 'EPERM')) return true
+      if (isErrno(error, 'ESRCH')) return false
+      return false
     }
+  }
+
+  async cleanupFailedSupervision(): Promise<void> {
+    try {
+      this.#groupOperations.signal(-this.pid, 'SIGKILL')
+    } catch (error) {
+      if (!isErrno(error, 'ESRCH')) {
+        // Even when the supervision probe failed unexpectedly, still fall back to
+        // closing the leader below. No positive-PID signal is used as a tree kill.
+      }
+    }
+    try { this.#killLeader() } catch { /* best-effort after whole-group signal */ }
+    this.stdin.destroy()
+    this.stdout.destroy()
+    this.stderr.destroy()
+    let groupGone = false
+    try {
+      groupGone = await this.waitTreeGone(5000)
+    } finally {
+      await this.dispose()
+    }
+    if (!groupGone) throw new CodexProcessOwnerError('spawn_failed')
   }
 
   #groupAlive(): boolean {
@@ -348,7 +441,9 @@ class PosixOwnedCodexProcess implements OwnedCodexProcess {
       this.#groupOperations.signal(-this.pid, 0)
       return true
     } catch (error) {
-      return isErrno(error, 'EPERM')
+      if (isErrno(error, 'EPERM')) return true
+      if (isErrno(error, 'ESRCH')) return false
+      throw new CodexProcessOwnerError('spawn_failed')
     }
   }
 
@@ -373,8 +468,9 @@ export function createPlatformCodexProcessOwnerFactory(options: {
 }
 
 class FailingWindowsCodexProcessOwnerFactory implements CodexProcessOwnerFactory {
-  spawn(spec: ApprovedSpawnSpec): Promise<OwnedCodexProcess> {
+  spawn(spec: ApprovedSpawnSpec, control: CodexProcessSpawnControl): Promise<OwnedCodexProcess> {
     void spec
+    void control
     return Promise.reject(new CodexProcessOwnerError('spawn_failed'))
   }
 }
@@ -423,8 +519,23 @@ function brandWorkspace(path: string): HostWorkspace {
 
 function brandHome(path: string, ephemeral: boolean): HostCodexHome {
   const value = Object.freeze({[hostCodexHomeBrand]: true as const})
-  homeValues.set(value, Object.freeze({path, ephemeral}))
+  homeValues.set(value, {
+    path,
+    ephemeral,
+    identity: ephemeral ? readEphemeralHomeIdentity(path) : null,
+    cleanupPath: null,
+  })
   return value
+}
+
+function readEphemeralHomeIdentity(path: string): EphemeralHomeIdentity {
+  try {
+    const info = lstatSync(path, {bigint: true})
+    if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('invalid home')
+    return Object.freeze({device: info.dev, inode: info.ino, uid: Number(info.uid)})
+  } catch {
+    throw new CodexProcessOwnerError('workspace_invalid')
+  }
 }
 
 function requireCanonicalRegularFile(

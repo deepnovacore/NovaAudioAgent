@@ -4,7 +4,6 @@ import {tmpdir} from 'node:os'
 import {join, resolve} from 'node:path'
 import {test} from 'node:test'
 
-import * as runtime from '../src/index.js'
 import {
   createApprovedCodexSpawnSpec,
   createPlatformCodexProcessOwnerFactory,
@@ -17,24 +16,13 @@ import {
   WINDOWS_GUARDIAN_FRAME_LIMIT,
   WindowsGuardianControlParser,
   windowsGuardianForceFrame,
+  windowsGuardianHelperForTest,
 } from '../src/codex-windows-guardian.js'
 
 const encoder = new TextEncoder()
 
 test('guardian control rejects duplicate ready frames without exposing their contents', () => {
-  const module = runtime as unknown as Record<string, unknown>
-  const Parser = typeof module.WindowsGuardianControlParser === 'function'
-    ? module.WindowsGuardianControlParser as new () => {
-      feed(chunk: Uint8Array): readonly unknown[]
-      end(): void
-    }
-    : class UnsafeGuardianParser {
-      feed(chunk: Uint8Array): readonly unknown[] {
-        return String(new TextDecoder().decode(chunk)).split('\n').filter(Boolean).map(value => JSON.parse(value) as unknown)
-      }
-      end(): void { return undefined }
-    }
-  const parser = new Parser()
+  const parser = new WindowsGuardianControlParser()
   const ready = '{"type":"ready","version":1,"targetPid":123}\n'
   assert.deepEqual(parser.feed(encoder.encode(ready)), [{type: 'ready', version: 1, targetPid: 123}])
   assert.throws(
@@ -80,7 +68,10 @@ test('the force command is fixed and Windows production has no helper or taskkil
     },
   })
   const factory = createPlatformCodexProcessOwnerFactory({platform: 'win32'})
-  await assert.rejects(factory.spawn(spec), (error: unknown) => {
+  await assert.rejects(factory.spawn(spec, {
+    signal: new AbortController().signal,
+    expiresAtMs: Date.now() + 5000,
+  }), (error: unknown) => {
     assert.equal(String(error), 'CodexProcessOwnerError: spawn_failed')
     assert.equal(String(error).includes('taskkill'), false)
     return true
@@ -92,37 +83,68 @@ test('guardian helper resolution accepts only canonical allowlisted architecture
   const valid = join(root, 'job-launcher.exe')
   const script = join(root, 'job-launcher.cmd')
   const malformed = join(root, 'malformed.exe')
-  const pe = new Uint8Array(256)
+  const zeroSection = join(root, 'zero-section.exe')
+  const pe = new Uint8Array(512)
   pe[0] = 0x4d
   pe[1] = 0x5a
   new DataView(pe.buffer).setUint32(0x3c, 0x80, true)
   pe.set([0x50, 0x45, 0x00, 0x00], 0x80)
   new DataView(pe.buffer).setUint16(0x84, 0x8664, true)
+  new DataView(pe.buffer).setUint16(0x86, 1, true)
+  new DataView(pe.buffer).setUint16(0x94, 0xf0, true)
+  new DataView(pe.buffer).setUint16(0x96, 0x0002, true)
+  new DataView(pe.buffer).setUint16(0x98, 0x020b, true)
+  pe.set(new TextEncoder().encode('.text\0\0\0'), 0x188)
+  new DataView(pe.buffer).setUint32(0x190, 1, true)
+  new DataView(pe.buffer).setUint32(0x194, 0x1000, true)
+  new DataView(pe.buffer).setUint32(0x198, 0x40, true)
+  new DataView(pe.buffer).setUint32(0x19c, 0x1c0, true)
+  new DataView(pe.buffer).setUint32(0x1ac, 0x60000020, true)
   await writeFile(valid, pe)
   await writeFile(script, pe)
   await writeFile(malformed, Uint8Array.of(0x4d, 0x5a))
+  const zeroSectionBytes = pe.slice()
+  zeroSectionBytes.fill(0, 0x188, 0x1b0)
+  await writeFile(zeroSection, zeroSectionBytes)
   try {
     const validCanonical = await realpath(valid)
     const scriptCanonical = await realpath(script)
     const malformedCanonical = await realpath(malformed)
-    const module = runtime as unknown as Record<string, unknown>
-    const validate = typeof module.windowsGuardianHelperForTest === 'function'
-      ? module.windowsGuardianHelperForTest as (
-        path: string,
-        allowlist: readonly string[],
-        architecture: string,
-      ) => string
-      : (path: string) => path
+    const zeroSectionCanonical = await realpath(zeroSection)
+    const validate = windowsGuardianHelperForTest
     assert.equal(validate(validCanonical, [validCanonical], 'x64'), validCanonical)
     for (const [path, allowlist, architecture] of [
       [scriptCanonical, [scriptCanonical], 'x64'],
       [malformedCanonical, [malformedCanonical], 'x64'],
+      [zeroSectionCanonical, [zeroSectionCanonical], 'x64'],
       [validCanonical, [validCanonical], 'arm64'],
       [validCanonical, [malformedCanonical], 'x64'],
       [`${resolve(validCanonical)}/.`, [validCanonical], 'x64'],
     ] as const) {
       assert.throws(() => validate(path, allowlist, architecture), CodexWindowsGuardianError)
     }
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('guardian rejects machine-only MZ/PE stubs without executable headers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-guardian-stub-'))
+  const stub = join(root, 'stub.exe')
+  const bytes = new Uint8Array(256)
+  bytes[0] = 0x4d
+  bytes[1] = 0x5a
+  const view = new DataView(bytes.buffer)
+  view.setUint32(0x3c, 0x80, true)
+  bytes.set([0x50, 0x45, 0, 0], 0x80)
+  view.setUint16(0x84, 0x8664, true)
+  await writeFile(stub, bytes)
+  try {
+    const canonical = await realpath(stub)
+    assert.throws(
+      () => windowsGuardianHelperForTest(canonical, [canonical], 'x64'),
+      CodexWindowsGuardianError,
+    )
   } finally {
     await rm(root, {recursive: true, force: true})
   }

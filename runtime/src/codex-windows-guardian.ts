@@ -167,6 +167,7 @@ function validatePortableExecutable(
   path: string,
   architecture: 'x64' | 'arm64' | 'ia32',
 ): void {
+  const fileSize = statSync(path).size
   const buffer = new Uint8Array(4096)
   const descriptor = openSync(path, 'r')
   let bytesRead: number
@@ -175,7 +176,7 @@ function validatePortableExecutable(
   } finally {
     closeSync(descriptor)
   }
-  if (bytesRead < 0x86 || buffer[0] !== 0x4d || buffer[1] !== 0x5a) {
+  if (bytesRead < 0x9a || buffer[0] !== 0x4d || buffer[1] !== 0x5a) {
     throw new CodexWindowsGuardianError()
   }
   const view = new DataView(buffer.buffer, buffer.byteOffset, bytesRead)
@@ -189,6 +190,48 @@ function validatePortableExecutable(
   ) throw new CodexWindowsGuardianError()
   const expected = architecture === 'x64' ? 0x8664 : architecture === 'arm64' ? 0xaa64 : 0x014c
   if (view.getUint16(peOffset + 4, true) !== expected) throw new CodexWindowsGuardianError()
+  const numberOfSections = view.getUint16(peOffset + 6, true)
+  const optionalHeaderBytes = view.getUint16(peOffset + 20, true)
+  const characteristics = view.getUint16(peOffset + 22, true)
+  const optionalHeaderOffset = peOffset + 24
+  const expectedOptionalMagic = architecture === 'ia32' ? 0x010b : 0x020b
+  if (
+    numberOfSections === 0
+    || numberOfSections > 96
+    || optionalHeaderBytes < 2
+    || optionalHeaderOffset + optionalHeaderBytes > bytesRead
+    || (characteristics & 0x0002) === 0
+    || (characteristics & 0x2000) !== 0
+    || view.getUint16(optionalHeaderOffset, true) !== expectedOptionalMagic
+  ) throw new CodexWindowsGuardianError()
+  const sectionTableOffset = optionalHeaderOffset + optionalHeaderBytes
+  const sectionTableBytes = numberOfSections * 40
+  if (
+    !Number.isSafeInteger(fileSize)
+    || fileSize <= 0
+    || sectionTableOffset + sectionTableBytes > bytesRead
+  ) throw new CodexWindowsGuardianError()
+  let executableCodeSection = false
+  for (let index = 0; index < numberOfSections; index += 1) {
+    const offset = sectionTableOffset + index * 40
+    const named = buffer.subarray(offset, offset + 8).some(byte => byte !== 0)
+    const virtualSize = view.getUint32(offset + 8, true)
+    const virtualAddress = view.getUint32(offset + 12, true)
+    const rawSize = view.getUint32(offset + 16, true)
+    const rawPointer = view.getUint32(offset + 20, true)
+    const sectionCharacteristics = view.getUint32(offset + 36, true)
+    if (
+      !named
+      || virtualAddress === 0
+      || (virtualSize === 0 && rawSize === 0)
+      || (rawSize > 0 && (rawPointer === 0 || rawPointer + rawSize > fileSize))
+    ) throw new CodexWindowsGuardianError()
+    executableCodeSection ||= (
+      (sectionCharacteristics & 0x00000020) !== 0
+      && (sectionCharacteristics & 0x20000000) !== 0
+    )
+  }
+  if (!executableCodeSection) throw new CodexWindowsGuardianError()
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

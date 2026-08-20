@@ -6,6 +6,7 @@ import type {Readable, Writable} from 'node:stream'
 import type {
   ApprovedSpawnSpec,
   CodexProcessOwnerFactory,
+  CodexProcessSpawnControl,
   OwnedCodexProcess,
 } from '../../../src/codex-process-owner.js'
 
@@ -20,6 +21,12 @@ export type FakeAppServerScenario =
   | 'stdout-overflow'
   | 'stderr-overflow'
   | 'delayed-turn'
+  | 'duplicate-response'
+  | 'unknown-response'
+  | 'server-request'
+  | 'clean-eof'
+  | 'pending-eof'
+  | 'turn-rejection-order'
   | 'descendant-leader-first'
   | 'descendant-ignore-term'
 
@@ -31,8 +38,11 @@ export class FakeAppServerOwnerFactory implements CodexProcessOwnerFactory {
     this.#scenario = scenario
   }
 
-  async spawn(_spec: ApprovedSpawnSpec): Promise<FakeAppServerOwner> {
+  async spawn(_spec: ApprovedSpawnSpec, control: CodexProcessSpawnControl): Promise<FakeAppServerOwner> {
     void _spec
+    if (control.signal.aborted || control.expiresAtMs <= Date.now()) {
+      throw new Error('fake owner spawn cancelled')
+    }
     const child = spawn(process.execPath, [FAKE_APP_SERVER_PATH, this.#scenario], {
       cwd: process.cwd(),
       env: {PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? ''},
@@ -95,7 +105,7 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
     })
   }
 
-  release(name: 'turn_start' | 'leader_exit'): void {
+  release(name: 'turn_start' | 'clean_eof' | 'leader_exit'): void {
     this.#child.send?.({type: 'release', name})
   }
 

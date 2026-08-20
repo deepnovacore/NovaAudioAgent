@@ -1,4 +1,4 @@
-import {constants as fsConstants} from 'node:fs'
+import {constants as fsConstants, type BigIntStats} from 'node:fs'
 import {
   chmod,
   lstat,
@@ -10,10 +10,11 @@ import {
   type FileHandle,
 } from 'node:fs/promises'
 import {createHash, randomUUID} from 'node:crypto'
-import {join} from 'node:path'
+import {basename, dirname, join, posix, win32} from 'node:path'
 
 import {
   hostCodexHomeValue,
+  refreshEphemeralCodexHomeIdentity,
   type HostCodexHome,
 } from './codex-process-owner.js'
 import {isWellFormed} from './python-text.js'
@@ -79,7 +80,7 @@ export class CredentialSnapshotter {
   }): Promise<CredentialSnapshot> {
     try {
       const home = hostCodexHomeValue(input.codexHome)
-      if (home.ephemeral) await ensureEphemeralDirectory(home.path)
+      if (home.ephemeral) await ensureEphemeralDirectory(input.codexHome)
       else await requirePrivateDirectory(home.path)
       const apiKey = validateApiKey(input.apiKey)
       if (apiKey === null) await this.#syncSavedLogin(home.path)
@@ -93,19 +94,7 @@ export class CredentialSnapshotter {
   }
 
   async removeEphemeralHome(home: HostCodexHome): Promise<void> {
-    try {
-      const selected = hostCodexHomeValue(home)
-      if (!selected.ephemeral) return
-      try {
-        await requirePrivateDirectory(selected.path)
-      } catch (error) {
-        if (isErrno(error, 'ENOENT')) return
-        throw error
-      }
-      await rm(selected.path, {recursive: true, force: false})
-    } catch {
-      throw new CodexCredentialError()
-    }
+    await removeEphemeralHome(home)
   }
 
   environment(snapshot: CredentialSnapshot): Readonly<Record<string, string>> {
@@ -163,6 +152,80 @@ export class CredentialSnapshotter {
   }
 }
 
+/** Test-only scheduler seam for proving cleanup identity remains bound across a rename race. */
+export async function removeEphemeralHomeWithRaceHookForTest(
+  home: HostCodexHome,
+  afterIdentityCheck: (path: string) => Promise<void>,
+): Promise<void> {
+  await removeEphemeralHome(home, afterIdentityCheck)
+}
+
+async function removeEphemeralHome(
+  home: HostCodexHome,
+  afterQuarantineRename?: (path: string) => Promise<void>,
+): Promise<void> {
+  try {
+    const selected = hostCodexHomeValue(home)
+    if (!selected.ephemeral) return
+    const identity = selected.identity
+    if (identity === null) throw new CodexCredentialError()
+    let cleanupPath = selected.cleanupPath
+    if (cleanupPath === null) {
+      let linkInfo
+      try { linkInfo = await lstat(selected.path, {bigint: true}) }
+      catch (error) { if (isErrno(error, 'ENOENT')) return; throw error }
+      await requireCleanupIdentity(selected.path, linkInfo, identity)
+      if (process.platform !== 'win32') await chmod(selected.path, 0o700)
+      await requireCleanupIdentity(
+        selected.path,
+        await lstat(selected.path, {bigint: true}),
+        identity,
+      )
+      cleanupPath = join(
+        dirname(selected.path),
+        `.${basename(selected.path)}.nova-delete-${randomUUID().replaceAll('-', '')}`,
+      )
+      try {
+        await lstat(cleanupPath)
+        throw new CodexCredentialError()
+      } catch (error) {
+        if (!isErrno(error, 'ENOENT')) throw error
+      }
+      await rename(selected.path, cleanupPath)
+      selected.cleanupPath = cleanupPath
+      await afterQuarantineRename?.(cleanupPath)
+    }
+    const quarantined = await lstat(cleanupPath, {bigint: true})
+    await requireCleanupIdentity(cleanupPath, quarantined, identity)
+    if (process.platform !== 'win32') await chmod(cleanupPath, 0o700)
+    await requirePrivateDirectory(cleanupPath)
+    await requireCleanupIdentity(cleanupPath, await lstat(cleanupPath, {bigint: true}), identity)
+    // Security precondition: the transport calls this only after the one owned app-server tree is
+    // confirmed gone. Node has no fd-relative recursive removal API, so the private-parent,
+    // quarantine rename, and device/inode capability bind the path once that sole actor is dead.
+    await rm(cleanupPath, {recursive: true, force: false})
+    selected.cleanupPath = null
+  } catch {
+    throw new CodexCredentialError()
+  }
+}
+
+async function requireCleanupIdentity(
+  path: string,
+  linkInfo: BigIntStats,
+  identity: {readonly device: bigint; readonly inode: bigint; readonly uid: number},
+): Promise<void> {
+  if (
+    linkInfo.isSymbolicLink()
+    || !linkInfo.isDirectory()
+    || linkInfo.dev !== identity.device
+    || linkInfo.ino !== identity.inode
+    || Number(linkInfo.uid) !== identity.uid
+    || !ownerMatches(Number(linkInfo.uid))
+    || await realpath(path) !== path
+  ) throw new CodexCredentialError()
+}
+
 export function credentialSnapshotEnvironment(snapshot: CredentialSnapshot): Readonly<Record<string, string>> {
   const value = snapshotValues.get(snapshot)
   if (value === undefined) throw new CodexCredentialError()
@@ -199,7 +262,8 @@ async function requirePrivateDirectory(path: string): Promise<void> {
   ) throw new CodexCredentialError()
 }
 
-async function ensureEphemeralDirectory(path: string): Promise<void> {
+async function ensureEphemeralDirectory(homeValue: HostCodexHome): Promise<void> {
+  const {path} = hostCodexHomeValue(homeValue)
   try {
     await requirePrivateDirectory(path)
   } catch (error) {
@@ -208,6 +272,7 @@ async function ensureEphemeralDirectory(path: string): Promise<void> {
     await mkdir(path, {mode: 0o700})
     await chmod(path, 0o700)
     await requirePrivateDirectory(path)
+    refreshEphemeralCodexHomeIdentity(homeValue)
   }
 }
 
@@ -292,8 +357,7 @@ function encodeCredentialMarker(marker: Readonly<Record<string, string>>): Uint8
 }
 
 async function atomicOwnerWrite(path: string, content: Uint8Array): Promise<void> {
-  const directory = path.slice(0, path.lastIndexOf('/'))
-  const filename = path.slice(path.lastIndexOf('/') + 1)
+  const {directory, filename} = splitAtomicTarget(path, process.platform)
   const temporary = join(directory, `.${filename}.${randomUUID().replaceAll('-', '')}.tmp`)
   const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0
   let handle: FileHandle | undefined
@@ -322,6 +386,22 @@ async function atomicOwnerWrite(path: string, content: Uint8Array): Promise<void
     if (handle !== undefined) await handle.close().catch(() => undefined)
     await rm(temporary, {force: true}).catch(() => undefined)
   }
+}
+
+/** Test-only Windows path contract used before the native guardian ships. */
+export function splitCredentialAtomicTargetForTest(
+  path: string,
+  platform: 'win32' | 'posix',
+): Readonly<{directory: string; filename: string}> {
+  return splitAtomicTarget(path, platform)
+}
+
+function splitAtomicTarget(
+  path: string,
+  platform: NodeJS.Platform | 'posix',
+): Readonly<{directory: string; filename: string}> {
+  const pathApi = platform === 'win32' ? win32 : posix
+  return Object.freeze({directory: pathApi.dirname(path), filename: pathApi.basename(path)})
 }
 
 function snapshotEnvironmentInput(

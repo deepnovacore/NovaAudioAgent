@@ -8,6 +8,12 @@ const allowedScenarios = new Set([
   'stdout-overflow',
   'stderr-overflow',
   'delayed-turn',
+  'duplicate-response',
+  'unknown-response',
+  'server-request',
+  'clean-eof',
+  'pending-eof',
+  'turn-rejection-order',
   'descendant-leader-first',
   'descendant-ignore-term',
 ])
@@ -27,6 +33,7 @@ process.on('message', message => {
     pendingTurnId = null
     turnCompletion(id)
   }
+  if (message.name === 'clean_eof' && scenario === 'clean-eof') endAndExit()
   if (message.name === 'leader_exit') {
     process.disconnect?.()
     process.exit(0)
@@ -34,15 +41,20 @@ process.on('message', message => {
 })
 
 if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-term') {
+  const readyFile = process.env.NOVA_FAKE_DESCENDANT_READY_FILE
   const childScript = scenario === 'descendant-ignore-term'
-    ? 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'
-    : 'setInterval(()=>{},1000)'
-  spawn(process.execPath, ['-e', childScript], {
-    stdio: 'ignore',
+    ? 'if(process.env.NOVA_FAKE_DESCENDANT_READY_FILE)require("node:fs").writeFileSync(process.env.NOVA_FAKE_DESCENDANT_READY_FILE,"ready");process.on("SIGTERM",()=>{});process.send?.({type:"ready"});setInterval(()=>{},1000)'
+    : 'if(process.env.NOVA_FAKE_DESCENDANT_READY_FILE)require("node:fs").writeFileSync(process.env.NOVA_FAKE_DESCENDANT_READY_FILE,"ready");process.send?.({type:"ready"});setInterval(()=>{},1000)'
+  const descendant = spawn(process.execPath, ['-e', childScript], {
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     shell: false,
     detached: false,
+    env: {...process.env, ...(readyFile === undefined ? {} : {NOVA_FAKE_DESCENDANT_READY_FILE: readyFile})},
   })
-  barrier('descendant_started')
+  descendant.once('message', message => {
+    if (plain(message) && message.type === 'ready') barrier('descendant_started')
+    else fail('invalid_descendant_ready')
+  })
 } else {
   const input = createInterface({input: process.stdin, crlfDelay: Infinity})
   input.on('line', line => {
@@ -52,6 +64,13 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
     } catch {
       fail('malformed_input')
     }
+    if (
+      plain(message)
+      && message.id === 909
+      && plain(message.error)
+      && message.error.code === -32601
+      && message.error.message === 'Method not implemented'
+    ) return
     if (!plain(message) || typeof message.method !== 'string') fail('invalid_shape')
     const params = plain(message.params) ? message.params : {}
     if (message.method === 'initialized') return
@@ -73,7 +92,22 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
         threadId = params.threadId
       }
       const persistent = params.ephemeral === false || message.method === 'thread/resume'
-      send({id: message.id, result: threadResponse(process.cwd(), threadId, persistent)})
+      const response = {id: message.id, result: threadResponse(process.cwd(), threadId, persistent)}
+      if (scenario === 'duplicate-response') {
+        sendMany([response, response])
+        return
+      }
+      if (scenario === 'unknown-response') {
+        sendMany([response, {id: 999_999, result: {private: 'unknown'}}])
+        return
+      }
+      if (scenario === 'server-request') {
+        sendMany([response, {
+          id: 909, method: 'account/private', params: {message: 'remote-private'},
+        }])
+        return
+      }
+      send(response)
       return
     }
     if (message.method === 'turn/start') {
@@ -81,6 +115,18 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       send({method: 'turn/started', params: {
         threadId, turn: {id: 'fixture-turn-1', items: [], status: 'inProgress'},
       }})
+      if (scenario === 'clean-eof') {
+        barrier('turn_start')
+        return
+      }
+      if (scenario === 'pending-eof') {
+        endAndExit()
+        return
+      }
+      if (scenario === 'turn-rejection-order') {
+        send({id: message.id, error: {code: -32000, message: 'remote-private-rejection'}})
+        return
+      }
       if (scenario === 'malformed-after-turn') {
         process.stdout.write(Buffer.from([0xff, 0x0a]))
         return
@@ -147,9 +193,23 @@ function send(value) {
   if (offset < bytes.length) process.stdout.write(bytes.subarray(offset))
 }
 
+function sendMany(values) {
+  process.stdout.write(Buffer.from(
+    values.map(value => `${JSON.stringify(value)}\n`).join(''),
+    'utf8',
+  ))
+}
+
 function barrier(name) {
   if (typeof process.send !== 'function') fail('missing_ipc')
   process.send({type: 'barrier', name})
+}
+
+function endAndExit() {
+  process.stdout.end(() => {
+    process.disconnect?.()
+    process.exit(0)
+  })
 }
 
 function fail(code) {

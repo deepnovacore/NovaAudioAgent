@@ -5,12 +5,27 @@ export * from './clock.js'
 export * from './codex-app-server-schema.js'
 export * from './codex-app-server-transport.js'
 export * from './codex-contract.js'
-export * from './codex-credential-snapshot.js'
+export {
+  CODEX_CREDENTIAL_MARKER,
+  CODEX_SAVED_LOGIN_FILES,
+  CodexCredentialError,
+  CredentialSnapshotter,
+  MAX_CREDENTIAL_BYTES,
+  MAX_CREDENTIAL_MARKER_BYTES,
+  credentialSnapshotEnvironment,
+  type CredentialSnapshot,
+} from './codex-credential-snapshot.js'
 export * from './codex-jsonl.js'
 export * from './codex-protocol.js'
-export * from './codex-process-owner.js'
 export * from './codex-turn-projection.js'
-export * from './codex-windows-guardian.js'
+export {
+  WINDOWS_GUARDIAN_FRAME_LIMIT,
+  WINDOWS_GUARDIAN_READY_TIMEOUT_MS,
+  CodexWindowsGuardianError,
+  WindowsGuardianControlParser,
+  windowsGuardianForceFrame,
+  type WindowsGuardianFrame,
+} from './codex-windows-guardian.js'
 export * from './cli.js'
 export * from './config.js'
 export * from './context-view.js'

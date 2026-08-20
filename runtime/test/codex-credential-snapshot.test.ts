@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict'
-import {chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile} from 'node:fs/promises'
+import {chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {test} from 'node:test'
 
-import * as runtime from '../src/index.js'
 import {
   CredentialSnapshotter,
   credentialSnapshotEnvironment,
   MAX_CREDENTIAL_BYTES,
   MAX_CREDENTIAL_MARKER_BYTES,
+  prepareCodexCredentialSnapshotForTest,
+  removeEphemeralHomeWithRaceHookForTest,
+  splitCredentialAtomicTargetForTest,
 } from '../src/codex-credential-snapshot.js'
 import {hostCodexHomeForTest} from '../src/codex-process-owner.js'
 
@@ -22,18 +24,9 @@ test('saved login is copied privately and the child environment is an exact allo
   await writeFile(join(source, 'auth.json'), '{"token":"credential-sentinel"}', {mode: 0o600})
   await chmod(join(source, 'auth.json'), 0o600)
   try {
-    const module = runtime as unknown as Record<string, unknown>
-    const prepare = typeof module.prepareCodexCredentialSnapshotForTest === 'function'
-      ? module.prepareCodexCredentialSnapshotForTest as (
-        input: Readonly<Record<string, unknown>>,
-      ) => Promise<Record<string, unknown>>
-      : (input: Readonly<Record<string, unknown>>) => {
-        void input
-        return Promise.resolve({environment: {...process.env}})
-      }
     process.env.NOVA_PARENT_CREDENTIAL_SENTINEL = 'must-not-cross'
 
-    const result = await prepare({
+    const result = await prepareCodexCredentialSnapshotForTest({
       sourceHome: await realpath(source),
       destinationHome: await realpath(destination),
       apiKey: null,
@@ -242,4 +235,64 @@ test('ephemeral cleanup is exact and idempotent while persistent homes remain', 
   } finally {
     await rm(root, {recursive: true, force: true})
   }
+})
+
+test('ephemeral cleanup restores a chmodded owned root but refuses an inode replacement', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-clean-identity-'))
+  const chmoddedPath = join(root, 'chmodded')
+  const replacedPath = join(root, 'replaced')
+  await mkdir(chmoddedPath, {mode: 0o700})
+  await mkdir(replacedPath, {mode: 0o700})
+  const snapshotter = new CredentialSnapshotter({environment: {PATH: '/safe', HOME: '/home'}})
+  try {
+    const chmodded = hostCodexHomeForTest(await realpath(chmoddedPath), {ephemeral: true})
+    await chmod(chmoddedPath, 0o000)
+    await snapshotter.removeEphemeralHome(chmodded)
+    await assert.rejects(lstat(chmoddedPath), {code: 'ENOENT'})
+
+    const replaced = hostCodexHomeForTest(await realpath(replacedPath), {ephemeral: true})
+    const original = join(root, 'original')
+    const {rename} = await import('node:fs/promises')
+    await rename(replacedPath, original)
+    await mkdir(replacedPath, {mode: 0o700})
+    await assert.rejects(
+      snapshotter.removeEphemeralHome(replaced),
+      (error: unknown) => String(error) === 'CodexCredentialError: credential_missing',
+    )
+    assert.equal((await lstat(replacedPath)).isDirectory(), true)
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('ephemeral cleanup never deletes a replacement raced after its identity check', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-clean-race-'))
+  const selectedPath = join(root, 'selected')
+  const originalPath = join(root, 'original')
+  let replacementPath = ''
+  await mkdir(selectedPath, {mode: 0o700})
+  const selected = hostCodexHomeForTest(await realpath(selectedPath), {ephemeral: true})
+  try {
+    await assert.rejects(
+      removeEphemeralHomeWithRaceHookForTest(selected, async quarantinedPath => {
+        replacementPath = quarantinedPath
+        await rename(quarantinedPath, originalPath)
+        await mkdir(quarantinedPath, {mode: 0o700})
+        await writeFile(join(quarantinedPath, 'replacement-sentinel'), 'must remain', {mode: 0o600})
+      }),
+      (error: unknown) => String(error) === 'CodexCredentialError: credential_missing',
+    )
+    assert.equal(await readFile(join(replacementPath, 'replacement-sentinel'), 'utf8'), 'must remain')
+    await assert.rejects(lstat(selectedPath), {code: 'ENOENT'})
+    assert.equal((await lstat(originalPath)).isDirectory(), true)
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('credential atomic targets use Windows dirname and basename semantics', () => {
+  assert.deepEqual(
+    splitCredentialAtomicTargetForTest('C:\\Users\\nova\\.codex\\auth.json', 'win32'),
+    {directory: 'C:\\Users\\nova\\.codex', filename: 'auth.json'},
+  )
 })

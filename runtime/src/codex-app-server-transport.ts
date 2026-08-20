@@ -13,11 +13,13 @@ import {
   AppServerRequestRejected,
   CodexProtocolError,
   JsonRpcConnection,
+  MAX_STDOUT,
 } from './codex-protocol.js'
 import {
   createApprovedCodexSpawnSpec,
   hostCodexHomeValue,
   hostWorkspacePath,
+  takeUnconfirmedCodexProcessOwner,
   type CodexProcessOwnerFactory,
   type HostBinary,
   type HostCodexHome,
@@ -156,8 +158,10 @@ interface Session {
   readonly rpc: JsonRpcConnection
   readonly credentialSnapshot: CredentialSnapshot
   readonly failure: Deferred<CodexTransportError>
+  failureCause: CodexTransportError | null
   readonly stdoutDone: Promise<void>
   readonly stderrDone: Promise<void>
+  readonly settlePumps: () => Promise<void>
   readonly removeListeners: () => void
   readonly threadResponse: unknown
   projection: AppServerTurnProjection | null
@@ -175,6 +179,8 @@ interface Session {
 interface CleanupResult {
   readonly stop: 'none' | 'terminate' | 'kill'
   readonly exitCode: number | null
+  readonly cleanupFailed: boolean
+  readonly treeGone: boolean
 }
 
 export class CodexTransportError extends Error {
@@ -205,6 +211,12 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   #closed = false
   #hadTurn = false
   readonly #sensitiveInputs: string[] = []
+  readonly #lateOwnerCleanups = new Set<Promise<void>>()
+  readonly #unconfirmedOwners = new Set<OwnedCodexProcess>()
+  readonly #spawnControllers = new Set<AbortController>()
+  #lateCleanupFailure: CodexTransportError | null = null
+  #credentialCleanupFailure: CodexTransportError | null = null
+  #failedTreeSession: Session | null = null
 
   constructor(options: {
     readonly config: CodexAppServerLaunchConfig
@@ -252,6 +264,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       const projection = new AppServerTurnProjection({clock: this.#scheduler.clock})
       this.#bindThread(projection, session.threadResponse)
       await this.#scheduler.yieldIo()
+      if (session.failureCause !== null) throw session.failureCause
       if (session.unexpectedServerRequest) {
         throw new CodexTransportError('unexpected_server_request')
       }
@@ -312,46 +325,56 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       this.#bindThread(projection, session.threadResponse)
       try { observer.onThreadReady?.() } catch { /* advisory */ }
       await this.#scheduler.yieldIo()
-      if (session.unexpectedServerRequest) throw new CodexTransportError('unexpected_server_request')
-      const turnResponse = await this.#requestWithin(
+      const turnResponse = await this.#requestPreparedWithin(
         session,
         'turn/start',
-        {threadId: projection.threadId, input: [{type: 'text', text: workOrder}]},
+        () => {
+          if (session!.failureCause !== null) {
+            throw new CodexProtocolError(session!.failureCause.code)
+          }
+          if (session!.unexpectedServerRequest) {
+            throw new CodexProtocolError('unexpected_server_request')
+          }
+          return {threadId: projection.threadId, input: [{type: 'text', text: workOrder}]}
+        },
         deadline,
         () => { session!.turnStartWritten = true },
       )
       projection.bindTurnResponse(turnResponse)
       completion = await this.#waitForCompletion(session, deadline)
-      this.#hadTurn ||= projection.turnWasStarted
     } catch (error) {
       failureCode = safeTransportError(error, 'transport_lost').code
     }
+    this.#hadTurn ||= session?.projection?.turnWasStarted ?? false
     const written = session?.turnStartWritten ?? false
-    let cleanup: CleanupResult = {stop: 'none', exitCode: null}
+    let cleanup: CleanupResult = {stop: 'none', exitCode: null, cleanupFailed: false, treeGone: true}
     if (session !== null) cleanup = await this.#cleanup(session, failureCode !== null)
-    this.#session = null
+    if (session !== null && cleanup.treeGone && this.#session === session) this.#session = null
     this.#runActive = false
-    this.#sensitiveInputs.splice(0)
-
-    if (failureCode !== null) {
-      return outcome(written ? 'uncertain' : 'refused', failureCode, written, completion)
+    try {
+      if (failureCode !== null) {
+        return outcome(written ? 'uncertain' : 'refused', failureCode, written, completion)
+      }
+      if (completion === null) return outcome(written ? 'uncertain' : 'refused', 'transport_lost', written, null)
+      const safeCompletion = Object.freeze({
+        status: completion.status,
+        final_text: completion.final_text === null
+          ? null
+          : this.#sanitizeText(completion.final_text, CODEX_FINAL_TEXT_LIMIT).text,
+        internal_activity: completion.internal_activity,
+      })
+      if (cleanup.cleanupFailed) return outcome('uncertain', 'credential_missing', written, safeCompletion)
+      if (session?.unexpectedServerRequest === true) {
+        return outcome('uncertain', 'unexpected_server_request', written, safeCompletion)
+      }
+      if (completion.status !== 'completed') return outcome('uncertain', 'turn_failed', written, safeCompletion)
+      if (safeCompletion.final_text === null) return outcome('uncertain', 'missing_terminal', written, safeCompletion)
+      if (cleanup.exitCode !== 0) return outcome('uncertain', 'nonzero_exit', written, safeCompletion)
+      if (cleanup.stop !== 'none') return outcome('uncertain', 'transport_lost', written, safeCompletion)
+      return outcome('completed', 'completed', written, safeCompletion)
+    } finally {
+      this.#sensitiveInputs.splice(0)
     }
-    if (completion === null) return outcome(written ? 'uncertain' : 'refused', 'transport_lost', written, null)
-    const safeCompletion = Object.freeze({
-      status: completion.status,
-      final_text: completion.final_text === null
-        ? null
-        : this.#sanitizeText(completion.final_text, CODEX_FINAL_TEXT_LIMIT).text,
-      internal_activity: completion.internal_activity,
-    })
-    if (session?.unexpectedServerRequest === true) {
-      return outcome('uncertain', 'unexpected_server_request', written, safeCompletion)
-    }
-    if (completion.status !== 'completed') return outcome('uncertain', 'turn_failed', written, safeCompletion)
-    if (safeCompletion.final_text === null) return outcome('uncertain', 'missing_terminal', written, safeCompletion)
-    if (cleanup.exitCode !== 0) return outcome('uncertain', 'nonzero_exit', written, safeCompletion)
-    if (cleanup.stop !== 'none') return outcome('uncertain', 'transport_lost', written, safeCompletion)
-    return outcome('completed', 'completed', written, safeCompletion)
   }
 
   async steer(input: SteerInput, deadline: TransportDeadline): Promise<SteerTransportResult> {
@@ -377,6 +400,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
           const pair = projection.activePair
           if (pair === null) throw new CodexProtocolError('stale_turn')
           expectedTurnId = pair[1]
+          this.#sensitiveInputs.push(instruction)
           return {
             threadId: pair[0],
             expectedTurnId: pair[1],
@@ -386,7 +410,6 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         deadline,
         () => {
           written = true
-          this.#sensitiveInputs.push(instruction)
         },
       )
       const envelope = snapshotJsonRecord(response)
@@ -411,15 +434,54 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     if (this.#closePromise !== null) return this.#closePromise
     this.#closed = true
     const work = (async (): Promise<void> => {
+      let closeTimedOut = false
+      for (const controller of this.#spawnControllers) controller.abort()
       const ownedAtClose = this.#session
-      if (ownedAtClose !== null) await this.#cleanup(ownedAtClose, true)
+      let cleanupFailed = false
+      if (ownedAtClose !== null) {
+        const cleanup = await this.#cleanupWithRetry(ownedAtClose, true)
+        cleanupFailed ||= cleanup.cleanupFailed
+        closeTimedOut ||= !cleanup.treeGone
+      }
       const prewarm = this.#prewarmPromise
       if (prewarm !== null) await prewarm.catch(() => undefined)
       const establishing = this.#establishPromise
-      if (establishing !== null) await establishing.catch(() => undefined)
+      if (establishing !== null) {
+        closeTimedOut ||= !await settleCleanupValue(
+          async () => { await establishing.catch(() => undefined); return true },
+          CODEX_TREE_GRACE_MS,
+          false,
+        )
+      }
       const session = this.#session
-      if (session !== null && session !== ownedAtClose) await this.#cleanup(session, true)
-      this.#session = null
+      if (session !== null && session !== ownedAtClose) {
+        const cleanup = await this.#cleanupWithRetry(session, true)
+        cleanupFailed ||= cleanup.cleanupFailed
+        closeTimedOut ||= !cleanup.treeGone
+      }
+      if (this.#failedTreeSession === null) this.#session = null
+      const late = [...this.#lateOwnerCleanups]
+      if (late.length > 0) {
+        closeTimedOut ||= !await settleCleanupValue(
+          async () => { await Promise.allSettled(late); return true },
+          CODEX_TREE_GRACE_MS,
+          false,
+        )
+      }
+      for (const owner of [...this.#unconfirmedOwners]) {
+        const gone = await this.#cleanupRejectedOwner(owner)
+        closeTimedOut ||= !gone
+        if (gone) {
+          try { await this.#removeCredentialHome() } catch { cleanupFailed = true }
+        }
+      }
+      cleanupFailed ||= this.#credentialCleanupFailure !== null
+      closeTimedOut ||= this.#failedTreeSession !== null || this.#unconfirmedOwners.size > 0
+      if (closeTimedOut) throw new CodexTransportError('transport_lost')
+      if (this.#lateCleanupFailure !== null) {
+        throw new CodexTransportError(this.#lateCleanupFailure.code)
+      }
+      if (cleanupFailed) throw new CodexTransportError('credential_missing')
     })()
     this.#closePromise = work
     return work
@@ -476,12 +538,12 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       // stops admission, not the already-owned worker operation, so shield and join it before
       // cleaning the selected home or returning cancellation to the caller.
       await credentialWork.catch(() => undefined)
-      await boundedCleanup(() => this.#credentials.removeEphemeralHome(this.#config.codexHome))
+      await this.#removeCredentialHome()
       if (error instanceof CodexTransportError && error.code === 'adapter_timeout') throw error
       throw new CodexTransportError('credential_missing')
     }
     if (this.#closed) {
-      await boundedCleanup(() => this.#credentials.removeEphemeralHome(this.#config.codexHome))
+      await this.#removeCredentialHome()
       throw new CodexTransportError('transport_lost')
     }
     let owner: OwnedCodexProcess
@@ -493,19 +555,64 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         codexHome: this.#config.codexHome,
         environment,
       })
-      owner = await runWithin(this.#processFactory.spawn(spec), deadline, 'adapter_timeout')
+      const spawnController = new AbortController()
+      const abortSpawn = (): void => { spawnController.abort() }
+      const spawnTimer = setTimeout(abortSpawn, Math.max(0, deadline.expiresAtMs - Date.now()))
+      deadline.signal?.addEventListener('abort', abortSpawn, {once: true})
+      this.#spawnControllers.add(spawnController)
+      const spawnWork = Promise.resolve().then(() => this.#processFactory.spawn(spec, {
+        signal: spawnController.signal,
+        expiresAtMs: deadline.expiresAtMs,
+      }))
+      void spawnWork.finally(() => {
+        clearTimeout(spawnTimer)
+        deadline.signal?.removeEventListener('abort', abortSpawn)
+        this.#spawnControllers.delete(spawnController)
+      }).catch(() => undefined)
+      try {
+        owner = await runWithin(spawnWork, deadline, 'adapter_timeout')
+      } catch (error) {
+        spawnController.abort()
+        const unconfirmedOwner = takeUnconfirmedCodexProcessOwner(error)
+        if (unconfirmedOwner !== null) {
+          this.#closed = true
+          this.#unconfirmedOwners.add(unconfirmedOwner)
+          throw new CodexTransportError('transport_lost')
+        }
+        const safe = this.#closed
+          ? new CodexTransportError('transport_lost')
+          : deadline.signal?.aborted === true || Date.now() >= deadline.expiresAtMs
+            ? new CodexTransportError('adapter_timeout')
+            : safeTransportError(error, 'spawn_failed')
+        if (safe.code === 'adapter_timeout') {
+          this.#trackLateOwnerCleanup(spawnWork)
+          throw safe
+        }
+        throw safe
+      }
     } catch (error) {
-      await boundedCleanup(() => this.#credentials.removeEphemeralHome(this.#config.codexHome))
       const safe = safeTransportError(error, 'spawn_failed')
-      throw new CodexTransportError(safe.code === 'adapter_timeout' ? 'adapter_timeout' : 'spawn_failed')
+      if (safe.code !== 'adapter_timeout' && this.#unconfirmedOwners.size === 0) {
+        await this.#removeCredentialHome().catch(() => undefined)
+      }
+      throw new CodexTransportError(
+        safe.code === 'adapter_timeout' || safe.code === 'transport_lost'
+          ? safe.code
+          : 'spawn_failed',
+      )
+    }
+    if (this.#closed) {
+      if (!await this.#cleanupRejectedOwner(owner)) throw new CodexTransportError('transport_lost')
+      await this.#removeCredentialHome()
+      throw new CodexTransportError('transport_lost')
     }
     let session: Session
     try {
       requireOwnedProcessContract(owner)
       session = this.#ownSession(owner, credentialSnapshot)
     } catch {
-      await cleanupRejectedOwner(owner)
-      await boundedCleanup(() => this.#credentials.removeEphemeralHome(this.#config.codexHome))
+      if (!await this.#cleanupRejectedOwner(owner)) throw new CodexTransportError('transport_lost')
+      await this.#removeCredentialHome()
       throw new CodexTransportError('spawn_failed')
     }
     this.#session = session
@@ -536,8 +643,8 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       ;(session as {threadResponse: unknown}).threadResponse = threadResponse
       return {report, session}
     } catch (error) {
-      await this.#cleanup(session, true)
-      if (this.#session === session) this.#session = null
+      const cleanup = await this.#cleanup(session, true)
+      if (cleanup.treeGone && this.#session === session) this.#session = null
       throw safeTransportError(error, 'transport_lost')
     }
   }
@@ -562,7 +669,10 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     const stdoutDone = new Promise<void>(resolve => { stdoutResolve = resolve })
     const stderrDone = new Promise<void>(resolve => { stderrResolve = resolve })
     let feedChain = Promise.resolve()
+    let stdoutBytes = 0
     let stderrBytes = 0
+    let stdoutTerminal = false
+    let stderrTerminal = false
     const rpc = new JsonRpcConnection({
       write: async bytes => { await writeDrain(owner.stdin, bytes) },
       onNotification: notification => {
@@ -572,70 +682,108 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
           const completion = projection.notification(notification.method, notification.params)
           if (completion !== null) session.completion?.resolve(completion)
         } catch (error) {
-          failure.resolve(safeTransportError(error, 'unsupported_protocol'))
+          this.#failSession(session, safeTransportError(error, 'unsupported_protocol'))
         }
       },
       onServerRequest: () => {
         session.unexpectedServerRequest = true
-        if (session.turnStartWritten) failure.resolve(new CodexTransportError('unexpected_server_request'))
+        if (session.turnStartWritten) this.#failSession(session, new CodexTransportError('unexpected_server_request'))
       },
     })
-    const onStdoutData = (chunk: Buffer): void => {
-      const copy = Uint8Array.from(chunk)
-      feedChain = feedChain.then(async () => { await rpc.feed(copy) })
-      void feedChain.catch(error => {
-        failure.resolve(mapProtocolFailure(error))
-      })
-    }
-    const onStdoutEnd = (): void => {
+    const finishStdout = (failureCode: CodexTransportError | null): void => {
+      if (failureCode !== null) this.#failSession(session, failureCode)
+      if (stdoutTerminal) return
+      stdoutTerminal = true
+      owner.stdout.pause()
       void feedChain.then(() => {
         const ended = rpc.end()
-        if (ended !== undefined) failure.resolve(mapProtocolFailure(ended))
-        else if (!session.closing && session.completion?.settled() !== true) {
-          failure.resolve(new CodexTransportError('transport_lost'))
+        if (ended !== undefined) this.#failSession(session, mapProtocolFailure(ended))
+        else if (failureCode === null && !session.closing && session.completion?.settled() !== true) {
+          this.#failSession(session, new CodexTransportError('transport_lost'))
         }
-      }, error => { failure.resolve(mapProtocolFailure(error)) }).finally(stdoutResolve)
+      }, error => { this.#failSession(session, mapProtocolFailure(error)) }).finally(stdoutResolve)
     }
-    const onStdoutError = (): void => {
-      failure.resolve(new CodexTransportError('transport_lost'))
-      stdoutResolve()
+    const onStdoutData = (chunk: Buffer): void => {
+      if (stdoutTerminal) return
+      owner.stdout.pause()
+      const byteLength = Reflect.get(chunk, 'byteLength') as unknown
+      if (
+        typeof byteLength !== 'number'
+        || !Number.isSafeInteger(byteLength)
+        || byteLength < 0
+        || stdoutBytes + byteLength > MAX_STDOUT
+      ) {
+        finishStdout(new CodexTransportError('transport_lost'))
+        return
+      }
+      let copy: Uint8Array
+      try { copy = Uint8Array.from(chunk) }
+      catch { finishStdout(new CodexTransportError('transport_lost')); return }
+      stdoutBytes += byteLength
+      const accepted = feedChain.then(async () => { await rpc.feed(copy) })
+      feedChain = accepted
+      void accepted.then(() => {
+        if (!stdoutTerminal) owner.stdout.resume()
+      }, error => { finishStdout(mapProtocolFailure(error)) })
+    }
+    const onStdoutEnd = (): void => { finishStdout(null) }
+    const onStdoutError = (): void => { finishStdout(new CodexTransportError('transport_lost')) }
+    const onStdoutClose = (): void => {
+      if (!stdoutTerminal) finishStdout(new CodexTransportError('transport_lost'))
     }
     const onStderrData = (chunk: Buffer): void => {
       stderrBytes += chunk.byteLength
       if (stderrBytes > CODEX_STDERR_LIMIT) {
-        failure.resolve(new CodexTransportError('stderr_too_large'))
+        this.#failSession(session, new CodexTransportError('stderr_too_large'))
       }
     }
-    const onStderrEnd = (): void => { stderrResolve() }
-    const onStderrError = (): void => {
-      failure.resolve(new CodexTransportError('transport_lost'))
+    const finishStderr = (failureCode: CodexTransportError | null): void => {
+      if (failureCode !== null) this.#failSession(session, failureCode)
+      if (stderrTerminal) return
+      stderrTerminal = true
       stderrResolve()
     }
+    const onStderrEnd = (): void => { finishStderr(null) }
+    const onStderrError = (): void => { finishStderr(new CodexTransportError('transport_lost')) }
+    const onStderrClose = (): void => {
+      if (!stderrTerminal) finishStderr(new CodexTransportError('transport_lost'))
+    }
     const onStdinError = (): void => {
-      failure.resolve(new CodexTransportError('transport_lost'))
+      this.#failSession(session, new CodexTransportError('transport_lost'))
     }
     owner.stdin.on('error', onStdinError)
     owner.stdout.on('data', onStdoutData)
     owner.stdout.once('end', onStdoutEnd)
     owner.stdout.once('error', onStdoutError)
+    owner.stdout.once('close', onStdoutClose)
     owner.stderr.on('data', onStderrData)
     owner.stderr.once('end', onStderrEnd)
     owner.stderr.once('error', onStderrError)
+    owner.stderr.once('close', onStderrClose)
     const session: Session = {
       owner,
       rpc,
       credentialSnapshot,
       failure,
+      failureCause: null,
       stdoutDone,
       stderrDone,
+      settlePumps: async () => {
+        finishStdout(session.closing ? null : new CodexTransportError('transport_lost'))
+        finishStderr(session.closing ? null : new CodexTransportError('transport_lost'))
+        await feedChain.catch(() => undefined)
+        await Promise.all([stdoutDone, stderrDone])
+      },
       removeListeners: () => {
         owner.stdin.off('error', onStdinError)
         owner.stdout.off('data', onStdoutData)
         owner.stdout.off('end', onStdoutEnd)
         owner.stdout.off('error', onStdoutError)
+        owner.stdout.off('close', onStdoutClose)
         owner.stderr.off('data', onStderrData)
         owner.stderr.off('end', onStderrEnd)
         owner.stderr.off('error', onStderrError)
+        owner.stderr.off('close', onStderrClose)
       },
       threadResponse: null,
       projection: null,
@@ -650,10 +798,13 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       cleanupPromise: null,
     }
     void owner.exit.then(
-      () => { session.exited = true },
       () => {
         session.exited = true
-        failure.resolve(new CodexTransportError('transport_lost'))
+        if (!session.closing) this.#failSession(session, new CodexTransportError('transport_lost'))
+      },
+      () => {
+        session.exited = true
+        this.#failSession(session, new CodexTransportError('transport_lost'))
       },
     )
     return session
@@ -767,6 +918,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       || session.used
       || session.exited
       || session.unexpectedServerRequest
+      || session.failureCause !== null
       || session.closing
     ) return null
     return session
@@ -775,10 +927,19 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   #cleanup(session: Session, interrupt: boolean): Promise<CleanupResult> {
     if (session.cleanupPromise !== null) return session.cleanupPromise
     session.closing = true
-    session.failure.resolve(new CodexTransportError('transport_lost'))
-    const work = this.#cleanupOwnedSession(session, interrupt)
+    this.#failSession(session, new CodexTransportError('transport_lost'))
+    const work = this.#cleanupOwnedSession(session, interrupt).then(result => {
+      if (!result.treeGone && session.cleanupPromise === work) session.cleanupPromise = null
+      return result
+    })
     session.cleanupPromise = work
     return work
+  }
+
+  async #cleanupWithRetry(session: Session, interrupt: boolean): Promise<CleanupResult> {
+    let cleanup = await this.#cleanup(session, interrupt)
+    if (!cleanup.treeGone) cleanup = await this.#cleanup(session, interrupt)
+    return cleanup
   }
 
   async #cleanupOwnedSession(session: Session, interrupt: boolean): Promise<CleanupResult> {
@@ -786,10 +947,19 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     if (interrupt && session.initialized && session.turnStartWritten) {
       const pair = session.projection?.activePair
       if (pair !== null && pair !== undefined) {
-        const interruptDeadline = {expiresAtMs: Date.now() + CODEX_INTERRUPT_GRACE_MS}
+        const interruptExpiresAtMs = Date.now() + CODEX_INTERRUPT_GRACE_MS
+        const interruptDeadline = {expiresAtMs: interruptExpiresAtMs}
         await this.#requestWithin(session, 'turn/interrupt', {
           threadId: pair[0], turnId: pair[1],
         }, interruptDeadline, undefined, false).catch(() => undefined)
+        const completion = session.completion
+        if (completion !== null && !completion.settled()) {
+          await settleCleanupValue(
+            () => completion.promise,
+            Math.max(0, interruptExpiresAtMs - Date.now()),
+            null,
+          )
+        }
       }
     }
     await settleCleanup(() => session.owner.closeStdin(), CODEX_INTERRUPT_GRACE_MS)
@@ -810,7 +980,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     if (!gone) {
       stop = 'kill'
       await settleCleanup(() => session.owner.killTree(), CODEX_INTERRUPT_GRACE_MS)
-      await settleCleanupValue(
+      gone = await settleCleanupValue(
         () => session.owner.waitTreeGone(CODEX_TREE_GRACE_MS),
         CODEX_TREE_GRACE_MS + 100,
         false,
@@ -822,17 +992,19 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       null,
     )
     session.rpc.end()
-    await Promise.all([
-      settleCleanup(() => session.stdoutDone, CODEX_TREE_GRACE_MS),
-      settleCleanup(() => session.stderrDone, CODEX_TREE_GRACE_MS),
-    ])
-    session.removeListeners()
     await settleCleanup(() => session.owner.dispose(), CODEX_TREE_GRACE_MS)
-    await settleCleanup(
-      () => this.#credentials.removeEphemeralHome(this.#config.codexHome),
-      CODEX_TREE_GRACE_MS,
-    )
-    return Object.freeze({stop, exitCode})
+    await session.settlePumps()
+    session.removeListeners()
+    let cleanupFailed = false
+    if (gone) {
+      if (this.#failedTreeSession === session) this.#failedTreeSession = null
+      try { await this.#removeCredentialHome() } catch { cleanupFailed = true }
+    } else {
+      this.#failedTreeSession = session
+      this.#closed = true
+      this.#session = session
+    }
+    return Object.freeze({stop, exitCode, cleanupFailed, treeGone: gone})
   }
 
   #sanitizeText(text: string, limit: number): {readonly text: string; readonly originalChars: number} {
@@ -840,9 +1012,11 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     const secrets = [
       ...this.#sensitiveInputs.map(value => normalizeNfcPinned(value)),
       this.#config.apiKey,
+      this.#config.developerInstructions,
       hostWorkspacePath(this.#config.workspace),
       hostCodexHomeValue(this.#config.codexHome).path,
     ].filter((value): value is string => value !== null && value !== '')
+      .map(value => normalizeNfcPinned(value))
     secrets.sort((left, right) => [...right].length - [...left].length)
     for (const secret of secrets) normalized = normalized.replaceAll(secret, '[REDACTED]')
     normalized = normalized.replace(
@@ -855,6 +1029,55 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     )).join('')
     const characters = [...normalized]
     return Object.freeze({text: characters.slice(0, limit).join(''), originalChars: characters.length})
+  }
+
+  #failSession(session: Session, error: CodexTransportError): void {
+    if (session.failureCause !== null) return
+    session.failureCause = error
+    session.failure.resolve(error)
+    if (session.warm && !session.used && !session.closing) {
+      void this.#cleanup(session, true).catch(() => undefined)
+    }
+  }
+
+  async #removeCredentialHome(): Promise<void> {
+    try { await this.#credentials.removeEphemeralHome(this.#config.codexHome) }
+    catch {
+      this.#credentialCleanupFailure ??= new CodexTransportError('credential_missing')
+      throw new CodexTransportError(this.#credentialCleanupFailure.code)
+    }
+  }
+
+  #trackLateOwnerCleanup(spawnWork: Promise<OwnedCodexProcess>): void {
+    const cleanupWork = spawnWork.then(async owner => {
+      if (!await this.#cleanupRejectedOwner(owner)) throw new CodexTransportError('transport_lost')
+      await this.#removeCredentialHome()
+    }, async error => {
+      const unconfirmedOwner = takeUnconfirmedCodexProcessOwner(error)
+      if (unconfirmedOwner !== null) {
+        this.#closed = true
+        this.#unconfirmedOwners.add(unconfirmedOwner)
+        throw new CodexTransportError('transport_lost')
+      }
+      await this.#removeCredentialHome()
+    })
+    const cleanup = cleanupWork.catch(error => {
+      this.#lateCleanupFailure ??= safeTransportError(error, 'credential_missing')
+      throw this.#lateCleanupFailure
+    })
+    this.#lateOwnerCleanups.add(cleanup)
+    void cleanup.finally(() => { this.#lateOwnerCleanups.delete(cleanup) }).catch(() => undefined)
+  }
+
+  async #cleanupRejectedOwner(owner: OwnedCodexProcess): Promise<boolean> {
+    const gone = await cleanupRejectedOwner(owner)
+    if (gone) {
+      this.#unconfirmedOwners.delete(owner)
+    } else {
+      this.#closed = true
+      this.#unconfirmedOwners.add(owner)
+    }
+    return gone
   }
 }
 
@@ -926,9 +1149,17 @@ function validateDeadline(deadline: TransportDeadline): void {
 }
 
 function requireCompletePreflightReport(value: unknown): SafePreflightReport {
+  let raw: Readonly<Record<string, unknown>>
+  try { raw = snapshotJsonRecord(value) }
+  catch { throw new CodexTransportError('preflight_failed') }
+  if (
+    Object.hasOwn(raw, 'version')
+    && typeof raw.version === 'string'
+    && !versionAtLeast(raw.version, [0, 145, 0])
+  ) throw new CodexTransportError('unsupported_version')
   const admitted = sanitizeCodexPreflightReport(value)
   if (
-    admitted?.version === undefined
+    typeof admitted?.version !== 'string'
     || admitted.root_matches !== true
     || admitted.mount !== 'workspace_only'
     || admitted.subprocess !== 'contained'
@@ -937,7 +1168,22 @@ function requireCompletePreflightReport(value: unknown): SafePreflightReport {
     || admitted.credential.present !== true
     || !isPlainRecord(admitted.limits)
   ) throw new CodexTransportError('preflight_failed')
+  if (!versionAtLeast(admitted.version, [0, 145, 0])) {
+    throw new CodexTransportError('unsupported_version')
+  }
   return admitted as SafePreflightReport
+}
+
+function versionAtLeast(value: string, minimum: readonly [number, number, number]): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(value)
+  if (match === null) return false
+  const actual = [Number(match[1]), Number(match[2]), Number(match[3])] as const
+  if (!actual.every(Number.isSafeInteger)) return false
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index]! > minimum[index]!) return true
+    if (actual[index]! < minimum[index]!) return false
+  }
+  return true
 }
 
 async function requestWithDeadline(
@@ -949,22 +1195,27 @@ async function requestWithDeadline(
   const controller = new AbortController()
   let timedOut = false
   const remaining = Math.max(0, deadline.expiresAtMs - Date.now())
+  let rejectDeadline!: (error: Error) => void
+  const deadlineFailure = new Promise<never>((_resolve, reject) => { rejectDeadline = reject })
+  void deadlineFailure.catch(() => undefined)
   const timer = setTimeout(() => {
     timedOut = true
     controller.abort()
+    rejectDeadline(new CodexTransportError('adapter_timeout'))
   }, remaining)
-  const onAbort = (): void => { controller.abort() }
+  const onAbort = (): void => {
+    controller.abort()
+    rejectDeadline(new CodexTransportError('adapter_timeout'))
+  }
   deadline.signal?.addEventListener('abort', onAbort, {once: true})
   try {
     const request = operation(controller.signal)
-    if (sessionFailure === undefined) return await request
-    return await Promise.race([
-      request,
-      sessionFailure.then(error => {
-        controller.abort()
-        throw error
-      }),
-    ])
+    const candidates: Promise<unknown>[] = [request, deadlineFailure]
+    if (sessionFailure !== undefined) candidates.push(sessionFailure.then(error => {
+      controller.abort()
+      throw error
+    }))
+    return await Promise.race(candidates)
   } catch (error) {
     if (timedOut || deadline.signal?.aborted === true) throw new CodexTransportError('adapter_timeout')
     throw error
@@ -999,10 +1250,24 @@ async function runWithin<T>(
 
 async function writeDrain(stream: Writable, bytes: Uint8Array): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    stream.write(bytes, error => {
-      if (error === null || error === undefined) resolve()
+    let settled = false
+    const finish = (error: Error | null = null): void => {
+      if (settled) return
+      settled = true
+      stream.off('error', onError)
+      stream.off('close', onClose)
+      if (error === null) resolve()
       else reject(new CodexTransportError('transport_lost'))
-    })
+    }
+    const onError = (): void => { finish(new Error('stream failure')) }
+    const onClose = (): void => { finish(new Error('stream closed')) }
+    stream.once('error', onError)
+    stream.once('close', onClose)
+    try {
+      stream.write(bytes, error => { finish(error ?? null) })
+    } catch {
+      finish(new Error('stream failure'))
+    }
   })
 }
 
@@ -1050,6 +1315,10 @@ function mapProtocolFailure(error: unknown): CodexTransportError {
   if (error.code === 'stream_failure' || error.code === 'transport_lost') {
     return new CodexTransportError('transport_lost')
   }
+  if (error.code === 'stderr_too_large') return new CodexTransportError('stderr_too_large')
+  if (error.code === 'unexpected_server_request') {
+    return new CodexTransportError('unexpected_server_request')
+  }
   return new CodexTransportError('unsupported_protocol')
 }
 
@@ -1072,10 +1341,6 @@ const TRANSPORT_CODES: ReadonlySet<CodexTransportCode> = new Set([
   'resume_unavailable', 'server_rejected', 'turn_failed', 'missing_terminal', 'nonzero_exit',
   'unexpected_server_request', 'busy',
 ])
-
-async function boundedCleanup(operation: () => Promise<void>): Promise<void> {
-  await settleCleanup(operation, CODEX_TREE_GRACE_MS)
-}
 
 async function settleCleanup(operation: () => Promise<void>, milliseconds: number): Promise<void> {
   await settleCleanupValue(async () => { await operation(); return true }, milliseconds, false)
@@ -1126,7 +1391,7 @@ function requireOwnedProcessContract(owner: OwnedCodexProcess): void {
   ) throw new CodexTransportError('spawn_failed')
 }
 
-async function cleanupRejectedOwner(owner: OwnedCodexProcess): Promise<void> {
+async function cleanupRejectedOwner(owner: OwnedCodexProcess): Promise<boolean> {
   await settleCleanup(() => owner.closeStdin(), CODEX_INTERRUPT_GRACE_MS)
   let gone = await settleCleanupValue(
     () => owner.waitTreeGone(CODEX_TREE_GRACE_MS),
@@ -1143,7 +1408,7 @@ async function cleanupRejectedOwner(owner: OwnedCodexProcess): Promise<void> {
   }
   if (!gone) {
     await settleCleanup(() => owner.killTree(), CODEX_INTERRUPT_GRACE_MS)
-    await settleCleanupValue(
+    gone = await settleCleanupValue(
       () => owner.waitTreeGone(CODEX_TREE_GRACE_MS),
       CODEX_TREE_GRACE_MS + 100,
       false,
@@ -1151,4 +1416,5 @@ async function cleanupRejectedOwner(owner: OwnedCodexProcess): Promise<void> {
   }
   await settleCleanupValue(() => owner.exit, CODEX_TREE_GRACE_MS, null)
   await settleCleanup(() => owner.dispose(), CODEX_TREE_GRACE_MS)
+  return gone
 }
