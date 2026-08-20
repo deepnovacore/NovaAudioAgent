@@ -38,6 +38,8 @@ const PREFLIGHT: SafePreflightReport = Object.freeze({
 
 class IntegrationTransport implements CodexAppServerTransport {
   readonly calls: string[] = []
+  runBarrier: Promise<void> | null = null
+  runEntered: (() => void) | null = null
 
   preflight(): Promise<SafePreflightReport> {
     this.calls.push('preflight')
@@ -56,7 +58,10 @@ class IntegrationTransport implements CodexAppServerTransport {
     assert.equal(input.workOrder, 'compile the runtime')
     this.calls.push('run')
     observer.onThreadReady?.()
+    observer.onTurnStartWritten?.()
     observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
+    this.runEntered?.()
+    if (this.runBarrier !== null) await this.runBarrier
     await yieldImmediate()
     return {
       classification: 'completed', code: 'completed', turnStartWritten: true,
@@ -73,6 +78,17 @@ class IntegrationTransport implements CodexAppServerTransport {
     this.calls.push('close')
     return Promise.resolve()
   }
+}
+
+interface Deferred<T> {
+  readonly promise: Promise<T>
+  readonly resolve: (value: T) => void
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolvePromise!: (value: T) => void
+  const promise = new Promise<T>(resolve => { resolvePromise = resolve })
+  return {promise, resolve: resolvePromise}
 }
 
 class NeverCalledGateway implements ModelGateway {
@@ -254,6 +270,51 @@ test('RealtimeService alone publishes selected Codex idle-running-idle with no d
     assert.deepEqual(states, ['idle', 'running', 'idle'])
     assert.equal(realtime.service.codexState, 'idle')
   } finally {
+    await realtime.stop()
+  }
+})
+
+test('RealtimeService suppresses duplicate running state for busy and unselected Codex work', async () => {
+  // This fails if adapter-local busy/rejected work manufactures a second state transition.
+  const transport = new IntegrationTransport()
+  const gate = deferred<void>()
+  const entered = deferred<void>()
+  transport.runBarrier = gate.promise
+  transport.runEntered = () => { entered.resolve() }
+  const adapter = new CodexAdapter(transport)
+  const core = createCore(transport, adapter)
+  const states = ['idle']
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider: new IdleProvider(),
+    onCodexState: state => { states.push(state) },
+    onDiagnostic: () => undefined,
+  })
+  await realtime.start()
+  try {
+    assert.equal(core.runtime.dispatchExternal({
+      executor: 'codex', op: 'run', request: {work_order: 'compile the runtime'},
+      origin_ref: appendOrigin(core),
+    }, reason).accepted, true)
+    await entered.promise
+    await waitNamed('selected Codex running', () => states.at(-1) === 'running')
+
+    core.runtime.dispatchExternal({
+      executor: 'codex', op: 'run', request: {work_order: 'compile the runtime'},
+      origin_ref: appendOrigin(core),
+    }, reason)
+    const unselected = core.runtime.dispatchExternal({
+      executor: 'codex', op: 'not_selected', request: {}, origin_ref: appendOrigin(core),
+    }, reason)
+    assert.equal(unselected.accepted, false)
+    assert.deepEqual(states, ['idle', 'running'])
+    assert.equal(transport.calls.filter(call => call === 'run').length, 1)
+
+    gate.resolve()
+    await waitNamed('selected Codex idle', () => states.at(-1) === 'idle')
+    assert.deepEqual(states, ['idle', 'running', 'idle'])
+  } finally {
+    gate.resolve()
     await realtime.stop()
   }
 })

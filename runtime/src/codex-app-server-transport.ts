@@ -98,6 +98,7 @@ export interface SteerInput { readonly instruction: string }
 export interface TransportObserver {
   readonly onProgress?: (progress: ExecutorProgress) => void
   readonly onThreadReady?: () => void
+  readonly onTurnStartWritten?: () => void
 }
 
 export interface TransportOutcome {
@@ -386,7 +387,10 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
           return {threadId: projection.threadId, input: [{type: 'text', text: workOrder}]}
         },
         deadline,
-        () => { session!.turnStartWritten = true },
+        () => {
+          session!.turnStartWritten = true
+          try { observer.onTurnStartWritten?.() } catch { /* advisory */ }
+        },
       )
       projection.bindTurnResponse(turnResponse)
       completion = await this.#waitForCompletion(session, deadline)
@@ -471,7 +475,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     } catch (error) {
       if (error instanceof AppServerRequestRejected) {
         return Object.freeze({
-          code: error.server_code === -32602 ? 'stale_turn' : 'server_rejected',
+          code: error.server_code === -32602 && !written ? 'stale_turn' : 'server_rejected',
           written,
         })
       }

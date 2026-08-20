@@ -51,7 +51,18 @@ const TRANSPORT_CODES: ReadonlySet<string> = new Set<CodexTransportCode>([
   'busy',
 ])
 const PREFLIGHT_CODES: ReadonlySet<string> = new Set(PUBLIC_PREFLIGHT_CODES)
-const ADAPTER_CLEANUP_GRACE_MS = 6_000
+const UNCERTAIN_CODES: ReadonlySet<string> = new Set([
+  'adapter_timeout',
+  'credential_missing',
+  'missing_terminal',
+  'nonzero_exit',
+  'server_rejected',
+  'stderr_too_large',
+  'transport_lost',
+  'turn_failed',
+  'unexpected_server_request',
+])
+const ADAPTER_CLEANUP_GRACE_SECONDS = 6
 
 export interface CodexAdapterScheduler {
   readonly wallNowMilliseconds: () => number
@@ -89,6 +100,7 @@ export class CodexAdapterCore {
   readonly #scheduler: CodexAdapterScheduler
   #status: CodexStatusSnapshot
   #runActive = false
+  #runToken: object | null = null
   #latestProgress: ExecutorProgress | null = null
 
   constructor(
@@ -125,11 +137,14 @@ export class CodexAdapterCore {
     context: ExecutorDispatchContext,
     options: {
       readonly preflight?: Readonly<Record<string, unknown>>
+      readonly prepare?: () => Promise<Readonly<Record<string, unknown>> | undefined>
       readonly onTurnBound?: () => void
     } = {},
   ): Promise<ExecutorHandoff> {
     if (this.#runActive) return failureHandoff('busy', 'run')
     this.#runActive = true
+    const runToken = Object.freeze({})
+    this.#runToken = runToken
     const startedAt = context.clock.now()
     const deadline = createRunDeadline(
       context.clock,
@@ -142,6 +157,7 @@ export class CodexAdapterCore {
     let preflightPassed = false
     let processStarted = false
     let sideEffectSeen = false
+    let observerOpen = true
     this.#latestProgress = null
     this.#status = freezeStatus({
       ...initialSnapshot(),
@@ -154,6 +170,7 @@ export class CodexAdapterCore {
 
     const observer = {
       onThreadReady: (): void => {
+        if (!observerOpen || this.#runToken !== runToken) return
         processStarted = true
         this.#status = freezeStatus({
           ...this.#status,
@@ -163,26 +180,32 @@ export class CodexAdapterCore {
         })
       },
       onProgress: (value: ExecutorProgress): void => {
+        if (!observerOpen || this.#runToken !== runToken) return
         const progress = sanitizeProgress(value)
         if (progress === null) return
-        if (progress.phase === 'started') {
-          sideEffectSeen = true
-          try { options.onTurnBound?.() } catch { /* advisory state never owns the worker */ }
-        }
         if (this.#live) this.#latestProgress = progress
         try { context.progress(progress) } catch { /* advisory progress never owns the worker */ }
+      },
+      onTurnStartWritten: (): void => {
+        if (!observerOpen || this.#runToken !== runToken || sideEffectSeen) return
+        sideEffectSeen = true
+        try { options.onTurnBound?.() } catch { /* advisory state never owns the worker */ }
       },
     }
 
     try {
       try {
-        if (options.preflight === undefined) {
+        let prepared = options.preflight
+        if (options.prepare !== undefined) {
+          prepared = await awaitCodexPhase(options.prepare, deadline)
+        }
+        if (prepared === undefined) {
           preflight = requirePreflight(await awaitCodexPhase(
             () => this.#transport.preflight(deadline.transport),
             deadline,
           ))
         } else {
-          preflight = requirePreflight(options.preflight)
+          preflight = requirePreflight(prepared)
         }
         preflightPassed = true
         this.#status = freezeStatus({...this.#status, preflight: 'passed'})
@@ -192,6 +215,7 @@ export class CodexAdapterCore {
           throw abortError()
         }
         this.#settle(sequence, startedAt, context.clock.now(), processStarted, false, null)
+        if (error instanceof CodexAdapterClosedError) return failureHandoff('closed', 'run')
         const code = error instanceof InvalidPreflightError
           ? 'invalid_preflight_report'
           : safePreflightExceptionCode(error, this.#live ? 'transport_failure' : 'worker_exception_before_start')
@@ -207,6 +231,9 @@ export class CodexAdapterCore {
       } catch (error) {
         this.#settle(sequence, startedAt, context.clock.now(), processStarted, preflightPassed, null)
         if (context.signal.aborted) throw abortError()
+        if (error instanceof AdapterDeadlineError && readWrittenBoundary(
+          error.lateValue, 'turnStartWritten',
+        ) === true) sideEffectSeen = true
         const afterStart = sideEffectSeen
         const code = safePreflightExceptionCode(
           error,
@@ -223,8 +250,11 @@ export class CodexAdapterCore {
       }
 
       const admitted = validateOutcome(rawOutcome)
-      const written = admitted?.turnStartWritten ?? sideEffectSeen
-      if (admitted?.turnStartWritten === true) sideEffectSeen = true
+      if (readWrittenBoundary(rawOutcome, 'turnStartWritten') === true) sideEffectSeen = true
+      const written = sideEffectSeen
+      const evidence = admitted?.classification === 'completed'
+        ? createCompletionEvidence(admitted)
+        : null
       this.#settle(
         sequence,
         startedAt,
@@ -232,6 +262,7 @@ export class CodexAdapterCore {
         processStarted || written,
         preflightPassed,
         admitted,
+        evidence !== null,
       )
       if (context.signal.aborted) throw abortError()
       if (admitted === null) {
@@ -243,23 +274,16 @@ export class CodexAdapterCore {
         )
       }
       if (admitted.classification === 'refused') {
-        if (admitted.turnStartWritten || admitted.completion !== null) {
-          return createRunHandoff('unknown', 'untrusted_external', 'invalid_worker_result', preflight)
-        }
         return createRunHandoff(
           'failed',
           'trusted_system',
-          this.#live ? admitted.code : 'worker_refused',
+          this.#live && PREFLIGHT_CODES.has(admitted.code) ? admitted.code : 'worker_refused',
           preflight,
         )
       }
       if (admitted.classification === 'uncertain') {
-        if (!admitted.turnStartWritten) {
-          return createRunHandoff('failed', 'trusted_system', 'invalid_worker_result', preflight)
-        }
         return createRunHandoff('unknown', 'untrusted_external', admitted.code, preflight)
       }
-      const evidence = createCompletionEvidence(admitted)
       if (evidence === null || !admitted.turnStartWritten) {
         return createRunHandoff(
           admitted.turnStartWritten ? 'unknown' : 'failed',
@@ -270,9 +294,13 @@ export class CodexAdapterCore {
       }
       return createRunHandoff('ok', 'untrusted_external', 'completed', preflight, evidence)
     } finally {
+      observerOpen = false
       deadline.detach()
       this.#latestProgress = null
-      this.#runActive = false
+      if (this.#runToken === runToken) {
+        this.#runToken = null
+        this.#runActive = false
+      }
     }
   }
 
@@ -283,9 +311,11 @@ export class CodexAdapterCore {
     processStarted: boolean,
     preflightPassed: boolean,
     outcome: ValidatedOutcome | null,
+    validCompletion = false,
   ): void {
     const now = Math.max(startedAt, finishedAt)
-    const completed = outcome?.classification === 'completed'
+    const completed = validCompletion
+      && outcome?.classification === 'completed'
       && outcome.code === 'completed'
       && outcome.turnStartWritten
       && outcome.completion?.status === 'completed'
@@ -429,7 +459,10 @@ async function awaitCodexPhase<T>(start: () => Promise<T>, deadline: RunDeadline
   } catch (error) {
     if (error instanceof AdapterDeadlineError || deadline.controller.signal.aborted) {
       deadline.controller.abort()
-      await settleAfterAbort(work)
+      const late = await settleAfterAbort(work, deadline.clock)
+      if (error instanceof AdapterDeadlineError) {
+        throw new AdapterDeadlineError(late.state === 'fulfilled' ? late.value : undefined)
+      }
     }
     throw error
   } finally {
@@ -439,15 +472,41 @@ async function awaitCodexPhase<T>(start: () => Promise<T>, deadline: RunDeadline
   }
 }
 
-async function settleAfterAbort(work: Promise<unknown>): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined
+type LateSettlement =
+  | Readonly<{state: 'fulfilled'; value: unknown}>
+  | Readonly<{state: 'rejected'}>
+  | Readonly<{state: 'pending'}>
+
+async function settleAfterAbort(work: Promise<unknown>, clock: Clock): Promise<LateSettlement> {
+  const controller = new AbortController()
+  const settled = work.then<LateSettlement, LateSettlement>(
+    value => ({state: 'fulfilled', value}),
+    () => ({state: 'rejected'}),
+  )
+  const grace = clock.sleep(ADAPTER_CLEANUP_GRACE_SECONDS, controller.signal)
+    .then<LateSettlement>(() => ({state: 'pending'}))
   try {
-    await Promise.race([
-      work.then(() => undefined, () => undefined),
-      new Promise<void>(resolve => { timer = setTimeout(resolve, ADAPTER_CLEANUP_GRACE_MS) }),
-    ])
+    return await Promise.race([settled, grace])
   } finally {
-    if (timer !== undefined) clearTimeout(timer)
+    controller.abort()
+    void grace.catch(() => undefined)
+  }
+}
+
+export function readWrittenBoundary(
+  value: unknown,
+  field: 'turnStartWritten' | 'written',
+): boolean | null {
+  try {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+    const descriptor = Object.getOwnPropertyDescriptor(value, field)
+    return descriptor !== undefined
+      && 'value' in descriptor
+      && typeof descriptor.value === 'boolean'
+      ? descriptor.value
+      : null
+  } catch {
+    return null
   }
 }
 
@@ -500,6 +559,23 @@ function validateOutcome(value: unknown): ValidatedOutcome | null {
         internal_activity: candidate.internal_activity,
       })
     }
+    if (snapshot.classification === 'completed') {
+      if (
+        snapshot.code !== 'completed'
+        || snapshot.turnStartWritten !== true
+        || completion?.status !== 'completed'
+        || completion.final_text === null
+      ) return null
+    } else if (snapshot.classification === 'refused') {
+      if (
+        snapshot.code === 'completed'
+        || snapshot.turnStartWritten
+        || completion !== null
+      ) return null
+    } else if (
+      !snapshot.turnStartWritten
+      || !UNCERTAIN_CODES.has(snapshot.code)
+    ) return null
     return Object.freeze({
       classification: snapshot.classification,
       code: snapshot.code as CodexTransportCode,
@@ -609,7 +685,10 @@ function sameKeys(value: Readonly<Record<string, unknown>>, expected: readonly s
 }
 
 class InvalidPreflightError extends Error {}
-class AdapterDeadlineError extends Error {}
+export class AdapterDeadlineError extends Error {
+  constructor(readonly lateValue?: unknown) { super('Codex adapter deadline exceeded') }
+}
+export class CodexAdapterClosedError extends Error {}
 
 function abortError(): Error {
   const error = new Error('Codex adapter dispatch cancelled')

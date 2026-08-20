@@ -17,11 +17,14 @@ import type {
 } from '../causal-runtime.js'
 import type {JsonValue} from '../events.js'
 import {
+  AdapterDeadlineError,
+  CodexAdapterClosedError,
   CodexAdapterCore,
   awaitOperation,
   createOperationDeadline,
   failureHandoff,
   lifecycleClock,
+  readWrittenBoundary,
   type CodexAdapterScheduler,
 } from './codex-common.js'
 
@@ -37,6 +40,8 @@ export class CodexLiveAdapter implements ExecutorAdapter {
   #prewarmReport: Readonly<Record<string, unknown>> | null = null
   #activeTurn = false
   #closed = false
+  #runController: AbortController | null = null
+  #runTask: Promise<ExecutorHandoff> | null = null
   #closePromise: Promise<void> | null = null
 
   constructor(transport: CodexAppServerTransport, scheduler?: CodexAdapterScheduler) {
@@ -83,6 +88,7 @@ export class CodexLiveAdapter implements ExecutorAdapter {
     const admitted = validateCodexRequest('live', op, request)
     if (!admitted.ok) return failureHandoff(admitted.error, admitted.op)
     if (op === 'status') return this.#core.statusHandoff(context.clock.now())
+    if (this.#closed) return failureHandoff('closed', op)
     if (op === 'steer') {
       const instruction = admitted.value.instruction
       if (typeof instruction !== 'string') return failureHandoff('invalid_params', op)
@@ -91,19 +97,44 @@ export class CodexLiveAdapter implements ExecutorAdapter {
     const workOrder = admitted.value.work_order
     if (typeof workOrder !== 'string') return failureHandoff('invalid_params', op)
     if (this.#core.runActive) return failureHandoff('busy', 'run')
-    const warming = this.#prewarmTask
-    if (warming !== null) await warming
-    const ready = this.#core.status.prewarm === 'ready' ? this.#prewarmReport : null
-    this.#prewarmReport = null
+    const controller = new AbortController()
+    const onAbort = (): void => { controller.abort() }
+    if (context.signal.aborted) controller.abort()
+    else context.signal.addEventListener('abort', onAbort, {once: true})
+    this.#runController = controller
+    const runContext: ExecutorDispatchContext = {...context, signal: controller.signal}
+    const work = this.#run(workOrder, runContext)
+    this.#runTask = work
+    try {
+      return await work
+    } finally {
+      context.signal.removeEventListener('abort', onAbort)
+      if (this.#runController === controller) this.#runController = null
+      if (this.#runTask === work) this.#runTask = null
+    }
+  }
+
+  async #run(workOrder: string, context: ExecutorDispatchContext): Promise<ExecutorHandoff> {
+    let consumedWarmState = false
     try {
       return await this.#core.run(workOrder, context, {
-        ...(ready === null ? {} : {preflight: ready}),
+        prepare: async () => {
+          const warming = this.#prewarmTask
+          if (warming !== null) await warming
+          if (this.#closed) throw new CodexAdapterClosedError()
+          consumedWarmState = true
+          const ready = this.#core.status.prewarm === 'ready' ? this.#prewarmReport : null
+          this.#prewarmReport = null
+          return ready ?? undefined
+        },
         onTurnBound: () => { this.#activeTurn = true },
       })
     } finally {
       this.#activeTurn = false
-      this.#prewarmReport = null
-      this.#core.setPrewarm('cold')
+      if (consumedWarmState) {
+        this.#prewarmReport = null
+        this.#core.setPrewarm('cold')
+      }
     }
   }
 
@@ -137,15 +168,20 @@ export class CodexLiveAdapter implements ExecutorAdapter {
   }
 
   async #close(): Promise<void> {
+    this.#runController?.abort()
     this.#prewarmController?.abort()
     const warming = this.#prewarmTask
+    const closingTransport = this.#core.transport.close('shutdown')
+    void closingTransport.catch(() => undefined)
     if (warming !== null) await warming
     this.#prewarmTask = null
     this.#prewarmController = null
     this.#prewarmReport = null
     this.#activeTurn = false
     try {
-      await this.#core.transport.close('shutdown')
+      const running = this.#runTask
+      if (running !== null) await running.catch(() => undefined)
+      await closingTransport
     } finally {
       this.#core.setPrewarm('cold')
     }
@@ -166,13 +202,18 @@ export class CodexLiveAdapter implements ExecutorAdapter {
           () => this.#core.transport.steer({instruction}, deadline.transport),
           deadline,
         )
-      } catch {
+      } catch (error) {
         if (context.signal.aborted) throw abortError()
-        return steerHandoff('unknown', 'transport_lost')
+        const written = error instanceof AdapterDeadlineError
+          && readWrittenBoundary(error.lateValue, 'written') === true
+        return steerHandoff(written ? 'unknown' : 'failed', 'transport_lost')
       }
       if (context.signal.aborted) throw abortError()
       const result = validateSteerResult(raw)
-      if (result === null) return steerHandoff('unknown', 'transport_lost')
+      if (result === null) {
+        const written = readWrittenBoundary(raw, 'written') === true
+        return steerHandoff(written ? 'unknown' : 'failed', 'transport_lost')
+      }
       if (result.code === 'accepted') return steerHandoff('ok', 'accepted')
       if (result.code === 'transport_lost') {
         return steerHandoff(result.written ? 'unknown' : 'failed', 'transport_lost')
@@ -212,6 +253,13 @@ function validateSteerResult(value: unknown): SteerTransportResult | null {
       && snapshot.code !== 'transport_lost'
     ) return null
     if (typeof snapshot.written !== 'boolean') return null
+    if (
+      (snapshot.code === 'accepted' && !snapshot.written)
+      || (snapshot.code === 'no_active_turn' && snapshot.written)
+      || (snapshot.code === 'stale_turn' && snapshot.written)
+      || (snapshot.code === 'server_rejected' && !snapshot.written)
+      || (snapshot.code === 'transport_lost' && !snapshot.written)
+    ) return null
     return Object.freeze({code: snapshot.code, written: snapshot.written})
   } catch {
     return null

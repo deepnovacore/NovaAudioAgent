@@ -7,7 +7,10 @@ import {test} from 'node:test'
 import {fileURLToPath} from 'node:url'
 
 import * as runtime from '../src/index.js'
-import {OwnedCodexAppServerTransport} from '../src/codex-app-server-transport.js'
+import {
+  OwnedCodexAppServerTransport,
+  type TransportObserver,
+} from '../src/codex-app-server-transport.js'
 import {MAX_STDOUT} from '../src/codex-protocol.js'
 import {
   hostBinaryForTest,
@@ -89,6 +92,24 @@ test('steer writes while turn/start response is delayed and reverse response ord
   const outcome = await running
   assert.equal(outcome.classification, 'completed')
   assert.equal(outcome.turnStartWritten, true)
+})
+
+test('a written stale-shaped steer rejection remains server_rejected with written evidence', async () => {
+  // This fails if a post-drain -32602 response is mislabeled as a pre-write stale turn.
+  const owner = new MemoryAppServerOwner([], {delayTurnStart: true, rejectSteer: -32602})
+  const transport = createTransport({spawn: async () => owner})
+  const running = transport.run(
+    {workOrder: 'perform the delayed task'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  await owner.turnStartReceived.promise
+  assert.deepEqual(await transport.steer(
+    {instruction: 'stale-shaped rejection'},
+    {expiresAtMs: Date.now() + 5000},
+  ), {code: 'server_rejected', written: true})
+  owner.completeDelayedTurn()
+  await running
 })
 
 test('a queued server request taints before turn/start and remains a private refusal', async () => {
@@ -949,6 +970,38 @@ test('pre-drain write failure is refused while post-drain EOF is uncertain', asy
   assert.equal(uncertain.classification, 'uncertain')
   assert.equal(uncertain.turnStartWritten, true)
   assert.equal(uncertain.code, 'transport_lost')
+})
+
+test('turn-start writer drain emits one advisory latch and pre-drain failure emits none', async () => {
+  // This fails until the transport exposes the exact writer-drain boundary to its adapter.
+  let preDrainLatches = 0
+  const preDrain = new MemoryAppServerOwner([], {failTurnWriteBeforeDrain: true})
+  const preDrainObserver: TransportObserver & {readonly onTurnStartWritten: () => void} = {
+    onTurnStartWritten: () => { preDrainLatches += 1 },
+  }
+  await createTransport({spawn: async () => preDrain}).run(
+    {workOrder: 'pre-drain'},
+    preDrainObserver,
+    {expiresAtMs: Date.now() + 5000},
+  )
+  assert.equal(preDrainLatches, 0)
+
+  let writtenLatches = 0
+  const written = new MemoryAppServerOwner([])
+  const writtenObserver: TransportObserver & {readonly onTurnStartWritten: () => void} = {
+    onTurnStartWritten: () => {
+      writtenLatches += 1
+      throw new Error('advisory callback must not own the worker')
+    },
+  }
+  const outcome = await createTransport({spawn: async () => written}).run(
+    {workOrder: 'written'},
+    writtenObserver,
+    {expiresAtMs: Date.now() + 5000},
+  )
+  assert.equal(writtenLatches, 1)
+  assert.equal(outcome.classification, 'completed')
+  assert.equal(outcome.turnStartWritten, true)
 })
 
 test('a post-start transport failure latches turn history for later stale steer', async () => {
@@ -2158,6 +2211,7 @@ class MemoryAppServerOwner {
     readonly threadId: string
     readonly holdInitialize: boolean
     readonly rejectTurn: number | null
+    readonly rejectSteer: number | null
     readonly finalText: string
     readonly failTurnWriteBeforeDrain: boolean
     readonly persistent: boolean
@@ -2178,6 +2232,7 @@ class MemoryAppServerOwner {
     readonly threadId?: string
     readonly holdInitialize?: boolean
     readonly rejectTurn?: number
+    readonly rejectSteer?: number
     readonly finalText?: string
     readonly failTurnWriteBeforeDrain?: boolean
     readonly persistent?: boolean
@@ -2198,6 +2253,7 @@ class MemoryAppServerOwner {
       threadId: options.threadId ?? 'thread-1',
       holdInitialize: options.holdInitialize ?? false,
       rejectTurn: options.rejectTurn ?? null,
+      rejectSteer: options.rejectSteer ?? null,
       finalText: options.finalText ?? 'bounded result',
       failTurnWriteBeforeDrain: options.failTurnWriteBeforeDrain ?? false,
       persistent: options.persistent ?? false,
@@ -2360,7 +2416,11 @@ class MemoryAppServerOwner {
       if (Array.isArray(input) && typeof Reflect.get(input[0] ?? {}, 'text') === 'string') {
         this.#lastSteer = Reflect.get(input[0] ?? {}, 'text') as string
       }
-      this.#send({id: message.id, result: {turnId: 'turn-1'}})
+      if (this.#options.rejectSteer !== null) {
+        this.#send({id: message.id, error: {
+          code: this.#options.rejectSteer, message: 'remote-private',
+        }})
+      } else this.#send({id: message.id, result: {turnId: 'turn-1'}})
       return
     }
     if (message.method === 'turn/interrupt') {

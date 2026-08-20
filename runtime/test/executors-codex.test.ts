@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
+import {setImmediate as yieldImmediate} from 'node:timers/promises'
 import {test} from 'node:test'
 
 import type {
@@ -138,6 +139,11 @@ const COMPLETE_OUTCOME: TransportOutcome = Object.freeze({
   turnStartWritten: true,
   completion: {status: 'completed' as const, final_text: 'done', internal_activity: 1},
 })
+
+function markTurnStartWritten(observer: TransportObserver): void {
+  const extended = observer as TransportObserver & {onTurnStartWritten?: () => void}
+  extended.onTurnStartWritten?.()
+}
 
 type CodexAdapterConstructor = new (transport: CodexAppServerTransport) => ExecutorAdapter
 
@@ -324,6 +330,85 @@ test('ordinary aggregate deadline stops before run and keeps the preflight repor
   assert.deepEqual(transport.calls, ['preflight'])
 })
 
+test('ordinary deadline retains a late writer-drain outcome as external uncertainty', async () => {
+  // This fails if bounded cleanup discards Task-6B's authoritative late turnStartWritten bit.
+  const clock = new VirtualClock(7)
+  const entered = deferred<void>()
+  const transport = new ScriptedTransport()
+  transport.runAction = async (_observer, deadline) => {
+    entered.resolve()
+    await new Promise<void>(resolve => {
+      deadline.signal?.addEventListener('abort', () => { resolve() }, {once: true})
+    })
+    return {
+      classification: 'uncertain', code: 'transport_lost',
+      turnStartWritten: true, completion: null,
+    }
+  }
+  const running = new CodexAdapter(transport).dispatch(
+    'run', {work_order: 'written near deadline'}, contextFor('run', {}, {clock}),
+  )
+  await entered.promise
+  clock.advanceTo(547)
+  const handoff = await running
+
+  assert.deepEqual([handoff.outcome, handoff.trust, handoff.content.code], [
+    'unknown', 'untrusted_external', 'adapter_timeout',
+  ])
+})
+
+test('ordinary side effects use writer drain rather than started progress guesses', async () => {
+  // This fails if progress is mistaken for authority or the formal written latch is ignored.
+  for (const [written, expected] of [
+    [false, ['failed', 'trusted_system', 'worker_exception_before_start']],
+    [true, ['unknown', 'untrusted_external', 'worker_exception_after_start']],
+  ] as const) {
+    const transport = new ScriptedTransport()
+    transport.runAction = observer => {
+      observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
+      if (written) markTurnStartWritten(observer)
+      return Promise.reject(new Error('PRIVATE-WRITER-DRAIN-SENTINEL'))
+    }
+    const handoff = await new CodexAdapter(transport).dispatch(
+      'run', {work_order: 'work'}, contextFor('run', {}),
+    )
+    assert.deepEqual([handoff.outcome, handoff.trust, handoff.content.code], expected)
+  }
+})
+
+test('ordinary cleanup grace follows VirtualClock and leaves no ambient waiter', async () => {
+  // This fails if bounded cleanup sleeps six real seconds after a virtual deadline.
+  const clock = new VirtualClock(7)
+  const entered = deferred<void>()
+  const release = deferred<TransportOutcome>()
+  const transport = new ScriptedTransport()
+  transport.runAction = async () => {
+    entered.resolve()
+    return await release.promise
+  }
+  const running = new CodexAdapter(transport).dispatch(
+    'run', {work_order: 'non-cooperative'}, contextFor('run', {}, {clock}),
+  )
+  await entered.promise
+  clock.advanceTo(547)
+  await yieldImmediate()
+  const cleanupWaiters = clock.waiterCount()
+  clock.advanceTo(553)
+  const winner = await Promise.race([
+    running.then(() => 'settled' as const),
+    yieldImmediate().then(() => 'ambient' as const),
+  ])
+  release.resolve({
+    classification: 'refused', code: 'transport_lost',
+    turnStartWritten: false, completion: null,
+  })
+  await running
+
+  assert.equal(cleanupWaiters, 1)
+  assert.equal(winner, 'settled')
+  assert.equal(clock.waiterCount(), 0)
+})
+
 test('ordinary maps pre/post-side-effect failures without leaking internal text', async () => {
   // This fails if preflight success is treated as a turn side effect or arbitrary exception text is copied.
   const cases: readonly Readonly<{
@@ -369,6 +454,7 @@ test('ordinary maps pre/post-side-effect failures without leaking internal text'
       configure: transport => {
         transport.runAction = observer => {
           observer.onProgress?.({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
+          markTurnStartWritten(observer)
           return Promise.reject(new Error('PRIVATE-RUN-SENTINEL'))
         }
       },
@@ -417,12 +503,32 @@ test('ordinary rejects hostile or contradictory completion before public evidenc
     transport.outcome = {
       classification: 'completed', code: 'completed', turnStartWritten: true, completion,
     }
-    const handoff = await new CodexAdapter(transport).dispatch(
+    const adapter = new CodexAdapter(transport)
+    const handoff = await adapter.dispatch(
       'run', {work_order: 'work'}, contextFor('run', {}),
     )
     assert.equal(handoff.outcome, 'unknown')
     assert.equal(handoff.content.code, 'invalid_worker_result')
     assert.equal(JSON.stringify(handoff).includes('line\\nfeed'), false)
+    assert.notEqual(adapter.status.state, 'exited')
+  }
+})
+
+test('ordinary rejects contradictory classification and code combinations', async () => {
+  // This fails if internal Task-6B codes cross a public classification they cannot represent.
+  for (const outcome of [
+    {classification: 'uncertain', code: 'completed', turnStartWritten: true, completion: null},
+    {classification: 'refused', code: 'completed', turnStartWritten: false, completion: null},
+    {classification: 'completed', code: 'completed', turnStartWritten: false,
+      completion: {status: 'completed', final_text: 'done', internal_activity: 0}},
+  ]) {
+    const transport = new ScriptedTransport()
+    transport.outcome = outcome
+    const handoff = await new CodexAdapter(transport).dispatch(
+      'run', {work_order: 'work'}, contextFor('run', {}),
+    )
+    assert.equal(handoff.content.code, 'invalid_worker_result')
+    assert.notEqual(handoff.outcome, 'ok')
   }
 })
 
