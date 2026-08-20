@@ -83,6 +83,37 @@ class ScriptedFrameSource implements FrameSource {
   }
 }
 
+class DeferredFrameSource implements FrameSource {
+  starts = 0
+  stops = 0
+  readonly #startGate: Promise<void>
+  readonly #releaseStart: () => void
+
+  constructor() {
+    let release = (): void => undefined
+    this.#startGate = new Promise<void>(resolve => { release = resolve })
+    this.#releaseStart = release
+  }
+
+  start(): Promise<void> {
+    this.starts += 1
+    return this.#startGate
+  }
+
+  stop(): Promise<void> {
+    this.stops += 1
+    return Promise.resolve()
+  }
+
+  snapshot(): Promise<Frame | null> {
+    return Promise.resolve(null)
+  }
+
+  releaseStart(): void {
+    this.#releaseStart()
+  }
+}
+
 /** A gateway whose stream and completion answers are scripted per model name. */
 class ScriptedGateway implements ModelGateway {
   readonly streamed: StreamRequest[] = []
@@ -317,6 +348,47 @@ test('assembly owns an idempotent retryable frame-source lifecycle', async () =>
   await assembly.stop()
   await assembly.stop()
   assert.equal(source.stops, 2, 'a failed stop remains started and is retried')
+})
+
+test('concurrent assembly starts acquire the frame source exactly once', async () => {
+  const source = new DeferredFrameSource()
+  const assembly = buildAssembly({
+    settings: settings(),
+    gateway: new ScriptedGateway([]),
+    searchTransport: new ScriptedSearchTransport(),
+    frameSource: source,
+  })
+
+  const first = assembly.start()
+  const second = assembly.start()
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(source.starts, 1)
+  source.releaseStart()
+  await Promise.all([first, second])
+  assert.equal(source.starts, 1)
+})
+
+test('assembly stop waits for an in-flight start and then releases the source', async () => {
+  const source = new DeferredFrameSource()
+  const assembly = buildAssembly({
+    settings: settings(),
+    gateway: new ScriptedGateway([]),
+    searchTransport: new ScriptedSearchTransport(),
+    frameSource: source,
+  })
+
+  const starting = assembly.start()
+  let stopReturned = false
+  const stopping = assembly.stop().then(() => { stopReturned = true })
+  await Promise.resolve()
+  assert.equal(stopReturned, false)
+  assert.equal(source.stops, 0)
+
+  source.releaseStart()
+  await starting
+  await stopping
+  assert.equal(source.starts, 1)
+  assert.equal(source.stops, 1)
 })
 
 test('the default disabled source reports unavailable capture and has a no-op lifecycle', async () => {

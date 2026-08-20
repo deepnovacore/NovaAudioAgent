@@ -279,6 +279,12 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   })
 
   let started = false
+  let lifecycle = Promise.resolve()
+  const serializeLifecycle = (operation: () => Promise<void>): Promise<void> => {
+    const pending = lifecycle.catch(() => undefined).then(operation)
+    lifecycle = pending
+    return pending
+  }
   return {
     runtime: holder.runtime,
     gateway,
@@ -286,15 +292,19 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     manifests,
     mediaStore,
     frameSource,
-    async start(): Promise<void> {
-      if (started) return
-      await frameSource.start()
-      started = true
+    start(): Promise<void> {
+      return serializeLifecycle(async () => {
+        if (started) return
+        await frameSource.start()
+        started = true
+      })
     },
-    async stop(): Promise<void> {
-      if (!started) return
-      await frameSource.stop()
-      started = false
+    stop(): Promise<void> {
+      return serializeLifecycle(async () => {
+        if (!started) return
+        await frameSource.stop()
+        started = false
+      })
     },
   }
 }
