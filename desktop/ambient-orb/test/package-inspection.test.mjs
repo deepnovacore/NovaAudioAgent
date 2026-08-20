@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import test from 'node:test'
 
+import { createPackage, extractAll, listPackage } from '@electron/asar'
+
 import * as packageInspection from '../scripts/inspect-package.mjs'
 
 const {
@@ -46,6 +48,8 @@ async function writeArtifactRoot(root, {
 } = {}) {
   const files = new Map([
     ['package.json', JSON.stringify(desktopManifest)],
+    ['src/main/main.mjs', 'export {}\n'],
+    ['src/main/camera-source.mjs', 'export {}\n'],
     ['src/renderer/camera.mjs', 'export const camera = true\n'],
     ['node_modules/@nova-audio-agent/runtime/package.json', JSON.stringify(runtimeManifest)],
     ['node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js', 'export {}\n'],
@@ -227,6 +231,40 @@ test('artifact dependency closure comes only from required manifest contents', (
   ]))
 })
 
+test('desktop and runtime peer surfaces cannot widen the production closure', () => {
+  for (const layer of ['desktop', 'runtime']) {
+    for (const [field, value] of [
+      ['peerDependencies', { lodash: '4.17.21' }],
+      ['peerDependenciesMeta', { lodash: { optional: true } }],
+      ['peerDependencies', null],
+      ['peerDependenciesMeta', []],
+    ]) {
+      assert.throws(
+        () => inspectArtifact(validArtifactFiles(), {
+          [`${layer}Manifest`]: {
+            ...(layer === 'desktop' ? DESKTOP_MANIFEST : RUNTIME_MANIFEST),
+            [field]: value,
+          },
+        }),
+        PackageInspectionError,
+        `${layer} ${field} must be an absent or empty plain object`,
+      )
+    }
+  }
+  assert.doesNotThrow(() => inspectArtifact(validArtifactFiles(), {
+    desktopManifest: {
+      ...DESKTOP_MANIFEST,
+      peerDependencies: {},
+      peerDependenciesMeta: {},
+    },
+    runtimeManifest: {
+      ...RUNTIME_MANIFEST,
+      peerDependencies: {},
+      peerDependenciesMeta: {},
+    },
+  }))
+})
+
 test('actual configured graph derives camera and runtime from config plus installed content', async () => {
   const result = await inspectConfiguredPackage()
   assert.equal(result.cameraIncluded, true)
@@ -271,6 +309,24 @@ test('artifact-root entry reads bounded manifests from the inspected artifact it
       PackageInspectionError,
       'a file list alone cannot substitute expected manifest contents',
     )
+    await writeFile(
+      fileList,
+      JSON.stringify([...validArtifactFiles(), 'secret-path-sentinel']),
+      'utf8',
+    )
+    await assert.rejects(
+      packageInspection.inspectArtifactFileList(fileList, root),
+      error => {
+        assert.ok(error instanceof PackageInspectionError)
+        assert.doesNotMatch(error.message, /nova-package-artifact|secret-path-sentinel/u)
+        return true
+      },
+    )
+    await writeFile(
+      fileList,
+      JSON.stringify(validArtifactFiles().map(file => `/${file}`)),
+      'utf8',
+    )
     const listed = await packageInspection.inspectArtifactFileList(fileList, root)
     assert.equal(listed.runtimeIncluded, true, 'asar-style leading slashes are list syntax')
     for (const missing of ['package.json', 'node_modules/@nova-audio-agent/runtime/package.json']) {
@@ -308,6 +364,47 @@ test('artifact-root entry reads bounded manifests from the inspected artifact it
         assert.doesNotMatch(error.message, /nova-package-artifact/u)
         return true
       },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('real ASAR listings admit structural directories but reject an extra package directory', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-package-asar-'))
+  const source = resolve(root, 'source')
+  const archive = resolve(root, 'app.asar')
+  const extracted = resolve(root, 'extracted')
+  const listFile = resolve(root, 'asar-file-list.json')
+  try {
+    await writeArtifactRoot(source)
+    await createPackage(source, archive)
+    const listed = listPackage(archive)
+    assert.ok(listed.includes('/node_modules'))
+    assert.ok(listed.includes('/node_modules/@nova-audio-agent'))
+    extractAll(archive, extracted)
+    await writeFile(listFile, JSON.stringify(listed), 'utf8')
+
+    const valid = await packageInspection.inspectArtifactFileList(listFile, extracted)
+    assert.equal(valid.runtimeIncluded, true)
+
+    await mkdir(resolve(source, 'node_modules/lodash'), { recursive: true })
+    const expandedArchive = resolve(root, 'expanded.asar')
+    const expandedRoot = resolve(root, 'expanded')
+    await createPackage(source, expandedArchive)
+    const expandedList = listPackage(expandedArchive)
+    assert.ok(expandedList.includes('/node_modules/lodash'))
+    extractAll(expandedArchive, expandedRoot)
+    await writeFile(listFile, JSON.stringify(expandedList), 'utf8')
+    await assert.rejects(
+      packageInspection.inspectArtifactFileList(listFile, expandedRoot),
+      PackageInspectionError,
+      'filtering directory entries must not conceal an undeclared empty package',
+    )
+    await assert.rejects(
+      packageInspection.inspectArtifactRoot(expandedRoot),
+      PackageInspectionError,
+      'root inspection must retain the same undeclared directory evidence',
     )
   } finally {
     await rm(root, { recursive: true, force: true })

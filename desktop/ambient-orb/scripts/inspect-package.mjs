@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { open, readdir, readFile } from 'node:fs/promises'
+import { lstat, open, readdir, readFile } from 'node:fs/promises'
 import { dirname, matchesGlob, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -118,23 +118,30 @@ function yamlResourceSources(text) {
   return [...text.matchAll(/^\s+- from: (.+)$/gmu)].map(match => yamlScalar(match[1]))
 }
 
-async function listFiles(root, { skipTopLevel = [] } = {}) {
+async function listFiles(root, { skipTopLevel = [], includeDirectories = false } = {}) {
   const files = []
+  const directories = []
   const skipped = new Set(skipTopLevel)
   async function visit(directory, depth) {
     const entries = await readdir(directory, { withFileTypes: true })
     for (const entry of entries) {
       if (depth === 0 && skipped.has(entry.name)) continue
       const path = resolve(directory, entry.name)
-      if (entry.isDirectory()) await visit(path, depth + 1)
-      else if (entry.isFile()) files.push(validateRelativeFile(relative(root, path)))
-      if (files.length > MAX_INSPECTED_FILES) {
+      if (entry.isDirectory()) {
+        if (includeDirectories) {
+          directories.push(validateRelativeFile(relative(root, path)))
+        }
+        await visit(path, depth + 1)
+      } else if (entry.isFile()) files.push(validateRelativeFile(relative(root, path)))
+      if (files.length + directories.length > MAX_INSPECTED_FILES) {
         throw new PackageInspectionError(`more than ${MAX_INSPECTED_FILES} files`)
       }
     }
   }
   await visit(root, 0)
-  return files.sort()
+  files.sort()
+  directories.sort()
+  return includeDirectories ? { files, directories } : files
 }
 
 async function readBoundedFile(path, maximumBytes, label) {
@@ -237,6 +244,12 @@ function manifestDependencies(manifest, expectedName, label) {
     ) continue
     throw new PackageInspectionError(`${label} manifest dependency closure rejected`)
   }
+  for (const field of ['peerDependencies', 'peerDependenciesMeta']) {
+    const value = manifest[field]
+    if (value === undefined) continue
+    if (isPlainJsonObject(value) && Object.keys(value).length === 0) continue
+    throw new PackageInspectionError(`${label} manifest peer closure rejected`)
+  }
   return Object.keys(dependencies).sort()
 }
 
@@ -263,15 +276,33 @@ function assertRuntimeFilesContract(files, runtimeManifest) {
   }
 }
 
-function assertAllowedNodeModules(files, allowedPackages) {
-  for (const file of files) {
-    const segments = file.split('/')
+function assertAllowedNodeModules(paths, allowedPackages, { directories = false } = {}) {
+  for (const path of paths) {
+    const segments = path.split('/')
     for (let index = 0; index < segments.length; index += 1) {
       if (segments[index] !== 'node_modules') continue
       const first = segments[index + 1]
-      if (index === 0 && first === '.package-lock.json' && segments.length === 2) continue
+      if (first === undefined) {
+        if (directories) continue
+        throw new PackageInspectionError('unexpected production package')
+      }
+      if (
+        !directories
+        && index === 0
+        && first === '.package-lock.json'
+        && segments.length === 2
+      ) continue
       let name = first
-      if (first?.startsWith('@')) name = `${first}/${segments[index + 2] ?? ''}`
+      if (first.startsWith('@')) {
+        const second = segments[index + 2]
+        if (second === undefined) {
+          if (directories && [...allowedPackages].some(value => value.startsWith(`${first}/`))) {
+            continue
+          }
+          throw new PackageInspectionError('unexpected production package')
+        }
+        name = `${first}/${second}`
+      }
       if (!name || name.endsWith('/') || !allowedPackages.has(name)) {
         throw new PackageInspectionError('unexpected production package')
       }
@@ -284,8 +315,10 @@ export function inspectPackagedFileList(includedFiles, {
   runtimeManifest,
   filePatterns = [],
   extraResources = [],
+  directories = [],
 } = {}) {
   const files = [...new Set(includedFiles.map(validateRelativeFile))].sort()
+  const artifactDirectories = [...new Set(directories.map(validateRelativeFile))].sort()
   const forbidden = []
   if (!files.includes(DESKTOP_MANIFEST_FILE)) forbidden.push(DESKTOP_MANIFEST_FILE)
   if (!files.includes(RUNTIME_MANIFEST_FILE)) forbidden.push(RUNTIME_MANIFEST_FILE)
@@ -307,6 +340,11 @@ export function inspectPackagedFileList(includedFiles, {
   const dependencies = assertDependencyContract(productionDependencies, runtimeDependencies)
   assertRuntimeFilesContract(files, runtimeManifest)
   assertAllowedNodeModules(files, new Set([...dependencies.production, ...dependencies.runtime]))
+  assertAllowedNodeModules(
+    artifactDirectories,
+    new Set([...dependencies.production, ...dependencies.runtime]),
+    { directories: true },
+  )
   const uniqueForbidden = [...new Set(forbidden)]
   if (uniqueForbidden.length > 0) throw new PackageInspectionError(uniqueForbidden.join(', '))
   return Object.freeze({
@@ -396,14 +434,14 @@ async function readArtifactManifests(artifactRoot, files) {
 }
 
 export async function inspectArtifactRoot(artifactRoot) {
-  let files
+  let entries
   try {
-    files = await listFiles(artifactRoot)
+    entries = await listFiles(artifactRoot, { includeDirectories: true })
   } catch {
     throw new PackageInspectionError('artifact file list unavailable')
   }
-  const manifests = await readArtifactManifests(artifactRoot, files)
-  return inspectPackagedFileList(files, manifests)
+  const manifests = await readArtifactManifests(artifactRoot, entries.files)
+  return inspectPackagedFileList(entries.files, { ...manifests, directories: entries.directories })
 }
 
 async function readArtifactFileList(path) {
@@ -423,9 +461,28 @@ async function readArtifactFileList(path) {
 }
 
 export async function inspectArtifactFileList(fileListPath, artifactRoot) {
-  const files = await readArtifactFileList(fileListPath)
+  const listed = await readArtifactFileList(fileListPath)
+  if (typeof artifactRoot !== 'string' || artifactRoot === '') {
+    throw new PackageInspectionError('artifact root required')
+  }
+  if (listed.length > MAX_INSPECTED_FILES) {
+    throw new PackageInspectionError(`more than ${MAX_INSPECTED_FILES} artifact entries`)
+  }
+  const files = []
+  const directories = []
+  for (const entry of new Set(listed.map(validateRelativeFile))) {
+    let status
+    try {
+      status = await lstat(resolve(artifactRoot, entry))
+    } catch {
+      throw new PackageInspectionError('artifact entry unavailable')
+    }
+    if (status.isFile()) files.push(entry)
+    else if (status.isDirectory()) directories.push(entry)
+    else throw new PackageInspectionError('artifact entry type rejected')
+  }
   const manifests = await readArtifactManifests(artifactRoot, files)
-  return inspectPackagedFileList(files, manifests)
+  return inspectPackagedFileList(files, { ...manifests, directories })
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''
