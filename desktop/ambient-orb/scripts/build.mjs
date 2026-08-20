@@ -3,10 +3,13 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
+import { inspectConfiguredPackage } from './inspect-package.mjs'
+
 const root = resolve(import.meta.dirname, '..')
 const scripts = [
   'src/main/main.mjs',
   'src/main/app-protocol.mjs',
+  'src/main/camera-source.mjs',
   'src/main/backend.mjs',
   'src/main/security.mjs',
   'src/main/native-audio.mjs',
@@ -19,6 +22,7 @@ const scripts = [
   'src/renderer/orb-visual.mjs',
   'src/renderer/settings.mjs',
   'scripts/utility-runtime-smoke.mjs',
+  'scripts/inspect-package.mjs',
 ]
 
 const runtimeEntry = resolve(root, '../../runtime/dist/src/desktop-entry.js')
@@ -36,6 +40,7 @@ const runtimeBuild = spawnSync(process.execPath, [
 })
 assert.equal(runtimeBuild.status, 0, runtimeBuild.stderr)
 await readFile(runtimeEntry, 'utf8')
+await inspectConfiguredPackage({ packageRoot: root })
 
 for (const file of scripts) {
   const result = spawnSync(process.execPath, ['--check', resolve(root, file)], {

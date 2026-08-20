@@ -7,7 +7,7 @@ test('main owns single-instance lifecycle and denies renderer escape', async () 
 
   assert.match(source, /requestSingleInstanceLock/)
   assert.match(source, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
-  assert.match(source, /setPermissionRequestHandler/)
+  assert.match(source, /configureWindowSecurity\(window\)/)
   assert.match(source, /loadAppWindow\(mainWindow/)
   assert.doesNotMatch(source, /shell\.openExternal/)
 })
@@ -238,7 +238,7 @@ test('a backend that died before the window exists replays its exit to the new r
   assert.match(source, /backendExited = true/)
   // Belt: the push replay still fires once the renderer has loaded.
   const load = source.slice(source.indexOf('loadAppWindow(mainWindow'))
-  assert.match(load.slice(0, 600), /if \(backendExited\) sendToOrb\('nova:backend-exit'\)/)
+  assert.match(load.slice(0, 900), /if \(backendExited\) sendToOrb\('nova:backend-exit'\)/)
 })
 
 test('the bootstrap answer carries the backend-exit verdict read at invoke time', async () => {
@@ -312,10 +312,40 @@ test('renderer threads the bootstrap platform into the orb state axes', async ()
 test('macOS camera permission is requested on the main thread before backend startup', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
-  assert.match(source, /systemPreferences/)
-  assert.match(source, /getMediaAccessStatus\('camera'\) === 'not-determined'/)
-  assert.match(source, /await systemPreferences\.askForMediaAccess\('camera'\)/)
-  assert.ok(source.indexOf('await requestCameraPermission()') < source.indexOf('await launchBackend()'))
+  const start = source.slice(source.indexOf('async function start()'))
+  const select = start.indexOf('selectMainCameraSource(process.env)')
+  const permission = start.indexOf('await requestLocalCameraPermission(')
+  const settings = start.indexOf('await loadSettings(')
+  const launch = start.indexOf('await launchBackend(')
+  assert.ok(select >= 0 && permission > select, 'validated selection precedes permission')
+  assert.ok(settings > permission, 'permission decision precedes settings startup work')
+  assert.ok(launch > settings, 'validated selection precedes backend launch')
+})
+
+test('camera bootstrap and protocol wiring catch canonical path disclosure or renderer URL choice', async () => {
+  const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  assert.match(main, /import \{ selectMainCameraSource \} from '.\/camera-source\.mjs'/)
+  const bootstrapAssignment = main.slice(main.indexOf('bootstrap = Object.freeze({'))
+  const bootstrapBody = bootstrapAssignment.slice(0, bootstrapAssignment.indexOf('})'))
+  assert.match(bootstrapBody, /cameraSource/)
+  assert.doesNotMatch(
+    bootstrapBody,
+    /camera\.file|cameraPath|NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE|file:|nova:\/\/orb\/camera-source/u,
+  )
+
+  const load = main.slice(main.indexOf('loadAppWindow(mainWindow'))
+  const loadOptions = load.slice(0, load.indexOf('}).then('))
+  assert.match(loadOptions, /cameraFile: camera\.source === 'file' \? camera\.file : undefined/)
+  assert.match(loadOptions, /fetchCameraFile: \(url, init\) => net\.fetch\(url, init\)/)
+  assert.doesNotMatch(loadOptions, /request\.url|pathname|query|decodeURI/u)
+
+  const boot = renderer.slice(renderer.indexOf('async function boot()'))
+  const mode = boot.indexOf('cameraController.setSourceMode(bootstrap.cameraSource)')
+  const socket = boot.indexOf('new WebSocket(bootstrap.endpoint)')
+  assert.ok(mode >= 0 && socket > mode, 'immutable mode is installed before any host request can arrive')
+  assert.doesNotMatch(boot.slice(0, socket), /cameraPath|camera\.file|NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE/u)
 })
 
 test('pins X11/XWayland and transparent visuals on linux before the app is ready', async () => {

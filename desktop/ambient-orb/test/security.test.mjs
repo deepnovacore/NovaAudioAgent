@@ -110,3 +110,124 @@ test('bootstrap remains reload-safe for the same renderer and rejects every othe
   assert.equal(read(renderer), bootstrap)
   assert.throws(() => read({}), /unavailable/)
 })
+
+test('media request policy catches lookalike origins, panels, and invalid media subsets', () => {
+  assert.equal(typeof securityModule.allowsOrbMediaRequest, 'function')
+  const renderer = {}
+  const base = {
+    contents: renderer,
+    renderer,
+    permission: 'media',
+    origin: 'nova://orb',
+  }
+  for (const mediaTypes of [['audio'], ['video'], ['audio', 'video']]) {
+    assert.equal(
+      securityModule.allowsOrbMediaRequest({ ...base, mediaTypes }),
+      true,
+      JSON.stringify(mediaTypes),
+    )
+  }
+
+  const denied = [
+    ['different contents', { ...base, contents: {} , mediaTypes: ['video'] }],
+    ['lookalike host', { ...base, origin: 'nova://orb.evil', mediaTypes: ['video'] }],
+    ['credential host', { ...base, origin: 'nova://orb@evil', mediaTypes: ['video'] }],
+    ['different host', { ...base, origin: 'nova://other', mediaTypes: ['video'] }],
+    ['path lookalike', { ...base, origin: 'nova://orb/index.html', mediaTypes: ['video'] }],
+    ['query lookalike', { ...base, origin: 'nova://orb?source=video', mediaTypes: ['video'] }],
+    ['wrong permission', { ...base, permission: 'display-capture', mediaTypes: ['video'] }],
+    ['missing media types', base],
+    ['empty media types', { ...base, mediaTypes: [] }],
+    ['duplicate media types', { ...base, mediaTypes: ['video', 'video'] }],
+    ['screen media type', { ...base, mediaTypes: ['screen'] }],
+    ['mixed unknown media type', { ...base, mediaTypes: ['audio', 'screen'] }],
+  ]
+  for (const [name, input] of denied) {
+    assert.equal(securityModule.allowsOrbMediaRequest(input), false, name)
+  }
+})
+
+test('media check policy catches weakening exact origin or renderer identity', () => {
+  assert.equal(typeof securityModule.allowsOrbMediaCheck, 'function')
+  const renderer = {}
+  const base = {
+    contents: renderer,
+    renderer,
+    permission: 'media',
+    origin: 'nova://orb',
+  }
+  assert.equal(securityModule.allowsOrbMediaCheck(base), true)
+  assert.equal(securityModule.allowsOrbMediaCheck({ ...base, contents: {} }), false)
+  assert.equal(securityModule.allowsOrbMediaCheck({ ...base, permission: 'camera' }), false)
+  assert.equal(securityModule.allowsOrbMediaCheck({ ...base, origin: 'nova://orb/' }), false)
+  assert.equal(securityModule.allowsOrbMediaCheck({ ...base, origin: 'nova://orb.evil' }), false)
+})
+
+test('window security installs one policy pair and invokes each request callback once', () => {
+  assert.equal(typeof securityModule.configureWindowSecurity, 'function')
+  let checkHandler
+  let requestHandler
+  let checkInstalls = 0
+  let requestInstalls = 0
+  const renderer = {
+    setWindowOpenHandler() {},
+    on() {},
+    session: {
+      setPermissionCheckHandler(handler) {
+        checkInstalls += 1
+        checkHandler = handler
+      },
+      setPermissionRequestHandler(handler) {
+        requestInstalls += 1
+        requestHandler = handler
+      },
+    },
+  }
+  securityModule.configureWindowSecurity({ webContents: renderer })
+
+  assert.equal(checkInstalls, 1)
+  assert.equal(requestInstalls, 1)
+  assert.equal(checkHandler(renderer, 'media', 'nova://orb', {}), true)
+  assert.equal(checkHandler({}, 'media', 'nova://orb', {}), false, 'a panel is denied')
+
+  for (const [name, contents, details, expected] of [
+    ['main video', renderer, { securityOrigin: 'nova://orb', mediaTypes: ['video'] }, true],
+    ['main audio/video', renderer, { securityOrigin: 'nova://orb', mediaTypes: ['audio', 'video'] }, true],
+    ['panel video', {}, { securityOrigin: 'nova://orb', mediaTypes: ['video'] }, false],
+    ['missing security origin', renderer, { mediaTypes: ['video'] }, false],
+    ['duplicate video', renderer, { securityOrigin: 'nova://orb', mediaTypes: ['video', 'video'] }, false],
+  ]) {
+    const values = []
+    requestHandler(contents, 'media', value => values.push(value), details)
+    assert.deepEqual(values, [expected], name)
+  }
+})
+
+test('main camera permission helper catches prompting or examining permissions in file mode', async () => {
+  assert.equal(typeof securityModule.requestLocalCameraPermission, 'function')
+  for (const [name, source, platform, status, expected] of [
+    ['local not determined', 'local', 'darwin', 'not-determined', ['status', 'ask']],
+    ['local already granted', 'local', 'darwin', 'granted', ['status']],
+    ['local non-mac', 'local', 'linux', 'not-determined', []],
+    ['file mac', 'file', 'darwin', 'not-determined', []],
+    ['file non-mac', 'file', 'linux', 'not-determined', []],
+  ]) {
+    const calls = []
+    await securityModule.requestLocalCameraPermission(source, {
+      platform,
+      systemPreferences: {
+        getMediaAccessStatus(kind) {
+          assert.equal(kind, 'camera')
+          calls.push('status')
+          return status
+        },
+        async askForMediaAccess(kind) {
+          assert.equal(kind, 'camera')
+          calls.push('ask')
+          return false
+        },
+      },
+    })
+    assert.deepEqual(calls, expected, name)
+  }
+})

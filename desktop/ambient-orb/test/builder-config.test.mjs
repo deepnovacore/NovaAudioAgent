@@ -11,6 +11,10 @@ import test from 'node:test'
 
 const CONFIG_PATH = resolve(import.meta.dirname, '../electron-builder.yml')
 const PACKAGE_JSON_PATH = resolve(import.meta.dirname, '../package.json')
+const ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.plist')
+const INHERIT_ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.inherit.plist')
+const HTML_PATH = resolve(import.meta.dirname, '../src/renderer/index.html')
+const BUILD_SCRIPT_PATH = resolve(import.meta.dirname, '../scripts/build.mjs')
 
 function indentOf(line) {
   const match = /^( *)/.exec(line)
@@ -213,4 +217,63 @@ test('every package: script disables publishing explicitly', async () => {
       `expected "${name}" to pass --publish never so CI never attempts to publish a release`,
     )
   }
+})
+
+function parseBooleanPlist(text) {
+  const dict = /<dict>([\s\S]*?)<\/dict>/u.exec(text)?.[1]
+  assert.ok(dict, 'expected one plist dict')
+  const tokens = [...dict.matchAll(/<key>([^<]+)<\/key>|<(true|false)\s*\/>/gu)]
+  const result = {}
+  for (let index = 0; index < tokens.length; index += 2) {
+    const key = tokens[index]?.[1]
+    const value = tokens[index + 1]?.[2]
+    assert.ok(key && value, 'every plist key must be followed by a boolean')
+    assert.equal(Object.hasOwn(result, key), false, `duplicate plist key: ${key}`)
+    result[key] = value === 'true'
+  }
+  assert.equal(tokens.length, Object.keys(result).length * 2)
+  return result
+}
+
+test('signed mac declarations catch an omitted camera entitlement or usage string', async () => {
+  const parent = parseBooleanPlist(await readFile(ENTITLEMENTS_PATH, 'utf8'))
+  const inherit = parseBooleanPlist(await readFile(INHERIT_ENTITLEMENTS_PATH, 'utf8'))
+
+  assert.equal(parent['com.apple.security.device.camera'], true)
+  assert.equal(inherit['com.apple.security.device.camera'], true)
+  assert.equal(parent['com.apple.security.device.audio-input'], true)
+  assert.equal(inherit['com.apple.security.device.audio-input'], true)
+  assert.equal(parent['com.apple.security.cs.allow-jit'], true)
+  assert.equal(inherit['com.apple.security.cs.allow-jit'], true)
+  assert.equal(parent['com.apple.security.network.client'], true)
+  assert.equal(config.mac.extendInfo.NSMicrophoneUsageDescription, 'Nova Audio Agent 使用麦克风进行带系统级回声消除的实时语音交互。')
+  assert.equal(config.mac.extendInfo.NSCameraUsageDescription, 'Nova Audio Agent 使用摄像头按需捕获画面，用于本地视觉观察和安全提醒。')
+})
+
+test('renderer CSP catches widening camera media beyond the exact same origin', async () => {
+  const html = await readFile(HTML_PATH, 'utf8')
+  const content = /http-equiv="Content-Security-Policy" content="([^"]+)"/u.exec(html)?.[1]
+  assert.ok(content, 'expected CSP meta content')
+  const directives = Object.fromEntries(content.split(';').map(part => {
+    const fields = part.trim().split(/\s+/u)
+    return [fields[0], fields.slice(1)]
+  }))
+
+  assert.deepEqual(directives['default-src'], ["'self'"])
+  assert.deepEqual(directives['script-src'], ["'self'"])
+  assert.deepEqual(directives['style-src'], ["'self'"])
+  assert.deepEqual(directives['connect-src'], ['ws://127.0.0.1:*'])
+  assert.deepEqual(directives['img-src'], ["'none'"])
+  assert.deepEqual(directives['media-src'], ["'self'"])
+  assert.deepEqual(directives['object-src'], ["'none'"])
+  assert.deepEqual(directives['base-uri'], ["'none'"])
+  assert.deepEqual(directives['form-action'], ["'none'"])
+  assert.doesNotMatch(directives['media-src'].join(' '), /file:|data:|blob:|https?:/u)
+})
+
+test('desktop build syntax-checks both camera main and renderer modules', async () => {
+  const source = await readFile(BUILD_SCRIPT_PATH, 'utf8')
+  const scriptsBlock = source.slice(source.indexOf('const scripts = ['), source.indexOf(']\n\nconst runtimeEntry'))
+  assert.match(scriptsBlock, /'src\/main\/camera-source\.mjs'/)
+  assert.match(scriptsBlock, /'src\/renderer\/camera\.mjs'/)
 })

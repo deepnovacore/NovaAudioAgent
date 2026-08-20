@@ -558,6 +558,7 @@ async function boot() {
   let bootSocket = null
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
+    cameraController.setSourceMode(bootstrap.cameraSource)
     axes.audioMode = bootstrap.audioMode
     axes.platform = bootstrap.platform
     // bootstrap.settings does not exist yet (it lands with the settings task);

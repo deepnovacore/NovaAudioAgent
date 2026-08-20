@@ -29,6 +29,7 @@ mac:
   extendInfo:
     LSUIElement: true
     NSMicrophoneUsageDescription: Nova Audio Agent 使用麦克风进行带系统级回声消除的实时语音交互。
+    NSCameraUsageDescription: Nova Audio Agent 使用摄像头按需捕获画面，用于本地视觉观察和安全提醒。
   icon: build/icon.icns
   target:
     - dir

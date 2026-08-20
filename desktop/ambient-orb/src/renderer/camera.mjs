@@ -226,6 +226,7 @@ export class RendererCameraController {
   #closedGenerations = new WeakSet()
   #captureTail = Promise.resolve()
   #disposed = false
+  #sourceMode
 
   constructor({
     mediaDevices,
@@ -251,6 +252,12 @@ export class RendererCameraController {
       : MAX_CAMERA_POSITION_MS
   }
 
+  setSourceMode(source) {
+    if (this.#sourceMode !== undefined) throw new Error('camera source mode is already set')
+    if (source !== 'local' && source !== 'file') throw new Error('camera source mode is invalid')
+    this.#sourceMode = source
+  }
+
   enqueue(rawText, delivery) {
     if (this.#disposed || !validDelivery(delivery)) return
     if (this.#closedGenerations.has(delivery.generation)) return
@@ -264,6 +271,12 @@ export class RendererCameraController {
       const requestId = safeMalformedRequestId(rawText)
       if (requestId) this.#append(() => {
         if (!state.closed) this.#sendUnavailable(requestId, delivery)
+      })
+      return
+    }
+    if (request.source !== this.#sourceMode) {
+      this.#append(() => {
+        if (!state.closed) this.#sendUnavailable(request.request_id, delivery)
       })
       return
     }

@@ -32,6 +32,7 @@ import {
   watchBackendExit,
 } from './backend.mjs'
 import { loadAppWindow } from './app-protocol.mjs'
+import { selectMainCameraSource } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
@@ -56,7 +57,9 @@ import {
   allowRendererNavigation,
   boardWindowOptions,
   browserWindowOptions,
+  configureWindowSecurity,
   createBootstrapAccess,
+  requestLocalCameraPermission,
   settingsWindowOptions,
   validateBootstrap,
 } from './security.mjs'
@@ -121,27 +124,6 @@ function pythonExecutable() {
 // it, uncaught, in the main process. One guard, one place.
 function sendToOrb(channel, ...args) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
-}
-
-function configureWindowSecurity(window) {
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  window.webContents.on('will-navigate', (event, url) => {
-    if (!allowRendererNavigation(url)) event.preventDefault()
-  })
-  const electronSession = window.webContents.session
-  electronSession.setPermissionCheckHandler((_contents, permission, origin) => (
-    permission === 'media' && origin.startsWith('nova://orb')
-  ))
-  electronSession.setPermissionRequestHandler((contents, permission, callback, details) => {
-    const types = details.mediaTypes || []
-    const audioOnly = types.length > 0 && types.every(type => type === 'audio')
-    callback(
-      contents === window.webContents
-      && permission === 'media'
-      && audioOnly
-      && contents.getURL().startsWith('nova://orb'),
-    )
-  })
 }
 
 function windowPositionFile() {
@@ -342,7 +324,7 @@ function decryptSecretsForSpawn(settings, codec) {
   return decrypted
 }
 
-async function launchBackend() {
+async function launchBackend(cameraSource) {
   const token = randomBytes(16).toString('hex')
   const workspace = process.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || process.cwd()
   const backendKind = selectedBackend(process.env)
@@ -424,23 +406,19 @@ async function launchBackend() {
     nativeAvailable,
     platform: process.platform,
     opaque,
+    cameraSource,
     settings: publicSettings(currentSettings),
   })
 }
 
-async function requestCameraPermission() {
-  if (
-    process.platform === 'darwin'
-    && systemPreferences.getMediaAccessStatus('camera') === 'not-determined'
-  ) {
-    await systemPreferences.askForMediaAccess('camera')
-  }
-}
-
 async function start() {
-  await requestCameraPermission()
+  const camera = selectMainCameraSource(process.env)
+  await requestLocalCameraPermission(camera.source, {
+    platform: process.platform,
+    systemPreferences,
+  })
   currentSettings = await loadSettings(settingsFile())
-  await launchBackend()
+  await launchBackend(camera.source)
   const launchId = randomBytes(8).toString('hex')
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
@@ -607,6 +585,8 @@ async function start() {
   void loadAppWindow(mainWindow, {
     rendererRoot,
     fetchFile: file => net.fetch(pathToFileURL(file).href),
+    cameraFile: camera.source === 'file' ? camera.file : undefined,
+    fetchCameraFile: (url, init) => net.fetch(url, init),
   }).then(() => {
     // Belt-and-braces only. The renderer binds its listener from boot(), after its own
     // bootstrap round-trip, so this push may still arrive before anything is listening —

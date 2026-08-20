@@ -113,3 +113,68 @@ export function allowRendererNavigation(url) {
     return false
   }
 }
+
+function isExactOrbOrigin(origin) {
+  if (typeof origin !== 'string') return false
+  try {
+    const parsed = new URL(origin)
+    return parsed.protocol === 'nova:'
+      && parsed.hostname === 'orb'
+      && parsed.username === ''
+      && parsed.password === ''
+      && parsed.port === ''
+      && parsed.pathname === ''
+      && parsed.search === ''
+      && parsed.hash === ''
+  } catch {
+    return false
+  }
+}
+
+export function allowsOrbMediaCheck({ contents, renderer, permission, origin }) {
+  return contents === renderer
+    && permission === 'media'
+    && isExactOrbOrigin(origin)
+}
+
+export function allowsOrbMediaRequest({
+  contents,
+  renderer,
+  permission,
+  origin,
+  mediaTypes,
+}) {
+  if (!allowsOrbMediaCheck({ contents, renderer, permission, origin })) return false
+  if (!Array.isArray(mediaTypes) || mediaTypes.length === 0) return false
+  const unique = new Set(mediaTypes)
+  return unique.size === mediaTypes.length
+    && [...unique].every(type => type === 'audio' || type === 'video')
+}
+
+export function configureWindowSecurity(window) {
+  const renderer = window.webContents
+  renderer.setWindowOpenHandler(() => ({ action: 'deny' }))
+  renderer.on('will-navigate', (event, url) => {
+    if (!allowRendererNavigation(url)) event.preventDefault()
+  })
+  const electronSession = renderer.session
+  electronSession.setPermissionCheckHandler((contents, permission, origin) => (
+    allowsOrbMediaCheck({ contents, renderer, permission, origin })
+  ))
+  electronSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    callback(allowsOrbMediaRequest({
+      contents,
+      renderer,
+      permission,
+      origin: details?.securityOrigin,
+      mediaTypes: details?.mediaTypes,
+    }))
+  })
+}
+
+export async function requestLocalCameraPermission(source, { platform, systemPreferences }) {
+  if (source !== 'local' || platform !== 'darwin') return
+  if (systemPreferences.getMediaAccessStatus('camera') === 'not-determined') {
+    await systemPreferences.askForMediaAccess('camera')
+  }
+}
