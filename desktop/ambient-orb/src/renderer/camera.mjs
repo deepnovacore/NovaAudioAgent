@@ -79,8 +79,138 @@ export function cameraUnavailableMessage(requestId) {
 }
 
 export function isCameraCaptureText(raw) {
-  const parsed = parseFlatJsonObject(raw)
-  return parsed?.value.type === 'camera.capture'
+  return classifyCameraCaptureText(raw).kind !== 'other'
+}
+
+export function classifyCameraCaptureText(raw) {
+  const request = parseCameraCapture(raw)
+  if (request) return Object.freeze({kind: 'valid', request})
+  const fields = scanTopLevelJsonFields(raw)
+  if (!fields.some(field => field.key === 'type' && field.value === 'camera.capture')) {
+    return Object.freeze({kind: 'other'})
+  }
+  const requestIds = fields
+    .filter(field => field.key === 'request_id' && validRequestId(field.value))
+    .map(field => field.value)
+  return Object.freeze({
+    kind: 'malformed',
+    requestId: requestIds.length === 1 ? requestIds[0] : null,
+  })
+}
+
+export class RendererSocketRouter {
+  #cameraController
+  #handleGeneric
+  #onGenericError
+  #onCurrentClose
+  #cameraTail = Promise.resolve()
+  #genericTail = Promise.resolve()
+  #current = null
+  #disposed = false
+
+  constructor({
+    cameraController,
+    handleGeneric,
+    onGenericError = () => {},
+    onCurrentClose = () => {},
+  } = {}) {
+    if (!cameraController || typeof cameraController.enqueue !== 'function'
+      || typeof cameraController.closeGeneration !== 'function'
+      || typeof handleGeneric !== 'function'
+      || typeof onGenericError !== 'function'
+      || typeof onCurrentClose !== 'function') throw new TypeError('invalid renderer socket router')
+    this.#cameraController = cameraController
+    this.#handleGeneric = handleGeneric
+    this.#onGenericError = onGenericError
+    this.#onCurrentClose = onCurrentClose
+  }
+
+  connect(socket) {
+    if (this.#disposed || !socket || typeof socket.send !== 'function') {
+      throw new TypeError('invalid renderer socket')
+    }
+    if (this.#current) this.#retireCamera(this.#current)
+    const generation = Object.freeze({})
+    const record = {
+      socket,
+      generation,
+      cameraClosed: false,
+      closed: false,
+    }
+    const delivery = Object.freeze({
+      generation,
+      isCurrent: () => this.#isCurrent(record) && socket.readyState === 1,
+      sendText: value => socket.send(value),
+      sendBinary: value => socket.send(value),
+    })
+    record.delivery = delivery
+    this.#current = record
+    return Object.freeze({
+      generation,
+      delivery,
+      isCurrent: () => this.#isCurrent(record),
+      onMessage: event => this.#route(record, event),
+      close: (notify = true) => this.#close(record, notify),
+    })
+  }
+
+  dispose() {
+    if (this.#disposed) return
+    this.#disposed = true
+    if (this.#current) this.#close(this.#current, false)
+  }
+
+  #route(record, event) {
+    if (!this.#isCurrent(record)) return
+    if (typeof event?.data === 'string'
+      && classifyCameraCaptureText(event.data).kind !== 'other') {
+      const runCamera = () => {
+        if (!this.#isCurrent(record)) return
+        try {
+          // `enqueue` owns and contains its async work. Its return value is
+          // deliberately discarded so a thenable fake/implementation cannot
+          // merge the camera tail with renderer playback scheduling.
+          void this.#cameraController.enqueue(event.data, record.delivery)
+        } catch { /* one camera failure cannot poison either renderer tail */ }
+      }
+      this.#cameraTail = this.#cameraTail.then(runCamera, runCamera).catch(() => {})
+      return
+    }
+    const runGeneric = () => {
+      if (!this.#isCurrent(record)) return undefined
+      return this.#handleGeneric(event, record.delivery)
+    }
+    this.#genericTail = this.#genericTail.then(runGeneric, runGeneric).catch(error => {
+      if (!this.#isCurrent(record)) return
+      try { this.#onGenericError(error, record.delivery) } catch { /* renderer event boundary */ }
+    }).catch(() => {})
+  }
+
+  #close(record, notify) {
+    this.#retireCamera(record)
+    record.closed = true
+    if (this.#current !== record) return false
+    this.#current = null
+    if (notify) {
+      try {
+        this.#onCurrentClose(Object.freeze({
+          socket: record.socket,
+          generation: record.generation,
+        }))
+      } catch { /* renderer event boundary */ }
+    }
+    return true
+  }
+
+  #retireCamera(record) {
+    if (record.cameraClosed) return
+    record.cameraClosed = true
+    try { this.#cameraController.closeGeneration(record.generation) } catch { /* cleanup boundary */ }
+  }
+
+  #isCurrent(record) {
+    return !this.#disposed && !record.closed && this.#current === record
+  }
 }
 
 export class RendererCameraController {
@@ -342,13 +472,19 @@ export class RendererCameraController {
       },
       wait: async (promise, releaseLate = () => {}) => {
         let returned = false
+        let released = false
+        const releaseOnce = value => {
+          if (returned || released) return
+          released = true
+          safeRelease(releaseLate, value)
+        }
         const task = Promise.resolve(promise)
         task.then(value => {
-          if (!active && !returned) safeRelease(releaseLate, value)
+          if (!active) releaseOnce(value)
         }, () => {})
         const value = await Promise.race([task, cancellation])
         if (!active) {
-          safeRelease(releaseLate, value)
+          releaseOnce(value)
           throw new Error('camera operation cancelled')
         }
         returned = true
@@ -426,10 +562,8 @@ function usableVideoTrack(stream) {
 }
 
 function safeMalformedRequestId(raw) {
-  const parsed = parseFlatJsonObject(raw)
-  return parsed?.value.type === 'camera.capture' && validRequestId(parsed.value.request_id)
-    ? parsed.value.request_id
-    : null
+  const classified = classifyCameraCaptureText(raw)
+  return classified.kind === 'malformed' ? classified.requestId : null
 }
 
 function validDelivery(delivery) {
@@ -520,6 +654,58 @@ function parseFlatJsonObject(raw) {
     }
     if (raw[offset] !== ',') return null
     offset = skipWhitespace(raw, offset + 1)
+  }
+  return null
+}
+
+function scanTopLevelJsonFields(raw) {
+  if (typeof raw !== 'string') return []
+  const fields = []
+  let offset = skipWhitespace(raw, 0)
+  if (raw[offset] !== '{') return fields
+  offset = skipWhitespace(raw, offset + 1)
+  while (offset < raw.length && raw[offset] !== '}') {
+    const keyToken = readJsonString(raw, offset)
+    if (!keyToken) return fields
+    const key = parseJsonToken(keyToken.source)
+    if (typeof key !== 'string') return fields
+    offset = skipWhitespace(raw, keyToken.end)
+    if (raw[offset] !== ':') return fields
+    offset = skipWhitespace(raw, offset + 1)
+    const valueToken = readJsonValue(raw, offset)
+    if (!valueToken) return fields
+    const value = parseJsonToken(valueToken.source)
+    fields.push({key, value: value === invalidToken ? null : value})
+    offset = skipWhitespace(raw, valueToken.end)
+    if (raw[offset] === '}') return fields
+    if (raw[offset] !== ',') return fields
+    offset = skipWhitespace(raw, offset + 1)
+  }
+  return fields
+}
+
+function readJsonValue(raw, start) {
+  if (raw[start] === '"') return readJsonString(raw, start)
+  if (raw[start] !== '{' && raw[start] !== '[') return readPrimitive(raw, start)
+  const stack = [raw[start]]
+  let offset = start + 1
+  while (offset < raw.length) {
+    if (raw[offset] === '"') {
+      const stringToken = readJsonString(raw, offset)
+      if (!stringToken) return null
+      offset = stringToken.end
+      continue
+    }
+    const character = raw[offset]
+    if (character === '{' || character === '[') stack.push(character)
+    else if (character === '}' || character === ']') {
+      const opening = stack.pop()
+      if ((opening === '{' && character !== '}') || (opening === '[' && character !== ']')) {
+        return null
+      }
+      if (stack.length === 0) return {source: raw.slice(start, offset + 1), end: offset + 1}
+    }
+    offset += 1
   }
   return null
 }

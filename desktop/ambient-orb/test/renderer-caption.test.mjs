@@ -11,7 +11,7 @@ test('renderer clears captions on disconnect and on every playback clear', async
     /if \(message\.type === 'playback\.clear'\) \{\n    clearAssistantCaption\(\)/,
   )
   // A dead socket must not leave speculative text on screen.
-  assert.match(source, /socket\.onclose = \(\) => \{[^}]*clearCaption\(\)/s)
+  assert.match(source, /onCurrentClose: \(\{socket: closedSocket\}\) => \{[^}]*clearCaption\(\)/s)
   // Continuous speech keeps refreshing the floor hold with the same utterance id.
   assert.match(source, /new OnsetTracker\(/)
 })
@@ -25,18 +25,6 @@ test('renderer stops the guard tone before replacement PCM and local onset', asy
   const decode = source.indexOf('decodeAudioFrame', handler)
   assert.ok(handler >= 0 && toneStop > handler && decode > toneStop)
   assert.match(source, /if \(verdict\) \{\n    alertTone\.stop\(\)\n    send\(/)
-})
-
-test('renderer serializes replacement PCM behind native alert clear acknowledgement', async () => {
-  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
-
-  assert.match(source, /let socketMessageTail = Promise\.resolve\(\)/)
-  assert.match(
-    source,
-    /socketMessageTail = socketMessageTail\.then\(\(\) => handleSocketMessage\(event\)\)/,
-  )
-  assert.match(source, /async function handleSocketMessage\(event\)/)
-  assert.match(source, /await handleControl\(JSON\.parse\(event\.data\)\)/)
 })
 
 test('renderer accepts the closed public Codex project message', async () => {

@@ -13,8 +13,8 @@ import {
   PlaybackMeter,
 } from './audio.mjs'
 import {
-  isCameraCaptureText,
   RendererCameraController,
+  RendererSocketRouter,
 } from './camera.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
 import { createOrbVisualSafe } from './orb-visual.mjs'
@@ -95,9 +95,6 @@ let workletLoaded = false
 let nativeAvailable = false
 let nativeReady = false
 let playbackCursor = 0
-let socketMessageTail = Promise.resolve()
-let cameraCaptureTail = Promise.resolve()
-let currentSocketGeneration = null
 const playingSources = new Set()
 const nativeFrames = new Map()
 const dragGesture = new OrbDragGesture()
@@ -119,6 +116,24 @@ const playback = new GenerationPlayback({
     playingSources.clear()
     playbackCursor = 0
     return inFlightMs
+  },
+})
+
+const socketRouter = new RendererSocketRouter({
+  cameraController,
+  handleGeneric: event => handleSocketMessage(event),
+  onGenericError: () => {
+    axes.error = 'playback'
+    render()
+  },
+  onCurrentClose: ({socket: closedSocket}) => {
+    if (socket !== closedSocket) return
+    socket = undefined
+    axes.connected = false
+    alertTone.stop()
+    playback.stopAll()
+    clearCaption()
+    render()
   },
 })
 
@@ -539,7 +554,8 @@ function handleBackendExit() {
 }
 
 async function boot() {
-  let bootGeneration = null
+  let bootConnection = null
+  let bootSocket = null
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
     axes.audioMode = bootstrap.audioMode
@@ -590,45 +606,19 @@ async function boot() {
       }
     })
     const nextSocket = new WebSocket(bootstrap.endpoint)
-    const socketGeneration = Object.freeze({})
-    bootGeneration = socketGeneration
-    currentSocketGeneration = socketGeneration
-    const delivery = Object.freeze({
-      generation: socketGeneration,
-      isCurrent: () => currentSocketGeneration === socketGeneration
-        && socket === nextSocket
-        && nextSocket.readyState === WebSocket.OPEN,
-      sendText: value => nextSocket.send(value),
-      sendBinary: value => nextSocket.send(value),
-    })
+    const connection = socketRouter.connect(nextSocket)
+    bootConnection = connection
+    bootSocket = nextSocket
     socket = nextSocket
     nextSocket.binaryType = 'arraybuffer'
-    nextSocket.onopen = () => send({ type: 'hello', token: bootstrap.token })
-    nextSocket.onmessage = event => {
-      if (typeof event.data === 'string' && isCameraCaptureText(event.data)) {
-        cameraCaptureTail = cameraCaptureTail.then(() => {
-          cameraController.enqueue(event.data, delivery)
-        }, () => {
-          cameraController.enqueue(event.data, delivery)
-        }).catch(() => {})
-        return
-      }
-      socketMessageTail = socketMessageTail.then(() => handleSocketMessage(event))
-        .catch(() => {
-          axes.error = 'playback'
-          render()
-        })
+    nextSocket.onopen = () => {
+      if (!connection.isCurrent()) return
+      connection.delivery.sendText(JSON.stringify({ type: 'hello', token: bootstrap.token }))
     }
-    socket.onclose = () => {
-      cameraController.closeGeneration(socketGeneration)
-      if (currentSocketGeneration === socketGeneration) currentSocketGeneration = null
-      axes.connected = false
-      alertTone.stop()
-      playback.stopAll()
-      clearCaption()
-      render()
-    }
-    socket.onerror = () => {
+    nextSocket.onmessage = connection.onMessage
+    nextSocket.onclose = () => { connection.close() }
+    nextSocket.onerror = () => {
+      if (!connection.isCurrent()) return
       axes.error = 'connection'
       render()
     }
@@ -639,10 +629,8 @@ async function boot() {
     // never pushed here and only the bootstrap reply above knows about it.
     if (bootstrap.backendExited === true) handleBackendExit()
   } catch {
-    if (bootGeneration) {
-      cameraController.closeGeneration(bootGeneration)
-      if (currentSocketGeneration === bootGeneration) currentSocketGeneration = null
-    }
+    bootConnection?.close(false)
+    if (socket === bootSocket) socket = undefined
     axes.booting = false
     axes.error = 'bootstrap'
   }
@@ -685,8 +673,7 @@ orb.addEventListener('contextmenu', event => {
   window.novaAudioAgentDesktop.orbMenu.show()
 })
 window.addEventListener('beforeunload', () => {
-  if (currentSocketGeneration) cameraController.closeGeneration(currentSocketGeneration)
-  currentSocketGeneration = null
+  socketRouter.dispose()
   cameraController.dispose()
   visual.destroy()
   void deactivateCapture()

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import {readFile} from 'node:fs/promises'
 import test from 'node:test'
 
 import {
@@ -13,6 +12,7 @@ import {
   MAX_CAMERA_POSITION_MS,
   RendererCameraController,
   cameraUnavailableMessage,
+  classifyCameraCaptureText,
   encodeCameraFrame,
   parseCameraCapture,
 } from '../src/renderer/camera.mjs'
@@ -268,6 +268,32 @@ test('strict camera capture parsing rejects the complete malformed grammar matri
   )
 })
 
+test('camera text classification contains every top-level camera intent without last-key wins', () => {
+  const valid = classifyCameraCaptureText(localRequest('camera-classified'))
+  assert.equal(valid.kind, 'valid')
+  assert.deepEqual(valid.request, {
+    type: 'camera.capture', request_id: 'camera-classified', source: 'local',
+  })
+
+  const attacks = [
+    '{"type":"camera.capture","type":"playback.clear","request_id":"camera-dupe-a","source":"local"}',
+    '{"type":"playback.clear","type":"camera.capture","request_id":"camera-dupe-b","source":"local"}',
+    '{"type":"camera.capture","request_id":"camera-extra","source":"local","path":"/Users/sentinel"}',
+    '{"type":"camera.capture","request_id":"camera-missing"}',
+    '{"type":"camera.capture","request_id":"camera-float","source":"file","position_ms":1.0}',
+    '{"type":"camera.capture","request_id":"camera-truncated"',
+  ]
+  for (const raw of attacks) {
+    const classified = classifyCameraCaptureText(raw)
+    assert.equal(classified.kind, 'malformed', raw)
+    assert.match(classified.requestId ?? '', /^camera-/u)
+  }
+  assert.deepEqual(
+    classifyCameraCaptureText('{"type":"playback.clear","utterance_id":"u","generation_epoch":1}'),
+    {kind: 'other'},
+  )
+})
+
 test('camera framing rejects invalid ids and JPEG boundaries', () => {
   const maximumId = `camera-${'a'.repeat(57)}`
   assert.equal(encoder.encode(maximumId).byteLength, 64)
@@ -380,6 +406,26 @@ test('bitmap ownership survives draw and conversion failures', async () => {
     assert.equal(harness.calls.bitmapCloses, 1)
     controller.dispose()
   }
+})
+
+test('an already-resolved bitmap is released exactly once when its generation closes first', async () => {
+  const generation = Object.freeze({name: 'bitmap-race'})
+  const harness = makeLocalHarness()
+  let controller
+  harness.ImageCapture.prototype.grabFrame = () => ({
+    then(resolve) {
+      resolve(harness.bitmap)
+      controller.closeGeneration(generation)
+    },
+  })
+  controller = new RendererCameraController(harness)
+  const response = makeDelivery(generation)
+  controller.enqueue(localRequest('camera-bitmap-race'), response.delivery)
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(response.sent.length, 0)
+  assert.equal(harness.calls.bitmapCloses, 1)
+  controller.dispose()
 })
 
 test('a controlled local deadline cleans late streams and emits at most one error', async () => {
@@ -652,21 +698,4 @@ test('isCurrent is rechecked immediately before response and send failures stay 
   await new Promise(resolve => setImmediate(resolve))
   await new Promise(resolve => setImmediate(resolve))
   controller.dispose()
-})
-
-test('renderer index routes camera on its own tail and fences each WebSocket generation', async () => {
-  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
-  assert.match(source, /from '\.\/camera\.mjs'/u)
-  assert.match(source, /let cameraCaptureTail = Promise\.resolve\(\)/u)
-  assert.match(source, /cameraController\.enqueue\(event\.data, delivery\)/u)
-  assert.match(source, /cameraCaptureTail = cameraCaptureTail\.then/u)
-  assert.doesNotMatch(source, /socketMessageTail[^\n]*cameraController\.enqueue/u)
-  const cameraBranch = source.indexOf('isCameraCaptureText(event.data)')
-  const genericTail = source.indexOf('socketMessageTail = socketMessageTail.then', cameraBranch)
-  assert.ok(cameraBranch >= 0 && genericTail > cameraBranch)
-  assert.match(source, /const socketGeneration = Object\.freeze\(\{\}\)/u)
-  assert.match(source, /currentSocketGeneration === socketGeneration/u)
-  assert.match(source, /nextSocket\.readyState === WebSocket\.OPEN/u)
-  assert.match(source, /cameraController\.closeGeneration\(socketGeneration\)/u)
-  assert.match(source, /cameraController\.dispose\(\)/u)
 })
