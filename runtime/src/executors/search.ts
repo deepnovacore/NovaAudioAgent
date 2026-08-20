@@ -15,6 +15,7 @@
 import { createHash } from 'node:crypto'
 import { compareCodePoints } from '../canonical-json.js'
 import { pythonFloat } from '../prompting.js'
+import { isWellFormed, stripLikePython } from '../python-text.js'
 import { isOtherCategory } from '../unicode-tables.js'
 
 const PROVIDER = 'tavily'
@@ -326,6 +327,10 @@ function normalizeResults(
     const canonicalUrl = canonicalizeUrl(raw.url)
     // All three or none: a result the model cannot attribute to a source is not evidence.
     if (title === '' || snippet === '' || canonicalUrl === '') continue
+    // A lone surrogate cannot be encoded as UTF-8 at all. The oracle raises out of `_digest` and takes
+    // the whole dispatch with it; refusing the one result instead is strictly better -- the rest of the
+    // response is still usable evidence, and a crash gives the model nothing. Recorded as a divergence.
+    if (!isWellFormed(title) || !isWellFormed(snippet) || !isWellFormed(canonicalUrl)) continue
     const contentDigest = digest([
       ['canonical_url', digestString(canonicalUrl)],
       ['snippet', digestString(snippet)],
@@ -352,11 +357,16 @@ function normalizeResults(
   return results
 }
 
+/**
+ * Trim and bound one piece of provider text.
+ *
+ * `stripLikePython` rather than `trim()`: a title of a single U+001C is blank to the oracle and
+ * non-blank to `trim`, so the same provider response would drop the result in one runtime and emit a
+ * control-character title in the other. U+FEFF is the same problem in reverse.
+ */
 function boundedText(value: unknown, limit: number): string {
-  // UTF-16 units, because the oracle's `[:limit]` counts what `len()` counts -- code points -- and
-  // these bounds are large enough that the difference only appears for astral text, which the fixture
-  // covers.
-  return typeof value === 'string' ? [...value.trim()].slice(0, limit).join('') : ''
+  if (typeof value !== 'string') return ''
+  return [...stripLikePython(value)].slice(0, limit).join('')
 }
 
 /**
@@ -409,10 +419,14 @@ function canonicalizeUrl(value: unknown): string {
   // evidence and must digest the same.
   parsed.hash = ''
   let canonical = parsed.toString()
-  // WHATWG always writes a path, so `https://example.com` comes back as `https://example.com/`. The
-  // oracle preserves the absence. These are the same resource, and a citation has to spell it one way.
-  if (authorityEnd === value.length && canonical.endsWith('/')) {
-    canonical = canonical.slice(0, -1)
+  // WHATWG always writes a path, so `https://example.com` comes back as `https://example.com/` -- and
+  // `https://example.com?` as `https://example.com/?`. The oracle preserves the absence in both. These
+  // are the same resource either way, and a citation has to spell it one way.
+  if (value.slice(authorityEnd, authorityEnd + 1) !== '/') {
+    const slash = canonical.indexOf('/', value.indexOf('://') + 3)
+    if (slash !== -1 && (canonical[slash + 1] === undefined || '?#'.includes(canonical[slash + 1]!))) {
+      canonical = canonical.slice(0, slash) + canonical.slice(slash + 1)
+    }
   }
   return canonical.length <= MAX_URL_CHARS ? canonical : ''
 }

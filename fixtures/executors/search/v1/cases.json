@@ -107,6 +107,31 @@
       "value": "https://example.com/?q=研究"
     },
     {
+      "name": "url-empty-query",
+      "kind": "canonical_url",
+      "value": "https://example.com?"
+    },
+    {
+      "name": "url-query-no-path",
+      "kind": "canonical_url",
+      "value": "https://example.com?q=1"
+    },
+    {
+      "name": "url-fragment-no-path",
+      "kind": "canonical_url",
+      "value": "https://example.com#frag"
+    },
+    {
+      "name": "url-empty-fragment-no-path",
+      "kind": "canonical_url",
+      "value": "https://example.com#"
+    },
+    {
+      "name": "url-slash-then-query",
+      "kind": "canonical_url",
+      "value": "https://example.com/?q=1"
+    },
+    {
       "name": "url-userinfo",
       "kind": "canonical_url",
       "value": "https://evil.com@good.com/"
@@ -697,6 +722,78 @@
       "kind": "digest",
       "fields": [],
       "ref_kind": "evidence"
+    },
+    {
+      "name": "dispatch-control-only-title",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 1
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "\u001c",
+            "content": "body",
+            "url": "https://e.com/"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-control-only-snippet",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 1
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "T",
+            "content": "",
+            "url": "https://e.com/"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-bom-title",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 1
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "﻿",
+            "content": "body",
+            "url": "https://e.com/"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-padded-title",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 1
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "\u001c Real title ",
+            "content": "body",
+            "url": "https://e.com/"
+          }
+        ]
+      }
     },
     {
       "name": "dispatch-ok",

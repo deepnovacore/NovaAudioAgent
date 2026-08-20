@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
+import { stripLikePython } from '../src/python-text.js'
 import {
   SearchAdapter,
   TavilyTransport,
@@ -287,10 +288,15 @@ test('an empty authority and an empty userinfo are read from the source, not the
   // empty userinfo — and each repair is a URL whose meaning this code would be choosing.
   assert.equal(canonicalizeUrlForTest('https:///a'), '')
   assert.equal(canonicalizeUrlForTest('https://@good.com/'), '')
-  // The path-less form keeps its shape, matching the oracle rather than the parser.
+  // The path-less form keeps its shape, matching the oracle rather than the parser -- and it keeps it
+  // whether or not a query or fragment follows. WHATWG inserts a `/` in all three.
   assert.equal(canonicalizeUrlForTest('https://example.com'), 'https://example.com')
+  assert.equal(canonicalizeUrlForTest('https://example.com?'), 'https://example.com?')
+  assert.equal(canonicalizeUrlForTest('https://example.com?q=1'), 'https://example.com?q=1')
+  assert.equal(canonicalizeUrlForTest('https://example.com#frag'), 'https://example.com')
+  // An explicit slash is preserved, because that one the author wrote.
   assert.equal(canonicalizeUrlForTest('https://example.com/'), 'https://example.com/')
-  assert.equal(canonicalizeUrlForTest('https://example.com?q=1'), 'https://example.com/?q=1')
+  assert.equal(canonicalizeUrlForTest('https://example.com/?q=1'), 'https://example.com/?q=1')
 })
 
 /**
@@ -425,4 +431,48 @@ test('the request carries the key as a bearer token and asks for nothing extra',
     include_raw_content: false,
     include_images: false,
   })
+})
+
+test('a lone surrogate is refused rather than digested', () => {
+  // It cannot be encoded as UTF-8 at all. The oracle raises out of `_digest` and takes the whole
+  // dispatch with it; refusing the one result is strictly better — the rest of the response is still
+  // usable evidence, and a crash gives the model nothing.
+  //
+  // A deliberate divergence, stated here because a golden would have to record the oracle's crash.
+  const adapter = new SearchAdapter({
+    search: () => Promise.resolve({
+      results: [
+        {title: `bad ${String.fromCharCode(0xd8_00)}`, content: 'body', url: 'https://a.example.com/'},
+        {title: 'good', content: 'body', url: 'https://b.example.com/'},
+      ],
+    }),
+  })
+  return adapter
+    .dispatch('search', {query: 'q', k: 2}, {
+      delegate: {delegate_id: 'd-1'},
+      clock: {now: () => 1},
+    })
+    .then(handoff => {
+      assert.equal(handoff.outcome, 'ok')
+      const results = handoff.content.results as readonly {readonly title: string}[]
+      assert.deepEqual(results.map(result => result.title), ['good'], 'only the encodable one')
+      // The rank gap is preserved: the survivor was second in the provider's ordering.
+      assert.deepEqual(
+        (handoff.content.results as readonly {readonly rank: number}[]).map(r => r.rank),
+        [2],
+      )
+    })
+})
+
+test('the six code points strip and trim disagree about are handled as Python handles them', () => {
+  // Derived rather than trusted, and the reason Search reuses recall's helper instead of calling
+  // `trim()`: a title of a single U+001C is blank to the oracle and non-blank to `trim`.
+  for (const codePoint of [0x1c, 0x1d, 0x1e, 0x1f, 0x85]) {
+    const character = String.fromCharCode(codePoint)
+    assert.equal(stripLikePython(character), '', `U+${codePoint.toString(16)} strips`)
+    assert.notEqual(character.trim(), '', 'but trim leaves it')
+  }
+  // And U+FEFF is the reverse.
+  assert.equal(stripLikePython('﻿'), '﻿', 'Python keeps the BOM')
+  assert.equal('﻿'.trim(), '', 'and trim removes it')
 })

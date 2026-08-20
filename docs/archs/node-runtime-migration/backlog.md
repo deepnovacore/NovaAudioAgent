@@ -242,6 +242,33 @@ be stopped from out here. And `close` waits with a bounded grace period, logging
 
 Both were verified by reverting each fix and watching a named test go red.
 
+### Search, second round: three more, and one lesson about not reusing a fix
+
+A Codex review found three divergences the first fixture set missed. All three reproduced.
+
+**`https://example.com?` and `https://example.com#frag`.** My pathless correction only fired when the
+authority ran to the end of the string, so a URL with an empty query or a fragment still gained the
+WHATWG `/`. The condition is now "no explicit slash after the authority", which covers all four shapes.
+
+**A lone surrogate in a title.** Python's `_digest` encodes with `.encode()` and raises
+`UnicodeEncodeError`, taking the whole dispatch down; `JSON.stringify` escapes it and produces a
+digest. Node now refuses the one result instead. **A deliberate divergence:** refusing is strictly
+better than crashing -- the rest of the response is still usable evidence, and a crash gives the model
+nothing. A golden cannot express it, because it would have to record the oracle's crash.
+
+**`str.strip()` versus `trim()`, again.** A title of a single U+001C is blank to the oracle and
+non-blank to `trim`, so the same response dropped the result in one runtime and emitted a
+control-character title in the other. U+FEFF is the reverse.
+
+That third one is the lesson. It is *exactly* the bug fixed in recall several commits earlier, found
+the same way, with the same six code points -- and I wrote `trim()` again because the fix lived as a
+private function inside `recall.ts`. A correction that is not extracted is a correction that has to be
+rediscovered.
+
+The helpers now live in `runtime/src/python-text.ts` (`stripLikePython`, `isPythonSpace`,
+`isWellFormed`) and recall imports them rather than owning them. The next module that needs Python
+string semantics should import from there rather than reasoning it out again.
+
 ### Stage 3, Search: three parser divergences and one chain gap
 
 Search is the first Stage 3 executor. Everything it returns is `untrusted_external` and reaches the

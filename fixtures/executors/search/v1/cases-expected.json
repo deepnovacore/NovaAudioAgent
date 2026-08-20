@@ -86,6 +86,26 @@
       "url": "https://example.com/?q=%E7%A0%94%E7%A9%B6"
     },
     {
+      "name": "url-empty-query",
+      "url": "https://example.com?"
+    },
+    {
+      "name": "url-query-no-path",
+      "url": "https://example.com?q=1"
+    },
+    {
+      "name": "url-fragment-no-path",
+      "url": "https://example.com"
+    },
+    {
+      "name": "url-empty-fragment-no-path",
+      "url": "https://example.com"
+    },
+    {
+      "name": "url-slash-then-query",
+      "url": "https://example.com/?q=1"
+    },
+    {
       "name": "url-userinfo",
       "url": ""
     },
@@ -413,6 +433,90 @@
       "name": "digest-empty",
       "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
       "ref": "web.search://evidence/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "dispatch-control-only-title",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "empty_evidence",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-control-only-snippet",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "empty_evidence",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-bom-title",
+      "outcome": "ok",
+      "trust": "untrusted_external",
+      "content": {
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0,
+        "provider_request_id": null,
+        "results": [
+          {
+            "rank": 1,
+            "title": "﻿",
+            "source_label": "e.com",
+            "snippet": "body",
+            "canonical_url": "https://e.com/",
+            "content_digest": "1fe0baf519370e60065ccacac6f001378e363bbff4cb15e0ebc35c72561addab",
+            "evidence_ref": "web.search://evidence/4584bbe9e0259d3a4040ffdd33be90a5b4c14786fb38b7a3d48355522e66091d"
+          }
+        ]
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "web.search://evidence/4584bbe9e0259d3a4040ffdd33be90a5b4c14786fb38b7a3d48355522e66091d"
+      ]
+    },
+    {
+      "name": "dispatch-padded-title",
+      "outcome": "ok",
+      "trust": "untrusted_external",
+      "content": {
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0,
+        "provider_request_id": null,
+        "results": [
+          {
+            "rank": 1,
+            "title": "Real title",
+            "source_label": "e.com",
+            "snippet": "body",
+            "canonical_url": "https://e.com/",
+            "content_digest": "8aae598c230e4b3fbe6c8b91490051a9daeb419b9047daf1357383f244d76024",
+            "evidence_ref": "web.search://evidence/9337260fc0cd6ef71f57b5997e4e43c6f9ca46d0af8aa52bcf816697b8087998"
+          }
+        ]
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "web.search://evidence/9337260fc0cd6ef71f57b5997e4e43c6f9ca46d0af8aa52bcf816697b8087998"
+      ]
     },
     {
       "name": "dispatch-ok",
