@@ -21,6 +21,11 @@ const MAX_MP4_BOXES = 4_096
 const EXPECTED_VIDEO = Object.freeze({
   codec: 'h264',
   sampleEntry: 'avc1',
+  configurationVersion: 1,
+  nalLengthBytes: 4,
+  sequenceParameterSetCount: 1,
+  pictureParameterSetCount: 1,
+  sequenceParameterSetExtensionCount: 0,
   profileIdc: 100,
   profileCompatibility: 0,
   levelIdc: 31,
@@ -111,6 +116,12 @@ export function inspectLockedCameraMp4(input) {
     const metadata = videoTracks[0]
     if (metadata.codec !== EXPECTED_VIDEO.codec
       || metadata.sampleEntry !== EXPECTED_VIDEO.sampleEntry
+      || metadata.configurationVersion !== EXPECTED_VIDEO.configurationVersion
+      || metadata.nalLengthBytes !== EXPECTED_VIDEO.nalLengthBytes
+      || metadata.sequenceParameterSetCount !== EXPECTED_VIDEO.sequenceParameterSetCount
+      || metadata.pictureParameterSetCount !== EXPECTED_VIDEO.pictureParameterSetCount
+      || metadata.sequenceParameterSetExtensionCount
+        !== EXPECTED_VIDEO.sequenceParameterSetExtensionCount
       || metadata.profileIdc !== EXPECTED_VIDEO.profileIdc
       || metadata.profileCompatibility !== EXPECTED_VIDEO.profileCompatibility
       || metadata.levelIdc !== EXPECTED_VIDEO.levelIdc
@@ -211,6 +222,11 @@ function inspectVideoTrack(bytes, track, movieTimescale, state) {
   return {
     codec: 'h264',
     sampleEntry: sampleEntry.type,
+    configurationVersion: sampleEntry.configurationVersion,
+    nalLengthBytes: sampleEntry.nalLengthBytes,
+    sequenceParameterSetCount: sampleEntry.sequenceParameterSetCount,
+    pictureParameterSetCount: sampleEntry.pictureParameterSetCount,
+    sequenceParameterSetExtensionCount: sampleEntry.sequenceParameterSetExtensionCount,
     profileIdc: sampleEntry.profileIdc,
     profileCompatibility: sampleEntry.profileCompatibility,
     levelIdc: sampleEntry.levelIdc,
@@ -245,66 +261,129 @@ function readVisualSampleEntry(bytes, stsd, state) {
 }
 
 function readAvcConfiguration(bytes, configuration) {
-  requireRange(configuration.dataStart, 8, configuration.end)
-  if (bytes[configuration.dataStart] !== 1) throw new Error('invalid AVC config')
-  const profileIdc = bytes[configuration.dataStart + 1]
-  const profileCompatibility = bytes[configuration.dataStart + 2]
-  const levelIdc = bytes[configuration.dataStart + 3]
-  const spsCount = bytes[configuration.dataStart + 5] & 0x1f
-  if (spsCount < 1) throw new Error('missing SPS')
-  const spsBytes = readU16(bytes, configuration.dataStart + 6)
-  const spsStart = configuration.dataStart + 8
-  requireRange(spsStart, spsBytes, configuration.end)
-  const sps = bytes.subarray(spsStart, spsStart + spsBytes)
-  if (sps.byteLength < 4 || (sps[0] & 0x1f) !== 7
+  let offset = configuration.dataStart
+  requireRange(offset, 6, configuration.end)
+  const configurationVersion = bytes[offset]
+  const profileIdc = bytes[offset + 1]
+  const profileCompatibility = bytes[offset + 2]
+  const levelIdc = bytes[offset + 3]
+  const lengthField = bytes[offset + 4]
+  const sequenceParameterSetCountField = bytes[offset + 5]
+  offset += 6
+  const lengthSizeMinusOne = lengthField & 0x03
+  const sequenceParameterSetCount = sequenceParameterSetCountField & 0x1f
+  if (configurationVersion !== 1
+    || (lengthField & 0xfc) !== 0xfc
+    || lengthSizeMinusOne !== 3
+    || (sequenceParameterSetCountField & 0xe0) !== 0xe0
+    || sequenceParameterSetCount !== 1) throw new Error('invalid AVC config')
+
+  const sequenceParameterSets = readAvcNalUnits(
+    bytes, offset, sequenceParameterSetCount, 7, configuration.end,
+  )
+  offset = sequenceParameterSets.offset
+  requireRange(offset, 1, configuration.end)
+  const pictureParameterSetCount = bytes[offset]
+  offset += 1
+  if (pictureParameterSetCount !== 1) throw new Error('invalid AVC config')
+  const pictureParameterSets = readAvcNalUnits(
+    bytes, offset, pictureParameterSetCount, 8, configuration.end,
+  )
+  offset = pictureParameterSets.offset
+
+  requireRange(offset, 4, configuration.end)
+  const chromaFormatField = bytes[offset]
+  const bitDepthLumaField = bytes[offset + 1]
+  const bitDepthChromaField = bytes[offset + 2]
+  const sequenceParameterSetExtensionCount = bytes[offset + 3]
+  offset += 4
+  const recordChromaFormatIdc = chromaFormatField & 0x03
+  const recordBitDepthLumaMinus8 = bitDepthLumaField & 0x07
+  const recordBitDepthChromaMinus8 = bitDepthChromaField & 0x07
+  if ((chromaFormatField & 0xfc) !== 0xfc
+    || recordChromaFormatIdc !== 1
+    || (bitDepthLumaField & 0xf8) !== 0xf8
+    || recordBitDepthLumaMinus8 !== 0
+    || (bitDepthChromaField & 0xf8) !== 0xf8
+    || recordBitDepthChromaMinus8 !== 0
+    || sequenceParameterSetExtensionCount !== 0
+    || offset !== configuration.end) throw new Error('invalid AVC config')
+
+  const sps = sequenceParameterSets.units[0]
+  if (sps.byteLength < 4
     || sps[1] !== profileIdc
     || sps[2] !== profileCompatibility
-    || sps[3] !== levelIdc) {
-    throw new Error('invalid SPS')
+    || sps[3] !== levelIdc) throw new Error('invalid SPS')
+  const parsedSps = readAvcSps(sps, profileIdc, profileCompatibility, levelIdc)
+  if (parsedSps.chromaFormatIdc !== recordChromaFormatIdc
+    || parsedSps.bitDepthLumaMinus8 !== recordBitDepthLumaMinus8
+    || parsedSps.bitDepthChromaMinus8 !== recordBitDepthChromaMinus8) {
+    throw new Error('invalid AVC config')
   }
+  const bitDepthLuma = 8 + parsedSps.bitDepthLumaMinus8
+  const bitDepthChroma = 8 + parsedSps.bitDepthChromaMinus8
+  const pixelFormat = parsedSps.chromaFormatIdc === 1
+    && parsedSps.separateColourPlaneFlag === 0
+    && parsedSps.bitDepthLumaMinus8 === 0
+    && parsedSps.bitDepthChromaMinus8 === 0
+    ? 'yuv420p' : 'unsupported'
+  return {
+    configurationVersion,
+    nalLengthBytes: lengthSizeMinusOne + 1,
+    sequenceParameterSetCount,
+    pictureParameterSetCount,
+    sequenceParameterSetExtensionCount,
+    profileIdc,
+    profileCompatibility,
+    levelIdc,
+    chromaFormatIdc: parsedSps.chromaFormatIdc,
+    separateColourPlaneFlag: parsedSps.separateColourPlaneFlag,
+    bitDepthLuma,
+    bitDepthChroma,
+    pixelFormat,
+  }
+}
+
+function readAvcNalUnits(bytes, start, count, expectedType, end) {
+  let offset = start
+  const units = []
+  for (let index = 0; index < count; index += 1) {
+    requireRange(offset, 2, end)
+    const unitBytes = readU16(bytes, offset)
+    offset += 2
+    if (unitBytes < 1) throw new Error('invalid AVC parameter set')
+    requireRange(offset, unitBytes, end)
+    const unit = bytes.subarray(offset, offset + unitBytes)
+    if ((unit[0] & 0x80) !== 0 || (unit[0] & 0x1f) !== expectedType) {
+      throw new Error('invalid AVC parameter set')
+    }
+    units.push(unit)
+    offset += unitBytes
+  }
+  return {offset, units}
+}
+
+function readAvcSps(sps, profileIdc, profileCompatibility, levelIdc) {
   const rbsp = removeEmulationPrevention(sps.subarray(1))
   const reader = new BitReader(rbsp)
   if (reader.readBits(8) !== profileIdc
     || reader.readBits(8) !== profileCompatibility
     || reader.readBits(8) !== levelIdc) throw new Error('invalid SPS')
   reader.readUnsignedExpGolomb()
-  let chromaFormatIdc = 1
-  let separateColourPlaneFlag = 0
-  let bitDepthLumaMinus8 = 0
-  let bitDepthChromaMinus8 = 0
   if (![100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135].includes(profileIdc)) {
-    return {
-      profileIdc,
-      profileCompatibility,
-      levelIdc,
-      chromaFormatIdc,
-      separateColourPlaneFlag,
-      bitDepthLuma: 8,
-      bitDepthChroma: 8,
-      pixelFormat: 'yuv420p',
-    }
+    throw new Error('invalid SPS')
   }
-  chromaFormatIdc = reader.readUnsignedExpGolomb()
+  const chromaFormatIdc = reader.readUnsignedExpGolomb()
   if (chromaFormatIdc > 3) throw new Error('invalid SPS')
+  let separateColourPlaneFlag = 0
   if (chromaFormatIdc === 3) separateColourPlaneFlag = reader.readBits(1)
-  bitDepthLumaMinus8 = reader.readUnsignedExpGolomb()
-  bitDepthChromaMinus8 = reader.readUnsignedExpGolomb()
-  const bitDepthLuma = 8 + bitDepthLumaMinus8
-  const bitDepthChroma = 8 + bitDepthChromaMinus8
-  const pixelFormat = chromaFormatIdc === 1
-    && separateColourPlaneFlag === 0
-    && bitDepthLumaMinus8 === 0
-    && bitDepthChromaMinus8 === 0
-    ? 'yuv420p' : 'unsupported'
+  const bitDepthLumaMinus8 = reader.readUnsignedExpGolomb()
+  const bitDepthChromaMinus8 = reader.readUnsignedExpGolomb()
   return {
-    profileIdc,
-    profileCompatibility,
-    levelIdc,
     chromaFormatIdc,
     separateColourPlaneFlag,
-    bitDepthLuma,
-    bitDepthChroma,
-    pixelFormat,
+    bitDepthLumaMinus8,
+    bitDepthChromaMinus8,
   }
 }
 

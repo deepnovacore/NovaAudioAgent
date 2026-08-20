@@ -30,6 +30,11 @@ test('camera file fixture authority verifies the committed cat-sofa bytes', asyn
   assert.equal(verified.height, 720)
   assert.equal(verified.codec, 'h264')
   assert.equal(verified.sampleEntry, 'avc1')
+  assert.equal(verified.configurationVersion, 1)
+  assert.equal(verified.nalLengthBytes, 4)
+  assert.equal(verified.sequenceParameterSetCount, 1)
+  assert.equal(verified.pictureParameterSetCount, 1)
+  assert.equal(verified.sequenceParameterSetExtensionCount, 0)
   assert.equal(verified.profileIdc, 100)
   assert.equal(verified.profileCompatibility, 0)
   assert.equal(verified.levelIdc, 31)
@@ -62,6 +67,11 @@ test('locked MP4 parser rejects AVC profile, pixel format, timing, and malformed
   assert.deepEqual(metadata, {
     codec: 'h264',
     sampleEntry: 'avc1',
+    configurationVersion: 1,
+    nalLengthBytes: 4,
+    sequenceParameterSetCount: 1,
+    pictureParameterSetCount: 1,
+    sequenceParameterSetExtensionCount: 0,
     profileIdc: 100,
     profileCompatibility: 0,
     levelIdc: 31,
@@ -122,6 +132,43 @@ test('locked MP4 parser rejects AVC profile, pixel format, timing, and malformed
     () => cameraFileContract.inspectLockedCameraMp4(invalidExtendedSize),
     /camera fixture invalid/u,
   )
+})
+
+test('locked MP4 parser consumes the complete AVC decoder configuration record', async t => {
+  const original = new Uint8Array(await readFile(resolve(
+    repositoryRoot, CAMERA_FILE_FIXTURE.assetRelative,
+  )))
+  assert.deepEqual([...original.subarray(585, 598)], [
+    0x01, 0x00, 0x06, 0x68, 0xeb, 0xe0, 0x8c,
+    0xb2, 0x2c, 0xfd, 0xf8, 0xf8, 0x00,
+  ])
+  const corruptions = [
+    ['configuration version', [[551, 0x02]]],
+    ['NAL length size', [[555, 0xfe]]],
+    ['NAL length reserved bits', [[555, 0x7f]]],
+    ['SPS count without a second record', [[556, 0xe2]]],
+    ['SPS count reserved bits', [[556, 0x61]]],
+    ['PPS count zero while retaining its bytes', [[585, 0x00]]],
+    ['PPS NAL type', [[588, 0x67]]],
+    ['extension chroma format', [[594, 0xfe]]],
+    ['extension chroma reserved bits', [[594, 0x7d]]],
+    ['extension luma bit depth', [[595, 0xf9]]],
+    ['extension luma reserved bits', [[595, 0x78]]],
+    ['extension chroma bit depth', [[596, 0xf9]]],
+    ['extension chroma bit-depth reserved bits', [[596, 0x78]]],
+    ['sequence-parameter-set extension count', [[597, 0x01]]],
+    ['trailing byte', [[587, 0x05], [593, 0xfd], [594, 0xf8], [596, 0x00]]],
+  ]
+  for (const [label, patches] of corruptions) {
+    await t.test(label, () => {
+      const corrupted = new Uint8Array(original)
+      for (const [offset, value] of patches) corrupted[offset] = value
+      assert.throws(
+        () => cameraFileContract.inspectLockedCameraMp4(corrupted),
+        /camera fixture invalid/u,
+      )
+    })
+  }
 })
 
 test('test-only encode barrier waits after real encoding and is explicitly releasable', async () => {
