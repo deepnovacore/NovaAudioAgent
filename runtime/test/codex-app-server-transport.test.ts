@@ -1203,6 +1203,10 @@ test('close releases the never-settling spawn deadline handle instead of pinning
 })
 
 test('close explicitly detaches every spawn waiter abort listener while raw ownership remains pending', async () => {
+  const addDescriptorBefore = Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'addEventListener')
+  const removeDescriptorBefore = Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'removeEventListener')
+  const addWasOwn = Object.hasOwn(AbortSignal.prototype, 'addEventListener')
+  const removeWasOwn = Object.hasOwn(AbortSignal.prototype, 'removeEventListener')
   // eslint-disable-next-line @typescript-eslint/unbound-method -- exact prototype method is restored in finally
   const originalAdd = AbortSignal.prototype.addEventListener
   // eslint-disable-next-line @typescript-eslint/unbound-method -- exact prototype method is restored in finally
@@ -1264,14 +1268,31 @@ test('close explicitly detaches every spawn waiter abort listener while raw owne
     assert.equal([...active.values()].reduce((total, listeners) => total + listeners.size, 0), 0)
   } finally {
     release.resolve()
-    await settleUntil(() => owner.disposed, 'listener-detach late owner cleanup')
-    Object.defineProperty(AbortSignal.prototype, 'addEventListener', {
-      configurable: true, value: originalAdd,
-    })
-    Object.defineProperty(AbortSignal.prototype, 'removeEventListener', {
-      configurable: true, value: originalRemove,
-    })
+    try {
+      await settleUntil(() => owner.disposed, 'listener-detach late owner cleanup')
+    } finally {
+      if (addDescriptorBefore === undefined) {
+        assert.equal(Reflect.deleteProperty(AbortSignal.prototype, 'addEventListener'), true)
+      } else {
+        Object.defineProperty(AbortSignal.prototype, 'addEventListener', addDescriptorBefore)
+      }
+      if (removeDescriptorBefore === undefined) {
+        assert.equal(Reflect.deleteProperty(AbortSignal.prototype, 'removeEventListener'), true)
+      } else {
+        Object.defineProperty(AbortSignal.prototype, 'removeEventListener', removeDescriptorBefore)
+      }
+    }
   }
+  assert.equal(Object.hasOwn(AbortSignal.prototype, 'addEventListener'), addWasOwn)
+  assert.equal(Object.hasOwn(AbortSignal.prototype, 'removeEventListener'), removeWasOwn)
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'addEventListener'),
+    addDescriptorBefore,
+  )
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'removeEventListener'),
+    removeDescriptorBefore,
+  )
 })
 
 test('close-driven explicit spawn rejection releases credentials only after rejection', async () => {
