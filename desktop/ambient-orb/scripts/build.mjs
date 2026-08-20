@@ -13,6 +13,7 @@ const scripts = [
   'src/main/drag-controller.mjs',
   'src/main/settings-store.mjs',
   'src/renderer/index.mjs',
+  'src/renderer/camera.mjs',
   'src/renderer/audio.mjs',
   'src/renderer/state.mjs',
   'src/renderer/orb-visual.mjs',

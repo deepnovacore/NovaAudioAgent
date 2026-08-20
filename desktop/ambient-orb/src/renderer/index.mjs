@@ -12,6 +12,10 @@ import {
   OnsetTracker,
   PlaybackMeter,
 } from './audio.mjs'
+import {
+  isCameraCaptureText,
+  RendererCameraController,
+} from './camera.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
 import { createOrbVisualSafe } from './orb-visual.mjs'
 import { deriveOrbState } from './state.mjs'
@@ -22,6 +26,12 @@ const stateLabel = document.querySelector('#state-label')
 const codexLabel = document.querySelector('#codex-label')
 const aecLabel = document.querySelector('#aec-label')
 const captionLabel = document.querySelector('#caption')
+const cameraController = new RendererCameraController({
+  mediaDevices: navigator.mediaDevices,
+  ImageCapture: globalThis.ImageCapture,
+  OffscreenCanvas: globalThis.OffscreenCanvas,
+  createVideo: () => document.createElement('video'),
+})
 
 // Declared ahead of the visual because the visual's loop pulls this: the
 // browser meter reads a Web Audio analyser, the native envelope replays what was
@@ -86,6 +96,8 @@ let nativeAvailable = false
 let nativeReady = false
 let playbackCursor = 0
 let socketMessageTail = Promise.resolve()
+let cameraCaptureTail = Promise.resolve()
+let currentSocketGeneration = null
 const playingSources = new Set()
 const nativeFrames = new Map()
 const dragGesture = new OrbDragGesture()
@@ -527,6 +539,7 @@ function handleBackendExit() {
 }
 
 async function boot() {
+  let bootGeneration = null
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
     axes.audioMode = bootstrap.audioMode
@@ -576,10 +589,30 @@ async function boot() {
         void fallBackAfterNativeFailure()
       }
     })
-    socket = new WebSocket(bootstrap.endpoint)
-    socket.binaryType = 'arraybuffer'
-    socket.onopen = () => send({ type: 'hello', token: bootstrap.token })
-    socket.onmessage = event => {
+    const nextSocket = new WebSocket(bootstrap.endpoint)
+    const socketGeneration = Object.freeze({})
+    bootGeneration = socketGeneration
+    currentSocketGeneration = socketGeneration
+    const delivery = Object.freeze({
+      generation: socketGeneration,
+      isCurrent: () => currentSocketGeneration === socketGeneration
+        && socket === nextSocket
+        && nextSocket.readyState === WebSocket.OPEN,
+      sendText: value => nextSocket.send(value),
+      sendBinary: value => nextSocket.send(value),
+    })
+    socket = nextSocket
+    nextSocket.binaryType = 'arraybuffer'
+    nextSocket.onopen = () => send({ type: 'hello', token: bootstrap.token })
+    nextSocket.onmessage = event => {
+      if (typeof event.data === 'string' && isCameraCaptureText(event.data)) {
+        cameraCaptureTail = cameraCaptureTail.then(() => {
+          cameraController.enqueue(event.data, delivery)
+        }, () => {
+          cameraController.enqueue(event.data, delivery)
+        }).catch(() => {})
+        return
+      }
       socketMessageTail = socketMessageTail.then(() => handleSocketMessage(event))
         .catch(() => {
           axes.error = 'playback'
@@ -587,6 +620,8 @@ async function boot() {
         })
     }
     socket.onclose = () => {
+      cameraController.closeGeneration(socketGeneration)
+      if (currentSocketGeneration === socketGeneration) currentSocketGeneration = null
       axes.connected = false
       alertTone.stop()
       playback.stopAll()
@@ -604,6 +639,10 @@ async function boot() {
     // never pushed here and only the bootstrap reply above knows about it.
     if (bootstrap.backendExited === true) handleBackendExit()
   } catch {
+    if (bootGeneration) {
+      cameraController.closeGeneration(bootGeneration)
+      if (currentSocketGeneration === bootGeneration) currentSocketGeneration = null
+    }
     axes.booting = false
     axes.error = 'bootstrap'
   }
@@ -646,6 +685,9 @@ orb.addEventListener('contextmenu', event => {
   window.novaAudioAgentDesktop.orbMenu.show()
 })
 window.addEventListener('beforeunload', () => {
+  if (currentSocketGeneration) cameraController.closeGeneration(currentSocketGeneration)
+  currentSocketGeneration = null
+  cameraController.dispose()
   visual.destroy()
   void deactivateCapture()
 })
