@@ -326,6 +326,14 @@ test('persistent POSIX supervision failure retains the first owner and blocks a 
   skip: process.platform === 'win32',
 }, async () => {
   const child = fakeChild(6363)
+  let streamDestroyCalls = 0
+  for (const stream of [child.stdin, child.stdout, child.stderr] as PassThrough[]) {
+    const destroy = stream.destroy.bind(stream)
+    stream.destroy = error => {
+      streamDestroyCalls += 1
+      return destroy(error)
+    }
+  }
   let leaderKillCalls = 0
   child.kill = () => {
     leaderKillCalls += 1
@@ -358,6 +366,7 @@ test('persistent POSIX supervision failure retains the first owner and blocks a 
   })
 
   await assert.rejects(factory.spawn(spec, spawnControl()))
+  assert.equal(streamDestroyCalls, 3, 'pipe shutdown must not final-dispose retained tree authority')
   await assert.rejects(factory.spawn(spec, spawnControl()))
   assert.equal(spawnCalls, 1)
   assert.equal(leaderKillCalls >= 2, true)

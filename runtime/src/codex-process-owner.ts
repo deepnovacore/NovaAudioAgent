@@ -427,13 +427,9 @@ class PosixOwnedCodexProcess implements OwnedCodexProcess {
     this.stdin.destroy()
     this.stdout.destroy()
     this.stderr.destroy()
-    let groupGone = false
-    try {
-      groupGone = await this.waitTreeGone(5000)
-    } finally {
-      await this.dispose()
-    }
+    const groupGone = await this.waitTreeGone(5000)
     if (!groupGone) throw new CodexProcessOwnerError('spawn_failed')
+    await this.dispose()
   }
 
   #groupAlive(): boolean {

@@ -38,6 +38,8 @@ import {isOtherCategory} from './unicode-tables.js'
 export const CODEX_PREFLIGHT_LIMIT_MS = 20_000
 export const CODEX_INTERRUPT_GRACE_MS = 2_000
 export const CODEX_TREE_GRACE_MS = 5_000
+const CODEX_CONTROL_GRACE_MS = 250
+const CODEX_TREE_PHASE_GRACE_MS = 1_000
 export const CODEX_STDERR_LIMIT = 64 * 1024
 export const CODEX_WORK_ORDER_LIMIT = 65_536
 export const CODEX_DEVELOPER_INSTRUCTIONS_LIMIT = 4000
@@ -174,6 +176,21 @@ interface Session {
   exited: boolean
   closing: boolean
   cleanupPromise: Promise<CleanupResult> | null
+  closeStdinPromise: Promise<void> | null
+  terminatePromise: Promise<void> | null
+  interruptAttempted: boolean
+  treeGone: boolean
+  rpcEnded: boolean
+  pumpPromise: Promise<void> | null
+  pumpsSettled: boolean
+  listenersRemoved: boolean
+  pipesClosed: boolean
+  disposePromise: Promise<void> | null
+  disposed: boolean
+  credentialSettled: boolean
+  credentialCleanupFailed: boolean
+  cleanupStop: 'none' | 'terminate' | 'kill'
+  cleanupExitCode: number | null
 }
 
 interface CleanupResult {
@@ -181,6 +198,26 @@ interface CleanupResult {
   readonly exitCode: number | null
   readonly cleanupFailed: boolean
   readonly treeGone: boolean
+  readonly complete: boolean
+}
+
+interface RetainedOwnerCleanup {
+  readonly owner: OwnedCodexProcess
+  treeGone: boolean
+  cleanupStop: 'none' | 'terminate' | 'kill'
+  cleanupExitCode: number | null
+  closeStdinPromise: Promise<void> | null
+  terminatePromise: Promise<void> | null
+  disposePromise: Promise<void> | null
+  disposed: boolean
+  credentialSettled: boolean
+  credentialCleanupFailed: boolean
+}
+
+interface CredentialRemovalAttempt {
+  promise: Promise<void>
+  settled: boolean
+  succeeded: boolean
 }
 
 export class CodexTransportError extends Error {
@@ -207,16 +244,22 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     readonly session: Session
   }> | null = null
   #closePromise: Promise<void> | null = null
+  #firstCloseFailure: CodexTransportError | null = null
   #runActive = false
   #closed = false
   #hadTurn = false
   readonly #sensitiveInputs: string[] = []
   readonly #lateOwnerCleanups = new Set<Promise<void>>()
-  readonly #unconfirmedOwners = new Set<OwnedCodexProcess>()
+  readonly #lateCredentialCleanups = new Set<Promise<void>>()
+  readonly #unconfirmedOwners = new Map<OwnedCodexProcess, RetainedOwnerCleanup>()
   readonly #spawnControllers = new Set<AbortController>()
+  readonly #establishControllers = new Set<AbortController>()
   #lateCleanupFailure: CodexTransportError | null = null
   #credentialCleanupFailure: CodexTransportError | null = null
-  #failedTreeSession: Session | null = null
+  #credentialRemovalRequired = false
+  #credentialRemovalAttempt: CredentialRemovalAttempt | null = null
+  #credentialPreparations = 0
+  #retainedCleanupSession: Session | null = null
 
   constructor(options: {
     readonly config: CodexAppServerLaunchConfig
@@ -244,7 +287,9 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       validateDeadline(deadline)
       if (this.#closed || this.#runActive) return Promise.resolve(null)
       if (this.#usableWarmSession() !== null) return Promise.resolve(null)
-      if (this.#prewarmPromise !== null) return this.#prewarmPromise
+      if (this.#prewarmPromise !== null) {
+        return runWithin(this.#prewarmPromise, deadline, 'preflight_timeout')
+      }
       const work = this.#prewarm(deadline)
       this.#prewarmPromise = work
       void work.finally(() => {
@@ -297,7 +342,9 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     let completion: TurnCompletion | null = null
     let failureCode: CodexTransportCode | null = null
     try {
-      if (this.#prewarmPromise !== null) await this.#prewarmPromise
+      if (this.#prewarmPromise !== null) {
+        await runWithin(this.#prewarmPromise, deadline, 'adapter_timeout')
+      }
       session = this.#usableWarmSession()
       if (session === null) {
         if (this.#session !== null) await this.#cleanup(this.#session, true)
@@ -347,9 +394,11 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     }
     this.#hadTurn ||= session?.projection?.turnWasStarted ?? false
     const written = session?.turnStartWritten ?? false
-    let cleanup: CleanupResult = {stop: 'none', exitCode: null, cleanupFailed: false, treeGone: true}
+    let cleanup: CleanupResult = {
+      stop: 'none', exitCode: null, cleanupFailed: false, treeGone: true, complete: true,
+    }
     if (session !== null) cleanup = await this.#cleanup(session, failureCode !== null)
-    if (session !== null && cleanup.treeGone && this.#session === session) this.#session = null
+    if (session !== null && cleanup.complete && this.#session === session) this.#session = null
     this.#runActive = false
     try {
       if (failureCode !== null) {
@@ -364,6 +413,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         internal_activity: completion.internal_activity,
       })
       if (cleanup.cleanupFailed) return outcome('uncertain', 'credential_missing', written, safeCompletion)
+      if (!cleanup.complete) return outcome('uncertain', 'transport_lost', written, safeCompletion)
       if (session?.unexpectedServerRequest === true) {
         return outcome('uncertain', 'unexpected_server_request', written, safeCompletion)
       }
@@ -433,58 +483,86 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     void reason
     if (this.#closePromise !== null) return this.#closePromise
     this.#closed = true
-    const work = (async (): Promise<void> => {
-      let closeTimedOut = false
-      for (const controller of this.#spawnControllers) controller.abort()
-      const ownedAtClose = this.#session
-      let cleanupFailed = false
-      if (ownedAtClose !== null) {
-        const cleanup = await this.#cleanupWithRetry(ownedAtClose, true)
-        cleanupFailed ||= cleanup.cleanupFailed
-        closeTimedOut ||= !cleanup.treeGone
-      }
-      const prewarm = this.#prewarmPromise
-      if (prewarm !== null) await prewarm.catch(() => undefined)
-      const establishing = this.#establishPromise
-      if (establishing !== null) {
-        closeTimedOut ||= !await settleCleanupValue(
-          async () => { await establishing.catch(() => undefined); return true },
-          CODEX_TREE_GRACE_MS,
-          false,
-        )
-      }
-      const session = this.#session
-      if (session !== null && session !== ownedAtClose) {
-        const cleanup = await this.#cleanupWithRetry(session, true)
-        cleanupFailed ||= cleanup.cleanupFailed
-        closeTimedOut ||= !cleanup.treeGone
-      }
-      if (this.#failedTreeSession === null) this.#session = null
-      const late = [...this.#lateOwnerCleanups]
-      if (late.length > 0) {
-        closeTimedOut ||= !await settleCleanupValue(
-          async () => { await Promise.allSettled(late); return true },
-          CODEX_TREE_GRACE_MS,
-          false,
-        )
-      }
-      for (const owner of [...this.#unconfirmedOwners]) {
-        const gone = await this.#cleanupRejectedOwner(owner)
-        closeTimedOut ||= !gone
-        if (gone) {
-          try { await this.#removeCredentialHome() } catch { cleanupFailed = true }
+    const work = this.#closeAttempt()
+    const exposed = work.then(
+      () => undefined,
+      error => {
+        this.#firstCloseFailure ??= safeTransportError(error, 'transport_lost')
+        if (this.#closePromise === exposed && this.#hasRetainedCleanup()) {
+          this.#closePromise = null
         }
-      }
-      cleanupFailed ||= this.#credentialCleanupFailure !== null
-      closeTimedOut ||= this.#failedTreeSession !== null || this.#unconfirmedOwners.size > 0
-      if (closeTimedOut) throw new CodexTransportError('transport_lost')
-      if (this.#lateCleanupFailure !== null) {
-        throw new CodexTransportError(this.#lateCleanupFailure.code)
-      }
-      if (cleanupFailed) throw new CodexTransportError('credential_missing')
-    })()
-    this.#closePromise = work
-    return work
+        throw new CodexTransportError(this.#firstCloseFailure.code)
+      },
+    )
+    this.#closePromise = exposed
+    return exposed
+  }
+
+  async #closeAttempt(): Promise<void> {
+    const expiresAtMs = Date.now() + CODEX_TREE_GRACE_MS
+    let closeTimedOut = false
+    let cleanupFailed = false
+    let credentialCoordinated = false
+    for (const controller of this.#establishControllers) controller.abort()
+    for (const controller of this.#spawnControllers) controller.abort()
+
+    const ownedAtClose = this.#retainedCleanupSession ?? this.#session
+    if (ownedAtClose !== null) {
+      credentialCoordinated = true
+      const cleanup = await this.#cleanup(ownedAtClose, true, expiresAtMs)
+      cleanupFailed ||= cleanup.cleanupFailed
+      closeTimedOut ||= !cleanup.complete && !cleanup.cleanupFailed
+    }
+    const prewarm = this.#prewarmPromise
+    if (prewarm !== null) closeTimedOut ||= !await settlePromiseBefore(prewarm, expiresAtMs)
+    const establishing = this.#establishPromise
+    if (establishing !== null) closeTimedOut ||= !await settlePromiseBefore(establishing, expiresAtMs)
+
+    const session = this.#retainedCleanupSession ?? this.#session
+    if (session !== null && session !== ownedAtClose) {
+      credentialCoordinated = true
+      const cleanup = await this.#cleanup(session, true, expiresAtMs)
+      cleanupFailed ||= cleanup.cleanupFailed
+      closeTimedOut ||= !cleanup.complete && !cleanup.cleanupFailed
+    }
+    if (this.#retainedCleanupSession === null) this.#session = null
+
+    const lateOwner = [...this.#lateOwnerCleanups]
+    if (lateOwner.length > 0) {
+      closeTimedOut ||= !await settlePromiseBefore(Promise.allSettled(lateOwner), expiresAtMs)
+    }
+    const lateCredential = [...this.#lateCredentialCleanups]
+    if (lateCredential.length > 0) {
+      closeTimedOut ||= !await settlePromiseBefore(Promise.allSettled(lateCredential), expiresAtMs)
+    }
+    for (const ledger of [...this.#unconfirmedOwners.values()]) {
+      credentialCoordinated = true
+      const cleanup = await this.#cleanupRejectedOwner(ledger.owner, expiresAtMs)
+      cleanupFailed ||= cleanup.cleanupFailed
+      closeTimedOut ||= !cleanup.complete && !cleanup.cleanupFailed
+    }
+    if (this.#credentialRemovalRequired && !credentialCoordinated) {
+      const credential = await this.#removeCredentialHomeBefore(expiresAtMs)
+      cleanupFailed ||= credential === 'failed'
+      closeTimedOut ||= credential === 'pending'
+    }
+    cleanupFailed ||= this.#credentialCleanupFailure !== null
+    if (closeTimedOut) throw new CodexTransportError('transport_lost')
+    if (this.#lateCleanupFailure !== null) throw new CodexTransportError(this.#lateCleanupFailure.code)
+    if (cleanupFailed) throw new CodexTransportError('credential_missing')
+    if (this.#hasRetainedCleanup()) throw new CodexTransportError('transport_lost')
+    if (this.#firstCloseFailure !== null) throw new CodexTransportError(this.#firstCloseFailure.code)
+  }
+
+  #hasRetainedCleanup(): boolean {
+    return this.#retainedCleanupSession !== null
+      || this.#unconfirmedOwners.size > 0
+      || this.#prewarmPromise !== null
+      || this.#establishPromise !== null
+      || this.#lateOwnerCleanups.size > 0
+      || this.#lateCredentialCleanups.size > 0
+      || this.#credentialRemovalRequired
+      || this.#credentialPreparations > 0
   }
 
   async #performPreflight(deadline: TransportDeadline): Promise<SafePreflightReport> {
@@ -522,11 +600,20 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   }> {
     const report = await this.#performPreflight(deadline)
     if (this.#closed) throw new CodexTransportError('transport_lost')
+    if (this.#credentialRemovalRequired) {
+      this.#closed = true
+      throw new CodexTransportError('transport_lost')
+    }
+    this.#credentialRemovalRequired = true
+    this.#credentialRemovalAttempt = null
     let credentialSnapshot: CredentialSnapshot
-    const credentialWork = Promise.resolve().then(() => this.#credentials.prepare({
-      codexHome: this.#config.codexHome,
-      apiKey: this.#config.apiKey,
-    }))
+    this.#credentialPreparations += 1
+    const credentialWork = Promise.resolve()
+      .then(() => this.#credentials.prepare({
+        codexHome: this.#config.codexHome,
+        apiKey: this.#config.apiKey,
+      }))
+      .finally(() => { this.#credentialPreparations -= 1 })
     try {
       credentialSnapshot = await runWithin(
         credentialWork,
@@ -534,16 +621,31 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         'adapter_timeout',
       )
     } catch (error) {
-      // Node's promise-based filesystem operations run through the libuv worker pool. A timeout
-      // stops admission, not the already-owned worker operation, so shield and join it before
-      // cleaning the selected home or returning cancellation to the caller.
-      await credentialWork.catch(() => undefined)
-      await this.#removeCredentialHome()
-      if (error instanceof CodexTransportError && error.code === 'adapter_timeout') throw error
+      // A libuv filesystem request cannot be force-cancelled. Keep its owned continuation
+      // shielded, but bound the caller/close join and remove the selected home when it settles.
+      const cleanup = this.#trackLateCredentialCleanup(credentialWork)
+      const joined = await settlePromiseBefore(
+        cleanup,
+        Date.now() + CODEX_TREE_GRACE_MS,
+      )
+      if (!joined) {
+        const closeOwnsCancellation = this.#closed
+        this.#closed = true
+        throw new CodexTransportError(closeOwnsCancellation ? 'transport_lost' : 'adapter_timeout')
+      }
+      if (this.#credentialCleanupFailure !== null) {
+        throw new CodexTransportError('credential_missing')
+      }
+      if (error instanceof CodexTransportError && error.code === 'adapter_timeout') {
+        throw new CodexTransportError(this.#closed ? 'transport_lost' : 'adapter_timeout')
+      }
       throw new CodexTransportError('credential_missing')
     }
     if (this.#closed) {
-      await this.#removeCredentialHome()
+      const removal = await this.#removeCredentialHomeBefore(
+        Date.now() + CODEX_TREE_GRACE_MS,
+      )
+      if (removal !== 'complete') this.#closed = true
       throw new CodexTransportError('transport_lost')
     }
     let owner: OwnedCodexProcess
@@ -576,7 +678,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         const unconfirmedOwner = takeUnconfirmedCodexProcessOwner(error)
         if (unconfirmedOwner !== null) {
           this.#closed = true
-          this.#unconfirmedOwners.add(unconfirmedOwner)
+          this.#retainUnconfirmedOwner(unconfirmedOwner)
           throw new CodexTransportError('transport_lost')
         }
         const safe = this.#closed
@@ -586,6 +688,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
             : safeTransportError(error, 'spawn_failed')
         if (safe.code === 'adapter_timeout') {
           this.#trackLateOwnerCleanup(spawnWork)
+          this.#closed = true
           throw safe
         }
         throw safe
@@ -593,7 +696,10 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     } catch (error) {
       const safe = safeTransportError(error, 'spawn_failed')
       if (safe.code !== 'adapter_timeout' && this.#unconfirmedOwners.size === 0) {
-        await this.#removeCredentialHome().catch(() => undefined)
+        const removal = await this.#removeCredentialHomeBefore(
+          Date.now() + CODEX_TREE_GRACE_MS,
+        )
+        if (removal !== 'complete') this.#closed = true
       }
       throw new CodexTransportError(
         safe.code === 'adapter_timeout' || safe.code === 'transport_lost'
@@ -602,8 +708,9 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       )
     }
     if (this.#closed) {
-      if (!await this.#cleanupRejectedOwner(owner)) throw new CodexTransportError('transport_lost')
-      await this.#removeCredentialHome()
+      if (!(await this.#cleanupRejectedOwner(owner)).complete) {
+        throw new CodexTransportError('transport_lost')
+      }
       throw new CodexTransportError('transport_lost')
     }
     let session: Session
@@ -611,8 +718,9 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       requireOwnedProcessContract(owner)
       session = this.#ownSession(owner, credentialSnapshot)
     } catch {
-      if (!await this.#cleanupRejectedOwner(owner)) throw new CodexTransportError('transport_lost')
-      await this.#removeCredentialHome()
+      if (!(await this.#cleanupRejectedOwner(owner)).complete) {
+        throw new CodexTransportError('transport_lost')
+      }
       throw new CodexTransportError('spawn_failed')
     }
     this.#session = session
@@ -644,7 +752,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       return {report, session}
     } catch (error) {
       const cleanup = await this.#cleanup(session, true)
-      if (cleanup.treeGone && this.#session === session) this.#session = null
+      if (cleanup.complete && this.#session === session) this.#session = null
       throw safeTransportError(error, 'transport_lost')
     }
   }
@@ -654,9 +762,15 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     readonly session: Session
   }> {
     if (this.#establishPromise !== null) return this.#establishPromise
-    const work = this.#establish(deadline)
+    const controller = new AbortController()
+    this.#establishControllers.add(controller)
+    const signal = deadline.signal === undefined
+      ? controller.signal
+      : AbortSignal.any([deadline.signal, controller.signal])
+    const work = this.#establish({...deadline, signal})
     this.#establishPromise = work
     void work.finally(() => {
+      this.#establishControllers.delete(controller)
       if (this.#establishPromise === work) this.#establishPromise = null
     }).catch(() => undefined)
     return work
@@ -796,6 +910,21 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       exited: false,
       closing: false,
       cleanupPromise: null,
+      closeStdinPromise: null,
+      terminatePromise: null,
+      interruptAttempted: false,
+      treeGone: false,
+      rpcEnded: false,
+      pumpPromise: null,
+      pumpsSettled: false,
+      listenersRemoved: false,
+      pipesClosed: false,
+      disposePromise: null,
+      disposed: false,
+      credentialSettled: false,
+      credentialCleanupFailed: false,
+      cleanupStop: 'none',
+      cleanupExitCode: null,
     }
     void owner.exit.then(
       () => {
@@ -924,30 +1053,39 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     return session
   }
 
-  #cleanup(session: Session, interrupt: boolean): Promise<CleanupResult> {
+  #cleanup(
+    session: Session,
+    interrupt: boolean,
+    expiresAtMs = Date.now() + CODEX_TREE_GRACE_MS,
+  ): Promise<CleanupResult> {
     if (session.cleanupPromise !== null) return session.cleanupPromise
     session.closing = true
     this.#failSession(session, new CodexTransportError('transport_lost'))
-    const work = this.#cleanupOwnedSession(session, interrupt).then(result => {
-      if (!result.treeGone && session.cleanupPromise === work) session.cleanupPromise = null
-      return result
-    })
+    const work = this.#cleanupOwnedSession(session, interrupt, expiresAtMs)
+      .then(result => {
+        if (!result.complete && session.cleanupPromise === work) session.cleanupPromise = null
+        return result
+      }, error => {
+        if (session.cleanupPromise === work) session.cleanupPromise = null
+        throw error
+      })
     session.cleanupPromise = work
     return work
   }
 
-  async #cleanupWithRetry(session: Session, interrupt: boolean): Promise<CleanupResult> {
-    let cleanup = await this.#cleanup(session, interrupt)
-    if (!cleanup.treeGone) cleanup = await this.#cleanup(session, interrupt)
-    return cleanup
-  }
-
-  async #cleanupOwnedSession(session: Session, interrupt: boolean): Promise<CleanupResult> {
-    let stop: CleanupResult['stop'] = 'none'
-    if (interrupt && session.initialized && session.turnStartWritten) {
+  async #cleanupOwnedSession(
+    session: Session,
+    interrupt: boolean,
+    expiresAtMs: number,
+  ): Promise<CleanupResult> {
+    if (interrupt && !session.interruptAttempted && session.initialized && session.turnStartWritten) {
+      session.interruptAttempted = true
       const pair = session.projection?.activePair
       if (pair !== null && pair !== undefined) {
-        const interruptExpiresAtMs = Date.now() + CODEX_INTERRUPT_GRACE_MS
+        const interruptExpiresAtMs = Math.min(
+          expiresAtMs,
+          Date.now() + CODEX_INTERRUPT_GRACE_MS,
+        )
         const interruptDeadline = {expiresAtMs: interruptExpiresAtMs}
         await this.#requestWithin(session, 'turn/interrupt', {
           threadId: pair[0], turnId: pair[1],
@@ -962,49 +1100,79 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         }
       }
     }
-    await settleCleanup(() => session.owner.closeStdin(), CODEX_INTERRUPT_GRACE_MS)
-    let gone = await settleCleanupValue(
-      () => session.owner.waitTreeGone(CODEX_TREE_GRACE_MS),
-      CODEX_TREE_GRACE_MS + 100,
-      false,
-    )
-    if (!gone) {
-      stop = 'terminate'
-      await settleCleanup(() => session.owner.terminateTree(), CODEX_INTERRUPT_GRACE_MS)
-      gone = await settleCleanupValue(
-        () => session.owner.waitTreeGone(CODEX_TREE_GRACE_MS),
-        CODEX_TREE_GRACE_MS + 100,
-        false,
-      )
+    session.closeStdinPromise ??= Promise.resolve().then(() => session.owner.closeStdin())
+    await settleSuccessBefore(session.closeStdinPromise, controlDeadline(expiresAtMs))
+    if (!session.treeGone) {
+      session.treeGone = await waitTreeGoneBefore(session.owner, expiresAtMs)
     }
-    if (!gone) {
-      stop = 'kill'
-      await settleCleanup(() => session.owner.killTree(), CODEX_INTERRUPT_GRACE_MS)
-      gone = await settleCleanupValue(
-        () => session.owner.waitTreeGone(CODEX_TREE_GRACE_MS),
-        CODEX_TREE_GRACE_MS + 100,
-        false,
-      )
+    if (!session.treeGone) {
+      session.cleanupStop = 'terminate'
+      session.terminatePromise ??= Promise.resolve().then(() => session.owner.terminateTree())
+      await settleSuccessBefore(session.terminatePromise, controlDeadline(expiresAtMs))
+      session.treeGone = await waitTreeGoneBefore(session.owner, expiresAtMs)
     }
-    const exitCode = await settleCleanupValue(
-      () => session.owner.exit,
-      CODEX_TREE_GRACE_MS,
-      null,
-    )
-    session.rpc.end()
-    await settleCleanup(() => session.owner.dispose(), CODEX_TREE_GRACE_MS)
-    await session.settlePumps()
-    session.removeListeners()
-    let cleanupFailed = false
-    if (gone) {
-      if (this.#failedTreeSession === session) this.#failedTreeSession = null
-      try { await this.#removeCredentialHome() } catch { cleanupFailed = true }
-    } else {
-      this.#failedTreeSession = session
+    if (!session.treeGone) {
+      session.cleanupStop = 'kill'
+      await settleOperationBefore(() => session.owner.killTree(), controlDeadline(expiresAtMs))
+      session.treeGone = await waitTreeGoneBefore(session.owner, expiresAtMs)
+    }
+    if (!session.treeGone) {
+      this.#retainedCleanupSession = session
       this.#closed = true
       this.#session = session
+      return cleanupResult(session, false)
     }
-    return Object.freeze({stop, exitCode, cleanupFailed, treeGone: gone})
+
+    session.cleanupExitCode ??= await settleCleanupValue(
+      () => session.owner.exit,
+      Math.min(100, remainingMilliseconds(expiresAtMs)),
+      null,
+    )
+    if (!session.rpcEnded) {
+      session.rpc.end()
+      session.rpcEnded = true
+    }
+    session.pumpPromise ??= session.settlePumps()
+    if (!session.listenersRemoved) {
+      session.removeListeners()
+      session.listenersRemoved = true
+    }
+    if (!session.pipesClosed) {
+      closeOwnedPipes(session.owner)
+      session.pipesClosed = true
+    }
+    if (!session.pumpsSettled) {
+      session.pumpsSettled = await settleSuccessBefore(session.pumpPromise, expiresAtMs)
+      if (!session.pumpsSettled) {
+        this.#retainedCleanupSession = session
+        this.#closed = true
+        this.#session = session
+        return cleanupResult(session, false)
+      }
+    }
+    session.disposePromise ??= Promise.resolve().then(() => session.owner.dispose())
+    if (!session.disposed) {
+      session.disposed = await settleSuccessBefore(session.disposePromise, expiresAtMs)
+      if (!session.disposed) {
+        this.#retainedCleanupSession = session
+        this.#closed = true
+        this.#session = session
+        return cleanupResult(session, false)
+      }
+    }
+    if (!session.credentialSettled) {
+      const removal = await this.#removeCredentialHomeBefore(expiresAtMs)
+      session.credentialSettled = removal === 'complete'
+      session.credentialCleanupFailed ||= removal === 'failed'
+      if (!session.credentialSettled) {
+        this.#retainedCleanupSession = session
+        this.#closed = true
+        this.#session = session
+        return cleanupResult(session, false)
+      }
+    }
+    if (this.#retainedCleanupSession === session) this.#retainedCleanupSession = null
+    return cleanupResult(session, true)
   }
 
   #sanitizeText(text: string, limit: number): {readonly text: string; readonly originalChars: number} {
@@ -1040,7 +1208,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     }
   }
 
-  async #removeCredentialHome(): Promise<void> {
+  async #invokeCredentialHomeRemoval(): Promise<void> {
     try { await this.#credentials.removeEphemeralHome(this.#config.codexHome) }
     catch {
       this.#credentialCleanupFailure ??= new CodexTransportError('credential_missing')
@@ -1048,18 +1216,72 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     }
   }
 
+  async #removeCredentialHomeBefore(
+    expiresAtMs: number,
+  ): Promise<'complete' | 'pending' | 'failed'> {
+    if (!this.#credentialRemovalRequired) return 'complete'
+    if (this.#credentialPreparations > 0) return 'pending'
+    let attempt = this.#credentialRemovalAttempt
+    if (attempt === null) {
+      const owned: CredentialRemovalAttempt = {
+        promise: Promise.resolve(), settled: false, succeeded: false,
+      }
+      owned.promise = Promise.resolve()
+        .then(() => this.#invokeCredentialHomeRemoval())
+        .then(
+          () => {
+            owned.settled = true
+            owned.succeeded = true
+            this.#credentialRemovalRequired = false
+          },
+          () => {
+            owned.settled = true
+          },
+        )
+      attempt = owned
+      this.#credentialRemovalAttempt = owned
+    }
+    if (!attempt.settled) {
+      const settled = await settlePromiseBefore(attempt.promise, expiresAtMs)
+      if (!settled) return 'pending'
+    }
+    if (attempt.succeeded) return 'complete'
+    if (this.#credentialRemovalAttempt === attempt) this.#credentialRemovalAttempt = null
+    return 'failed'
+  }
+
+  #trackLateCredentialCleanup(work: Promise<CredentialSnapshot>): Promise<void> {
+    const remove = async (): Promise<void> => {
+      const result = await this.#removeCredentialHomeBefore(Date.now() + CODEX_TREE_GRACE_MS)
+      if (result === 'pending') throw new CodexTransportError('transport_lost')
+      if (result === 'failed') throw new CodexTransportError('credential_missing')
+    }
+    const cleanupWork = work.then(remove, remove)
+    this.#lateCredentialCleanups.add(cleanupWork)
+    void cleanupWork.finally(() => {
+      this.#lateCredentialCleanups.delete(cleanupWork)
+    }).catch(() => undefined)
+    return cleanupWork
+  }
+
   #trackLateOwnerCleanup(spawnWork: Promise<OwnedCodexProcess>): void {
     const cleanupWork = spawnWork.then(async owner => {
-      if (!await this.#cleanupRejectedOwner(owner)) throw new CodexTransportError('transport_lost')
-      await this.#removeCredentialHome()
+      const cleanup = await this.#cleanupRejectedOwner(owner)
+      if (!cleanup.complete) {
+        throw new CodexTransportError(cleanup.cleanupFailed ? 'credential_missing' : 'transport_lost')
+      }
     }, async error => {
       const unconfirmedOwner = takeUnconfirmedCodexProcessOwner(error)
       if (unconfirmedOwner !== null) {
         this.#closed = true
-        this.#unconfirmedOwners.add(unconfirmedOwner)
+        this.#retainUnconfirmedOwner(unconfirmedOwner)
         throw new CodexTransportError('transport_lost')
       }
-      await this.#removeCredentialHome()
+      const removal = await this.#removeCredentialHomeBefore(
+        Date.now() + CODEX_TREE_GRACE_MS,
+      )
+      if (removal === 'pending') throw new CodexTransportError('transport_lost')
+      if (removal === 'failed') throw new CodexTransportError('credential_missing')
     })
     const cleanup = cleanupWork.catch(error => {
       this.#lateCleanupFailure ??= safeTransportError(error, 'credential_missing')
@@ -1069,15 +1291,72 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     void cleanup.finally(() => { this.#lateOwnerCleanups.delete(cleanup) }).catch(() => undefined)
   }
 
-  async #cleanupRejectedOwner(owner: OwnedCodexProcess): Promise<boolean> {
-    const gone = await cleanupRejectedOwner(owner)
-    if (gone) {
-      this.#unconfirmedOwners.delete(owner)
-    } else {
-      this.#closed = true
-      this.#unconfirmedOwners.add(owner)
+  #retainUnconfirmedOwner(owner: OwnedCodexProcess): RetainedOwnerCleanup {
+    const existing = this.#unconfirmedOwners.get(owner)
+    if (existing !== undefined) return existing
+    const ledger: RetainedOwnerCleanup = {
+      owner,
+      treeGone: false,
+      cleanupStop: 'none',
+      cleanupExitCode: null,
+      closeStdinPromise: null,
+      terminatePromise: null,
+      disposePromise: null,
+      disposed: false,
+      credentialSettled: false,
+      credentialCleanupFailed: false,
     }
-    return gone
+    this.#unconfirmedOwners.set(owner, ledger)
+    return ledger
+  }
+
+  async #cleanupRejectedOwner(
+    owner: OwnedCodexProcess,
+    expiresAtMs = Date.now() + CODEX_TREE_GRACE_MS,
+  ): Promise<CleanupResult> {
+    const ledger = this.#retainUnconfirmedOwner(owner)
+    ledger.closeStdinPromise ??= Promise.resolve().then(() => owner.closeStdin())
+    await settleSuccessBefore(ledger.closeStdinPromise, controlDeadline(expiresAtMs))
+    if (!ledger.treeGone) ledger.treeGone = await waitTreeGoneBefore(owner, expiresAtMs)
+    if (!ledger.treeGone) {
+      ledger.cleanupStop = 'terminate'
+      ledger.terminatePromise ??= Promise.resolve().then(() => owner.terminateTree())
+      await settleSuccessBefore(ledger.terminatePromise, controlDeadline(expiresAtMs))
+      ledger.treeGone = await waitTreeGoneBefore(owner, expiresAtMs)
+    }
+    if (!ledger.treeGone) {
+      ledger.cleanupStop = 'kill'
+      await settleOperationBefore(() => owner.killTree(), controlDeadline(expiresAtMs))
+      ledger.treeGone = await waitTreeGoneBefore(owner, expiresAtMs)
+    }
+    if (!ledger.treeGone) {
+      this.#closed = true
+      return retainedOwnerResult(ledger, false)
+    }
+    ledger.cleanupExitCode ??= await settleCleanupValue(
+      () => owner.exit,
+      Math.min(100, remainingMilliseconds(expiresAtMs)),
+      null,
+    )
+    ledger.disposePromise ??= Promise.resolve().then(() => owner.dispose())
+    if (!ledger.disposed) {
+      ledger.disposed = await settleSuccessBefore(ledger.disposePromise, expiresAtMs)
+      if (!ledger.disposed) {
+        this.#closed = true
+        return retainedOwnerResult(ledger, false)
+      }
+    }
+    if (!ledger.credentialSettled) {
+      const removal = await this.#removeCredentialHomeBefore(expiresAtMs)
+      ledger.credentialSettled = removal === 'complete'
+      ledger.credentialCleanupFailed ||= removal === 'failed'
+      if (!ledger.credentialSettled) {
+        this.#closed = true
+        return retainedOwnerResult(ledger, false)
+      }
+    }
+    this.#unconfirmedOwners.delete(owner)
+    return retainedOwnerResult(ledger, true)
   }
 }
 
@@ -1342,8 +1621,78 @@ const TRANSPORT_CODES: ReadonlySet<CodexTransportCode> = new Set([
   'unexpected_server_request', 'busy',
 ])
 
-async function settleCleanup(operation: () => Promise<void>, milliseconds: number): Promise<void> {
-  await settleCleanupValue(async () => { await operation(); return true }, milliseconds, false)
+function remainingMilliseconds(expiresAtMs: number): number {
+  return Math.max(0, expiresAtMs - Date.now())
+}
+
+function controlDeadline(expiresAtMs: number): number {
+  return Math.min(expiresAtMs, Date.now() + CODEX_CONTROL_GRACE_MS)
+}
+
+async function settlePromiseBefore(work: Promise<unknown>, expiresAtMs: number): Promise<boolean> {
+  return await settleCleanupValue(
+    async () => { await work.catch(() => undefined); return true },
+    remainingMilliseconds(expiresAtMs),
+    false,
+  )
+}
+
+async function settleSuccessBefore(work: Promise<unknown>, expiresAtMs: number): Promise<boolean> {
+  return await settleCleanupValue(
+    async () => { await work; return true },
+    remainingMilliseconds(expiresAtMs),
+    false,
+  )
+}
+
+async function settleOperationBefore(
+  operation: () => Promise<void>,
+  expiresAtMs: number,
+): Promise<boolean> {
+  return await settleCleanupValue(
+    async () => { await operation(); return true },
+    remainingMilliseconds(expiresAtMs),
+    false,
+  )
+}
+
+async function waitTreeGoneBefore(
+  owner: OwnedCodexProcess,
+  expiresAtMs: number,
+): Promise<boolean> {
+  const graceMs = Math.min(CODEX_TREE_PHASE_GRACE_MS, remainingMilliseconds(expiresAtMs))
+  if (graceMs <= 0) return false
+  return await settleCleanupValue(
+    () => owner.waitTreeGone(graceMs),
+    graceMs,
+    false,
+  )
+}
+
+function closeOwnedPipes(owner: OwnedCodexProcess): void {
+  try { owner.stdin.destroy() } catch { /* tree is already gone; continue final cleanup */ }
+  try { owner.stdout.destroy() } catch { /* tree is already gone; continue final cleanup */ }
+  try { owner.stderr.destroy() } catch { /* tree is already gone; continue final cleanup */ }
+}
+
+function cleanupResult(session: Session, complete: boolean): CleanupResult {
+  return Object.freeze({
+    stop: session.cleanupStop,
+    exitCode: session.cleanupExitCode,
+    cleanupFailed: session.credentialCleanupFailed,
+    treeGone: session.treeGone,
+    complete,
+  })
+}
+
+function retainedOwnerResult(ledger: RetainedOwnerCleanup, complete: boolean): CleanupResult {
+  return Object.freeze({
+    stop: ledger.cleanupStop,
+    exitCode: ledger.cleanupExitCode,
+    cleanupFailed: ledger.credentialCleanupFailed,
+    treeGone: ledger.treeGone,
+    complete,
+  })
 }
 
 async function settleCleanupValue<T>(
@@ -1389,32 +1738,4 @@ function requireOwnedProcessContract(owner: OwnedCodexProcess): void {
     || typeof owner.killTree !== 'function'
     || typeof owner.dispose !== 'function'
   ) throw new CodexTransportError('spawn_failed')
-}
-
-async function cleanupRejectedOwner(owner: OwnedCodexProcess): Promise<boolean> {
-  await settleCleanup(() => owner.closeStdin(), CODEX_INTERRUPT_GRACE_MS)
-  let gone = await settleCleanupValue(
-    () => owner.waitTreeGone(CODEX_TREE_GRACE_MS),
-    CODEX_TREE_GRACE_MS + 100,
-    false,
-  )
-  if (!gone) {
-    await settleCleanup(() => owner.terminateTree(), CODEX_INTERRUPT_GRACE_MS)
-    gone = await settleCleanupValue(
-      () => owner.waitTreeGone(CODEX_TREE_GRACE_MS),
-      CODEX_TREE_GRACE_MS + 100,
-      false,
-    )
-  }
-  if (!gone) {
-    await settleCleanup(() => owner.killTree(), CODEX_INTERRUPT_GRACE_MS)
-    gone = await settleCleanupValue(
-      () => owner.waitTreeGone(CODEX_TREE_GRACE_MS),
-      CODEX_TREE_GRACE_MS + 100,
-      false,
-    )
-  }
-  await settleCleanupValue(() => owner.exit, CODEX_TREE_GRACE_MS, null)
-  await settleCleanup(() => owner.dispose(), CODEX_TREE_GRACE_MS)
-  return gone
 }
