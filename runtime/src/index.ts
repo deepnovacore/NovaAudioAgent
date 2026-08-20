@@ -18,6 +18,8 @@ export {
 export * from './codex-jsonl.js'
 export * from './codex-protocol.js'
 export * from './codex-turn-projection.js'
+export * from './executors/codex.js'
+export * from './executors/codex-live.js'
 export {
   WINDOWS_GUARDIAN_FRAME_LIMIT,
   WINDOWS_GUARDIAN_READY_TIMEOUT_MS,

@@ -85,13 +85,15 @@ test('base, live, and project manifests pin exact immutable public operations an
   assert.equal(INTERNAL_CODEX_RUN_DEADLINE, 540)
 })
 
-test('the runtime package root exposes only the pure Codex foundation', () => {
+test('the runtime package root adds adapters without exposing process authority', () => {
   const exports = runtimeIndex as Readonly<Record<string, unknown>>
   assert.equal(exports.CODEX_BASE_MANIFEST, CODEX_BASE_MANIFEST)
   assert.equal(exports.JsonRpcConnection !== undefined, true)
   assert.equal(exports.CodexJsonlParser !== undefined, true)
   assert.equal(exports.AppServerTurnProjection !== undefined, true)
-  for (const forbidden of ['CodexProcess', 'CodexTransport', 'CodexAdapter', 'spawnCodex']) {
+  assert.equal(typeof exports.CodexAdapter, 'function')
+  assert.equal(typeof exports.CodexLiveAdapter, 'function')
+  for (const forbidden of ['CodexProcess', 'CodexTransport', 'spawnCodex']) {
     assert.equal(Object.hasOwn(exports, forbidden), false)
   }
 })
