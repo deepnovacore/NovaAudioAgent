@@ -1,9 +1,12 @@
 import { createRequire } from 'node:module'
-import { readdir, readFile } from 'node:fs/promises'
+import { open, readdir, readFile } from 'node:fs/promises'
 import { dirname, matchesGlob, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const RUNTIME_PACKAGE = '@nova-audio-agent/runtime'
+const DESKTOP_PACKAGE = '@nova-audio-agent/ambient-orb'
+const DESKTOP_MANIFEST_FILE = 'package.json'
+const RUNTIME_MANIFEST_FILE = `node_modules/${RUNTIME_PACKAGE}/package.json`
 const REQUIRED_CAMERA_FILE = 'src/renderer/camera.mjs'
 const REQUIRED_RUNTIME_FILE = `node_modules/${RUNTIME_PACKAGE}/dist/src/desktop-entry.js`
 const EXPECTED_RUNTIME_DEPENDENCIES = Object.freeze(['ws', 'zod'])
@@ -12,6 +15,7 @@ const REQUIRED_RUNTIME_DEPENDENCY_FILES = Object.freeze(
 )
 const MAX_INSPECTED_FILES = 10_000
 const MAX_ARTIFACT_LIST_BYTES = 4 * 1024 * 1024
+const MAX_ARTIFACT_MANIFEST_BYTES = 64 * 1024
 
 export class PackageInspectionError extends Error {
   constructor(detail) {
@@ -133,6 +137,26 @@ async function listFiles(root, { skipTopLevel = [] } = {}) {
   return files.sort()
 }
 
+async function readBoundedFile(path, maximumBytes, label) {
+  let handle
+  try {
+    handle = await open(path, 'r')
+    const status = await handle.stat()
+    if (!status.isFile() || status.size > maximumBytes) {
+      throw new PackageInspectionError(`${label} rejected`)
+    }
+    const body = Buffer.alloc(maximumBytes + 1)
+    const { bytesRead } = await handle.read(body, 0, body.byteLength, 0)
+    if (bytesRead > maximumBytes) throw new PackageInspectionError(`${label} rejected`)
+    return body.subarray(0, bytesRead)
+  } catch (error) {
+    if (error instanceof PackageInspectionError) throw error
+    throw new PackageInspectionError(`${label} unavailable`)
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+}
+
 function forbiddenPath(path) {
   const lower = path.toLowerCase()
   return lower.endsWith('.mp4')
@@ -182,14 +206,89 @@ function assertDependencyContract(productionDependencies, runtimeDependencies) {
   return { production, runtime }
 }
 
+function isPlainJsonObject(value) {
+  return value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype
+}
+
+function manifestDependencies(manifest, expectedName, label) {
+  if (!isPlainJsonObject(manifest)) {
+    throw new PackageInspectionError(`${label} manifest rejected`)
+  }
+  if (manifest.name !== expectedName) throw new PackageInspectionError(`${label} manifest rejected`)
+  const dependencies = manifest.dependencies ?? {}
+  if (!isPlainJsonObject(dependencies)) {
+    throw new PackageInspectionError(`${label} manifest dependencies rejected`)
+  }
+  for (const value of Object.values(dependencies)) {
+    if (typeof value !== 'string' || value === '') {
+      throw new PackageInspectionError(`${label} manifest dependencies rejected`)
+    }
+  }
+  for (const field of ['optionalDependencies', 'bundledDependencies', 'bundleDependencies']) {
+    const value = manifest[field]
+    if (value === undefined) continue
+    if (Array.isArray(value) && value.length === 0) continue
+    if (
+      isPlainJsonObject(value)
+      && Object.keys(value).length === 0
+    ) continue
+    throw new PackageInspectionError(`${label} manifest dependency closure rejected`)
+  }
+  return Object.keys(dependencies).sort()
+}
+
+function assertRuntimeFilesContract(files, runtimeManifest) {
+  if (!Array.isArray(runtimeManifest.files)) {
+    throw new PackageInspectionError('runtime manifest files rejected')
+  }
+  const prefix = `node_modules/${RUNTIME_PACKAGE}/`
+  const runtimeFiles = files
+    .filter(file => file.startsWith(prefix))
+    .map(file => file.slice(prefix.length))
+  let selected
+  try {
+    selected = evaluatePackageFiles(runtimeFiles, runtimeManifest.files)
+  } catch {
+    throw new PackageInspectionError('runtime manifest files rejected')
+  }
+  if (!selected.includes('dist/src/desktop-entry.js')) {
+    throw new PackageInspectionError('runtime manifest entry rejected')
+  }
+  const actual = [...new Set(runtimeFiles)].sort()
+  if (actual.length !== selected.length || actual.some((file, index) => file !== selected[index])) {
+    throw new PackageInspectionError('runtime manifest files rejected')
+  }
+}
+
+function assertAllowedNodeModules(files, allowedPackages) {
+  for (const file of files) {
+    const segments = file.split('/')
+    for (let index = 0; index < segments.length; index += 1) {
+      if (segments[index] !== 'node_modules') continue
+      const first = segments[index + 1]
+      if (index === 0 && first === '.package-lock.json' && segments.length === 2) continue
+      let name = first
+      if (first?.startsWith('@')) name = `${first}/${segments[index + 2] ?? ''}`
+      if (!name || name.endsWith('/') || !allowedPackages.has(name)) {
+        throw new PackageInspectionError('unexpected production package')
+      }
+    }
+  }
+}
+
 export function inspectPackagedFileList(includedFiles, {
-  productionDependencies = [RUNTIME_PACKAGE],
-  runtimeDependencies = EXPECTED_RUNTIME_DEPENDENCIES,
+  desktopManifest,
+  runtimeManifest,
   filePatterns = [],
   extraResources = [],
 } = {}) {
   const files = [...new Set(includedFiles.map(validateRelativeFile))].sort()
   const forbidden = []
+  if (!files.includes(DESKTOP_MANIFEST_FILE)) forbidden.push(DESKTOP_MANIFEST_FILE)
+  if (!files.includes(RUNTIME_MANIFEST_FILE)) forbidden.push(RUNTIME_MANIFEST_FILE)
   if (!files.includes(REQUIRED_CAMERA_FILE)) forbidden.push(REQUIRED_CAMERA_FILE)
   if (!files.includes(REQUIRED_RUNTIME_FILE)) forbidden.push(REQUIRED_RUNTIME_FILE)
   for (const required of REQUIRED_RUNTIME_DEPENDENCY_FILES) {
@@ -199,7 +298,15 @@ export function inspectPackagedFileList(includedFiles, {
   for (const rule of [...filePatterns, ...extraResources]) {
     if (forbiddenRule(rule)) forbidden.push(rule)
   }
+  const productionDependencies = manifestDependencies(
+    desktopManifest,
+    DESKTOP_PACKAGE,
+    'desktop',
+  )
+  const runtimeDependencies = manifestDependencies(runtimeManifest, RUNTIME_PACKAGE, 'runtime')
   const dependencies = assertDependencyContract(productionDependencies, runtimeDependencies)
+  assertRuntimeFilesContract(files, runtimeManifest)
+  assertAllowedNodeModules(files, new Set([...dependencies.production, ...dependencies.runtime]))
   const uniqueForbidden = [...new Set(forbidden)]
   if (uniqueForbidden.length > 0) throw new PackageInspectionError(uniqueForbidden.join(', '))
   return Object.freeze({
@@ -240,7 +347,6 @@ export async function inspectConfiguredPackage({
     listFiles(packageRoot, { skipTopLevel: ['build', 'dist', 'node_modules'] }),
   ])
   const packageJson = JSON.parse(packageText)
-  const productionDependencies = Object.keys(packageJson.dependencies ?? {}).sort()
   const filePatterns = topLevelYamlList(builderText, 'files')
   const desktopIncluded = evaluateBuilderFiles(desktopFiles, filePatterns)
 
@@ -256,29 +362,70 @@ export async function inspectConfiguredPackage({
   }))).flat()
 
   return inspectPackagedFileList([...desktopIncluded, ...runtimeIncluded, ...dependencyIncluded], {
-    productionDependencies,
-    runtimeDependencies,
+    desktopManifest: packageJson,
+    runtimeManifest: runtime.manifest,
     filePatterns,
     extraResources: yamlResourceSources(builderText),
   })
 }
 
-async function readArtifactFileList(path) {
-  const body = await readFile(path)
-  if (body.byteLength > MAX_ARTIFACT_LIST_BYTES) {
-    throw new PackageInspectionError('artifact file list exceeds four MiB')
+async function readArtifactManifests(artifactRoot, files) {
+  if (typeof artifactRoot !== 'string' || artifactRoot === '') {
+    throw new PackageInspectionError('artifact root required')
   }
+  if (!files.includes(DESKTOP_MANIFEST_FILE) || !files.includes(RUNTIME_MANIFEST_FILE)) {
+    throw new PackageInspectionError('artifact manifests missing')
+  }
+  const parse = async (file, label) => {
+    const body = await readBoundedFile(
+      resolve(artifactRoot, file),
+      MAX_ARTIFACT_MANIFEST_BYTES,
+      `${label} manifest`,
+    )
+    try {
+      return JSON.parse(body.toString('utf8'))
+    } catch {
+      throw new PackageInspectionError(`${label} manifest malformed`)
+    }
+  }
+  const [desktopManifest, runtimeManifest] = await Promise.all([
+    parse(DESKTOP_MANIFEST_FILE, 'desktop'),
+    parse(RUNTIME_MANIFEST_FILE, 'runtime'),
+  ])
+  return { desktopManifest, runtimeManifest }
+}
+
+export async function inspectArtifactRoot(artifactRoot) {
+  let files
+  try {
+    files = await listFiles(artifactRoot)
+  } catch {
+    throw new PackageInspectionError('artifact file list unavailable')
+  }
+  const manifests = await readArtifactManifests(artifactRoot, files)
+  return inspectPackagedFileList(files, manifests)
+}
+
+async function readArtifactFileList(path) {
+  const body = await readBoundedFile(path, MAX_ARTIFACT_LIST_BYTES, 'artifact file list')
   const text = body.toString('utf8')
+  const listPath = value => value.startsWith('/') ? value.slice(1) : value
   try {
     const parsed = JSON.parse(text)
     if (!Array.isArray(parsed) || parsed.some(value => typeof value !== 'string')) {
       throw new PackageInspectionError('artifact JSON must be an array of paths')
     }
-    return parsed
+    return parsed.map(listPath)
   } catch (error) {
     if (error instanceof PackageInspectionError) throw error
-    return text.split(/\r?\n/u).filter(Boolean)
+    return text.split(/\r?\n/u).filter(Boolean).map(listPath)
   }
+}
+
+export async function inspectArtifactFileList(fileListPath, artifactRoot) {
+  const files = await readArtifactFileList(fileListPath)
+  const manifests = await readArtifactManifests(artifactRoot, files)
+  return inspectPackagedFileList(files, manifests)
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''
@@ -286,8 +433,16 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
   const run = process.argv.length === 2
     ? inspectConfiguredPackage()
     : process.argv.length === 4 && process.argv[2] === '--file-list'
-      ? readArtifactFileList(process.argv[3]).then(inspectPackagedFileList)
-      : Promise.reject(new PackageInspectionError('usage: inspect-package [--file-list path]'))
+      ? Promise.reject(new PackageInspectionError('artifact root required with file list'))
+      : process.argv.length === 4 && process.argv[2] === '--artifact-root'
+        ? inspectArtifactRoot(process.argv[3])
+        : process.argv.length === 6
+          && process.argv[2] === '--file-list'
+          && process.argv[4] === '--artifact-root'
+          ? inspectArtifactFileList(process.argv[3], process.argv[5])
+          : Promise.reject(new PackageInspectionError(
+            'usage: inspect-package [--artifact-root root | --file-list list --artifact-root root]',
+          ))
   run.then(
     result => process.stdout.write(`${JSON.stringify(result)}\n`),
     error => {

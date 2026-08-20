@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, resolve } from 'node:path'
 import test from 'node:test'
 
-import {
+import * as packageInspection from '../scripts/inspect-package.mjs'
+
+const {
   PackageInspectionError,
   evaluateBuilderFiles,
   evaluatePackageFiles,
   inspectConfiguredPackage,
   inspectPackagedFileList,
-} from '../scripts/inspect-package.mjs'
+} = packageInspection
 
 const DESKTOP_FILES = [
   'src/main/main.mjs',
@@ -16,6 +21,43 @@ const DESKTOP_FILES = [
   'package.json',
   'assets/demos/cat-sofa-guard/cat-sofa-guard.mp4',
 ]
+
+const DESKTOP_MANIFEST = Object.freeze({
+  name: '@nova-audio-agent/ambient-orb',
+  dependencies: { '@nova-audio-agent/runtime': '0.1.0' },
+})
+const RUNTIME_MANIFEST = Object.freeze({
+  name: '@nova-audio-agent/runtime',
+  files: ['dist/src'],
+  dependencies: { ws: '8.21.3', zod: '4.4.3' },
+})
+
+function inspectArtifact(files, overrides = {}) {
+  return inspectPackagedFileList(files, {
+    desktopManifest: DESKTOP_MANIFEST,
+    runtimeManifest: RUNTIME_MANIFEST,
+    ...overrides,
+  })
+}
+
+async function writeArtifactRoot(root, {
+  desktopManifest = DESKTOP_MANIFEST,
+  runtimeManifest = RUNTIME_MANIFEST,
+} = {}) {
+  const files = new Map([
+    ['package.json', JSON.stringify(desktopManifest)],
+    ['src/renderer/camera.mjs', 'export const camera = true\n'],
+    ['node_modules/@nova-audio-agent/runtime/package.json', JSON.stringify(runtimeManifest)],
+    ['node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js', 'export {}\n'],
+    ['node_modules/ws/package.json', '{"name":"ws"}\n'],
+    ['node_modules/zod/package.json', '{"name":"zod"}\n'],
+  ])
+  for (const [file, body] of files) {
+    const target = resolve(root, file)
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, body, 'utf8')
+  }
+}
 
 test('builder files matcher catches removing or excluding camera with ordered rules', () => {
   assert.deepEqual(evaluateBuilderFiles(DESKTOP_FILES, [
@@ -86,15 +128,17 @@ function validArtifactFiles() {
 }
 
 test('artifact file-list entry point catches missing camera/runtime and forbidden surfaces', () => {
-  assert.doesNotThrow(() => inspectPackagedFileList(validArtifactFiles()))
+  assert.doesNotThrow(() => inspectArtifact(validArtifactFiles()))
   for (const missing of [
+    'package.json',
+    'node_modules/@nova-audio-agent/runtime/package.json',
     'src/renderer/camera.mjs',
     'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
     'node_modules/ws/package.json',
     'node_modules/zod/package.json',
   ]) {
     assert.throws(
-      () => inspectPackagedFileList(validArtifactFiles().filter(file => file !== missing)),
+      () => inspectArtifact(validArtifactFiles().filter(file => file !== missing)),
       PackageInspectionError,
       missing,
     )
@@ -110,16 +154,77 @@ test('artifact file-list entry point catches missing camera/runtime and forbidde
     'node_modules/node-webcam/index.js',
   ]) {
     assert.throws(
-      () => inspectPackagedFileList([...validArtifactFiles(), forbidden]),
+      () => inspectArtifact([...validArtifactFiles(), forbidden]),
       PackageInspectionError,
       forbidden,
     )
   }
   assert.throws(
-    () => inspectPackagedFileList(validArtifactFiles(), { runtimeDependencies: ['ws'] }),
+    () => inspectArtifact(validArtifactFiles(), {
+      runtimeManifest: { ...RUNTIME_MANIFEST, dependencies: { ws: '8.21.3' } },
+    }),
     PackageInspectionError,
     'missing runtime dependency must fail closed',
   )
+})
+
+test('artifact dependency closure comes only from required manifest contents', () => {
+  assert.throws(
+    () => inspectPackagedFileList(validArtifactFiles()),
+    PackageInspectionError,
+    'artifact inspection cannot default manifest evidence',
+  )
+  assert.throws(
+    () => inspectArtifact([...validArtifactFiles(), 'node_modules/lodash/package.json']),
+    PackageInspectionError,
+    'an ordinary undeclared package must fail even when its name is not otherwise forbidden',
+  )
+  assert.throws(
+    () => inspectArtifact(validArtifactFiles(), {
+      desktopManifest: {
+        ...DESKTOP_MANIFEST,
+        dependencies: {
+          '@nova-audio-agent/runtime': '0.1.0',
+          lodash: '4.17.21',
+        },
+      },
+    }),
+    PackageInspectionError,
+    'desktop dependency expansion must fail',
+  )
+  assert.throws(
+    () => inspectArtifact(validArtifactFiles(), {
+      runtimeManifest: { ...RUNTIME_MANIFEST, files: ['dist/other'] },
+    }),
+    PackageInspectionError,
+    'the runtime entry must be selected by its own files contract',
+  )
+  assert.throws(
+    () => inspectArtifact([
+      ...validArtifactFiles(),
+      'node_modules/@nova-audio-agent/runtime/src/private.ts',
+    ]),
+    PackageInspectionError,
+    'runtime artifact files outside the manifest files contract must fail',
+  )
+  assert.throws(
+    () => inspectArtifact(validArtifactFiles(), {
+      runtimeManifest: { ...RUNTIME_MANIFEST, optionalDependencies: null },
+    }),
+    PackageInspectionError,
+    'malformed dependency closure fields must fail closed',
+  )
+  assert.throws(
+    () => inspectArtifact(validArtifactFiles(), {
+      runtimeManifest: Object.assign(Object.create(null), RUNTIME_MANIFEST),
+    }),
+    PackageInspectionError,
+    'manifest inputs must be plain JSON objects',
+  )
+  assert.doesNotThrow(() => inspectArtifact([
+    ...validArtifactFiles(),
+    'node_modules/.package-lock.json',
+  ]))
 })
 
 test('actual configured graph derives camera and runtime from config plus installed content', async () => {
@@ -134,4 +239,77 @@ test('actual configured graph derives camera and runtime from config plus instal
   assert.ok(result.includedFiles.includes('node_modules/zod/package.json'))
   assert.deepEqual(result.productionDependencies, ['@nova-audio-agent/runtime'])
   assert.equal(result.forbidden.length, 0)
+})
+
+test('artifact-root entry reads bounded manifests from the inspected artifact itself', async () => {
+  assert.equal(typeof packageInspection.inspectArtifactRoot, 'function')
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-package-artifact-'))
+  try {
+    await writeArtifactRoot(root)
+    const result = await packageInspection.inspectArtifactRoot(root)
+    assert.equal(result.cameraIncluded, true)
+    assert.deepEqual(result.productionDependencies, ['@nova-audio-agent/runtime'])
+
+    for (const missing of ['package.json', 'node_modules/@nova-audio-agent/runtime/package.json']) {
+      await rm(resolve(root, missing))
+      await assert.rejects(
+        packageInspection.inspectArtifactRoot(root),
+        PackageInspectionError,
+        `physically removing ${missing} must fail artifact-root inspection`,
+      )
+      await writeArtifactRoot(root)
+    }
+
+    const fileList = resolve(root, 'asar-file-list.json')
+    await writeFile(
+      fileList,
+      JSON.stringify(validArtifactFiles().map(file => `/${file}`)),
+      'utf8',
+    )
+    await assert.rejects(
+      packageInspection.inspectArtifactFileList(fileList),
+      PackageInspectionError,
+      'a file list alone cannot substitute expected manifest contents',
+    )
+    const listed = await packageInspection.inspectArtifactFileList(fileList, root)
+    assert.equal(listed.runtimeIncluded, true, 'asar-style leading slashes are list syntax')
+    for (const missing of ['package.json', 'node_modules/@nova-audio-agent/runtime/package.json']) {
+      await writeFile(
+        fileList,
+        JSON.stringify(validArtifactFiles().filter(file => file !== missing)),
+        'utf8',
+      )
+      await assert.rejects(
+        packageInspection.inspectArtifactFileList(fileList, root),
+        PackageInspectionError,
+        missing,
+      )
+    }
+
+    await writeFile(resolve(root, 'package.json'), '{malformed secret-path-sentinel', 'utf8')
+    await assert.rejects(
+      packageInspection.inspectArtifactRoot(root),
+      error => {
+        assert.ok(error instanceof PackageInspectionError)
+        assert.doesNotMatch(error.message, /nova-package-artifact|secret-path-sentinel/u)
+        return true
+      },
+    )
+
+    await writeFile(
+      resolve(root, 'package.json'),
+      JSON.stringify({ ...DESKTOP_MANIFEST, padding: 'x'.repeat(128 * 1024) }),
+      'utf8',
+    )
+    await assert.rejects(
+      packageInspection.inspectArtifactRoot(root),
+      error => {
+        assert.ok(error instanceof PackageInspectionError)
+        assert.doesNotMatch(error.message, /nova-package-artifact/u)
+        return true
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
