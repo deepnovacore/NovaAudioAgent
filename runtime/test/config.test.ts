@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   ConfigurationError,
   loadSettings,
+  requireQwenRealtime,
   resolveProactivity,
 } from '../src/config.js'
 
@@ -81,4 +82,167 @@ test('configuration failures never echo secret values', () => {
 test('the unprefixed Tavily credential is preserved for production assembly', () => {
   const configured = loadSettings({TAVILY_API_KEY: '  tavily-test-key  '})
   assert.equal(configured.tavily_api_key, 'tavily-test-key')
+})
+
+test('configuration normalization uses Python whitespace rather than JavaScript trim', () => {
+  assert.equal(loadSettings({TAVILY_API_KEY: '\u001ctavily-test-key\u0085'}).tavily_api_key,
+    'tavily-test-key')
+  assert.equal(loadSettings({TAVILY_API_KEY: '\ufefftavily-test-key\ufeff'}).tavily_api_key,
+    '\ufefftavily-test-key\ufeff')
+  assert.deepEqual(
+    loadSettings({NOVA_AUDIO_AGENT_EXECUTORS: '\u001cslow_sim\u0085,fast_sim'}).executors,
+    ['slow_sim', 'fast_sim'],
+  )
+})
+
+test('Qwen realtime settings preserve Python defaults and every host override', () => {
+  const defaults = loadSettings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'})
+  assert.deepEqual(requireQwenRealtime(defaults), {
+    url: 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+    model: 'qwen-audio-3.0-realtime-plus',
+    voice: 'longanqian',
+    apiKey: 'model-key',
+  })
+  assert.deepEqual({
+    controlled: defaults.qwen_controlled_guard_reconnect,
+    recovery: defaults.qwen_guard_history_recovery,
+    pairs: defaults.qwen_guard_history_pairs,
+  }, {controlled: false, recovery: 'none', pairs: 4})
+
+  const explicit = loadSettings({
+    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+    DASHSCOPE_API_KEY: 'dash-key',
+    NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: ' wss://qwen.example/realtime ',
+    NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: ' qwen-test ',
+    NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: ' voice-test ',
+    NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT: 'true',
+    NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY: 'packed',
+    NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS: '2',
+  })
+  assert.deepEqual(requireQwenRealtime(explicit), {
+    url: 'wss://qwen.example/realtime',
+    model: 'qwen-test',
+    voice: 'voice-test',
+    apiKey: 'dash-key',
+  })
+  assert.deepEqual({
+    controlled: explicit.qwen_controlled_guard_reconnect,
+    recovery: explicit.qwen_guard_history_recovery,
+    pairs: explicit.qwen_guard_history_pairs,
+  }, {controlled: true, recovery: 'packed', pairs: 2})
+})
+
+test('Qwen require uses Python strip for URL, model, voice, and credentials', () => {
+  const pythonWhitespace = loadSettings({
+    NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: '\u001cwss://qwen.example/realtime\u0085',
+    NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: '\u001cqwen-test\u0085',
+    NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: '\u001cvoice-test\u0085',
+    DASHSCOPE_API_KEY: '\u001cdash-key\u0085',
+    NOVA_AUDIO_AGENT_MODEL_API_KEY: '\u001cmodel-key\u0085',
+  })
+  assert.deepEqual(requireQwenRealtime(pythonWhitespace), {
+    url: 'wss://qwen.example/realtime',
+    model: 'qwen-test',
+    voice: 'voice-test',
+    apiKey: 'dash-key',
+  })
+
+  assert.throws(
+    () => requireQwenRealtime(loadSettings({
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: '\ufeffwss://qwen.example/realtime',
+      DASHSCOPE_API_KEY: 'dash-key',
+    })),
+    error => error instanceof ConfigurationError
+      && error.message === 'NOVA_AUDIO_AGENT_QWEN_REALTIME_URL 必须使用 wss://',
+  )
+  assert.throws(
+    () => requireQwenRealtime(loadSettings({
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: '\u001c\u0085',
+      DASHSCOPE_API_KEY: 'dash-key',
+    })),
+    /NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL 不能为空/u,
+  )
+  assert.throws(
+    () => requireQwenRealtime(loadSettings({
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: '\u001c\u0085',
+      DASHSCOPE_API_KEY: 'dash-key',
+    })),
+    /NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE 不能为空/u,
+  )
+  assert.equal(requireQwenRealtime(loadSettings({
+    DASHSCOPE_API_KEY: '\ufeff',
+    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+  })).apiKey, '\ufeff')
+  assert.deepEqual(requireQwenRealtime(loadSettings({
+    NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: '\ufeffqwen-test\ufeff',
+    NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: '\ufeffvoice-test\ufeff',
+    NOVA_AUDIO_AGENT_MODEL_API_KEY: '\ufeffmodel-key\ufeff',
+  })), {
+    url: 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+    model: '\ufeffqwen-test\ufeff',
+    voice: '\ufeffvoice-test\ufeff',
+    apiKey: '\ufeffmodel-key\ufeff',
+  })
+})
+
+test('Qwen require returns focused credential-safe validation errors', () => {
+  const sentinel = 'sentinel-secret-never-echo'
+  const cases: readonly [NodeJS.ProcessEnv, string][] = [
+    [{
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: `https://qwen.invalid/?token=${sentinel}`,
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: sentinel,
+    }, 'NOVA_AUDIO_AGENT_QWEN_REALTIME_URL 必须使用 wss://'],
+    [{
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: '\u001c',
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: sentinel,
+    }, 'NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL 不能为空'],
+    [{
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: '\u0085',
+      DASHSCOPE_API_KEY: sentinel,
+    }, 'NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE 不能为空'],
+    [{
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: `wss://qwen.invalid/?token=${sentinel}`,
+      DASHSCOPE_API_KEY: '\u001c',
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: '\u0085',
+    }, '缺少 DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY'],
+  ]
+  for (const [environment, expected] of cases) {
+    assert.throws(
+      () => requireQwenRealtime(loadSettings(environment)),
+      error => error instanceof ConfigurationError
+        && error.message === expected
+        && !error.message.includes(sentinel),
+    )
+  }
+})
+
+test('Qwen boolean, Guard recovery, and history pair settings reject unknown arms', () => {
+  const truthy = ['true', 'TRUE', '1', 'on', 'YES', 'y']
+  const falsy = ['false', 'FALSE', '0', 'off', 'NO', 'n']
+  for (const value of truthy) {
+    assert.equal(loadSettings({
+      NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT: value,
+    }).qwen_controlled_guard_reconnect, true)
+  }
+  for (const value of falsy) {
+    assert.equal(loadSettings({
+      NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT: value,
+    }).qwen_controlled_guard_reconnect, false)
+  }
+  for (const value of ['1', '2', '4']) {
+    assert.equal(loadSettings({
+      NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS: value,
+    }).qwen_guard_history_pairs, Number(value))
+  }
+  for (const [variable, value] of [
+    ['NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT', 'maybe'],
+    ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY', 'native'],
+    ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS', '3'],
+    ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS', ''],
+  ] as const) {
+    assert.throws(
+      () => loadSettings({[variable]: value}),
+      error => error instanceof ConfigurationError && error.message.includes(variable.slice(17)),
+    )
+  }
 })

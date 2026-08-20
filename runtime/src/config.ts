@@ -1,8 +1,11 @@
 import { z } from 'zod'
+import { stripLikePython } from './python-text.js'
 
 const backendSchema = z.enum(['python', 'node'])
 export const proactivityPresetSchema = z.enum(['conservative', 'balanced', 'eager'])
 const realtimeProviderSchema = z.enum(['qwen', 'volcengine'])
+const qwenGuardHistoryRecoverySchema = z.enum(['none', 'packed'])
+const qwenGuardHistoryPairsSchema = z.union([z.literal(1), z.literal(2), z.literal(4)])
 const executorNameSchema = z.enum(['fast_sim', 'slow_sim', 'codex', 'ha', 'autoglm'])
 
 export const settingsSchema = z.object({
@@ -15,6 +18,13 @@ export const settingsSchema = z.object({
   surrogate_model: z.string().min(1).default('qwen-flash'),
   compressor_model: z.string().min(1).default('qwen-flash'),
   realtime_provider: realtimeProviderSchema.default('qwen'),
+  qwen_realtime_url: z.string().default('wss://dashscope.aliyuncs.com/api-ws/v1/realtime'),
+  qwen_realtime_model: z.string().default('qwen-audio-3.0-realtime-plus'),
+  qwen_realtime_voice: z.string().default('longanqian'),
+  dashscope_api_key: z.string().nullable().default(null),
+  qwen_controlled_guard_reconnect: z.boolean().default(false),
+  qwen_guard_history_recovery: qwenGuardHistoryRecoverySchema.default('none'),
+  qwen_guard_history_pairs: qwenGuardHistoryPairsSchema.default(4),
   executor: executorNameSchema.default('fast_sim'),
   executors: z.array(executorNameSchema).min(1),
   proactivity_preset: proactivityPresetSchema.default('balanced'),
@@ -24,6 +34,13 @@ export const settingsSchema = z.object({
 }).strict()
 
 export type Settings = z.infer<typeof settingsSchema>
+
+export interface QwenRealtimeConfig {
+  readonly url: string
+  readonly model: string
+  readonly voice: string
+  readonly apiKey: string
+}
 
 export interface ProactivityParams {
   readonly cooldown: number
@@ -46,7 +63,7 @@ export class ConfigurationError extends Error {
 }
 
 export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Settings {
-  const configuredExecutor = environment.NOVA_AUDIO_AGENT_EXECUTOR?.trim()
+  const configuredExecutor = optionalString(environment.NOVA_AUDIO_AGENT_EXECUTOR)
   const executor = configuredExecutor === undefined || configuredExecutor.length === 0
     ? 'fast_sim'
     : configuredExecutor
@@ -61,6 +78,19 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     surrogate_model: optionalString(environment.NOVA_AUDIO_AGENT_SURROGATE_MODEL),
     compressor_model: optionalString(environment.NOVA_AUDIO_AGENT_COMPRESSOR_MODEL),
     realtime_provider: optionalString(environment.NOVA_AUDIO_AGENT_REALTIME_PROVIDER),
+    qwen_realtime_url: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL),
+    qwen_realtime_model: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL),
+    qwen_realtime_voice: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE),
+    dashscope_api_key: optionalSecret(environment.DASHSCOPE_API_KEY),
+    qwen_controlled_guard_reconnect: optionalBoolean(
+      environment.NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT,
+    ),
+    qwen_guard_history_recovery: optionalString(
+      environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY,
+    ),
+    qwen_guard_history_pairs: optionalQwenGuardHistoryPairs(
+      environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS,
+    ),
     executor,
     executors,
     proactivity_preset: optionalString(environment.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET),
@@ -107,9 +137,31 @@ export function resolveProactivityPreset(preset: ProactivityPreset): Proactivity
   return proactivityPresets[preset]
 }
 
+export function requireQwenRealtime(settings: Settings): QwenRealtimeConfig {
+  const url = stripLikePython(settings.qwen_realtime_url)
+  const model = stripLikePython(settings.qwen_realtime_model)
+  const voice = stripLikePython(settings.qwen_realtime_voice)
+  if (!url.startsWith('wss://')) {
+    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_URL 必须使用 wss://')
+  }
+  if (model.length === 0) {
+    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL 不能为空')
+  }
+  if (voice.length === 0) {
+    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE 不能为空')
+  }
+  const realtimeKey = stripLikePython(settings.dashscope_api_key ?? '')
+  const modelKey = stripLikePython(settings.model_api_key ?? '')
+  const apiKey = realtimeKey || modelKey
+  if (apiKey.length === 0) {
+    throw new ConfigurationError('缺少 DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY')
+  }
+  return {url, model, voice, apiKey}
+}
+
 function parseExecutors(raw: string | undefined, fallback: string): string[] {
   if (raw === undefined || raw.length === 0) return [fallback]
-  const names = raw.split(',').map(name => name.trim())
+  const names = raw.split(',').map(stripLikePython)
   if (names.some(name => name.length === 0)) {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_EXECUTORS contains an empty name')
   }
@@ -121,12 +173,29 @@ function parseExecutors(raw: string | undefined, fallback: string): string[] {
 
 function optionalString(value: string | undefined): string | undefined {
   if (value === undefined) return undefined
-  return value.trim()
+  return stripLikePython(value)
 }
 
 function optionalSecret(value: string | undefined): string | null | undefined {
   if (value === undefined) return undefined
-  return value.trim() || null
+  return stripLikePython(value) || null
+}
+
+function optionalBoolean(value: string | undefined): boolean | string | undefined {
+  if (value === undefined) return undefined
+  const normalized = stripLikePython(value).toLowerCase()
+  if (['true', '1', 'on', 'yes', 'y'].includes(normalized)) return true
+  if (['false', '0', 'off', 'no', 'n'].includes(normalized)) return false
+  return normalized
+}
+
+function optionalQwenGuardHistoryPairs(value: string | undefined): 1 | 2 | 4 | string | undefined {
+  if (value === undefined) return undefined
+  const normalized = stripLikePython(value)
+  if (normalized === '1') return 1
+  if (normalized === '2') return 2
+  if (normalized === '4') return 4
+  return normalized
 }
 
 function optionalNumber(value: string | undefined, variable: string): number | undefined {

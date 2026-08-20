@@ -77,6 +77,8 @@ export interface AssemblyOptions {
   readonly frameSource?: FrameSource
   readonly mediaStore?: MediaStore
   readonly includeMemoryRecall?: boolean
+  /** Qwen/other provider frontbrains own the user turn, so no competing fast text port is built. */
+  readonly realtimeFrontbrain?: boolean
 }
 
 export interface Assembly {
@@ -125,8 +127,8 @@ function resolveExecutors(
 }
 
 function requireApiKey(settings: Settings): string {
-  const key = settings.model_api_key
-  if (key === null || key.trim().length === 0) {
+  const key = stripLikePython(settings.model_api_key ?? '')
+  if (key.length === 0) {
     // Never echo configuration values; the name is enough to act on.
     throw new AssemblyError('缺少 NOVA_AUDIO_AGENT_MODEL_API_KEY')
   }
@@ -134,8 +136,8 @@ function requireApiKey(settings: Settings): string {
 }
 
 function requireTavilyApiKey(settings: Settings): string {
-  const key = settings.tavily_api_key
-  if (key === null || key.trim().length === 0) {
+  const key = stripLikePython(settings.tavily_api_key ?? '')
+  if (key.length === 0) {
     throw new AssemblyError('缺少 TAVILY_API_KEY')
   }
   return key
@@ -201,15 +203,11 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   const executors = [search, camera, watch, guard, ...configuredExecutors]
   const manifests = executors.map(adapter => adapter.manifest)
   const tools = compileToolSchema(manifests, {
-    includeMemoryRecall: options.includeMemoryRecall ?? false,
+    includeMemoryRecall: options.realtimeFrontbrain === true
+      ? true
+      : (options.includeMemoryRecall ?? false),
   })
 
-  const fastBrain = new GatewayFastBrain({
-    gateway,
-    model: settings.fast_model,
-    tools,
-    ...(options.media === undefined ? {} : {media: options.media}),
-  })
   const surrogate = new GatewaySurrogate({gateway, model: settings.surrogate_model})
   const compressor = new GatewayCompressor({gateway, model: settings.compressor_model})
 
@@ -223,29 +221,6 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
   }
 
   const models: Partial<Record<Slot, ModelPort>> = {
-    fast: {
-      complete: async (call: ModelCall, signal: AbortSignal) => {
-        const view = call.context_view
-        if (view === undefined) throw new AssemblyError('fast slot requires a ContextView')
-        const utteranceId = call.utterance_id
-        if (utteranceId === undefined) {
-          throw new AssemblyError('fast slot requires an utterance id')
-        }
-        const core = requireRuntime().core
-        const record = await runFastBrainCall(fastBrain, {
-          view,
-          reason: call.reason,
-          utteranceId,
-          sink,
-          // Arbitration happens here, at the first chunk, not after the fold.
-          openFloor: (utterance, priority) =>
-            core.openFloor(call.job_id, utterance, priority, clock.now()),
-          closeFloor: utterance => { core.closeFloor(utterance, clock.now()) },
-          signal,
-        })
-        return foldFastBrainRecord(record)
-      },
-    },
     'surrogate.watch': {
       complete: async (call: ModelCall, signal: AbortSignal) => {
         const view = call.context_view
@@ -267,6 +242,37 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
         }
       },
     },
+  }
+  if (options.realtimeFrontbrain !== true) {
+    const fastBrain = new GatewayFastBrain({
+      gateway,
+      model: settings.fast_model,
+      tools,
+      ...(options.media === undefined ? {} : {media: options.media}),
+    })
+    models.fast = {
+      complete: async (call: ModelCall, signal: AbortSignal) => {
+        const view = call.context_view
+        if (view === undefined) throw new AssemblyError('fast slot requires a ContextView')
+        const utteranceId = call.utterance_id
+        if (utteranceId === undefined) {
+          throw new AssemblyError('fast slot requires an utterance id')
+        }
+        const core = requireRuntime().core
+        const record = await runFastBrainCall(fastBrain, {
+          view,
+          reason: call.reason,
+          utteranceId,
+          sink,
+          // Arbitration happens here, at the first chunk, not after the fold.
+          openFloor: (utterance, priority) =>
+            core.openFloor(call.job_id, utterance, priority, clock.now()),
+          closeFloor: utterance => { core.closeFloor(utterance, clock.now()) },
+          signal,
+        })
+        return foldFastBrainRecord(record)
+      },
+    }
   }
 
   holder.runtime = new CausalRuntime({
