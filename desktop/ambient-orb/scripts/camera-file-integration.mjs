@@ -13,6 +13,7 @@ import {
   assertVisualEvidence,
   integrationExitCode,
   integrationResultLine,
+  settleIntegrationOperation,
   verifyCameraFileFixture,
 } from './camera-file-integration-contract.mjs'
 
@@ -42,7 +43,6 @@ const HANDSHAKE_DEADLINE_MS = 2_000
 const MEDIA_DEADLINE_MS = 5_000
 const TOKEN = '0123456789abcdef0123456789abcdef'
 
-let stage = 'fixture'
 let window
 let server
 let source
@@ -55,12 +55,7 @@ async function runIntegration() {
     throw new CameraFileIntegrationError('camera fixture selection rejected')
   }
 
-  stage = 'app_ready'
-  try {
-    await settleWithin(app.whenReady(), HANDSHAKE_DEADLINE_MS, 'electron app readiness')
-  } catch {
-    throw new ChromiumCapabilityError()
-  }
+  await waitForAppReady()
 
   const clock = new VirtualClock(100)
   const mediaStore = new MediaStore()
@@ -77,12 +72,10 @@ async function runIntegration() {
   const readiness = await settleWithin(server.start(), HANDSHAKE_DEADLINE_MS, 'desktop server start')
   source = new ChromiumFrameSource({source: 'file', transport: server, clock})
 
-  stage = 'source_start_without_renderer'
   await settleWithin(source.start(), HANDSHAKE_DEADLINE_MS, 'camera source start')
   assert.equal(authenticatedCount, 0)
 
   const route = {requests: 0, nonzeroRanges: 0}
-  stage = 'window'
   window = new BrowserWindow({
     ...browserWindowOptions(preload, `camera-${randomBytes(4).toString('hex')}`, {opaque: true}),
     show: false,
@@ -121,18 +114,16 @@ async function runIntegration() {
       return net.fetch(url, init)
     },
   })
-  stage = 'page_load'
-  try {
-    await settleWithin(
-      window.loadURL('nova://orb/scripts/camera-file-integration.html'),
-      HANDSHAKE_DEADLINE_MS,
-      'renderer page load',
-    )
-    assert.equal(await rendererExpression(
-      'typeof window.novaCameraFileIntegration === "object"',
-    ), true)
-  } catch {
-    throw new ChromiumCapabilityError()
+  await settleWithin(
+    window.loadURL('nova://orb/scripts/camera-file-integration.html'),
+    HANDSHAKE_DEADLINE_MS,
+    'renderer page load',
+  )
+  assert.equal(await rendererExpression(
+    'typeof window.novaCameraFileIntegration === "object"',
+  ), true)
+  if (await rendererCall('supportsFileCodec') !== true) {
+    throw new ChromiumCapabilityError('codec_not_supported')
   }
 
   const endpoint = `ws://${readiness.host}:${readiness.port}`
@@ -157,14 +148,8 @@ async function runIntegration() {
     )
   }
 
-  stage = 'chromium_decode'
   await connectRenderer()
-  let first
-  try {
-    first = await settleWithin(source.snapshot(), MEDIA_DEADLINE_MS, 'first Chromium capture')
-  } catch {
-    throw new ChromiumCapabilityError()
-  }
+  const first = await settleWithin(source.snapshot(), MEDIA_DEADLINE_MS, 'first Chromium capture')
   assertJpeg(first)
   assertJpeg(await settleWithin(source.snapshot(), MEDIA_DEADLINE_MS, 'second initial capture'))
   await source.restart()
@@ -183,16 +168,11 @@ async function runIntegration() {
   assert.ok(route.requests > 0)
   assert.ok(route.nonzeroRanges > 0)
 
-  let visual
-  try {
-    visual = await settleWithin(rendererCall('visualEvidence'), MEDIA_DEADLINE_MS, 'visual oracle')
-    assertVisualEvidence(visual)
-  } catch {
-    throw new ChromiumCapabilityError()
-  }
+  const visual = await settleWithin(rendererCall('visualEvidence'), MEDIA_DEADLINE_MS,
+    'visual oracle')
+  assertVisualEvidence(visual)
   const visualSummary = withoutLandmarks(visual)
 
-  stage = 'shared_executors'
   const cam = new CamAdapter(source, mediaStore)
   const camResult = await cam.dispatch('snapshot', {}, executorContext(clock))
   assert.equal(camResult.outcome, 'ok')
@@ -264,10 +244,10 @@ async function runIntegration() {
   assert.ok(guardEntry)
   assert.deepEqual(guardEntry.payload, guardGateway.calls[0].images[0].payload)
 
-  stage = 'failure_sweep'
   const stableFailures = []
   for (const hook of [
-    'metadata_unavailable', 'seek_unavailable', 'canvas_unavailable', 'encode_unavailable',
+    'metadata_unavailable', 'decode_unavailable', 'seek_unavailable', 'canvas_unavailable',
+    'encode_unavailable',
   ]) {
     await connectRenderer({failureSequence: [hook]})
     await assert.rejects(source.snapshot(), CameraError)
@@ -307,7 +287,6 @@ async function runIntegration() {
   await assert.rejects(programmingSource.snapshot(), error => !(error instanceof CameraError))
   await programmingSource.stop()
 
-  stage = 'watch_recovery'
   await connectRenderer({
     failureSequence: [
       'encode_unavailable', 'ok', 'encode_unavailable', 'encode_unavailable',
@@ -350,7 +329,6 @@ async function runIntegration() {
   }, executorContext(clock, []))
   assert.equal(guardFailure.content.error, 'capture_unavailable')
 
-  stage = 'non_starvation'
   await connectRenderer({holdSeek: true})
   let heldSettled = false
   const held = source.snapshot().finally(() => { heldSettled = true })
@@ -365,10 +343,10 @@ async function runIntegration() {
   await rendererCall('releaseSeek')
   assertJpeg(await settleWithin(held, MEDIA_DEADLINE_MS, 'released held capture'))
 
-  stage = 'reload_reconnect'
+  await connectRenderer({failureSequence: ['hold_encode']})
   const staleCapture = source.snapshot()
-  await waitUntil(async () => (await rendererCall('requestTrace')).length >= 2,
-    HANDSHAKE_DEADLINE_MS, 'reload held capture')
+  await settleWithin(rendererCall('waitForEncodeBarrier'), HANDSHAKE_DEADLINE_MS,
+    'reload encode barrier')
   const reloaded = new Promise(resolveReload => window.webContents.once('did-finish-load', resolveReload))
   window.reload()
   await settleWithin(reloaded, HANDSHAKE_DEADLINE_MS, 'renderer reload')
@@ -380,7 +358,6 @@ async function runIntegration() {
   await connectRenderer()
   assertJpeg(await source.snapshot())
 
-  stage = 'pending_shutdown'
   await connectRenderer({holdSeek: true})
   const pendingAtShutdown = source.snapshot()
   await waitUntil(async () => (await rendererCall('requestTrace')).length >= 1,
@@ -400,7 +377,17 @@ async function runIntegration() {
 
   return Object.freeze({
     ok: true,
-    fixture: {sha256: fixture.sha256, bytes: fixture.bytes, width: 1280, height: 720},
+    fixture: {
+      sha256: fixture.sha256,
+      bytes: fixture.bytes,
+      codec: fixture.codec,
+      chromaSubsampling: fixture.chromaSubsampling,
+      width: fixture.width,
+      height: fixture.height,
+      durationSeconds: fixture.durationSeconds,
+      frameRate: fixture.frameRate,
+      sampleCount: fixture.sampleCount,
+    },
     route,
     visual: visualSummary,
     epochPositions: [0, 0, 2_500, 5_000, 0, MAX_CAMERA_POSITION_MS],
@@ -497,7 +484,8 @@ function makeCameraTimer() {
 
 async function rendererCall(method, ...args) {
   const allowed = new Set([
-    'start', 'waitForControl', 'releaseSeek', 'requestTrace', 'visualEvidence', 'cleanup',
+    'start', 'supportsFileCodec', 'waitForControl', 'releaseSeek', 'waitForEncodeBarrier',
+    'releaseEncode', 'requestTrace', 'visualEvidence', 'cleanup',
   ])
   if (!allowed.has(method)) throw new CameraFileIntegrationError('renderer call rejected')
   return rendererExpression(
@@ -530,18 +518,21 @@ function settleWithin(promise, timeoutMs, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(handle))
 }
 
+function waitForAppReady() {
+  let handle
+  const timeout = new Promise((_, reject) => {
+    handle = setTimeout(
+      () => reject(new ChromiumCapabilityError('app_ready_timeout')),
+      HANDSHAKE_DEADLINE_MS,
+    )
+  })
+  return Promise.race([app.whenReady(), timeout]).finally(() => clearTimeout(handle))
+}
+
 const complete = settleWithin(runIntegration(), RUNNER_DEADLINE_MS, 'camera integration')
 let result
 try {
-  result = await complete
-} catch (error) {
-  result = error instanceof ChromiumCapabilityError
-    || stage === 'app_ready'
-    || stage === 'window'
-    || stage === 'page_load'
-    || stage === 'chromium_decode'
-    ? new ChromiumCapabilityError()
-    : error
+  result = await settleIntegrationOperation(() => complete)
 } finally {
   try {
     await settleWithin(server?.close() ?? Promise.resolve(), HANDSHAKE_DEADLINE_MS,

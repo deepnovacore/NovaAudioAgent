@@ -138,6 +138,7 @@ function localRequest(id = 'camera-local') {
 function makeFakeVideo({
   duration = 10,
   metadata = 'success',
+  decode = 'success',
   seek = 'success',
   readyAfterSeek = 2,
 } = {}) {
@@ -168,9 +169,15 @@ function makeFakeVideo({
     load() {
       this.loadCalls += 1
       if (metadata === 'success' && this.src) queueMicrotask(() => {
-        this.readyState = 2
+        this.readyState = 1
         this.dispatch('loadedmetadata')
-        this.dispatch('loadeddata')
+        setImmediate(() => {
+          if (decode === 'success') {
+            this.readyState = 2
+            this.dispatch('loadeddata')
+          }
+          if (decode === 'error') this.dispatch('error')
+        })
       })
       if (metadata === 'error' && this.src) queueMicrotask(() => this.dispatch('error'))
     },
@@ -619,6 +626,31 @@ test('file metadata/seek/frame failures are stable and failed decoders can be re
   }
 })
 
+test('file decode failure after metadata is stable and the next decoder recovers', async () => {
+  const failedDecoder = makeFakeVideo({metadata: 'success', decode: 'error'})
+  const recoveredDecoder = makeFakeVideo()
+  const harness = makeLocalHarness()
+  let createCalls = 0
+  const controller = makeController({
+    ...harness,
+    createVideo: () => (++createCalls === 1 ? failedDecoder : recoveredDecoder),
+  }, 'file')
+  const generation = Object.freeze({})
+  const failed = makeDelivery(generation)
+  controller.enqueue(fileRequest(0, 'camera-decode-failed'), failed.delivery)
+  assert.equal(
+    (await settleWithin(failed.response.promise, 'decode failure')).value,
+    cameraUnavailableMessage('camera-decode-failed'),
+  )
+  assert.equal(failedDecoder.removeSourceCalls, 1)
+
+  const retry = makeDelivery(generation)
+  controller.enqueue(fileRequest(0, 'camera-decode-retry'), retry.delivery)
+  assert.equal((await settleWithin(retry.response.promise, 'decode recovery')).kind, 'binary')
+  assert.equal(createCalls, 2)
+  controller.dispose()
+})
+
 test('a controlled file metadata deadline removes listeners and ignores late events', async () => {
   const callbacks = new Map()
   let nextTimer = 0
@@ -729,6 +761,38 @@ test('closing generation A fences late work while generation B captures independ
   assert.equal(trackB.stops, 0)
   controller.dispose()
   assert.equal(trackB.stops, 1)
+})
+
+test('closing a generation at the encode barrier releases FIFO and fences its late JPEG', async () => {
+  const firstEncoding = deferred()
+  let conversions = 0
+  const harness = makeLocalHarness({
+    convertToBlob: () => (++conversions === 1 ? firstEncoding.promise : harness.blob),
+  })
+  const controller = makeController(harness)
+  const generationA = Object.freeze({name: 'encode-A'})
+  const generationB = Object.freeze({name: 'encode-B'})
+  const responseA = makeDelivery(generationA)
+  const responseB = makeDelivery(generationB)
+  controller.enqueue(localRequest('camera-encode-A'), responseA.delivery)
+  await settleWithin((async () => {
+    while (harness.calls.conversions.length === 0) {
+      await new Promise(resolveWait => setImmediate(resolveWait))
+    }
+  })(), 'encode barrier entrance')
+
+  controller.closeGeneration(generationA)
+  responseA.close()
+  controller.enqueue(localRequest('camera-encode-B'), responseB.delivery)
+  assert.equal(
+    (await settleWithin(responseB.response.promise, 'generation B after encode close')).kind,
+    'binary',
+  )
+  firstEncoding.resolve(harness.blob)
+  await new Promise(resolveWait => setImmediate(resolveWait))
+  assert.equal(responseA.sent.length, 0)
+  assert.equal(responseB.sent.length, 1)
+  controller.dispose()
 })
 
 test('a generation closed before its first capture can never be reopened by queued work', async () => {

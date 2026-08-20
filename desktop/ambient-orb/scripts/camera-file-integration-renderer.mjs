@@ -13,6 +13,33 @@ const WAIT_MS = 2_000
 
 let active
 
+export function createEncodeBarrier() {
+  const pending = new Set()
+  return Object.freeze({
+    hold(encoded) {
+      return Promise.resolve(encoded).then(value => new Promise(resolve => {
+        const release = () => {
+          pending.delete(release)
+          resolve(value)
+        }
+        pending.add(release)
+      }))
+    },
+    pendingCount: () => pending.size,
+    releaseAll() {
+      const count = pending.size
+      for (const release of [...pending]) release()
+      return count
+    },
+  })
+}
+
+export function supportsLockedFileCodec(canPlayType) {
+  if (typeof canPlayType !== 'function') throw new Error('camera codec probe unavailable')
+  const support = canPlayType('video/mp4; codecs="avc1.64001f"')
+  return support === 'probably' || support === 'maybe'
+}
+
 export function compareLandmarks(left, right) {
   if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length
     || left.length !== GRID_COLUMNS * GRID_ROWS) throw new TypeError('invalid landmarks')
@@ -49,6 +76,7 @@ async function start(config) {
   const controls = []
   const controlWaiters = new Map()
   const heldSeekListeners = new Set()
+  const encodeBarrier = createEncodeBarrier()
   const stats = {
     videoPause: 0,
     videoLoad: 0,
@@ -74,7 +102,8 @@ async function start(config) {
 
     convertToBlob(options) {
       if (this.hook === 'encode_unavailable') return Promise.reject(new Error('unavailable'))
-      return this.canvas.convertToBlob(options)
+      const encoded = this.canvas.convertToBlob(options)
+      return this.hook === 'hold_encode' ? encodeBarrier.hold(encoded) : encoded
     }
   }
 
@@ -82,6 +111,10 @@ async function start(config) {
     if (pendingCanvasHook === 'metadata_unavailable') {
       pendingCanvasHook = 'ok'
       return unavailableVideo()
+    }
+    if (pendingCanvasHook === 'decode_unavailable') {
+      pendingCanvasHook = 'ok'
+      return decodeUnavailableVideo()
     }
     const seekUnavailable = pendingCanvasHook === 'seek_unavailable'
     if (seekUnavailable) pendingCanvasHook = 'ok'
@@ -231,6 +264,7 @@ async function start(config) {
     controls,
     controlWaiters,
     heldSeekListeners,
+    encodeBarrier,
     nativeSocket,
     requests,
     router,
@@ -238,6 +272,11 @@ async function start(config) {
   }
   window.addEventListener('beforeunload', () => cleanup(), {once: true})
   return true
+}
+
+function supportsFileCodec() {
+  const video = document.createElement('video')
+  return supportsLockedFileCodec(video.canPlayType?.bind(video))
 }
 
 async function waitForControl(type) {
@@ -264,6 +303,20 @@ function releaseSeek() {
   for (const listener of [...active.heldSeekListeners]) listener(new Event('seeked'))
   active.heldSeekListeners.clear()
   return true
+}
+
+async function waitForEncodeBarrier() {
+  if (!active) throw new Error('camera integration renderer not started')
+  const deadline = Date.now() + WAIT_MS
+  while (Date.now() < deadline) {
+    if (active.encodeBarrier.pendingCount() > 0) return true
+    await new Promise(resolveWait => setTimeout(resolveWait, 0))
+  }
+  throw new Error('renderer encode barrier timed out')
+}
+
+function releaseEncode() {
+  return active?.encodeBarrier.releaseAll() ?? 0
 }
 
 function requestTrace() {
@@ -300,6 +353,7 @@ function cleanup() {
   active = undefined
   current.router.dispose()
   current.controller.dispose()
+  current.encodeBarrier.releaseAll()
   try { current.nativeSocket.close() } catch { /* closed renderer socket */ }
   return Object.freeze({...current.stats})
 }
@@ -386,10 +440,50 @@ function unavailableVideo() {
   return video
 }
 
+function decodeUnavailableVideo() {
+  const listeners = new Map()
+  const video = {
+    preload: '',
+    muted: false,
+    playsInline: false,
+    src: '',
+    readyState: 0,
+    duration: 7.033,
+    currentTime: 0,
+    paused: true,
+    addEventListener(type, listener) {
+      const values = listeners.get(type) ?? []
+      values.push(listener)
+      listeners.set(type, values)
+    },
+    removeEventListener(type, listener) {
+      listeners.set(type, (listeners.get(type) ?? []).filter(value => value !== listener))
+    },
+    pause() {},
+    load() {
+      if (!this.src) return
+      queueMicrotask(() => {
+        this.readyState = 1
+        for (const listener of listeners.get('loadedmetadata') ?? []) {
+          listener(new Event('loadedmetadata'))
+        }
+        setTimeout(() => {
+          for (const listener of listeners.get('error') ?? []) listener(new Event('error'))
+        }, 0)
+      })
+    },
+    removeAttribute(name) { if (name === 'src') this.src = '' },
+  }
+  return video
+}
+
 const api = Object.freeze({
   start,
+  supportsFileCodec,
   waitForControl,
   releaseSeek,
+  waitForEncodeBarrier,
+  releaseEncode,
   requestTrace,
   visualEvidence,
   cleanup,
