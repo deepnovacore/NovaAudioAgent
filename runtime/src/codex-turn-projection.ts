@@ -1,6 +1,7 @@
 import {resolve} from 'node:path'
 import type {ExecutorProgress} from './causal-runtime.js'
 import type {Clock} from './clock.js'
+import {snapshotJsonRecord} from './codex-safe-json.js'
 import {PROGRESS_SUMMARY_LIMIT, validProgressSummary} from './events.js'
 import {isPythonSpace} from './python-text.js'
 import {
@@ -67,7 +68,7 @@ export class AppServerTurnProjection {
     },
   ): void {
     try {
-      const envelope = requireObject(response)
+      const envelope = snapshotJsonRecord(response)
       const thread = requireObject(envelope.thread)
       const threadId = requireNonemptyString(thread.id)
       const ephemeral = options.ephemeral ?? true
@@ -101,7 +102,7 @@ export class AppServerTurnProjection {
   bindTurnResponse(response: unknown): string {
     let turnId: string
     try {
-      const envelope = requireObject(response)
+      const envelope = snapshotJsonRecord(response)
       turnId = requireNonemptyString(requireObject(envelope.turn).id)
     } catch {
       throw new CodexProtocolError('unsupported_protocol')
@@ -114,16 +115,24 @@ export class AppServerTurnProjection {
   }
 
   notification(method: string, params: Readonly<Record<string, unknown>>): TurnCompletion | null {
+    if (method !== 'turn/started' && method !== 'item/completed' && method !== 'turn/completed') {
+      return null
+    }
+    let snapshot: Record<string, unknown>
+    try {
+      snapshot = snapshotJsonRecord(params)
+    } catch {
+      throw new CodexProtocolError('unsupported_protocol')
+    }
     if (method === 'turn/started') {
-      this.#turnStarted(params)
+      this.#turnStarted(snapshot)
       return null
     }
     if (method === 'item/completed') {
-      this.#itemCompleted(params)
+      this.#itemCompleted(snapshot)
       return null
     }
-    if (method === 'turn/completed') return this.#turnCompleted(params)
-    return null
+    return this.#turnCompleted(snapshot)
   }
 
   #turnStarted(params: Readonly<Record<string, unknown>>): void {

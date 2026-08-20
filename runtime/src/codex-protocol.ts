@@ -1,3 +1,5 @@
+import {snapshotJsonValue} from './codex-safe-json.js'
+
 export const MAX_JSONL_LINE = 256 * 1024
 export const MAX_STDOUT = 2 * 1024 * 1024
 export const MAX_REQUEST = 64 * 1024
@@ -28,6 +30,7 @@ export class AppServerRequestRejected extends CodexProtocolError {
 
 export interface JsonRpcConnectionOptions {
   readonly write: (bytes: Uint8Array) => Promise<void>
+  readonly onBufferCopy?: (bytes: number) => void
   readonly onNotification?: (notification: {
     readonly method: string
     readonly params: Readonly<Record<string, unknown>>
@@ -55,11 +58,14 @@ export class JsonRpcConnection {
   readonly #write: (bytes: Uint8Array) => Promise<void>
   readonly #onNotification: JsonRpcConnectionOptions['onNotification']
   readonly #onServerRequest: JsonRpcConnectionOptions['onServerRequest']
+  readonly #onBufferCopy: JsonRpcConnectionOptions['onBufferCopy']
   readonly #pending = new Map<number, PendingRequest>()
+  readonly #input = new SegmentedByteQueue(bytes => { this.#noteBufferCopy(bytes) })
   #nextId = 0
   #writer = Promise.resolve()
-  #reader = Promise.resolve()
-  #buffer = new Uint8Array()
+  #drainPromise: Promise<void> | undefined
+  #lineSegments: Uint8Array[] = []
+  #lineBytes = 0
   #stdoutBytes = 0
   #failure: CodexProtocolError | undefined
   #ended = false
@@ -68,6 +74,7 @@ export class JsonRpcConnection {
     this.#write = options.write
     this.#onNotification = options.onNotification
     this.#onServerRequest = options.onServerRequest
+    this.#onBufferCopy = options.onBufferCopy
   }
 
   get pendingRequestIds(): readonly number[] {
@@ -89,6 +96,7 @@ export class JsonRpcConnection {
       resolveResponse = resolve
       rejectResponse = reject
     })
+    void response.catch(() => undefined)
     await this.#serializeWrite(async () => {
       this.#raiseIfFailed()
       if (options.signal?.aborted === true) throw abortError()
@@ -144,45 +152,33 @@ export class JsonRpcConnection {
   }
 
   feed(chunk: Uint8Array): Promise<void> {
-    const operation = this.#reader.then(async () => {
+    try {
       this.#raiseIfFailed()
       if (this.#ended) throw this.#failure ?? new CodexProtocolError('transport_lost')
       if (!(chunk instanceof Uint8Array)) throw this.#poison(new CodexProtocolError('malformed_jsonl'))
-      this.#stdoutBytes += chunk.byteLength
-      if (this.#stdoutBytes > MAX_STDOUT) {
-        throw this.#poison(new CodexProtocolError('stdout_too_large'))
-      }
-      this.#buffer = concatenate(this.#buffer, chunk)
-      while (true) {
-        const newline = this.#buffer.indexOf(0x0a)
-        if (newline < 0) {
-          if (this.#buffer.byteLength > MAX_JSONL_LINE) {
-            throw this.#poison(new CodexProtocolError('stdout_line_too_large'))
-          }
-          return
-        }
-        const lineLength = newline + 1
-        if (lineLength > MAX_JSONL_LINE) {
-          throw this.#poison(new CodexProtocolError('stdout_line_too_large'))
-        }
-        const line = this.#buffer.slice(0, lineLength)
-        this.#buffer = this.#buffer.slice(lineLength)
-        await this.#route(decodeMessage(line))
-      }
-    })
-    const task = operation.catch((error: unknown) => {
-      if (error instanceof CodexProtocolError) throw this.#poison(error)
-      throw this.#poison(new CodexProtocolError('stream_failure'))
-    })
-    this.#reader = task.catch(() => undefined)
-    return task
+      const capacity = Math.max(0, MAX_STDOUT + 1 - this.#stdoutBytes - this.#input.byteLength)
+      this.#input.append(chunk, capacity)
+      if (this.#drainPromise !== undefined) return this.#drainPromise
+      const operation = Promise.resolve().then(async () => { await this.#drainInput() })
+      const guarded = operation.catch((error: unknown) => {
+        if (error instanceof CodexProtocolError) throw this.#poison(error)
+        throw this.#poison(new CodexProtocolError('stream_failure'))
+      })
+      const shared = guarded.finally(() => {
+        if (this.#drainPromise === shared) this.#drainPromise = undefined
+      })
+      this.#drainPromise = shared
+      return shared
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new CodexProtocolError('stream_failure'))
+    }
   }
 
   end(): CodexProtocolError | undefined {
     if (this.#ended) return this.#failure
     this.#ended = true
     if (this.#failure !== undefined) return this.#failure
-    if (this.#buffer.byteLength > 0) {
+    if (this.#lineBytes > 0 || this.#input.byteLength > 0) {
       return this.#poison(new CodexProtocolError('malformed_jsonl'))
     }
     if ([...this.#pending.values()].some(pending => pending.active)) {
@@ -262,6 +258,38 @@ export class JsonRpcConnection {
     throw this.#poison(new CodexProtocolError('malformed_jsonl'))
   }
 
+  async #drainInput(): Promise<void> {
+    while (this.#input.byteLength > 0) {
+      this.#raiseIfFailed()
+      if (this.#ended) throw this.#failure ?? new CodexProtocolError('transport_lost')
+      if (this.#stdoutBytes === MAX_STDOUT) throw new CodexProtocolError('stdout_too_large')
+      if (this.#lineBytes === MAX_JSONL_LINE) {
+        throw new CodexProtocolError('stdout_line_too_large')
+      }
+      const next = this.#input.take(Math.min(
+        MAX_STDOUT - this.#stdoutBytes,
+        MAX_JSONL_LINE - this.#lineBytes,
+      ))
+      this.#lineSegments.push(next.bytes)
+      this.#lineBytes += next.bytes.byteLength
+      this.#stdoutBytes += next.bytes.byteLength
+      if (!next.endsLine) continue
+      const line = joinSegments(this.#lineSegments, this.#lineBytes)
+      this.#noteBufferCopy(this.#lineBytes)
+      this.#lineSegments = []
+      this.#lineBytes = 0
+      await this.#route(decodeMessage(line))
+    }
+  }
+
+  #noteBufferCopy(bytes: number): void {
+    try {
+      this.#onBufferCopy?.(bytes)
+    } catch {
+      // Diagnostics cannot own protocol state.
+    }
+  }
+
   #serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
     const task = this.#writer.then(operation)
     this.#writer = task.then(() => undefined, () => undefined)
@@ -297,8 +325,7 @@ export class JsonRpcConnection {
 
 function encodeMessage(message: unknown): Uint8Array {
   try {
-    assertJsonValue(message, new Set<object>())
-    const rendered = JSON.stringify(message)
+    const rendered = JSON.stringify(snapshotJsonValue(message))
     if (rendered === undefined) throw new TypeError('not JSON')
     const bytes = encoder.encode(`${rendered}\n`)
     if (bytes.byteLength > MAX_REQUEST) throw new CodexProtocolError('request_too_large')
@@ -307,30 +334,6 @@ function encodeMessage(message: unknown): Uint8Array {
     if (error instanceof CodexProtocolError) throw error
     throw new CodexProtocolError('invalid_request')
   }
-}
-
-function assertJsonValue(value: unknown, ancestors: Set<object>): void {
-  if (value === null || typeof value === 'boolean') return
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
-      throw new TypeError('invalid number')
-    }
-    return
-  }
-  if (typeof value === 'string') {
-    if (!isWellFormedString(value)) throw new TypeError('invalid string')
-    return
-  }
-  if (typeof value !== 'object') throw new TypeError('invalid JSON value')
-  if (ancestors.has(value)) throw new TypeError('cyclic JSON value')
-  ancestors.add(value)
-  if (Array.isArray(value)) {
-    for (const item of value) assertJsonValue(item, ancestors)
-  } else {
-    if (!isPlainObject(value)) throw new TypeError('non-plain JSON object')
-    for (const item of Object.values(value)) assertJsonValue(item, ancestors)
-  }
-  ancestors.delete(value)
 }
 
 function decodeMessage(line: Uint8Array): Record<string, unknown> {
@@ -367,22 +370,75 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null
 }
 
-function isWellFormedString(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index)
-    if (unit >= 0xd8_00 && unit <= 0xdb_ff) {
-      const next = value.charCodeAt(index + 1)
-      if (!Number.isFinite(next) || next < 0xdc_00 || next > 0xdf_ff) return false
-      index += 1
-    } else if (unit >= 0xdc_00 && unit <= 0xdf_ff) return false
-  }
-  return true
+
+const INPUT_SLAB_BYTES = 4096
+
+interface InputSlab {
+  readonly bytes: Uint8Array
+  read: number
+  used: number
 }
 
-function concatenate(left: Uint8Array, right: Uint8Array): Uint8Array<ArrayBuffer> {
-  const result = new Uint8Array(left.byteLength + right.byteLength)
-  result.set(left)
-  result.set(right, left.byteLength)
+class SegmentedByteQueue {
+  readonly #onCopy: (bytes: number) => void
+  #slabs: InputSlab[] = []
+  #head = 0
+  #byteLength = 0
+
+  constructor(onCopy: (bytes: number) => void) {
+    this.#onCopy = onCopy
+  }
+
+  get byteLength(): number {
+    return this.#byteLength
+  }
+
+  append(source: Uint8Array, maximum: number): void {
+    const accepted = Math.min(source.byteLength, maximum)
+    let offset = 0
+    while (offset < accepted) {
+      let tail = this.#slabs.at(-1)
+      if (tail === undefined || tail.used === tail.bytes.byteLength) {
+        tail = {bytes: new Uint8Array(INPUT_SLAB_BYTES), read: 0, used: 0}
+        this.#slabs.push(tail)
+      }
+      const count = Math.min(accepted - offset, tail.bytes.byteLength - tail.used)
+      tail.bytes.set(source.subarray(offset, offset + count), tail.used)
+      tail.used += count
+      offset += count
+      this.#byteLength += count
+      this.#onCopy(count)
+    }
+  }
+
+  take(maximum: number): {readonly bytes: Uint8Array; readonly endsLine: boolean} {
+    const slab = this.#slabs[this.#head]
+    if (slab === undefined || maximum <= 0) throw new TypeError('empty input queue')
+    const available = Math.min(slab.used - slab.read, maximum)
+    const candidate = slab.bytes.subarray(slab.read, slab.read + available)
+    const newline = candidate.indexOf(0x0a)
+    const count = newline < 0 ? candidate.byteLength : newline + 1
+    const bytes = candidate.subarray(0, count)
+    slab.read += count
+    this.#byteLength -= count
+    if (slab.read === slab.used) {
+      this.#head += 1
+      if (this.#byteLength === 0) {
+        this.#slabs = []
+        this.#head = 0
+      }
+    }
+    return {bytes, endsLine: newline >= 0}
+  }
+}
+
+function joinSegments(segments: readonly Uint8Array[], size: number): Uint8Array<ArrayBuffer> {
+  const result = new Uint8Array(size)
+  let offset = 0
+  for (const segment of segments) {
+    result.set(segment, offset)
+    offset += segment.byteLength
+  }
   return result
 }
 

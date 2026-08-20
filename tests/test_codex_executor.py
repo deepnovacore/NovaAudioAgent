@@ -515,6 +515,12 @@ async def test_handoff_uses_exact_preflight_call_report_not_result_content() -> 
     _assert_opaque(handoff)
 
 
+def test_preflight_limit_special_key_is_an_ordinary_python_dict_key() -> None:
+    report = codex_module._sanitize_preflight({"limits": {"__proto__": "finite"}})
+
+    assert report == {"limits": {"__proto__": "finite"}}
+
+
 async def test_hostile_result_content_is_rejected_without_reading_it() -> None:
     result = CodexTransportResult(
         classification="completed",

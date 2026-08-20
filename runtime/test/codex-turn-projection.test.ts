@@ -258,6 +258,25 @@ test('callback failures and non-finite elapsed cannot break terminal projection'
   assert.equal(completion?.final_text, 'safe')
 })
 
+test('direct projection rejects item accessors without reading or surfacing their changing value', () => {
+  const progress: ExecutorProgress[] = []
+  const projection = startedProjection(new VirtualClock(), value => { progress.push(value) })
+  let reads = 0
+  const completedItem: Record<string, unknown> = {type: 'agentMessage'}
+  Object.defineProperty(completedItem, 'text', {
+    enumerable: true,
+    get: () => {
+      reads += 1
+      return reads === 1 ? 'safe' : 'PRIVATE'
+    },
+  })
+  assert.throws(() => projection.notification('item/completed', {
+    threadId: 'PRIVATE-THREAD', turnId: 'PRIVATE-TURN', item: completedItem,
+  }), error => code(error) === 'unsupported_protocol')
+  assert.equal(reads, 0)
+  assert.equal(JSON.stringify(progress).includes('PRIVATE'), false)
+})
+
 test('activity count saturates at the fixed bound', () => {
   const projection = startedProjection()
   for (let index = 0; index < MAX_INTERNAL_ACTIVITY + 1; index += 1) {

@@ -1,5 +1,6 @@
 import {resolve} from 'node:path'
 import {CodexProtocolError} from './codex-protocol.js'
+import {snapshotJsonRecord} from './codex-safe-json.js'
 
 export interface MethodSchemaSpec {
   readonly file: string
@@ -98,8 +99,8 @@ export function validateCodexSchemaBundle(
   bundle: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, true>> {
   try {
-    if (!isPlainObject(bundle)) throw new TypeError('bundle')
-    const client = requireObject(bundle['ClientRequest.json'])
+    const bundleSnapshot = snapshotJsonRecord(bundle)
+    const client = requireObject(bundleSnapshot['ClientRequest.json'])
     const variants = client.oneOf
     if (!Array.isArray(variants)) throw new TypeError('variants')
     const requests = new Map<string, Record<string, unknown>>()
@@ -121,11 +122,11 @@ export function validateCodexSchemaBundle(
       const params = requireObject(properties.params)
       const stem = spec.file.slice(spec.file.lastIndexOf('/') + 1, -'.json'.length)
       if (params.$ref !== `#/definitions/${stem}`) throw new TypeError('request reference')
-      validateObjectSchema(bundle[spec.file], spec.fields, spec.required)
+      validateObjectSchema(bundleSnapshot[spec.file], spec.fields, spec.required)
       result[name] = true
     }
     for (const spec of APP_SERVER_INBOUND_SCHEMAS) {
-      const root = requireObject(bundle[spec.file])
+      const root = requireObject(bundleSnapshot[spec.file])
       validateObjectSchema(root, spec.fields, spec.required)
       if (spec.nested !== undefined) {
         const properties = requireObject(root.properties)
@@ -262,7 +263,7 @@ export function validateEffectiveCodexConfig(
   options: {readonly allowReplacementInstructions: boolean},
 ): EffectiveCodexConfigReport {
   try {
-    const envelope = requireObject(response)
+    const envelope = snapshotJsonRecord(response)
     if (truthy(envelope.warnings) || truthy(envelope.requirements)) throw new TypeError('diagnostic')
     const config = requireObject(envelope.config)
     if (config.default_permissions !== 'nova_audio_agent') throw new TypeError('permissions')
@@ -337,7 +338,7 @@ function exactStringRecord(
 ): boolean {
   const keys = Object.keys(value)
   return keys.length === Object.keys(expected).length
-    && keys.every(key => value[key] === expected[key])
+    && Object.keys(expected).every(key => value[key] === expected[key])
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

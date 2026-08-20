@@ -421,6 +421,18 @@ test('every capability widening, warning, requirement, and replacement fails pri
   }
 })
 
+test('workspace roots require the exact expected key set even when an extra value is undefined', () => {
+  const value = effectiveConfig()
+  const roots = nested(
+    value, 'config', 'permissions', 'nova_audio_agent', 'filesystem', ':workspace_roots',
+  )
+  delete roots['.codex']
+  roots.evil = undefined
+  assert.throws(() => validateEffectiveCodexConfig(value, '/workspace', {
+    allowReplacementInstructions: false,
+  }), expectCode('config_not_isolated'))
+})
+
 test('replacement instructions require the explicit opt-in and change only the report verdict', () => {
   const value = effectiveConfig()
   nested(value, 'config').model_instructions_file = '/host/selected/instructions.md'

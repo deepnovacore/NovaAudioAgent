@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto'
 import type {ExecutorProgress} from './causal-runtime.js'
+import {snapshotJsonRecord} from './codex-safe-json.js'
 import {validProgressSummary} from './events.js'
 import {hasOtherCategory as hasPinnedOtherCategory} from './unicode-tables.js'
 import {normalizeNfcPinned} from './unicode-normalize.js'
@@ -138,26 +139,26 @@ function validateCodexRequestChecked(
       ? new Set(['run', 'steer', 'status'])
       : new Set(['run', 'project', 'steer', 'status'])
   if (!operations.has(op)) return failure('unknown_op', op)
-  if (!isPlainObject(request)) return failure('invalid_params', op)
+  const requestSnapshot = snapshotJsonRecord(request)
   if (op === 'status') {
-    return Object.keys(request).length === 0
+    return Object.keys(requestSnapshot).length === 0
       ? success({})
       : failure('invalid_params', op)
   }
   if (op === 'steer') {
-    const instruction = exactBoundedString(request, 'instruction', 2000)
+    const instruction = exactBoundedString(requestSnapshot, 'instruction', 2000)
     return instruction === null
       ? failure('invalid_params', op)
       : success({instruction})
   }
   if (op === 'run') {
-    if (variant === 'project') return validateProjectRun(request)
-    const workOrder = exactBoundedString(request, 'work_order', 4000)
+    if (variant === 'project') return validateProjectRun(requestSnapshot)
+    const workOrder = exactBoundedString(requestSnapshot, 'work_order', 4000)
     return workOrder === null
       ? failure('invalid_params', op)
       : success({work_order: workOrder})
   }
-  return validateProjectOperation(request)
+  return validateProjectOperation(requestSnapshot)
 }
 
 function validateProjectRun(request: Record<string, unknown>): CodexRequestValidation {
@@ -336,7 +337,7 @@ export function createCodexRunEnvelope(
 
 export function sanitizeCodexPreflightReport(value: unknown): Readonly<Record<string, unknown>> | null {
   try {
-    return sanitizeCodexPreflightReportChecked(value)
+    return sanitizeCodexPreflightReportChecked(snapshotJsonRecord(value))
   } catch {
     return null
   }
@@ -395,7 +396,7 @@ function sanitizeCodexPreflightReportChecked(
           && classification !== 'unbounded'
           && classification !== 'unavailable')
       ) return null
-      limits[name] = classification
+      defineJsonProperty(limits, name, classification)
     }
     result.limits = limits
   }
@@ -404,7 +405,7 @@ function sanitizeCodexPreflightReportChecked(
 
 export function sanitizeCodexEvidence(value: unknown): Readonly<Record<string, unknown>> | null {
   try {
-    return sanitizeCodexEvidenceChecked(value)
+    return sanitizeCodexEvidenceChecked(snapshotJsonRecord(value))
   } catch {
     return null
   }
@@ -575,6 +576,15 @@ function safeIntegerBetween(value: unknown, minimum: number, maximum: number): v
 
 function sameKeySet(actual: readonly string[], expected: readonly string[]): boolean {
   return actual.length === expected.length && expected.every(key => actual.includes(key))
+}
+
+function defineJsonProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  })
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

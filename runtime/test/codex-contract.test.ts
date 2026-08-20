@@ -384,6 +384,16 @@ test('preflight report sanitizer drops unknown content and admits only typed saf
   assert.equal(sanitizeCodexPreflightReport({credential: {identity: 'PRIVATE'}}), null)
 })
 
+test('preflight limits preserve a safe __proto__ own JSON key like Python dict', () => {
+  const limits = JSON.parse('{"__proto__":"finite"}') as Record<string, unknown>
+  const report = sanitizeCodexPreflightReport({limits})
+  assert.notEqual(report, null)
+  const projected = record(report?.limits)
+  assert.equal(Object.hasOwn(projected, '__proto__'), true)
+  assert.equal(projected.__proto__, 'finite')
+  assert.equal(JSON.stringify(projected), '{"__proto__":"finite"}')
+})
+
 test('public contract helpers fail closed when hostile objects throw during inspection', () => {
   const hostile = new Proxy({}, {
     ownKeys: () => { throw new Error('PRIVATE OWN KEYS') },
@@ -396,4 +406,59 @@ test('public contract helpers fail closed when hostile objects throw during insp
     assert.equal(sanitizeCodexEvidence(hostile), null)
     assert.equal(sanitizeCodexPreflightReport(hostile), null)
   })
+})
+
+test('request and sanitizer boundaries reject accessors without reading changing values', () => {
+  let requestReads = 0
+  const request: Record<string, unknown> = {}
+  Object.defineProperty(request, 'work_order', {
+    enumerable: true,
+    get: () => {
+      requestReads += 1
+      return requestReads === 1 ? 'legal' : 'PRIVATE'
+    },
+  })
+  assert.deepEqual(validateCodexRequest('base', 'run', request), {
+    ok: false, error: 'invalid_params', op: 'run',
+  })
+  assert.equal(requestReads, 0)
+
+  for (const field of ['exit_code', 'stop'] as const) {
+    let reads = 0
+    const evidence = validEvidence()
+    const processEvidence = record(evidence.process)
+    Object.defineProperty(processEvidence, field, {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        reads += 1
+        if (field === 'exit_code') return reads <= 2 ? 0 : 'PRIVATE'
+        return reads === 1 ? 'none' : 'PRIVATE'
+      },
+    })
+    assert.equal(sanitizeCodexEvidence(evidence), null)
+    assert.equal(reads, 0)
+  }
+
+  let versionReads = 0
+  const preflight: Record<string, unknown> = {}
+  Object.defineProperty(preflight, 'version', {
+    enumerable: true,
+    get: () => {
+      versionReads += 1
+      return versionReads <= 2 ? 'codex-cli 1.2.3' : 'PRIVATE'
+    },
+  })
+  assert.equal(sanitizeCodexPreflightReport(preflight), null)
+  assert.equal(versionReads, 0)
+})
+
+test('sanitizers reject symbol and non-enumerable own content instead of silently dropping it', () => {
+  const withSymbol = validEvidence() as Record<PropertyKey, unknown>
+  withSymbol[Symbol('private')] = 'PRIVATE'
+  assert.equal(sanitizeCodexEvidence(withSymbol), null)
+
+  const nonEnumerable = validEvidence()
+  Object.defineProperty(nonEnumerable, 'private', {enumerable: false, value: 'PRIVATE'})
+  assert.equal(sanitizeCodexEvidence(nonEnumerable), null)
 })

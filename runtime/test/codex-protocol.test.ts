@@ -16,6 +16,28 @@ function jsonLine(value: unknown): Uint8Array {
   return encoder.encode(`${JSON.stringify(value)}\n`)
 }
 
+function joinBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const size = parts.reduce((total, part) => total + part.byteLength, 0)
+  const result = new Uint8Array(size)
+  let offset = 0
+  for (const part of parts) {
+    result.set(part, offset)
+    offset += part.byteLength
+  }
+  return result
+}
+
+function paddedNotificationLine(size: number): Uint8Array {
+  const prefix = encoder.encode('{"method":"future","params":{"padding":"')
+  const suffix = encoder.encode('"}}\n')
+  assert.ok(size >= prefix.byteLength + suffix.byteLength)
+  const line = new Uint8Array(size)
+  line.set(prefix)
+  line.fill(0x78, prefix.byteLength, size - suffix.byteLength)
+  line.set(suffix, size - suffix.byteLength)
+  return line
+}
+
 function errorCode(error: unknown): string | undefined {
   return error instanceof CodexProtocolError ? error.code : undefined
 }
@@ -101,6 +123,36 @@ test('onWritten follows drain and a failed sink leaves no pending request', asyn
   assert.deepEqual(failed.pendingRequestIds, [])
 })
 
+test('abort EOF and server rejection during drain never expose the hidden deferred as unhandled', async () => {
+  const unhandled: unknown[] = []
+  const observe = (reason: unknown): void => { unhandled.push(reason) }
+  process.on('unhandledRejection', observe)
+  try {
+    for (const scenario of ['abort', 'eof', 'server'] as const) {
+      let release!: () => void
+      const drain = new Promise<void>(resolve => { release = resolve })
+      const controller = new AbortController()
+      const connection = new JsonRpcConnection({write: () => drain})
+      const request = connection.request('turn/start', {}, {signal: controller.signal})
+      await settleUntil(() => connection.pendingRequestIds.length === 1, `${scenario} pending`)
+      if (scenario === 'abort') controller.abort()
+      else if (scenario === 'eof') connection.end()
+      else await connection.feed(jsonLine({id: 1, error: {code: 7, message: 'PRIVATE'}}))
+      await new Promise<void>(resolve => { setImmediate(resolve) })
+      const outcome = request.catch((error: unknown) => error)
+      release()
+      const failure = await outcome
+      if (scenario === 'abort') assert.equal((failure as {name?: unknown}).name, 'AbortError')
+      else if (scenario === 'eof') assert.equal(errorCode(failure), 'transport_lost')
+      else assert.equal(errorCode(failure), 'server_rejected')
+      connection.end()
+    }
+    assert.deepEqual(unhandled, [])
+  } finally {
+    process.off('unhandledRejection', observe)
+  }
+})
+
 test('cancelled waiters accept a late response without poisoning later traffic', async () => {
   const controller = new AbortController()
   const writes: Uint8Array[] = []
@@ -163,6 +215,60 @@ test('unsafe outgoing integers are rejected before a frame is written', async ()
   await request
   assert.equal(failure, 'invalid_request')
   assert.deepEqual(writes, [])
+})
+
+test('direct request objects reject accessors and every non-JSON own shape before writing', async () => {
+  let getterReads = 0
+  const accessor: Record<string, unknown> = {}
+  Object.defineProperty(accessor, 'value', {
+    enumerable: true,
+    get: () => {
+      getterReads += 1
+      return getterReads === 1 ? 'legal' : Number.NaN
+    },
+  })
+  const symbolKey = {value: 'legal'} as Record<PropertyKey, unknown>
+  symbolKey[Symbol('private')] = 'PRIVATE'
+  const nonEnumerable: Record<string, unknown> = {}
+  Object.defineProperty(nonEnumerable, 'private', {enumerable: false, value: 'PRIVATE'})
+  const inherited = Object.create({private: 'PRIVATE'}) as Record<string, unknown>
+  inherited.value = 'legal'
+  const cyclic: Record<string, unknown> = {}
+  cyclic.self = cyclic
+  const loneKey = Object.create(null) as Record<string, unknown>
+  loneKey['\ud800'] = 'value'
+  const cases: readonly unknown[] = [
+    accessor,
+    symbolKey,
+    nonEnumerable,
+    inherited,
+    {value: new String('boxed')},
+    cyclic,
+    {value: () => 'PRIVATE'},
+    {value: 1n},
+    {value: Number.NaN},
+    {value: '\ud800'},
+    loneKey,
+    {value: undefined},
+  ]
+  for (const params of cases) {
+    const writes: Uint8Array[] = []
+    let outcome: unknown
+    const connection = new JsonRpcConnection({write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    }})
+    const request = connection.request('m', params as never).then(
+      value => { outcome = value },
+      error => { outcome = error },
+    )
+    await settleUntil(() => writes.length > 0 || outcome !== undefined, 'direct request verdict')
+    if (writes.length > 0) await connection.feed(jsonLine({id: 1, result: 'unexpected-write'}))
+    await request
+    assert.equal(errorCode(outcome), 'invalid_request')
+    assert.deepEqual(writes, [])
+  }
+  assert.equal(getterReads, 0)
 })
 
 test('incremental framing handles split and coalesced lines and forwards safe notifications', async () => {
@@ -279,6 +385,51 @@ test('line and aggregate inbound byte bounds include LF', async () => {
   const remaining = MAX_STDOUT - repetitions * small.byteLength
   if (remaining > 0) await total.feed(new Uint8Array(remaining).fill(0x20))
   await assert.rejects(total.feed(Uint8Array.of(0x0a)), error => errorCode(error) === 'stdout_too_large')
+})
+
+test('aggregate overflow routes every earlier complete response independent of feed splitting', async () => {
+  const prefix = Array.from({length: 7}, () => paddedNotificationLine(MAX_JSONL_LINE))
+  const response = jsonLine({id: 1, result: 'safe'})
+  const tail = paddedNotificationLine(MAX_STDOUT - 7 * MAX_JSONL_LINE - response.byteLength)
+  const exactStream = joinBytes([...prefix, response, tail])
+  const overStream = joinBytes([exactStream, Uint8Array.of(0x20)])
+  assert.equal(exactStream.byteLength, MAX_STDOUT)
+
+  for (const split of [false, true]) {
+    const connection = new JsonRpcConnection({write: () => Promise.resolve()})
+    const outcome = connection.request('m', {}).then(
+      value => ({kind: 'value' as const, value}),
+      (error: unknown) => ({kind: 'error' as const, error}),
+    )
+    await settleUntil(() => connection.pendingRequestIds.length === 1, 'pending request')
+    const failure = split
+      ? await connection.feed(exactStream).then(
+        () => connection.feed(Uint8Array.of(0x20)).catch((error: unknown) => error),
+      )
+      : await connection.feed(overStream).catch((error: unknown) => error)
+    assert.equal(errorCode(failure), 'stdout_too_large')
+    assert.deepEqual(await outcome, {kind: 'value', value: 'safe'})
+  }
+})
+
+test('single-byte feeds share one bounded linear-copy drain up to the exact line limit', async () => {
+  let copied = 0
+  const options = {
+    write: () => Promise.resolve(),
+    onBufferCopy: (bytes: number) => { copied += bytes },
+  }
+  const connection = new JsonRpcConnection(options)
+  let shared: Promise<void> | undefined
+  for (let index = 0; index < MAX_JSONL_LINE; index += 1) {
+    const current = connection.feed(Uint8Array.of(0x78))
+    if (shared === undefined) shared = current
+    else assert.equal(current, shared)
+  }
+  await shared
+  assert.equal(copied, MAX_JSONL_LINE)
+  await assert.rejects(connection.feed(Uint8Array.of(0x78)), error => (
+    errorCode(error) === 'stdout_line_too_large'
+  ))
 })
 
 test('end fans the same transport-lost error to all active waiters exactly once', async () => {
