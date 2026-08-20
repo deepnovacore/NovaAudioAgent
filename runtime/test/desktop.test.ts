@@ -6,6 +6,8 @@ import { WebSocket, type RawData } from 'ws'
 import {
   DesktopProtocolError,
   MAX_DESKTOP_JSON_BYTES,
+  MAX_DESKTOP_OUTBOUND_BINARY_BYTES,
+  MAX_DESKTOP_PENDING_SENDS,
   MAX_DESKTOP_PCM_BYTES,
   NodeDesktopServer,
   announceReadiness,
@@ -19,6 +21,11 @@ const TOKEN = '0123456789abcdef0123456789abcdef'
 interface CloseVerdict {
   readonly code: number
   readonly reason: string
+}
+
+interface ReceivedFrame {
+  readonly binary: boolean
+  readonly bytes: Uint8Array
 }
 
 function text(data: RawData): string {
@@ -78,6 +85,54 @@ async function closeClient(socket: WebSocket): Promise<void> {
   const closed = waitForClose(socket)
   if (socket.readyState < WebSocket.CLOSING) socket.close(1000)
   await closed
+}
+
+function settleWithin<T>(label: string, promise: Promise<T>, timeoutMs = 1_000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} did not settle in time`)), timeoutMs)
+    void promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      error => {
+        clearTimeout(timer)
+        reject(error instanceof Error ? error : new Error(`${label} rejected`))
+      },
+    )
+  })
+}
+
+function nextFrames(socket: WebSocket, count: number): Promise<readonly ReceivedFrame[]> {
+  return new Promise((resolve, reject) => {
+    const frames: ReceivedFrame[] = []
+    const onMessage = (data: RawData, isBinary: boolean): void => {
+      const bytes = Buffer.isBuffer(data)
+        ? new Uint8Array(data)
+        : new Uint8Array(Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]))
+      frames.push({binary: isBinary, bytes})
+      if (frames.length === count) {
+        cleanup()
+        resolve(frames)
+      }
+    }
+    const onClose = (): void => {
+      cleanup()
+      reject(new Error('desktop socket closed before all frames arrived'))
+    }
+    const cleanup = (): void => {
+      socket.off('message', onMessage)
+      socket.off('close', onClose)
+    }
+    socket.on('message', onMessage)
+    socket.once('close', onClose)
+  })
+}
+
+async function authenticate(socket: WebSocket, bootstrapCount = 2): Promise<void> {
+  const bootstrap = nextFrames(socket, bootstrapCount)
+  socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
+  await settleWithin('desktop authentication bootstrap', bootstrap)
 }
 
 test('desktop parsers validate credentials without echoing them', () => {
@@ -291,6 +346,193 @@ test('a renderer that disconnects can reconnect to the same live runtime', async
       '{"type":"codex.state","state":"idle"}',
     ])
     await closeClient(second)
+  } finally {
+    await server.close()
+  }
+})
+
+test('desktop outbound sends fail closed before authentication and after disconnect', async () => {
+  let observeDisconnect: (() => void) | undefined
+  const disconnected = new Promise<void>(resolve => { observeDisconnect = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onClientDisconnect: () => observeDisconnect?.(),
+  })
+  const readiness = await server.start()
+  const socket = await connect(readiness.port)
+
+  try {
+    await assert.rejects(
+      server.sendText('{"type":"before-auth"}'),
+      error => error instanceof DesktopProtocolError && !error.message.includes('before-auth'),
+    )
+    await authenticate(socket)
+    await closeClient(socket)
+    await settleWithin('server observes desktop disconnect', disconnected)
+    await assert.rejects(
+      server.sendBinary(new Uint8Array([9, 8, 7])),
+      error => error instanceof DesktopProtocolError,
+    )
+  } finally {
+    await server.close()
+  }
+})
+
+test('desktop outbound writer preserves accepted text and binary frame order', async () => {
+  const server = new NodeDesktopServer({token: TOKEN})
+  const readiness = await server.start()
+  const socket = await connect(readiness.port)
+
+  try {
+    await authenticate(socket)
+    const received = nextFrames(socket, 3)
+    await Promise.all([
+      server.sendText('{"type":"outbound.one"}'),
+      server.sendBinary(new Uint8Array([0, 255, 3, 128])),
+      server.sendText('{"type":"outbound.two"}'),
+    ])
+    const frames = await settleWithin('ordered desktop outbound frames', received)
+    assert.deepEqual(frames.map(frame => ({
+      binary: frame.binary,
+      bytes: [...frame.bytes],
+    })), [
+      {binary: false, bytes: [...Buffer.from('{"type":"outbound.one"}', 'utf8')]},
+      {binary: true, bytes: [0, 255, 3, 128]},
+      {binary: false, bytes: [...Buffer.from('{"type":"outbound.two"}', 'utf8')]},
+    ])
+  } finally {
+    await closeClient(socket)
+    await server.close()
+  }
+})
+
+test('configured bootstrap frames precede the authenticated notification', async () => {
+  let authenticatedNotifications = 0
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    bootstrapTextFrames: ['{"type":"desktop.ready"}'],
+    onClientAuthenticated: async () => {
+      authenticatedNotifications += 1
+      await server.sendText('{"type":"desktop.authenticated"}')
+    },
+  })
+  const readiness = await server.start()
+  const socket = await connect(readiness.port)
+
+  try {
+    const received = nextFrames(socket, 2)
+    socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
+    const frames = await settleWithin('configured bootstrap and authentication notification', received)
+    assert.equal(authenticatedNotifications, 1)
+    assert.deepEqual(frames.map(frame => text(Buffer.from(frame.bytes))), [
+      '{"type":"desktop.ready"}',
+      '{"type":"desktop.authenticated"}',
+    ])
+  } finally {
+    await closeClient(socket)
+    await server.close()
+  }
+})
+
+test('desktop outbound applies size and pending-send bounds', async () => {
+  const server = new NodeDesktopServer({token: TOKEN})
+  const readiness = await server.start()
+  const socket = await connect(readiness.port)
+
+  try {
+    await authenticate(socket)
+    const delivered = nextFrames(socket, MAX_DESKTOP_PENDING_SENDS)
+    const pending = Array.from({length: MAX_DESKTOP_PENDING_SENDS}, (_, index) =>
+      server.sendText(`{"type":"pending","index":${index}}`),
+    )
+    await assert.rejects(
+      server.sendText('{"type":"pending","index":128}'),
+      error => error instanceof DesktopProtocolError,
+    )
+    await Promise.all(pending)
+    await settleWithin('bounded pending desktop sends', delivered)
+    await assert.rejects(
+      server.sendText('x'.repeat(MAX_DESKTOP_JSON_BYTES + 1)),
+      error => error instanceof DesktopProtocolError,
+    )
+    await assert.rejects(
+      server.sendBinary(new Uint8Array(MAX_DESKTOP_OUTBOUND_BINARY_BYTES + 1)),
+      error => error instanceof DesktopProtocolError,
+    )
+  } finally {
+    await closeClient(socket)
+    await server.close()
+  }
+})
+
+test('a failed desktop outbound send releases only that socket and notifies once', async () => {
+  let disconnects = 0
+  let observeDisconnect: (() => void) | undefined
+  const disconnected = new Promise<void>(resolve => { observeDisconnect = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onClientDisconnect: () => {
+      disconnects += 1
+      observeDisconnect?.()
+    },
+  })
+  const readiness = await server.start()
+  const socket = await connect(readiness.port)
+
+  try {
+    await authenticate(socket)
+    const sending = server.sendBinary(
+      new Uint8Array(MAX_DESKTOP_OUTBOUND_BINARY_BYTES),
+    )
+    socket.terminate()
+    await assert.rejects(
+      settleWithin('failed desktop outbound send', sending),
+      error => error instanceof DesktopProtocolError,
+    )
+    await settleWithin('failed send disconnect notification', disconnected)
+    assert.equal(disconnects, 1)
+  } finally {
+    await server.close()
+  }
+})
+
+test('desktop outbound uses a fresh authenticated socket after reconnect', async () => {
+  let disconnects = 0
+  let observeFirstDisconnect: (() => void) | undefined
+  const firstDisconnected = new Promise<void>(resolve => { observeFirstDisconnect = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onClientDisconnect: () => {
+      disconnects += 1
+      if (disconnects === 1) observeFirstDisconnect?.()
+    },
+  })
+  const readiness = await server.start()
+
+  try {
+    const first = await connect(readiness.port)
+    await authenticate(first)
+    const firstMessage = nextFrames(first, 1)
+    await server.sendText('{"type":"first-connection"}')
+    const firstFrames = await settleWithin('first outbound send', firstMessage)
+    assert.equal(firstFrames.length, 1)
+    assert.equal(text(Buffer.from(firstFrames[0]!.bytes)),
+      '{"type":"first-connection"}')
+    await closeClient(first)
+    await settleWithin('first server disconnect', firstDisconnected)
+
+    const second = await connect(readiness.port)
+    try {
+      await authenticate(second)
+      const secondMessage = nextFrames(second, 1)
+      await server.sendText('{"type":"second-connection"}')
+      const secondFrames = await settleWithin('second outbound send', secondMessage)
+      assert.equal(secondFrames.length, 1)
+      assert.equal(text(Buffer.from(secondFrames[0]!.bytes)),
+        '{"type":"second-connection"}')
+    } finally {
+      await closeClient(second)
+    }
   } finally {
     await server.close()
   }

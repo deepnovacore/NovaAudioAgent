@@ -5,6 +5,8 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024
+export const MAX_DESKTOP_OUTBOUND_BINARY_BYTES = 8 * 1024 * 1024
+export const MAX_DESKTOP_PENDING_SENDS = 128
 export const DESKTOP_AUTH_TIMEOUT_MS = 3_000
 export const DESKTOP_CLOSE_GRACE_MS = 500
 export const DESKTOP_READY_TIMEOUT_MS = 5_000
@@ -18,6 +20,10 @@ const helloSchema = z.object({
   type: z.literal('hello'),
   token: z.string(),
 })
+const DEFAULT_BOOTSTRAP_TEXT_FRAMES = [
+  '{"type":"desktop.ready"}',
+  '{"type":"codex.state","state":"idle"}',
+] as const
 
 export const desktopControlSchema = z.discriminatedUnion('type', [
   z.object({
@@ -64,6 +70,8 @@ export interface DesktopServerOptions {
   readonly onControl?: (control: DesktopControl) => void | Promise<void>
   readonly onAudio?: (pcm: Uint8Array) => void | Promise<void>
   readonly onClientDisconnect?: () => void
+  readonly onClientAuthenticated?: () => void | Promise<void>
+  readonly bootstrapTextFrames?: readonly string[]
   readonly authTimeoutMs?: number
   readonly closeGraceMs?: number
 }
@@ -78,6 +86,11 @@ export class NodeDesktopServer {
   readonly #options: DesktopServerOptions
   #server: WebSocketServer | undefined
   #active: WebSocket | undefined
+  #authenticated = false
+  readonly #pendingSends: PendingDesktopSend[] = []
+  #currentSend: PendingDesktopSend | undefined
+  #writerRunning = false
+  #pendingSendCount = 0
   #stopping = false
   #closing: Promise<void> | undefined
 
@@ -91,7 +104,26 @@ export class NodeDesktopServer {
     if (!Number.isFinite(closeGrace) || closeGrace <= 0) {
       throw new DesktopProtocolError('desktop close grace is invalid')
     }
-    this.#options = {...options, authTimeoutMs: timeout, closeGraceMs: closeGrace}
+    this.#options = {
+      ...options,
+      authTimeoutMs: timeout,
+      closeGraceMs: closeGrace,
+      bootstrapTextFrames: copyBootstrapTextFrames(options.bootstrapTextFrames),
+    }
+  }
+
+  async sendText(raw: string): Promise<void> {
+    if (!this.#canSend()) throw outboundUnavailableError()
+    validateOutboundText(raw)
+    return this.#enqueueSend(this.#active!, raw)
+  }
+
+  async sendBinary(raw: Uint8Array): Promise<void> {
+    if (!this.#canSend()) throw outboundUnavailableError()
+    validateOutboundBinary(raw)
+    // The caller may reuse its buffer after the Promise is returned. The queued
+    // frame must remain exactly the bytes accepted at this boundary.
+    return this.#enqueueSend(this.#active!, new Uint8Array(raw))
   }
 
   async start(): Promise<DesktopReadiness> {
@@ -168,9 +200,12 @@ export class NodeDesktopServer {
           if (isBinary) throw new DesktopProtocolError('desktop authentication frame must be text')
           authenticateDesktopFrame(rawText(data), this.#options.token)
           authenticated = true
+          this.#authenticated = true
           clearTimeout(authTimer)
-          socket.send('{"type":"desktop.ready"}')
-          socket.send('{"type":"codex.state","state":"idle"}')
+          for (const frame of this.#options.bootstrapTextFrames ?? []) {
+            await this.#enqueueSend(socket, frame)
+          }
+          await this.#options.onClientAuthenticated?.()
           return
         }
         if (isBinary) {
@@ -196,7 +231,94 @@ export class NodeDesktopServer {
   #notifyDisconnected(socket: WebSocket | undefined): void {
     if (socket === undefined || this.#active !== socket) return
     this.#active = undefined
+    this.#authenticated = false
+    this.#rejectSocketSends(socket, outboundUnavailableError())
     this.#options.onClientDisconnect?.()
+  }
+
+  #canSend(): boolean {
+    return !this.#stopping && this.#active !== undefined && this.#authenticated
+  }
+
+  #enqueueSend(socket: WebSocket, raw: string | Uint8Array): Promise<void> {
+    if (this.#pendingSendCount >= MAX_DESKTOP_PENDING_SENDS) {
+      return Promise.reject(new DesktopProtocolError('desktop outbound send queue is full'))
+    }
+    this.#pendingSendCount += 1
+    const pending = new PendingDesktopSend(socket, raw)
+    this.#pendingSends.push(pending)
+    void this.#drainSends()
+    return pending.promise
+  }
+
+  async #drainSends(): Promise<void> {
+    if (this.#writerRunning) return
+    this.#writerRunning = true
+    try {
+      while (this.#pendingSends.length > 0) {
+        const pending = this.#pendingSends.shift()!
+        this.#currentSend = pending
+        if (this.#active !== pending.socket || !this.#authenticated || this.#stopping) {
+          this.#settleSend(pending, outboundUnavailableError())
+          this.#currentSend = undefined
+          continue
+        }
+        try {
+          await sendWebSocketFrame(pending.socket, pending.raw)
+          this.#settleSend(pending)
+        } catch {
+          this.#settleSend(pending, new DesktopProtocolError('desktop outbound send failed'))
+          this.#closeFailedSocket(pending.socket)
+        }
+        this.#currentSend = undefined
+      }
+    } finally {
+      this.#writerRunning = false
+      if (this.#pendingSends.length > 0) void this.#drainSends()
+    }
+  }
+
+  #settleSend(pending: PendingDesktopSend, error?: DesktopProtocolError): void {
+    if (pending.settled) return
+    pending.settled = true
+    this.#pendingSendCount -= 1
+    if (error === undefined) pending.resolve()
+    else pending.reject(error)
+  }
+
+  #rejectSocketSends(socket: WebSocket, error: DesktopProtocolError): void {
+    if (this.#currentSend?.socket === socket) this.#settleSend(this.#currentSend, error)
+    for (const pending of this.#pendingSends) {
+      if (pending.socket === socket) this.#settleSend(pending, error)
+    }
+  }
+
+  #closeFailedSocket(socket: WebSocket): void {
+    this.#notifyDisconnected(socket)
+    if (socket.readyState < WebSocket.CLOSING) {
+      socket.close(4003, 'desktop protocol rejected')
+    }
+  }
+}
+
+class PendingDesktopSend {
+  readonly promise: Promise<void>
+  settled = false
+  readonly resolve: () => void
+  readonly reject: (error: DesktopProtocolError) => void
+
+  constructor(
+    readonly socket: WebSocket,
+    readonly raw: string | Uint8Array,
+  ) {
+    let resolve: (() => void) | undefined
+    let reject: ((error: DesktopProtocolError) => void) | undefined
+    this.promise = new Promise<void>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve
+      reject = promiseReject
+    })
+    this.resolve = resolve as () => void
+    this.reject = reject as (error: DesktopProtocolError) => void
   }
 }
 
@@ -204,6 +326,43 @@ export function validateDesktopToken(token: string): void {
   if (!tokenPattern.test(token)) {
     throw new DesktopProtocolError('desktop token must be 128-bit lowercase hexadecimal')
   }
+}
+
+function copyBootstrapTextFrames(frames: readonly string[] | undefined): readonly string[] {
+  const copied = [...(frames ?? DEFAULT_BOOTSTRAP_TEXT_FRAMES)]
+  for (const frame of copied) validateOutboundText(frame, 'desktop bootstrap frame')
+  return copied
+}
+
+function validateOutboundText(raw: string, label = 'desktop outbound text frame'): void {
+  if (typeof raw !== 'string') {
+    throw new DesktopProtocolError(`${label} is invalid`)
+  }
+  if (Buffer.byteLength(raw, 'utf8') > MAX_DESKTOP_JSON_BYTES) {
+    throw new DesktopProtocolError(`${label} is too large`)
+  }
+}
+
+function validateOutboundBinary(raw: Uint8Array): void {
+  if (!(raw instanceof Uint8Array)) {
+    throw new DesktopProtocolError('desktop outbound binary frame is invalid')
+  }
+  if (raw.byteLength > MAX_DESKTOP_OUTBOUND_BINARY_BYTES) {
+    throw new DesktopProtocolError('desktop outbound binary frame is too large')
+  }
+}
+
+function outboundUnavailableError(): DesktopProtocolError {
+  return new DesktopProtocolError('desktop outbound send is unavailable')
+}
+
+function sendWebSocketFrame(socket: WebSocket, raw: string | Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => {
+    socket.send(raw, {binary: typeof raw !== 'string'}, error => {
+      if (error == null) resolve()
+      else reject(error)
+    })
+  })
 }
 
 export function authenticateDesktopFrame(raw: string, expectedToken: string): void {
