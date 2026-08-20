@@ -289,6 +289,55 @@ test('incremental framing handles split and coalesced lines and forwards safe no
   assert.deepEqual(await request, {ok: true})
 })
 
+test('a feed arriving in the drain-finalizer window is routed before its shared promise settles', async () => {
+  const notifications: unknown[] = []
+  const connection = new JsonRpcConnection({
+    write: () => Promise.resolve(),
+    onNotification: value => { notifications.push(value) },
+  })
+  const first = connection.feed(encoder.encode('{"method":"future"'))
+  let second: Promise<void> | undefined
+  queueMicrotask(() => {
+    second = connection.feed(encoder.encode('}\n'))
+  })
+  await first
+  assert.equal(second, first)
+  await second
+  assert.deepEqual(notifications, [{method: 'future', params: {}}])
+  assert.equal(connection.end(), undefined)
+})
+
+test('raw feed input rejects Proxy and non-Uint8 views without invoking private traps', async () => {
+  let trapReads = 0
+  const proxied = new Proxy(new Uint8Array([0x0a]), {
+    get: () => {
+      trapReads += 1
+      throw new Error('PRIVATE BYTE TRAP')
+    },
+  })
+  for (const input of [proxied, new Uint16Array([0x0a]), new DataView(new ArrayBuffer(1))]) {
+    const connection = new JsonRpcConnection({write: () => Promise.resolve()})
+    const failure = await connection.feed(input as never).catch((error: unknown) => error)
+    assert.equal(errorCode(failure), 'malformed_jsonl')
+    assert.equal(String(failure).includes('PRIVATE'), false)
+  }
+  assert.equal(trapReads, 0)
+
+  let ownGetterReads = 0
+  const hostile = new Uint8Array([0x0a])
+  Object.defineProperty(hostile, 'byteLength', {
+    get: () => {
+      ownGetterReads += 1
+      throw new Error('PRIVATE BYTE LENGTH')
+    },
+  })
+  const connection = new JsonRpcConnection({write: () => Promise.resolve()})
+  const failure = await connection.feed(hostile).catch((error: unknown) => error)
+  assert.equal(errorCode(failure), 'malformed_jsonl')
+  assert.equal(String(failure).includes('PRIVATE'), false)
+  assert.equal(ownGetterReads, 1)
+})
+
 test('server requests are observed by method only and refused with the fixed error', async () => {
   const writes: Uint8Array[] = []
   const methods: string[] = []
@@ -413,9 +462,11 @@ test('aggregate overflow routes every earlier complete response independent of f
 })
 
 test('single-byte feeds share one bounded linear-copy drain up to the exact line limit', async () => {
+  let allocated = 0
   let copied = 0
   const options = {
     write: () => Promise.resolve(),
+    onBufferAllocate: (bytes: number) => { allocated += bytes },
     onBufferCopy: (bytes: number) => { copied += bytes },
   }
   const connection = new JsonRpcConnection(options)
@@ -426,10 +477,28 @@ test('single-byte feeds share one bounded linear-copy drain up to the exact line
     else assert.equal(current, shared)
   }
   await shared
-  assert.equal(copied, MAX_JSONL_LINE)
+  assert.equal(copied, MAX_JSONL_LINE * 2)
+  assert.ok(allocated <= MAX_JSONL_LINE * 2)
   await assert.rejects(connection.feed(Uint8Array.of(0x78)), error => (
     errorCode(error) === 'stdout_line_too_large'
   ))
+})
+
+test('sequential awaited one-byte feeds retain one bounded line buffer and one reusable slab', async () => {
+  const line = paddedNotificationLine(8192)
+  let allocated = 0
+  let copied = 0
+  const notifications: unknown[] = []
+  const connection = new JsonRpcConnection({
+    write: () => Promise.resolve(),
+    onBufferAllocate: bytes => { allocated += bytes },
+    onBufferCopy: bytes => { copied += bytes },
+    onNotification: value => { notifications.push(value) },
+  })
+  for (const byte of line) await connection.feed(Uint8Array.of(byte))
+  assert.equal(copied, line.byteLength * 2)
+  assert.ok(allocated <= MAX_JSONL_LINE + 4096)
+  assert.equal(notifications.length, 1)
 })
 
 test('end fans the same transport-lost error to all active waiters exactly once', async () => {

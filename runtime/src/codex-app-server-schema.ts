@@ -337,8 +337,9 @@ function exactStringRecord(
   expected: Readonly<Record<string, string>>,
 ): boolean {
   const keys = Object.keys(value)
-  return keys.length === Object.keys(expected).length
-    && Object.keys(expected).every(key => value[key] === expected[key])
+  const expectedKeys = Object.keys(expected)
+  return keys.length === expectedKeys.length
+    && expectedKeys.every(key => Object.hasOwn(value, key) && value[key] === expected[key])
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

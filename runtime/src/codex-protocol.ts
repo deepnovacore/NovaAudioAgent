@@ -30,6 +30,7 @@ export class AppServerRequestRejected extends CodexProtocolError {
 
 export interface JsonRpcConnectionOptions {
   readonly write: (bytes: Uint8Array) => Promise<void>
+  readonly onBufferAllocate?: (bytes: number) => void
   readonly onBufferCopy?: (bytes: number) => void
   readonly onNotification?: (notification: {
     readonly method: string
@@ -53,18 +54,24 @@ interface PendingRequest {
 
 const encoder = new TextEncoder()
 const fatalDecoder = new TextDecoder('utf-8', {fatal: true})
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object
+const typedArrayTag = Reflect.get(
+  Object.getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag) ?? {},
+  'get',
+) as ((this: unknown) => unknown) | undefined
 
 export class JsonRpcConnection {
   readonly #write: (bytes: Uint8Array) => Promise<void>
   readonly #onNotification: JsonRpcConnectionOptions['onNotification']
   readonly #onServerRequest: JsonRpcConnectionOptions['onServerRequest']
+  readonly #onBufferAllocate: JsonRpcConnectionOptions['onBufferAllocate']
   readonly #onBufferCopy: JsonRpcConnectionOptions['onBufferCopy']
   readonly #pending = new Map<number, PendingRequest>()
-  readonly #input = new SegmentedByteQueue(bytes => { this.#noteBufferCopy(bytes) })
+  readonly #input: SegmentedByteQueue
+  readonly #lineBuffer: Uint8Array
   #nextId = 0
   #writer = Promise.resolve()
   #drainPromise: Promise<void> | undefined
-  #lineSegments: Uint8Array[] = []
   #lineBytes = 0
   #stdoutBytes = 0
   #failure: CodexProtocolError | undefined
@@ -74,7 +81,14 @@ export class JsonRpcConnection {
     this.#write = options.write
     this.#onNotification = options.onNotification
     this.#onServerRequest = options.onServerRequest
+    this.#onBufferAllocate = options.onBufferAllocate
     this.#onBufferCopy = options.onBufferCopy
+    this.#lineBuffer = new Uint8Array(MAX_JSONL_LINE)
+    this.#noteBufferAllocate(MAX_JSONL_LINE)
+    this.#input = new SegmentedByteQueue(
+      bytes => { this.#noteBufferAllocate(bytes) },
+      bytes => { this.#noteBufferCopy(bytes) },
+    )
   }
 
   get pendingRequestIds(): readonly number[] {
@@ -155,22 +169,18 @@ export class JsonRpcConnection {
     try {
       this.#raiseIfFailed()
       if (this.#ended) throw this.#failure ?? new CodexProtocolError('transport_lost')
-      if (!(chunk instanceof Uint8Array)) throw this.#poison(new CodexProtocolError('malformed_jsonl'))
+      if (!isUint8Array(chunk)) throw this.#poison(new CodexProtocolError('malformed_jsonl'))
       const capacity = Math.max(0, MAX_STDOUT + 1 - this.#stdoutBytes - this.#input.byteLength)
       this.#input.append(chunk, capacity)
       if (this.#drainPromise !== undefined) return this.#drainPromise
-      const operation = Promise.resolve().then(async () => { await this.#drainInput() })
-      const guarded = operation.catch((error: unknown) => {
-        if (error instanceof CodexProtocolError) throw this.#poison(error)
-        throw this.#poison(new CodexProtocolError('stream_failure'))
-      })
-      const shared = guarded.finally(() => {
-        if (this.#drainPromise === shared) this.#drainPromise = undefined
-      })
+      const shared = Promise.resolve().then(async () => { await this.#ownInputDrain() })
       this.#drainPromise = shared
       return shared
     } catch (error) {
-      return Promise.reject(error instanceof Error ? error : new CodexProtocolError('stream_failure'))
+      const failure = error instanceof CodexProtocolError
+        ? this.#poison(error)
+        : this.#poison(new CodexProtocolError('malformed_jsonl'))
+      return Promise.reject(failure)
     }
   }
 
@@ -270,21 +280,39 @@ export class JsonRpcConnection {
         MAX_STDOUT - this.#stdoutBytes,
         MAX_JSONL_LINE - this.#lineBytes,
       ))
-      this.#lineSegments.push(next.bytes)
+      this.#lineBuffer.set(next.bytes, this.#lineBytes)
+      this.#noteBufferCopy(next.bytes.byteLength)
       this.#lineBytes += next.bytes.byteLength
       this.#stdoutBytes += next.bytes.byteLength
       if (!next.endsLine) continue
-      const line = joinSegments(this.#lineSegments, this.#lineBytes)
-      this.#noteBufferCopy(this.#lineBytes)
-      this.#lineSegments = []
+      const message = decodeMessage(this.#lineBuffer.subarray(0, this.#lineBytes))
       this.#lineBytes = 0
-      await this.#route(decodeMessage(line))
+      await this.#route(message)
+    }
+  }
+
+  async #ownInputDrain(): Promise<void> {
+    try {
+      while (this.#input.byteLength > 0) await this.#drainInput()
+    } catch (error) {
+      if (error instanceof CodexProtocolError) throw this.#poison(error)
+      throw this.#poison(new CodexProtocolError('stream_failure'))
+    } finally {
+      this.#drainPromise = undefined
     }
   }
 
   #noteBufferCopy(bytes: number): void {
     try {
       this.#onBufferCopy?.(bytes)
+    } catch {
+      // Diagnostics cannot own protocol state.
+    }
+  }
+
+  #noteBufferAllocate(bytes: number): void {
+    try {
+      this.#onBufferAllocate?.(bytes)
     } catch {
       // Diagnostics cannot own protocol state.
     }
@@ -370,6 +398,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null
 }
 
+function isUint8Array(value: unknown): value is Uint8Array {
+  if (!ArrayBuffer.isView(value) || typedArrayTag === undefined) return false
+  try {
+    return Reflect.apply(typedArrayTag, value, []) === 'Uint8Array'
+  } catch {
+    return false
+  }
+}
+
 
 const INPUT_SLAB_BYTES = 4096
 
@@ -380,12 +417,14 @@ interface InputSlab {
 }
 
 class SegmentedByteQueue {
+  readonly #onAllocate: (bytes: number) => void
   readonly #onCopy: (bytes: number) => void
   #slabs: InputSlab[] = []
   #head = 0
   #byteLength = 0
 
-  constructor(onCopy: (bytes: number) => void) {
+  constructor(onAllocate: (bytes: number) => void, onCopy: (bytes: number) => void) {
+    this.#onAllocate = onAllocate
     this.#onCopy = onCopy
   }
 
@@ -400,6 +439,7 @@ class SegmentedByteQueue {
       let tail = this.#slabs.at(-1)
       if (tail === undefined || tail.used === tail.bytes.byteLength) {
         tail = {bytes: new Uint8Array(INPUT_SLAB_BYTES), read: 0, used: 0}
+        this.#onAllocate(INPUT_SLAB_BYTES)
         this.#slabs.push(tail)
       }
       const count = Math.min(accepted - offset, tail.bytes.byteLength - tail.used)
@@ -424,22 +464,14 @@ class SegmentedByteQueue {
     if (slab.read === slab.used) {
       this.#head += 1
       if (this.#byteLength === 0) {
-        this.#slabs = []
+        slab.read = 0
+        slab.used = 0
+        this.#slabs = [slab]
         this.#head = 0
       }
     }
     return {bytes, endsLine: newline >= 0}
   }
-}
-
-function joinSegments(segments: readonly Uint8Array[], size: number): Uint8Array<ArrayBuffer> {
-  const result = new Uint8Array(size)
-  let offset = 0
-  for (const segment of segments) {
-    result.set(segment, offset)
-    offset += segment.byteLength
-  }
-  return result
 }
 
 function abortError(): Error {

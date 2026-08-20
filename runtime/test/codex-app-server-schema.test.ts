@@ -433,6 +433,25 @@ test('workspace roots require the exact expected key set even when an extra valu
   }), expectCode('config_not_isolated'))
 })
 
+test('workspace roots require own keys even when Object prototype supplies the missing key', () => {
+  Object.defineProperty(Object.prototype, '.codex', {
+    value: 'read', enumerable: false, configurable: true, writable: true,
+  })
+  try {
+    const value = effectiveConfig()
+    const roots = nested(
+      value, 'config', 'permissions', 'nova_audio_agent', 'filesystem', ':workspace_roots',
+    )
+    delete roots['.codex']
+    roots.evil = 'read'
+    assert.throws(() => validateEffectiveCodexConfig(value, '/workspace', {
+      allowReplacementInstructions: false,
+    }), expectCode('config_not_isolated'))
+  } finally {
+    delete (Object.prototype as Record<string, unknown>)['.codex']
+  }
+})
+
 test('replacement instructions require the explicit opt-in and change only the report verdict', () => {
   const value = effectiveConfig()
   nested(value, 'config').model_instructions_file = '/host/selected/instructions.md'
