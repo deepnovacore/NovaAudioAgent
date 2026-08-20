@@ -242,6 +242,39 @@ be stopped from out here. And `close` waits with a bounded grace period, logging
 
 Both were verified by reverting each fix and watching a named test go red.
 
+### Stage 3, Search: three parser divergences and one chain gap
+
+Search is the first Stage 3 executor. Everything it returns is `untrusted_external` and reaches the
+model as evidence, so both pinned surfaces -- URL canonicalization and the evidence-ref digests -- are
+contract-visible rather than internal.
+
+The golden found four divergences on its first run:
+
+- **`https:///a`** parses as host `a` under WHATWG and as no host at all in the oracle.
+- **`https://@good.com/`** carries an *empty* userinfo, which WHATWG discards and the oracle refuses.
+- **`https://example.com`** comes back from WHATWG with a path (`.../`), which the oracle does not add.
+- **An IPv6 `source_label`** kept its brackets; the oracle's `hostname` reports the address without
+  them.
+
+The first three are now read from the *source text* before any parser sees it, because each repair is a
+URL whose meaning the code would be choosing on the model's behalf.
+
+A fifth was my own design error rather than a parser difference. The digest rendered numbers by
+guessing from the field name -- `rank` as an int, everything else as a float. Correct for the two real
+shapes and wrong for any other, which is the kind of rule that is right until it silently is not. Each
+digest field now declares its JSON spelling at the call site, where the type is actually known.
+
+**A chain gap, not a local one.** Python's `isinstance(k, int)` refuses a `k` that arrived as the JSON
+float `3.0`; JavaScript cannot tell it from `3` once parsed. The literal is only visible where the
+provider's tool-call arguments are parsed, several layers above this adapter -- the same class of
+problem the desktop wire solved with a reviver, and the same fix would apply there. Recorded rather
+than patched locally, because a check inside the adapter would be guarding a value that has already
+lost the distinction. A Node test states the current behaviour so it is not mistaken for parity.
+
+Coverage: 38 of 40 mutations detected, over 117 golden cases and 17 Node tests. The two survivors are
+the parsed-userinfo and hostname checks, each redundant with a source-text check that runs first --
+verified by removing *both* halves of the userinfo pair and watching three cases go red.
+
 ### Retracted: the continuation sweep in commit 03d9843 was not measured
 
 That commit claims "twenty-one mutations swept, twenty-one detected". The claim is void. The sweep

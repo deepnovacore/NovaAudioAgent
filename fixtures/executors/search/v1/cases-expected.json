@@ -1,0 +1,862 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "url-plain-https",
+      "url": "https://example.com/a"
+    },
+    {
+      "name": "url-plain-http",
+      "url": "http://example.com/a"
+    },
+    {
+      "name": "url-with-query",
+      "url": "https://example.com/a?b=1&c=2"
+    },
+    {
+      "name": "url-fragment-dropped",
+      "url": "https://example.com/a"
+    },
+    {
+      "name": "url-fragment-only",
+      "url": "https://example.com/a"
+    },
+    {
+      "name": "url-default-port-https",
+      "url": "https://example.com/a"
+    },
+    {
+      "name": "url-default-port-http",
+      "url": "http://example.com/a"
+    },
+    {
+      "name": "url-nondefault-port",
+      "url": "https://example.com:8443/a"
+    },
+    {
+      "name": "url-empty-path",
+      "url": "https://example.com"
+    },
+    {
+      "name": "url-trailing-slash",
+      "url": "https://example.com/"
+    },
+    {
+      "name": "url-uppercase-host",
+      "url": "https://example.com/a"
+    },
+    {
+      "name": "url-uppercase-path",
+      "url": "https://example.com/A/B"
+    },
+    {
+      "name": "url-percent-encoded",
+      "url": "https://example.com/a%20b"
+    },
+    {
+      "name": "url-unencoded-space-in-path",
+      "url": ""
+    },
+    {
+      "name": "url-idn-host",
+      "url": "https://xn--r8jz45g.jp/a"
+    },
+    {
+      "name": "url-punycode-host",
+      "url": "https://xn--r8jz45g.jp/a"
+    },
+    {
+      "name": "url-dot-segments",
+      "url": "https://example.com/a/c"
+    },
+    {
+      "name": "url-double-slash-path",
+      "url": "https://example.com//a"
+    },
+    {
+      "name": "url-ipv4-host",
+      "url": "https://192.0.2.1/a"
+    },
+    {
+      "name": "url-ipv6-host",
+      "url": "https://[2001:db8::1]/a"
+    },
+    {
+      "name": "url-cjk-query",
+      "url": "https://example.com/?q=%E7%A0%94%E7%A9%B6"
+    },
+    {
+      "name": "url-userinfo",
+      "url": ""
+    },
+    {
+      "name": "url-userinfo-with-password",
+      "url": ""
+    },
+    {
+      "name": "url-empty-userinfo",
+      "url": ""
+    },
+    {
+      "name": "url-scheme-ftp",
+      "url": ""
+    },
+    {
+      "name": "url-scheme-ws",
+      "url": ""
+    },
+    {
+      "name": "url-scheme-wss",
+      "url": ""
+    },
+    {
+      "name": "url-scheme-gopher",
+      "url": ""
+    },
+    {
+      "name": "url-scheme-mixed-case-https",
+      "url": "https://example.com/a"
+    },
+    {
+      "name": "url-scheme-mixed-case-http",
+      "url": "http://example.com/a"
+    },
+    {
+      "name": "url-wrong-scheme-file",
+      "url": ""
+    },
+    {
+      "name": "url-wrong-scheme-javascript",
+      "url": ""
+    },
+    {
+      "name": "url-wrong-scheme-data",
+      "url": ""
+    },
+    {
+      "name": "url-scheme-relative",
+      "url": ""
+    },
+    {
+      "name": "url-relative",
+      "url": ""
+    },
+    {
+      "name": "url-no-host",
+      "url": ""
+    },
+    {
+      "name": "url-empty",
+      "url": ""
+    },
+    {
+      "name": "url-not-a-string",
+      "url": ""
+    },
+    {
+      "name": "url-none",
+      "url": ""
+    },
+    {
+      "name": "url-too-long",
+      "url": ""
+    },
+    {
+      "name": "url-near-bound",
+      "url": "https://example.com/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "name": "url-at-bound",
+      "url": "https://example.com/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "name": "url-leading-space",
+      "url": ""
+    },
+    {
+      "name": "url-trailing-space",
+      "url": ""
+    },
+    {
+      "name": "url-interior-space",
+      "url": ""
+    },
+    {
+      "name": "url-tab",
+      "url": ""
+    },
+    {
+      "name": "url-newline",
+      "url": ""
+    },
+    {
+      "name": "url-nul",
+      "url": ""
+    },
+    {
+      "name": "url-zero-width",
+      "url": ""
+    },
+    {
+      "name": "url-bidi-override",
+      "url": ""
+    },
+    {
+      "name": "url-soft-hyphen",
+      "url": ""
+    },
+    {
+      "name": "url-backslash",
+      "url": ""
+    },
+    {
+      "name": "url-angle-open",
+      "url": ""
+    },
+    {
+      "name": "url-angle-close",
+      "url": ""
+    },
+    {
+      "name": "label-www",
+      "label": "example.com"
+    },
+    {
+      "name": "label-bare",
+      "label": "example.com"
+    },
+    {
+      "name": "label-subdomain",
+      "label": "news.example.com"
+    },
+    {
+      "name": "label-www-inside",
+      "label": "a.www.example.com"
+    },
+    {
+      "name": "label-wwwx",
+      "label": "wwwx.example.com"
+    },
+    {
+      "name": "label-punycode",
+      "label": "xn--r8jz45g.jp"
+    },
+    {
+      "name": "label-ipv6",
+      "label": "2001:db8::1"
+    },
+    {
+      "name": "req-valid",
+      "normalized": {
+        "query": "hello",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-k-min",
+      "normalized": {
+        "query": "hello",
+        "k": 1
+      }
+    },
+    {
+      "name": "req-k-max",
+      "normalized": {
+        "query": "hello",
+        "k": 5
+      }
+    },
+    {
+      "name": "req-k-zero",
+      "normalized": null
+    },
+    {
+      "name": "req-k-over",
+      "normalized": null
+    },
+    {
+      "name": "req-k-fractional",
+      "normalized": null
+    },
+    {
+      "name": "req-k-bool",
+      "normalized": null
+    },
+    {
+      "name": "req-k-string",
+      "normalized": null
+    },
+    {
+      "name": "req-query-padded",
+      "normalized": {
+        "query": "hello",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-query-blank",
+      "normalized": null
+    },
+    {
+      "name": "req-query-empty",
+      "normalized": null
+    },
+    {
+      "name": "req-query-number",
+      "normalized": null
+    },
+    {
+      "name": "req-query-at-bound",
+      "normalized": {
+        "query": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-query-over-bound",
+      "normalized": null
+    },
+    {
+      "name": "req-query-padded-to-bound",
+      "normalized": {
+        "query": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-extra-field",
+      "normalized": null
+    },
+    {
+      "name": "req-missing-k",
+      "normalized": null
+    },
+    {
+      "name": "req-missing-query",
+      "normalized": null
+    },
+    {
+      "name": "req-empty",
+      "normalized": null
+    },
+    {
+      "name": "digest-query-shape",
+      "digest": "4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+      "ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+    },
+    {
+      "name": "digest-whole-timestamp",
+      "digest": "2d8c043b4f2c92bdfefd7b5cfb52089aaf112a6b1a0756fdcd24e657f69867be",
+      "ref": "web.search://evidence/2d8c043b4f2c92bdfefd7b5cfb52089aaf112a6b1a0756fdcd24e657f69867be"
+    },
+    {
+      "name": "digest-fractional-timestamp",
+      "digest": "05aa34f22a4bfeda82e2be47595823b7da3537e95e4c7c73e150233108e9b2bf",
+      "ref": "web.search://evidence/05aa34f22a4bfeda82e2be47595823b7da3537e95e4c7c73e150233108e9b2bf"
+    },
+    {
+      "name": "digest-zero-timestamp",
+      "digest": "a9763c05a6a05160a20f7e0fbe59833d63c1f5fd7f8bd84fba24efc9413601d7",
+      "ref": "web.search://evidence/a9763c05a6a05160a20f7e0fbe59833d63c1f5fd7f8bd84fba24efc9413601d7"
+    },
+    {
+      "name": "digest-large-timestamp",
+      "digest": "e2b0042f526c7c8f28fa6775692fd92c4060efef4098b34e445417a26c1137b4",
+      "ref": "web.search://evidence/e2b0042f526c7c8f28fa6775692fd92c4060efef4098b34e445417a26c1137b4"
+    },
+    {
+      "name": "digest-small-timestamp",
+      "digest": "c8b8da7fdb3be1e04a30fa1e9ea79e9319a0da0f8e425891f0a4d327b98cf199",
+      "ref": "web.search://evidence/c8b8da7fdb3be1e04a30fa1e9ea79e9319a0da0f8e425891f0a4d327b98cf199"
+    },
+    {
+      "name": "digest-precise-timestamp",
+      "digest": "7a6b92cf5907bcc0e78cb0def3186480b031475b1780f4902fffe096175a460e",
+      "ref": "web.search://evidence/7a6b92cf5907bcc0e78cb0def3186480b031475b1780f4902fffe096175a460e"
+    },
+    {
+      "name": "digest-int-one",
+      "digest": "afbf9d0f3560b0fd7795e81c42a0a79ee6b6fc67e064f77826aee642cad28d91",
+      "ref": "web.search://evidence/afbf9d0f3560b0fd7795e81c42a0a79ee6b6fc67e064f77826aee642cad28d91"
+    },
+    {
+      "name": "digest-float-one",
+      "digest": "f3c8be97307d38261061fa08e74365e54a239cddb1d189f3bea18022adbe2f35",
+      "ref": "web.search://evidence/f3c8be97307d38261061fa08e74365e54a239cddb1d189f3bea18022adbe2f35"
+    },
+    {
+      "name": "digest-cjk",
+      "digest": "a1d24494d88945a6c3e31a4ab58b8749f12695d044912df11c2fb45a738e9bcb",
+      "ref": "web.search://evidence/a1d24494d88945a6c3e31a4ab58b8749f12695d044912df11c2fb45a738e9bcb"
+    },
+    {
+      "name": "digest-quotes",
+      "digest": "6bb013867dcadcc07c468d2217db1e39769ba3284d515a120eead410d2ad4f04",
+      "ref": "web.search://evidence/6bb013867dcadcc07c468d2217db1e39769ba3284d515a120eead410d2ad4f04"
+    },
+    {
+      "name": "digest-astral",
+      "digest": "0d23abd612a23efb861ee91268a5b9d2c52c5ce10a41784abf4a33d4470ef28e",
+      "ref": "web.search://evidence/0d23abd612a23efb861ee91268a5b9d2c52c5ce10a41784abf4a33d4470ef28e"
+    },
+    {
+      "name": "digest-key-order",
+      "digest": "e145110e712e3ed0a6b233551b27a90aa39b4c93ed67e111ba2002d16e5ed1fa",
+      "ref": "web.search://evidence/e145110e712e3ed0a6b233551b27a90aa39b4c93ed67e111ba2002d16e5ed1fa"
+    },
+    {
+      "name": "digest-key-order-unicode",
+      "digest": "00759359239160848768aff200a5794bb431994a77ccce7152cf1d5814936fd4",
+      "ref": "web.search://evidence/00759359239160848768aff200a5794bb431994a77ccce7152cf1d5814936fd4"
+    },
+    {
+      "name": "digest-empty",
+      "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "ref": "web.search://evidence/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "dispatch-ok",
+      "outcome": "ok",
+      "trust": "untrusted_external",
+      "content": {
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 1755123456.5,
+        "provider_request_id": "req-1",
+        "results": [
+          {
+            "rank": 1,
+            "title": "Example title",
+            "source_label": "example.com",
+            "snippet": "Example snippet body",
+            "canonical_url": "https://www.example.com/a",
+            "content_digest": "deff53b9b8af7726f32a6b59d199844bc93db502eff8ec0e063cc171ebfc540c",
+            "evidence_ref": "web.search://evidence/d723b22526f7f877b485f219878c4f2c094aaf9b72f594ed26acb28308a8d27c"
+          }
+        ]
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "web.search://evidence/d723b22526f7f877b485f219878c4f2c094aaf9b72f594ed26acb28308a8d27c"
+      ]
+    },
+    {
+      "name": "dispatch-ok-whole-timestamp",
+      "outcome": "ok",
+      "trust": "untrusted_external",
+      "content": {
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 1755123456.0,
+        "provider_request_id": "req-1",
+        "results": [
+          {
+            "rank": 1,
+            "title": "Example title",
+            "source_label": "example.com",
+            "snippet": "Example snippet body",
+            "canonical_url": "https://www.example.com/a",
+            "content_digest": "deff53b9b8af7726f32a6b59d199844bc93db502eff8ec0e063cc171ebfc540c",
+            "evidence_ref": "web.search://evidence/ee96aacc05e9ec6afc9a312098c8779100f892371a8d6463d8ff1a84c14a6f0b"
+          }
+        ]
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "web.search://evidence/ee96aacc05e9ec6afc9a312098c8779100f892371a8d6463d8ff1a84c14a6f0b"
+      ]
+    },
+    {
+      "name": "dispatch-ok-multiple",
+      "outcome": "ok",
+      "trust": "untrusted_external",
+      "content": {
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0,
+        "provider_request_id": null,
+        "results": [
+          {
+            "rank": 1,
+            "title": "Example title",
+            "source_label": "example.com",
+            "snippet": "Example snippet body",
+            "canonical_url": "https://www.example.com/a",
+            "content_digest": "deff53b9b8af7726f32a6b59d199844bc93db502eff8ec0e063cc171ebfc540c",
+            "evidence_ref": "web.search://evidence/8cb67006b401d481c0a59d72cf7b796cba97c52efef96512bf3beccb8316689b"
+          },
+          {
+            "rank": 2,
+            "title": "Second",
+            "source_label": "b.example.com",
+            "snippet": "Second body",
+            "canonical_url": "https://b.example.com/",
+            "content_digest": "9a465845beef4938158a4b8db696895bdf7dd66eb868fde53c4eedd034d03088",
+            "evidence_ref": "web.search://evidence/ed8a41adc79bdea614b9332b6147b50b4abea8b0f6dbd7fa281a606d9ca40059"
+          },
+          {
+            "rank": 3,
+            "title": "Third",
+            "source_label": "c.example.com",
+            "snippet": "Third body",
+            "canonical_url": "http://c.example.com/x?y=1",
+            "content_digest": "d086cd25e2a702198f8ba6601fb230c3ff699b1b3487d0a12b0b32230c9dc1bd",
+            "evidence_ref": "web.search://evidence/71a0111b39c2bef86cb4890fdbc8539cc452ffc403b092487fec12ecd6baf4ee"
+          }
+        ]
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "web.search://evidence/8cb67006b401d481c0a59d72cf7b796cba97c52efef96512bf3beccb8316689b",
+        "web.search://evidence/ed8a41adc79bdea614b9332b6147b50b4abea8b0f6dbd7fa281a606d9ca40059",
+        "web.search://evidence/71a0111b39c2bef86cb4890fdbc8539cc452ffc403b092487fec12ecd6baf4ee"
+      ]
+    },
+    {
+      "name": "dispatch-rank-gap",
+      "outcome": "ok",
+      "trust": "untrusted_external",
+      "content": {
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0,
+        "provider_request_id": null,
+        "results": [
+          {
+            "rank": 2,
+            "title": "Example title",
+            "source_label": "example.com",
+            "snippet": "Example snippet body",
+            "canonical_url": "https://www.example.com/a",
+            "content_digest": "deff53b9b8af7726f32a6b59d199844bc93db502eff8ec0e063cc171ebfc540c",
+            "evidence_ref": "web.search://evidence/84728b7f9584fec2f5ab6889bc3b638d47523b3483d3f38a5786753ca0aceb0b"
+          },
+          {
+            "rank": 4,
+            "title": "Fourth",
+            "source_label": "e.example.com",
+            "snippet": "Fourth body",
+            "canonical_url": "https://e.example.com/",
+            "content_digest": "92f37d3b07fe350ecde434d13a1a30d8ed9aa9aaf0cc654a5dbffd89071276fc",
+            "evidence_ref": "web.search://evidence/5266263f676640bbdf2668d6fd126f3c6f06f5f21f6bda0d626a98cf3ed19bb4"
+          }
+        ]
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "web.search://evidence/84728b7f9584fec2f5ab6889bc3b638d47523b3483d3f38a5786753ca0aceb0b",
+        "web.search://evidence/5266263f676640bbdf2668d6fd126f3c6f06f5f21f6bda0d626a98cf3ed19bb4"
+      ]
+    },
+    {
+      "name": "dispatch-truncates-to-k",
+      "outcome": "ok",
+      "trust": "untrusted_external",
+      "content": {
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0,
+        "provider_request_id": null,
+        "results": [
+          {
+            "rank": 1,
+            "title": "Example title",
+            "source_label": "example.com",
+            "snippet": "Example snippet body",
+            "canonical_url": "https://www.example.com/a",
+            "content_digest": "deff53b9b8af7726f32a6b59d199844bc93db502eff8ec0e063cc171ebfc540c",
+            "evidence_ref": "web.search://evidence/8cb67006b401d481c0a59d72cf7b796cba97c52efef96512bf3beccb8316689b"
+          },
+          {
+            "rank": 2,
+            "title": "Second",
+            "source_label": "b.example.com",
+            "snippet": "Second body",
+            "canonical_url": "https://b.example.com/",
+            "content_digest": "9a465845beef4938158a4b8db696895bdf7dd66eb868fde53c4eedd034d03088",
+            "evidence_ref": "web.search://evidence/ed8a41adc79bdea614b9332b6147b50b4abea8b0f6dbd7fa281a606d9ca40059"
+          }
+        ]
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "web.search://evidence/8cb67006b401d481c0a59d72cf7b796cba97c52efef96512bf3beccb8316689b",
+        "web.search://evidence/ed8a41adc79bdea614b9332b6147b50b4abea8b0f6dbd7fa281a606d9ca40059"
+      ]
+    },
+    {
+      "name": "dispatch-bounds-title-and-snippet",
+      "outcome": "ok",
+      "trust": "untrusted_external",
+      "content": {
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0,
+        "provider_request_id": null,
+        "results": [
+          {
+            "rank": 1,
+            "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+            "source_label": "example.com",
+            "snippet": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
+            "canonical_url": "https://example.com/",
+            "content_digest": "09b92207c5e6ef115d830561009a930de37dc6aff72d635c06952c66af726479",
+            "evidence_ref": "web.search://evidence/872a88c8dea9dca611870de27fd6c756427ac3ae6e424ba45f87cf7901c6574a"
+          }
+        ]
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "web.search://evidence/872a88c8dea9dca611870de27fd6c756427ac3ae6e424ba45f87cf7901c6574a"
+      ]
+    },
+    {
+      "name": "dispatch-no-results-key",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "empty_evidence",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-results-not-a-list",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "empty_evidence",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-all-results-unusable",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "empty_evidence",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-non-string-request-id",
+      "outcome": "ok",
+      "trust": "untrusted_external",
+      "content": {
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0,
+        "provider_request_id": null,
+        "results": [
+          {
+            "rank": 1,
+            "title": "Example title",
+            "source_label": "example.com",
+            "snippet": "Example snippet body",
+            "canonical_url": "https://www.example.com/a",
+            "content_digest": "deff53b9b8af7726f32a6b59d199844bc93db502eff8ec0e063cc171ebfc540c",
+            "evidence_ref": "web.search://evidence/8cb67006b401d481c0a59d72cf7b796cba97c52efef96512bf3beccb8316689b"
+          }
+        ]
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "web.search://evidence/8cb67006b401d481c0a59d72cf7b796cba97c52efef96512bf3beccb8316689b"
+      ]
+    },
+    {
+      "name": "dispatch-unknown-op",
+      "outcome": "failed",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "unknown_op",
+        "provider": "tavily"
+      },
+      "refs": []
+    },
+    {
+      "name": "dispatch-invalid-params",
+      "outcome": "failed",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "invalid_params",
+        "provider": "tavily"
+      },
+      "refs": []
+    },
+    {
+      "name": "dispatch-adapter-exception",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "adapter_exception",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-failure-authentication",
+      "outcome": "failed",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "authentication",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-failure-provider_rejected",
+      "outcome": "failed",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "provider_rejected",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-failure-rate_limited",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "rate_limited",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-failure-upstream",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "upstream",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-failure-timeout",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "timeout",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-failure-transport",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "transport",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-failure-redirect",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "redirect",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-failure-malformed_response",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "malformed_response",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    },
+    {
+      "name": "dispatch-failure-response_too_large",
+      "outcome": "unknown",
+      "trust": "untrusted_external",
+      "content": {
+        "error": "response_too_large",
+        "provider": "tavily",
+        "query": "hello",
+        "query_ref": "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1",
+        "fetched_at": 2.0
+      },
+      "refs": [
+        "web.search://query/4012a843e5cc2574be50685b06bf184063bac5979a43479da4d40bb55fea29f1"
+      ]
+    }
+  ]
+}

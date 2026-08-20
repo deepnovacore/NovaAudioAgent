@@ -1,0 +1,1044 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "url-plain-https",
+      "kind": "canonical_url",
+      "value": "https://example.com/a"
+    },
+    {
+      "name": "url-plain-http",
+      "kind": "canonical_url",
+      "value": "http://example.com/a"
+    },
+    {
+      "name": "url-with-query",
+      "kind": "canonical_url",
+      "value": "https://example.com/a?b=1&c=2"
+    },
+    {
+      "name": "url-fragment-dropped",
+      "kind": "canonical_url",
+      "value": "https://example.com/a#section"
+    },
+    {
+      "name": "url-fragment-only",
+      "kind": "canonical_url",
+      "value": "https://example.com/a#"
+    },
+    {
+      "name": "url-default-port-https",
+      "kind": "canonical_url",
+      "value": "https://example.com:443/a"
+    },
+    {
+      "name": "url-default-port-http",
+      "kind": "canonical_url",
+      "value": "http://example.com:80/a"
+    },
+    {
+      "name": "url-nondefault-port",
+      "kind": "canonical_url",
+      "value": "https://example.com:8443/a"
+    },
+    {
+      "name": "url-empty-path",
+      "kind": "canonical_url",
+      "value": "https://example.com"
+    },
+    {
+      "name": "url-trailing-slash",
+      "kind": "canonical_url",
+      "value": "https://example.com/"
+    },
+    {
+      "name": "url-uppercase-host",
+      "kind": "canonical_url",
+      "value": "https://EXAMPLE.COM/a"
+    },
+    {
+      "name": "url-uppercase-path",
+      "kind": "canonical_url",
+      "value": "https://example.com/A/B"
+    },
+    {
+      "name": "url-percent-encoded",
+      "kind": "canonical_url",
+      "value": "https://example.com/a%20b"
+    },
+    {
+      "name": "url-unencoded-space-in-path",
+      "kind": "canonical_url",
+      "value": "https://example.com/a b"
+    },
+    {
+      "name": "url-idn-host",
+      "kind": "canonical_url",
+      "value": "https://例え.jp/a"
+    },
+    {
+      "name": "url-punycode-host",
+      "kind": "canonical_url",
+      "value": "https://xn--r8jz45g.jp/a"
+    },
+    {
+      "name": "url-dot-segments",
+      "kind": "canonical_url",
+      "value": "https://example.com/a/./b/../c"
+    },
+    {
+      "name": "url-double-slash-path",
+      "kind": "canonical_url",
+      "value": "https://example.com//a"
+    },
+    {
+      "name": "url-ipv4-host",
+      "kind": "canonical_url",
+      "value": "https://192.0.2.1/a"
+    },
+    {
+      "name": "url-ipv6-host",
+      "kind": "canonical_url",
+      "value": "https://[2001:db8::1]/a"
+    },
+    {
+      "name": "url-cjk-query",
+      "kind": "canonical_url",
+      "value": "https://example.com/?q=研究"
+    },
+    {
+      "name": "url-userinfo",
+      "kind": "canonical_url",
+      "value": "https://evil.com@good.com/"
+    },
+    {
+      "name": "url-userinfo-with-password",
+      "kind": "canonical_url",
+      "value": "https://user:pass@good.com/"
+    },
+    {
+      "name": "url-empty-userinfo",
+      "kind": "canonical_url",
+      "value": "https://@good.com/"
+    },
+    {
+      "name": "url-scheme-ftp",
+      "kind": "canonical_url",
+      "value": "ftp://example.com/a"
+    },
+    {
+      "name": "url-scheme-ws",
+      "kind": "canonical_url",
+      "value": "ws://example.com/a"
+    },
+    {
+      "name": "url-scheme-wss",
+      "kind": "canonical_url",
+      "value": "wss://example.com/a"
+    },
+    {
+      "name": "url-scheme-gopher",
+      "kind": "canonical_url",
+      "value": "gopher://example.com/a"
+    },
+    {
+      "name": "url-scheme-mixed-case-https",
+      "kind": "canonical_url",
+      "value": "HTTPS://example.com/a"
+    },
+    {
+      "name": "url-scheme-mixed-case-http",
+      "kind": "canonical_url",
+      "value": "HtTp://example.com/a"
+    },
+    {
+      "name": "url-wrong-scheme-file",
+      "kind": "canonical_url",
+      "value": "file:///etc/passwd"
+    },
+    {
+      "name": "url-wrong-scheme-javascript",
+      "kind": "canonical_url",
+      "value": "javascript:alert(1)"
+    },
+    {
+      "name": "url-wrong-scheme-data",
+      "kind": "canonical_url",
+      "value": "data:text/html,<b>x</b>"
+    },
+    {
+      "name": "url-scheme-relative",
+      "kind": "canonical_url",
+      "value": "//example.com/a"
+    },
+    {
+      "name": "url-relative",
+      "kind": "canonical_url",
+      "value": "/a/b"
+    },
+    {
+      "name": "url-no-host",
+      "kind": "canonical_url",
+      "value": "https:///a"
+    },
+    {
+      "name": "url-empty",
+      "kind": "canonical_url",
+      "value": ""
+    },
+    {
+      "name": "url-not-a-string",
+      "kind": "canonical_url",
+      "value": 42
+    },
+    {
+      "name": "url-none",
+      "kind": "canonical_url",
+      "value": null
+    },
+    {
+      "name": "url-too-long",
+      "kind": "canonical_url",
+      "value": "https://example.com/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "name": "url-near-bound",
+      "kind": "canonical_url",
+      "value": "https://example.com/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "name": "url-at-bound",
+      "kind": "canonical_url",
+      "value": "https://example.com/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "name": "url-leading-space",
+      "kind": "canonical_url",
+      "value": " https://example.com/a"
+    },
+    {
+      "name": "url-trailing-space",
+      "kind": "canonical_url",
+      "value": "https://example.com/a "
+    },
+    {
+      "name": "url-interior-space",
+      "kind": "canonical_url",
+      "value": "https://exa mple.com/a"
+    },
+    {
+      "name": "url-tab",
+      "kind": "canonical_url",
+      "value": "https://example.com/\ta"
+    },
+    {
+      "name": "url-newline",
+      "kind": "canonical_url",
+      "value": "https://example.com/\na"
+    },
+    {
+      "name": "url-nul",
+      "kind": "canonical_url",
+      "value": "https://example.com/\u0000a"
+    },
+    {
+      "name": "url-zero-width",
+      "kind": "canonical_url",
+      "value": "https://example.com/​a"
+    },
+    {
+      "name": "url-bidi-override",
+      "kind": "canonical_url",
+      "value": "https://example.com/‮a"
+    },
+    {
+      "name": "url-soft-hyphen",
+      "kind": "canonical_url",
+      "value": "https://exam­ple.com/a"
+    },
+    {
+      "name": "url-backslash",
+      "kind": "canonical_url",
+      "value": "https://example.com\\a"
+    },
+    {
+      "name": "url-angle-open",
+      "kind": "canonical_url",
+      "value": "https://example.com/<a"
+    },
+    {
+      "name": "url-angle-close",
+      "kind": "canonical_url",
+      "value": "https://example.com/>a"
+    },
+    {
+      "name": "label-www",
+      "kind": "source_label",
+      "value": "https://www.example.com/a"
+    },
+    {
+      "name": "label-bare",
+      "kind": "source_label",
+      "value": "https://example.com/a"
+    },
+    {
+      "name": "label-subdomain",
+      "kind": "source_label",
+      "value": "https://news.example.com/a"
+    },
+    {
+      "name": "label-www-inside",
+      "kind": "source_label",
+      "value": "https://a.www.example.com/x"
+    },
+    {
+      "name": "label-wwwx",
+      "kind": "source_label",
+      "value": "https://wwwx.example.com/a"
+    },
+    {
+      "name": "label-punycode",
+      "kind": "source_label",
+      "value": "https://xn--r8jz45g.jp/a"
+    },
+    {
+      "name": "label-ipv6",
+      "kind": "source_label",
+      "value": "https://[2001:db8::1]/a"
+    },
+    {
+      "name": "req-valid",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-k-min",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello",
+        "k": 1
+      }
+    },
+    {
+      "name": "req-k-max",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello",
+        "k": 5
+      }
+    },
+    {
+      "name": "req-k-zero",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello",
+        "k": 0
+      }
+    },
+    {
+      "name": "req-k-over",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello",
+        "k": 6
+      }
+    },
+    {
+      "name": "req-k-fractional",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello",
+        "k": 3.5
+      }
+    },
+    {
+      "name": "req-k-bool",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello",
+        "k": true
+      }
+    },
+    {
+      "name": "req-k-string",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello",
+        "k": "3"
+      }
+    },
+    {
+      "name": "req-query-padded",
+      "kind": "normalize_request",
+      "request": {
+        "query": "  hello  ",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-query-blank",
+      "kind": "normalize_request",
+      "request": {
+        "query": "   ",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-query-empty",
+      "kind": "normalize_request",
+      "request": {
+        "query": "",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-query-number",
+      "kind": "normalize_request",
+      "request": {
+        "query": 5,
+        "k": 3
+      }
+    },
+    {
+      "name": "req-query-at-bound",
+      "kind": "normalize_request",
+      "request": {
+        "query": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-query-over-bound",
+      "kind": "normalize_request",
+      "request": {
+        "query": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-query-padded-to-bound",
+      "kind": "normalize_request",
+      "request": {
+        "query": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  ",
+        "k": 3
+      }
+    },
+    {
+      "name": "req-extra-field",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello",
+        "k": 3,
+        "extra": 1
+      }
+    },
+    {
+      "name": "req-missing-k",
+      "kind": "normalize_request",
+      "request": {
+        "query": "hello"
+      }
+    },
+    {
+      "name": "req-missing-query",
+      "kind": "normalize_request",
+      "request": {
+        "k": 3
+      }
+    },
+    {
+      "name": "req-empty",
+      "kind": "normalize_request",
+      "request": {}
+    },
+    {
+      "name": "digest-query-shape",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "provider",
+          "kind": "string",
+          "value": "tavily"
+        },
+        {
+          "key": "query",
+          "kind": "string",
+          "value": "hello"
+        },
+        {
+          "key": "delegate_id",
+          "kind": "string",
+          "value": "d-1"
+        }
+      ],
+      "ref_kind": "query"
+    },
+    {
+      "name": "digest-whole-timestamp",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "fetched_at",
+          "kind": "float",
+          "value": 1.0
+        },
+        {
+          "key": "rank",
+          "kind": "int",
+          "value": 2
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-fractional-timestamp",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "fetched_at",
+          "kind": "float",
+          "value": 1.5
+        },
+        {
+          "key": "rank",
+          "kind": "int",
+          "value": 2
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-zero-timestamp",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "fetched_at",
+          "kind": "float",
+          "value": 0.0
+        },
+        {
+          "key": "rank",
+          "kind": "int",
+          "value": 1
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-large-timestamp",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "fetched_at",
+          "kind": "float",
+          "value": 1e+16
+        },
+        {
+          "key": "rank",
+          "kind": "int",
+          "value": 1
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-small-timestamp",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "fetched_at",
+          "kind": "float",
+          "value": 1e-05
+        },
+        {
+          "key": "rank",
+          "kind": "int",
+          "value": 1
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-precise-timestamp",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "fetched_at",
+          "kind": "float",
+          "value": 1755123456.789012
+        },
+        {
+          "key": "rank",
+          "kind": "int",
+          "value": 3
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-int-one",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "v",
+          "kind": "int",
+          "value": 1
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-float-one",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "v",
+          "kind": "float",
+          "value": 1.0
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-cjk",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "title",
+          "kind": "string",
+          "value": "研究项目"
+        },
+        {
+          "key": "snippet",
+          "kind": "string",
+          "value": "摘要"
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-quotes",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "title",
+          "kind": "string",
+          "value": "he said \"hi\""
+        },
+        {
+          "key": "snippet",
+          "kind": "string",
+          "value": "a\\b"
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-astral",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "title",
+          "kind": "string",
+          "value": "😀"
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-key-order",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "b",
+          "kind": "int",
+          "value": 1
+        },
+        {
+          "key": "a",
+          "kind": "int",
+          "value": 2
+        },
+        {
+          "key": "c",
+          "kind": "int",
+          "value": 3
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-key-order-unicode",
+      "kind": "digest",
+      "fields": [
+        {
+          "key": "é",
+          "kind": "string",
+          "value": "1"
+        },
+        {
+          "key": "a",
+          "kind": "string",
+          "value": "2"
+        },
+        {
+          "key": "Z",
+          "kind": "string",
+          "value": "3"
+        }
+      ],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "digest-empty",
+      "kind": "digest",
+      "fields": [],
+      "ref_kind": "evidence"
+    },
+    {
+      "name": "dispatch-ok",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 1755123456.5,
+      "response": {
+        "request_id": "req-1",
+        "results": [
+          {
+            "title": "Example title",
+            "content": "Example snippet body",
+            "url": "https://www.example.com/a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-ok-whole-timestamp",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 1755123456.0,
+      "response": {
+        "request_id": "req-1",
+        "results": [
+          {
+            "title": "Example title",
+            "content": "Example snippet body",
+            "url": "https://www.example.com/a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-ok-multiple",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "Example title",
+            "content": "Example snippet body",
+            "url": "https://www.example.com/a"
+          },
+          {
+            "title": "Second",
+            "content": "Second body",
+            "url": "https://b.example.com/"
+          },
+          {
+            "title": "Third",
+            "content": "Third body",
+            "url": "http://c.example.com/x?y=1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-rank-gap",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "no url",
+            "content": "body"
+          },
+          {
+            "title": "Example title",
+            "content": "Example snippet body",
+            "url": "https://www.example.com/a"
+          },
+          {
+            "title": "",
+            "content": "body",
+            "url": "https://d.example.com/"
+          },
+          {
+            "title": "Fourth",
+            "content": "Fourth body",
+            "url": "https://e.example.com/"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-truncates-to-k",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 2
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "Example title",
+            "content": "Example snippet body",
+            "url": "https://www.example.com/a"
+          },
+          {
+            "title": "Second",
+            "content": "Second body",
+            "url": "https://b.example.com/"
+          },
+          {
+            "title": "Third",
+            "content": "Third body",
+            "url": "https://c.example.com/"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-bounds-title-and-snippet",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 1
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+            "content": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
+            "url": "https://example.com/"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-no-results-key",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "response": {}
+    },
+    {
+      "name": "dispatch-results-not-a-list",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "response": {
+        "results": {
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "dispatch-all-results-unusable",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "t",
+            "content": "c",
+            "url": "javascript:alert(1)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-non-string-request-id",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 1
+      },
+      "now": 2.0,
+      "response": {
+        "request_id": 7,
+        "results": [
+          {
+            "title": "Example title",
+            "content": "Example snippet body",
+            "url": "https://www.example.com/a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-unknown-op",
+      "kind": "dispatch",
+      "op": "fetch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "Example title",
+            "content": "Example snippet body",
+            "url": "https://www.example.com/a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-invalid-params",
+      "kind": "dispatch",
+      "request": {
+        "query": "",
+        "k": 3
+      },
+      "now": 2.0,
+      "response": {
+        "results": [
+          {
+            "title": "Example title",
+            "content": "Example snippet body",
+            "url": "https://www.example.com/a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dispatch-adapter-exception",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_raises": true
+    },
+    {
+      "name": "dispatch-failure-authentication",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_failure": "authentication"
+    },
+    {
+      "name": "dispatch-failure-provider_rejected",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_failure": "provider_rejected"
+    },
+    {
+      "name": "dispatch-failure-rate_limited",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_failure": "rate_limited"
+    },
+    {
+      "name": "dispatch-failure-upstream",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_failure": "upstream"
+    },
+    {
+      "name": "dispatch-failure-timeout",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_failure": "timeout"
+    },
+    {
+      "name": "dispatch-failure-transport",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_failure": "transport"
+    },
+    {
+      "name": "dispatch-failure-redirect",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_failure": "redirect"
+    },
+    {
+      "name": "dispatch-failure-malformed_response",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_failure": "malformed_response"
+    },
+    {
+      "name": "dispatch-failure-response_too_large",
+      "kind": "dispatch",
+      "request": {
+        "query": "hello",
+        "k": 3
+      },
+      "now": 2.0,
+      "transport_failure": "response_too_large"
+    }
+  ]
+}
