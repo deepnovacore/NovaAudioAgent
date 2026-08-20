@@ -109,11 +109,20 @@ export class MediaStore {
     return this.#entries.size
   }
 
-  /** Mint a ref, retrying on the vanishingly unlikely collision rather than overwriting a frame. */
+  /**
+   * Mint a ref, retrying on the vanishingly unlikely collision rather than overwriting a frame.
+   *
+   * Bounded, unlike the oracle's `while True`. A factory that keeps returning the same value is a
+   * programming error, and the oracle's response to it is to spin forever holding the event loop --
+   * which is how a monitoring window turns into a hung process rather than a failed one. Sixteen
+   * attempts is far past what randomness would ever need, so reaching the limit means the factory is
+   * broken and says so.
+   */
   #newRef(): MediaRef {
-    for (;;) {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
       const ref = `media:${this.#idFactory()}`
       if (!this.#entries.has(ref)) return ref
     }
+    throw new Error('media id factory is not producing distinct refs')
   }
 }

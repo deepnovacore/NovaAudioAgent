@@ -1,0 +1,557 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "verdict-hit",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"有人站在门口\"}"
+    },
+    {
+      "name": "verdict-miss",
+      "kind": "verdict",
+      "text": "{\"hit\": false, \"observation\": \"\"}"
+    },
+    {
+      "name": "verdict-hit-padded",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"  有人  \"}"
+    },
+    {
+      "name": "verdict-key-order",
+      "kind": "verdict",
+      "text": "{\"observation\": \"有人\", \"hit\": true}"
+    },
+    {
+      "name": "verdict-observation-at-bound",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}"
+    },
+    {
+      "name": "verdict-astral-observation",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"\\ud83d\\ude00\"}"
+    },
+    {
+      "name": "verdict-hit-empty-observation",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"\"}"
+    },
+    {
+      "name": "verdict-hit-blank-observation",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"   \"}"
+    },
+    {
+      "name": "verdict-miss-with-observation",
+      "kind": "verdict",
+      "text": "{\"hit\": false, \"observation\": \"没有人\"}"
+    },
+    {
+      "name": "verdict-miss-blank-observation",
+      "kind": "verdict",
+      "text": "{\"hit\": false, \"observation\": \"   \"}"
+    },
+    {
+      "name": "verdict-observation-over-bound",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}"
+    },
+    {
+      "name": "verdict-hit-control-observation",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"a\\u0000b\"}"
+    },
+    {
+      "name": "verdict-miss-control-observation",
+      "kind": "verdict",
+      "text": "{\"hit\": false, \"observation\": \"\\u0000\"}"
+    },
+    {
+      "name": "verdict-hit-bom-observation",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"\\ufeff\"}"
+    },
+    {
+      "name": "verdict-not-json",
+      "kind": "verdict",
+      "text": "not json"
+    },
+    {
+      "name": "verdict-array",
+      "kind": "verdict",
+      "text": "[1, 2]"
+    },
+    {
+      "name": "verdict-null",
+      "kind": "verdict",
+      "text": "null"
+    },
+    {
+      "name": "verdict-string",
+      "kind": "verdict",
+      "text": "\"a string\""
+    },
+    {
+      "name": "verdict-extra-field",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"x\", \"extra\": 1}"
+    },
+    {
+      "name": "verdict-missing-observation",
+      "kind": "verdict",
+      "text": "{\"hit\": true}"
+    },
+    {
+      "name": "verdict-missing-hit",
+      "kind": "verdict",
+      "text": "{\"observation\": \"x\"}"
+    },
+    {
+      "name": "verdict-hit-not-bool",
+      "kind": "verdict",
+      "text": "{\"hit\": \"true\", \"observation\": \"x\"}"
+    },
+    {
+      "name": "verdict-hit-number",
+      "kind": "verdict",
+      "text": "{\"hit\": 1, \"observation\": \"x\"}"
+    },
+    {
+      "name": "verdict-observation-not-string",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": 5}"
+    },
+    {
+      "name": "verdict-observation-null",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": null}"
+    },
+    {
+      "name": "verdict-empty-object",
+      "kind": "verdict",
+      "text": "{}"
+    },
+    {
+      "name": "start-minimal",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "有人进门"
+      }
+    },
+    {
+      "name": "start-full",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "有人进门",
+        "interval_s": 5,
+        "duration_s": 60
+      }
+    },
+    {
+      "name": "start-interval-min",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "interval_s": 2
+      }
+    },
+    {
+      "name": "start-interval-max",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "interval_s": 30
+      }
+    },
+    {
+      "name": "start-interval-below",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "interval_s": 1.99
+      }
+    },
+    {
+      "name": "start-interval-above",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "interval_s": 30.01
+      }
+    },
+    {
+      "name": "start-duration-min",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "duration_s": 30
+      }
+    },
+    {
+      "name": "start-duration-max",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "duration_s": 1800
+      }
+    },
+    {
+      "name": "start-duration-below",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "duration_s": 29
+      }
+    },
+    {
+      "name": "start-duration-above",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "duration_s": 1801
+      }
+    },
+    {
+      "name": "start-condition-padded",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "  有人  "
+      }
+    },
+    {
+      "name": "start-condition-blank",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "   "
+      }
+    },
+    {
+      "name": "start-condition-empty",
+      "kind": "normalize_start",
+      "request": {
+        "condition": ""
+      }
+    },
+    {
+      "name": "start-condition-at-bound",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "name": "start-condition-over-bound",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "name": "start-condition-control",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "a\u0000b"
+      }
+    },
+    {
+      "name": "start-condition-bom",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "a﻿b"
+      }
+    },
+    {
+      "name": "start-condition-not-string",
+      "kind": "normalize_start",
+      "request": {
+        "condition": 5
+      }
+    },
+    {
+      "name": "start-missing-condition",
+      "kind": "normalize_start",
+      "request": {
+        "interval_s": 5
+      }
+    },
+    {
+      "name": "start-unknown-field",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "extra": 1
+      }
+    },
+    {
+      "name": "start-empty",
+      "kind": "normalize_start",
+      "request": {}
+    },
+    {
+      "name": "start-interval-not-number",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "interval_s": "5"
+      }
+    },
+    {
+      "name": "start-interval-bool",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "c",
+        "interval_s": true
+      }
+    },
+    {
+      "name": "printable-plain",
+      "kind": "printable",
+      "value": "hello",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-cjk",
+      "kind": "printable",
+      "value": "有人进门",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-empty",
+      "kind": "printable",
+      "value": "",
+      "allow_empty": true
+    },
+    {
+      "name": "printable-empty-not-allowed",
+      "kind": "printable",
+      "value": "",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-blank",
+      "kind": "printable",
+      "value": "   ",
+      "allow_empty": true
+    },
+    {
+      "name": "printable-nul",
+      "kind": "printable",
+      "value": "a\u0000b",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-bom",
+      "kind": "printable",
+      "value": "a﻿b",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-zero-width",
+      "kind": "printable",
+      "value": "a​b",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-newline",
+      "kind": "printable",
+      "value": "a\nb",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-astral",
+      "kind": "printable",
+      "value": "😀",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-private-use",
+      "kind": "printable",
+      "value": "",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-file-separator",
+      "kind": "printable",
+      "value": "a\u001cb",
+      "allow_empty": false
+    },
+    {
+      "name": "machine-single-hit",
+      "kind": "state_machine",
+      "verdicts": [
+        true
+      ]
+    },
+    {
+      "name": "machine-hit-then-one-miss",
+      "kind": "state_machine",
+      "verdicts": [
+        true,
+        false
+      ]
+    },
+    {
+      "name": "machine-hit-then-two-misses",
+      "kind": "state_machine",
+      "verdicts": [
+        true,
+        false,
+        false
+      ]
+    },
+    {
+      "name": "machine-hit-reset-hit",
+      "kind": "state_machine",
+      "verdicts": [
+        true,
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "name": "machine-hit-miss-hit",
+      "kind": "state_machine",
+      "verdicts": [
+        true,
+        false,
+        true
+      ]
+    },
+    {
+      "name": "machine-hit-miss-hit-miss-miss",
+      "kind": "state_machine",
+      "verdicts": [
+        true,
+        false,
+        true,
+        false,
+        false
+      ]
+    },
+    {
+      "name": "machine-repeated-hits",
+      "kind": "state_machine",
+      "verdicts": [
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "name": "machine-all-misses",
+      "kind": "state_machine",
+      "verdicts": [
+        false,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "name": "machine-miss-first",
+      "kind": "state_machine",
+      "verdicts": [
+        false,
+        true
+      ]
+    },
+    {
+      "name": "machine-long-run",
+      "kind": "state_machine",
+      "verdicts": [
+        true,
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "name": "start-condition-python-only-space",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "\u001c有人进门\u001c"
+      }
+    },
+    {
+      "name": "start-condition-python-only-space-nel",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "有人进门"
+      }
+    },
+    {
+      "name": "start-condition-bom-is-not-python-space",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "﻿有人进门"
+      }
+    },
+    {
+      "name": "start-condition-astral-at-bound",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞"
+      }
+    },
+    {
+      "name": "start-condition-astral-over-bound",
+      "kind": "normalize_start",
+      "request": {
+        "condition": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞"
+      }
+    },
+    {
+      "name": "printable-python-only-space-padding",
+      "kind": "printable",
+      "value": "\u001c看到一只猫\u001c",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-bom-padding",
+      "kind": "printable",
+      "value": "﻿看到一只猫",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-only-python-space",
+      "kind": "printable",
+      "value": "\u001c",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-astral-at-bound",
+      "kind": "printable",
+      "value": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
+      "allow_empty": false
+    },
+    {
+      "name": "printable-astral-over-bound",
+      "kind": "printable",
+      "value": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
+      "allow_empty": false
+    },
+    {
+      "name": "verdict-observation-python-only-space",
+      "kind": "verdict",
+      "text": "{\"hit\": true, \"observation\": \"\\u001c有人站在门口\\u001c\"}"
+    },
+    {
+      "name": "verdict-miss-python-only-space-is-empty",
+      "kind": "verdict",
+      "text": "{\"hit\": false, \"observation\": \"\\u001c\"}"
+    },
+    {
+      "name": "verdict-miss-bom-is-not-empty",
+      "kind": "verdict",
+      "text": "{\"hit\": false, \"observation\": \"﻿\"}"
+    }
+  ]
+}

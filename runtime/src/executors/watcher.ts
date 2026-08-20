@@ -17,6 +17,7 @@
  */
 
 import { isOtherCategory } from '../unicode-tables.js'
+import { stripLikePython } from '../python-text.js'
 import type { MediaRef, MediaStore } from '../media-store.js'
 
 export const WATCH_PROGRESS_SUMMARY_TEMPLATE = '仍在监控：{condition}'
@@ -55,7 +56,12 @@ export interface Frame {
 }
 
 export interface FrameSource {
-  snapshot(): Promise<Frame>
+  /**
+   * `null` is "no frame this time", not an error -- a disabled camera reports it every sample.
+   * Mirrors `Frame | None` in the oracle (watcher.py:257); the sampling loop treats a null and a
+   * thrown snapshot identically, as a capture failure.
+   */
+  snapshot(): Promise<Frame | null>
 }
 
 export interface GatewayResponse {
@@ -135,7 +141,7 @@ export function parseWatchVerdict(text: string): WatchVerdict {
   if (typeof hit !== 'boolean' || typeof observation !== 'string') {
     throw new TypeError('invalid verdict')
   }
-  const stripped = observation.trim()
+  const stripped = stripLikePython(observation)
   if (hit && !printableText(observation, {allowEmpty: false})) {
     throw new TypeError('invalid verdict')
   }
@@ -301,8 +307,8 @@ export class WatchAdapter {
 
       if (frame === null) {
         captureFailures += 1
-        // Consecutive, not cumulative: an intermittent camera recovers, and a window that gave up on
-        // the third failure of a long run would end most sessions early.
+        // Consecutive, not cumulative -- the `else` below resets the count. An intermittent camera
+        // recovers, and a counter that never reset would end most long windows on stray failures.
         if (captureFailures >= MAX_CONSECUTIVE_FAILURES) return unknown('capture_unavailable')
       } else {
         captureFailures = 0
@@ -382,6 +388,8 @@ export class WatchAdapter {
       this.#status = {
         ...this.#status,
         hit_count: this.#status.hit_count + 1,
+        // Dead, and dead in the oracle too (watcher.py:305): the `cooling` transition below sets
+        // reset_count itself. Kept so the two read line-for-line; a mutation sweep cannot kill it.
         reset_count: 0,
       }
       ctx.observe?.({
@@ -508,6 +516,45 @@ export class WatchAdapter {
     }
   }
 
+  /**
+   * Drive one verdict through the state machine, without the loop around it.
+   *
+   * The debounce is the behaviour worth pinning, and driving it through the real loop would make the
+   * golden depend on the scheduler. This is the *real* transition code -- a test that replayed the
+   * four rules itself would only prove it agrees with itself.
+   */
+  applyVerdictForTest(
+    hit: boolean,
+    ctx: WatchDispatchContext,
+  ): {readonly announced: boolean; readonly status: WatchStatus} {
+    if (this.#status.state === 'idle') {
+      this.#status = {
+        state: 'armed',
+        condition: 'c',
+        started_at: 0,
+        elapsed: 0,
+        samples: 0,
+        hit_count: 0,
+        reset_count: 0,
+      }
+    }
+    const before = this.#status.hit_count
+    const frame: Frame = {
+      payload: new Uint8Array([0, 1]),
+      media_type: 'image/jpeg',
+      width: 1,
+      height: 1,
+      captured_at: 0,
+    }
+    this.#applyVerdict(
+      {hit, observation: hit ? '有人' : ''},
+      frame,
+      {condition: 'c', intervalS: 2, durationS: 1_800},
+      ctx,
+    )
+    return {announced: this.#status.hit_count > before, status: this.#status}
+  }
+
   /** Wake a pending sleep, for a stop that arrives between samples. */
   interruptForTest(): void {
     for (const waiter of this.#stopWaiters) waiter.abort()
@@ -535,10 +582,11 @@ function normalizeStart(request: Record<string, unknown>): NormalizedStart | nul
   const intervalS = request.interval_s ?? DEFAULT_INTERVAL_S
   const durationS = request.duration_s ?? DEFAULT_DURATION_S
   if (typeof rawCondition !== 'string') return null
-  const condition = rawCondition.trim()
+  const condition = stripLikePython(rawCondition)
   // Printable because it is echoed back in progress summaries and observations: a control character
-  // here would reach a renderer that has no way to display it.
-  if (condition === '' || condition.length > MAX_CONDITION_CHARS || !printable(condition)) {
+  // here would reach a renderer that has no way to display it. Length counts code points, as Python
+  // `len` does -- `.length` would let an astral condition past a bound it should have failed.
+  if (condition === '' || [...condition].length > MAX_CONDITION_CHARS || !printable(condition)) {
     return null
   }
   if (!boundedNumber(intervalS, 2, 30)) return null
@@ -555,9 +603,9 @@ function boundedNumber(value: unknown, low: number, high: number): value is numb
 
 function printableText(value: unknown, options: {readonly allowEmpty: boolean}): boolean {
   if (typeof value !== 'string') return false
-  const stripped = value.trim()
+  const stripped = stripLikePython(value)
   return (options.allowEmpty || stripped !== '')
-    && stripped.length <= MAX_OBSERVATION_CHARS
+    && [...stripped].length <= MAX_OBSERVATION_CHARS
     && printable(stripped)
 }
 
@@ -598,3 +646,16 @@ function unknown(error: string): WatchHandoff {
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+
+/**
+ * Test seams.
+ *
+ * These are what the golden compares; a test reimplementing them would only prove it agrees with
+ * itself.
+ */
+export {
+  normalizeStart as normalizeStartForTest,
+  printable as printableForTest,
+  printableText as printableTextForTest,
+}
+export type { NormalizedStart }

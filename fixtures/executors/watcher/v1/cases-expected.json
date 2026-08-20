@@ -1,0 +1,724 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "verdict-hit",
+      "hit": true,
+      "observation": "有人站在门口"
+    },
+    {
+      "name": "verdict-miss",
+      "hit": false,
+      "observation": ""
+    },
+    {
+      "name": "verdict-hit-padded",
+      "hit": true,
+      "observation": "有人"
+    },
+    {
+      "name": "verdict-key-order",
+      "hit": true,
+      "observation": "有人"
+    },
+    {
+      "name": "verdict-observation-at-bound",
+      "hit": true,
+      "observation": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "name": "verdict-astral-observation",
+      "hit": true,
+      "observation": "😀"
+    },
+    {
+      "name": "verdict-hit-empty-observation",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-hit-blank-observation",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-miss-with-observation",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-miss-blank-observation",
+      "hit": false,
+      "observation": ""
+    },
+    {
+      "name": "verdict-observation-over-bound",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-hit-control-observation",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-miss-control-observation",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-hit-bom-observation",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-not-json",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-array",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-null",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-string",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-extra-field",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-missing-observation",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-missing-hit",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-hit-not-bool",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-hit-number",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-observation-not-string",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-observation-null",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-empty-object",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "start-minimal",
+      "normalized": {
+        "condition": "有人进门",
+        "interval_s": 2.5,
+        "duration_s": 1800.0
+      }
+    },
+    {
+      "name": "start-full",
+      "normalized": {
+        "condition": "有人进门",
+        "interval_s": 5.0,
+        "duration_s": 60.0
+      }
+    },
+    {
+      "name": "start-interval-min",
+      "normalized": {
+        "condition": "c",
+        "interval_s": 2.0,
+        "duration_s": 1800.0
+      }
+    },
+    {
+      "name": "start-interval-max",
+      "normalized": {
+        "condition": "c",
+        "interval_s": 30.0,
+        "duration_s": 1800.0
+      }
+    },
+    {
+      "name": "start-interval-below",
+      "normalized": null
+    },
+    {
+      "name": "start-interval-above",
+      "normalized": null
+    },
+    {
+      "name": "start-duration-min",
+      "normalized": {
+        "condition": "c",
+        "interval_s": 2.5,
+        "duration_s": 30.0
+      }
+    },
+    {
+      "name": "start-duration-max",
+      "normalized": {
+        "condition": "c",
+        "interval_s": 2.5,
+        "duration_s": 1800.0
+      }
+    },
+    {
+      "name": "start-duration-below",
+      "normalized": null
+    },
+    {
+      "name": "start-duration-above",
+      "normalized": null
+    },
+    {
+      "name": "start-condition-padded",
+      "normalized": {
+        "condition": "有人",
+        "interval_s": 2.5,
+        "duration_s": 1800.0
+      }
+    },
+    {
+      "name": "start-condition-blank",
+      "normalized": null
+    },
+    {
+      "name": "start-condition-empty",
+      "normalized": null
+    },
+    {
+      "name": "start-condition-at-bound",
+      "normalized": {
+        "condition": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "interval_s": 2.5,
+        "duration_s": 1800.0
+      }
+    },
+    {
+      "name": "start-condition-over-bound",
+      "normalized": null
+    },
+    {
+      "name": "start-condition-control",
+      "normalized": null
+    },
+    {
+      "name": "start-condition-bom",
+      "normalized": null
+    },
+    {
+      "name": "start-condition-not-string",
+      "normalized": null
+    },
+    {
+      "name": "start-missing-condition",
+      "normalized": null
+    },
+    {
+      "name": "start-unknown-field",
+      "normalized": null
+    },
+    {
+      "name": "start-empty",
+      "normalized": null
+    },
+    {
+      "name": "start-interval-not-number",
+      "normalized": null
+    },
+    {
+      "name": "start-interval-bool",
+      "normalized": null
+    },
+    {
+      "name": "printable-plain",
+      "printable": true,
+      "printable_text": true
+    },
+    {
+      "name": "printable-cjk",
+      "printable": true,
+      "printable_text": true
+    },
+    {
+      "name": "printable-empty",
+      "printable": true,
+      "printable_text": true
+    },
+    {
+      "name": "printable-empty-not-allowed",
+      "printable": true,
+      "printable_text": false
+    },
+    {
+      "name": "printable-blank",
+      "printable": true,
+      "printable_text": true
+    },
+    {
+      "name": "printable-nul",
+      "printable": false,
+      "printable_text": false
+    },
+    {
+      "name": "printable-bom",
+      "printable": false,
+      "printable_text": false
+    },
+    {
+      "name": "printable-zero-width",
+      "printable": false,
+      "printable_text": false
+    },
+    {
+      "name": "printable-newline",
+      "printable": false,
+      "printable_text": false
+    },
+    {
+      "name": "printable-astral",
+      "printable": true,
+      "printable_text": true
+    },
+    {
+      "name": "printable-private-use",
+      "printable": false,
+      "printable_text": false
+    },
+    {
+      "name": "printable-file-separator",
+      "printable": false,
+      "printable_text": false
+    },
+    {
+      "name": "machine-single-hit",
+      "steps": [
+        {
+          "step": 0,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        }
+      ]
+    },
+    {
+      "name": "machine-hit-then-one-miss",
+      "steps": [
+        {
+          "step": 0,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 1,
+          "hit": false,
+          "announced": false,
+          "state": "waiting_reset",
+          "hit_count": 1,
+          "reset_count": 1
+        }
+      ]
+    },
+    {
+      "name": "machine-hit-then-two-misses",
+      "steps": [
+        {
+          "step": 0,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 1,
+          "hit": false,
+          "announced": false,
+          "state": "waiting_reset",
+          "hit_count": 1,
+          "reset_count": 1
+        },
+        {
+          "step": 2,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 1,
+          "reset_count": 0
+        }
+      ]
+    },
+    {
+      "name": "machine-hit-reset-hit",
+      "steps": [
+        {
+          "step": 0,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 1,
+          "hit": false,
+          "announced": false,
+          "state": "waiting_reset",
+          "hit_count": 1,
+          "reset_count": 1
+        },
+        {
+          "step": 2,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 3,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 2,
+          "reset_count": 0
+        }
+      ]
+    },
+    {
+      "name": "machine-hit-miss-hit",
+      "steps": [
+        {
+          "step": 0,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 1,
+          "hit": false,
+          "announced": false,
+          "state": "waiting_reset",
+          "hit_count": 1,
+          "reset_count": 1
+        },
+        {
+          "step": 2,
+          "hit": true,
+          "announced": false,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        }
+      ]
+    },
+    {
+      "name": "machine-hit-miss-hit-miss-miss",
+      "steps": [
+        {
+          "step": 0,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 1,
+          "hit": false,
+          "announced": false,
+          "state": "waiting_reset",
+          "hit_count": 1,
+          "reset_count": 1
+        },
+        {
+          "step": 2,
+          "hit": true,
+          "announced": false,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 3,
+          "hit": false,
+          "announced": false,
+          "state": "waiting_reset",
+          "hit_count": 1,
+          "reset_count": 1
+        },
+        {
+          "step": 4,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 1,
+          "reset_count": 0
+        }
+      ]
+    },
+    {
+      "name": "machine-repeated-hits",
+      "steps": [
+        {
+          "step": 0,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 1,
+          "hit": true,
+          "announced": false,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 2,
+          "hit": true,
+          "announced": false,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 3,
+          "hit": true,
+          "announced": false,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        }
+      ]
+    },
+    {
+      "name": "machine-all-misses",
+      "steps": [
+        {
+          "step": 0,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 0,
+          "reset_count": 0
+        },
+        {
+          "step": 1,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 0,
+          "reset_count": 0
+        },
+        {
+          "step": 2,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 0,
+          "reset_count": 0
+        },
+        {
+          "step": 3,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 0,
+          "reset_count": 0
+        }
+      ]
+    },
+    {
+      "name": "machine-miss-first",
+      "steps": [
+        {
+          "step": 0,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 0,
+          "reset_count": 0
+        },
+        {
+          "step": 1,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        }
+      ]
+    },
+    {
+      "name": "machine-long-run",
+      "steps": [
+        {
+          "step": 0,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 1,
+          "hit": true,
+          "announced": false,
+          "state": "cooling",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 2,
+          "hit": false,
+          "announced": false,
+          "state": "waiting_reset",
+          "hit_count": 1,
+          "reset_count": 1
+        },
+        {
+          "step": 3,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 1,
+          "reset_count": 0
+        },
+        {
+          "step": 4,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 2,
+          "reset_count": 0
+        },
+        {
+          "step": 5,
+          "hit": false,
+          "announced": false,
+          "state": "waiting_reset",
+          "hit_count": 2,
+          "reset_count": 1
+        },
+        {
+          "step": 6,
+          "hit": true,
+          "announced": false,
+          "state": "cooling",
+          "hit_count": 2,
+          "reset_count": 0
+        },
+        {
+          "step": 7,
+          "hit": false,
+          "announced": false,
+          "state": "waiting_reset",
+          "hit_count": 2,
+          "reset_count": 1
+        },
+        {
+          "step": 8,
+          "hit": false,
+          "announced": false,
+          "state": "armed",
+          "hit_count": 2,
+          "reset_count": 0
+        },
+        {
+          "step": 9,
+          "hit": true,
+          "announced": true,
+          "state": "cooling",
+          "hit_count": 3,
+          "reset_count": 0
+        }
+      ]
+    },
+    {
+      "name": "start-condition-python-only-space",
+      "normalized": {
+        "condition": "有人进门",
+        "interval_s": 2.5,
+        "duration_s": 1800.0
+      }
+    },
+    {
+      "name": "start-condition-python-only-space-nel",
+      "normalized": {
+        "condition": "有人进门",
+        "interval_s": 2.5,
+        "duration_s": 1800.0
+      }
+    },
+    {
+      "name": "start-condition-bom-is-not-python-space",
+      "normalized": null
+    },
+    {
+      "name": "start-condition-astral-at-bound",
+      "normalized": {
+        "condition": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
+        "interval_s": 2.5,
+        "duration_s": 1800.0
+      }
+    },
+    {
+      "name": "start-condition-astral-over-bound",
+      "normalized": null
+    },
+    {
+      "name": "printable-python-only-space-padding",
+      "printable": false,
+      "printable_text": true
+    },
+    {
+      "name": "printable-bom-padding",
+      "printable": false,
+      "printable_text": false
+    },
+    {
+      "name": "printable-only-python-space",
+      "printable": false,
+      "printable_text": false
+    },
+    {
+      "name": "printable-astral-at-bound",
+      "printable": true,
+      "printable_text": true
+    },
+    {
+      "name": "printable-astral-over-bound",
+      "printable": true,
+      "printable_text": false
+    },
+    {
+      "name": "verdict-observation-python-only-space",
+      "hit": true,
+      "observation": "有人站在门口"
+    },
+    {
+      "name": "verdict-miss-python-only-space-is-empty",
+      "error": "invalid verdict"
+    },
+    {
+      "name": "verdict-miss-bom-is-not-empty",
+      "error": "invalid verdict"
+    }
+  ]
+}
