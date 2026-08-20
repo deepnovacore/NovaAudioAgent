@@ -60,6 +60,39 @@ test('assistant_spoken appends the exact audible delivery to trusted conversatio
   }])
 })
 
+test('assistant_spoken crossing the conversation watermark schedules the normal compressor wake', () => {
+  const modelCalls: ModelCall[] = []
+  const runtime = new CoreRuntime({
+    manifests: [],
+    ids: new MonotonicIdFactory(),
+    modelSlots: ['compress'],
+    onModelCall: call => modelCalls.push(call),
+  })
+  for (let index = 1; index <= 40; index += 1) {
+    runtime.post({
+      kind: 'assistant_spoken',
+      payload: {
+        text: `assistant line ${index}`,
+        utterance_id: `utterance-${index}`,
+        delivery: 'spoken',
+        played_ms: index,
+      },
+    }, index)
+    runtime.apply(runtime.queue.popReady(index)!)
+  }
+
+  const scheduled = runtime.queue.popReady(40)
+  assert.equal(scheduled?.kind, 'compress')
+  assert.deepEqual(scheduled?.payload, {channel: CONVERSATION_CHANNEL})
+  assert.equal(runtime.apply(scheduled)?.kind, 'compress')
+  assert.equal(modelCalls.length, 1)
+  const call = modelCalls[0]
+  assert.notEqual(call, undefined)
+  assert.equal(call!.slot, 'compress')
+  assert.equal(call!.channel, CONVERSATION_CHANNEL)
+  assert.equal(call!.compression_items?.length, 40)
+})
+
 test('sensitive parameters must name declared request properties', () => {
   assert.throws(() => opSpecSchema.parse({
     name: 'write',

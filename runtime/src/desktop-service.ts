@@ -6,6 +6,7 @@ import {
   type DesktopServerTransport,
 } from './desktop-realtime.js'
 import {
+  DesktopProtocolError,
   parseReadyEndpoint,
   validateDesktopToken,
   type DesktopReadiness,
@@ -61,12 +62,18 @@ export function buildDesktopRealtimeComposition(
   options: BuildDesktopRealtimeCompositionOptions,
 ): DesktopRealtimeComposition {
   validateDesktopToken(options.token)
-  const holder: {desktop?: DesktopRealtime} = {}
+  const holder: {desktop?: DesktopRealtime; realtime?: RealtimeAssembly} = {}
   const requireDesktop = (): DesktopRealtime => {
     if (holder.desktop === undefined) {
       throw new Error('desktop realtime bridge is unavailable during construction')
     }
     return holder.desktop
+  }
+  const requireRealtime = (): RealtimeAssembly => {
+    if (holder.realtime === undefined) {
+      throw new Error('desktop realtime runtime is unavailable during construction')
+    }
+    return holder.realtime
   }
   const realtime = options.buildRealtime({
     onAudioFrame: frame => requireDesktop().bridge.onAudioFrame(frame),
@@ -81,12 +88,13 @@ export function buildDesktopRealtimeComposition(
     },
     onDelivery: completion => {
       const payload = deliveryToEvent(completion)
-      if (payload !== null) realtime.runtime.post({kind: 'assistant_spoken', payload})
+      if (payload !== null) requireRealtime().runtime.post({kind: 'assistant_spoken', payload})
     },
     onCaption: frame => requireDesktop().bridge.onCaption(frame),
     onCodexState: state => requireDesktop().bridge.onCodexState(state),
     onProjectView: view => requireDesktop().bridge.onCodexProject(view),
   })
+  holder.realtime = realtime
   const desktop = new DesktopRealtime({
     token: options.token,
     service: realtime.service,
@@ -189,7 +197,7 @@ export class RealtimeDesktopService {
       if (!this.#stop.signal.aborted) {
         const start = await this.#runPhase(
           this.#realtime.start(),
-          external.promise,
+          external,
           'desktop_realtime_start_abandoned',
         )
         if (start.kind === 'rejected') primaryFailure = {error: start.error}
@@ -205,7 +213,7 @@ export class RealtimeDesktopService {
 
         const listener = await this.#runPhase(
           this.#desktop.server.start(),
-          terminal.promise,
+          terminal,
           'desktop_server_start_abandoned',
         )
         if (listener.kind === 'rejected') primaryFailure = {error: listener.error}
@@ -213,8 +221,9 @@ export class RealtimeDesktopService {
         if (listener.kind === 'resolved') {
           const announcement = await this.#runPhase(
             this.#announce(this.#readyEndpoint, listener.value, this.#stop.signal),
-            terminal.promise,
+            terminal,
             'desktop_readiness_announcement_abandoned',
+            isReadinessCancellation,
           )
           if (announcement.kind === 'rejected') primaryFailure = {error: announcement.error}
           if (announcement.kind === 'terminal') return await this.#finish(announcement.cause)
@@ -250,8 +259,8 @@ export class RealtimeDesktopService {
   #armTerminalMonitor(external: TerminalMonitor): TerminalMonitor {
     let current = external.current()
     const remember = (cause: TerminalCause): TerminalCause => {
-      current ??= cause
-      return cause
+      current ??= external.current() ?? cause
+      return current
     }
     let service: Promise<TerminalCause>
     try {
@@ -268,13 +277,14 @@ export class RealtimeDesktopService {
       void this.#ensureCleanup()
       return cause
     })
-    return {promise, current: () => current}
+    return {promise, current: () => current ?? external.current()}
   }
 
   async #runPhase<T>(
     work: Promise<T>,
-    terminal: Promise<TerminalCause>,
+    terminal: TerminalMonitor,
     abandonedDiagnostic: string,
+    terminalWinsConcurrentRejection?: (error: unknown) => boolean,
   ): Promise<PhaseResult<T>> {
     const outcome: Promise<PhaseResult<T>> = work.then(
       value => ({kind: 'resolved', value}),
@@ -282,8 +292,15 @@ export class RealtimeDesktopService {
     )
     const raced = await Promise.race([
       outcome,
-      terminal.then(cause => ({kind: 'terminal' as const, cause})),
+      terminal.promise.then(cause => ({kind: 'terminal' as const, cause})),
     ])
+    if (
+      raced.kind === 'rejected'
+      && terminalWinsConcurrentRejection?.(raced.error) === true
+    ) {
+      const cause = terminal.current()
+      if (cause !== undefined) return {kind: 'terminal', cause}
+    }
     if (raced.kind !== 'terminal') return raced
     await this.#settlePhaseWithinGrace(outcome, abandonedDiagnostic)
     return raced
@@ -513,6 +530,11 @@ export function isDesktopShutdownMessage(event: unknown): boolean {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object'
+}
+
+function isReadinessCancellation(error: unknown): boolean {
+  return error instanceof DesktopProtocolError
+    && error.message === 'desktop readiness announcement cancelled'
 }
 
 function removeEventListener(

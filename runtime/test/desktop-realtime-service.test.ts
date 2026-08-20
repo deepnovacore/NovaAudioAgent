@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import {EventEmitter} from 'node:events'
+import {createServer, type Server, type Socket} from 'node:net'
 import {test} from 'node:test'
 import {WebSocket, type RawData} from 'ws'
 import {buildAssembly} from '../src/assembly.js'
 import {VirtualClock} from '../src/clock.js'
 import {settingsSchema} from '../src/config.js'
-import type {DesktopReadiness} from '../src/desktop.js'
+import {announceReadiness, type DesktopReadiness} from '../src/desktop.js'
 import {
   buildDesktopRealtimeComposition,
   installDesktopStopSources,
@@ -142,7 +143,12 @@ function controlledOwner(options: {
   readonly cleanupGraceMs?: number
   readonly closeAuxiliary?: () => void | Promise<void>
   readonly onDiagnostic?: (line: string) => void
-  readonly announce?: (signal?: AbortSignal) => void | Promise<void>
+  readonly readyEndpoint?: string
+  readonly announce?: (
+    signal: AbortSignal,
+    endpoint: string,
+    readiness: DesktopReadiness,
+  ) => void | Promise<void>
 } = {}): {
   readonly owner: RealtimeDesktopService
   readonly realtime: ControlledRealtime
@@ -159,12 +165,12 @@ function controlledOwner(options: {
   const owner = new RealtimeDesktopService({
     realtime,
     desktop,
-    readyEndpoint: '127.0.0.1:51515',
+    readyEndpoint: options.readyEndpoint ?? '127.0.0.1:51515',
     stop,
     announce: async (_endpoint, _readiness, signal?: AbortSignal) => {
       trace.push('ready')
       announced.resolve()
-      await options.announce?.(signal)
+      await options.announce?.(signal!, _endpoint, _readiness)
     },
     ...(options.closeAuxiliary === undefined ? {} : {closeAuxiliary: options.closeAuxiliary}),
     ...(options.cleanupGraceMs === undefined ? {} : {cleanupGraceMs: options.cleanupGraceMs}),
@@ -308,6 +314,106 @@ test('external stop aborts a deferred readiness announcement and prevents a late
     await Promise.allSettled([running, stopping])
   }
   assert.equal(harness.trace.filter(item => item === 'ready').length, 1)
+})
+
+interface HeldReadinessParent {
+  readonly listener: Server
+  readonly endpoint: string
+  readonly sockets: Socket[]
+  readonly received: Uint8Array[]
+}
+
+async function heldReadinessParent(onData?: (text: string) => void): Promise<HeldReadinessParent> {
+  const sockets: Socket[] = []
+  const received: Uint8Array[] = []
+  const listener = createServer(socket => {
+    sockets.push(socket)
+    socket.on('data', chunk => {
+      received.push(new Uint8Array(chunk))
+      onData?.(Buffer.concat(received.map(value => Buffer.from(value))).toString('utf8'))
+    })
+  })
+  await new Promise<void>((resolve, reject) => {
+    listener.once('error', reject)
+    listener.listen({host: '127.0.0.1', port: 0}, resolve)
+  })
+  const address = listener.address()
+  assert.ok(address !== null && typeof address === 'object')
+  return {listener, endpoint: `127.0.0.1:${address.port}`, sockets, received}
+}
+
+async function closeHeldReadinessParent(parent: HeldReadinessParent): Promise<void> {
+  for (const socket of parent.sockets) socket.destroy()
+  await new Promise<void>((resolve, reject) => parent.listener.close(error => {
+    if (error !== undefined) reject(error)
+    else resolve()
+  }))
+}
+
+test('pre-write terminal abort sends zero readiness bytes and remains a normal owner stop', async () => {
+  const parent = await heldReadinessParent()
+  const diagnostics: string[] = []
+  const harness = controlledOwner({
+    readyEndpoint: parent.endpoint,
+    onDiagnostic: line => diagnostics.push(line),
+    announce: (signal, endpoint, value) => {
+      harness.stop.abort()
+      return announceReadiness(endpoint, value, {timeoutMs: 250, signal})
+    },
+  })
+  try {
+    await settleNamed('pre-write readiness owner stop', harness.owner.run())
+    assert.equal(Buffer.concat(parent.received.map(value => Buffer.from(value))).byteLength, 0)
+    assert.deepEqual(diagnostics, [])
+    assert.deepEqual(harness.trace, [
+      'realtime:start', 'server:start', 'ready', 'server:close', 'realtime:stop',
+    ])
+  } finally {
+    await Promise.allSettled([harness.owner.stop()])
+    await closeHeldReadinessParent(parent)
+  }
+})
+
+test('post-write terminal abort commits one exact readiness line and cleans up normally', async () => {
+  const holder: {harness?: ReturnType<typeof controlledOwner>} = {}
+  let aborted = false
+  const parent = await heldReadinessParent(textValue => {
+    if (!aborted && textValue.endsWith('\n')) {
+      aborted = true
+      holder.harness?.stop.abort()
+    }
+  })
+  const diagnostics: string[] = []
+  let announceResult = 'pending'
+  const harness = controlledOwner({
+    readyEndpoint: parent.endpoint,
+    onDiagnostic: line => diagnostics.push(line),
+    announce: async (signal, endpoint, value) => {
+      try {
+        await announceReadiness(endpoint, value, {timeoutMs: 250, signal})
+        announceResult = 'committed'
+      } catch (error) {
+        announceResult = error instanceof Error ? error.message : 'unknown failure'
+        throw error
+      }
+    },
+  })
+  holder.harness = harness
+  try {
+    await settleNamed('post-write readiness owner stop', harness.owner.run())
+    assert.equal(
+      Buffer.concat(parent.received.map(value => Buffer.from(value))).toString('utf8'),
+      `${JSON.stringify(readiness())}\n`,
+    )
+    assert.equal(announceResult, 'committed')
+    assert.deepEqual(diagnostics, [])
+    assert.deepEqual(harness.trace, [
+      'realtime:start', 'server:start', 'ready', 'server:close', 'realtime:stop',
+    ])
+  } finally {
+    await Promise.allSettled([harness.owner.stop()])
+    await closeHeldReadinessParent(parent)
+  }
 })
 
 test('startup failures rollback in listener-first shutdown order without readiness', async () => {
@@ -968,4 +1074,27 @@ test('composition rejects output callbacks fired before the desktop bridge exist
       throw new Error(`unreachable ${core.runtime.clock.now()}`)
     },
   }), /desktop realtime bridge is unavailable during construction/u)
+})
+
+test('composition rejects synchronous delivery before the realtime holder exists without a TDZ leak', () => {
+  const completion: PlaybackCompletion = {
+    session_epoch: 1,
+    response_id: 'response-early',
+    utterance_id: 'utterance-early',
+    generation_epoch: 1,
+    text: 'too early',
+    disposition: 'spoken',
+    started: true,
+    played_ms: 10,
+  }
+  assert.throws(() => buildDesktopRealtimeComposition({
+    token: TOKEN,
+    stop: new AbortController(),
+    buildRealtime: callbacks => {
+      callbacks.onDelivery(completion)
+      throw new Error('unreachable after synchronous delivery')
+    },
+  }), error => error instanceof Error
+    && !(error instanceof ReferenceError)
+    && error.message === 'desktop realtime runtime is unavailable during construction')
 })

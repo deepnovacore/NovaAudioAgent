@@ -423,6 +423,7 @@ export async function announceReadiness(
   await new Promise<void>((resolve, reject) => {
     const socket = createConnection(target)
     let settled = false
+    let writeStarted = false
     const finish = (error?: Error): void => {
       if (settled) return
       settled = true
@@ -432,12 +433,15 @@ export async function announceReadiness(
       else reject(error)
     }
     const onAbort = (): void => {
+      // Once the whole line has been handed to Socket.end it cannot be reliably withdrawn. Keep
+      // observing that write: reporting "cancelled" after the parent may have accepted readiness
+      // would make the two processes disagree about whether startup committed.
+      if (writeStarted) return
       socket.destroy()
       finish(new DesktopProtocolError('desktop readiness announcement cancelled'))
     }
-    // The handshake is one line followed by EOF. A parent that accepts the
-    // connection and then never closes it must not hang startup indefinitely
-    // with no diagnostic.
+    // The commit point is the completion callback for this process's one line write, not a close from
+    // the parent. The parent is allowed to hold its side open after it has accepted the complete line.
     const timer = setTimeout(() => {
       socket.destroy()
       finish(new DesktopProtocolError('desktop readiness announcement timed out'))
@@ -445,10 +449,16 @@ export async function announceReadiness(
     signal?.addEventListener('abort', onAbort, {once: true})
     if (signal?.aborted === true) onAbort()
     socket.once('error', error => finish(error))
-    socket.once('connect', () => socket.end(line))
-    socket.once('close', hadError => {
-      if (hadError) return
-      finish()
+    socket.once('connect', () => {
+      if (signal?.aborted === true) {
+        onAbort()
+        return
+      }
+      writeStarted = true
+      socket.end(line, () => {
+        finish()
+        socket.destroy()
+      })
     })
   })
 }

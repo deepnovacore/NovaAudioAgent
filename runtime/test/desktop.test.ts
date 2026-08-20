@@ -242,8 +242,14 @@ test('desktop controls preserve the Python accepted shape and strip unknown evid
 
 test('readiness is announced as one authenticated line over loopback TCP', async () => {
   let received = Buffer.alloc(0)
+  let receiveLine: ((line: string) => void) | undefined
+  const lineReceived = new Promise<string>(resolve => { receiveLine = resolve })
   const listener = createServer(socket => {
-    socket.on('data', chunk => { received = Buffer.concat([received, chunk]) })
+    socket.on('data', chunk => {
+      received = Buffer.concat([received, chunk])
+      const textValue = received.toString('utf8')
+      if (textValue.endsWith('\n')) receiveLine?.(textValue)
+    })
   })
   await new Promise<void>((resolve, reject) => {
     listener.once('error', reject)
@@ -258,7 +264,7 @@ test('readiness is announced as one authenticated line over loopback TCP', async
       host: '127.0.0.1',
       port: 51_515,
     })
-    assert.equal(received.toString('utf8'), `${JSON.stringify({
+    assert.equal(await settleWithin('readiness parent receives line', lineReceived), `${JSON.stringify({
       token: TOKEN,
       host: '127.0.0.1',
       port: 51_515,
@@ -675,10 +681,19 @@ test('forwarded PCM is a copy that a later frame cannot overwrite', async () => 
   }
 })
 
-test('readiness announcement fails on its own deadline instead of hanging', async () => {
-  // A parent that accepts and then holds the connection open forever.
+test('readiness announcement commits after its line flush even when the parent holds the socket', async () => {
   const held: Socket[] = []
-  const listener = createServer(socket => held.push(socket))
+  let received = Buffer.alloc(0)
+  let receiveLine: ((line: string) => void) | undefined
+  const lineReceived = new Promise<string>(resolve => { receiveLine = resolve })
+  const listener = createServer(socket => {
+    held.push(socket)
+    socket.on('data', chunk => {
+      received = Buffer.concat([received, chunk])
+      const textValue = received.toString('utf8')
+      if (textValue.endsWith('\n')) receiveLine?.(textValue)
+    })
+  })
   await new Promise<void>((resolve, reject) => {
     listener.once('error', reject)
     listener.listen({host: '127.0.0.1', port: 0}, resolve)
@@ -687,15 +702,17 @@ test('readiness announcement fails on its own deadline instead of hanging', asyn
   assert.ok(address !== null && typeof address === 'object')
 
   try {
-    await assert.rejects(
+    await settleWithin(
+      'held readiness write commit',
       announceReadiness(
         `127.0.0.1:${address.port}`,
         {token: TOKEN, host: '127.0.0.1', port: 51_515},
         50,
       ),
-      (error: unknown) => error instanceof DesktopProtocolError
-        && error.message.includes('timed out'),
     )
+    assert.equal(await settleWithin('held readiness parent receives line', lineReceived), `${JSON.stringify({
+      token: TOKEN, host: '127.0.0.1', port: 51_515,
+    })}\n`)
   } finally {
     for (const socket of held) socket.destroy()
     await new Promise<void>((resolve, reject) => listener.close(error => {
@@ -707,11 +724,8 @@ test('readiness announcement fails on its own deadline instead of hanging', asyn
 
 test('readiness announcement abort destroys the held socket with a stable safe error', async () => {
   const held: Socket[] = []
-  let accepted: (() => void) | undefined
-  const connected = new Promise<void>(resolve => { accepted = resolve })
   const listener = createServer(socket => {
     held.push(socket)
-    accepted?.()
   })
   await new Promise<void>((resolve, reject) => {
     listener.once('error', reject)
@@ -721,6 +735,7 @@ test('readiness announcement abort destroys the held socket with a stable safe e
   assert.ok(address !== null && typeof address === 'object')
   const abort = new AbortController()
   const endpoint = `127.0.0.1:${address.port}`
+  abort.abort()
   const announcing = announceReadiness(
     endpoint,
     {token: TOKEN, host: '127.0.0.1', port: 51_515},
@@ -728,8 +743,6 @@ test('readiness announcement abort destroys the held socket with a stable safe e
   )
 
   try {
-    await settleWithin('readiness abort accepted connection', connected)
-    abort.abort()
     await assert.rejects(
       settleWithin('readiness abort result', announcing),
       (error: unknown) => error instanceof DesktopProtocolError
@@ -737,10 +750,7 @@ test('readiness announcement abort destroys the held socket with a stable safe e
         && !error.message.includes(endpoint)
         && !error.message.includes(TOKEN),
     )
-    await settleWithin('readiness abort socket close', new Promise<void>(resolve => {
-      if (held.every(socket => socket.destroyed)) resolve()
-      else for (const socket of held) socket.once('close', () => resolve())
-    }))
+    assert.equal(held.length, 0)
   } finally {
     abort.abort()
     for (const socket of held) socket.destroy()

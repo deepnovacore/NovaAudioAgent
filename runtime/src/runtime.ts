@@ -447,7 +447,7 @@ export class CoreRuntime {
         this.#applyCompressDone(event)
         break
       case 'assistant_spoken':
-        this.memory.append(CONVERSATION_CHANNEL, {
+        this.#appendMemory(CONVERSATION_CHANNEL, {
           ts: event.ts,
           trust: 'trusted_system',
           priority: USER_PRIORITY,
