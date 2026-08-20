@@ -32,6 +32,7 @@ import {
   type PublicProjectView,
 } from './desktop-wire.js'
 import type { Clock } from './clock.js'
+import type { DesktopControl } from './desktop.js'
 import type { PlaybackFrame } from './playback.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
@@ -78,10 +79,19 @@ export interface DesktopBridgeOptions {
   readonly clock?: Clock
   readonly telemetry?: RealtimeTelemetry
   readonly projectView?: PublicProjectView
+  /** Wake the composition-owned sender after, and only after, work becomes available. */
+  readonly onOutboundAvailable?: () => void
 }
 
 /** An outbound frame: text for control and captions, bytes for audio. */
 export type OutboundFrame = string | Uint8Array
+
+export type DesktopDeliveryPolicy = 'required' | 'droppable' | 'latest'
+
+export interface DesktopDelivery {
+  readonly frame: OutboundFrame
+  readonly policy: DesktopDeliveryPolicy
+}
 
 export class DesktopSocketBridge {
   readonly #token: string
@@ -91,11 +101,12 @@ export class DesktopSocketBridge {
   readonly #memoryBoard: ((requestId: string) => string) | undefined
   readonly #clock: Clock | undefined
   readonly #telemetry: RealtimeTelemetry | undefined
+  readonly #onOutboundAvailable: (() => void) | undefined
 
   /** Audio, captions, terminals. Bounded; a non-droppable overflow stops the transport. */
-  readonly #outbound: OutboundFrame[] = []
+  readonly #outbound: DesktopDelivery[] = []
   /** Clears and alerts. Drained before `#outbound` so a clear overtakes the audio it cancels. */
-  readonly #preemptOutbound: string[] = []
+  readonly #preemptOutbound: DesktopDelivery[] = []
   /** Single-slot: only the latest state matters, and a backlog of stale ones is worse than none. */
   #codexOutbound: CodexState | null = null
   #projectOutbound: PublicProjectView | null = null
@@ -137,6 +148,7 @@ export class DesktopSocketBridge {
     this.#clock = options.clock
     // Telemetry needs a clock to be worth anything: every sample it takes is a duration.
     this.#telemetry = options.clock === undefined ? undefined : options.telemetry
+    this.#onOutboundAvailable = options.onOutboundAvailable
     this.#codexState = options.service.codexState
     this.#projectView = options.projectView ?? null
     this.#uplinkFlushedAt = options.clock?.now() ?? 0
@@ -293,11 +305,24 @@ export class DesktopSocketBridge {
       return true
     }
     if (typeof raw !== 'string') {
-      this.#recordUplink(raw.length)
-      await this.#service.sendAudio(validateInputPcm(raw))
+      await this.receiveAudio(raw)
       return true
     }
     const command = parseClientMessage(raw, {expectedToken: this.#token, authenticated: true})
+    await this.#receiveCommand(command)
+    return true
+  }
+
+  async receiveAudio(raw: Uint8Array): Promise<void> {
+    this.#recordUplink(raw.length)
+    await this.#service.sendAudio(validateInputPcm(raw))
+  }
+
+  async receiveControl(control: DesktopControl): Promise<void> {
+    await this.#receiveCommand(commandFromControl(control))
+  }
+
+  async #receiveCommand(command: DesktopCommand): Promise<void> {
     if (this.#telemetry !== undefined && command.kind !== 'memory_board_request') {
       this.#telemetry.record('renderer.ack', {kind: command.kind, ...command.payload})
     }
@@ -307,46 +332,46 @@ export class DesktopSocketBridge {
           String(command.payload.ping_id),
           Number(command.payload.t_render_ms),
         )
-        return true
+        return
       case 'speech_onset':
         await this.#service.localSpeechOnset(String(command.payload.speech_id))
-        return true
+        return
       case 'playback_started':
         this.#service.playbackStarted(
           String(command.payload.utterance_id),
           Number(command.payload.generation_epoch),
         )
-        return true
+        return
       case 'playback_done':
         this.#service.playbackDone(
           String(command.payload.utterance_id),
           Number(command.payload.generation_epoch),
           optionalPlayedMs(command.payload),
         )
-        return true
+        return
       case 'playback_stopped':
         await this.#service.playbackStopped(
           String(command.payload.utterance_id),
           Number(command.payload.generation_epoch),
           optionalPlayedMs(command.payload),
         )
-        return true
+        return
       case 'playback_cleared':
         this.#service.playbackCleared(
           String(command.payload.utterance_id),
           Number(command.payload.generation_epoch),
           optionalPlayedMs(command.payload),
         )
-        return true
+        return
       case 'memory_board_request':
         if (this.#memoryBoard !== undefined) {
           // Droppable: a board the renderer asked for and did not get is a refresh it can ask for
           // again, unlike playback state it cannot reconstruct.
           this.#enqueue(this.#memoryBoard(String(command.payload.request_id)), {droppable: true})
         }
-        return true
+        return
       default:
-        return true
+        return
     }
   }
 
@@ -362,12 +387,17 @@ export class DesktopSocketBridge {
    * common case, since a clear is exactly what raises it.
    */
   takeNextFrame(): OutboundFrame | null {
+    return this.takeNextDelivery()?.frame ?? null
+  }
+
+  /** Take the next frame together with the failure policy the sender must apply. */
+  takeNextDelivery(): DesktopDelivery | null {
     const preempt = this.#preemptOutbound.shift()
     if (preempt !== undefined) return preempt
     for (;;) {
-      const frame = this.#outbound.shift()
-      if (frame === undefined) break
-      if (!this.#isFencedPlaybackMessage(frame)) return frame
+      const delivery = this.#outbound.shift()
+      if (delivery === undefined) break
+      if (!this.#isFencedPlaybackMessage(delivery.frame)) return delivery
     }
     if (this.#codexOutbound !== null) {
       const state = this.#codexOutbound
@@ -375,7 +405,7 @@ export class DesktopSocketBridge {
       if (state !== this.#lastCodexStateSent) {
         this.#lastCodexStateSent = state
         this.#syncCodexStateDelivery()
-        return codexStateMessage(state)
+        return {frame: codexStateMessage(state), policy: 'latest'}
       }
     }
     if (this.#projectOutbound !== null) {
@@ -384,7 +414,7 @@ export class DesktopSocketBridge {
       if (!sameProjectView(view, this.#lastProjectViewSent)) {
         this.#lastProjectViewSent = view
         this.#syncProjectDelivery()
-        return codexProjectMessage(view)
+        return {frame: codexProjectMessage(view), policy: 'latest'}
       }
     }
     return null
@@ -437,7 +467,8 @@ export class DesktopSocketBridge {
       if (options.droppable !== true) this.#stop.abort()
       return false
     }
-    this.#outbound.push(value)
+    this.#outbound.push({frame: value, policy: options.droppable === true ? 'droppable' : 'required'})
+    this.#onOutboundAvailable?.()
     return true
   }
 
@@ -447,27 +478,30 @@ export class DesktopSocketBridge {
       this.#stop.abort()
       return false
     }
-    this.#preemptOutbound.push(value)
+    this.#preemptOutbound.push({frame: value, policy: 'required'})
+    this.#onOutboundAvailable?.()
     return true
   }
 
   /** Re-arm the single slot if the renderer's state is still behind. */
   #syncCodexStateDelivery(): void {
-    this.#codexOutbound = null
-    if (this.#authenticated && this.#codexState !== this.#lastCodexStateSent) {
-      this.#codexOutbound = this.#codexState
-    }
+    const next = this.#authenticated && this.#codexState !== this.#lastCodexStateSent
+      ? this.#codexState
+      : null
+    if (next === this.#codexOutbound) return
+    this.#codexOutbound = next
+    if (next !== null) this.#onOutboundAvailable?.()
   }
 
   #syncProjectDelivery(): void {
-    this.#projectOutbound = null
-    if (
+    const next = (
       this.#authenticated
       && this.#projectView !== null
       && !sameProjectView(this.#projectView, this.#lastProjectViewSent)
-    ) {
-      this.#projectOutbound = this.#projectView
-    }
+    ) ? this.#projectView : null
+    if (sameProjectView(next, this.#projectOutbound)) return
+    this.#projectOutbound = next
+    if (next !== null) this.#onOutboundAvailable?.()
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -489,8 +523,10 @@ export class DesktopSocketBridge {
     const ids: string[] = []
     for (let index = 0; index < count; index += 1) {
       const pingId = `ping-${index}`
-      this.registerPing(pingId)
-      ids.push(pingId)
+      if (this.#enqueue(`{"type":"clock.ping","ping_id":"${pingId}"}`, {droppable: true})) {
+        this.registerPing(pingId)
+        ids.push(pingId)
+      }
     }
     return ids
   }
@@ -647,6 +683,49 @@ export function parseClientMessage(
     }
   }
   throw new DesktopProtocolError('desktop control frame type is unsupported')
+}
+
+function commandFromControl(control: DesktopControl): DesktopCommand {
+  switch (control.type) {
+    case 'speech.onset':
+      return {
+        kind: 'speech_onset',
+        payload: withRenderTimestamp({speech_id: control.speech_id}, control.t_render_ms),
+      }
+    case 'playback.started':
+      return {
+        kind: 'playback_started',
+        payload: withRenderTimestamp({
+          utterance_id: control.utterance_id,
+          generation_epoch: control.generation_epoch,
+        }, control.t_render_ms),
+      }
+    case 'playback.stopped':
+    case 'playback.done':
+    case 'playback.cleared': {
+      const payload = withRenderTimestamp({
+        utterance_id: control.utterance_id,
+        generation_epoch: control.generation_epoch,
+      }, control.t_render_ms)
+      if (control.played_ms !== undefined) payload.played_ms = control.played_ms
+      return {kind: control.type.replace('.', '_') as DesktopCommand['kind'], payload}
+    }
+    case 'memory.board.request':
+      return {kind: 'memory_board_request', payload: {request_id: control.request_id}}
+    case 'clock.pong':
+      return {
+        kind: 'clock_pong',
+        payload: {ping_id: control.ping_id, t_render_ms: control.t_render_ms},
+      }
+  }
+}
+
+function withRenderTimestamp(
+  payload: Record<string, string | number>,
+  timestamp: number | undefined,
+): Record<string, string | number> {
+  if (timestamp !== undefined) payload.t_render_ms = timestamp
+  return payload
 }
 
 const MAX_DESKTOP_JSON_BYTES = 16 * 1_024

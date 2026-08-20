@@ -230,6 +230,53 @@ test('an overflowing preempt queue always stops the transport', () => {
   assert.equal(stopped(), true)
 })
 
+test('outbound availability is announced only after a frame is actually queued', () => {
+  let available = 0
+  const {bridge} = harness({
+    onOutboundAvailable: () => { available += 1 },
+    maxOutboundFrames: 1,
+  })
+
+  bridge.onAudioFrame(frame(1, 0))
+  assert.equal(available, 1, 'the queued frame wakes a drain')
+  bridge.onCaption({role: 'user', text: 'dropped', final: false})
+  assert.equal(available, 1, 'an overflowed droppable frame does not announce unavailable work')
+})
+
+test('delivery envelopes identify required, droppable, and latest policy without parsing frames', () => {
+  const {bridge} = harness({projectView: {
+    workspace_display_name: 'project',
+    session_title: null,
+    pending_confirmation: false,
+  }})
+  bridge.onAudioFrame(frame(1, 0))
+  bridge.onCaption({role: 'user', text: 'caption', final: true})
+  bridge.markAuthenticated()
+
+  assert.equal(bridge.takeNextDelivery()?.policy, 'required')
+  assert.equal(bridge.takeNextDelivery()?.policy, 'droppable')
+  assert.equal(bridge.takeNextDelivery()?.policy, 'latest')
+  assert.equal(bridge.takeNextDelivery()?.policy, 'latest')
+})
+
+test('typed audio and controls route once through the same bridge behavior', async () => {
+  const {bridge, calls} = harness()
+
+  await bridge.receiveAudio(new Uint8Array([0, 1, 2, 3]))
+  await bridge.receiveControl({type: 'speech.onset', speech_id: 's-typed'})
+  await bridge.receiveControl({
+    type: 'playback.stopped',
+    utterance_id: 'u-typed',
+    generation_epoch: 4,
+    played_ms: 25,
+  })
+  assert.deepEqual(calls, [
+    'sendAudio:4',
+    'onset:s-typed',
+    'stopped:u-typed:4:25',
+  ])
+})
+
 test('the Codex state queue holds only the latest', () => {
   // A backlog of stale states is worse than none: the renderer would show `running` after the work
   // finished, briefly, for no reason.
@@ -415,6 +462,20 @@ test('a clock pong is only measured against a ping that was actually sent', asyn
     telemetry.records.filter(record => record.kind === 'renderer.clock_sync').length,
     1,
   )
+})
+
+test('clock pings are queued as droppable output', () => {
+  const {bridge, stopped} = harness()
+  assert.deepEqual(bridge.sendClockPings(2), ['ping-0', 'ping-1'])
+  assert.deepEqual(bridge.takeNextDelivery(), {
+    frame: '{"type":"clock.ping","ping_id":"ping-0"}',
+    policy: 'droppable',
+  })
+  assert.deepEqual(bridge.takeNextDelivery(), {
+    frame: '{"type":"clock.ping","ping_id":"ping-1"}',
+    policy: 'droppable',
+  })
+  assert.equal(stopped(), false)
 })
 
 test('uplink volume is reported at most once a second', async () => {
