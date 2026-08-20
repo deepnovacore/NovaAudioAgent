@@ -4,6 +4,7 @@ import type { Socket } from 'node:net'
 import { test } from 'node:test'
 import { WebSocket, type RawData } from 'ws'
 import {
+  DesktopCameraError,
   DesktopProtocolError,
   MAX_DESKTOP_JSON_BYTES,
   MAX_DESKTOP_OUTBOUND_BINARY_BYTES,
@@ -15,6 +16,17 @@ import {
   parseDesktopControl,
   parseReadyEndpoint,
 } from '../src/desktop.js'
+import {
+  CAMERA_CAPTURE_TIMEOUT_MS,
+  CAMERA_FRAME_MAGIC,
+  MAX_CAMERA_JPEG_BYTES,
+  MAX_CAMERA_LATE_RESPONSES,
+  MAX_CAMERA_WIRE_BYTES,
+  MAX_DESKTOP_INBOUND_BYTES,
+  MAX_PENDING_CAMERA_REQUESTS,
+  encodeCameraFrame,
+  serializeCameraError,
+} from '../src/desktop-camera.js'
 
 const TOKEN = '0123456789abcdef0123456789abcdef'
 
@@ -194,6 +206,49 @@ async function authenticate(socket: WebSocket, bootstrapCount = 2): Promise<void
   await settleWithin('desktop authentication bootstrap', bootstrap)
 }
 
+async function cameraResult(promise: ReturnType<NodeDesktopServer['captureCamera']>): Promise<unknown> {
+  try {
+    return await promise
+  } catch (error: unknown) {
+    return error
+  }
+}
+
+class FakeCameraTimer {
+  readonly delays: number[] = []
+  readonly #callbacks = new Map<number, () => void>()
+  #sequence = 0
+
+  set(delayMs: number, callback: () => void): number {
+    this.delays.push(delayMs)
+    const handle = ++this.#sequence
+    this.#callbacks.set(handle, callback)
+    return handle
+  }
+
+  clear(handle: unknown): void {
+    if (typeof handle === 'number') this.#callbacks.delete(handle)
+  }
+
+  fireOldest(): void {
+    const first = this.#callbacks.entries().next().value as [number, () => void] | undefined
+    assert.ok(first !== undefined, 'a camera deadline is armed')
+    this.#callbacks.delete(first[0])
+    first[1]()
+  }
+
+  get active(): number {
+    return this.#callbacks.size
+  }
+}
+
+function captureError(error: unknown): boolean {
+  return error instanceof DesktopCameraError
+    && error.code === 'capture_unavailable'
+    && !error.message.includes(TOKEN)
+    && !error.message.includes('/private/camera')
+}
+
 test('desktop parsers validate credentials without echoing them', () => {
   authenticateDesktopFrame(
     JSON.stringify({type: 'hello', token: TOKEN, ignored: 'compatible-with-python'}),
@@ -311,6 +366,575 @@ test('authenticated desktop client receives bootstrap and forwards validated inp
   assert.equal(disconnects, 1)
 })
 
+test('authenticated desktop camera capture correlates one exact framed JPEG', async () => {
+  const server = new NodeDesktopServer({token: TOKEN})
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    const rendererRequest = nextTextFrames(socket, 1)
+    let capture: ReturnType<NodeDesktopServer['captureCamera']>
+    try {
+      capture = server.captureCamera({source: 'local'})
+    } catch (error) {
+      void rendererRequest.catch(() => undefined)
+      throw error
+    }
+    const [request] = await settleWithin('desktop camera request', rendererRequest)
+    assert.equal(request, '{"type":"camera.capture","request_id":"camera-1","source":"local"}')
+    socket.send(encodeCameraFrame({
+      request_id: 'camera-1',
+      payload: new Uint8Array([0xff, 0xd8, 0x11, 0x22, 0xff, 0xd9]),
+    }))
+    const frame = await settleWithin('desktop camera capture', capture)
+    assert.deepEqual(frame, {
+      payload: new Uint8Array([0xff, 0xd8, 0x11, 0x22, 0xff, 0xd9]),
+      media_type: 'image/jpeg',
+      width: 1280,
+      height: 720,
+    })
+  } finally {
+    await closeDesktopClientAndServer(socket, server)
+  }
+})
+
+test('camera errors isolate requests and concurrent frames may settle out of order', async () => {
+  const timer = new FakeCameraTimer()
+  const server = new NodeDesktopServer({token: TOKEN, cameraTimer: timer})
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    const requests = nextTextFrames(socket, 3)
+    const first = server.captureCamera({source: 'local'})
+    const second = server.captureCamera({source: 'file', positionMs: 2500})
+    const third = server.captureCamera({source: 'local'})
+    const [firstRaw, secondRaw, thirdRaw] = await settleWithin('three camera requests', requests)
+    const firstRequest = JSON.parse(firstRaw!) as {request_id: string}
+    const secondRequest = JSON.parse(secondRaw!) as {request_id: string}
+    const thirdRequest = JSON.parse(thirdRaw!) as {request_id: string}
+    assert.deepEqual([firstRequest.request_id, secondRequest.request_id, thirdRequest.request_id],
+      ['camera-1', 'camera-2', 'camera-3'])
+    assert.equal(secondRaw,
+      '{"type":"camera.capture","request_id":"camera-2","source":"file","position_ms":2500}')
+
+    socket.send(encodeCameraFrame({
+      request_id: thirdRequest.request_id,
+      payload: new Uint8Array([0xff, 0xd8, 3, 3, 0xff, 0xd9]),
+    }))
+    socket.send(serializeCameraError({request_id: firstRequest.request_id}))
+    socket.send(encodeCameraFrame({
+      request_id: secondRequest.request_id,
+      payload: new Uint8Array([0xff, 0xd8, 2, 2, 0xff, 0xd9]),
+    }))
+
+    await assert.rejects(settleWithin('isolated camera error', first), captureError)
+    assert.deepEqual([...((await settleWithin('third camera frame', third)).payload)],
+      [0xff, 0xd8, 3, 3, 0xff, 0xd9])
+    assert.deepEqual([...((await settleWithin('second camera frame', second)).payload)],
+      [0xff, 0xd8, 2, 2, 0xff, 0xd9])
+    assert.equal(timer.active, 0)
+  } finally {
+    await closeDesktopClientAndServer(socket, server)
+  }
+})
+
+test('camera capture validates before socket state and bounds pending requests', async () => {
+  const timer = new FakeCameraTimer()
+  const server = new NodeDesktopServer({token: TOKEN, cameraTimer: timer})
+  assert.throws(
+    () => server.captureCamera({source: 'file'}),
+    error => error instanceof DesktopCameraError && error.code === 'invalid_request',
+  )
+  assert.throws(
+    () => server.captureCamera({source: 'local', positionMs: 0}),
+    error => error instanceof DesktopCameraError && error.code === 'invalid_request',
+  )
+  await assert.rejects(
+    settleWithin('disconnected camera request', server.captureCamera({source: 'local'})),
+    captureError,
+  )
+  assert.equal(timer.active, 0)
+
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await assert.rejects(
+      settleWithin('unauthenticated camera request', server.captureCamera({source: 'local'})),
+      captureError,
+    )
+    await authenticate(socket)
+    const requests = nextTextFrames(socket, MAX_PENDING_CAMERA_REQUESTS)
+    const pending = Array.from({length: MAX_PENDING_CAMERA_REQUESTS}, () =>
+      cameraResult(server.captureCamera({source: 'local'})),
+    )
+    await assert.rejects(
+      settleWithin('ninth camera request', server.captureCamera({source: 'local'})),
+      captureError,
+    )
+    assert.equal((await settleWithin('bounded camera requests', requests)).length,
+      MAX_PENDING_CAMERA_REQUESTS)
+    assert.equal(timer.active, MAX_PENDING_CAMERA_REQUESTS)
+    await settleWithin('pending camera disconnect', server.disconnectClient())
+    const errors = await settleWithin('pending camera cleanup', Promise.all(pending))
+    assert.equal(errors.filter(captureError).length, MAX_PENDING_CAMERA_REQUESTS)
+    assert.equal(timer.active, 0)
+  } finally {
+    await closeDesktopServer(server)
+  }
+  await assert.rejects(
+    settleWithin('stopped camera request', server.captureCamera({source: 'local'})),
+    captureError,
+  )
+})
+
+test('camera timeout is exactly five seconds and a valid late reply is ignored', async () => {
+  const timer = new FakeCameraTimer()
+  let passBarrier: (() => void) | undefined
+  const barrier = new Promise<void>(resolve => { passBarrier = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    cameraTimer: timer,
+    onControl: () => passBarrier?.(),
+  })
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    const firstRequest = nextTextFrames(socket, 1)
+    const first = server.captureCamera({source: 'local'})
+    const [raw] = await settleWithin('timed camera request', firstRequest)
+    const requestId = (JSON.parse(raw!) as {request_id: string}).request_id
+    assert.deepEqual(timer.delays, [CAMERA_CAPTURE_TIMEOUT_MS])
+    timer.fireOldest()
+    await assert.rejects(settleWithin('camera timeout result', first), captureError)
+    assert.equal(timer.active, 0)
+
+    socket.send(encodeCameraFrame({request_id: requestId, payload: JPEG_BYTES}))
+    socket.send(JSON.stringify({type: 'speech.onset', speech_id: 'after-late-camera'}))
+    await settleWithin('late camera processing barrier', barrier)
+    assert.equal(socket.readyState, WebSocket.OPEN)
+
+    const secondRequest = nextTextFrames(socket, 1)
+    const second = server.captureCamera({source: 'local'})
+    const secondId = (JSON.parse((await settleWithin('post-timeout camera request', secondRequest))[0]!) as {
+      request_id: string
+    }).request_id
+    assert.notEqual(secondId, requestId)
+    socket.send(encodeCameraFrame({request_id: secondId, payload: JPEG_BYTES}))
+    await settleWithin('post-timeout camera success', second)
+    assert.equal(timer.active, 0)
+  } finally {
+    await closeDesktopClientAndServer(socket, server)
+  }
+})
+
+test('a timeout tombstone belongs only to its original socket generation', async () => {
+  const timer = new FakeCameraTimer()
+  let observeDisconnect: (() => void) | undefined
+  const disconnected = new Promise<void>(resolve => { observeDisconnect = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    cameraTimer: timer,
+    onClientDisconnect: () => observeDisconnect?.(),
+  })
+  const readiness = await startDesktopServer(server)
+  const first = await connectDesktopClient(server, readiness.port)
+  let second: WebSocket | undefined
+  try {
+    await authenticate(first)
+    const request = nextTextFrames(first, 1)
+    const capture = server.captureCamera({source: 'local'})
+    const requestId = (JSON.parse((await settleWithin('generation tombstone request', request))[0]!) as {
+      request_id: string
+    }).request_id
+    timer.fireOldest()
+    await assert.rejects(settleWithin('generation tombstone timeout', capture), captureError)
+    await closeClient(first)
+    await settleWithin('generation tombstone disconnect', disconnected)
+
+    second = await connect(readiness.port)
+    await authenticate(second)
+    const closed = waitForClose(second)
+    second.send(encodeCameraFrame({request_id: requestId, payload: JPEG_BYTES}))
+    assert.deepEqual(await settleWithin('wrong generation tombstone close', closed), {
+      code: 4003, reason: 'desktop protocol rejected',
+    })
+  } finally {
+    if (second !== undefined) await closeClient(second)
+    await closeDesktopServer(server)
+  }
+})
+
+test('camera timeout tombstones retain only the newest bounded FIFO', async () => {
+  const timer = new FakeCameraTimer()
+  let passBarrier: (() => void) | undefined
+  const barrier = new Promise<void>(resolve => { passBarrier = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    cameraTimer: timer,
+    onControl: () => passBarrier?.(),
+  })
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  const ids: string[] = []
+  try {
+    await authenticate(socket)
+    for (let index = 0; index <= MAX_CAMERA_LATE_RESPONSES; index += 1) {
+      const request = nextTextFrames(socket, 1)
+      const capture = server.captureCamera({source: 'local'})
+      ids.push((JSON.parse((await settleWithin('bounded tombstone request', request))[0]!) as {
+        request_id: string
+      }).request_id)
+      timer.fireOldest()
+      await assert.rejects(settleWithin('bounded tombstone timeout', capture), captureError)
+    }
+    socket.send(encodeCameraFrame({request_id: ids.at(-1)!, payload: JPEG_BYTES}))
+    socket.send(JSON.stringify({type: 'speech.onset', speech_id: 'after-newest-tombstone'}))
+    await settleWithin('newest tombstone processing barrier', barrier)
+    assert.equal(socket.readyState, WebSocket.OPEN)
+
+    const closed = waitForClose(socket)
+    socket.send(encodeCameraFrame({request_id: ids[0]!, payload: JPEG_BYTES}))
+    assert.deepEqual(await settleWithin('evicted tombstone close', closed), {
+      code: 4003, reason: 'desktop protocol rejected',
+    })
+  } finally {
+    await closeDesktopServer(server)
+  }
+})
+
+const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0x44, 0x55, 0xff, 0xd9])
+
+test('unknown and duplicate successful camera replies are protocol violations', async t => {
+  await t.test('unknown request id', async () => {
+    const server = new NodeDesktopServer({token: TOKEN})
+    const readiness = await startDesktopServer(server)
+    const socket = await connectDesktopClient(server, readiness.port)
+    try {
+      await authenticate(socket)
+      const closed = waitForClose(socket)
+      socket.send(encodeCameraFrame({request_id: 'camera-never-issued', payload: JPEG_BYTES}))
+      assert.deepEqual(await settleWithin('unknown camera close', closed), {
+        code: 4003, reason: 'desktop protocol rejected',
+      })
+    } finally {
+      await closeDesktopServer(server)
+    }
+  })
+
+  await t.test('duplicate successful response', async () => {
+    const server = new NodeDesktopServer({token: TOKEN})
+    const readiness = await startDesktopServer(server)
+    const socket = await connectDesktopClient(server, readiness.port)
+    try {
+      await authenticate(socket)
+      const request = nextTextFrames(socket, 1)
+      const capture = server.captureCamera({source: 'local'})
+      const requestId = (JSON.parse((await settleWithin('duplicate camera request', request))[0]!) as {
+        request_id: string
+      }).request_id
+      const response = encodeCameraFrame({request_id: requestId, payload: JPEG_BYTES})
+      socket.send(response)
+      await settleWithin('first camera response', capture)
+      const closed = waitForClose(socket)
+      socket.send(response)
+      assert.deepEqual(await settleWithin('duplicate camera close', closed), {
+        code: 4003, reason: 'desktop protocol rejected',
+      })
+    } finally {
+      await closeDesktopServer(server)
+    }
+  })
+})
+
+test('camera requests are cleaned on disconnect, explicit disconnect and server close', async () => {
+  const timer = new FakeCameraTimer()
+  const server = new NodeDesktopServer({token: TOKEN, cameraTimer: timer})
+  const readiness = await startDesktopServer(server)
+  let socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    let requests = nextTextFrames(socket, 2)
+    const first = server.captureCamera({source: 'local'})
+    const second = server.captureCamera({source: 'file', positionMs: 0})
+    const firstResult = cameraResult(first)
+    const secondResult = cameraResult(second)
+    await settleWithin('disconnect cleanup requests', requests)
+    await closeClient(socket)
+    assert.ok(captureError(await settleWithin('first disconnect cleanup', firstResult)))
+    assert.ok(captureError(await settleWithin('second disconnect cleanup', secondResult)))
+    assert.equal(timer.active, 0)
+
+    socket = await connect(readiness.port)
+    await authenticate(socket)
+    requests = nextTextFrames(socket, 1)
+    const explicit = server.captureCamera({source: 'local'})
+    const explicitResult = cameraResult(explicit)
+    await settleWithin('explicit disconnect camera request', requests)
+    await settleWithin('explicit camera disconnect', server.disconnectClient())
+    assert.ok(captureError(await settleWithin('explicit disconnect cleanup', explicitResult)))
+    assert.equal(timer.active, 0)
+
+    socket = await connect(readiness.port)
+    await authenticate(socket)
+    requests = nextTextFrames(socket, 1)
+    const closing = server.captureCamera({source: 'local'})
+    const closingResult = cameraResult(closing)
+    await settleWithin('server close camera request', requests)
+    await closeDesktopServer(server)
+    assert.ok(captureError(await settleWithin('server close camera cleanup', closingResult)))
+    assert.equal(timer.active, 0)
+  } finally {
+    await closeDesktopServer(server)
+  }
+})
+
+test('camera send callback failure rejects its request and clears its deadline', async () => {
+  const timer = new FakeCameraTimer()
+  const server = new NodeDesktopServer({token: TOKEN, cameraTimer: timer})
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  const prototype = WebSocket.prototype as unknown as {
+    send(data: unknown, options: unknown, callback: (error?: Error) => void): void
+  }
+  // Captured so the patched method can delegate with the server-side socket as `this`.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const originalSend = prototype.send
+  try {
+    await authenticate(socket)
+    const closed = waitForClose(socket)
+    prototype.send = function failCameraSend(data, options, callback): void {
+      if (typeof data === 'string' && data.includes('camera.capture')) {
+        callback(new Error('injected /private/camera send failure'))
+        return
+      }
+      originalSend.call(this, data, options, callback)
+    }
+    const capture = server.captureCamera({source: 'local'})
+    await assert.rejects(settleWithin('camera send failure', capture), captureError)
+    assert.equal(timer.active, 0)
+    assert.deepEqual(await settleWithin('camera send failure socket close', closed), {
+      code: 4003, reason: 'desktop protocol rejected',
+    })
+  } finally {
+    prototype.send = originalSend
+    await closeDesktopServer(server)
+  }
+})
+
+test('stale generation response cannot settle or close a fresh camera request', async () => {
+  let releaseAudio: (() => void) | undefined
+  const heldAudio = new Promise<void>(resolve => { releaseAudio = resolve })
+  let observeDisconnect: (() => void) | undefined
+  const disconnected = new Promise<void>(resolve => { observeDisconnect = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onAudio: () => heldAudio,
+    onClientDisconnect: () => observeDisconnect?.(),
+  })
+  const readiness = await startDesktopServer(server)
+  const firstSocket = await connectDesktopClient(server, readiness.port)
+  let secondSocket: WebSocket | undefined
+  try {
+    await authenticate(firstSocket)
+    const oldRequest = nextTextFrames(firstSocket, 1)
+    const oldCapture = server.captureCamera({source: 'local'})
+    const oldResult = cameraResult(oldCapture)
+    const oldId = (JSON.parse((await settleWithin('old generation camera request', oldRequest))[0]!) as {
+      request_id: string
+    }).request_id
+    firstSocket.send(Buffer.from([0, 0]))
+    firstSocket.send(encodeCameraFrame({request_id: oldId, payload: JPEG_BYTES}))
+    firstSocket.terminate()
+    await settleWithin('old generation server disconnect', disconnected)
+    assert.ok(captureError(await settleWithin('old generation camera cleanup', oldResult)))
+
+    secondSocket = await connect(readiness.port)
+    await authenticate(secondSocket)
+    const freshRequest = nextTextFrames(secondSocket, 1)
+    const freshCapture = server.captureCamera({source: 'local'})
+    const freshId = (JSON.parse((await settleWithin('fresh generation camera request', freshRequest))[0]!) as {
+      request_id: string
+    }).request_id
+    releaseAudio?.()
+    await settleWithin('stale generation processing turn', new Promise<void>(resolve => {
+      setImmediate(resolve)
+    }))
+    assert.equal(secondSocket.readyState, WebSocket.OPEN)
+    secondSocket.send(encodeCameraFrame({request_id: freshId, payload: JPEG_BYTES}))
+    await settleWithin('fresh generation camera result', freshCapture)
+    assert.equal(secondSocket.readyState, WebSocket.OPEN)
+  } finally {
+    releaseAudio?.()
+    if (secondSocket !== undefined) await closeClient(secondSocket)
+    await closeDesktopServer(server)
+  }
+})
+
+test('camera binary dispatch preserves PCM prefixes and rejects malformed full magic', async () => {
+  const audio: Uint8Array[] = []
+  let resolveAudio: (() => void) | undefined
+  const allAudio = new Promise<void>(resolve => { resolveAudio = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onAudio: pcm => {
+      audio.push(pcm)
+      if (audio.length === 8) resolveAudio?.()
+    },
+  })
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    socket.send(Buffer.from([0, 1]))
+    for (let prefix = 1; prefix < CAMERA_FRAME_MAGIC.byteLength; prefix += 1) {
+      const length = prefix % 2 === 0 ? prefix : prefix + 1
+      const pcm = new Uint8Array(length)
+      pcm.set(CAMERA_FRAME_MAGIC.subarray(0, prefix))
+      socket.send(pcm)
+    }
+    await settleWithin('partial camera magic PCM delivery', allAudio)
+    assert.equal(audio.length, 8)
+    assert.deepEqual([...audio[7]!.subarray(0, 7)], [...CAMERA_FRAME_MAGIC.subarray(0, 7)])
+    const closed = waitForClose(socket)
+    socket.send(CAMERA_FRAME_MAGIC)
+    assert.deepEqual(await settleWithin('malformed camera frame close', closed), {
+      code: 4003, reason: 'desktop protocol rejected',
+    })
+    assert.equal(audio.length, 8)
+  } finally {
+    await closeDesktopServer(server)
+  }
+})
+
+test('full camera magic rejects truncated and oversized JPEG without PCM fallback', async t => {
+  async function expectProtocolClose(name: string, payload: Uint8Array): Promise<void> {
+    let audioCalls = 0
+    const server = new NodeDesktopServer({token: TOKEN, onAudio: () => { audioCalls += 1 }})
+    const readiness = await startDesktopServer(server)
+    const socket = await connectDesktopClient(server, readiness.port)
+    try {
+      await authenticate(socket)
+      const closed = waitForClose(socket)
+      socket.send(payload)
+      assert.deepEqual(await settleWithin(name, closed), {
+        code: 4003, reason: 'desktop protocol rejected',
+      })
+      assert.equal(audioCalls, 0)
+    } finally {
+      await closeDesktopServer(server)
+    }
+  }
+
+  await t.test('truncated JPEG', async () => {
+    const valid = encodeCameraFrame({request_id: 'camera-1', payload: JPEG_BYTES})
+    await expectProtocolClose('truncated camera JPEG close', valid.subarray(0, valid.byteLength - 1))
+  })
+
+  await t.test('one byte over JPEG limit', async () => {
+    const jpeg = new Uint8Array(MAX_CAMERA_JPEG_BYTES)
+    jpeg.set([0xff, 0xd8])
+    jpeg.set([0xff, 0xd9], jpeg.byteLength - 2)
+    const valid = encodeCameraFrame({request_id: 'camera-1', payload: jpeg})
+    const oversized = new Uint8Array(valid.byteLength + 1)
+    oversized.set(valid)
+    oversized[valid.byteLength - 2] = 0
+    oversized[valid.byteLength - 1] = 0xff
+    oversized[valid.byteLength] = 0xd9
+    assert.ok(oversized.byteLength <= MAX_CAMERA_WIRE_BYTES)
+    await expectProtocolClose('oversized camera JPEG close', oversized)
+  })
+})
+
+test('malformed camera error text closes with the stable protocol verdict', async () => {
+  const server = new NodeDesktopServer({token: TOKEN})
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    const closed = waitForClose(socket)
+    socket.send(JSON.stringify({
+      type: 'camera.error',
+      request_id: 'camera-1',
+      error: 'capture_unavailable',
+      path: '/private/camera/secret-device',
+    }))
+    assert.deepEqual(await settleWithin('malformed camera error close', closed), {
+      code: 4003, reason: 'desktop protocol rejected',
+    })
+  } finally {
+    await closeDesktopServer(server)
+  }
+})
+
+test('desktop applies separate PCM, camera wire and aggregate inbound bounds', async t => {
+  await t.test('raw PCM remains limited to 64 KiB', async () => {
+    const server = new NodeDesktopServer({token: TOKEN})
+    const readiness = await startDesktopServer(server)
+    const socket = await connectDesktopClient(server, readiness.port)
+    try {
+      await authenticate(socket)
+      const closed = waitForClose(socket)
+      socket.send(Buffer.alloc(MAX_DESKTOP_PCM_BYTES + 2))
+      assert.deepEqual(await settleWithin('application PCM limit close', closed), {
+        code: 4003, reason: 'desktop protocol rejected',
+      })
+    } finally {
+      await closeDesktopServer(server)
+    }
+  })
+
+  await t.test('WebSocket rejects bytes above the camera wire maximum', async () => {
+    const server = new NodeDesktopServer({token: TOKEN})
+    const readiness = await startDesktopServer(server)
+    const socket = await connectDesktopClient(server, readiness.port)
+    try {
+      await authenticate(socket)
+      const closed = waitForClose(socket)
+      socket.send(Buffer.alloc(MAX_CAMERA_WIRE_BYTES + 1))
+      assert.equal((await settleWithin('WebSocket camera limit close', closed)).code, 1009)
+    } finally {
+      await closeDesktopServer(server)
+    }
+  })
+
+  await t.test('queued inbound camera bytes cannot exceed four MiB', async () => {
+    let releaseAudio: (() => void) | undefined
+    const heldAudio = new Promise<void>(resolve => { releaseAudio = resolve })
+    const server = new NodeDesktopServer({token: TOKEN, onAudio: () => heldAudio})
+    const readiness = await startDesktopServer(server)
+    const socket = await connectDesktopClient(server, readiness.port)
+    try {
+      await authenticate(socket)
+      const requests = nextTextFrames(socket, 2)
+      const first = cameraResult(server.captureCamera({source: 'local'}))
+      const second = cameraResult(server.captureCamera({source: 'local'}))
+      const ids = (await settleWithin('aggregate camera requests', requests)).map(raw =>
+        (JSON.parse(raw) as {request_id: string}).request_id)
+      const jpeg = new Uint8Array(MAX_CAMERA_JPEG_BYTES)
+      jpeg.set([0xff, 0xd8])
+      jpeg.set([0xff, 0xd9], jpeg.byteLength - 2)
+      const firstFrame = encodeCameraFrame({request_id: ids[0]!, payload: jpeg})
+      const secondFrame = encodeCameraFrame({request_id: ids[1]!, payload: jpeg})
+      assert.ok(firstFrame.byteLength + secondFrame.byteLength > MAX_DESKTOP_INBOUND_BYTES)
+      socket.send(Buffer.from([0, 0]))
+      const closed = waitForClose(socket)
+      socket.send(firstFrame)
+      socket.send(secondFrame)
+      assert.deepEqual(await settleWithin('aggregate inbound close', closed), {
+        code: 4003, reason: 'desktop protocol rejected',
+      })
+      releaseAudio?.()
+      assert.ok(captureError(await settleWithin('aggregate first cleanup', first)))
+      assert.ok(captureError(await settleWithin('aggregate second cleanup', second)))
+    } finally {
+      releaseAudio?.()
+      await closeDesktopServer(server)
+    }
+  })
+})
+
 test('invalid credentials and malformed PCM fail closed with no credential disclosure', async () => {
   const server = new NodeDesktopServer({token: TOKEN})
   const readiness = await server.start()
@@ -362,7 +986,7 @@ test('an unauthenticated desktop client is dropped on its own deadline', async (
   await server.close()
 })
 
-test('oversized PCM is rejected by the WebSocket payload bound', async () => {
+test('oversized PCM is rejected by the application PCM bound', async () => {
   const server = new NodeDesktopServer({token: TOKEN})
   const readiness = await server.start()
   const socket = await connect(readiness.port)
@@ -372,7 +996,7 @@ test('oversized PCM is rejected by the WebSocket payload bound', async () => {
 
   const closed = waitForClose(socket)
   socket.send(Buffer.alloc(MAX_DESKTOP_PCM_BYTES + 2))
-  assert.equal((await closed).code, 1009)
+  assert.deepEqual(await closed, {code: 4003, reason: 'desktop protocol rejected'})
   await server.close()
 })
 

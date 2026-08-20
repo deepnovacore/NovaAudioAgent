@@ -2,6 +2,20 @@ import { timingSafeEqual } from 'node:crypto'
 import { createConnection } from 'node:net'
 import { z } from 'zod'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
+import {
+  CAMERA_CAPTURE_TIMEOUT_MS,
+  CAMERA_HEIGHT,
+  CAMERA_WIDTH,
+  MAX_CAMERA_LATE_RESPONSES,
+  MAX_CAMERA_POSITION_MS,
+  MAX_CAMERA_WIRE_BYTES,
+  MAX_DESKTOP_INBOUND_BYTES,
+  MAX_PENDING_CAMERA_REQUESTS,
+  decodeCameraFrame,
+  hasCameraFrameMagic,
+  parseCameraError,
+  serializeCameraCapture,
+} from './desktop-camera.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024
@@ -65,6 +79,34 @@ export class DesktopProtocolError extends Error {
   }
 }
 
+export type DesktopCameraErrorCode = 'invalid_request' | 'capture_unavailable'
+
+export class DesktopCameraError extends Error {
+  constructor(readonly code: DesktopCameraErrorCode) {
+    super(code === 'invalid_request'
+      ? 'desktop camera capture request is invalid'
+      : 'desktop camera capture is unavailable')
+    this.name = 'DesktopCameraError'
+  }
+}
+
+export interface CameraCaptureRequest {
+  readonly source: 'local' | 'file'
+  readonly positionMs?: number
+}
+
+export interface CapturedCameraFrame {
+  readonly payload: Uint8Array
+  readonly media_type: 'image/jpeg'
+  readonly width: typeof CAMERA_WIDTH
+  readonly height: typeof CAMERA_HEIGHT
+}
+
+export interface DesktopCameraTimer {
+  set(delayMs: number, callback: () => void): unknown
+  clear(handle: unknown): void
+}
+
 export interface DesktopServerOptions {
   readonly token: string
   readonly onControl?: (control: DesktopControl) => void | Promise<void>
@@ -74,6 +116,7 @@ export interface DesktopServerOptions {
   readonly bootstrapTextFrames?: readonly string[]
   readonly authTimeoutMs?: number
   readonly closeGraceMs?: number
+  readonly cameraTimer?: DesktopCameraTimer
 }
 
 export interface DesktopReadiness {
@@ -93,6 +136,12 @@ export class NodeDesktopServer {
   #pendingSendCount = 0
   #stopping = false
   #closing: Promise<void> | undefined
+  #connectionGeneration = 0
+  #cameraSequence = 0n
+  readonly #pendingCamera = new Map<string, PendingCameraCapture>()
+  readonly #lateCameraIds = new Map<string, CameraResponseOwner>()
+  readonly #lateCameraOrder: string[] = []
+  #inboundBytes = 0
 
   constructor(options: DesktopServerOptions) {
     validateDesktopToken(options.token)
@@ -126,10 +175,38 @@ export class NodeDesktopServer {
     return this.#enqueueSend(this.#active!, new Uint8Array(raw))
   }
 
+  captureCamera(request: CameraCaptureRequest): Promise<CapturedCameraFrame> {
+    validateCameraCaptureRequest(request)
+    if (!this.#canSend() || this.#pendingCamera.size >= MAX_PENDING_CAMERA_REQUESTS) {
+      return Promise.reject(cameraUnavailableError())
+    }
+    const socket = this.#active!
+    const generation = this.#connectionGeneration
+    this.#cameraSequence += 1n
+    const requestId = `camera-${this.#cameraSequence}`
+    const raw = serializeCameraCapture(request.source === 'local'
+      ? {request_id: requestId, source: 'local'}
+      : {request_id: requestId, source: 'file', position_ms: request.positionMs!})
+    const pending = new PendingCameraCapture(requestId, socket, generation)
+    this.#pendingCamera.set(requestId, pending)
+    const timer = this.#options.cameraTimer ?? defaultCameraTimer
+    pending.timerHandle = timer.set(CAMERA_CAPTURE_TIMEOUT_MS, () => {
+      if (this.#pendingCamera.get(requestId) !== pending) return
+      this.#pendingCamera.delete(requestId)
+      this.#rememberLateCameraId(pending)
+      pending.reject(cameraUnavailableError())
+    })
+    void this.#enqueueSend(socket, raw).catch(() => {
+      this.#rejectCameraCapture(pending, cameraUnavailableError())
+    })
+    return pending.promise
+  }
+
   /** Retire only the client active when this call begins; a later reconnect is never its target. */
   async disconnectClient(): Promise<void> {
     const active = this.#active
     if (active === undefined) return
+    this.#rejectSocketCameraCaptures(active)
     await closeWebSocket(active, this.#options.closeGraceMs ?? DESKTOP_CLOSE_GRACE_MS)
     this.#notifyDisconnected(active)
   }
@@ -141,7 +218,7 @@ export class NodeDesktopServer {
     const server = new WebSocketServer({
       host: '127.0.0.1',
       port: 0,
-      maxPayload: MAX_DESKTOP_PCM_BYTES,
+      maxPayload: MAX_CAMERA_WIRE_BYTES,
       perMessageDeflate: false,
     })
     this.#server = server
@@ -168,6 +245,7 @@ export class NodeDesktopServer {
     const server = this.#server
     this.#server = undefined
     const active = this.#active
+    if (active !== undefined) this.#rejectSocketCameraCaptures(active)
     const activeClosed = active === undefined ? Promise.resolve() : closeWebSocket(
       active,
       this.#options.closeGraceMs ?? DESKTOP_CLOSE_GRACE_MS,
@@ -190,6 +268,7 @@ export class NodeDesktopServer {
       return
     }
     this.#active = socket
+    const generation = ++this.#connectionGeneration
     // `ws` reports protocol and max-payload failures through this event before
     // closing the peer. The close code remains the renderer-visible verdict.
     socket.on('error', error => { void error })
@@ -200,6 +279,13 @@ export class NodeDesktopServer {
       this.#options.authTimeoutMs)
 
     socket.on('message', (data, isBinary) => {
+      const inboundBytes = rawDataByteLength(data)
+      if (this.#inboundBytes + inboundBytes > MAX_DESKTOP_INBOUND_BYTES) {
+        rejected = true
+        socket.close(4003, 'desktop protocol rejected')
+        return
+      }
+      this.#inboundBytes += inboundBytes
       processing = processing.then(async () => {
         // One rejection is terminal. Without this latch a peer could keep
         // guessing tokens on the same socket in the window before close settles.
@@ -217,17 +303,30 @@ export class NodeDesktopServer {
           return
         }
         if (isBinary) {
-          const pcm = rawBytes(data)
+          const binary = rawBinaryBytes(data)
+          if (hasCameraFrameMagic(binary)) {
+            this.#receiveCameraFrame(socket, generation, binary)
+            return
+          }
+          const pcm = validateAndCopyPcm(binary)
           if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
             throw new DesktopProtocolError('desktop input must be aligned PCM16 bytes')
           }
           await this.#options.onAudio?.(pcm)
           return
         }
-        await this.#options.onControl?.(parseDesktopControl(rawText(data)))
+        const raw = rawText(data)
+        const cameraError = maybeCameraError(raw)
+        if (cameraError !== undefined) {
+          this.#receiveCameraError(socket, generation, cameraError.request_id)
+          return
+        }
+        await this.#options.onControl?.(parseDesktopControl(raw))
       }).catch(() => {
         rejected = true
         socket.close(4003, 'desktop protocol rejected')
+      }).finally(() => {
+        this.#inboundBytes -= inboundBytes
       })
     })
     socket.once('close', () => {
@@ -237,7 +336,9 @@ export class NodeDesktopServer {
   }
 
   #notifyDisconnected(socket: WebSocket | undefined): void {
-    if (socket === undefined || this.#active !== socket) return
+    if (socket === undefined) return
+    this.#rejectSocketCameraCaptures(socket)
+    if (this.#active !== socket) return
     this.#active = undefined
     this.#authenticated = false
     this.#rejectSocketSends(socket, outboundUnavailableError())
@@ -307,6 +408,81 @@ export class NodeDesktopServer {
       socket.close(4003, 'desktop protocol rejected')
     }
   }
+
+  #receiveCameraFrame(socket: WebSocket, generation: number, raw: Uint8Array): void {
+    const frame = decodeCameraFrame(raw)
+    const pending = this.#ownedCameraCapture(frame.request_id, socket, generation)
+    if (pending === undefined) return
+    this.#settleCameraCapture(pending)
+    pending.resolve({
+      payload: new Uint8Array(frame.payload),
+      media_type: 'image/jpeg',
+      width: CAMERA_WIDTH,
+      height: CAMERA_HEIGHT,
+    })
+  }
+
+  #receiveCameraError(socket: WebSocket, generation: number, requestId: string): void {
+    const pending = this.#ownedCameraCapture(requestId, socket, generation)
+    if (pending === undefined) return
+    this.#rejectCameraCapture(pending, cameraUnavailableError())
+  }
+
+  #ownedCameraCapture(
+    requestId: string,
+    socket: WebSocket,
+    generation: number,
+  ): PendingCameraCapture | undefined {
+    const pending = this.#pendingCamera.get(requestId)
+    if (pending === undefined) {
+      const lateOwner = this.#lateCameraIds.get(requestId)
+      if (lateOwner !== undefined) {
+        if (lateOwner.socket === socket && lateOwner.generation === generation) return undefined
+        throw new DesktopProtocolError('desktop camera response has wrong owner')
+      }
+      throw new DesktopProtocolError('desktop camera response is unsolicited')
+    }
+    if (pending.socket !== socket || pending.generation !== generation) {
+      throw new DesktopProtocolError('desktop camera response has wrong owner')
+    }
+    return pending
+  }
+
+  #settleCameraCapture(pending: PendingCameraCapture): void {
+    if (this.#pendingCamera.get(pending.requestId) !== pending) return
+    this.#pendingCamera.delete(pending.requestId)
+    const timer = this.#options.cameraTimer ?? defaultCameraTimer
+    if (pending.timerHandle !== undefined) timer.clear(pending.timerHandle)
+  }
+
+  #rejectCameraCapture(pending: PendingCameraCapture, error: DesktopCameraError): void {
+    if (this.#pendingCamera.get(pending.requestId) !== pending) return
+    this.#settleCameraCapture(pending)
+    pending.reject(error)
+  }
+
+  #rejectSocketCameraCaptures(socket: WebSocket): void {
+    for (const pending of [...this.#pendingCamera.values()]) {
+      if (pending.socket === socket) this.#rejectCameraCapture(pending, cameraUnavailableError())
+    }
+  }
+
+  #rememberLateCameraId(pending: PendingCameraCapture): void {
+    this.#lateCameraIds.set(pending.requestId, {
+      socket: pending.socket,
+      generation: pending.generation,
+    })
+    this.#lateCameraOrder.push(pending.requestId)
+    while (this.#lateCameraOrder.length > MAX_CAMERA_LATE_RESPONSES) {
+      const oldest = this.#lateCameraOrder.shift()
+      if (oldest !== undefined) this.#lateCameraIds.delete(oldest)
+    }
+  }
+}
+
+interface CameraResponseOwner {
+  readonly socket: WebSocket
+  readonly generation: number
 }
 
 class PendingDesktopSend {
@@ -328,6 +504,33 @@ class PendingDesktopSend {
     this.resolve = resolve as () => void
     this.reject = reject as (error: DesktopProtocolError) => void
   }
+}
+
+class PendingCameraCapture {
+  readonly promise: Promise<CapturedCameraFrame>
+  readonly resolve: (frame: CapturedCameraFrame) => void
+  readonly reject: (error: DesktopCameraError) => void
+  timerHandle: unknown
+
+  constructor(
+    readonly requestId: string,
+    readonly socket: WebSocket,
+    readonly generation: number,
+  ) {
+    let resolve: ((frame: CapturedCameraFrame) => void) | undefined
+    let reject: ((error: DesktopCameraError) => void) | undefined
+    this.promise = new Promise<CapturedCameraFrame>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve
+      reject = promiseReject
+    })
+    this.resolve = resolve as (frame: CapturedCameraFrame) => void
+    this.reject = reject as (error: DesktopCameraError) => void
+  }
+}
+
+const defaultCameraTimer: DesktopCameraTimer = {
+  set: (delayMs, callback) => setTimeout(callback, delayMs),
+  clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
 export function validateDesktopToken(token: string): void {
@@ -362,6 +565,40 @@ function validateOutboundBinary(raw: Uint8Array): void {
 
 function outboundUnavailableError(): DesktopProtocolError {
   return new DesktopProtocolError('desktop outbound send is unavailable')
+}
+
+function cameraUnavailableError(): DesktopCameraError {
+  return new DesktopCameraError('capture_unavailable')
+}
+
+function validateCameraCaptureRequest(request: CameraCaptureRequest): void {
+  if (typeof request !== 'object' || request === null) {
+    throw new DesktopCameraError('invalid_request')
+  }
+  if (request.source === 'local') {
+    if (request.positionMs !== undefined) throw new DesktopCameraError('invalid_request')
+    return
+  }
+  if (request.source !== 'file'
+    || typeof request.positionMs !== 'number'
+    || !Number.isFinite(request.positionMs)
+    || !Number.isInteger(request.positionMs)
+    || request.positionMs < 0
+    || request.positionMs > MAX_CAMERA_POSITION_MS) {
+    throw new DesktopCameraError('invalid_request')
+  }
+}
+
+function maybeCameraError(raw: string): {readonly request_id: string} | undefined {
+  let value: unknown
+  try {
+    value = JSON.parse(raw) as unknown
+  } catch {
+    return undefined
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)
+    || (value as Record<string, unknown>).type !== 'camera.error') return undefined
+  return parseCameraError(raw)
 }
 
 function sendWebSocketFrame(socket: WebSocket, raw: string | Uint8Array): Promise<void> {
@@ -487,10 +724,19 @@ function rawText(data: RawData): string {
     : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]).toString('utf8')
 }
 
-function rawBytes(data: RawData): Uint8Array {
+function rawDataByteLength(data: RawData): number {
+  if (Array.isArray(data)) return data.reduce((total, chunk) => total + chunk.byteLength, 0)
+  return data.byteLength
+}
+
+function rawBinaryBytes(data: RawData): Uint8Array {
   const bytes = Buffer.isBuffer(data)
     ? data
     : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)])
+  return new Uint8Array(bytes)
+}
+
+function validateAndCopyPcm(bytes: Uint8Array): Uint8Array {
   if (bytes.byteLength > MAX_DESKTOP_PCM_BYTES) {
     throw new DesktopProtocolError('desktop input PCM frame is too large')
   }
