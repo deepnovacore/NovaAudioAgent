@@ -167,6 +167,13 @@ export interface RealtimeServiceOptions {
     originRef: string,
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly onProjectView?: (view: ProjectConfirmationView) => void
+  /**
+   * How long one expiry cleanup step may take before it is abandoned.
+   *
+   * Injectable because the default is five seconds of wall clock, and the behaviour that matters -- what
+   * happens *after* a step is abandoned -- is otherwise only reachable by waiting that long.
+   */
+  readonly projectExpiryStepTimeoutMs?: number
   /** Where a diagnostic goes. Defaults to stdout, which is what the oracle captures. */
   readonly onDiagnostic?: (line: string) => void
 }
@@ -205,6 +212,7 @@ export class RealtimeService {
     }>)
     | undefined
   readonly #onProjectView: ((view: ProjectConfirmationView) => void) | undefined
+  readonly #projectExpiryStepTimeoutMs: number
 
   /** A binary min-heap ordered by `compareQueuedHostResponses`, matching the oracle's `heapq`. */
   #hostItems: QueuedHostResponse[] = []
@@ -336,6 +344,8 @@ export class RealtimeService {
     this.#projectConfirmation = options.projectConfirmation
     this.#commitProjectOperation = options.commitProjectOperation
     this.#onProjectView = options.onProjectView
+    this.#projectExpiryStepTimeoutMs = options.projectExpiryStepTimeoutMs
+      ?? PROJECT_EXPIRY_STEP_TIMEOUT_S * 1_000
     // Subscribed at construction: a proposal can expire before anything else happens, and the observer
     // is the only notice of it.
     this.#unsubscribeProjectExpiry = options.projectConfirmation?.observeExpiry(() => {
@@ -419,6 +429,9 @@ export class RealtimeService {
       this.#unsubscribeProjectExpiry = null
     }
     this.#projectExpiryBatches.length = 0
+    // The drain is shutdown-owned work. A promise cannot be cancelled, so its continuations check the
+    // signal instead -- and this waits, bounded, so a reconnect cannot land after `close` returned.
+    const draining = this.#projectExpiryDraining
     this.#providerEpochNeedingActivation = null
     this.#providerReconnectSourceEpoch = null
     this.#urgentHostResponseOwner = null
@@ -442,7 +455,7 @@ export class RealtimeService {
     if (closeAbandoned) {
       this.#onDiagnostic('[realtime-diagnostic] shutdown_provider_close_abandoned')
     }
-    const tasks = this.#tasks
+    const tasks = draining === null ? this.#tasks : [...this.#tasks, draining]
     this.#tasks = []
     // Bounded. A promise cannot be cancelled from outside the way an asyncio task can, so a loop that
     // ignores the abort would make `close` wait forever -- and a service that never finishes closing
@@ -2718,9 +2731,12 @@ export class RealtimeService {
           text = result.accepted
             ? '已确认，正在处理。'
             : projectCommitFailureText(result.code)
-        } catch {
-          // Deliberately vague: the failure came from somewhere this layer does not model, and naming a
-          // reason would be inventing one.
+        } catch (failure) {
+          // A cancellation is not a failed operation: the caller is trying to stop or replace this, and
+          // reporting an authoritative outcome would contradict that. It propagates.
+          if (isAbort(failure)) throw failure
+          // Everything else is deliberately vague: the failure came from somewhere this layer does not
+          // model, and naming a reason would be inventing one.
           text = '已确认，但操作未执行。'
         }
       }
@@ -2840,7 +2856,8 @@ export class RealtimeService {
     }
     this.#projectExpiryBatches.push({item_keys: itemKeys, source_epoch: sourceEpoch, reconnect})
     if (this.#projectExpiryDraining === null) {
-      this.#projectExpiryDraining = this.#drainProjectConfirmationExpiries()
+      const signal = this.#stop.signal
+      this.#projectExpiryDraining = this.#drainProjectConfirmationExpiries(signal)
         .catch((failure: unknown) => {
           this.#onDiagnostic(
             `[realtime-diagnostic] project_expiry_failure type=${diagnosticName(failure)}`,
@@ -2853,11 +2870,12 @@ export class RealtimeService {
     this.#publishProjectView()
   }
 
-  async #drainProjectConfirmationExpiries(): Promise<void> {
+  async #drainProjectConfirmationExpiries(signal: AbortSignal): Promise<void> {
     for (;;) {
+      if (signal.aborted) return
       const batch = this.#projectExpiryBatches.shift()
       if (batch === undefined) return
-      await this.#finishProjectConfirmationExpiry(batch)
+      await this.#finishProjectConfirmationExpiry(batch, signal)
     }
   }
 
@@ -2872,9 +2890,16 @@ export class RealtimeService {
    * The re-drain loop matters: closing a call awaits, and a provider event during that await can defer
    * another call for the same epoch. Taking the queue once would leave it behind.
    */
-  async #finishProjectConfirmationExpiry(batch: ProjectExpiryBatch): Promise<void> {
+  async #finishProjectConfirmationExpiry(
+    batch: ProjectExpiryBatch,
+    signal: AbortSignal,
+  ): Promise<void> {
     let closeFailed = false
     for (;;) {
+      // Checked at every resumption point, not just on entry: each close awaits the provider, and the
+      // service can be closed during any of them. Reconnecting or injecting after that would be a
+      // stopped service talking to a provider it has already released.
+      if (signal.aborted) return
       const deferred = this.#takeConfirmationDeferredCalls(batch.source_epoch)
       if (deferred.length === 0) break
       for (const call of deferred) {
@@ -2888,6 +2913,7 @@ export class RealtimeService {
         }
       }
     }
+    if (signal.aborted) return
     if (batch.reconnect || closeFailed) {
       try {
         await this.#runProjectExpiryStep(
@@ -2899,10 +2925,13 @@ export class RealtimeService {
         )
       }
     }
+    // The items are released even at shutdown: leaving one closing would block a service that is
+    // restarted. Only the provider-facing half below is skipped.
     for (const key of batch.item_keys) {
       const {sessionEpoch, id} = parseCallKey(key)
       this.#endProjectConfirmationClose(sessionEpoch, id)
     }
+    if (signal.aborted) return
     this.#queueProjectConfirmationFact('确认已过期，本次操作已取消。')
     try {
       await this.#runProjectExpiryStep(this.#deliveryPass())
@@ -2937,7 +2966,7 @@ export class RealtimeService {
     const settled = work.then(() => true, () => false)
     let timer: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<false>(resolve => {
-      timer = setTimeout(() => resolve(false), PROJECT_EXPIRY_STEP_TIMEOUT_S * 1_000)
+      timer = setTimeout(() => resolve(false), this.#projectExpiryStepTimeoutMs)
     })
     try {
       return await Promise.race([settled, deadline])
@@ -3836,6 +3865,26 @@ export class RealtimeService {
    */
   get guardPreemptionForTest(): GuardPreemption | null {
     return this.#guardPreemption
+  }
+
+  /** Which responses a confirmation has blocked. The block outliving its turn is the failure mode. */
+  get confirmationResponsesForTest(): readonly string[] {
+    return [...this.#projectConfirmationResponses]
+  }
+
+  /** Items reserved as the answer to a proposal. One left here blocks every later turn. */
+  get confirmationItemsForTest(): readonly string[] {
+    return [...this.#projectConfirmationItems]
+  }
+
+  /** Items mid-close. One left here after an expiry would block every later turn. */
+  get confirmationClosingItemsForTest(): readonly string[] {
+    return [...this.#projectConfirmationClosingItems]
+  }
+
+  /** Drive invalidation directly, for the observer-failure case. */
+  invalidateProjectConfirmationForTest(reason: string): void {
+    this.#invalidateProjectConfirmation(reason)
   }
 
   /** Whether a confirmation is currently refusing tool calls. Invisible from outside otherwise. */

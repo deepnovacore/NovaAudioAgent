@@ -2829,6 +2829,9 @@ function confirmationService(options: {
     originRef: string,
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly withoutCommit?: boolean
+  /** Make the provider's injection hang, so an expiry outlives the shutdown grace period. */
+  readonly hangInjection?: boolean
+  readonly expiryStepTimeoutMs?: number
 } = {}): {
   readonly service: RealtimeService
   readonly controller: ProjectConfirmationController
@@ -2882,6 +2885,7 @@ function confirmationService(options: {
     },
     injectHostItem: (item: {readonly host_item_id: string; readonly event_id: string}) => {
       actions.push(`inject:${item.event_id}`)
+      if (options.hangInjection === true) return new Promise<never>(() => undefined)
       return Promise.resolve({session_epoch: epoch, host_item_id: item.host_item_id})
     },
     createResponse: (intent: {readonly kind: string}) => {
@@ -2953,6 +2957,9 @@ function confirmationService(options: {
     }),
     idFactory: nextId,
     projectConfirmation: controller,
+    ...(options.expiryStepTimeoutMs === undefined
+      ? {}
+      : {projectExpiryStepTimeoutMs: options.expiryStepTimeoutMs}),
     ...(commit === undefined ? {} : {commitProjectOperation: commit}),
     onProjectView: view => views.push(view),
     onDiagnostic: () => undefined,
@@ -3194,4 +3201,631 @@ test('an expiry cleans up and tells the user, without leaving the block set', as
   await new Promise<void>(resolve => setTimeout(resolve, 20))
   assert.ok(toldAboutConfirmation(service, actions), 'the user is told it lapsed')
   assert.equal(service.projectConfirmationBlockingForTest, false, 'and nothing stays blocked')
+})
+
+test('reserving does nothing when no proposal is pending', () => {
+  // Every user utterance reaches this. Reserving without a proposal would arm a fence and start
+  // blocking tool calls for a confirmation that does not exist.
+  return (async (): Promise<void> => {
+    const {service, controller} = confirmationService()
+    await service.connect()
+    assert.equal(controller.pending, false)
+    await service.handleEvent({
+      kind: 'user_speech_started',
+      session_epoch: 1,
+      speech_id: 'speech-1',
+      provider_item_id: 'user-item-1',
+    })
+    assert.equal(
+      service.projectConfirmationBlockingForTest,
+      false,
+      'no proposal, so nothing is blocked',
+    )
+  })()
+})
+
+test('reserving arms a fence so the question is not spoken over', async () => {
+  // The user is answering something. A new turn starting on top of it would replace the question they
+  // are answering, and the answer would then be to nothing.
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  // The fence is armed, so the next response is cancelled rather than allowed to speak.
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  assert.ok(actions.includes('cancel:r-1'), 'the next turn was fenced')
+})
+
+test('a confirmation blocks tool calls across the whole epoch, not just one response', async () => {
+  // A reconnect renumbers responses. Keying the block only by response would let a confirmation
+  // spanning one stop blocking, and the model would act inside the turn that is meant to be waiting.
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  const before = service.toolCallAcceptances().length
+  // A *different* response in the same epoch is blocked too.
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-2',
+    item_id: 'tool-2',
+    name: 'codex__start',
+    arguments: {work_order: 'do something'},
+    response_id: 'r-9',
+  })
+  assert.equal(service.toolCallAcceptances().length, before, 'blocked by epoch')
+})
+
+test('one refused call gets exactly one terminal output', async () => {
+  // Two terminal outputs for the same function call is a protocol violation, and both the expiry
+  // cleanup and a provider event can reach the same call.
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  const call = {
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'do something'},
+    response_id: 'r-1',
+  } as const
+  await service.handleEvent(call)
+  const first = actions.filter(action => action.startsWith('inject:id-')).length
+  // The same call again -- a retried delivery, which the provider does.
+  await service.handleEvent(call)
+  assert.equal(
+    actions.filter(action => action.startsWith('inject:id-')).length,
+    first,
+    'answered once',
+  )
+})
+
+test('a confirmation fact never outranks the user', async () => {
+  // Nothing the host says may claim precedence over the person in the room, however urgent.
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await speak(service, 'user-item-1', '取消')
+  for (const item of service.queuedHostItems()) {
+    if (!item.intent.item.event_id.startsWith('project-confirmation:')) continue
+    assert.ok(item.priority < 100, `priority ${item.priority} must stay below the user`)
+    assert.equal(item.preemptive, false, 'and it does not interrupt')
+  }
+})
+
+test('a view observer that throws does not break the state change that produced it', () => {
+  // The renderer's failure is not the confirmation's to propagate: by the time the view is published,
+  // the decision has already been made.
+  const manifest = executorManifestSchema.parse({
+    name: 'codex',
+    policy: {
+      channel: 'codex',
+      priority: 50,
+      wake: 'fast',
+      typical_latency: 5,
+      compress_watermark: 8,
+    },
+    ops: [{
+      name: 'look',
+      description: 'readonly',
+      params: {type: 'object', properties: {}, additionalProperties: false},
+      readonly: true,
+      deadline_budget: 5,
+    }],
+  })
+  const clock = new VirtualClock()
+  const memory = new Memory({policies: [manifest.policy]})
+  const executors = new Map([[manifest.name, {manifest}]])
+  let ids = 0
+  const nextId = (): string => `id-${++ids}`
+  const controller = new ProjectConfirmationController({clock, idFactory: nextId})
+  const service = new RealtimeService({
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      events: () => emptyStream(),
+      close: () => Promise.resolve(),
+    },
+    runtime: {
+      clock,
+      executors,
+      memory,
+      observe: () => unsubscribeNothing,
+      serve: () => new Promise<void>(() => undefined),
+      claimedHandoff: () => undefined,
+      terminatedByDeadline: () => false,
+      delegateFor: () => undefined,
+      inFlightDelegate: () => undefined,
+    },
+    tools: compileToolSchema([manifest]),
+    session: {connect: () => Promise.resolve()} as unknown as RealtimeSession,
+    bridge: new RealtimeRuntimeBridge({
+      runtime: {
+        clock,
+        memory,
+        executors,
+        ingestUserInput: () => Promise.reject(new Error('unused')),
+        updateExternal: () => false,
+        dispatchExternal: () => ({accepted: false, delegate_id: null}),
+      },
+      tools: compileToolSchema([manifest]),
+      idFactory: nextId,
+    }),
+    idFactory: nextId,
+    projectConfirmation: controller,
+    onProjectView: () => {
+      throw new Error('renderer is gone')
+    },
+    onDiagnostic: () => undefined,
+  })
+  propose(controller)
+  // Invalidation publishes the view; a throwing observer must not stop the invalidation.
+  assert.doesNotThrow(() => service.invalidateProjectConfirmationForTest('test'))
+  assert.equal(controller.pending, false, 'the proposal is still gone')
+})
+
+test('an expiry reconnects when a close failed, even without a fenced response', async () => {
+  // A close that did not complete leaves the provider holding a function call open. Reconnecting is the
+  // only way back to a session whose state can be reasoned about.
+  const {service, controller, actions, clock} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  const connects = actions.filter(action => action.startsWith('connect:')).length
+  clock.advanceTo(clock.now() + 200)
+  assert.equal(controller.expire(), true, 'past the deadline')
+  for (let index = 0; index < 30; index += 1) await Promise.resolve()
+  await new Promise<void>(resolve => setTimeout(resolve, 30))
+  assert.ok(
+    actions.filter(action => action.startsWith('connect:')).length > connects,
+    'the fenced response forced a reconnect',
+  )
+  // The reserved item is released. The block itself legitimately persists here, because the armed fence
+  // was never spent -- the user never finished speaking -- and an unspent fence is still holding the
+  // question open. That distinction is what `_end_project_confirmation_close` encodes.
+  assert.deepEqual(service.confirmationClosingItemsForTest, [], 'the item is no longer closing')
+})
+
+test('a terminal releases the response from the confirmation block', async () => {
+  // Otherwise the block outlives the turn it was about, and every later call in the epoch is refused
+  // for a confirmation that has already been answered.
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  assert.ok(service.confirmationResponsesForTest.length > 0, 'the response is recorded')
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  assert.deepEqual(
+    service.confirmationResponsesForTest,
+    [],
+    'and released when the turn ends',
+  )
+})
+
+test('a settled confirmation stops blocking, so later turns work again', async () => {
+  // The block has to lift completely. An item left in either set, or a fence left pending, would refuse
+  // every tool call for the rest of the session — the agent would appear to work and quietly do nothing.
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  // The armed fence is spent by the next response, which is what stops it holding the block open.
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: '确认',
+  })
+  assert.equal(controller.pending, false, 'the proposal is settled')
+  assert.deepEqual(service.confirmationItemsForTest, [], 'no item reserved')
+  assert.deepEqual(service.confirmationClosingItemsForTest, [], 'and none closing')
+  assert.equal(
+    service.projectConfirmationBlockingForTest,
+    false,
+    'so nothing is blocked any more',
+  )
+})
+
+test('an unspent fence keeps the block open even after the item is released', async () => {
+  // The fence is what stops the question being spoken over. While it is still armed the confirmation is
+  // not finished, whatever happened to the reserved item -- which is why the recomputation counts it.
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  // No `user_speech_ended`, and no response: the fence is armed and unspent.
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: '确认',
+  })
+  assert.deepEqual(service.confirmationItemsForTest, [], 'the item was consumed')
+  assert.equal(
+    service.projectConfirmationBlockingForTest,
+    true,
+    'but the unspent fence still holds the block',
+  )
+})
+
+test('a response spends the fence, and the block lifts with it', async () => {
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: '确认',
+  })
+  // The item is gone but the fence is not, so the block stands.
+  assert.equal(service.projectConfirmationBlockingForTest, true)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  assert.equal(
+    service.projectConfirmationBlockingForTest,
+    false,
+    'the response spent the fence and the block lifted',
+  )
+})
+
+test('a response recorded while blocking keeps blocking its own epoch after the block lifts', async () => {
+  // The narrow window the epoch-wide scan exists for: the items have cleared and the fence is spent, but
+  // a response that was blocked is still running. A call in it must still be refused, or the model gets
+  // to act inside the turn it was told to wait in.
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: '确认',
+  })
+  assert.equal(service.projectConfirmationBlockingForTest, false, 'the block has lifted')
+  assert.deepEqual(service.confirmationResponsesForTest, ['1:r-1'], 'but r-1 is still recorded')
+
+  const before = service.toolCallAcceptances().length
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-late',
+    item_id: 'tool-late',
+    name: 'codex__start',
+    arguments: {work_order: 'sneak in'},
+    response_id: 'r-1',
+  })
+  assert.equal(service.toolCallAcceptances().length, before, 'still refused')
+})
+
+test('after the block lifts, a call in any response of that epoch is still refused', async () => {
+  // What the epoch-wide scan is for, isolated. A call on a response the confirmation never saw start is
+  // caught by neither the exact-key check nor the blocking flag -- only by the epoch.
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: '确认',
+  })
+  assert.equal(service.projectConfirmationBlockingForTest, false, 'the block has lifted')
+
+  const before = service.toolCallAcceptances().length
+  // A different response id, never started, never recorded.
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-other',
+    item_id: 'tool-other',
+    name: 'codex__start',
+    arguments: {work_order: 'different response'},
+    response_id: 'r-77',
+  })
+  assert.equal(
+    service.toolCallAcceptances().length,
+    before,
+    'refused because the epoch is still tainted',
+  )
+})
+
+test('a tool call arriving while blocked taints its own response for later calls', async () => {
+  // The recording in the block check, isolated. A response that never emitted `response_started` while
+  // blocking is only known from the tool call that arrived on it -- and once that is refused, every
+  // later call on the same response has to be refused too.
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'first'},
+    response_id: 'r-5',
+  })
+  assert.ok(
+    service.confirmationResponsesForTest.includes('1:r-5'),
+    'the response is recorded from the call itself',
+  )
+})
+
+test('an expiry in flight cannot reconnect after the service is closed', async () => {
+  // A promise cannot be cancelled, so the continuations check the signal instead. Without that, an
+  // expiry chain resuming after `close` returned would reconnect a provider the service has released.
+  const {service, controller, actions, clock} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  clock.advanceTo(clock.now() + 200)
+  assert.equal(controller.expire(), true)
+  // Close immediately, before the drain has had a turn.
+  await service.close()
+  const connectsAfterClose = actions.filter(action => action.startsWith('connect:')).length
+  // Give the drain every chance to resume.
+  for (let index = 0; index < 40; index += 1) await Promise.resolve()
+  await new Promise<void>(resolve => setTimeout(resolve, 30))
+  assert.equal(
+    actions.filter(action => action.startsWith('connect:')).length,
+    connectsAfterClose,
+    'no reconnect after close',
+  )
+  // The items are still released, so a restarted service is not blocked by them.
+  assert.deepEqual(service.confirmationClosingItemsForTest, [])
+})
+
+test('a cancelled commit propagates instead of being reported as a failed operation', async () => {
+  // The caller is trying to stop or replace this. Reporting "已确认，但操作未执行。" would publish an
+  // authoritative outcome that contradicts the cancellation.
+  const aborted = new Error('operation aborted')
+  aborted.name = 'AbortError'
+  const {service, controller} = confirmationService({commit: () => Promise.reject(aborted)})
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await assert.rejects(
+    () => service.handleEvent({
+      kind: 'user_transcript_final',
+      session_epoch: 1,
+      item_id: 'user-item-1',
+      text: '确认',
+    }),
+    /operation aborted/u,
+    'the cancellation reaches the caller',
+  )
+})
+
+test('an expiry that outlives the shutdown grace period still cannot reconnect', async () => {
+  // `close` waits for the drain, but only boundedly — a provider that never answers makes the drain
+  // outlive it. That is exactly when the signal checks inside the drain are the only thing left
+  // stopping a stopped service from reconnecting.
+  const {service, controller, actions, clock} = confirmationService({
+    hangInjection: true,
+    // Milliseconds rather than the five-second default: what this test is about is what happens after a
+    // step is abandoned, and waiting five real seconds for it would be waiting on the clock, not the code.
+    expiryStepTimeoutMs: 5,
+  })
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  // A deferred call for this epoch, so the expiry has provider work to do.
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  clock.advanceTo(clock.now() + 200)
+  assert.equal(controller.expire(), true)
+  // Let the drain reach its first hanging injection.
+  for (let index = 0; index < 10; index += 1) await Promise.resolve()
+  await service.close()
+  const connects = actions.filter(action => action.startsWith('connect:')).length
+  for (let index = 0; index < 40; index += 1) await Promise.resolve()
+  await new Promise<void>(resolve => setTimeout(resolve, 40))
+  assert.equal(
+    actions.filter(action => action.startsWith('connect:')).length,
+    connects,
+    'a stopped service does not reconnect, however late the drain resumes',
+  )
+})
+
+test('a shutdown mid-cleanup stops the expiry before it reconnects', async () => {
+  // The inner signal checks, isolated. They matter when the drain is *already* inside cleanup when the
+  // service closes: `close` waits only boundedly, so a step that hangs leaves the rest of the chain to
+  // resume later — and without the checks it would reconnect a provider the service has released.
+  //
+  // The shape needed is a tool call deferred *before* the proposal exists, because once a confirmation
+  // is pending its calls are blocked and closed rather than deferred.
+  const {service, controller, actions, clock} = confirmationService({
+    hangInjection: true,
+    expiryStepTimeoutMs: 5,
+  })
+  await service.connect()
+  // A user turn with no proposal: nothing is reserved, so the call that follows is merely deferred.
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'deferred'},
+    response_id: 'r-1',
+  })
+
+  // Now a proposal, reserved by a second turn.
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-2',
+    provider_item_id: 'user-item-2',
+  })
+  clock.advanceTo(clock.now() + 200)
+  assert.equal(controller.expire(), true)
+
+  // Let the drain reach the hanging close of that deferred call, then close during it.
+  for (let index = 0; index < 10; index += 1) await Promise.resolve()
+  await service.close()
+  const connects = actions.filter(action => action.startsWith('connect:')).length
+  // Past the step timeout, so the chain resumes with the service already stopped.
+  await new Promise<void>(resolve => setTimeout(resolve, 60))
+  for (let index = 0; index < 40; index += 1) await Promise.resolve()
+  assert.equal(
+    actions.filter(action => action.startsWith('connect:')).length,
+    connects,
+    'the resumed chain does not reconnect a stopped service',
+  )
 })

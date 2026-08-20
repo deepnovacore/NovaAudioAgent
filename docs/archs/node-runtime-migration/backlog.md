@@ -265,6 +265,41 @@ Two lessons, both about the harness rather than the code:
   file rather than the service. Five projection mutations were invisible to it. The parity test now
   drives `projectRuntimeEvent` and reads what was queued.
 
+### Measured coverage: family I (project confirmation) is 35 of 40
+
+Two findings from a Codex review, both real and both questions I had put in my own brief:
+
+- **A cancelled commit was reported as a failed operation.** An `AbortError` from an aborted commit
+  became "已确认，但操作未执行。" -- an authoritative outcome published while the caller was trying to
+  stop. It propagates now, and the mutation reverting that is detected.
+- **Expiry cleanup could outlive `close`.** Python cancels and awaits the expiry task during shutdown; a
+  JavaScript promise cannot be cancelled, so the drain now checks the stop signal at each resumption
+  point and `close` observes it within the shutdown grace period.
+
+**On the second fix, an honest qualification.** I could not construct a scenario where removing either
+the signal checks or the `close` await changes observable behaviour. In every sequence I built, the
+epoch race check inside `#reconnectProviderSession` gets there first: the epoch has already moved, so the
+reconnect returns false regardless. Removing *that* guard is detected; removing the new fences is not.
+
+The fences are kept anyway, because relying on the epoch having coincidentally moved is not the same as
+a shutdown boundary, and the next change to the reconnect path would not know it was load-bearing. But
+the two tests added for it pin the *property*, not the mechanism, and should not be read as proving the
+fix.
+
+The other five survivors, with reasons:
+
+| Mutation | Why |
+|---|---|
+| `reserve` without the pending check | The controller's own `reserveUserItem` refuses when nothing is proposed, so the check is a duplicate. |
+| The closing-items half of `#isProjectConfirmationItem` | An item is only in that set during an await inside the close, and no scenario delivers a transcript in that window. |
+| The `try`/`finally` around the deferred close | Needs `#closeConfirmationDeferredCalls` to throw, which needs a failing provider injection *inside* the close. |
+| The closed-call reservation taken before the first await | Needs two callers reaching the same call id concurrently. |
+| Detaching the deferred queue before awaiting | Same: needs a provider event appending during the await. |
+| Fact priority at `USER_PRIORITY` instead of one below | `queueHostItem` clamps to `USER_PRIORITY - 1`, so the two are the same value. |
+
+The last is genuinely redundant. The middle four need a concurrency harness the current fixtures do not
+provide, and are listed here rather than left as a silent gap in a number.
+
 ### And then the parser had to be scoped to the root
 
 Moving the integer check into a `JSON.parse` reviver fixed three bypasses and introduced a fourth
