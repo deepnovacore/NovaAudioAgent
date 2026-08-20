@@ -123,7 +123,7 @@ Scorecard and demo caveats:
 |---|---|---|---|
 | Fast/slow simulators | sim tests | Node tests and core fixtures | First vertical slice green |
 | Search trust, errors, and redaction | search executor/smoke tests | Node HTTP unit tests plus real production-assembly dispatch with opaque evidence refs; optional live smoke | Same trust and safe error behavior |
-| Codex JSONL and protocol parsing | Codex JSONL/protocol tests | Node parser fixtures | Exact accepted/rejected messages |
+| Codex JSONL and protocol parsing | Codex JSONL/protocol tests | Both Python-owned historical JSONL fixtures reduce to the exact sanitized Node summary; pure Node tests cover bounded incremental JSON-RPC, schema/config fail-closed validation, turn correlation/progress redaction, and exact base/live/project tool contracts | Exact accepted/rejected messages; JSONL remains fixture-parser-only while production process ownership is app-server-only (intentional architecture divergence, transport deferred to the next slice) |
 | Codex app-server lifecycle | app-server/transport/runtime tests | Node fake-process integration tests | Run/steer/cancel ordering preserved |
 | Codex progress and recall | progress status/recall evals | Fixture parity plus gated live eval | Correlation and memory behavior match |
 | Process tree ownership | process-tree/preflight tests | Cross-platform integration and hardware tests | Windows Job Object equivalent verified |

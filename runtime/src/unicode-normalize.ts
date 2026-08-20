@@ -123,6 +123,11 @@ export function normalizeNfkcPinned(text: string): string {
   return betweenHeldBack(text, run => run.normalize('NFKC'))
 }
 
+/** NFC as the pinned Unicode version would compute it. */
+export function normalizeNfcPinned(text: string): string {
+  return betweenHeldBack(text, run => run.normalize('NFC'))
+}
+
 /** Lowercase as the pinned Unicode version would compute it. */
 export function toLowerPinned(text: string): string {
   return betweenHeldBack(text, run => run.toLowerCase())
