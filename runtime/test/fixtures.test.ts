@@ -8,6 +8,7 @@ import {
   fixtureManifestSchema,
   loadRuntimeFixture,
   runtimeFixtureJsonSchema,
+  runtimeFixtureSchema,
 } from '../src/fixtures.js'
 import { handoffPolicySchema } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
@@ -242,6 +243,35 @@ test('fixture contracts can be emitted as JSON Schema', () => {
   assert.equal(schema.type, 'object')
   assert.ok('$defs' in schema || 'properties' in schema)
   assert.match(JSON.stringify(schema), /\^\.\+:\[0-9\]\+\$/u)
+})
+
+test('fixture memory refs remain canonical even when runtime memory accepts opaque evidence', async () => {
+  const fixture = await loadRuntimeFixture(fixtureRoot)
+  const channel = Object.entries(fixture.expected.memory.channels)
+    .find(([, items]) => items.length > 0)
+  assert.ok(channel !== undefined)
+  const [channelName, items] = channel
+  const first = items[0]
+  assert.ok(first !== undefined)
+
+  const candidate = {
+    ...fixture,
+    expected: {
+      ...fixture.expected,
+      memory: {
+        ...fixture.expected.memory,
+        channels: {
+          ...fixture.expected.memory.channels,
+          [channelName]: [{...first, refs: ['web.search://evidence/opaque']}, ...items.slice(1)],
+        },
+      },
+    },
+  }
+  const result = runtimeFixtureSchema.safeParse(candidate)
+  assert.equal(result.success, false)
+  if (!result.success) {
+    assert.ok(result.error.issues.some(issue => issue.path.at(-2) === 'refs'))
+  }
 })
 
 test('the committed fixture schema has no drift from the Zod contract', () => {

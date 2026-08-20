@@ -8,7 +8,7 @@ import {
   outcomeSchema,
   trustSchema,
 } from './events.js'
-import { memoryItemSchema, structuredStateSchema } from './memory.js'
+import { memoryItemSchema, memoryRefSchema, structuredStateSchema } from './memory.js'
 import {
   delegateSchema,
 } from './ports.js'
@@ -271,12 +271,17 @@ export const fixtureModelViewSchema = z.object({
   view: z.record(z.string(), jsonValueSchema),
 }).strict()
 
+/** Portable oracle snapshots use only canonical channel/sequence references. */
+const fixtureMemoryItemSchema = memoryItemSchema.extend({
+  refs: z.array(memoryRefSchema).default([]),
+})
+
 export const fixtureExpectedSchema = z.object({
   schema_version: z.literal(1),
   model_views: z.array(fixtureModelViewSchema),
   applied_events: z.array(eventRecordSchema),
   memory: z.object({
-    channels: z.record(z.string(), z.array(memoryItemSchema)),
+    channels: z.record(z.string(), z.array(fixtureMemoryItemSchema)),
     structured: structuredStateSchema,
     summaries: z.record(z.string(), z.string().nullable()),
   }).strict(),

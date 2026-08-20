@@ -1567,7 +1567,8 @@
                       "default": [],
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "string",
+                        "pattern": "^.+:[0-9]+$"
                       }
                     }
                   },
