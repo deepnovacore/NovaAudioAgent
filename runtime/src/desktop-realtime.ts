@@ -16,6 +16,7 @@ const READY_FRAME = '{"type":"desktop.ready"}'
 export interface DesktopServerTransport {
   sendText(raw: string): Promise<void>
   sendBinary(raw: Uint8Array): Promise<void>
+  disconnectClient(): Promise<void>
   start(): Promise<DesktopReadiness>
   close(): Promise<void>
 }
@@ -105,7 +106,10 @@ export class DesktopRealtime {
             await this.#send(delivery)
           } catch {
             if (delivery.policy === 'required') this.#stop.abort()
-            else this.#release(generation)
+            else {
+              await this.server.disconnectClient()
+              this.#release(generation)
+            }
             break
           }
           if (this.#activeGeneration !== generation) break

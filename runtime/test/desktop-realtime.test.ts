@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {WebSocket, type RawData} from 'ws'
+import {VirtualClock} from '../src/clock.js'
 import {
   DesktopRealtime,
   type DesktopServerTransport,
@@ -8,6 +9,8 @@ import {
 import type {BridgeService} from '../src/desktop-bridge.js'
 import {decodeAudioFrame} from '../src/desktop-wire.js'
 import type {DesktopServerOptions} from '../src/desktop.js'
+import type {JsonValue} from '../src/events.js'
+import type {RealtimeTelemetry} from '../src/realtime/telemetry.js'
 
 const TOKEN = '1'.repeat(32)
 const SETTLE_MS = 1_000
@@ -15,6 +18,21 @@ const SETTLE_MS = 1_000
 interface ServiceHarness {
   readonly service: BridgeService
   readonly calls: string[]
+}
+
+interface TelemetryRecord {
+  readonly kind: string
+  readonly payload: Readonly<Record<string, JsonValue>>
+}
+
+class RecordingTelemetry implements RealtimeTelemetry {
+  readonly records: TelemetryRecord[] = []
+  record(kind: string, payload: Readonly<Record<string, JsonValue>>): void {
+    this.records.push({kind, payload})
+  }
+  close(): void {
+    // Nothing to release.
+  }
 }
 
 function serviceHarness(): ServiceHarness {
@@ -116,6 +134,8 @@ function text(frame: ReceivedFrame): string {
 test('real loopback drains ready, preempt, current state, project, and duplex traffic', async () => {
   const {service, calls} = serviceHarness()
   const stop = new AbortController()
+  const clock = new VirtualClock()
+  const telemetry = new RecordingTelemetry()
   const realtime = new DesktopRealtime({
     token: TOKEN,
     service,
@@ -126,6 +146,8 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
       pending_confirmation: false,
     },
     memoryBoard: requestId => JSON.stringify({type: 'memory.board', request_id: requestId}),
+    clock,
+    telemetry,
   })
   realtime.bridge.onAudioFrame({
     utterance_id: 'stale', generation_epoch: 1, sequence: 0, pcm: new Uint8Array([0, 1]),
@@ -168,6 +190,8 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
     assert.equal(text(frames[4]!), '{"type":"codex.state","state":"idle"}')
     assert.match(text(frames[5]!), /"workspace_display_name":"project-b"/u)
 
+    realtime.bridge.registerPing('p-1')
+    clock.advanceTo(0.25)
     const board = nextFrames(socket, 1, 'desktop memory board response')
     for (const [label, value] of [
       ['desktop PCM send', new Uint8Array([4, 5, 6, 7])],
@@ -184,6 +208,10 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
       'audio:4,5,6,7', 'onset:s-1', 'started:u-2:2', 'stopped:u-2:2:12',
       'done:u-2:2:null', 'cleared:u-2:2:0',
     ])
+    assert.deepEqual(telemetry.records.filter(record => record.kind === 'renderer.clock_sync'), [{
+      kind: 'renderer.clock_sync',
+      payload: {ping_id: 'p-1', round_trip_ms: 250, t_render_ms: 4.5},
+    }])
     assert.equal(stop.signal.aborted, false)
   } finally {
     await closeDesktop(socket)
@@ -262,6 +290,12 @@ class ControlledServer implements DesktopServerTransport {
   #next: ((value: string | Uint8Array) => void) | undefined
   #fail = false
   #hold: (() => void) | undefined
+  #connected = false
+  #clientGeneration = 0
+  #disconnectGate: Promise<void> | undefined
+  #releaseDisconnect: (() => void) | undefined
+  #observeDisconnectStart: (() => void) | undefined
+  #observeDisconnected: (() => void) | undefined
 
   constructor(readonly options: DesktopServerOptions) {}
   start(): Promise<never> { return Promise.reject(new Error('controlled server does not listen')) }
@@ -270,6 +304,42 @@ class ControlledServer implements DesktopServerTransport {
     return settleWithin(label, new Promise(resolve => { this.#next = resolve }))
   }
   failNext(): void { this.#fail = true }
+  async connectClient(): Promise<void> {
+    if (this.#connected) throw new Error('controlled desktop client already connected')
+    this.#connected = true
+    this.#clientGeneration += 1
+    try {
+      await this.options.onClientAuthenticated?.()
+    } catch (error) {
+      this.#connected = false
+      throw error
+    }
+  }
+  holdDisconnect(): void {
+    this.#disconnectGate = new Promise(resolve => { this.#releaseDisconnect = resolve })
+  }
+  releaseDisconnect(): void {
+    this.#releaseDisconnect?.()
+    this.#releaseDisconnect = undefined
+  }
+  nextDisconnectStart(label: string): Promise<void> {
+    return settleWithin(label, new Promise(resolve => { this.#observeDisconnectStart = resolve }))
+  }
+  nextDisconnected(label: string): Promise<void> {
+    return settleWithin(label, new Promise(resolve => { this.#observeDisconnected = resolve }))
+  }
+  async disconnectClient(): Promise<void> {
+    if (!this.#connected) return
+    const generation = this.#clientGeneration
+    this.#observeDisconnectStart?.()
+    this.#observeDisconnectStart = undefined
+    await this.#disconnectGate
+    if (!this.#connected || generation !== this.#clientGeneration) return
+    this.#connected = false
+    this.options.onClientDisconnect?.()
+    this.#observeDisconnected?.()
+    this.#observeDisconnected = undefined
+  }
   holdNext(): Promise<void> { return new Promise(resolve => { this.#hold = resolve }) }
   releaseHeld(): void { this.#hold?.(); this.#hold = undefined }
   sendText(raw: string): Promise<void> { return this.#send(raw) }
@@ -315,7 +385,7 @@ test('one serialized drain retains a wake that arrives while a socket send is he
   const stop = new AbortController()
   const {realtime, server} = controlledRealtime(stop)
   const initial = server.nextSend('controlled initial state send')
-  await server.options.onClientAuthenticated?.()
+  await server.connectClient()
   assert.equal(await initial, '{"type":"codex.state","state":"running"}')
 
   const held = server.holdNext()
@@ -338,21 +408,21 @@ test('connection ownership refuses a second claim and fences an old held generat
   const stop = new AbortController()
   const {realtime, server} = controlledRealtime(stop)
   const initial = server.nextSend('owned connection initial state')
-  await server.options.onClientAuthenticated?.()
+  await server.connectClient()
   await initial
   await assert.rejects(
-    Promise.resolve().then(() => server.options.onClientAuthenticated?.()),
-    /desktop bridge connection is unavailable/u,
+    server.connectClient(),
+    /controlled desktop client already connected/u,
   )
 
   const oldHeld = server.holdNext()
   const oldSend = server.nextSend('old generation held caption')
   realtime.bridge.onCaption({role: 'user', text: 'old-generation', final: true})
   await oldSend
-  server.options.onClientDisconnect?.()
+  await server.disconnectClient()
 
   const freshState = server.nextSend('fresh generation current state')
-  await server.options.onClientAuthenticated?.()
+  await server.connectClient()
   server.releaseHeld()
   await settleWithin('old generation held send release', oldHeld)
   assert.equal(await freshState, '{"type":"codex.state","state":"running"}')
@@ -364,7 +434,7 @@ test('required send failure and bridge overflow abort, while droppable/latest fa
   const requiredStop = new AbortController()
   const required = controlledRealtime(requiredStop)
   const requiredInitial = required.server.nextSend('required failure initial state')
-  await required.server.options.onClientAuthenticated?.()
+  await required.server.connectClient()
   await requiredInitial
   required.server.failNext()
   const requiredAttempt = required.server.nextSend('required failing send attempt')
@@ -380,24 +450,38 @@ test('required send failure and bridge overflow abort, while droppable/latest fa
   const softStop = new AbortController()
   const soft = controlledRealtime(softStop)
   const softInitial = soft.server.nextSend('soft failure initial state')
-  await soft.server.options.onClientAuthenticated?.()
+  await soft.server.connectClient()
   await softInitial
+  soft.server.holdDisconnect()
+  const disconnectStarted = soft.server.nextDisconnectStart('soft failure transport disconnect start')
   soft.server.failNext()
   const captionAttempt = soft.server.nextSend('droppable failing send attempt')
   soft.realtime.bridge.onCaption({role: 'user', text: 'droppable', final: true})
   await captionAttempt
   assert.equal(softStop.signal.aborted, false)
+  await disconnectStarted
+  await assert.rejects(
+    soft.server.connectClient(),
+    /controlled desktop client already connected/u,
+  )
+  const disconnected = soft.server.nextDisconnected('soft failure transport disconnected')
+  soft.server.releaseDisconnect()
+  await disconnected
 
   const reconnectState = soft.server.nextSend('soft failure reconnect state')
-  await soft.server.options.onClientAuthenticated?.()
+  await soft.server.connectClient()
   assert.equal(await reconnectState, '{"type":"codex.state","state":"running"}')
   soft.server.failNext()
   const latestAttempt = soft.server.nextSend('latest failing send attempt')
+  soft.server.holdDisconnect()
+  const latestDisconnected = soft.server.nextDisconnected('latest failure transport disconnected')
   soft.realtime.bridge.onCodexState('idle')
   await latestAttempt
   assert.equal(softStop.signal.aborted, false)
+  soft.server.releaseDisconnect()
+  await latestDisconnected
   const currentState = soft.server.nextSend('latest failure current state retry')
-  await soft.server.options.onClientAuthenticated?.()
+  await soft.server.connectClient()
   assert.equal(await currentState, '{"type":"codex.state","state":"idle"}')
 
   const overflowStop = new AbortController()

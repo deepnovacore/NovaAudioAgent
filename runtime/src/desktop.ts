@@ -126,6 +126,14 @@ export class NodeDesktopServer {
     return this.#enqueueSend(this.#active!, new Uint8Array(raw))
   }
 
+  /** Retire only the client active when this call begins; a later reconnect is never its target. */
+  async disconnectClient(): Promise<void> {
+    const active = this.#active
+    if (active === undefined) return
+    await closeWebSocket(active, this.#options.closeGraceMs ?? DESKTOP_CLOSE_GRACE_MS)
+    this.#notifyDisconnected(active)
+  }
+
   async start(): Promise<DesktopReadiness> {
     if (this.#server !== undefined || this.#stopping) {
       throw new Error('desktop server already started or stopped')

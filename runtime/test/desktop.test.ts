@@ -600,6 +600,51 @@ test('desktop outbound uses a fresh authenticated socket after reconnect', async
   }
 })
 
+test('explicit desktop disconnect retires the captured client once and leaves reconnect usable', async () => {
+  let disconnects = 0
+  let observeDisconnect: (() => void) | undefined
+  const disconnected = new Promise<void>(resolve => { observeDisconnect = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onClientDisconnect: () => {
+      disconnects += 1
+      observeDisconnect?.()
+    },
+  })
+  const readiness = await startDesktopServer(server)
+  const first = await connectDesktopClient(server, readiness.port)
+
+  try {
+    await authenticate(first)
+    const firstClosed = settleWithin('explicitly disconnected desktop client close', waitForClose(first))
+    await settleWithin(
+      'generation-scoped desktop disconnect',
+      server.disconnectClient(),
+    )
+    await firstClosed
+    await settleWithin('explicit desktop disconnect notification', disconnected)
+    assert.equal(disconnects, 1)
+
+    const second = await connect(readiness.port)
+    try {
+      await authenticate(second)
+      const received = nextFrames(second, 1)
+      await settleWithin(
+        'post-explicit-disconnect fresh send',
+        server.sendText('{"type":"fresh-after-disconnect"}'),
+      )
+      assert.equal(
+        text(Buffer.from((await settleWithin('fresh reconnect frame', received))[0]!.bytes)),
+        '{"type":"fresh-after-disconnect"}',
+      )
+    } finally {
+      await closeClient(second)
+    }
+  } finally {
+    await closeDesktopServer(server)
+  }
+})
+
 test('forwarded PCM is a copy that a later frame cannot overwrite', async () => {
   // `ws` allocates receive buffers from a shared pool, so a view would alias
   // bytes the next frame reuses.
