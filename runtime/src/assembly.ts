@@ -143,12 +143,16 @@ function requireTavilyApiKey(settings: Settings): string {
   return key
 }
 
-interface RestartableFrameSource extends FrameSource {
+export interface FileBackedFrameSource extends FrameSource {
+  readonly isFileBackedFrameSource: true
   restart(): Promise<void>
 }
 
-function isRestartable(source: FrameSource): source is RestartableFrameSource {
-  return 'restart' in source && typeof source.restart === 'function'
+export function isFileBackedFrameSource(source: FrameSource): source is FileBackedFrameSource {
+  return 'isFileBackedFrameSource' in source
+    && source.isFileBackedFrameSource === true
+    && 'restart' in source
+    && typeof source.restart === 'function'
 }
 
 /**
@@ -195,7 +199,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     mediaStore,
     model: watchModel,
     captureEnabled,
-    ...(isRestartable(frameSource)
+    ...(isFileBackedFrameSource(frameSource)
       ? {prepareObservation: () => frameSource.restart()}
       : {}),
   })

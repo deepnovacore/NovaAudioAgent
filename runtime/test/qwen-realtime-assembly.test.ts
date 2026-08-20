@@ -3,6 +3,9 @@ import { test } from 'node:test'
 import { buildAssembly } from '../src/assembly.js'
 import { VirtualClock } from '../src/clock.js'
 import { ConfigurationError, loadSettings, type Settings } from '../src/config.js'
+import {buildDesktopRealtimeComposition} from '../src/desktop-service.js'
+import type {CapturedCameraFrame} from '../src/desktop.js'
+import {ChromiumFrameSource} from '../src/executors/chromium-frame-source.js'
 import type { Frame, FrameSource } from '../src/executors/watcher.js'
 import type { SearchTransport } from '../src/executors/search.js'
 import type { IdFactory } from '../src/ids.js'
@@ -276,6 +279,59 @@ test('Qwen factory preserves resource identity, explicit Guard settings, and one
 
   await settleNamed('Qwen factory stop', realtime.stop())
   assert.equal(frame.stops, 1)
+})
+
+test('desktop Qwen composition shares one clock, Chromium source, and camera server owner', async () => {
+  const connector = recordingConnector()
+  const clock = new VirtualClock(5)
+  const stop = new AbortController()
+  const captures: unknown[] = []
+  let source: ChromiumFrameSource | undefined
+  const server = {
+    sendText: () => Promise.resolve(),
+    sendBinary: () => Promise.resolve(),
+    disconnectClient: () => Promise.resolve(),
+    start: () => Promise.resolve({
+      token: '0123456789abcdef0123456789abcdef' as const,
+      host: '127.0.0.1' as const,
+      port: 43123,
+    }),
+    close: () => Promise.resolve(),
+    captureCamera: (request: unknown): Promise<CapturedCameraFrame> => {
+      captures.push(request)
+      return Promise.resolve({
+        payload: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+        media_type: 'image/jpeg',
+        width: 1280,
+        height: 720,
+      })
+    },
+  }
+  const composition = buildDesktopRealtimeComposition({
+    token: '0123456789abcdef0123456789abcdef',
+    stop,
+    createServer: () => server,
+    buildRealtime: (callbacks, transport) => {
+      source = new ChromiumFrameSource({source: 'file', transport, clock})
+      return buildQwenRealtimeAssembly(qwenOptions(
+        settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+        connector.connector,
+        {clock, frameSource: source, ...callbacks},
+      ))
+    },
+  })
+  assert.ok(source !== undefined)
+  assert.equal(composition.realtime.core.frameSource, source)
+  assert.equal(composition.realtime.runtime.clock, clock)
+  assert.equal(composition.desktop.server, server)
+
+  await settleNamed('desktop Qwen start before renderer', composition.realtime.start())
+  assert.deepEqual(captures, [], 'source start does not capture before desktop readiness/auth')
+  const frame = await source.snapshot()
+  assert.deepEqual(captures, [{source: 'file', positionMs: 0}])
+  assert.equal(frame.captured_at, 5)
+  await settleNamed('desktop Qwen source stop', composition.realtime.stop())
+  await assert.rejects(source.snapshot(), /camera source is unavailable/u)
 })
 
 test('Qwen factory passes default and every Guard history pair arm to the service', () => {

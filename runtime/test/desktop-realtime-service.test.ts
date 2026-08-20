@@ -7,6 +7,10 @@ import {buildAssembly} from '../src/assembly.js'
 import {VirtualClock} from '../src/clock.js'
 import {settingsSchema} from '../src/config.js'
 import {announceReadiness, type DesktopReadiness} from '../src/desktop.js'
+import type {
+  CameraCaptureTransport,
+  CapturedCameraFrame,
+} from '../src/desktop.js'
 import {
   buildDesktopRealtimeComposition,
   installDesktopStopSources,
@@ -1097,4 +1101,87 @@ test('composition rejects synchronous delivery before the realtime holder exists
   }), error => error instanceof Error
     && !(error instanceof ReferenceError)
     && error.message === 'desktop realtime runtime is unavailable during construction')
+})
+
+test('composition camera transport rejects construction-time use with a fixed non-TDZ error', async () => {
+  const core = buildAssembly({
+    settings: settingsSchema.parse({
+      executors: ['fast_sim'], model_api_key: 'model-key', tavily_api_key: 'search-key',
+    }),
+    gateway: new NeverGateway(),
+    searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
+    realtimeFrontbrain: true,
+  })
+  let earlyCapture: Promise<CapturedCameraFrame> | undefined
+  buildDesktopRealtimeComposition({
+    token: TOKEN,
+    stop: new AbortController(),
+    buildRealtime: (callbacks, cameraTransport) => {
+      earlyCapture = cameraTransport.captureCamera({source: 'local'})
+      void earlyCapture.catch(() => undefined)
+      return buildRealtimeAssembly({
+        core,
+        provider: new ScriptedProvider([]),
+        ...callbacks,
+        onDiagnostic: () => undefined,
+      })
+    },
+  })
+  assert.ok(earlyCapture !== undefined)
+  await assert.rejects(
+    earlyCapture,
+    error => error instanceof Error
+      && !(error instanceof ReferenceError)
+      && error.message === 'desktop realtime bridge is unavailable during construction',
+  )
+})
+
+test('composition camera transport is one stable proxy to the final desktop server owner', async () => {
+  const core = buildAssembly({
+    settings: settingsSchema.parse({
+      executors: ['fast_sim'], model_api_key: 'model-key', tavily_api_key: 'search-key',
+    }),
+    gateway: new NeverGateway(),
+    searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
+    realtimeFrontbrain: true,
+  })
+  const requests: unknown[] = []
+  let capturedTransport: CameraCaptureTransport | undefined
+  const fakeServer = {
+    sendText: () => Promise.resolve(),
+    sendBinary: () => Promise.resolve(),
+    disconnectClient: () => Promise.resolve(),
+    start: () => Promise.resolve(readiness()),
+    close: () => Promise.resolve(),
+    captureCamera: (request: unknown): Promise<CapturedCameraFrame> => {
+      requests.push(request)
+      return Promise.resolve({
+        payload: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+        media_type: 'image/jpeg',
+        width: 1280,
+        height: 720,
+      })
+    },
+  }
+  const composition = buildDesktopRealtimeComposition({
+    token: TOKEN,
+    stop: new AbortController(),
+    createServer: () => fakeServer,
+    buildRealtime: (callbacks, cameraTransport) => {
+      capturedTransport = cameraTransport
+      return buildRealtimeAssembly({
+        core,
+        provider: new ScriptedProvider([]),
+        ...callbacks,
+        onDiagnostic: () => undefined,
+      })
+    },
+  })
+  assert.notEqual(capturedTransport, undefined)
+  assert.equal(composition.desktop.server, fakeServer)
+  const first = await capturedTransport!.captureCamera({source: 'local'})
+  const second = await capturedTransport!.captureCamera({source: 'file', positionMs: 25})
+  assert.deepEqual(requests, [{source: 'local'}, {source: 'file', positionMs: 25}])
+  assert.deepEqual(first.payload, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]))
+  assert.deepEqual(second.payload, first.payload)
 })

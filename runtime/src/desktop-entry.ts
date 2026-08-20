@@ -7,6 +7,9 @@ import {
   type DesktopStopParentSource,
 } from './desktop-service.js'
 import {announceReadiness} from './desktop.js'
+import {selectDesktopCameraSource} from './desktop-camera-source.js'
+import {ChromiumFrameSource} from './executors/chromium-frame-source.js'
+import {RealClock} from './clock.js'
 import {buildQwenRealtimeAssembly} from './qwen-realtime-assembly.js'
 import {NullTelemetry} from './realtime/telemetry.js'
 
@@ -34,16 +37,27 @@ process.exitCode = await runDesktopEntryWithStopSources({
   construct: () => {
     const settings = loadSettings()
     const telemetry = new NullTelemetry()
+    const clock = new RealClock()
+    const camera = selectDesktopCameraSource(process.env)
     const composition = buildDesktopRealtimeComposition({
       token,
       stop,
       telemetry,
-      buildRealtime: callbacks => buildQwenRealtimeAssembly({
-        settings,
-        telemetry,
-        onDiagnostic,
-        ...callbacks,
-      }),
+      buildRealtime: (callbacks, transport) => {
+        const frameSource = new ChromiumFrameSource({
+          source: camera.source,
+          transport,
+          clock,
+        })
+        return buildQwenRealtimeAssembly({
+          settings,
+          telemetry,
+          onDiagnostic,
+          clock,
+          frameSource,
+          ...callbacks,
+        })
+      },
     })
     return {
       ...composition,

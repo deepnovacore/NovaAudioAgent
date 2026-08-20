@@ -6,6 +6,7 @@ import { settingsSchema, type Settings } from '../src/config.js'
 import type { ExecutorDispatchContext } from '../src/causal-runtime.js'
 import type { EventRecord } from '../src/events.js'
 import { CamAdapter } from '../src/executors/camera.js'
+import { ChromiumFrameSource } from '../src/executors/chromium-frame-source.js'
 import { DisabledFrameSource } from '../src/executors/frame-source.js'
 import type { SearchTransport } from '../src/executors/search.js'
 import { WatchAdapter, type Frame, type FrameSource } from '../src/executors/watcher.js'
@@ -47,6 +48,7 @@ class ScriptedSearchTransport implements SearchTransport {
 }
 
 class ScriptedFrameSource implements FrameSource {
+  readonly isFileBackedFrameSource = true
   starts = 0
   stops = 0
   restarts = 0
@@ -80,6 +82,15 @@ class ScriptedFrameSource implements FrameSource {
 
   snapshot(): Promise<Frame | null> {
     return Promise.resolve(this.frame)
+  }
+}
+
+class ExplodingLocalChromiumSource extends ChromiumFrameSource {
+  restartCalls = 0
+
+  override restart(): Promise<void> {
+    this.restartCalls += 1
+    return Promise.reject(new Error('local restart must not be exposed to Guard'))
   }
 }
 
@@ -326,6 +337,95 @@ test('camera, watch, and guard share capture while only Guard prepares a restart
     ref: 'watch-frame', media_type: 'image/png', payload: new Uint8Array([1, 2, 3]),
   }])
   assert.equal(store.size, 2, 'both Watch adapters persist hits into the assembly store')
+})
+
+test('a local Chromium source is not exposed to Guard as file-restartable', async () => {
+  const clock = new VirtualClock()
+  const source = new ExplodingLocalChromiumSource({
+    source: 'local',
+    clock,
+    transport: {
+      captureCamera: () => Promise.resolve({
+        payload: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+        media_type: 'image/jpeg',
+        width: 1280,
+        height: 720,
+      }),
+    },
+  })
+  const gateway = new ScriptedGateway(
+    [],
+    {'fast-model': '{"hit": false, "observation": "clear"}'},
+    () => { setImmediate(() => clock.advanceTo(31)) },
+  )
+  const assembly = buildAssembly({
+    settings: settings({fast_model: 'fast-model'}),
+    gateway,
+    searchTransport: new ScriptedSearchTransport(),
+    frameSource: source,
+    clock,
+  })
+  await assembly.start()
+  try {
+    const guard = assembly.runtime.executors.get('guard')
+    assert.ok(guard instanceof WatchAdapter)
+    const handoff = await guard.dispatch(
+      'start', {condition: 'motion', duration_s: 30}, watchContext('guard', clock),
+    )
+    assert.notEqual(handoff.content.error, 'capture_unavailable')
+    assert.equal(source.restartCalls, 0)
+  } finally {
+    await assembly.stop()
+  }
+})
+
+test('Watch keeps the Chromium file epoch while Guard resets it before observation', async () => {
+  const clock = new VirtualClock()
+  const captures: unknown[] = []
+  const source = new ChromiumFrameSource({
+    source: 'file',
+    clock,
+    transport: {
+      captureCamera: request => {
+        captures.push(request)
+        return Promise.resolve({
+          payload: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+          media_type: 'image/jpeg',
+          width: 1280,
+          height: 720,
+        })
+      },
+    },
+  })
+  const gateway = new ScriptedGateway(
+    [],
+    {'fast-model': '{"hit": false, "observation": "clear"}'},
+    () => { setImmediate(() => clock.advanceTo(clock.now() + 31)) },
+  )
+  const assembly = buildAssembly({
+    settings: settings({fast_model: 'fast-model'}),
+    gateway,
+    searchTransport: new ScriptedSearchTransport(),
+    frameSource: source,
+    clock,
+  })
+  await assembly.start()
+  try {
+    await source.restart()
+    clock.advanceTo(10)
+    const watch = assembly.runtime.executors.get('watch')
+    const guard = assembly.runtime.executors.get('guard')
+    assert.ok(watch instanceof WatchAdapter)
+    assert.ok(guard instanceof WatchAdapter)
+    await watch.dispatch('start', {condition: 'motion', duration_s: 30}, watchContext('watch', clock))
+    await guard.dispatch('start', {condition: 'motion', duration_s: 30}, watchContext('guard', clock))
+    assert.deepEqual(captures, [
+      {source: 'file', positionMs: 10_000},
+      {source: 'file', positionMs: 0},
+    ])
+  } finally {
+    await assembly.stop()
+  }
 })
 
 test('assembly owns an idempotent retryable frame-source lifecycle', async () => {

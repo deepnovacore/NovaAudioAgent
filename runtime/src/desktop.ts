@@ -102,6 +102,11 @@ export interface CapturedCameraFrame {
   readonly height: typeof CAMERA_HEIGHT
 }
 
+/** The authenticated, bounded camera request surface exposed by the desktop owner. */
+export interface CameraCaptureTransport {
+  captureCamera(request: CameraCaptureRequest): Promise<CapturedCameraFrame>
+}
+
 export interface DesktopCameraTimer {
   set(delayMs: number, callback: () => void): unknown
   clear(handle: unknown): void

@@ -9,6 +9,9 @@ import {
   DesktopProtocolError,
   parseReadyEndpoint,
   validateDesktopToken,
+  type CameraCaptureRequest,
+  type CameraCaptureTransport,
+  type CapturedCameraFrame,
   type DesktopReadiness,
 } from './desktop.js'
 import {deliveryToEvent} from './desktop-wire.js'
@@ -46,7 +49,10 @@ export interface DesktopOutputCallbacks {
 export interface BuildDesktopRealtimeCompositionOptions {
   readonly token: string
   readonly stop: AbortController
-  readonly buildRealtime: (callbacks: DesktopOutputCallbacks) => RealtimeAssembly
+  readonly buildRealtime: (
+    callbacks: DesktopOutputCallbacks,
+    cameraTransport: CameraCaptureTransport,
+  ) => RealtimeAssembly
   readonly telemetry?: RealtimeTelemetry
   readonly projectView?: ProjectConfirmationView
   readonly createServer?: DesktopRealtimeOptions['createServer']
@@ -75,6 +81,22 @@ export function buildDesktopRealtimeComposition(
     }
     return holder.realtime
   }
+  const cameraTransport: CameraCaptureTransport = {
+    captureCamera(request: CameraCaptureRequest): Promise<CapturedCameraFrame> {
+      let server: DesktopServerTransport
+      try {
+        server = requireDesktop().server
+      } catch (error) {
+        return Promise.reject(error instanceof Error
+          ? error
+          : new Error('desktop realtime bridge is unavailable during construction'))
+      }
+      if (!isCameraCaptureTransport(server)) {
+        return Promise.reject(new Error('desktop camera transport is unavailable'))
+      }
+      return server.captureCamera(request)
+    },
+  }
   const realtime = options.buildRealtime({
     onAudioFrame: frame => requireDesktop().bridge.onAudioFrame(frame),
     onAudioClear: (utteranceId, generationEpoch) => {
@@ -93,7 +115,7 @@ export function buildDesktopRealtimeComposition(
     onCaption: frame => requireDesktop().bridge.onCaption(frame),
     onCodexState: state => requireDesktop().bridge.onCodexState(state),
     onProjectView: view => requireDesktop().bridge.onCodexProject(view),
-  })
+  }, cameraTransport)
   holder.realtime = realtime
   const desktop = new DesktopRealtime({
     token: options.token,
@@ -107,6 +129,12 @@ export function buildDesktopRealtimeComposition(
   })
   holder.desktop = desktop
   return {realtime, desktop}
+}
+
+function isCameraCaptureTransport(
+  server: DesktopServerTransport,
+): server is DesktopServerTransport & CameraCaptureTransport {
+  return 'captureCamera' in server && typeof server.captureCamera === 'function'
 }
 
 export interface RealtimeDesktopServiceOptions {
