@@ -272,24 +272,38 @@ export function parseJsonWithIntegerFields(
   onInvalid: (field: string) => Error,
 ): unknown {
   const named = new Set(fields)
-  let invalid: string | null = null
+  // Collected rather than judged in place: the reviver runs bottom-up, so the root object's identity is
+  // not known until the very end. A nested `{"meta":{"generation_epoch":1.5}}` is forward-compatible
+  // renderer metadata that the oracle parses and ignores -- it reads only `value.get(field)` on the
+  // root -- so rejecting it here would discard valid acknowledgements and strand playback state.
+  const candidates: {readonly holder: object; readonly field: string; readonly source: string}[] = []
   const parsed: unknown = JSON.parse(text, function reviver(
+    this: unknown,
     key: string,
     value: unknown,
     context?: {readonly source?: string},
   ): unknown {
-    if (!named.has(key) || context?.source === undefined) return value
-    const source = context.source
-    // `null` is a legal value wherever a field is optional; it is not a number at all.
-    if (source === 'null') return value
-    // Two conditions with one job between them, and the second does most of it: `String(value)` for a
-    // `1.0` source is `"1"`, so the round-trip comparison already rejects a float spelling. The digit
-    // pattern is kept because it states the intent -- and because it is the only thing rejecting a
-    // form like `1e0`, where the round trip happens to agree.
-    if (!/^-?\d+$/u.test(source) || String(value) !== source) invalid ??= key
+    if (
+      named.has(key)
+      && context?.source !== undefined
+      && typeof this === 'object'
+      && this !== null
+    ) {
+      candidates.push({holder: this, field: key, source: context.source})
+    }
     return value
   })
-  if (invalid !== null) throw onInvalid(invalid)
+  if (typeof parsed !== 'object' || parsed === null) return parsed
+  for (const candidate of candidates) {
+    // Only the root's own members. Identity works because this reviver returns every value unchanged,
+    // so the object the top-level members were revived into is the object that comes back.
+    if (candidate.holder !== parsed) continue
+    // `null` is a legal value wherever a field is optional; it is not a number at all.
+    if (candidate.source === 'null') continue
+    if (!/^-?\d+$/u.test(candidate.source) || String((parsed as Record<string, unknown>)[candidate.field]) !== candidate.source) {
+      throw onInvalid(candidate.field)
+    }
+  }
   return parsed
 }
 

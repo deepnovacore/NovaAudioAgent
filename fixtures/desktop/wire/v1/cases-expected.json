@@ -159,6 +159,13 @@
       "pcm": "0001"
     },
     {
+      "name": "decode-nested-decoy",
+      "utterance_id": "u",
+      "generation_epoch": 1,
+      "sequence": 0,
+      "pcm": "0001"
+    },
+    {
       "name": "decode-duplicate-epoch-last-integer",
       "utterance_id": "u-1",
       "generation_epoch": 1,
@@ -497,6 +504,34 @@
         "utterance_id": "x \"generation_epoch\": 1.5 y",
         "generation_epoch": 1
       }
+    },
+    {
+      "name": "nested-decoy-object",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 1
+      }
+    },
+    {
+      "name": "nested-decoy-array",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 1
+      }
+    },
+    {
+      "name": "nested-decoy-both",
+      "command": "playback_done",
+      "payload": {
+        "utterance_id": "u-1",
+        "generation_epoch": 1
+      }
+    },
+    {
+      "name": "nested-decoy-with-bad-root",
+      "error": "desktop playback generation is invalid"
     },
     {
       "name": "oversized-frame",

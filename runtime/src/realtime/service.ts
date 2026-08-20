@@ -30,6 +30,11 @@ import type { PlaybackCompletion, PlaybackGeneration } from '../playback.js'
 import type { CompiledTools } from '../tool-schema.js'
 import type { RealtimeRuntimeBridge, ToolAcceptance, ToolCallReady } from './bridge.js'
 import type {
+  ConfirmedProjectOperation,
+  ProjectConfirmationController,
+  ProjectConfirmationView,
+} from './project-confirmation.js'
+import type {
   HostContextItem,
   HostResponseIntent,
   RealtimeProviderEvent,
@@ -48,12 +53,14 @@ import {
   MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS,
   MAX_TRACKED_TOOL_CALLS,
   MAX_UNCERTAIN_DELIVERY_RETRIES,
+  PROJECT_EXPIRY_STEP_TIMEOUT_S,
   PREEMPT_MIN_PRIORITY,
   USER_HOLD_MAX_S,
   callKey,
   compareQueuedHostResponses,
   parseCallKey,
   continuationBatch,
+  projectCommitFailureText,
   semanticAcknowledgement,
   toolCallState,
   type CodexState,
@@ -62,6 +69,7 @@ import {
   type GuardActivationAuthority,
   type GuardHistoryRecovery,
   type GuardPreemption,
+  type ProjectExpiryBatch,
   type QueuedHostResponse,
   type SemanticAcknowledgement,
   type ToolCallAcceptanceSnapshot,
@@ -152,6 +160,13 @@ export interface RealtimeServiceOptions {
   readonly controlledGuardReconnect?: boolean
   readonly guardHistoryRecovery?: GuardHistoryRecovery
   readonly guardHistoryPairs?: number
+  /** Absent means project confirmation is off, and every branch of it is inert. */
+  readonly projectConfirmation?: ProjectConfirmationController
+  readonly commitProjectOperation?: (
+    operation: ConfirmedProjectOperation,
+    originRef: string,
+  ) => Promise<{readonly accepted: boolean; readonly code: string}>
+  readonly onProjectView?: (view: ProjectConfirmationView) => void
   /** Where a diagnostic goes. Defaults to stdout, which is what the oracle captures. */
   readonly onDiagnostic?: (line: string) => void
 }
@@ -182,6 +197,14 @@ export class RealtimeService {
   readonly #controlledGuardReconnect: boolean
   readonly #guardHistoryRecovery: GuardHistoryRecovery
   readonly #guardHistoryPairs: number
+  readonly #projectConfirmation: ProjectConfirmationController | undefined
+  readonly #commitProjectOperation:
+    | ((operation: ConfirmedProjectOperation, originRef: string) => Promise<{
+      readonly accepted: boolean
+      readonly code: string
+    }>)
+    | undefined
+  readonly #onProjectView: ((view: ProjectConfirmationView) => void) | undefined
 
   /** A binary min-heap ordered by `compareQueuedHostResponses`, matching the oracle's `heapq`. */
   #hostItems: QueuedHostResponse[] = []
@@ -246,6 +269,20 @@ export class RealtimeService {
   readonly #originDeferredToolCalls: DeferredOriginToolCall[] = []
   /** R105: delegate id -> the call key waiting on its synchronous result. */
   readonly #pendingSync = new Map<string, string>()
+  /** Reserved user items answering a proposal, keyed `epoch:item`. */
+  readonly #projectConfirmationItems = new Set<string>()
+  /** Items mid-close: no longer answerable, still blocking tool calls. */
+  readonly #projectConfirmationClosingItems = new Set<string>()
+  /** Responses a confirmation has blocked, so the block sticks for the whole turn. */
+  readonly #projectConfirmationResponses = new Set<string>()
+  readonly #projectConfirmationClosingCalls = new Set<string>()
+  /** Insertion-ordered so the oldest closed call is the one evicted. */
+  readonly #projectConfirmationClosedCalls = new Map<string, null>()
+  #projectConfirmationBlocking = false
+  #projectConfirmationFencePending = false
+  readonly #projectExpiryBatches: ProjectExpiryBatch[] = []
+  #projectExpiryDraining: Promise<void> | null = null
+  #unsubscribeProjectExpiry: (() => void) | null = null
   /**
    * The last progress summary spoken for each delegate.
    *
@@ -296,6 +333,14 @@ export class RealtimeService {
     this.#controlledGuardReconnect = options.controlledGuardReconnect ?? false
     this.#guardHistoryRecovery = recovery
     this.#guardHistoryPairs = pairs
+    this.#projectConfirmation = options.projectConfirmation
+    this.#commitProjectOperation = options.commitProjectOperation
+    this.#onProjectView = options.onProjectView
+    // Subscribed at construction: a proposal can expire before anything else happens, and the observer
+    // is the only notice of it.
+    this.#unsubscribeProjectExpiry = options.projectConfirmation?.observeExpiry(() => {
+      this.#projectConfirmationExpired()
+    }) ?? null
   }
 
   get codexState(): CodexState {
@@ -368,6 +413,12 @@ export class RealtimeService {
    */
   async close(): Promise<void> {
     this.#stop.abort()
+    this.#invalidateProjectConfirmation('service_closed')
+    if (this.#unsubscribeProjectExpiry !== null) {
+      this.#unsubscribeProjectExpiry()
+      this.#unsubscribeProjectExpiry = null
+    }
+    this.#projectExpiryBatches.length = 0
     this.#providerEpochNeedingActivation = null
     this.#providerReconnectSourceEpoch = null
     this.#urgentHostResponseOwner = null
@@ -1122,6 +1173,7 @@ export class RealtimeService {
     return this.#reconnectLock.run(async () => {
       if (this.session.sessionEpoch !== requestedEpoch) return false
       const oldEpoch = this.session.sessionEpoch
+      this.#invalidateProjectConfirmation('provider_replaced')
       this.#guardPreemption = null
       this.#providerReconnectSourceEpoch = oldEpoch
       await this.session.reconnect({tools: structuredClone(this.#providerSchemas)})
@@ -1681,8 +1733,20 @@ export class RealtimeService {
       ? this.#urgentOwnerForResponse(event.session_epoch, event.response_id)
       : null
 
-    const accepted = await this.session.accept(event)
+    // A tool call in a turn that is meant to be waiting for a confirmation is refused before the
+    // session sees it: letting it through would have the model acting inside the very turn whose answer
+    // it is supposed to be waiting for.
+    const blockedConfirmationTool = event.kind === 'tool_call_ready'
+      && this.#blocksProjectConfirmationTool(event)
+    const accepted = blockedConfirmationTool ? false : await this.session.accept(event)
 
+    if (event.kind === 'response_started' && this.#projectConfirmationBlocking) {
+      this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
+      // The armed fence has been spent by this response, so it no longer holds the block open.
+      this.#projectConfirmationFencePending = false
+      this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
+        || this.#projectConfirmationClosingItems.size > 0
+    }
     if (event.kind === 'response_started' || event.kind === 'response_audio_delta') {
       const preemption = this.#guardPreemption
       // A turn that was still starting when the alert arrived has only now revealed its id, so the
@@ -1747,6 +1811,7 @@ export class RealtimeService {
       if (event.provider_item_id !== null) {
         this.#rememberUnboundUserOrigin(event.provider_item_id)
       }
+      this.#reserveProjectConfirmation(event)
     }
 
     if (event.kind === 'response_terminal' && accepted) {
@@ -1783,7 +1848,11 @@ export class RealtimeService {
         this.#rememberUserOriginRef(event.item_id, originRef)
         this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
         if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
-        await this.#releaseDeferredOriginCalls(event.item_id, originRef)
+        if (this.#isProjectConfirmationItem(event.session_epoch, event.item_id)) {
+          await this.#finishProjectConfirmation(event, originRef)
+        } else {
+          await this.#releaseDeferredOriginCalls(event.item_id, originRef)
+        }
       }
     } else if (event.kind === 'user_transcript_failed') {
       if (accepted) {
@@ -1797,11 +1866,23 @@ export class RealtimeService {
         }
         this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
         if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
-        await this.#releaseDeferredOriginCalls(event.item_id, null)
+        if (this.#isProjectConfirmationItem(event.session_epoch, event.item_id)) {
+          await this.#failProjectConfirmation(event.session_epoch, event.item_id)
+        } else {
+          await this.#releaseDeferredOriginCalls(event.item_id, null)
+        }
       }
     } else if (event.kind === 'tool_call_ready') {
-      if (!accepted) return
+      if (!accepted) {
+        // A refused confirmation tool still owes the provider a terminal result, or the protocol stalls
+        // waiting for one that will never come.
+        if (blockedConfirmationTool) await this.#closeProjectConfirmationTool(event)
+        return
+      }
       await this.#routeToolCall(event)
+    }
+    if (event.kind === 'response_terminal') {
+      this.#projectConfirmationResponses.delete(callKey(event.session_epoch, event.response_id))
     }
 
     if (accepted) await this.driveContinuations()
@@ -2495,6 +2576,400 @@ export class RealtimeService {
     if (batch?.phase !== 'collecting') return
     batch.origin_status = this.#originStatus(responseId)
     batch.phase = 'ready'
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Family I: project confirmation.
+  //
+  // Changing which workspace the agent operates in needs the user to say yes out loud, and this is the
+  // machinery that makes that answer trustworthy in a conversation that keeps moving. The controller
+  // owns the decision; this owns the *isolation* around it.
+  //
+  // Three overlapping guards, because the failure modes are different. The reserved item makes one
+  // transcript the answer and nothing else. The response block stops the model calling tools in a turn
+  // that is meant to be waiting. And the armed fence keeps the reply the user is answering from being
+  // spoken over by a new turn. Each closes a hole the other two leave open.
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Claim the user's next utterance as the answer to a pending proposal.
+   *
+   * An utterance with no provider item id cannot be reserved, and an unreservable one cannot be
+   * answered -- so the proposal is cancelled outright rather than left waiting for a reply that can
+   * never be attributed to it.
+   */
+  #reserveProjectConfirmation(event: {
+    readonly session_epoch: number
+    readonly provider_item_id: string | null
+  }): void {
+    if (this.#projectConfirmation?.pending !== true) return
+    const itemId = event.provider_item_id
+    if (itemId === null) {
+      this.#invalidateProjectConfirmation('missing_item_correlation')
+      this.#queueProjectConfirmationFact('缺少语音确认关联，本次操作已取消。')
+      return
+    }
+    if (!this.#projectConfirmation.reserveUserItem({epoch: event.session_epoch, itemId})) return
+    this.#projectConfirmationItems.add(callKey(event.session_epoch, itemId))
+    this.#projectConfirmationBlocking = true
+    this.#projectConfirmationFencePending = true
+    // The reply the user is answering must not be spoken over by whatever the model says next.
+    this.session.armNextResponseFence()
+    this.#publishProjectView()
+  }
+
+  /**
+   * Whether this tool call arrives in a turn that is supposed to be waiting for a confirmation.
+   *
+   * Blocked by *epoch* as well as by response, because a reconnect renumbers responses and a
+   * confirmation spanning one would otherwise stop blocking. Recording the response id on the way
+   * through is what makes the block stick for the rest of that turn.
+   */
+  #blocksProjectConfirmationTool(event: {
+    readonly session_epoch: number
+    readonly response_id: string | null
+  }): boolean {
+    for (const key of this.#projectConfirmationResponses) {
+      if (parseCallKey(key).sessionEpoch === event.session_epoch) return true
+    }
+    const effectiveResponseId = event.response_id ?? this.session.activeProviderResponseId
+    if (
+      effectiveResponseId !== null
+      && this.#projectConfirmationResponses.has(callKey(event.session_epoch, effectiveResponseId))
+    ) {
+      return true
+    }
+    if (this.#projectConfirmationBlocking) {
+      if (event.response_id !== null) {
+        this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
+      }
+      return true
+    }
+    return false
+  }
+
+  #isProjectConfirmationItem(epoch: number, itemId: string): boolean {
+    const key = callKey(epoch, itemId)
+    return this.#projectConfirmationItems.has(key)
+      || this.#projectConfirmationClosingItems.has(key)
+  }
+
+  /**
+   * Move an item from reserved to closing.
+   *
+   * A separate set rather than a flag, because closing involves provider I/O: during it the item is no
+   * longer accepting an answer but still has to block tool calls, and a single set could not say both.
+   */
+  #beginProjectConfirmationClose(epoch: number, itemId: string): void {
+    const key = callKey(epoch, itemId)
+    this.#projectConfirmationItems.delete(key)
+    this.#projectConfirmationClosingItems.add(key)
+    this.#projectConfirmationBlocking = true
+  }
+
+  #endProjectConfirmationClose(epoch: number, itemId: string): void {
+    this.#projectConfirmationClosingItems.delete(callKey(epoch, itemId))
+    this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
+      || this.#projectConfirmationClosingItems.size > 0
+      || this.#projectConfirmationFencePending
+  }
+
+  /**
+   * Judge the transcript that answers a proposal, and act on it.
+   *
+   * The re-entrancy check is first: an item already closing means this transcript arrived twice, and
+   * the only outstanding work is the deferred calls. Running the controller again would let a second
+   * delivery of the same words confirm something the first delivery already declined.
+   *
+   * The commit callback is wrapped because a failing one must still tell the user *something*. A
+   * confirmation that produced silence is the worst outcome available: the user said yes and has no
+   * idea whether anything happened.
+   */
+  async #finishProjectConfirmation(
+    event: {readonly session_epoch: number; readonly item_id: string; readonly text: string},
+    originRef: string,
+  ): Promise<void> {
+    const key = callKey(event.session_epoch, event.item_id)
+    if (this.#projectConfirmationClosingItems.has(key)) {
+      await this.#closeConfirmationDeferredCalls(event.item_id)
+      return
+    }
+    this.#beginProjectConfirmationClose(event.session_epoch, event.item_id)
+    try {
+      await this.#closeConfirmationDeferredCalls(event.item_id)
+    } finally {
+      this.#endProjectConfirmationClose(event.session_epoch, event.item_id)
+    }
+    const controller = this.#projectConfirmation
+    if (controller === undefined) return
+    const outcome = controller.acceptTranscript({
+      epoch: event.session_epoch,
+      itemId: event.item_id,
+      text: event.text,
+    })
+    let text = outcome.response_text
+    if (outcome.kind === 'confirmed' && outcome.operation !== null) {
+      const callback = this.#commitProjectOperation
+      if (callback === undefined) {
+        text = '确认处理不可用，本次操作未执行。'
+      } else {
+        try {
+          const result = await callback(outcome.operation, originRef)
+          text = result.accepted
+            ? '已确认，正在处理。'
+            : projectCommitFailureText(result.code)
+        } catch {
+          // Deliberately vague: the failure came from somewhere this layer does not model, and naming a
+          // reason would be inventing one.
+          text = '已确认，但操作未执行。'
+        }
+      }
+    }
+    if (text !== null && text !== '') this.#queueProjectConfirmationFact(text)
+    this.#publishProjectView()
+  }
+
+  /** Transcription failed, so the answer is unknowable and the proposal is cancelled. */
+  async #failProjectConfirmation(epoch: number, itemId: string): Promise<void> {
+    if (this.#projectConfirmationClosingItems.has(callKey(epoch, itemId))) {
+      await this.#closeConfirmationDeferredCalls(itemId)
+      return
+    }
+    this.#beginProjectConfirmationClose(epoch, itemId)
+    try {
+      await this.#closeConfirmationDeferredCalls(itemId)
+    } finally {
+      this.#endProjectConfirmationClose(epoch, itemId)
+    }
+    const controller = this.#projectConfirmation
+    if (controller === undefined) return
+    const outcome = controller.failTranscript({epoch, itemId})
+    if (outcome.response_text !== null && outcome.response_text !== '') {
+      this.#queueProjectConfirmationFact(outcome.response_text)
+    }
+    this.#publishProjectView()
+  }
+
+  /**
+   * Give the provider a terminal result for a tool call the confirmation refused.
+   *
+   * Reserved *before* the first await: expiry cleanup and a provider event can both reach the same
+   * call, and two terminal outputs for one function call is a protocol violation. Cleared on failure so
+   * a retry is possible; recorded on success so a later attempt is a no-op.
+   */
+  async #closeProjectConfirmationTool(event: ToolCallReady): Promise<void> {
+    const key = callKey(event.session_epoch, event.call_id)
+    if (
+      this.#projectConfirmationClosingCalls.has(key)
+      || this.#projectConfirmationClosedCalls.has(key)
+    ) {
+      return
+    }
+    this.#projectConfirmationClosingCalls.add(key)
+    const item: HostContextItem = {
+      kind: 'tool_output',
+      host_item_id: this.#idFactory(),
+      event_id: this.#idFactory(),
+      call_id: event.call_id,
+      content: '{"code":"confirmation_reserved","state":"superseded"}',
+    }
+    try {
+      await this.session.injectToolOutput(item)
+    } catch (cause) {
+      this.#projectConfirmationClosingCalls.delete(key)
+      throw cause
+    }
+    this.#projectConfirmationClosingCalls.delete(key)
+    this.#projectConfirmationClosedCalls.delete(key)
+    this.#projectConfirmationClosedCalls.set(key, null)
+    while (this.#projectConfirmationClosedCalls.size > MAX_TRACKED_TOOL_CALLS) {
+      const oldest = this.#projectConfirmationClosedCalls.keys().next()
+      if (oldest.done === true) break
+      this.#projectConfirmationClosedCalls.delete(oldest.value)
+    }
+  }
+
+  /**
+   * Refuse the tool calls that were waiting on this transcript.
+   *
+   * Detached before awaiting: rebuilding the queue from a snapshot after provider I/O would overwrite
+   * calls a concurrent event appended in the meantime.
+   */
+  async #closeConfirmationDeferredCalls(itemId: string): Promise<void> {
+    const matching: DeferredOriginToolCall[] = []
+    const retained: DeferredOriginToolCall[] = []
+    for (const call of this.#originDeferredToolCalls) {
+      (call.user_item_id === itemId ? matching : retained).push(call)
+    }
+    this.#originDeferredToolCalls.length = 0
+    this.#originDeferredToolCalls.push(...retained)
+    for (const call of matching) {
+      await this.#closeProjectConfirmationTool(call.event)
+    }
+  }
+
+  /** Say something to the user about the confirmation. Just below user priority: urgent, not louder. */
+  #queueProjectConfirmationFact(text: string): void {
+    this.queueHostItem(hostFactIntent({
+      kind: 'final',
+      host_item_id: this.#idFactory(),
+      event_id: `project-confirmation:${this.#idFactory()}`,
+      content: [...text].slice(0, MAX_HOST_FACT_CHARS).join(''),
+    }), {priority: USER_PRIORITY - 1, preemptive: false})
+    this.#deliveryReady.set()
+  }
+
+  /**
+   * The proposal timed out on its own.
+   *
+   * Batched and drained by one task rather than handled inline, because cleanup involves provider I/O
+   * and possibly a reconnect -- and the expiry observer is called from a timer that must not be left
+   * awaiting either. A second expiry while one is draining joins the queue instead of racing it.
+   */
+  #projectConfirmationExpired(): void {
+    const itemKeys = [...this.#projectConfirmationItems]
+    const sourceEpoch = this.session.sessionEpoch
+    // A reconnect is needed when the confirmation armed a fence or blocked a response in this epoch:
+    // either leaves provider state the next turn would otherwise inherit.
+    const reconnect = this.#projectConfirmationFencePending
+      || [...this.#projectConfirmationResponses]
+        .some(key => parseCallKey(key).sessionEpoch === sourceEpoch)
+    for (const key of itemKeys) {
+      const {sessionEpoch, id} = parseCallKey(key)
+      this.#beginProjectConfirmationClose(sessionEpoch, id)
+    }
+    this.#projectExpiryBatches.push({item_keys: itemKeys, source_epoch: sourceEpoch, reconnect})
+    if (this.#projectExpiryDraining === null) {
+      this.#projectExpiryDraining = this.#drainProjectConfirmationExpiries()
+        .catch((failure: unknown) => {
+          this.#onDiagnostic(
+            `[realtime-diagnostic] project_expiry_failure type=${diagnosticName(failure)}`,
+          )
+        })
+        .finally(() => {
+          this.#projectExpiryDraining = null
+        })
+    }
+    this.#publishProjectView()
+  }
+
+  async #drainProjectConfirmationExpiries(): Promise<void> {
+    for (;;) {
+      const batch = this.#projectExpiryBatches.shift()
+      if (batch === undefined) return
+      await this.#finishProjectConfirmationExpiry(batch)
+    }
+  }
+
+  /**
+   * Clean up after one expired proposal.
+   *
+   * Every step is deadlined, because each one talks to a provider that may not answer and an expiry
+   * that hangs leaves the confirmation state blocking every later turn. A step that times out is
+   * treated as a failure of that step, not of the expiry: the loop carries on and the user is still
+   * told the proposal lapsed.
+   *
+   * The re-drain loop matters: closing a call awaits, and a provider event during that await can defer
+   * another call for the same epoch. Taking the queue once would leave it behind.
+   */
+  async #finishProjectConfirmationExpiry(batch: ProjectExpiryBatch): Promise<void> {
+    let closeFailed = false
+    for (;;) {
+      const deferred = this.#takeConfirmationDeferredCalls(batch.source_epoch)
+      if (deferred.length === 0) break
+      for (const call of deferred) {
+        try {
+          const completed = await this.#runProjectExpiryStep(
+            this.#closeProjectConfirmationTool(call.event),
+          )
+          closeFailed = closeFailed || !completed
+        } catch {
+          closeFailed = true
+        }
+      }
+    }
+    if (batch.reconnect || closeFailed) {
+      try {
+        await this.#runProjectExpiryStep(
+          this.#reconnectProviderSession({expectedEpoch: batch.source_epoch}),
+        )
+      } catch (failure) {
+        this.#onDiagnostic(
+          `[realtime-diagnostic] project_expiry_reconnect_failure type=${diagnosticName(failure)}`,
+        )
+      }
+    }
+    for (const key of batch.item_keys) {
+      const {sessionEpoch, id} = parseCallKey(key)
+      this.#endProjectConfirmationClose(sessionEpoch, id)
+    }
+    this.#queueProjectConfirmationFact('确认已过期，本次操作已取消。')
+    try {
+      await this.#runProjectExpiryStep(this.#deliveryPass())
+    } catch (failure) {
+      this.#onDiagnostic(
+        `[realtime-diagnostic] project_expiry_delivery_failure type=${diagnosticName(failure)}`,
+      )
+    }
+    this.#publishProjectView()
+  }
+
+  /** Take the deferred calls belonging to one epoch, leaving the rest queued in order. */
+  #takeConfirmationDeferredCalls(sourceEpoch: number): readonly DeferredOriginToolCall[] {
+    const matching: DeferredOriginToolCall[] = []
+    const retained: DeferredOriginToolCall[] = []
+    for (const deferred of this.#originDeferredToolCalls) {
+      (deferred.event.session_epoch === sourceEpoch ? matching : retained).push(deferred)
+    }
+    this.#originDeferredToolCalls.length = 0
+    this.#originDeferredToolCalls.push(...retained)
+    return matching
+  }
+
+  /**
+   * Run one cleanup step, or give up on it.
+   *
+   * Returns whether it finished. A step that did not is abandoned rather than awaited: the work may
+   * still complete in the background, and the alternative is an expiry that never ends.
+   */
+  async #runProjectExpiryStep(work: Promise<unknown>): Promise<boolean> {
+    // Attached now so a rejection after the deadline is not an unhandled one.
+    const settled = work.then(() => true, () => false)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<false>(resolve => {
+      timer = setTimeout(() => resolve(false), PROJECT_EXPIRY_STEP_TIMEOUT_S * 1_000)
+    })
+    try {
+      return await Promise.race([settled, deadline])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
+  #publishProjectView(): void {
+    const controller = this.#projectConfirmation
+    if (controller === undefined) return
+    try {
+      this.#onProjectView?.(controller.view)
+    } catch {
+      // A renderer that cannot accept the view must not prevent the state change that produced it.
+    }
+  }
+
+  /**
+   * Drop the proposal and every trace of its isolation.
+   *
+   * Called when the world the proposal described has changed underneath it -- a reconnect, a new
+   * provider session -- so confirming it would commit against a context the user never saw.
+   */
+  #invalidateProjectConfirmation(reason: string): void {
+    this.#projectConfirmation?.invalidate(reason)
+    this.#projectConfirmationItems.clear()
+    this.#projectConfirmationClosingItems.clear()
+    this.#projectConfirmationResponses.clear()
+    this.#projectConfirmationBlocking = false
+    this.#projectConfirmationFencePending = false
+    this.#publishProjectView()
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -3361,6 +3836,11 @@ export class RealtimeService {
    */
   get guardPreemptionForTest(): GuardPreemption | null {
     return this.#guardPreemption
+  }
+
+  /** Whether a confirmation is currently refusing tool calls. Invisible from outside otherwise. */
+  get projectConfirmationBlockingForTest(): boolean {
+    return this.#projectConfirmationBlocking
   }
 
   /** Which response holds which user turn, in binding order. */

@@ -30,6 +30,11 @@ import {
 } from '../src/realtime/service-state.js'
 import { SPEECH_FINAL_LIMIT } from '../src/realtime/speech-prep.js'
 import { RealtimeSession, type SessionProvider } from '../src/realtime/session.js'
+import {
+  ProjectConfirmationController,
+  type ConfirmedProjectOperation,
+  type ProjectConfirmationView,
+} from '../src/realtime/project-confirmation.js'
 import { PlaybackRegistry } from '../src/playback.js'
 import { compileToolSchema } from '../src/tool-schema.js'
 
@@ -2808,4 +2813,385 @@ test('a cancel rejection for a turn that already spoke is ignored', async () => 
     before,
     'a turn that already spoke is not replaced under',
   )
+})
+
+/**
+ * Project confirmation, service side.
+ *
+ * The controller decides whether the user said yes; this owns the isolation around that decision. Three
+ * overlapping guards, because the failure modes differ: the reserved item makes one transcript the
+ * answer, the response block stops the model acting inside the turn that is meant to be waiting, and
+ * the armed fence keeps the question from being spoken over. Each closes a hole the others leave.
+ */
+function confirmationService(options: {
+  readonly commit?: (
+    operation: ConfirmedProjectOperation,
+    originRef: string,
+  ) => Promise<{readonly accepted: boolean; readonly code: string}>
+  readonly withoutCommit?: boolean
+} = {}): {
+  readonly service: RealtimeService
+  readonly controller: ProjectConfirmationController
+  readonly actions: string[]
+  readonly views: ProjectConfirmationView[]
+  readonly clock: VirtualClock
+} {
+  const manifest = executorManifestSchema.parse({
+    name: 'codex',
+    policy: {
+      channel: 'codex',
+      priority: 50,
+      wake: 'fast',
+      typical_latency: 5,
+      compress_watermark: 8,
+    },
+    ops: [
+      {
+        name: 'start',
+        description: 'begin work',
+        params: {
+          type: 'object',
+          properties: {work_order: {type: 'string', minLength: 1}},
+          required: ['work_order'],
+          additionalProperties: false,
+        },
+        deadline_budget: 30,
+      },
+      {
+        name: 'look',
+        description: 'readonly',
+        params: {type: 'object', properties: {}, additionalProperties: false},
+        readonly: true,
+        deadline_budget: 5,
+      },
+    ],
+  })
+  const clock = new VirtualClock()
+  const memory = new Memory({policies: [manifest.policy]})
+  const executors = new Map([[manifest.name, {manifest}]])
+  const actions: string[] = []
+  const views: ProjectConfirmationView[] = []
+  let ids = 0
+  const nextId = (): string => `id-${++ids}`
+  let epoch = 0
+  const provider = {
+    connect: () => {
+      epoch += 1
+      actions.push(`connect:${epoch}`)
+      return Promise.resolve({epoch})
+    },
+    injectHostItem: (item: {readonly host_item_id: string; readonly event_id: string}) => {
+      actions.push(`inject:${item.event_id}`)
+      return Promise.resolve({session_epoch: epoch, host_item_id: item.host_item_id})
+    },
+    createResponse: (intent: {readonly kind: string}) => {
+      actions.push(`create:${intent.kind}`)
+      return Promise.resolve()
+    },
+    cancelResponse: (responseId: string) => {
+      actions.push(`cancel:${responseId}`)
+      return Promise.resolve()
+    },
+    sendAudio: () => Promise.resolve(),
+    events: () => emptyStream(),
+    close: () => Promise.resolve(),
+  }
+  const session = new RealtimeSession({
+    provider,
+    playback: new PlaybackRegistry({
+      idFactory: nextId,
+      onFrame: () => undefined,
+      onClear: () => undefined,
+    }),
+    idFactory: nextId,
+    clock,
+    onDiagnostic: () => undefined,
+  })
+  const controller = new ProjectConfirmationController({clock, idFactory: nextId})
+  let ingested = 0
+  const commit = options.withoutCommit === true
+    ? undefined
+    : options.commit ?? ((): Promise<{readonly accepted: boolean; readonly code: string}> => {
+      actions.push('commit')
+      return Promise.resolve({accepted: true, code: 'ok'})
+    })
+  const service = new RealtimeService({
+    provider,
+    runtime: {
+      clock,
+      executors,
+      memory,
+      observe: () => unsubscribeNothing,
+      serve: () => new Promise<void>(() => undefined),
+      claimedHandoff: () => undefined,
+      terminatedByDeadline: () => false,
+      delegateFor: () => undefined,
+      inFlightDelegate: () => undefined,
+    },
+    tools: compileToolSchema([manifest]),
+    session,
+    bridge: new RealtimeRuntimeBridge({
+      runtime: {
+        clock,
+        memory,
+        executors,
+        ingestUserInput: (input: {readonly text: string}) => {
+          ingested += 1
+          const item = memory.append('conversation', {
+            ts: ingested,
+            trust: 'trusted_user',
+            priority: 100,
+            content: {text: input.text},
+          })
+          return Promise.resolve(`${item.channel}:${item.seq}`)
+        },
+        updateExternal: () => true,
+        dispatchExternal: () => ({accepted: true, delegate_id: 'd-1'}),
+      },
+      tools: compileToolSchema([manifest]),
+      idFactory: nextId,
+    }),
+    idFactory: nextId,
+    projectConfirmation: controller,
+    ...(commit === undefined ? {} : {commitProjectOperation: commit}),
+    onProjectView: view => views.push(view),
+    onDiagnostic: () => undefined,
+  })
+  return {service, controller, actions, views, clock}
+}
+
+/**
+ * Whether the user was told something about the confirmation.
+ *
+ * Queued or already injected: the fact is enqueued synchronously and delivered by the pass at the end
+ * of the event, which only fires when the floor is free. Asserting on the injection alone would make
+ * this a test of floor state.
+ */
+function toldAboutConfirmation(service: RealtimeService, actions: readonly string[]): boolean {
+  return actions.some(action => action.startsWith('inject:project-confirmation:'))
+    || service.queuedHostItems().some(item => (
+      item.intent.item.event_id.startsWith('project-confirmation:')
+    ))
+}
+
+function propose(controller: ProjectConfirmationController): void {
+  controller.prepare({
+    action: 'create',
+    workspace_display_name: '研究项目',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: null,
+    origin_ref: 'conversation:1',
+  })
+}
+
+async function speak(service: RealtimeService, itemId: string, text: string): Promise<void> {
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: `speech-${itemId}`,
+    provider_item_id: itemId,
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: `speech-${itemId}`,
+    provider_item_id: itemId,
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: itemId,
+    text,
+  })
+}
+
+test('a spoken confirmation commits the operation', async () => {
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await speak(service, 'user-item-1', '确认')
+  assert.ok(actions.includes('commit'), 'the operation was carried out')
+  assert.equal(controller.pending, false, 'and the proposal is settled')
+})
+
+test('a cancellation does not commit, and says so', async () => {
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await speak(service, 'user-item-1', '取消')
+  assert.equal(actions.includes('commit'), false, 'nothing was committed')
+  assert.equal(controller.pending, false)
+  assert.ok(toldAboutConfirmation(service, actions), 'and the user is told')
+})
+
+test('a failing commit still tells the user something', async () => {
+  // A confirmation that produced silence is the worst outcome available: the user said yes and has no
+  // idea whether anything happened.
+  const {service, controller, actions} = confirmationService({
+    commit: () => Promise.reject(new Error('workspace service is down')),
+  })
+  await service.connect()
+  propose(controller)
+  await speak(service, 'user-item-1', '确认')
+  assert.ok(toldAboutConfirmation(service, actions), 'the user hears that it did not happen')
+})
+
+test('a refused commit reports the reason it gave', async () => {
+  const {service, controller, actions} = confirmationService({
+    commit: () => Promise.resolve({accepted: false, code: 'workspace_name_conflict'}),
+  })
+  await service.connect()
+  propose(controller)
+  await speak(service, 'user-item-1', '确认')
+  assert.ok(toldAboutConfirmation(service, actions))
+})
+
+test('with no commit callback wired, a confirmation says so rather than pretending', async () => {
+  const {service, controller, actions} = confirmationService({withoutCommit: true})
+  await service.connect()
+  propose(controller)
+  await speak(service, 'user-item-1', '确认')
+  assert.ok(toldAboutConfirmation(service, actions))
+})
+
+test('a tool call in a blocked turn is refused and answered', async () => {
+  // The model must not act inside the very turn whose answer it is supposed to be waiting for -- and a
+  // refused call still owes the provider a terminal result, or the protocol stalls.
+  const {service, actions, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  const before = service.toolCallAcceptances().length
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'do something'},
+    response_id: 'r-1',
+  })
+  assert.equal(service.toolCallAcceptances().length, before, 'never admitted')
+  assert.ok(
+    actions.some(action => action.startsWith('inject:id-')),
+    'but the provider got a terminal result',
+  )
+})
+
+test('a user utterance with no item id cancels rather than waiting for an answer it cannot attribute', async () => {
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: null,
+  })
+  assert.equal(controller.pending, false, 'the proposal is gone')
+  assert.ok(toldAboutConfirmation(service, actions))
+})
+
+test('a failed transcript cancels the confirmation', async () => {
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_failed',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+  })
+  assert.equal(controller.pending, false)
+})
+
+test('a reconnect invalidates a pending proposal', async () => {
+  // It described a provider session that no longer exists, so confirming it would commit against a
+  // context the user never saw.
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  assert.equal(controller.pending, true)
+  await service.reconnectForTest()
+  assert.equal(controller.pending, false, 'invalidated by the reconnect')
+})
+
+test('closing the service drops the proposal and stops observing expiry', async () => {
+  const {service, controller} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.close()
+  assert.equal(controller.pending, false)
+})
+
+test('the project view is published on every state change', async () => {
+  // The renderer has no other way to learn a confirmation is pending, or that it stopped being.
+  const {service, controller, views} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await speak(service, 'user-item-1', '确认')
+  assert.ok(views.length > 0, 'the renderer was told')
+  assert.equal(views.at(-1)?.pending_confirmation, false, 'and told it is over')
+})
+
+test('a duplicate transcript for a closing item does not confirm twice', async () => {
+  // A second delivery of the same words must not confirm something the first delivery already handled.
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await speak(service, 'user-item-1', '确认')
+  const commits = actions.filter(action => action === 'commit').length
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: '确认',
+  })
+  assert.equal(actions.filter(action => action === 'commit').length, commits, 'committed once')
+})
+
+test('an expiry cleans up and tells the user, without leaving the block set', async () => {
+  // Cleanup involves provider I/O and possibly a reconnect, so it is batched onto its own task -- and
+  // if it left the block set, every later turn would be refused.
+  const {service, controller, actions, clock} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-1',
+    provider_item_id: 'user-item-1',
+  })
+  clock.advanceTo(clock.now() + 200)
+  assert.equal(controller.expire(), true, 'the proposal lapsed')
+  // Let the drain task run.
+  for (let index = 0; index < 20; index += 1) await Promise.resolve()
+  await new Promise<void>(resolve => setTimeout(resolve, 20))
+  assert.ok(toldAboutConfirmation(service, actions), 'the user is told it lapsed')
+  assert.equal(service.projectConfirmationBlockingForTest, false, 'and nothing stays blocked')
 })

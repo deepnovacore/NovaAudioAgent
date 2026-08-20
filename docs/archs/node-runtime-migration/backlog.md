@@ -265,6 +265,27 @@ Two lessons, both about the harness rather than the code:
   file rather than the service. Five projection mutations were invisible to it. The parity test now
   drives `projectRuntimeEvent` and reads what was queued.
 
+### And then the parser had to be scoped to the root
+
+Moving the integer check into a `JSON.parse` reviver fixed three bypasses and introduced a fourth
+problem, in the opposite direction: the reviver visits *every* member, so nested renderer metadata
+carrying the same field name was rejected. `{"generation_epoch":1,"meta":{"generation_epoch":1.5}}` is
+forward-compatible data the oracle parses and ignores -- it reads only `value.get(field)` on the root --
+and refusing it would discard valid playback acknowledgements, leaving playback state and clear
+deadlines unresolved.
+
+Found by a Codex review, asking the question I had put in my own brief. The reviver now *collects*
+candidates with their holder object and judges them after the parse, keeping only those whose holder is
+the returned root. Identity works because the reviver returns every value unchanged, so the object the
+top-level members were revived into is the object that comes back.
+
+Five cases cover it: a nested object decoy, a nested array decoy, both together, and -- the one that
+matters most -- a nested decoy alongside an *invalid* root field, which must still be refused.
+
+The lesson is the shape of the mistake rather than the mistake: each fix moved the check to a more
+precise mechanism, and each move brought its own over-reach. A pattern was too loose about which text
+counted; a reviver was too eager about which members counted.
+
 ### The integer check had to become a parser, not a pattern
 
 The first two versions of the integer-literal check were a regex over the raw JSON text, and a Codex

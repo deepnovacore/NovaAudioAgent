@@ -219,6 +219,11 @@
       "bytes": "4e4f564100367b227574746572616e63655f6964223a2275222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
     },
     {
+      "name": "decode-nested-decoy",
+      "kind": "decode_audio",
+      "bytes": "4e4f5641004e7b227574746572616e63655f6964223a2275222c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a302c226d657461223a7b2273657175656e6365223a322e357d7d0001"
+    },
+    {
       "name": "decode-duplicate-epoch-last-integer",
       "kind": "decode_audio",
       "bytes": "4e4f5641004f7b227574746572616e63655f6964223a22752d31222c2267656e65726174696f6e5f65706f6368223a312e352c2267656e65726174696f6e5f65706f6368223a312c2273657175656e6365223a307d0001"
@@ -616,6 +621,30 @@
       "kind": "parse_client",
       "authenticated": true,
       "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"x \\\"generation_epoch\\\": 1.5 y\",\"generation_epoch\":1}"
+    },
+    {
+      "name": "nested-decoy-object",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_epoch\":1,\"meta\":{\"generation_epoch\":1.5}}"
+    },
+    {
+      "name": "nested-decoy-array",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_epoch\":1,\"items\":[{\"played_ms\":2.5}]}"
+    },
+    {
+      "name": "nested-decoy-both",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_epoch\":1,\"meta\":{\"generation_epoch\":1.5},\"items\":[{\"played_ms\":2.5}]}"
+    },
+    {
+      "name": "nested-decoy-with-bad-root",
+      "kind": "parse_client",
+      "authenticated": true,
+      "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\",\"generation_epoch\":1.5,\"meta\":{\"generation_epoch\":1}}"
     },
     {
       "name": "oversized-frame",
