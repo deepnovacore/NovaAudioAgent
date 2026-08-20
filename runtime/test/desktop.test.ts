@@ -705,6 +705,52 @@ test('readiness announcement fails on its own deadline instead of hanging', asyn
   }
 })
 
+test('readiness announcement abort destroys the held socket with a stable safe error', async () => {
+  const held: Socket[] = []
+  let accepted: (() => void) | undefined
+  const connected = new Promise<void>(resolve => { accepted = resolve })
+  const listener = createServer(socket => {
+    held.push(socket)
+    accepted?.()
+  })
+  await new Promise<void>((resolve, reject) => {
+    listener.once('error', reject)
+    listener.listen({host: '127.0.0.1', port: 0}, resolve)
+  })
+  const address = listener.address()
+  assert.ok(address !== null && typeof address === 'object')
+  const abort = new AbortController()
+  const endpoint = `127.0.0.1:${address.port}`
+  const announcing = announceReadiness(
+    endpoint,
+    {token: TOKEN, host: '127.0.0.1', port: 51_515},
+    {timeoutMs: 1_000, signal: abort.signal},
+  )
+
+  try {
+    await settleWithin('readiness abort accepted connection', connected)
+    abort.abort()
+    await assert.rejects(
+      settleWithin('readiness abort result', announcing),
+      (error: unknown) => error instanceof DesktopProtocolError
+        && error.message === 'desktop readiness announcement cancelled'
+        && !error.message.includes(endpoint)
+        && !error.message.includes(TOKEN),
+    )
+    await settleWithin('readiness abort socket close', new Promise<void>(resolve => {
+      if (held.every(socket => socket.destroyed)) resolve()
+      else for (const socket of held) socket.once('close', () => resolve())
+    }))
+  } finally {
+    abort.abort()
+    for (const socket of held) socket.destroy()
+    await new Promise<void>((resolve, reject) => listener.close(error => {
+      if (error !== undefined) reject(error)
+      else resolve()
+    }))
+  }
+})
+
 test('desktop shutdown terminates a peer that does not acknowledge close', async () => {
   const server = new NodeDesktopServer({token: TOKEN, closeGraceMs: 25})
   const readiness = await server.start()

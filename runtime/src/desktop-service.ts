@@ -10,7 +10,8 @@ import {
   validateDesktopToken,
   type DesktopReadiness,
 } from './desktop.js'
-import type {PlaybackFrame} from './playback.js'
+import {deliveryToEvent} from './desktop-wire.js'
+import type {PlaybackCompletion, PlaybackFrame} from './playback.js'
 import type {RealtimeAssembly} from './realtime-assembly.js'
 import {memoryBoardMessage} from './realtime/memory-board.js'
 import type {ProjectConfirmationView} from './realtime/project-confirmation.js'
@@ -35,6 +36,7 @@ export interface DesktopOutputCallbacks {
   readonly onAudioClear: (utteranceId: string, generationEpoch: number) => void
   readonly onAudioAlert: (utteranceId: string | null, generationEpoch: number | null) => void
   readonly onAudioTerminal: (utteranceId: string, generationEpoch: number) => void
+  readonly onDelivery: (completion: PlaybackCompletion) => void
   readonly onCaption: (frame: CaptionFrame) => void
   readonly onCodexState: (state: CodexState) => void
   readonly onProjectView: (view: ProjectConfirmationView) => void
@@ -77,6 +79,10 @@ export function buildDesktopRealtimeComposition(
     onAudioTerminal: (utteranceId, generationEpoch) => {
       requireDesktop().bridge.onAudioTerminal(utteranceId, generationEpoch)
     },
+    onDelivery: completion => {
+      const payload = deliveryToEvent(completion)
+      if (payload !== null) realtime.runtime.post({kind: 'assistant_spoken', payload})
+    },
     onCaption: frame => requireDesktop().bridge.onCaption(frame),
     onCodexState: state => requireDesktop().bridge.onCodexState(state),
     onProjectView: view => requireDesktop().bridge.onCodexProject(view),
@@ -100,7 +106,11 @@ export interface RealtimeDesktopServiceOptions {
   readonly desktop: DesktopRealtimeTransportOwner
   readonly readyEndpoint: string
   readonly stop: AbortController
-  readonly announce: (endpoint: string, readiness: DesktopReadiness) => Promise<void>
+  readonly announce: (
+    endpoint: string,
+    readiness: DesktopReadiness,
+    signal: AbortSignal,
+  ) => Promise<void>
   readonly closeAuxiliary?: () => void | Promise<void>
   readonly cleanupGraceMs?: number
   readonly onDiagnostic?: (line: string) => void
@@ -113,13 +123,31 @@ type CleanupResult =
 
 interface CleanupOutcome {readonly firstFailure: {readonly error: unknown} | null}
 
+type TerminalCause =
+  | {readonly kind: 'external'; readonly error: null}
+  | {readonly kind: 'service'; readonly error: {readonly value: unknown} | null}
+
+interface TerminalMonitor {
+  readonly promise: Promise<TerminalCause>
+  readonly current: () => TerminalCause | undefined
+}
+
+type PhaseResult<T> =
+  | {readonly kind: 'resolved'; readonly value: T}
+  | {readonly kind: 'rejected'; readonly error: unknown}
+  | {readonly kind: 'terminal'; readonly cause: TerminalCause}
+
 /** One idempotent lifecycle owner around the already-constructed realtime and socket graphs. */
 export class RealtimeDesktopService {
   readonly #realtime: DesktopRealtimeOwner
   readonly #desktop: DesktopRealtimeTransportOwner
   readonly #readyEndpoint: string
   readonly #stop: AbortController
-  readonly #announce: (endpoint: string, readiness: DesktopReadiness) => Promise<void>
+  readonly #announce: (
+    endpoint: string,
+    readiness: DesktopReadiness,
+    signal: AbortSignal,
+  ) => Promise<void>
   readonly #closeAuxiliary: () => void | Promise<void>
   readonly #cleanupGraceMs: number
   readonly #onDiagnostic: (line: string) => void
@@ -157,43 +185,127 @@ export class RealtimeDesktopService {
   async #runFresh(): Promise<void> {
     let primaryFailure: {readonly error: unknown} | null = null
     try {
-      if (!this.#stop.signal.aborted) await this.#realtime.start()
+      const external = this.#externalStopMonitor()
       if (!this.#stop.signal.aborted) {
-        const readiness = await this.#desktop.server.start()
-        if (!this.#stop.signal.aborted) await this.#announce(this.#readyEndpoint, readiness)
+        const start = await this.#runPhase(
+          this.#realtime.start(),
+          external.promise,
+          'desktop_realtime_start_abandoned',
+        )
+        if (start.kind === 'rejected') primaryFailure = {error: start.error}
+        if (start.kind === 'terminal') return await this.#finish(start.cause)
       }
-      if (!this.#stop.signal.aborted) await this.#waitForTerminalCause()
+      if (primaryFailure === null && !this.#stop.signal.aborted) {
+        const terminal = this.#armTerminalMonitor(external)
+        // Promise callbacks for an already-settled waitStopped run before this continuation. This
+        // fence is what keeps a dead service from briefly advertising a live desktop listener.
+        await Promise.resolve()
+        const early = terminal.current()
+        if (early !== undefined) return await this.#finish(early)
+
+        const listener = await this.#runPhase(
+          this.#desktop.server.start(),
+          terminal.promise,
+          'desktop_server_start_abandoned',
+        )
+        if (listener.kind === 'rejected') primaryFailure = {error: listener.error}
+        if (listener.kind === 'terminal') return await this.#finish(listener.cause)
+        if (listener.kind === 'resolved') {
+          const announcement = await this.#runPhase(
+            this.#announce(this.#readyEndpoint, listener.value, this.#stop.signal),
+            terminal.promise,
+            'desktop_readiness_announcement_abandoned',
+          )
+          if (announcement.kind === 'rejected') primaryFailure = {error: announcement.error}
+          if (announcement.kind === 'terminal') return await this.#finish(announcement.cause)
+        }
+        if (primaryFailure === null) return await this.#finish(await terminal.promise)
+      }
     } catch (error) {
       primaryFailure = {error}
     }
+    this.#stop.abort()
     const cleanup = await this.#ensureCleanup()
     if (primaryFailure !== null) throw primaryFailure.error
     if (cleanup.firstFailure !== null) throw cleanup.firstFailure.error
   }
 
-  async #waitForTerminalCause(): Promise<void> {
-    let removeAbortListener = noop
-    const externalStop = new Promise<{readonly kind: 'external'}>(resolve => {
+  #externalStopMonitor(): TerminalMonitor {
+    let current: TerminalCause | undefined
+    const promise = new Promise<TerminalCause>(resolve => {
       if (this.#stop.signal.aborted) {
-        resolve({kind: 'external'})
+        current = {kind: 'external', error: null}
+        resolve(current)
         return
       }
-      const onAbort = (): void => resolve({kind: 'external'})
-      removeAbortListener = () => this.#stop.signal.removeEventListener('abort', onAbort)
+      const onAbort = (): void => {
+        current = {kind: 'external', error: null}
+        resolve(current)
+      }
       this.#stop.signal.addEventListener('abort', onAbort, {once: true})
     })
-    const serviceStop = Promise.resolve()
-      .then(() => this.#realtime.service.waitStopped())
-      .then(
-        () => ({kind: 'service' as const, error: null}),
-        (error: unknown) => ({kind: 'service' as const, error: {value: error}}),
-      )
-    const cause = await Promise.race([externalStop, serviceStop])
-    removeAbortListener()
-    if (cause.kind === 'service') {
-      this.#stop.abort()
-      if (cause.error !== null) throw cause.error.value
+    return {promise, current: () => current}
+  }
+
+  #armTerminalMonitor(external: TerminalMonitor): TerminalMonitor {
+    let current = external.current()
+    const remember = (cause: TerminalCause): TerminalCause => {
+      current ??= cause
+      return cause
     }
+    let service: Promise<TerminalCause>
+    try {
+      service = this.#realtime.service.waitStopped().then<TerminalCause, TerminalCause>(
+        () => remember({kind: 'service', error: null}),
+        (error: unknown) => remember({kind: 'service', error: {value: error}}),
+      )
+    } catch (error) {
+      service = Promise.resolve(remember({kind: 'service', error: {value: error}}))
+    }
+    const promise = Promise.race([external.promise, service]).then(cause => {
+      current = cause
+      this.#stop.abort()
+      void this.#ensureCleanup()
+      return cause
+    })
+    return {promise, current: () => current}
+  }
+
+  async #runPhase<T>(
+    work: Promise<T>,
+    terminal: Promise<TerminalCause>,
+    abandonedDiagnostic: string,
+  ): Promise<PhaseResult<T>> {
+    const outcome: Promise<PhaseResult<T>> = work.then(
+      value => ({kind: 'resolved', value}),
+      (error: unknown) => ({kind: 'rejected', error}),
+    )
+    const raced = await Promise.race([
+      outcome,
+      terminal.then(cause => ({kind: 'terminal' as const, cause})),
+    ])
+    if (raced.kind !== 'terminal') return raced
+    await this.#settlePhaseWithinGrace(outcome, abandonedDiagnostic)
+    return raced
+  }
+
+  async #settlePhaseWithinGrace<T>(
+    outcome: Promise<PhaseResult<T>>,
+    diagnostic: string,
+  ): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<'abandoned'>(resolve => {
+      timer = setTimeout(() => resolve('abandoned'), this.#cleanupGraceMs)
+    })
+    const result = await Promise.race([outcome.then(() => 'settled' as const), deadline])
+    if (timer !== undefined) clearTimeout(timer)
+    if (result === 'abandoned') this.#emitDiagnostic(diagnostic)
+  }
+
+  async #finish(cause: TerminalCause): Promise<void> {
+    const cleanup = await this.#ensureCleanup()
+    if (cause.kind === 'service' && cause.error !== null) throw cause.error.value
+    if (cleanup.firstFailure !== null) throw cleanup.firstFailure.error
   }
 
   #ensureCleanup(): Promise<CleanupOutcome> {
@@ -237,13 +349,17 @@ export class RealtimeDesktopService {
     const result = await Promise.race([settled, deadline])
     if (timer !== undefined) clearTimeout(timer)
     if (result.kind === 'abandoned') {
-      try {
-        this.#onDiagnostic(`[runtime-diagnostic] ${diagnostic}`)
-      } catch {
-        // Diagnostic observers do not own shutdown progress.
-      }
+      this.#emitDiagnostic(diagnostic)
     }
     return result
+  }
+
+  #emitDiagnostic(diagnostic: string): void {
+    try {
+      this.#onDiagnostic(`[runtime-diagnostic] ${diagnostic}`)
+    } catch {
+      // Diagnostic observers do not own shutdown progress.
+    }
   }
 }
 
@@ -267,7 +383,11 @@ export interface DesktopEntryOptions {
   readonly readyEndpoint: string
   readonly stop: AbortController
   readonly construct: () => DesktopEntryConstruction
-  readonly announce: (endpoint: string, readiness: DesktopReadiness) => Promise<void>
+  readonly announce: (
+    endpoint: string,
+    readiness: DesktopReadiness,
+    signal: AbortSignal,
+  ) => Promise<void>
   readonly onDiagnostic: (line: string) => void
   readonly cleanupGraceMs?: number
 }
@@ -302,6 +422,89 @@ export async function runDesktopEntry(options: DesktopEntryOptions): Promise<0 |
   }
 }
 
+export interface DesktopStopEventSource {
+  once(event: string, listener: (...args: unknown[]) => void): unknown
+  on(event: string, listener: (...args: unknown[]) => void): unknown
+  off?(event: string, listener: (...args: unknown[]) => void): unknown
+  removeListener?(event: string, listener: (...args: unknown[]) => void): unknown
+}
+
+export interface DesktopStopInputSource extends DesktopStopEventSource {
+  resume(): unknown
+  pause?(): unknown
+}
+
+export interface DesktopStopParentSource extends DesktopStopEventSource {
+  start?(): void
+}
+
+export interface DesktopStopSources {
+  readonly processEvents: DesktopStopEventSource
+  readonly stdin: DesktopStopInputSource
+  readonly parentPort?: DesktopStopParentSource
+}
+
+export interface DesktopStopSourceBinding {
+  dispose(): void
+}
+
+/** Bind every host termination path to one abort owner and make the bindings explicitly releasable. */
+export function installDesktopStopSources(
+  options: DesktopStopSources & {readonly stop: AbortController},
+): DesktopStopSourceBinding {
+  const removers: (() => void)[] = []
+  let resumedStdin = false
+  let disposed = false
+  const requestStop = (): void => options.stop.abort()
+  const bind = (
+    source: DesktopStopEventSource,
+    method: 'on' | 'once',
+    event: string,
+    listener: (...args: unknown[]) => void,
+  ): void => {
+    source[method](event, listener)
+    removers.push(() => removeEventListener(source, event, listener))
+  }
+
+  bind(options.processEvents, 'once', 'SIGINT', requestStop)
+  bind(options.processEvents, 'once', 'SIGTERM', requestStop)
+  if (options.parentPort === undefined) {
+    bind(options.processEvents, 'once', 'disconnect', requestStop)
+    bind(options.stdin, 'once', 'end', requestStop)
+    options.stdin.resume()
+    resumedStdin = true
+  } else {
+    const onMessage = (event: unknown): void => {
+      if (isDesktopShutdownMessage(event)) requestStop()
+    }
+    bind(options.parentPort, 'on', 'message', onMessage)
+    bind(options.parentPort, 'once', 'close', requestStop)
+    options.parentPort.start?.()
+  }
+
+  return {
+    dispose: (): void => {
+      if (disposed) return
+      disposed = true
+      for (const remove of removers.splice(0).reverse()) remove()
+      if (resumedStdin) options.stdin.pause?.()
+    },
+  }
+}
+
+/** Entry wrapper that cannot leave a resumed stdin or process listener behind after any exit. */
+export async function runDesktopEntryWithStopSources(
+  options: DesktopEntryOptions,
+  sources: DesktopStopSources,
+): Promise<0 | 2> {
+  const binding = installDesktopStopSources({...sources, stop: options.stop})
+  try {
+    return await runDesktopEntry(options)
+  } finally {
+    binding.dispose()
+  }
+}
+
 /** Accept both Electron MessageEvent wrappers and utility-process direct payloads. */
 export function isDesktopShutdownMessage(event: unknown): boolean {
   const message = isObject(event) && 'data' in event ? event.data : event
@@ -310,6 +513,15 @@ export function isDesktopShutdownMessage(event: unknown): boolean {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object'
+}
+
+function removeEventListener(
+  source: DesktopStopEventSource,
+  event: string,
+  listener: (...args: unknown[]) => void,
+): void {
+  if (source.off !== undefined) source.off(event, listener)
+  else source.removeListener?.(event, listener)
 }
 
 function noop(): void {

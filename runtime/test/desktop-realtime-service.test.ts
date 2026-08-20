@@ -1,18 +1,24 @@
 import assert from 'node:assert/strict'
+import {EventEmitter} from 'node:events'
 import {test} from 'node:test'
 import {WebSocket, type RawData} from 'ws'
 import {buildAssembly} from '../src/assembly.js'
+import {VirtualClock} from '../src/clock.js'
 import {settingsSchema} from '../src/config.js'
 import type {DesktopReadiness} from '../src/desktop.js'
 import {
   buildDesktopRealtimeComposition,
+  installDesktopStopSources,
   isDesktopShutdownMessage,
   RealtimeDesktopService,
   runDesktopEntry,
+  runDesktopEntryWithStopSources,
   type DesktopRealtimeOwner,
   type DesktopRealtimeTransportOwner,
+  type DesktopOutputCallbacks,
 } from '../src/desktop-service.js'
 import {decodeAudioFrame} from '../src/desktop-wire.js'
+import type {EventRecord} from '../src/events.js'
 import type {
   CompleteRequest,
   GatewayCompletion,
@@ -21,6 +27,7 @@ import type {
   StreamRequest,
 } from '../src/model-gateway.js'
 import {buildRealtimeAssembly} from '../src/realtime-assembly.js'
+import type {PlaybackCompletion} from '../src/playback.js'
 import type {
   HostContextItem,
   HostResponseIntent,
@@ -66,21 +73,30 @@ function readiness(): DesktopReadiness {
 class ControlledRealtime implements DesktopRealtimeOwner {
   readonly trace: string[]
   readonly stopped = deferred<void>()
+  readonly startCalled = deferred<void>()
   starts = 0
   stops = 0
+  waitCalls = 0
   startFailure: Error | undefined
   stopFailure: Error | undefined
+  waitFailure: Error | undefined
+  startWork: Promise<void> | undefined
   stopWork: Promise<void> | undefined
-  readonly service = {waitStopped: (): Promise<void> => this.stopped.promise}
+  readonly service = {waitStopped: (): Promise<void> => {
+    this.waitCalls += 1
+    return this.waitFailure === undefined
+      ? this.stopped.promise
+      : Promise.reject(this.waitFailure)
+  }}
 
   constructor(trace: string[]) { this.trace = trace }
 
-  start(): Promise<void> {
+  async start(): Promise<void> {
     this.starts += 1
     this.trace.push('realtime:start')
-    return this.startFailure === undefined
-      ? Promise.resolve()
-      : Promise.reject(this.startFailure)
+    this.startCalled.resolve()
+    if (this.startWork !== undefined) await this.startWork
+    if (this.startFailure !== undefined) throw this.startFailure
   }
 
   async stop(): Promise<void> {
@@ -93,18 +109,21 @@ class ControlledRealtime implements DesktopRealtimeOwner {
 
 class ControlledDesktop implements DesktopRealtimeTransportOwner {
   readonly trace: string[]
+  readonly startCalled = deferred<void>()
   starts = 0
   closes = 0
   startFailure: Error | undefined
   closeFailure: Error | undefined
+  startWork: Promise<void> | undefined
   closeWork: Promise<void> | undefined
   readonly server = {
-    start: (): Promise<DesktopReadiness> => {
+    start: async (): Promise<DesktopReadiness> => {
       this.starts += 1
       this.trace.push('server:start')
-      return this.startFailure === undefined
-        ? Promise.resolve(readiness())
-        : Promise.reject(this.startFailure)
+      this.startCalled.resolve()
+      if (this.startWork !== undefined) await this.startWork
+      if (this.startFailure !== undefined) throw this.startFailure
+      return readiness()
     },
     close: async (): Promise<void> => {
       this.closes += 1
@@ -123,7 +142,7 @@ function controlledOwner(options: {
   readonly cleanupGraceMs?: number
   readonly closeAuxiliary?: () => void | Promise<void>
   readonly onDiagnostic?: (line: string) => void
-  readonly announce?: () => void | Promise<void>
+  readonly announce?: (signal?: AbortSignal) => void | Promise<void>
 } = {}): {
   readonly owner: RealtimeDesktopService
   readonly realtime: ControlledRealtime
@@ -142,10 +161,10 @@ function controlledOwner(options: {
     desktop,
     readyEndpoint: '127.0.0.1:51515',
     stop,
-    announce: async () => {
+    announce: async (_endpoint, _readiness, signal?: AbortSignal) => {
       trace.push('ready')
       announced.resolve()
-      await options.announce?.()
+      await options.announce?.(signal)
     },
     ...(options.closeAuxiliary === undefined ? {} : {closeAuxiliary: options.closeAuxiliary}),
     ...(options.cleanupGraceMs === undefined ? {} : {cleanupGraceMs: options.cleanupGraceMs}),
@@ -172,6 +191,123 @@ test('realtime starts before listener/readiness and service self-stop owns one s
   await settleNamed('repeated desktop owner stop', harness.owner.stop())
   assert.equal(harness.realtime.stops, 1)
   assert.equal(harness.desktop.closes, 1)
+})
+
+test('an already-stopped service never opens the listener or announces readiness', async () => {
+  const harness = controlledOwner()
+  harness.realtime.stopped.resolve()
+
+  await settleNamed('pre-resolved service shutdown', harness.owner.run())
+
+  assert.equal(harness.realtime.waitCalls, 1)
+  assert.equal(harness.desktop.starts, 0)
+  assert.deepEqual(harness.trace, ['realtime:start', 'server:close', 'realtime:stop'])
+})
+
+test('a service failure is observed before listener startup and remains the primary failure', async () => {
+  const failure = new Error('service stopped unexpectedly')
+  const harness = controlledOwner()
+  harness.realtime.waitFailure = failure
+
+  await assert.rejects(harness.owner.run(), error => error === failure)
+
+  assert.equal(harness.realtime.waitCalls, 1)
+  assert.equal(harness.desktop.starts, 0)
+  assert.deepEqual(harness.trace, ['realtime:start', 'server:close', 'realtime:stop'])
+})
+
+test('service stop while listener startup is held cancels startup and cleans up without resurrection', async () => {
+  const listenerGate = deferred<void>()
+  const harness = controlledOwner({cleanupGraceMs: 15})
+  harness.desktop.startWork = listenerGate.promise
+  const running = harness.owner.run()
+  await settleNamed('held listener entered', harness.desktop.startCalled.promise)
+  harness.realtime.stopped.resolve()
+
+  try {
+    await settleNamed('held listener service shutdown', running, 250)
+    assert.deepEqual(harness.trace, [
+      'realtime:start', 'server:start', 'server:close', 'realtime:stop',
+    ])
+  } finally {
+    listenerGate.resolve()
+    await Promise.allSettled([running, harness.owner.stop()])
+  }
+})
+
+test('external stop during realtime start is bounded and cannot start the listener late', async () => {
+  const startGate = deferred<void>()
+  const diagnostics: string[] = []
+  const harness = controlledOwner({
+    cleanupGraceMs: 15,
+    onDiagnostic: line => diagnostics.push(line),
+  })
+  harness.realtime.startWork = startGate.promise
+  const running = harness.owner.run()
+  await settleNamed('held realtime start entered', harness.realtime.startCalled.promise)
+  const stopping = harness.owner.stop()
+
+  try {
+    await settleNamed('held realtime start shutdown', Promise.all([running, stopping]), 250)
+    assert.equal(harness.desktop.starts, 0)
+    assert.deepEqual(diagnostics, ['[runtime-diagnostic] desktop_realtime_start_abandoned'])
+  } finally {
+    startGate.resolve()
+    await Promise.allSettled([running, stopping])
+  }
+  assert.equal(harness.desktop.starts, 0, 'late realtime start cannot resurrect the listener')
+})
+
+test('external stop during listener start is bounded and cannot announce readiness late', async () => {
+  const listenerGate = deferred<void>()
+  const diagnostics: string[] = []
+  const harness = controlledOwner({
+    cleanupGraceMs: 15,
+    onDiagnostic: line => diagnostics.push(line),
+  })
+  harness.desktop.startWork = listenerGate.promise
+  const running = harness.owner.run()
+  await settleNamed('held desktop listener entered', harness.desktop.startCalled.promise)
+  const stopping = harness.owner.stop()
+
+  try {
+    await settleNamed('held desktop listener shutdown', Promise.all([running, stopping]), 250)
+    assert.equal(harness.trace.includes('ready'), false)
+    assert.deepEqual(diagnostics, ['[runtime-diagnostic] desktop_server_start_abandoned'])
+  } finally {
+    listenerGate.resolve()
+    await Promise.allSettled([running, stopping])
+  }
+  assert.equal(harness.trace.includes('ready'), false, 'late listener start cannot announce readiness')
+})
+
+test('external stop aborts a deferred readiness announcement and prevents a late ready result', async () => {
+  const announceGate = deferred<void>()
+  let announcedSignal: AbortSignal | undefined
+  const diagnostics: string[] = []
+  const harness = controlledOwner({
+    cleanupGraceMs: 15,
+    onDiagnostic: line => diagnostics.push(line),
+    announce: signal => {
+      announcedSignal = signal
+      return announceGate.promise
+    },
+  })
+  const running = harness.owner.run()
+  await settleNamed('deferred readiness entered', harness.announced)
+  const stopping = harness.owner.stop()
+
+  try {
+    await settleNamed('deferred readiness shutdown', Promise.all([running, stopping]), 250)
+    assert.equal(announcedSignal?.aborted, true)
+    assert.deepEqual(diagnostics, [
+      '[runtime-diagnostic] desktop_readiness_announcement_abandoned',
+    ])
+  } finally {
+    announceGate.resolve()
+    await Promise.allSettled([running, stopping])
+  }
+  assert.equal(harness.trace.filter(item => item === 'ready').length, 1)
 })
 
 test('startup failures rollback in listener-first shutdown order without readiness', async () => {
@@ -284,6 +420,113 @@ test('utility shutdown messages and parent EOF converge on the shared abort owne
   if (isDesktopShutdownMessage({data: {type: 'nova.shutdown'}})) shutdown()
   shutdown() // the parent-EOF seam invokes the same idempotent owner
   assert.equal(stop.signal.aborted, true)
+})
+
+class FakeStdin extends EventEmitter {
+  resumes = 0
+  pauses = 0
+  resume(): this { this.resumes += 1; return this }
+  pause(): this { this.pauses += 1; return this }
+}
+
+class FakeParentPort extends EventEmitter {
+  starts = 0
+  start(): void { this.starts += 1 }
+}
+
+test('desktop stop sources bind and dispose SIGINT and SIGTERM callbacks exactly', () => {
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    const processEvents = new EventEmitter()
+    const stdin = new FakeStdin()
+    const stop = new AbortController()
+    const binding = installDesktopStopSources({stop, processEvents, stdin})
+    assert.equal(stdin.resumes, 1)
+    processEvents.emit(signal)
+    assert.equal(stop.signal.aborted, true, signal)
+    binding.dispose()
+    binding.dispose()
+    assert.equal(processEvents.listenerCount(signal), 0)
+    assert.equal(stdin.listenerCount('end'), 0)
+    assert.equal(stdin.pauses, 1)
+  }
+})
+
+test('utility parent message and close callbacks stop once and are all unbound', () => {
+  for (const source of ['direct-message', 'wrapped-message', 'close'] as const) {
+    const processEvents = new EventEmitter()
+    const stdin = new FakeStdin()
+    const parentPort = new FakeParentPort()
+    const stop = new AbortController()
+    const binding = installDesktopStopSources({stop, processEvents, stdin, parentPort})
+    assert.equal(parentPort.starts, 1)
+    assert.equal(stdin.resumes, 0)
+    parentPort.emit('message', {type: 'other'})
+    assert.equal(stop.signal.aborted, false)
+    if (source === 'direct-message') parentPort.emit('message', {type: 'nova.shutdown'})
+    else if (source === 'wrapped-message') {
+      parentPort.emit('message', {data: {type: 'nova.shutdown'}})
+    } else parentPort.emit('close')
+    assert.equal(stop.signal.aborted, true, source)
+
+    binding.dispose()
+    assert.equal(parentPort.listenerCount('message'), 0)
+    assert.equal(parentPort.listenerCount('close'), 0)
+    assert.equal(processEvents.listenerCount('SIGINT'), 0)
+    assert.equal(processEvents.listenerCount('SIGTERM'), 0)
+  }
+})
+
+test('plain Node disconnect and stdin EOF share one stop and dispose resumed stdin', () => {
+  for (const source of ['disconnect', 'end'] as const) {
+    const processEvents = new EventEmitter()
+    const stdin = new FakeStdin()
+    const stop = new AbortController()
+    const binding = installDesktopStopSources({stop, processEvents, stdin})
+    if (source === 'disconnect') processEvents.emit(source)
+    else stdin.emit(source)
+    assert.equal(stop.signal.aborted, true, source)
+    binding.dispose()
+    assert.equal(processEvents.listenerCount('disconnect'), 0)
+    assert.equal(stdin.listenerCount('end'), 0)
+    assert.equal(stdin.pauses, 1)
+  }
+})
+
+test('entry wrapper always disposes stop sources after construction failure and service self-stop', async () => {
+  const failedProcess = new EventEmitter()
+  const failedStdin = new FakeStdin()
+  const failedStop = new AbortController()
+  const failed = await runDesktopEntryWithStopSources({
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:51515',
+    stop: failedStop,
+    construct: () => { throw new Error('configuration failed') },
+    announce: () => Promise.resolve(),
+    onDiagnostic: () => undefined,
+  }, {processEvents: failedProcess, stdin: failedStdin})
+  assert.equal(failed, 2)
+  assert.equal(failedProcess.listenerCount('SIGINT'), 0)
+  assert.equal(failedProcess.listenerCount('disconnect'), 0)
+  assert.equal(failedStdin.listenerCount('end'), 0)
+  assert.equal(failedStdin.pauses, 1)
+
+  const stoppedProcess = new EventEmitter()
+  const stoppedStdin = new FakeStdin()
+  const harness = controlledOwner()
+  harness.realtime.stopped.resolve()
+  const stopped = await runDesktopEntryWithStopSources({
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:51515',
+    stop: harness.stop,
+    construct: () => ({realtime: harness.realtime, desktop: harness.desktop}),
+    announce: () => Promise.resolve(),
+    onDiagnostic: () => undefined,
+  }, {processEvents: stoppedProcess, stdin: stoppedStdin})
+  assert.equal(stopped, 0)
+  assert.equal(stoppedProcess.listenerCount('SIGTERM'), 0)
+  assert.equal(stoppedProcess.listenerCount('disconnect'), 0)
+  assert.equal(stoppedStdin.listenerCount('end'), 0)
+  assert.equal(stoppedStdin.pauses, 1)
 })
 
 class NeverGateway implements ModelGateway {
@@ -563,6 +806,149 @@ test('authenticated fake-provider loopback uses one service for duplex audio and
   }
   assert.equal(provider.closeCalls, 1)
   assert.equal(serveCalls, 1)
+})
+
+test('composition posts only audible delivery events into the exact runtime and memory board', () => {
+  const clock = new VirtualClock(12.5)
+  const core = buildAssembly({
+    settings: settingsSchema.parse({
+      executors: ['fast_sim'], model_api_key: 'model-key', tavily_api_key: 'search-key',
+    }),
+    clock,
+    gateway: new NeverGateway(),
+    searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
+    realtimeFrontbrain: true,
+  })
+  type DeliveryCallbacks = DesktopOutputCallbacks & {
+    readonly onDelivery?: (completion: PlaybackCompletion) => void
+  }
+  let captured: DeliveryCallbacks | undefined
+  const composition = buildDesktopRealtimeComposition({
+    token: TOKEN,
+    stop: new AbortController(),
+    buildRealtime: callbacks => {
+      captured = callbacks
+      return buildRealtimeAssembly({
+        core,
+        provider: new ScriptedProvider([]),
+        ...callbacks,
+        onDiagnostic: () => undefined,
+      })
+    },
+  })
+  const onDelivery = captured?.onDelivery
+  assert.notEqual(onDelivery, undefined, 'production composition must capture delivery reports')
+  const completion = (
+    textValue: string,
+    disposition: PlaybackCompletion['disposition'],
+    playedMs: number | null,
+    utteranceId: string,
+  ): PlaybackCompletion => ({
+    session_epoch: 1,
+    response_id: `response-${utteranceId}`,
+    utterance_id: utteranceId,
+    generation_epoch: 1,
+    text: textValue,
+    disposition,
+    started: disposition !== 'suppressed',
+    played_ms: playedMs,
+  })
+
+  onDelivery!(completion('已播放', 'spoken', 520, 'utterance-spoken'))
+  onDelivery!(completion('被打断', 'interrupted', 140, 'utterance-interrupted'))
+  onDelivery!(completion('没有播放', 'suppressed', 0, 'utterance-suppressed'))
+  onDelivery!(completion('', 'spoken', 10, 'utterance-empty'))
+
+  const applied: EventRecord[] = []
+  for (;;) {
+    const event = core.runtime.core.queue.popReady(clock.now())
+    if (event === undefined) break
+    applied.push(event)
+    core.runtime.core.apply(event)
+  }
+  assert.deepEqual(applied.map(event => event.kind), ['assistant_spoken', 'assistant_spoken'])
+  assert.deepEqual(
+    core.runtime.memory.channels.get('conversation')?.items.map(item => item.content),
+    [{
+      text: '已播放', utterance_id: 'utterance-spoken', delivery: 'spoken', played_ms: 520,
+    }, {
+      text: '被打断', utterance_id: 'utterance-interrupted', delivery: 'interrupted', played_ms: 140,
+    }],
+  )
+  const board = memoryBoardMessage('delivery-board', composition.realtime.runtime.memory)
+  assert.match(board, /已播放/u)
+  assert.match(board, /被打断/u)
+  assert.doesNotMatch(board, /没有播放/u)
+})
+
+test('captured composition callbacks preserve clear alert Codex project clock and telemetry routing', async () => {
+  const clock = new VirtualClock(30)
+  const telemetryRecords: {readonly kind: string; readonly payload: unknown}[] = []
+  const telemetry = {
+    record: (kind: string, payload: unknown): void => { telemetryRecords.push({kind, payload}) },
+    close: (): void => undefined,
+  }
+  const core = buildAssembly({
+    settings: settingsSchema.parse({
+      executors: ['fast_sim'], model_api_key: 'model-key', tavily_api_key: 'search-key',
+    }),
+    clock,
+    gateway: new NeverGateway(),
+    searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
+    realtimeFrontbrain: true,
+  })
+  let callbacks: DesktopOutputCallbacks | undefined
+  const composition = buildDesktopRealtimeComposition({
+    token: TOKEN,
+    stop: new AbortController(),
+    telemetry,
+    buildRealtime: output => {
+      callbacks = output
+      return buildRealtimeAssembly({
+        core,
+        provider: new ScriptedProvider([]),
+        telemetry,
+        ...output,
+        onDiagnostic: () => undefined,
+      })
+    },
+  })
+  assert.equal(composition.realtime.runtime.clock, clock)
+  assert.equal(composition.desktop.bridge.claim(), true)
+  composition.desktop.bridge.markAuthenticated()
+  assert.equal(composition.desktop.bridge.takeNextDelivery()?.frame, '{"type":"codex.state","state":"idle"}')
+
+  callbacks!.onAudioClear('utterance-clear', 2)
+  callbacks!.onAudioAlert('utterance-alert', 3)
+  callbacks!.onCodexState('running')
+  callbacks!.onProjectView({
+    workspace_display_name: '项目甲', session_title: '会话乙', pending_confirmation: true,
+  })
+  assert.deepEqual(composition.desktop.bridge.sendClockPings(1), ['ping-0'])
+  clock.advanceTo(30.25)
+  await composition.desktop.bridge.receiveControl({
+    type: 'clock.pong', ping_id: 'ping-0', t_render_ms: 200,
+  })
+
+  const frames: (string | Uint8Array)[] = []
+  for (;;) {
+    const delivery = composition.desktop.bridge.takeNextDelivery()
+    if (delivery === null) break
+    frames.push(delivery.frame)
+  }
+  assert.deepEqual(frames, [
+    '{"type":"playback.clear","utterance_id":"utterance-clear","generation_epoch":2}',
+    '{"type":"playback.alert","utterance_id":"utterance-alert","generation_epoch":3}',
+    '{"type":"clock.ping","ping_id":"ping-0"}',
+    '{"type":"codex.state","state":"running"}',
+    '{"type":"codex.project","workspace_display_name":"项目甲","session_title":"会话乙","pending_confirmation":true}',
+  ])
+  assert.deepEqual(telemetryRecords.map(record => record.kind), [
+    'playback.clear_sent',
+    'renderer.alert_tone_sent',
+    'renderer.ack',
+    'renderer.clock_sync',
+  ])
 })
 
 test('composition rejects output callbacks fired before the desktop bridge exists', () => {

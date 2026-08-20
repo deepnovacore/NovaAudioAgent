@@ -400,8 +400,13 @@ export function parseReadyEndpoint(raw: string): {readonly host: '127.0.0.1', re
 export async function announceReadiness(
   endpoint: string,
   readiness: DesktopReadiness,
-  timeoutMs = DESKTOP_READY_TIMEOUT_MS,
+  input: number | {
+    readonly timeoutMs?: number
+    readonly signal?: AbortSignal
+  } = DESKTOP_READY_TIMEOUT_MS,
 ): Promise<void> {
+  const timeoutMs = typeof input === 'number' ? input : (input.timeoutMs ?? DESKTOP_READY_TIMEOUT_MS)
+  const signal = typeof input === 'number' ? undefined : input.signal
   validateDesktopToken(readiness.token)
   if (readiness.host !== '127.0.0.1' || !Number.isInteger(readiness.port)
     || readiness.port < 1 || readiness.port > 65_535) {
@@ -410,26 +415,40 @@ export async function announceReadiness(
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new DesktopProtocolError('desktop readiness timeout is invalid')
   }
+  if (signal?.aborted === true) {
+    throw new DesktopProtocolError('desktop readiness announcement cancelled')
+  }
   const target = parseReadyEndpoint(endpoint)
   const line = `${JSON.stringify(readiness)}\n`
   await new Promise<void>((resolve, reject) => {
     const socket = createConnection(target)
+    let settled = false
+    const finish = (error?: Error): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      if (error === undefined) resolve()
+      else reject(error)
+    }
+    const onAbort = (): void => {
+      socket.destroy()
+      finish(new DesktopProtocolError('desktop readiness announcement cancelled'))
+    }
     // The handshake is one line followed by EOF. A parent that accepts the
     // connection and then never closes it must not hang startup indefinitely
     // with no diagnostic.
     const timer = setTimeout(() => {
       socket.destroy()
-      reject(new DesktopProtocolError('desktop readiness announcement timed out'))
+      finish(new DesktopProtocolError('desktop readiness announcement timed out'))
     }, timeoutMs)
-    socket.once('error', error => {
-      clearTimeout(timer)
-      reject(error)
-    })
+    signal?.addEventListener('abort', onAbort, {once: true})
+    if (signal?.aborted === true) onAbort()
+    socket.once('error', error => finish(error))
     socket.once('connect', () => socket.end(line))
     socket.once('close', hadError => {
       if (hadError) return
-      clearTimeout(timer)
-      resolve()
+      finish()
     })
   })
 }

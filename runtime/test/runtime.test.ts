@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { MonotonicIdFactory, ScriptedIdFactory } from '../src/ids.js'
-import { handoffPolicySchema } from '../src/memory.js'
+import {
+  CONVERSATION_CHANNEL,
+  USER_PRIORITY,
+  handoffPolicySchema,
+} from '../src/memory.js'
 import { executorManifestSchema, fastBrainOutputSchema, opSpecSchema } from '../src/ports.js'
 import { CoreRuntime, type ModelCall } from '../src/runtime.js'
 import { wakeReasonSchema, type Slot } from '../src/slots.js'
@@ -23,6 +27,37 @@ const manifest = executorManifestSchema.parse({
     deadline_budget: 5,
     sensitive_params: [],
   }],
+})
+
+test('assistant_spoken appends the exact audible delivery to trusted conversation memory', () => {
+  const runtime = new CoreRuntime({manifests: [], ids: new MonotonicIdFactory()})
+  const event = runtime.post({
+    kind: 'assistant_spoken',
+    payload: {
+      text: '我说过的话',
+      utterance_id: 'utterance-1',
+      delivery: 'interrupted',
+      played_ms: 420,
+    },
+  }, 12.5)
+
+  assert.equal(runtime.apply(runtime.queue.popReady(12.5)!), null)
+
+  assert.deepEqual(runtime.memory.channels.get(CONVERSATION_CHANNEL)?.items, [{
+    channel: CONVERSATION_CHANNEL,
+    seq: 1,
+    ts: event.ts,
+    trust: 'trusted_system',
+    priority: USER_PRIORITY,
+    content: {
+      text: '我说过的话',
+      utterance_id: 'utterance-1',
+      delivery: 'interrupted',
+      played_ms: 420,
+    },
+    outcome: null,
+    refs: [],
+  }])
 })
 
 test('sensitive parameters must name declared request properties', () => {
