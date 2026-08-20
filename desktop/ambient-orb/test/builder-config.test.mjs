@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, resolve } from 'node:path'
 import test from 'node:test'
 
 // electron-builder.yml is small and structurally simple (two-space indents,
@@ -14,7 +15,25 @@ const PACKAGE_JSON_PATH = resolve(import.meta.dirname, '../package.json')
 const ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.plist')
 const INHERIT_ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.inherit.plist')
 const HTML_PATH = resolve(import.meta.dirname, '../src/renderer/index.html')
-const BUILD_SCRIPT_PATH = resolve(import.meta.dirname, '../scripts/build.mjs')
+const EXPECTED_BUILD_SCRIPTS = [
+  'src/main/main.mjs',
+  'src/main/app-protocol.mjs',
+  'src/main/camera-source.mjs',
+  'src/main/backend.mjs',
+  'src/main/security.mjs',
+  'src/main/native-audio.mjs',
+  'src/main/drag-controller.mjs',
+  'src/main/settings-store.mjs',
+  'src/renderer/index.mjs',
+  'src/renderer/camera.mjs',
+  'src/renderer/audio.mjs',
+  'src/renderer/state.mjs',
+  'src/renderer/orb-visual.mjs',
+  'src/renderer/settings.mjs',
+  'scripts/utility-runtime-smoke.mjs',
+  'scripts/inspect-package.mjs',
+  'scripts/build-contract.mjs',
+]
 
 function indentOf(line) {
   const match = /^( *)/.exec(line)
@@ -134,10 +153,13 @@ function parseYaml(text) {
 }
 
 let config
+let checkJavaScriptFiles
 
 test.before(async () => {
   const text = await readFile(CONFIG_PATH, 'utf8')
   config = parseYaml(text)
+  const buildContract = await import('../scripts/build-contract.mjs').catch(() => ({}))
+  checkJavaScriptFiles = buildContract.checkJavaScriptFiles
 })
 
 test('mac, win, and linux platform blocks all exist', () => {
@@ -271,9 +293,30 @@ test('renderer CSP catches widening camera media beyond the exact same origin', 
   assert.doesNotMatch(directives['media-src'].join(' '), /file:|data:|blob:|https?:/u)
 })
 
-test('desktop build syntax-checks both camera main and renderer modules', async () => {
-  const source = await readFile(BUILD_SCRIPT_PATH, 'utf8')
-  const scriptsBlock = source.slice(source.indexOf('const scripts = ['), source.indexOf(']\n\nconst runtimeEntry'))
-  assert.match(scriptsBlock, /'src\/main\/camera-source\.mjs'/)
-  assert.match(scriptsBlock, /'src\/renderer\/camera\.mjs'/)
+test('desktop build executes syntax checks for both camera main and renderer modules', async () => {
+  assert.equal(typeof checkJavaScriptFiles, 'function')
+  for (const malformed of ['src/main/camera-source.mjs', 'src/renderer/camera.mjs']) {
+    const temporary = await mkdtemp(resolve(tmpdir(), 'nova-camera-build-check-'))
+    try {
+      for (const file of EXPECTED_BUILD_SCRIPTS) {
+        const target = resolve(temporary, file)
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(
+          target,
+          file === malformed ? 'export const malformed =' : 'export const valid = true\n',
+          'utf8',
+        )
+      }
+      assert.throws(
+        () => checkJavaScriptFiles(temporary),
+        error => {
+          assert.match(error.message, new RegExp(malformed.replaceAll('.', '\\.'), 'u'))
+          return true
+        },
+        malformed,
+      )
+    } finally {
+      await rm(temporary, { recursive: true, force: true })
+    }
+  }
 })

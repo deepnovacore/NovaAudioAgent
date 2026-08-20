@@ -32,7 +32,7 @@ import {
   watchBackendExit,
 } from './backend.mjs'
 import { loadAppWindow } from './app-protocol.mjs'
-import { selectMainCameraSource } from './camera-source.mjs'
+import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
@@ -411,12 +411,7 @@ async function launchBackend(cameraSource) {
   })
 }
 
-async function start() {
-  const camera = selectMainCameraSource(process.env)
-  await requestLocalCameraPermission(camera.source, {
-    platform: process.platform,
-    systemPreferences,
-  })
+async function startSelectedCamera(camera) {
   currentSettings = await loadSettings(settingsFile())
   await launchBackend(camera.source)
   const launchId = randomBytes(8).toString('hex')
@@ -606,6 +601,17 @@ async function start() {
   if (!shortcutRegistered) {
     console.warn('[ambient-orb] global shortcut unavailable on this session')
   }
+}
+
+async function start() {
+  return startWithSelectedCamera({
+    environment: process.env,
+    requestPermission: source => requestLocalCameraPermission(source, {
+      platform: process.platform,
+      systemPreferences,
+    }),
+    start: startSelectedCamera,
+  })
 }
 
 if (!app.requestSingleInstanceLock()) {

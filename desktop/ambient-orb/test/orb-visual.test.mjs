@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import test from 'node:test'
 
+import { checkJavaScriptFiles } from '../scripts/build-contract.mjs'
 import {
   createOrbVisual,
   createOrbVisualSafe,
@@ -1279,7 +1282,22 @@ test('the renderer maps the onset attack window onto the candidate state', async
 })
 
 test('the build syntax-checks the visual module', async () => {
-  const source = await readFile(new URL('../scripts/build.mjs', import.meta.url), 'utf8')
-
-  assert.match(source, /'src\/renderer\/orb-visual\.mjs'/)
+  const temporary = await mkdtemp(resolve(tmpdir(), 'nova-visual-build-check-'))
+  try {
+    await cp(new URL('../src', import.meta.url), resolve(temporary, 'src'), { recursive: true })
+    await cp(new URL('../scripts', import.meta.url), resolve(temporary, 'scripts'), {
+      recursive: true,
+    })
+    await writeFile(
+      resolve(temporary, 'src/renderer/orb-visual.mjs'),
+      'export const malformed =',
+      'utf8',
+    )
+    assert.throws(
+      () => checkJavaScriptFiles(temporary),
+      /src\/renderer\/orb-visual\.mjs/u,
+    )
+  } finally {
+    await rm(temporary, { recursive: true, force: true })
+  }
 })

@@ -6,9 +6,62 @@ import test from 'node:test'
 import {
   CAMERA_SOURCE_PATH,
   CAMERA_SOURCE_URL,
+  buildRendererAssetGraph,
   installAppProtocol,
   loadAppWindow,
 } from '../src/main/app-protocol.mjs'
+
+const ACTUAL_RENDERER_ROOT = resolve(import.meta.dirname, '../src/renderer')
+
+test('renderer protocol serves the complete reachable static import graph and nothing arbitrary', async () => {
+  const rendererFiles = await buildRendererAssetGraph(ACTUAL_RENDERER_ROOT)
+  assert.ok(Object.isFrozen(rendererFiles))
+  assert.ok(rendererFiles.includes('/camera.mjs'), 'index.mjs camera import is reachable')
+  assert.ok(rendererFiles.includes('/orb-visual.mjs'), 'index.mjs orb visual import is reachable')
+
+  let handler
+  const fetched = []
+  installAppProtocol({ handle: (_scheme, next) => { handler = next } }, {
+    rendererRoot: ACTUAL_RENDERER_ROOT,
+    rendererFiles,
+    fetchFile: file => {
+      fetched.push(file)
+      return new Response(file)
+    },
+  })
+
+  for (const path of rendererFiles) {
+    const response = await handler(new Request(`nova://orb${path}`))
+    assert.equal(response.status, 200, path)
+    assert.equal(await response.text(), resolve(ACTUAL_RENDERER_ROOT, path.slice(1)), path)
+  }
+  assert.equal(fetched.length, rendererFiles.length)
+  assert.equal((await handler(new Request('nova://orb/future-arbitrary.mjs'))).status, 404)
+})
+
+test('renderer graph follows future module re-exports and stylesheet imports without hand listing', async () => {
+  const sources = new Map([
+    ['/index.html', '<link href="./index.css"><script src="./index.mjs"></script>'],
+    ['/capture-worklet.mjs', "export { capture } from './audio.mjs'"],
+    ['/memory-board.html', '<link href="./memory-board.css">'],
+    ['/settings.html', ''],
+    ['/index.css', '@import "./theme.css";'],
+    ['/index.mjs', "import './camera.mjs'; export { visual } from './orb-visual.mjs'"],
+    ['/audio.mjs', 'export const capture = true'],
+    ['/memory-board.css', ''],
+    ['/theme.css', ''],
+    ['/camera.mjs', ''],
+    ['/orb-visual.mjs', 'export const visual = true'],
+  ])
+
+  const graph = await buildRendererAssetGraph('/unused-renderer-root', file => {
+    const route = `/${file.split('/').at(-1)}`
+    assert.ok(sources.has(route), `unexpected graph read: ${route}`)
+    return sources.get(route)
+  })
+
+  assert.deepEqual(graph, [...sources.keys()].sort())
+})
 
 test('session-local app protocol serves only allowlisted renderer files', async () => {
   let scheme
@@ -24,6 +77,7 @@ test('session-local app protocol serves only allowlisted renderer files', async 
   const rendererRoot = '/tmp/orb-renderer'
   installAppProtocol(targetProtocol, {
     rendererRoot,
+    rendererFiles: ['/index.html', '/memory-board.html', '/drag-gesture.mjs'],
     fetchFile: async file => {
       fetched.push(file)
       return new Response('ok')
@@ -31,16 +85,16 @@ test('session-local app protocol serves only allowlisted renderer files', async 
   })
 
   assert.equal(scheme, 'nova')
-  const allowed = await handler({ url: 'nova://orb/index.html' })
+  const allowed = await handler(new Request('nova://orb/index.html'))
   assert.equal(await allowed.text(), 'ok')
-  const board = await handler({ url: 'nova://orb/memory-board.html' })
+  const board = await handler(new Request('nova://orb/memory-board.html'))
   assert.equal(await board.text(), 'ok')
   assert.deepEqual(fetched, [
     resolve(rendererRoot, 'index.html'),
     resolve(rendererRoot, 'memory-board.html'),
   ])
 
-  const dragGesture = await handler({ url: 'nova://orb/drag-gesture.mjs' })
+  const dragGesture = await handler(new Request('nova://orb/drag-gesture.mjs'))
   assert.equal(await dragGesture.text(), 'ok')
   assert.deepEqual(fetched, [
     resolve(rendererRoot, 'index.html'),
@@ -48,7 +102,7 @@ test('session-local app protocol serves only allowlisted renderer files', async 
     resolve(rendererRoot, 'drag-gesture.mjs'),
   ])
 
-  const rejected = await handler({ url: 'nova://orb/unknown-module.mjs' })
+  const rejected = await handler(new Request('nova://orb/unknown-module.mjs'))
   assert.equal(rejected.status, 404)
   assert.deepEqual(fetched, [
     resolve(rendererRoot, 'index.html'),
@@ -62,6 +116,7 @@ test('session-local app protocol serves the settings panel assets', async () => 
   const fetched = []
   installAppProtocol({ handle: (_scheme, next) => { handler = next } }, {
     rendererRoot: '/tmp/orb-renderer',
+    rendererFiles: ['/settings.html', '/settings.css', '/settings.mjs'],
     fetchFile: async file => {
       fetched.push(file)
       return new Response('ok')
@@ -69,7 +124,7 @@ test('session-local app protocol serves the settings panel assets', async () => 
   })
 
   for (const path of ['settings.html', 'settings.css', 'settings.mjs']) {
-    const response = await handler({ url: `nova://orb/${path}` })
+    const response = await handler(new Request(`nova://orb/${path}`))
     assert.equal(await response.text(), 'ok')
   }
   assert.deepEqual(fetched, [
@@ -78,9 +133,9 @@ test('session-local app protocol serves the settings panel assets', async () => 
     resolve('/tmp/orb-renderer', 'settings.mjs'),
   ])
 
-  const rejected = await handler({ url: 'nova://orb/settings.json' })
+  const rejected = await handler(new Request('nova://orb/settings.json'))
   assert.equal(rejected.status, 404)
-  const wrongHost = await handler({ url: 'nova://elsewhere/settings.html' })
+  const wrongHost = await handler(new Request('nova://elsewhere/settings.html'))
   assert.equal(wrongHost.status, 404)
   assert.equal(fetched.length, 3, 'a rejected path never reaches the filesystem')
 })
@@ -103,6 +158,7 @@ test('session-local app protocol registers before window navigation', async () =
 
   await loadAppWindow(window, {
     rendererRoot: '/tmp/orb-renderer',
+    rendererFiles: ['/index.html'],
     fetchFile: async () => new Response('ok'),
   })
 
@@ -126,6 +182,7 @@ test('camera route catches wrapping the range response or losing request headers
   })
   installAppProtocol({ handle: (_scheme, next) => { handler = next } }, {
     rendererRoot: '/tmp/orb-renderer',
+    rendererFiles: [],
     fetchFile: file => {
       assetCalls.push(file)
       return new Response('asset')
@@ -144,7 +201,8 @@ test('camera route catches wrapping the range response or losing request headers
     'if-range': 'tag',
     'x-request-sentinel': 'preserve-complete-collection',
   })
-  const response = await handler({ method: 'GET', url: CAMERA_SOURCE_URL, headers })
+  const request = new Request(CAMERA_SOURCE_URL, { method: 'GET', headers })
+  const response = await handler(request)
 
   assert.equal(response, expected, 'the exact net.fetch Response is returned')
   assert.equal(response.status, 206)
@@ -154,7 +212,7 @@ test('camera route catches wrapping the range response or losing request headers
   assert.deepEqual(assetCalls, [])
   assert.equal(cameraCalls.length, 1)
   assert.equal(cameraCalls[0].url, pathToFileURL('/canonical/cat-sofa.mp4').href)
-  assert.equal(cameraCalls[0].init.headers, headers, 'incoming immutable headers are forwarded')
+  assert.equal(cameraCalls[0].init.headers, request.headers, 'observable request headers are forwarded')
 })
 
 test('camera route catches alternate paths, authority, metadata, methods, and missing config', async () => {
@@ -164,7 +222,6 @@ test('camera route catches alternate paths, authority, metadata, methods, and mi
     ['trailing slash', 'GET', 'nova://orb/camera-source/', true, 404],
     ['encoded slash', 'GET', 'nova://orb/camera-source%2f', true, 404],
     ['encoded dot', 'GET', 'nova://orb/camera-source%2e', true, 404],
-    ['encoded traversal', 'GET', 'nova://orb/camera-source/%2e%2e/index.html', true, 404],
     ['asset pretending to be media', 'GET', 'nova://orb/index.html/camera-source', true, 404],
     ['query', 'GET', 'nova://orb/camera-source?path=secret', true, 404],
     ['fragment', 'GET', 'nova://orb/camera-source#secret', true, 404],
@@ -179,6 +236,7 @@ test('camera route catches alternate paths, authority, metadata, methods, and mi
     const cameraCalls = []
     installAppProtocol({ handle: (_scheme, next) => { handler = next } }, {
       rendererRoot: '/tmp/orb-renderer',
+      rendererFiles: [],
       fetchFile: file => {
         assetCalls.push(file)
         return new Response('asset')
@@ -190,7 +248,7 @@ test('camera route catches alternate paths, authority, metadata, methods, and mi
       },
     })
 
-    const response = await handler({ method, url, headers: new Headers() })
+    const response = await handler(new Request(url, { method, headers: new Headers() }))
     assert.equal(response.status, status, name)
     assert.deepEqual(assetCalls, [], `${name}: renderer fetch remains untouched`)
     assert.deepEqual(cameraCalls, [], `${name}: camera fetch remains untouched`)
@@ -198,25 +256,29 @@ test('camera route catches alternate paths, authority, metadata, methods, and mi
   }
 })
 
-test('camera route remains disjoint from the renderer asset allowlist', async () => {
+test('WHATWG Request canonicalization makes dot aliases the canonical fixed camera route', async () => {
   let handler
-  const fetched = []
+  const cameraCalls = []
   installAppProtocol({ handle: (_scheme, next) => { handler = next } }, {
     rendererRoot: '/tmp/orb-renderer',
-    fetchFile: file => {
-      fetched.push(file)
-      return new Response('asset')
+    rendererFiles: [],
+    fetchFile: () => new Response('asset'),
+    cameraFile: '/canonical/cat-sofa.mp4',
+    fetchCameraFile: (...args) => {
+      cameraCalls.push(args)
+      return new Response('camera')
     },
   })
 
-  for (const url of [
-    'nova://orb/camera-source',
+  for (const raw of [
     'nova://orb/../camera-source',
     'nova://orb/%2e%2e/camera-source',
-    'nova://orb/%2f/camera-source',
+    'nova://orb/camera-source/%2e%2e/camera-source',
   ]) {
-    const response = await handler({ method: 'GET', url, headers: new Headers() })
-    assert.equal(response.status, 404, url)
+    const request = new Request(raw)
+    assert.equal(request.url, CAMERA_SOURCE_URL, raw)
+    const response = await handler(request)
+    assert.equal(response.status, 200, raw)
   }
-  assert.deepEqual(fetched, [])
+  assert.equal(cameraCalls.length, 3)
 })

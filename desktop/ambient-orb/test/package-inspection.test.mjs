@@ -3,81 +3,135 @@ import test from 'node:test'
 
 import {
   PackageInspectionError,
+  evaluateBuilderFiles,
+  evaluatePackageFiles,
   inspectConfiguredPackage,
-  inspectPackageGraph,
+  inspectPackagedFileList,
 } from '../scripts/inspect-package.mjs'
 
-function validGraph() {
-  return {
-    includedFiles: [
-      'src/main/main.mjs',
-      'src/main/camera-source.mjs',
-      'src/renderer/camera.mjs',
-      'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
-      'package.json',
-    ],
-    filePatterns: ['src/**/*', 'package.json', 'THIRD_PARTY_NOTICES.md', 'LICENSES/**/*'],
-    extraResources: ['resources/tray', 'build/macos_voice_io'],
-    dependencies: { '@nova-audio-agent/runtime': '0.1.0' },
-    runtimePackage: {
-      files: ['dist/src'],
-      dependencies: { ws: '8.21.3', zod: '4.4.3' },
-    },
+const DESKTOP_FILES = [
+  'src/main/main.mjs',
+  'src/renderer/camera.mjs',
+  'src/renderer/orb-visual.mjs',
+  'package.json',
+  'assets/demos/cat-sofa-guard/cat-sofa-guard.mp4',
+]
+
+test('builder files matcher catches removing or excluding camera with ordered rules', () => {
+  assert.deepEqual(evaluateBuilderFiles(DESKTOP_FILES, [
+    'src/**/*', 'package.json', '!src/renderer/orb-visual.mjs', 'src/renderer/orb-visual.mjs',
+  ]), [
+    'package.json',
+    'src/main/main.mjs',
+    'src/renderer/camera.mjs',
+    'src/renderer/orb-visual.mjs',
+  ])
+
+  assert.equal(evaluateBuilderFiles(DESKTOP_FILES, ['package.json']).includes(
+    'src/renderer/camera.mjs',
+  ), false, 'removing src/**/* excludes camera')
+  assert.equal(evaluateBuilderFiles(DESKTOP_FILES, [
+    'src/**/*', '!src/renderer/camera.mjs',
+  ]).includes('src/renderer/camera.mjs'), false, 'later exclusion wins')
+  assert.equal(evaluateBuilderFiles(DESKTOP_FILES, [
+    '!src/renderer/camera.mjs', 'src/**/*',
+  ]).includes('src/renderer/camera.mjs'), true, 'later inclusion can re-include')
+})
+
+test('builder files matcher fails closed on unsupported or unsafe rules', () => {
+  for (const rule of [
+    '', '!', '/absolute/**/*', '../outside/**/*', 'src/{main,renderer}/**/*',
+    'src/[ab].mjs', 'src/@(main|renderer)/**/*', 'src/!(camera).mjs', 'src\\**\\*',
+  ]) {
+    assert.throws(
+      () => evaluateBuilderFiles(DESKTOP_FILES, [rule]),
+      PackageInspectionError,
+      rule,
+    )
   }
+})
+
+test('workspace package files materialization catches changed files rules and missing entry', () => {
+  const installed = [
+    'package.json',
+    'dist/src/index.js',
+    'dist/src/desktop-entry.js',
+    'dist/test/desktop-entry.test.js',
+    'src/desktop-entry.ts',
+  ]
+  assert.deepEqual(evaluatePackageFiles(installed, ['dist/src']), [
+    'dist/src/desktop-entry.js',
+    'dist/src/index.js',
+    'package.json',
+  ])
+  assert.equal(evaluatePackageFiles(installed, ['dist/other']).includes(
+    'dist/src/desktop-entry.js',
+  ), false)
+  assert.equal(evaluatePackageFiles(installed.filter(
+    file => file !== 'dist/src/desktop-entry.js',
+  ), ['dist/src']).includes('dist/src/desktop-entry.js'), false)
+})
+
+function validArtifactFiles() {
+  return [
+    'src/main/main.mjs',
+    'src/main/camera-source.mjs',
+    'src/renderer/camera.mjs',
+    'node_modules/@nova-audio-agent/runtime/package.json',
+    'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
+    'node_modules/ws/package.json',
+    'node_modules/zod/package.json',
+    'package.json',
+  ]
 }
 
-test('package graph catches missing renderer camera or compiled runtime', () => {
-  assert.doesNotThrow(() => inspectPackageGraph(validGraph()))
+test('artifact file-list entry point catches missing camera/runtime and forbidden surfaces', () => {
+  assert.doesNotThrow(() => inspectPackagedFileList(validArtifactFiles()))
   for (const missing of [
     'src/renderer/camera.mjs',
     'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
+    'node_modules/ws/package.json',
+    'node_modules/zod/package.json',
   ]) {
-    const graph = validGraph()
-    graph.includedFiles = graph.includedFiles.filter(file => file !== missing)
-    assert.throws(() => inspectPackageGraph(graph), PackageInspectionError, missing)
+    assert.throws(
+      () => inspectPackagedFileList(validArtifactFiles().filter(file => file !== missing)),
+      PackageInspectionError,
+      missing,
+    )
   }
-})
-
-test('package graph catches demo media, Python surfaces, and broad video inclusion', () => {
-  const forbiddenFiles = [
+  for (const forbidden of [
     'assets/demos/cat-sofa-guard/cat-sofa-guard.mp4',
-    'assets/development-camera.mp4',
     'src/nova_audio_agent/camera.py',
     'pyproject.toml',
     'uv.lock',
-    'scripts/launch_python.py',
-  ]
-  for (const file of forbiddenFiles) {
-    const graph = validGraph()
-    graph.includedFiles.push(file)
-    assert.throws(() => inspectPackageGraph(graph), PackageInspectionError, file)
-  }
-  for (const pattern of ['assets/**/*', '**/*.mp4', 'assets/demos/**/*']) {
-    const graph = validGraph()
-    graph.filePatterns.push(pattern)
-    assert.throws(() => inspectPackageGraph(graph), PackageInspectionError, pattern)
-  }
-})
-
-test('package graph catches camera-native, OpenCV, ffmpeg, or Python dependencies', () => {
-  for (const dependency of [
-    'opencv4nodejs', 'ffmpeg-static', 'python-shell', 'node-webcam', 'native-video-codec',
+    'node_modules/opencv4nodejs/index.js',
+    'node_modules/ffmpeg-static/ffmpeg',
+    'node_modules/python-shell/index.js',
+    'node_modules/node-webcam/index.js',
   ]) {
-    const graph = validGraph()
-    graph.dependencies[dependency] = '1.0.0'
-    assert.throws(() => inspectPackageGraph(graph), PackageInspectionError, dependency)
+    assert.throws(
+      () => inspectPackagedFileList([...validArtifactFiles(), forbidden]),
+      PackageInspectionError,
+      forbidden,
+    )
   }
-  for (const dependency of ['opencv-wasm', 'ffmpeg-kit', 'python-bridge', 'camera-addon']) {
-    const graph = validGraph()
-    graph.runtimePackage.dependencies[dependency] = '1.0.0'
-    assert.throws(() => inspectPackageGraph(graph), PackageInspectionError, dependency)
-  }
+  assert.throws(
+    () => inspectPackagedFileList(validArtifactFiles(), { runtimeDependencies: ['ws'] }),
+    PackageInspectionError,
+    'missing runtime dependency must fail closed',
+  )
 })
 
-test('actual configured package graph satisfies the deterministic contract', async () => {
+test('actual configured graph derives camera and runtime from config plus installed content', async () => {
   const result = await inspectConfiguredPackage()
   assert.equal(result.cameraIncluded, true)
   assert.equal(result.runtimeIncluded, true)
+  assert.ok(result.includedFiles.includes('src/renderer/camera.mjs'))
+  assert.ok(result.includedFiles.includes(
+    'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
+  ))
+  assert.ok(result.includedFiles.includes('node_modules/ws/package.json'))
+  assert.ok(result.includedFiles.includes('node_modules/zod/package.json'))
   assert.deepEqual(result.productionDependencies, ['@nova-audio-agent/runtime'])
   assert.equal(result.forbidden.length, 0)
 })

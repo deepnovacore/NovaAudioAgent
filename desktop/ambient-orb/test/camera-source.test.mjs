@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
+import * as cameraSource from '../src/main/camera-source.mjs'
+
+const {
   DESKTOP_VIDEO_FILE_ENV,
   MainCameraConfigurationError,
   selectMainCameraSource,
-} from '../src/main/camera-source.mjs'
+} = cameraSource
 
 class RecordingFileSystem {
   calls = []
@@ -127,4 +129,67 @@ test('main camera selector catches accepting invalid targets or leaking filesyst
     )
     if (scenario.calls) assert.deepEqual(fileSystem.calls, scenario.calls, scenario.name)
   }
+})
+
+test('camera selection failure stops every later main startup phase without path disclosure', async () => {
+  assert.equal(typeof cameraSource.startWithSelectedCamera, 'function')
+  const calls = {
+    permission: 0,
+    backend: 0,
+    protocol: 0,
+    bootstrap: 0,
+  }
+  const fileSystem = new RecordingFileSystem()
+  fileSystem.realpathFailure = new Error('os-error-sentinel secret-sentinel')
+
+  await assert.rejects(
+    cameraSource.startWithSelectedCamera({
+      environment: {
+        [DESKTOP_VIDEO_FILE_ENV]: '/input-path-sentinel/private-camera.mp4',
+      },
+      fileSystem,
+      requestPermission: async () => {
+        calls.permission += 1
+      },
+      start: async () => {
+        calls.backend += 1
+        calls.protocol += 1
+        calls.bootstrap += 1
+      },
+    }),
+    error => {
+      assert.ok(error instanceof MainCameraConfigurationError)
+      assert.match(error.message, new RegExp(DESKTOP_VIDEO_FILE_ENV, 'u'))
+      assert.doesNotMatch(
+        `${error.name}: ${error.message}`,
+        /input-path-sentinel|private-camera|os-error-sentinel|secret-sentinel/u,
+      )
+      return true
+    },
+  )
+
+  assert.deepEqual(calls, {
+    permission: 0,
+    backend: 0,
+    protocol: 0,
+    bootstrap: 0,
+  })
+})
+
+test('main camera startup orders selection, permission, and the remaining startup body', async () => {
+  assert.equal(typeof cameraSource.startWithSelectedCamera, 'function')
+  const events = []
+  const result = await cameraSource.startWithSelectedCamera({
+    environment: {},
+    requestPermission: async source => {
+      events.push(`permission:${source}`)
+    },
+    start: async selected => {
+      events.push(`start:${selected.source}`)
+      return 'started-sentinel'
+    },
+  })
+
+  assert.equal(result, 'started-sentinel')
+  assert.deepEqual(events, ['permission:local', 'start:local'])
 })

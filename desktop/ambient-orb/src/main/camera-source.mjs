@@ -43,3 +43,14 @@ export function selectMainCameraSource(environment, fileSystem = defaultFileSyst
     throw new MainCameraConfigurationError()
   }
 }
+
+export async function startWithSelectedCamera({
+  environment,
+  fileSystem = defaultFileSystem,
+  requestPermission,
+  start,
+}) {
+  const selected = selectMainCameraSource(environment, fileSystem)
+  await requestPermission(selected.source)
+  return start(selected)
+}

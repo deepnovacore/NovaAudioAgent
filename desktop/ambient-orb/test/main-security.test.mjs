@@ -309,24 +309,21 @@ test('renderer threads the bootstrap platform into the orb state axes', async ()
   assert.match(source, /axes\.platform = bootstrap\.platform/)
 })
 
-test('macOS camera permission is requested on the main thread before backend startup', async () => {
+test('main delegates camera-gated startup through the tested selector lifecycle', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
   const start = source.slice(source.indexOf('async function start()'))
-  const select = start.indexOf('selectMainCameraSource(process.env)')
-  const permission = start.indexOf('await requestLocalCameraPermission(')
-  const settings = start.indexOf('await loadSettings(')
-  const launch = start.indexOf('await launchBackend(')
-  assert.ok(select >= 0 && permission > select, 'validated selection precedes permission')
-  assert.ok(settings > permission, 'permission decision precedes settings startup work')
-  assert.ok(launch > settings, 'validated selection precedes backend launch')
+  assert.match(start, /return startWithSelectedCamera\(\{/u)
+  assert.match(start, /environment: process\.env/u)
+  assert.match(start, /requestPermission: source => requestLocalCameraPermission\(source/u)
+  assert.match(start, /start: startSelectedCamera/u)
 })
 
 test('camera bootstrap and protocol wiring catch canonical path disclosure or renderer URL choice', async () => {
   const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
-  assert.match(main, /import \{ selectMainCameraSource \} from '.\/camera-source\.mjs'/)
+  assert.match(main, /import \{ startWithSelectedCamera \} from '.\/camera-source\.mjs'/)
   const bootstrapAssignment = main.slice(main.indexOf('bootstrap = Object.freeze({'))
   const bootstrapBody = bootstrapAssignment.slice(0, bootstrapAssignment.indexOf('})'))
   assert.match(bootstrapBody, /cameraSource/)
@@ -364,7 +361,7 @@ test('delays window creation on linux only, via an injectable wait rather than a
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
   assert.match(source, /LINUX_WINDOW_DELAY_MS\s*=\s*300/)
-  const startBody = source.slice(source.indexOf('async function start()'))
+  const startBody = source.slice(source.indexOf('async function startSelectedCamera('))
   const platformCheck = startBody.indexOf("process.platform === 'linux'")
   const createWindowCall = startBody.indexOf('createWindow(launchId')
   assert.ok(platformCheck >= 0 && createWindowCall > platformCheck)

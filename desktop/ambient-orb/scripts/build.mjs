@@ -3,27 +3,10 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
+import { checkJavaScriptFiles } from './build-contract.mjs'
 import { inspectConfiguredPackage } from './inspect-package.mjs'
 
 const root = resolve(import.meta.dirname, '..')
-const scripts = [
-  'src/main/main.mjs',
-  'src/main/app-protocol.mjs',
-  'src/main/camera-source.mjs',
-  'src/main/backend.mjs',
-  'src/main/security.mjs',
-  'src/main/native-audio.mjs',
-  'src/main/drag-controller.mjs',
-  'src/main/settings-store.mjs',
-  'src/renderer/index.mjs',
-  'src/renderer/camera.mjs',
-  'src/renderer/audio.mjs',
-  'src/renderer/state.mjs',
-  'src/renderer/orb-visual.mjs',
-  'src/renderer/settings.mjs',
-  'scripts/utility-runtime-smoke.mjs',
-  'scripts/inspect-package.mjs',
-]
 
 const runtimeEntry = resolve(root, '../../runtime/dist/src/desktop-entry.js')
 const npmCli = process.env.npm_execpath
@@ -42,12 +25,7 @@ assert.equal(runtimeBuild.status, 0, runtimeBuild.stderr)
 await readFile(runtimeEntry, 'utf8')
 await inspectConfiguredPackage({ packageRoot: root })
 
-for (const file of scripts) {
-  const result = spawnSync(process.execPath, ['--check', resolve(root, file)], {
-    encoding: 'utf8',
-  })
-  assert.equal(result.status, 0, `${file}: ${result.stderr}`)
-}
+checkJavaScriptFiles(root)
 
 const html = await readFile(resolve(root, 'src/renderer/index.html'), 'utf8')
 assert.match(html, /Content-Security-Policy/)
