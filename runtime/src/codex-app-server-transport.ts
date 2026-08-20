@@ -250,6 +250,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   #hadTurn = false
   readonly #sensitiveInputs: string[] = []
   readonly #lateOwnerCleanups = new Set<Promise<void>>()
+  readonly #pendingSpawnOwnerships = new Set<Promise<OwnedCodexProcess>>()
   readonly #lateCredentialCleanups = new Set<Promise<void>>()
   readonly #unconfirmedOwners = new Map<OwnedCodexProcess, RetainedOwnerCleanup>()
   readonly #spawnControllers = new Set<AbortController>()
@@ -560,6 +561,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       || this.#prewarmPromise !== null
       || this.#establishPromise !== null
       || this.#lateOwnerCleanups.size > 0
+      || this.#pendingSpawnOwnerships.size > 0
       || this.#lateCredentialCleanups.size > 0
       || this.#credentialRemovalRequired
       || this.#credentialPreparations > 0
@@ -686,7 +688,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
           : deadline.signal?.aborted === true || Date.now() >= deadline.expiresAtMs
             ? new CodexTransportError('adapter_timeout')
             : safeTransportError(error, 'spawn_failed')
-        if (safe.code === 'adapter_timeout') {
+        if (safe.code === 'adapter_timeout' || safe.code === 'transport_lost') {
           this.#trackLateOwnerCleanup(spawnWork)
           this.#closed = true
           throw safe
@@ -695,7 +697,11 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       }
     } catch (error) {
       const safe = safeTransportError(error, 'spawn_failed')
-      if (safe.code !== 'adapter_timeout' && this.#unconfirmedOwners.size === 0) {
+      if (
+        safe.code !== 'adapter_timeout'
+        && safe.code !== 'transport_lost'
+        && this.#unconfirmedOwners.size === 0
+      ) {
         const removal = await this.#removeCredentialHomeBefore(
           Date.now() + CODEX_TREE_GRACE_MS,
         )
@@ -1220,7 +1226,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     expiresAtMs: number,
   ): Promise<'complete' | 'pending' | 'failed'> {
     if (!this.#credentialRemovalRequired) return 'complete'
-    if (this.#credentialPreparations > 0) return 'pending'
+    if (this.#credentialPreparations > 0 || this.#pendingSpawnOwnerships.size > 0) return 'pending'
     let attempt = this.#credentialRemovalAttempt
     if (attempt === null) {
       const owned: CredentialRemovalAttempt = {
@@ -1265,8 +1271,12 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   }
 
   #trackLateOwnerCleanup(spawnWork: Promise<OwnedCodexProcess>): void {
+    this.#pendingSpawnOwnerships.add(spawnWork)
     const cleanupWork = spawnWork.then(async owner => {
-      const cleanup = await this.#cleanupRejectedOwner(owner)
+      // Transfer the barrier to a retained owner before releasing pending spawn ownership.
+      const ownerCleanup = this.#cleanupRejectedOwner(owner)
+      this.#pendingSpawnOwnerships.delete(spawnWork)
+      const cleanup = await ownerCleanup
       if (!cleanup.complete) {
         throw new CodexTransportError(cleanup.cleanupFailed ? 'credential_missing' : 'transport_lost')
       }
@@ -1275,8 +1285,11 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       if (unconfirmedOwner !== null) {
         this.#closed = true
         this.#retainUnconfirmedOwner(unconfirmedOwner)
+        this.#pendingSpawnOwnerships.delete(spawnWork)
         throw new CodexTransportError('transport_lost')
       }
+      // A definitive rejection proves no owner exists, so credential cleanup may proceed.
+      this.#pendingSpawnOwnerships.delete(spawnWork)
       const removal = await this.#removeCredentialHomeBefore(
         Date.now() + CODEX_TREE_GRACE_MS,
       )

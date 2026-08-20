@@ -1068,6 +1068,124 @@ test('close-driven cooperative spawn cancellation remains transport_lost', async
   await closing
 })
 
+test('close-driven pending spawn keeps credentials until its materialized owner is disposed', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const owner = new MemoryAppServerOwner([])
+  const events: string[] = []
+  const originalDispose = owner.dispose.bind(owner)
+  owner.waitTreeGone = async () => {
+    events.push('tree-gone')
+    return true
+  }
+  owner.dispose = async () => {
+    events.push('dispose')
+    await originalDispose()
+  }
+  let removalCount = 0
+  const transport = createTransport({spawn: async () => {
+    entered.resolve()
+    await release.promise
+    events.push('owner-materialized')
+    return owner
+  }}, {removeEphemeralHome: async () => {
+    removalCount += 1
+    events.push('remove-credentials')
+  }})
+  const running = transport.run(
+    {workOrder: 'close owns pending spawn cancellation'},
+    {},
+    {expiresAtMs: Date.now() + 60_000},
+  )
+  await entered.promise
+
+  let retry: Promise<void> | null = null
+  try {
+    const firstClose = transport.close()
+    assert.equal((await running).code, 'transport_lost')
+    await assert.rejects(
+      within(firstClose, runtime.CODEX_TREE_GRACE_MS + 1000, 'close-driven pending spawn'),
+      (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+    )
+    assert.equal(removalCount, 0)
+    assert.equal(owner.disposeCalls, 0)
+    retry = transport.close()
+  } finally {
+    release.resolve()
+  }
+  assert.notEqual(retry, null)
+  await assert.rejects(
+    within(retry, runtime.CODEX_TREE_GRACE_MS + 1000, 'close-driven materialized owner retry'),
+    (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+  )
+  assert.deepEqual(events, [
+    'owner-materialized',
+    'tree-gone',
+    'dispose',
+    'remove-credentials',
+  ])
+  assert.equal(removalCount, 1)
+})
+
+test('close-driven indefinitely pending spawn keeps credentials across bounded retries', async () => {
+  const entered = testDeferred<void>()
+  let spawnCount = 0
+  let removalCount = 0
+  const transport = createTransport({spawn: async () => {
+    spawnCount += 1
+    entered.resolve()
+    return await new Promise<never>(() => {})
+  }}, {removeEphemeralHome: async () => { removalCount += 1 }})
+  const running = transport.run(
+    {workOrder: 'close cannot abandon raw spawn ownership'},
+    {},
+    {expiresAtMs: Date.now() + 50},
+  )
+  await entered.promise
+  const firstClose = transport.close()
+  assert.equal((await running).code, 'transport_lost')
+
+  for (const [label, closing] of [
+    ['first', firstClose] as const,
+    ['second', null] as const,
+  ]) {
+    await assert.rejects(
+      within(closing ?? transport.close(), runtime.CODEX_TREE_GRACE_MS + 1000, `${label} close retry`),
+      (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+    )
+    assert.equal(removalCount, 0)
+    assert.equal(spawnCount, 1)
+  }
+  assert.equal(await transport.prewarm({expiresAtMs: Date.now() + 100}), null)
+})
+
+test('close-driven explicit spawn rejection releases credentials only after rejection', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  let removalCount = 0
+  const transport = createTransport({spawn: async () => {
+    entered.resolve()
+    await release.promise
+    throw new Error('private close-driven spawn rejection')
+  }}, {removeEphemeralHome: async () => { removalCount += 1 }})
+  const running = transport.run(
+    {workOrder: 'close waits for definitive spawn rejection'},
+    {},
+    {expiresAtMs: Date.now() + 60_000},
+  )
+  await entered.promise
+  const closing = transport.close()
+  try {
+    assert.equal((await running).code, 'transport_lost')
+    await new Promise<void>(resolve => { setImmediate(resolve) })
+    assert.equal(removalCount, 0)
+  } finally {
+    release.resolve()
+  }
+  await closing
+  assert.equal(removalCount, 1)
+})
+
 test('a non-cooperative spawn is diagnosed as transport loss and its late owner is immediately disposed', async () => {
   const entered = testDeferred<void>()
   const release = testDeferred<void>()
@@ -1143,6 +1261,125 @@ test('a caller-timed-out spawn fail-stops admission until its late owner is clea
     await settleUntil(() => owner.disposed, 'late exclusive owner cleanup')
     await transport.close().catch(() => undefined)
   }
+})
+
+test('a pending late spawn keeps credentials until its materialized owner is gone and disposed', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const owner = new MemoryAppServerOwner([])
+  const events: string[] = []
+  const originalDispose = owner.dispose.bind(owner)
+  owner.waitTreeGone = async () => {
+    events.push('tree-gone')
+    return true
+  }
+  owner.dispose = async () => {
+    events.push('dispose')
+    await originalDispose()
+  }
+  const controller = new AbortController()
+  let removalCount = 0
+  const transport = createTransport({spawn: async () => {
+    entered.resolve()
+    await release.promise
+    events.push('owner-materialized')
+    return owner
+  }}, {removeEphemeralHome: async () => {
+    removalCount += 1
+    events.push('remove-credentials')
+  }})
+  const running = transport.run(
+    {workOrder: 'pending spawn owns the credential barrier'},
+    {},
+    {expiresAtMs: Date.now() + 60_000, signal: controller.signal},
+  )
+  await entered.promise
+  controller.abort()
+  assert.equal((await running).code, 'adapter_timeout')
+
+  let retry: Promise<void> | null = null
+  try {
+    await assert.rejects(
+      within(transport.close(), runtime.CODEX_TREE_GRACE_MS + 1000, 'first pending-spawn close'),
+      (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+    )
+    assert.equal(removalCount, 0)
+    assert.equal(owner.disposeCalls, 0)
+    retry = transport.close()
+  } finally {
+    release.resolve()
+  }
+  assert.notEqual(retry, null)
+  await assert.rejects(
+    within(retry, runtime.CODEX_TREE_GRACE_MS + 1000, 'materialized-owner close retry'),
+    (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+  )
+  assert.deepEqual(events, [
+    'owner-materialized',
+    'tree-gone',
+    'dispose',
+    'remove-credentials',
+  ])
+  assert.equal(removalCount, 1)
+  assert.equal(owner.disposeCalls, 1)
+})
+
+test('an indefinitely pending spawn keeps its credential barrier across bounded close retries', async () => {
+  const entered = testDeferred<void>()
+  let spawnCount = 0
+  let removalCount = 0
+  const transport = createTransport({spawn: async () => {
+    spawnCount += 1
+    entered.resolve()
+    return await new Promise<never>(() => {})
+  }}, {removeEphemeralHome: async () => { removalCount += 1 }})
+  const running = transport.run(
+    {workOrder: 'never materialized child still owns credentials'},
+    {},
+    {expiresAtMs: Date.now() + 50},
+  )
+  await entered.promise
+  assert.equal((await running).code, 'adapter_timeout')
+  assert.equal(await transport.prewarm({expiresAtMs: Date.now() + 100}), null)
+  assert.equal((await transport.run(
+    {workOrder: 'second admission stays closed'},
+    {},
+    {expiresAtMs: Date.now() + 100},
+  )).code, 'busy')
+
+  for (const label of ['first', 'second']) {
+    await assert.rejects(
+      within(transport.close(), runtime.CODEX_TREE_GRACE_MS + 1000, `${label} pending-spawn close`),
+      (error: unknown) => String(error) === 'CodexTransportError: transport_lost',
+    )
+    assert.equal(removalCount, 0)
+    assert.equal(spawnCount, 1)
+  }
+})
+
+test('an explicit late spawn rejection releases its credential cleanup barrier', async () => {
+  const entered = testDeferred<void>()
+  const release = testDeferred<void>()
+  const controller = new AbortController()
+  let removalCount = 0
+  const transport = createTransport({spawn: async () => {
+    entered.resolve()
+    await release.promise
+    throw new Error('private spawn rejection')
+  }}, {removeEphemeralHome: async () => { removalCount += 1 }})
+  const running = transport.run(
+    {workOrder: 'late rejection releases credentials'},
+    {},
+    {expiresAtMs: Date.now() + 60_000, signal: controller.signal},
+  )
+  await entered.promise
+  controller.abort()
+  assert.equal((await running).code, 'adapter_timeout')
+  assert.equal(removalCount, 0)
+  release.resolve()
+  await settleUntil(() => removalCount === 1, 'late rejected spawn credential cleanup')
+  await transport.close().catch(() => undefined)
+  assert.equal(removalCount, 1)
 })
 
 test('a completed late-owner cleanup latches its first stable failure for later close', async () => {
