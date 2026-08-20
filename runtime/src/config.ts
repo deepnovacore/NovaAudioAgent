@@ -85,9 +85,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     qwen_controlled_guard_reconnect: optionalBoolean(
       environment.NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT,
     ),
-    qwen_guard_history_recovery: optionalString(
-      environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY,
-    ),
+    qwen_guard_history_recovery: environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY,
     qwen_guard_history_pairs: optionalQwenGuardHistoryPairs(
       environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS,
     ),
@@ -183,19 +181,18 @@ function optionalSecret(value: string | undefined): string | null | undefined {
 
 function optionalBoolean(value: string | undefined): boolean | string | undefined {
   if (value === undefined) return undefined
-  const normalized = stripLikePython(value).toLowerCase()
-  if (['true', '1', 'on', 'yes', 'y'].includes(normalized)) return true
-  if (['false', '0', 'off', 'no', 'n'].includes(normalized)) return false
+  const normalized = value.toLowerCase()
+  if (['true', 't', '1', 'on', 'yes', 'y'].includes(normalized)) return true
+  if (['false', 'f', '0', 'off', 'no', 'n'].includes(normalized)) return false
   return normalized
 }
 
 function optionalQwenGuardHistoryPairs(value: string | undefined): 1 | 2 | 4 | string | undefined {
   if (value === undefined) return undefined
-  const normalized = stripLikePython(value)
-  if (normalized === '1') return 1
-  if (normalized === '2') return 2
-  if (normalized === '4') return 4
-  return normalized
+  if (value === '1') return 1
+  if (value === '2') return 2
+  if (value === '4') return 4
+  return value
 }
 
 function optionalNumber(value: string | undefined, variable: string): number | undefined {

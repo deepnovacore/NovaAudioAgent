@@ -216,9 +216,9 @@ test('Qwen require returns focused credential-safe validation errors', () => {
   }
 })
 
-test('Qwen boolean, Guard recovery, and history pair settings reject unknown arms', () => {
-  const truthy = ['true', 'TRUE', '1', 'on', 'YES', 'y']
-  const falsy = ['false', 'FALSE', '0', 'off', 'NO', 'n']
+test('Qwen boolean settings accept every exact Pydantic arm case-insensitively', () => {
+  const truthy = ['true', 'TRUE', 't', 'T', '1', 'on', 'YES', 'y']
+  const falsy = ['false', 'FALSE', 'f', 'F', '0', 'off', 'NO', 'n']
   for (const value of truthy) {
     assert.equal(loadSettings({
       NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT: value,
@@ -234,10 +234,17 @@ test('Qwen boolean, Guard recovery, and history pair settings reject unknown arm
       NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS: value,
     }).qwen_guard_history_pairs, Number(value))
   }
+})
+
+test('Qwen boolean and Guard enum settings do not strip their raw environment values', () => {
   for (const [variable, value] of [
     ['NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT', 'maybe'],
+    ['NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT', ' true '],
+    ['NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT', '\u001ctrue\u001c'],
     ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY', 'native'],
+    ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY', ' packed '],
     ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS', '3'],
+    ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS', ' 2 '],
     ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS', ''],
   ] as const) {
     assert.throws(
