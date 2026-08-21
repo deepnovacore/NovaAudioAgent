@@ -369,10 +369,10 @@ function lexicalTokens(text: string): ReadonlySet<string> {
     if (match[0].length >= 2) tokens.add(match[0])
   }
   for (const match of normalized.matchAll(CJK_RUN)) {
-    const run = match[0]
+    const run = [...match[0]]
     // Overlapping bigrams. A one-character run contributes nothing, which is deliberate.
     for (let index = 0; index < run.length - 1; index += 1) {
-      tokens.add(run.slice(index, index + 2))
+      tokens.add(run.slice(index, index + 2).join(''))
     }
   }
   return tokens

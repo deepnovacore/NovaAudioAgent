@@ -198,7 +198,7 @@ function compileOp(manifest: ExecutorManifest, op: OpSpec): {
 }
 
 function validatePart(value: string, label: string): void {
-  if (value.length === 0 || !WIRE_PART.test(value)) {
+  if (value === '' || !WIRE_PART.test(value)) {
     throw new ToolSchemaError(`${label} 名称只能包含字母、数字、下划线和短划线：'${value}'`)
   }
 }

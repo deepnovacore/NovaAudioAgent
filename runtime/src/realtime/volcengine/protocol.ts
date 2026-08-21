@@ -94,7 +94,7 @@ export class VolcMessage {
     const body = new ByteWriter()
     body.int32(this.event)
     if (sessionEvents.has(this.event)) {
-      if (this.sessionId === null || this.sessionId.length === 0 || !isWellFormed(this.sessionId)) {
+      if (this.sessionId === null || this.sessionId === '' || !isWellFormed(this.sessionId)) {
         throw new VolcProtocolError('session event requires session_id')
       }
       body.sized(new TextEncoder().encode(this.sessionId))

@@ -455,7 +455,7 @@ export class RealtimeSessionState {
       readonly elapsed?: number
     },
   ): void {
-    if (delegateId.length === 0 || update.summary.length === 0) {
+    if (delegateId === '' || update.summary === '') {
       throw new TypeError('delegate_id and summary are required')
     }
     const previous = this.#delegates.get(delegateId)

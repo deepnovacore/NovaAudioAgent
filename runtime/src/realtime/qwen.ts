@@ -366,7 +366,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
 
   async cancelResponse(responseId: string, signal: AbortSignal): Promise<void> {
     void signal
-    if (typeof responseId !== 'string' || responseId.length === 0) {
+    if (typeof responseId !== 'string' || responseId === '') {
       throw new TypeError('responseId must be a non-empty string')
     }
     if (this.#epoch < 1 || this.#socket === undefined) {
@@ -649,7 +649,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     }
     const details = response.status_details
     const rawReason = isJsonObject(details) ? details.reason : undefined
-    const reason = typeof rawReason === 'string' && rawReason.length > 0 ? rawReason : rawStatus
+    const reason = typeof rawReason === 'string' && rawReason !== '' ? rawReason : rawStatus
     const id = eventId(response, 'id')
     if (this.#pendingCancel?.epoch === epoch && this.#pendingCancel.responseId === id) {
       this.#pendingCancel = undefined
@@ -985,7 +985,7 @@ function sessionId(event: Readonly<Record<string, JsonValue>>, expected: string)
   }
   const session = event.session
   const id = isJsonObject(session) ? session.id : undefined
-  if (typeof id !== 'string' || id.length === 0) {
+  if (typeof id !== 'string' || id === '') {
     throw new QwenRealtimeError('qwen realtime omitted session identity')
   }
   return id
@@ -993,7 +993,7 @@ function sessionId(event: Readonly<Record<string, JsonValue>>, expected: string)
 
 function eventId(event: Readonly<Record<string, JsonValue>>, field: string): string {
   const value = event[field]
-  if (typeof value !== 'string' || value.length === 0) {
+  if (typeof value !== 'string' || value === '') {
     throw new QwenRealtimeError(`qwen event omitted ${field}`)
   }
   return value
@@ -1005,7 +1005,7 @@ function optionalEventId(
 ): string | null {
   const value = event[field]
   if (value === null || value === undefined) return null
-  if (typeof value !== 'string' || value.length === 0) {
+  if (typeof value !== 'string' || value === '') {
     throw new QwenRealtimeError(`qwen event has invalid ${field}`)
   }
   return value
@@ -1019,7 +1019,7 @@ function eventText(event: Readonly<Record<string, JsonValue>>, field: string): s
 
 function responseId(event: Readonly<Record<string, JsonValue>>): string {
   const direct = event.response_id
-  if (typeof direct === 'string' && direct.length > 0) return direct
+  if (typeof direct === 'string' && direct !== '') return direct
   const response = event.response
   if (isJsonObject(response)) return eventId(response, 'id')
   throw new QwenRealtimeError('qwen event omitted response identity')
@@ -1029,5 +1029,5 @@ function confirmedItemId(event: Readonly<Record<string, JsonValue>>): string | u
   const item = event.item
   if (!isJsonObject(item)) return undefined
   const id = item.id
-  return typeof id === 'string' && id.length > 0 ? id : undefined
+  return typeof id === 'string' && id !== '' ? id : undefined
 }

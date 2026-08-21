@@ -80,7 +80,7 @@ export class PlaybackRegistry {
   }
 
   openResponse(input: {readonly sessionEpoch: number; readonly responseId: string}): PlaybackGeneration {
-    if (!Number.isInteger(input.sessionEpoch) || input.sessionEpoch < 1 || input.responseId.length === 0) {
+    if (!Number.isInteger(input.sessionEpoch) || input.sessionEpoch < 1 || input.responseId === '') {
       throw new Error('sessionEpoch and responseId are required')
     }
     const providerIdentity = providerKey(input.sessionEpoch, input.responseId)
@@ -303,7 +303,7 @@ export class PlaybackRegistry {
 
   #requiredId(): string {
     const value = this.#idFactory()
-    if (value.length === 0) throw new Error('playback ids must be non-empty')
+    if (value === '') throw new Error('playback ids must be non-empty')
     return value
   }
 }

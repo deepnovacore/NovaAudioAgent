@@ -139,6 +139,8 @@ test('normalizeSettings bounds the voice name and refuses control characters', (
   assert.equal(normalizeSettings({ voice: 'long\nanqian' }).voice, 'longanqian')
   assert.equal(normalizeSettings({ voice: 42 }).voice, 'longanqian')
   assert.equal(normalizeSettings({ voice: 'x'.repeat(64) }).voice, 'x'.repeat(64))
+  assert.equal(normalizeSettings({ voice: '😀'.repeat(64) }).voice, '😀'.repeat(64))
+  assert.equal(normalizeSettings({ voice: '😀'.repeat(65) }).voice, 'longanqian')
 })
 
 test('normalizeSettings falls back per field to a caller-supplied base', () => {

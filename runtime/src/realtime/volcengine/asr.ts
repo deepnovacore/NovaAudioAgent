@@ -120,7 +120,7 @@ export class DoubaoAsrProtocol {
     if (nested !== decoded) raiseProviderError(nested)
     const text = extractText(decoded)
     const final = flags === 0x03 || sequence < 0 || decoded.is_last_package === true
-    return text.length > 0 || final ? {text, final} : null
+    return text !== '' || final ? {text, final} : null
   }
 }
 
@@ -415,7 +415,7 @@ function positiveMilliseconds(value: number): boolean {
 }
 
 function nonblank(value: unknown): value is string {
-  return typeof value === 'string' && stripLikePython(value).length > 0
+  return typeof value === 'string' && stripLikePython(value) !== ''
 }
 
 const MAX_SIGNED_SEQUENCE = 2_147_483_647

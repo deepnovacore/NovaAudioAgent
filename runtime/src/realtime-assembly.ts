@@ -466,8 +466,8 @@ function validFunctionSchemaName(schema: unknown): string | null {
   const declaration = schema.function
   if (!isUnknownObject(declaration)) return null
   const {name, description, parameters} = declaration
-  if (typeof name !== 'string' || name.length === 0) return null
-  if (typeof description !== 'string' || description.length === 0) return null
+  if (typeof name !== 'string' || name === '') return null
+  if (typeof description !== 'string' || description === '') return null
   if (!isUnknownObject(parameters) || parameters.type !== 'object') return null
   if (!isUnknownObject(parameters.properties)) return null
   return name

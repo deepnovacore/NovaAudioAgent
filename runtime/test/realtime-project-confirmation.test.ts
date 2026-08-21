@@ -315,6 +315,32 @@ test('a nonce that is empty or oversized is refused', () => {
       `nonce length ${nonce.length}`,
     )
   }
+  const accepted = new ProjectConfirmationController({
+    clock: new VirtualClock(),
+    idFactory: () => '😀'.repeat(128),
+  })
+  assert.doesNotThrow(() => accepted.prepare({
+    action: 'create',
+    workspace_display_name: '研究项目',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: null,
+    origin_ref: 'conversation:1',
+  }))
+  const rejected = new ProjectConfirmationController({
+    clock: new VirtualClock(),
+    idFactory: () => '😀'.repeat(129),
+  })
+  assert.throws(() => rejected.prepare({
+    action: 'create',
+    workspace_display_name: '研究项目',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: null,
+    origin_ref: 'conversation:1',
+  }), /invalid confirmation nonce/u)
 })
 
 test('an observer that throws does not strand the ones after it', () => {

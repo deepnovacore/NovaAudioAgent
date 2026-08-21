@@ -124,7 +124,7 @@ export class Channel {
   uncompressed = 0
 
   constructor(name: string) {
-    if (name.length === 0) throw new TypeError('channel name cannot be empty')
+    if (name === '') throw new TypeError('channel name cannot be empty')
     this.name = name
   }
 

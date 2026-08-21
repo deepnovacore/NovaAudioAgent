@@ -504,8 +504,8 @@ async function handleControl(message) {
     const workspace = message.workspace_display_name
     const session = message.session_title
     const valid = keys === 'pending_confirmation,session_title,type,workspace_display_name'
-      && (workspace === null || (typeof workspace === 'string' && workspace.length <= 80))
-      && (session === null || (typeof session === 'string' && session.length <= 120))
+      && (workspace === null || (typeof workspace === 'string' && [...workspace].length <= 80))
+      && (session === null || (typeof session === 'string' && [...session].length <= 120))
       && typeof message.pending_confirmation === 'boolean'
     if (valid) {
       axes.workspace = workspace || ''

@@ -212,7 +212,7 @@ function decodeDelegate(
   argumentsObject: Record<string, JsonValue>,
 ): ActionDelta | ContractFailureDelta {
   const {origin_ref: originRef, ...request} = argumentsObject
-  if (typeof originRef !== 'string' || originRef.length === 0) {
+  if (typeof originRef !== 'string' || originRef === '') {
     return {kind: 'contract_failure', code: 'missing_origin_ref', tool_name: name}
   }
   if (binding.executor === null || binding.op === null) {

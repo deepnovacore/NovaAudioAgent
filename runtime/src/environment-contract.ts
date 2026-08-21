@@ -121,7 +121,7 @@ export function findRetiredConfiguration(environment: NodeJS.ProcessEnv):
   | {readonly capability: 'ha' | 'autoglm'; readonly fields: readonly string[]}
   | null {
   const configured = environment.NOVA_AUDIO_AGENT_EXECUTORS
-  const selectorValues = configured === undefined || configured.length === 0
+  const selectorValues = configured === undefined || configured === ''
     ? [environment.NOVA_AUDIO_AGENT_EXECUTOR ?? '']
     : configured.split(',')
   for (const value of selectorValues) {

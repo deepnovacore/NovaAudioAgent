@@ -1092,7 +1092,7 @@ export class CoreRuntime {
       }
       const channel = this.memory.channels.get(event.payload.channel)
       if (channel === undefined || job.compression === null) return
-      if (summary.length > 0) {
+      if (summary !== '') {
         channel.summary = summary
         channel.uncompressed = Math.max(0, channel.uncompressed - job.compression.snapshotCount)
         const policy = this.memory.policies.get(event.payload.channel)
@@ -1158,7 +1158,7 @@ export class CoreRuntime {
     eventSequence: number,
     job?: ModelJob,
   ): void {
-    if (speak.act === 'none' || speak.text.length === 0) return
+    if (speak.act === 'none' || speak.text === '') return
     const prepared = job === undefined ? undefined : this.#preparedSpeech.get(job.jobId)
     if (job !== undefined) this.#preparedSpeech.delete(job.jobId)
     const decision = prepared?.decision ?? this.floor.decide(reason.priority)
@@ -1203,7 +1203,7 @@ export class CoreRuntime {
     // would post a second speak_start for the same utterance.
     if (this.#preparedSpeech.has(job.jobId)) return
     const parsed = fastBrainOutputSchema.safeParse(output)
-    if (!parsed.success || parsed.data.speak.act === 'none' || parsed.data.speak.text.length === 0) {
+    if (!parsed.success || parsed.data.speak.act === 'none' || parsed.data.speak.text === '') {
       return
     }
     const decision = this.floor.decide(job.reason.priority)

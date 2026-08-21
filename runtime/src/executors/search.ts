@@ -466,7 +466,7 @@ function canonicalizeUrl(value: unknown): string {
       canonical = canonical.slice(0, slash) + canonical.slice(slash + 1)
     }
   }
-  return canonical.length <= MAX_URL_CHARS ? canonical : ''
+  return codePointLengthLikePython(canonical) <= MAX_URL_CHARS ? canonical : ''
 }
 
 /**

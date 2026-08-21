@@ -65,7 +65,7 @@ function validHeartbeat(value) {
 function validVoice(value) {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
-  if (!trimmed || trimmed.length > MAX_VOICE_LENGTH) return null
+  if (trimmed === '' || [...trimmed].length > MAX_VOICE_LENGTH) return null
   if (CONTROL_CHARACTERS.test(trimmed)) return null
   return trimmed
 }
@@ -77,7 +77,7 @@ function validSecretEntry(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
   if (entry.enc !== 'safeStorage' && entry.enc !== 'none') return null
   const { data } = entry
-  if (typeof data !== 'string' || !data || data.length > MAX_CIPHERTEXT_BASE64) return null
+  if (typeof data !== 'string' || data === '' || data.length > MAX_CIPHERTEXT_BASE64) return null
   if (data.length % 4 !== 0 || !BASE64.test(data)) return null
   return { enc: entry.enc, data }
 }
@@ -203,7 +203,7 @@ function updatedSecrets(stored, updates, codec) {
   for (const key of SECRET_KEYS) {
     if (!Object.hasOwn(updates, key)) continue
     const value = updates[key]
-    if (typeof value !== 'string' || value.length > MAX_SECRET_LENGTH) {
+    if (typeof value !== 'string' || [...value].length > MAX_SECRET_LENGTH) {
       rejected.push(key)
       continue
     }

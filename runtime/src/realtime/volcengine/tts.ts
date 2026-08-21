@@ -423,7 +423,7 @@ function ttsPositiveMilliseconds(value: number): boolean {
 }
 
 function ttsNonblank(value: unknown): value is string {
-  return typeof value === 'string' && stripLikePython(value).length > 0
+  return typeof value === 'string' && stripLikePython(value) !== ''
 }
 
 function ttsId(idFactory: () => string): string {

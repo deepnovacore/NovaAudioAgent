@@ -43,7 +43,7 @@ import { ItemDeliveryUncertainError } from './protocol.js'
 import { packRecoveryTurns, projectRecoveryTurns, type RecoveryTurn } from './history.js'
 import { RealtimeDeliveryError, type RealtimeSession } from './session.js'
 import { MAX_CONTINUATION_TASK_SUMMARY, type CaptionFrame } from './session-state.js'
-import {stripLikePython} from '../python-text.js'
+import {codePointLengthLikePython, stripLikePython} from '../python-text.js'
 import {
   GUARD_ALERT_DEADLINE_S,
   GUARD_CLEAR_ACK_DEADLINE_S,
@@ -3318,7 +3318,10 @@ export class RealtimeService {
               outcome: historyOutcome,
               item_count: history.length,
               pair_count: Math.floor(history.length / 2),
-              character_count: history.reduce((total, turn) => total + turn.text.length, 0),
+              character_count: history.reduce(
+                (total, turn) => total + codePointLengthLikePython(turn.text),
+                0,
+              ),
             })
           }
           this.#awaitingUserOrigin = false

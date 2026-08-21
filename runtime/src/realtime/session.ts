@@ -19,6 +19,7 @@
 import type { Clock } from '../clock.js'
 import { Floor } from '../floor.js'
 import { USER_PRIORITY } from '../memory.js'
+import {codePointLengthLikePython} from '../python-text.js'
 import type {
   PlaybackCompletion,
   PlaybackGeneration,
@@ -1631,7 +1632,7 @@ function recoveryContent(snapshot: RealtimeSnapshot): string {
     const trial = [...header, ...activeWork, line]
     // The omission notice has to fit too, or dropping a line could make the content longer.
     if (remaining > 0) trial.push(`active_work_omitted=${remaining}`)
-    if ([...trial, ...footer].join('\n').length > MAX_REALTIME_TEXT) break
+    if (codePointLengthLikePython([...trial, ...footer].join('\n')) > MAX_REALTIME_TEXT) break
     activeWork.push(line)
   }
   const omitted = snapshot.active_delegates.length - activeWork.length

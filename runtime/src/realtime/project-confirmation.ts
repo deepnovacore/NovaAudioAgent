@@ -15,7 +15,7 @@
  */
 
 import type { Clock } from '../clock.js'
-import {isPythonSpace} from '../python-text.js'
+import {codePointLengthLikePython, isPythonSpace} from '../python-text.js'
 import { isOtherCategory, isPunctuationCategory } from '../unicode-tables.js'
 import { normalizeNfkcPinned } from '../unicode-normalize.js'
 
@@ -167,7 +167,7 @@ export class ProjectConfirmationController {
   }): ProjectProposal {
     validatePrepared(input)
     const nonce = this.#idFactory()
-    if (typeof nonce !== 'string' || nonce === '' || nonce.length > 128) {
+    if (typeof nonce !== 'string' || nonce === '' || codePointLengthLikePython(nonce) > 128) {
       throw new TypeError('invalid confirmation nonce')
     }
     const proposal: ProjectProposal = Object.freeze({

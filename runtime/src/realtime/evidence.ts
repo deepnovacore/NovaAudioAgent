@@ -38,14 +38,14 @@ export function finalSpeechView(outcome: string, content: unknown): string {
     upstreamTruncated = finalMessage.truncated === true
   }
   if (text === undefined) {
-    const category = typeof code === 'string' && code.length > 0 ? code : 'no_final_message'
+    const category = typeof code === 'string' && code !== '' ? code : 'no_final_message'
     return `Codex 任务未能确认完成（${category}）`
   }
   const prepared = prepareForSpeech(text, {limit: SPEECH_FINAL_LIMIT})
   const note = upstreamTruncated || prepared.truncated ? '（结果较长，已截取要点）' : ''
   if (outcome === 'ok') return `Codex 报告任务完成：${prepared.text}${note}`
   if (outcome === 'failed') {
-    const category = typeof code === 'string' && code.length > 0 ? `（${code}）` : ''
+    const category = typeof code === 'string' && code !== '' ? `（${code}）` : ''
     return `Codex 任务失败${category}：${prepared.text}${note}`
   }
   return `Codex 任务结果不确定：${prepared.text}${note}`
@@ -125,7 +125,7 @@ export function safeMemoryEvidence(item: MemoryItem): string | null {
     else if (typeof value === 'string' || typeof value === 'number') {
       rendered = stripLikePython(String(value))
     }
-    if (rendered !== undefined && rendered.length > 0) fields.push(`${key}=${rendered}`)
+    if (rendered !== undefined && rendered !== '') fields.push(`${key}=${rendered}`)
   }
   if (fields.length === 0) return null
   return prepareForSpeech(`${item.channel} 报告：${fields.join('；')}`, {
@@ -168,9 +168,9 @@ function searchEvidence(content: Readonly<Record<string, JsonValue>>): string | 
       const title = preparedScalar(result.title, 120)
       const source = preparedScalar(result.source_label, 80)
       const snippet = preparedScalar(result.snippet, 240)
-      const head = title.length > 0 && source.length > 0 ? `${title}（${source}）` : title || source
-      const rendered = head.length > 0 && snippet.length > 0 ? `${head}：${snippet}` : head || snippet
-      if (rendered.length > 0) renderedResults.push(rendered)
+      const head = title !== '' && source !== '' ? `${title}（${source}）` : title || source
+      const rendered = head !== '' && snippet !== '' ? `${head}：${snippet}` : head || snippet
+      if (rendered !== '') renderedResults.push(rendered)
     }
   }
   if (renderedResults.length === 0) return null
@@ -186,7 +186,7 @@ function preparedScalar(value: unknown, limit: number): string {
 
 function nonemptyPrepared(value: string): string | null {
   const prepared = prepareForSpeech(value, {limit: SPEECH_FINAL_LIMIT}).text
-  return prepared.length > 0 ? prepared : null
+  return prepared !== '' ? prepared : null
 }
 
 function selectKeys(

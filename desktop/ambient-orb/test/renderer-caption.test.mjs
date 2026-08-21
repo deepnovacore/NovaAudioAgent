@@ -33,4 +33,6 @@ test('renderer accepts the closed public Codex project message', async () => {
   assert.match(source, /message\.type === 'codex\.project'/)
   assert.match(source, /workspace_display_name/)
   assert.match(source, /pending_confirmation/)
+  assert.match(source, /\[\.\.\.workspace\]\.length <= 80/)
+  assert.match(source, /\[\.\.\.session\]\.length <= 120/)
 })

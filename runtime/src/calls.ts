@@ -123,7 +123,7 @@ export async function runFastBrainCall(
         // An empty delta does not count as speaking. The provider's first chunk often
         // carries only a role; treating it as the first token would burn a Floor turn and
         // the preempt path would cut off someone else's utterance for not one word.
-        if (delta.text.length === 0) continue
+        if (delta.text === '') continue
         // Arbitration happens the instant the first character arrives, before it enters
         // the sink. Asking "should I be speaking?" after the words are out is meaningless,
         // and asking at stream start is too early: it is not yet known whether there is

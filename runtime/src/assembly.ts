@@ -128,7 +128,7 @@ function resolveExecutors(
 
 function requireApiKey(settings: Settings): string {
   const key = stripLikePython(settings.model_api_key ?? '')
-  if (key.length === 0) {
+  if (key === '') {
     // Never echo configuration values; the name is enough to act on.
     throw new AssemblyError('缺少 NOVA_AUDIO_AGENT_MODEL_API_KEY')
   }
@@ -137,7 +137,7 @@ function requireApiKey(settings: Settings): string {
 
 function requireTavilyApiKey(settings: Settings): string {
   const key = stripLikePython(settings.tavily_api_key ?? '')
-  if (key.length === 0) {
+  if (key === '') {
     throw new AssemblyError('缺少 TAVILY_API_KEY')
   }
   return key
@@ -336,7 +336,7 @@ export function foldFastBrainRecord(record: {
   readonly contract_failures: readonly {readonly code: string, readonly tool_name: string | null}[]
 }): unknown {
   return {
-    speak: record.spoken_text.length === 0
+    speak: record.spoken_text === ''
       ? {act: 'none'}
       : {act: record.speak_act, text: record.spoken_text},
     action: record.action,

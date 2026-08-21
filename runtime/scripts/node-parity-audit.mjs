@@ -1,13 +1,16 @@
 import {createHash} from 'node:crypto'
-import {readdir, readFile, writeFile} from 'node:fs/promises'
+import {readdir, readFile} from 'node:fs/promises'
 import {extname, relative, resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
 import ts from 'typescript'
 
 const mode = process.argv[2]
-if (mode !== '--check' && mode !== '--write') {
-  process.stderr.write('Usage: node runtime/scripts/node-parity-audit.mjs --check|--write\n')
+if (mode === '--write') {
+  process.stderr.write('Node parity audit refuses bulk exemptions; review each occurrence manually\n')
+  process.exitCode = 2
+} else if (mode !== '--check' && mode !== '--inventory') {
+  process.stderr.write('Usage: node runtime/scripts/node-parity-audit.mjs --check|--inventory\n')
   process.exitCode = 2
 } else {
   const runtimeRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -37,20 +40,11 @@ if (mode !== '--check' && mode !== '--write') {
   }
   const files = sourceFiles.map(path => relative(repositoryRoot, path).replaceAll('\\', '/'))
   const current = {schema_version: 1, files, occurrences}
-  if (mode === '--write') {
-    const document = {
-      ...current,
-      occurrences: occurrences.map(occurrence => ({
-        ...occurrence,
-        disposition: defaultDisposition(occurrence.kind),
-        test: 'runtime/test/node-parity-audit.test.ts',
-      })),
-    }
-    await writeFile(manifestPath, `${JSON.stringify(document, null, 2)}\n`)
-    process.stdout.write(`wrote Node parity audit: ${files.length} files, ${occurrences.length} occurrences\n`)
+  if (mode === '--inventory') {
+    process.stdout.write(`${JSON.stringify(current, null, 2)}\n`)
   } else {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-    validateManifest(manifest, current)
+    await validateManifest(manifest, current, repositoryRoot)
     process.stdout.write(`Node parity audit passed: ${files.length} files, ${occurrences.length} occurrences\n`)
   }
 }
@@ -73,6 +67,8 @@ function visitSource(source, checker, file, output) {
       file,
       kind,
       occurrence_index: occurrenceIndex,
+      line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
+      snippet,
       snippet_sha256: createHash('sha256').update(snippet).digest('hex'),
     })
     occurrenceIndex += 1
@@ -125,21 +121,22 @@ function isNumberType(type) {
   return (type.flags & ts.TypeFlags.NumberLike) !== 0
 }
 
-function defaultDisposition(kind) {
-  if (kind === 'string_length') return 'intentional_utf16'
-  if (kind === 'string_trim' || kind === 'locale_unicode' || kind === 'unicode_property_regex') {
-    return 'host_only_unicode'
-  }
-  return 'wire_json'
-}
-
-function validateManifest(manifest, current) {
-  if (manifest?.schema_version !== 1 || !Array.isArray(manifest.files)
+async function validateManifest(manifest, current, repositoryRoot) {
+  if (manifest?.schema_version !== 2 || !Array.isArray(manifest.files)
     || !Array.isArray(manifest.occurrences)) throw new Error('invalid Node parity audit manifest')
   if (JSON.stringify(manifest.files) !== JSON.stringify(current.files)) {
     throw new Error('Node parity audit source-file inventory changed')
   }
-  const allowed = new Set(['byte_length', 'array_length', 'wire_json', 'host_only_unicode', 'intentional_utf16'])
+  const allowedByKind = new Map([
+    ['string_length', new Set(['byte_length', 'intentional_utf16'])],
+    ['string_trim', new Set(['host_only_unicode'])],
+    ['locale_unicode', new Set(['host_only_unicode'])],
+    ['unicode_property_regex', new Set(['host_only_unicode'])],
+    ['number_format', new Set(['wire_json'])],
+    ['numeric_string', new Set(['wire_json'])],
+    ['numeric_template', new Set(['wire_json'])],
+    ['raw_json', new Set(['wire_json'])],
+  ])
   if (manifest.occurrences.length !== current.occurrences.length) {
     throw new Error('Node parity audit occurrence count changed')
   }
@@ -149,8 +146,22 @@ function validateManifest(manifest, current) {
     for (const field of ['file', 'kind', 'occurrence_index', 'snippet_sha256']) {
       if (expected?.[field] !== actual[field]) throw new Error(`Node parity audit drift: ${actual.file}`)
     }
-    if (!allowed.has(expected.disposition) || typeof expected.test !== 'string' || expected.test === '') {
+    const allowed = allowedByKind.get(actual.kind)
+    if (allowed === undefined || !allowed.has(expected.disposition)
+      || typeof expected.test !== 'string' || expected.test === ''
+      || typeof expected.behavior !== 'string' || expected.behavior === ''
+      || expected.test === 'runtime/test/node-parity-audit.test.ts'
+      || expected.test.startsWith('/') || expected.test.includes('..')) {
       throw new Error(`invalid Node parity audit disposition: ${actual.file}`)
+    }
+    let testSource
+    try {
+      testSource = await readFile(resolve(repositoryRoot, expected.test), 'utf8')
+    } catch {
+      throw new Error(`Node parity audit behavior test missing: ${actual.file}`)
+    }
+    if (!testSource.includes(expected.behavior)) {
+      throw new Error(`Node parity audit behavior name changed: ${actual.file}`)
     }
   }
 }

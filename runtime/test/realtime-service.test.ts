@@ -2518,10 +2518,14 @@ test('an acknowledgement bound to an unfinished continuation is reopened by the 
  * token on each preemption is what stops a deadline belonging to a resolved one from tearing down its
  * successor.
  */
-function guardService(options: {readonly controlledReconnect?: boolean} = {}): {
+function guardService(options: {
+  readonly controlledReconnect?: boolean
+  readonly recoveryTexts?: readonly [string, string]
+} = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
   readonly clock: VirtualClock
+  readonly telemetry: {readonly kind: string; readonly payload: Readonly<Record<string, JsonValue>>}[]
 } {
   // Priority 90 is inside the preemption band, which is what makes a queued item preemptive at all.
   const manifest = executorManifestSchema.parse({
@@ -2552,8 +2556,23 @@ function guardService(options: {readonly controlledReconnect?: boolean} = {}): {
   })
   const clock = new VirtualClock()
   const memory = new Memory({policies: [manifest.policy]})
+  if (options.recoveryTexts !== undefined) {
+    memory.append('conversation', {
+      ts: 1,
+      trust: 'trusted_user',
+      priority: 100,
+      content: {text: options.recoveryTexts[0]},
+    })
+    memory.append('conversation', {
+      ts: 2,
+      trust: 'trusted_system',
+      priority: 100,
+      content: {text: options.recoveryTexts[1], delivery: 'spoken', played_ms: 1},
+    })
+  }
   const executors = new Map([[manifest.name, {manifest}]])
   const actions: string[] = []
+  const telemetry: {kind: string; payload: Readonly<Record<string, JsonValue>>}[] = []
   let ids = 0
   const nextId = (): string => `id-${++ids}`
   let epoch = 0
@@ -2621,9 +2640,21 @@ function guardService(options: {readonly controlledReconnect?: boolean} = {}): {
     }),
     idFactory: nextId,
     controlledGuardReconnect: options.controlledReconnect ?? false,
+    ...(options.recoveryTexts === undefined
+      ? {}
+      : {
+          guardHistoryRecovery: 'packed' as const,
+          guardHistoryPairs: 1,
+          telemetry: {
+            record: (kind: string, payload: Readonly<Record<string, JsonValue>>) => {
+              telemetry.push({kind, payload})
+            },
+            close: () => undefined,
+          },
+        }),
     onDiagnostic: () => undefined,
   })
-  return {service, actions, clock}
+  return {service, actions, clock, telemetry}
 }
 
 function guardFact(eventId = 'final:d-guard'): Parameters<RealtimeService['queueHostItem']>[0] {
@@ -2782,6 +2813,32 @@ test('a cancel rejection with the gate open replaces the provider session', asyn
     'the session was replaced',
   )
   assert.equal(service.guardPreemptionForTest?.reconnect_permit_consumed, true, 'permit spent')
+})
+
+test('Guard recovery telemetry counts Python code points in astral history', async () => {
+  const {service, telemetry} = guardService({
+    controlledReconnect: true,
+    recoveryTexts: ['😀', 'A😀'],
+  })
+  await service.connect()
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+  service.queueHostItem(guardFact(), {priority: 90, preemptive: true})
+  await service.flushHostItems()
+  await service.handleEvent({
+    kind: 'response_cancel_rejected',
+    session_epoch: 1,
+    response_id: 'r-1',
+    cancel_request_id: 'cancel-1',
+    reason: 'no_active_response',
+  })
+  const recovery = telemetry.find(item => item.kind === 'guard.history_recovery')
+  assert.equal(recovery?.payload.character_count, 3)
 })
 
 test('a cancel rejection for a turn that already spoke is ignored', async () => {

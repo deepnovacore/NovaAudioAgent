@@ -144,7 +144,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     )
   }
   const configuredExecutor = optionalString(environment.NOVA_AUDIO_AGENT_EXECUTOR)
-  const executor = configuredExecutor === undefined || configuredExecutor.length === 0
+  const executor = configuredExecutor === undefined || configuredExecutor === ''
     ? 'fast_sim'
     : configuredExecutor
   const executors = parseExecutors(environment.NOVA_AUDIO_AGENT_EXECUTORS, executor)
@@ -269,16 +269,16 @@ export function requireQwenRealtime(settings: Settings): QwenRealtimeConfig {
   if (!url.startsWith('wss://')) {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_URL 必须使用 wss://')
   }
-  if (model.length === 0) {
+  if (model === '') {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL 不能为空')
   }
-  if (voice.length === 0) {
+  if (voice === '') {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE 不能为空')
   }
   const realtimeKey = stripLikePython(settings.dashscope_api_key ?? '')
   const modelKey = stripLikePython(settings.model_api_key ?? '')
   const apiKey = realtimeKey || modelKey
-  if (apiKey.length === 0) {
+  if (apiKey === '') {
     throw new ConfigurationError('缺少 DASHSCOPE_API_KEY 或 NOVA_AUDIO_AGENT_MODEL_API_KEY')
   }
   return {url, model, voice, apiKey}
@@ -288,9 +288,9 @@ export function requireVolcengineRealtime(settings: Settings): VolcengineRealtim
   const arkApiKey = stripLikePython(settings.ark_api_key ?? '')
   const ttsApiKey = stripLikePython(settings.doubao_bigmodel_api_key ?? '')
   const asrApiKey = stripLikePython(settings.doubao_asr_api_key ?? '') || ttsApiKey
-  if (arkApiKey.length === 0) throw new ConfigurationError('缺少 ARK_API_KEY')
-  if (ttsApiKey.length === 0) throw new ConfigurationError('缺少 DOUBAO_BIGMODEL_API_KEY')
-  if (asrApiKey.length === 0) {
+  if (arkApiKey === '') throw new ConfigurationError('缺少 ARK_API_KEY')
+  if (ttsApiKey === '') throw new ConfigurationError('缺少 DOUBAO_BIGMODEL_API_KEY')
+  if (asrApiKey === '') {
     throw new ConfigurationError('缺少 DOUBAO_ASR_API_KEY 或 DOUBAO_BIGMODEL_API_KEY')
   }
   if (settings.doubao_asr_chunk_ms <= 0) {
@@ -343,9 +343,9 @@ export function requireVolcengineRealtime(settings: Settings): VolcengineRealtim
 }
 
 function parseExecutors(raw: string | undefined, fallback: string): string[] {
-  if (raw === undefined || raw.length === 0) return [fallback]
+  if (raw === undefined || raw === '') return [fallback]
   const names = raw.split(',').map(stripLikePython)
-  if (names.some(name => name.length === 0)) {
+  if (names.some(name => name === '')) {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_EXECUTORS contains an empty name')
   }
   if (new Set(names).size !== names.length) {
@@ -416,7 +416,7 @@ function rawEnvironmentValue(value: string | undefined): string | undefined {
 
 function requiredSetting(value: string, name: string): string {
   const normalized = stripLikePython(value)
-  if (normalized.length === 0) throw new ConfigurationError(`${name} 不能为空`)
+  if (normalized === '') throw new ConfigurationError(`${name} 不能为空`)
   return normalized
 }
 
@@ -433,9 +433,9 @@ function secureEndpoint(value: string, scheme: 'https' | 'wss', name: string): s
   } catch {
     // The fixed error below deliberately does not retain the submitted URL.
   }
-  const valid = parsed?.protocol === `${scheme}:` && parsed.hostname.length > 0
-    && !authority.includes('@') && parsed.username.length === 0 && parsed.password.length === 0
-    && parsed.hash.length === 0
+  const valid = parsed?.protocol === `${scheme}:` && parsed.hostname !== ''
+    && !authority.includes('@') && parsed.username === '' && parsed.password === ''
+    && parsed.hash === ''
   if (!valid) {
     throw new ConfigurationError(`${name} 必须是安全的 ${scheme}:// 地址`)
   }
