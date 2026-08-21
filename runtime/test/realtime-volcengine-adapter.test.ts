@@ -933,7 +933,13 @@ test('close bounds pending endpoint work and gives a fresh epoch an independent 
     void oldAudio.catch(() => undefined)
     await waitFor('old endpoint feed', () => endpointing.calls === 1)
     try {
-      await assert.rejects(settleWithin('bounded endpoint close', adapter.close(), 150),
+      const closing = adapter.close()
+      void closing.catch(() => undefined)
+      await assert.rejects(settleWithin('post-close audio refusal', adapter.sendAudio(
+        new Uint8Array([0, 0]), new AbortController().signal,
+      ), 100), (error: unknown) => error instanceof VolcengineRealtimeError
+        && error.code === 'state')
+      await assert.rejects(settleWithin('bounded endpoint close', closing, 150),
         (error: unknown) => error instanceof VolcengineRealtimeError && error.code === 'closed')
       await adapter.connect({tools: [], signal: new AbortController().signal})
       await settleWithin('fresh audio tail', adapter.sendAudio(

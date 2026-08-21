@@ -325,8 +325,13 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
     } catch {
       return Promise.reject(new VolcengineRealtimeError('configuration'))
     }
+    let owner: EpochOwner
+    try {
+      owner = this.#requiredOwner()
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new VolcengineRealtimeError('state'))
+    }
     const operation = this.#audioTail.then(async () => {
-      const owner = this.#requiredOwner()
       const combined = combineSignals(owner.controller.signal, signal)
       throwIfAborted(combined)
       let decisions: readonly VolcEndpointingEvent[]
