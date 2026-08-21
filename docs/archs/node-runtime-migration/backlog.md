@@ -69,15 +69,12 @@ Ruff format check, Python build, CLI help, Electron build, and production npm au
 The execution environment used for this pass exposes `.git` read-only, so the documented backup
 branch and commits remain an operator step; tracked source remains recoverable from `f452077`.
 
-The current checkpoint has 186 passing runtime tests, 299 passing Electron tests, 2,782 passing
-pytest cases with exit 0, and Ruff clean over 241 files. Twenty runtime fixtures and fourteen Qwen
-normalization scenarios are Python-exported and matched by Node on canonical bytes, in both
-directions. The Qwen Audio Realtime adapter, its bounded WebSocket transport, and a live DashScope
-smoke are landed. Review fixes since the foundation landed are listed in the parity matrix
-checkpoint. Stage 1 acceptance is still open on two counts: production desktop assembly does not
-instantiate `CausalRuntime`, so no renderer traffic is served, and the Electron utility-process
-smoke stays environment-blocked. Desktop audio remains unwired above the adapter; a placeholder that
-silently consumes PCM is not an acceptable milestone.
+The current checkpoint includes Python-owned differential fixtures, the Qwen and Volcengine
+provider implementations, and a production desktop assembly that owns `CausalRuntime`, realtime
+service/provider resources, renderer traffic, Camera, and Codex. Counts are intentionally left to
+the parity matrix and CI instead of copied here. GUI Electron, live provider, native endpointing,
+clean-machine, signing, and real audio/video hardware gates remain pending external evidence; no
+offline fixture or successful constructor is reported as one of those external passes.
 
 In-place Python refactors were considered and rejected: Python is the behavioral oracle and is
 scheduled for removal, so duplication found by the audit is not cleaned up in Python. It becomes

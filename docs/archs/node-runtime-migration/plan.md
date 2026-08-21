@@ -150,20 +150,17 @@ Implementation checkpoint, 2026-08-19:
   `npm run runtime:fixtures` and `npm run runtime:demo -- <scenario>`.
 - `CausalRuntime` owns the asynchronous model/executor task boundary: completions re-enter through
   the event queue, user ingress resolves to the applied MemoryRef, compressor calls receive frozen
-  snapshots, and shutdown aborts and boundedly awaits owned tasks. No production source constructs
-  it yet; provider/model adapters and the desktop service assembly remain required.
+  snapshots, and shutdown aborts and boundedly awaits owned tasks. The production assembly now owns
+  this runtime together with the provider, realtime service, desktop bridge, Camera, and Codex
+  resources.
 - The compiled Node desktop entry and authenticated single-client WebSocket transport are wired to
   Electron's `utilityProcess.fork()`, with Python still the default. The explicit utility-process
   smoke is present but cannot start Electron in the current headless macOS sandbox because
   `_RegisterApplication` has no WindowServer session; this is recorded as environment-blocked, not
   passing.
-- The current checkpoint has 147 passing runtime tests, 299 passing Electron tests, and Python/Node
-  fixture parity for twenty scenarios. The latest full Python run completed all 2,764 test cases but
-  returned failure because its deterministic phase measured 3.605 seconds against a 3.500-second
-  budget; this timing gate is not recorded as green. Strict TypeScript/Python lint and format checks,
-  both builds, the Python CLI smoke, and whitespace checks are rerun at each checkpoint. Stage 1 is
-  not accepted: a GUI-capable Electron smoke and a production assembly that instantiates
-  `CausalRuntime` with real model/provider ports are still required. Malformed executor output
+- Strict TypeScript/Python lint and format checks, both builds, the Python CLI smoke, and whitespace
+  checks are rerun at each checkpoint. External GUI, provider, clean-machine, native binding, and
+  hardware acceptance remains pending external evidence. Malformed executor output
   becomes a language-neutral, payload-free unknown handoff. Deadline evidence has an exact sensitive-request
   redaction fixture whose durable outputs are checked for sentinel leakage. Malformed model raw
   output is likewise absent from snapshots, and trace writes reject raw-prompt fields before bytes
@@ -182,9 +179,9 @@ Implementation checkpoint, 2026-08-19:
 - Provider-neutral realtime contracts and lifecycle are now implemented in TypeScript. They validate
   host items, response intents, normalized provider events, bounded aligned PCM16, strictly increasing
   session epochs, stale-event rejection, host-item confirmation identity, reconnect, and idempotent
-  close. This is shared substrate, not Qwen/Volcengine adapter parity or the full Python
-  `RealtimeSession`; desktop microphone audio remains deliberately unwired until the first real
-  provider adapter lands.
+  close. The production desktop assembly routes authenticated audio/control traffic through this
+  shared service and its selected Qwen or Volcengine provider; live device acceptance remains
+  pending external evidence.
 
 Stage 1 status, 2026-08-19: one item remains.
 
@@ -203,9 +200,9 @@ Stage 1 status, 2026-08-19: one item remains.
   `npm run smoke:node-backend --workspace @nova-audio-agent/ambient-orb` on a real desktop session;
   it is not recorded as passing until someone does.
 
-Desktop microphone audio and renderer control frames are still not routed into the runtime. That
-belongs with the realtime session port in Stage 2, not here: a placeholder that consumes PCM without
-a provider would be a milestone that looks like progress and is not.
+Desktop microphone audio and renderer control frames are routed through the production realtime
+assembly. GUI microphone, speaker, echo-cancellation, and interruption behavior still require the
+external hardware matrix and are not recorded as passing here.
 
 Review fixes landed on the foundation, each with its own gate: the reducer no longer derives its
 types from the fixture contract (`effects.ts` and `fixture-host.ts` split out, proven byte-identical
@@ -241,7 +238,8 @@ Stage 2 progress, 2026-08-19: the Qwen Audio Realtime adapter and its bounded We
 are ported. The wire protocol, the Chinese session instructions, the host-item wording and role
 split, the one-pending-cancel-per-epoch rule, and the provider error taxonomy are reproduced from
 the Python adapter and pinned by 14 Python-exported normalization scenarios matched on canonical
-bytes. `npm run runtime:smoke:qwen` passes against the live DashScope endpoint.
+bytes. The live DashScope smoke remains pending external evidence and is never inferred from offline
+transport fixtures.
 
 Two departures from Python are deliberate and documented in code. A transport close now yields the
 recoverable `disconnected` provider error: Python reaches that branch only on `EOFError`, which its
@@ -250,18 +248,15 @@ receiver does not catch, leaving the documented reconnect path unreachable in pr
 `injectHostItem` rejects a non-positive confirmation timeout, which the neutral session layer would
 otherwise let through.
 
-Still required above the adapter: the shared realtime session and service behavior, playback
-generation fencing wired to a provider, history recovery, caption ordering, memory-board projection,
-telemetry, and controlled Guard activation. Desktop microphone audio stays unwired until that
-assembly exists.
+The shared realtime session/service, playback fencing, history recovery, captions, memory-board,
+telemetry, controlled Guard activation, and desktop routing are assembled. Provider and hardware
+acceptance remain pending external evidence.
 
 ### LiveKit voice endpointing decision
 
-The published `@livekit/agents@1.6.4` package contains a real audio turn detector, not only the
-text/ChatContext EOU model from `@livekit/agents-plugin-livekit`. It exports
-`inference.TurnDetector`; the `v1-mini` path runs locally through `@livekit/local-inference`, while
-`v1` uses the LiveKit inference WebSocket and falls back to the local model. The same local native
-package exposes a stateful streaming VAD. Both consume mono 16 kHz int16 PCM.
+The provider-neutral contract targets the public `@livekit/agents@1.6.4` lifecycle for local
+endpointing. Repository tests pin the public-import boundary and explicit fallback outcomes; they do
+not prove that a `v1-mini` executor or native model runs on any release platform.
 
 The constructor alone is not a capability probe. Outside a LiveKit job context,
 `TurnDetector` has no inference executor and can return its positive default instead of a model
@@ -270,13 +265,13 @@ supported standalone API. Nova must therefore integrate through a supported `@li
 and audio-recognition lifecycle, or leave local EOT disabled; it must not import
 `@livekit/local-inference` directly, extract model weights, or copy inference code.
 
-The local package currently publishes native binaries for macOS arm64/x64, Linux arm64/x64 glibc,
-and Windows x64. Stage 2 must add installation and startup probes on every release platform, prewarm
+Stage 2 must add installation and startup probes on every release platform, prewarm
 the EOT and VAD models, and measure memory and first-turn latency. The probe must run discriminating
 synthetic speech/silence inputs through the actual executor path; successful construction or a
 positive default is insufficient. Unsupported platforms, a missing native binding, or a missing
 executor must produce an explicit capability result and use bounded silence endpointing. Cloud `v1`
-remains an optional, separately configured enhancement rather than a shipping requirement.
+remains an optional, separately configured enhancement rather than a shipping requirement. Every
+native/executor claim remains pending external evidence until those probes run in release CI.
 
 ### 3. Executors and vision
 

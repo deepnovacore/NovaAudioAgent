@@ -106,10 +106,10 @@ Scorecard and demo caveats:
 | Project boundary confirmation | confirmation tests | 52 classifier phrasings and 12 controller conversations matching on both legs | Same closed confirmation sets, same one-retry rule, same single-use commit authority; the expiry timer is always armed in Node (recorded divergence) |
 | Telemetry and trace redaction | telemetry/evidence tests | Node unit tests | No credentials or raw protected payloads |
 | Provider-neutral contract and lifecycle | realtime protocol/session tests | Zod and Node lifecycle tests for host items, events, PCM, epoch, reconnect, and close; 26 Python-exported provider-frame session scenarios matching on both legs | Shared contract is used by both production adapters; `accept`, captions, fence/preempt, playback acknowledgement, continuation, and both reconnect paths are ported and gated |
-| Qwen provider protocol | realtime Qwen tests | 18 Python-exported normalization scenarios plus real-loopback transport tests; live smoke passing | Session, playback fencing, and recovery still required above the adapter |
+| Qwen provider protocol | realtime Qwen tests | 18 Python-exported normalization scenarios plus offline loopback transport and production-assembly tests | Live provider evidence remains pending external evidence; shared session, playback fencing, and recovery are assembled |
 | Volcengine ASR/TTS/Ark/protocol | Volcengine component/provider tests | Python-exported fixtures and Node integration tests cover config, PCM, VAD/endpointing fallback, ASR/TTS/Ark sessions, provider lifecycle, and production assembly | Live provider/audio evidence remains pending external evidence |
-| Streaming VAD | Volcengine VAD tests | LiveKit local VAD waveform fixtures plus native-binding startup tests | Equivalent segmentation tolerances documented on every release platform |
-| Audio end-of-turn detection | turn handling, endpointing, interruption, and backchannel tests | LiveKit `TurnDetector` stream fixtures plus microphone acceptance | Local `v1-mini` is proven through a real inference executor; missing executor/native inference is explicit and bounded, never accepted via the positive default |
+| Streaming VAD | Volcengine VAD tests | Deterministic waveform fixtures cover the provider-neutral capability and bounded-silence fallback contracts | Native binding and equivalent segmentation evidence remain pending on every release platform |
+| Audio end-of-turn detection | turn handling, endpointing, interruption, and backchannel tests | Public-import and capability tests reject constructor-only/default-positive evidence and keep fallback explicit | Real `v1-mini` executor, native model, and microphone evidence remain pending external evidence |
 
 ## Executors and Vision
 

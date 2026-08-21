@@ -15,6 +15,8 @@ const currentDocs = [
   'docs/getting-started.md',
   'docs/getting-started.zh-CN.md',
   'docs/status.md',
+  'docs/archs/node-runtime-migration/plan.md',
+  'docs/archs/node-runtime-migration/backlog.md',
   'docs/archs/node-runtime-migration/parity-matrix.md',
   'docs/releases/node-runtime-migration-unreleased.md',
 ] as const
@@ -27,6 +29,9 @@ test('current docs state the rollback truth and do not advertise retired Node ca
   for (const {file, text} of documents) {
     assert.doesNotMatch(text, /active executors?[^\n]*(?:Home Assistant|AutoGLM)|(?:Home Assistant|AutoGLM)[^\n]*(?:implemented|supported active)/iu, file)
     assert.equal(text.includes('tests/snapshots') && file !== 'docs/archs/node-runtime-migration/parity-matrix.md', false, file)
+    assert.doesNotMatch(text, /no production source constructs (?:it|CausalRuntime)|does not instantiate CausalRuntime|desktop (?:microphone )?audio remains (?:deliberately )?unwired/iu, file)
+    assert.doesNotMatch(text, /live (?:DashScope )?smoke[^\n]*(?:landed|pass)|runtime:smoke:qwen[^\n]*pass/iu, file)
+    assert.doesNotMatch(text, /v1-mini[^\n]*(?:real|actual) executor[^\n]*(?:proven|pass)|v1-mini path runs locally/iu, file)
   }
   const status = documents.find(item => item.file === 'docs/status.md')!.text
   assert.match(status, /Python[^\n]*default[^\n]*source oracle/iu)
