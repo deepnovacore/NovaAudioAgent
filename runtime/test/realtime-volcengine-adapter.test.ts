@@ -1,0 +1,1047 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import type { RealtimeProviderEvent } from '../src/realtime/protocol.js'
+import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
+import {
+  VOLCENGINE_GUARD_POLICY,
+  VolcengineCascadedAdapter,
+  type VolcAsrClient,
+  type VolcAsrSession,
+  type VolcEndpointingEvent,
+  type VolcEndpointingPort,
+  type VolcTtsClient,
+  type VolcTtsSession,
+} from '../src/realtime/volcengine/adapter.js'
+import type {
+  ArkEvent,
+  ArkResponsesGateway,
+  ArkStreamInput,
+} from '../src/realtime/volcengine/ark.js'
+import type { AsrTranscript } from '../src/realtime/volcengine/asr.js'
+import type { TtsAudio } from '../src/realtime/volcengine/tts.js'
+
+async function settleWithin<T>(label: string, promise: Promise<T>, milliseconds = 500): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} did not settle`)), milliseconds)
+  })
+  try {
+    return await Promise.race([promise, expired])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+class ScriptedEndpointing implements VolcEndpointingPort {
+  readonly #batches: (readonly VolcEndpointingEvent[])[]
+  resets = 0
+  closed = false
+
+  constructor(...batches: (readonly VolcEndpointingEvent[])[]) {
+    this.#batches = [...batches]
+  }
+
+  feed(): Promise<readonly VolcEndpointingEvent[]> {
+    return Promise.resolve(this.#batches.shift() ?? [])
+  }
+
+  reset(): void {
+    this.resets += 1
+  }
+
+  close(): Promise<void> {
+    this.closed = true
+    return Promise.resolve()
+  }
+}
+
+class FakeAsrSession implements VolcAsrSession {
+  readonly appended: Uint8Array[] = []
+  readonly #transcripts: readonly AsrTranscript[]
+  #release: (() => void) | null = null
+  readonly #finished = new Promise<void>(resolve => { this.#release = resolve })
+  closed = false
+
+  constructor(...transcripts: readonly AsrTranscript[]) {
+    this.#transcripts = transcripts
+  }
+
+  append(pcm: Uint8Array): Promise<void> {
+    this.appended.push(pcm)
+    return Promise.resolve()
+  }
+
+  finish(): Promise<void> {
+    this.#release?.()
+    return Promise.resolve()
+  }
+
+  async *events(): AsyncIterable<AsrTranscript> {
+    await this.#finished
+    for (const transcript of this.#transcripts) yield transcript
+  }
+
+  close(): Promise<void> {
+    this.closed = true
+    this.#release?.()
+    return Promise.resolve()
+  }
+}
+
+class FakeAsrClient implements VolcAsrClient {
+  readonly sessions: VolcAsrSession[]
+  opens = 0
+
+  constructor(...sessions: VolcAsrSession[]) {
+    this.sessions = sessions
+  }
+
+  open(): Promise<VolcAsrSession> {
+    const session = this.sessions[this.opens]
+    this.opens += 1
+    if (session === undefined) return Promise.reject(new Error('fake ASR exhausted'))
+    return Promise.resolve(session)
+  }
+}
+
+class FakeArk implements ArkResponsesGateway {
+  readonly calls: ArkStreamInput[] = []
+  readonly #eventSets: (readonly ArkEvent[])[]
+  closed = false
+
+  constructor(...eventSets: (readonly ArkEvent[])[]) {
+    this.#eventSets = [...eventSets]
+  }
+
+  async *stream(input: ArkStreamInput): AsyncIterable<ArkEvent> {
+    this.calls.push(structuredClone(input))
+    await Promise.resolve()
+    for (const event of this.#eventSets.shift() ?? []) yield structuredClone(event)
+  }
+
+  close(): Promise<void> {
+    this.closed = true
+    return Promise.resolve()
+  }
+}
+
+class FakeTtsSession implements VolcTtsSession {
+  readonly texts: string[] = []
+  readonly #audio: readonly Uint8Array[]
+  #release: (() => void) | null = null
+  readonly #finished = new Promise<void>(resolve => { this.#release = resolve })
+  cancelled = false
+  closed = false
+
+  constructor(...audio: readonly Uint8Array[]) {
+    this.#audio = audio.map(pcm => pcm.slice())
+  }
+
+  sendText(text: string): Promise<void> {
+    this.texts.push(text)
+    return Promise.resolve()
+  }
+
+  finish(): Promise<void> {
+    this.#release?.()
+    return Promise.resolve()
+  }
+
+  cancel(): Promise<void> {
+    this.cancelled = true
+    this.#release?.()
+    return Promise.resolve()
+  }
+
+  async *events(): AsyncIterable<TtsAudio> {
+    await this.#finished
+    if (!this.cancelled) for (const pcm of this.#audio) yield {pcm: pcm.slice()}
+  }
+
+  close(): Promise<void> {
+    this.closed = true
+    this.#release?.()
+    return Promise.resolve()
+  }
+}
+
+class FakeTtsClient implements VolcTtsClient {
+  readonly sessions: VolcTtsSession[]
+  opens = 0
+
+  constructor(...sessions: VolcTtsSession[]) {
+    this.sessions = sessions
+  }
+
+  open(): Promise<VolcTtsSession> {
+    const session = this.sessions[this.opens]
+    this.opens += 1
+    if (session === undefined) return Promise.reject(new Error('fake TTS exhausted'))
+    return Promise.resolve(session)
+  }
+}
+
+class RecordingTelemetry implements RealtimeTelemetry {
+  readonly records: {readonly kind: string; readonly payload: Readonly<Record<string, unknown>>}[] = []
+  closed = false
+
+  record(kind: string, payload: Readonly<Record<string, unknown>>): void {
+    this.records.push({kind, payload: structuredClone(payload)})
+  }
+
+  close(): void {
+    this.closed = true
+  }
+}
+
+class BlockingArk implements ArkResponsesGateway {
+  readonly calls: ArkStreamInput[] = []
+  closed = false
+
+  async *stream(input: ArkStreamInput): AsyncIterable<ArkEvent> {
+    this.calls.push(structuredClone(input))
+    yield {kind: 'response_started', response_id: 'response-blocked'}
+    await new Promise<void>((_resolve, reject) => {
+      const abort = (): void => reject(new DOMException('aborted', 'AbortError'))
+      input.signal?.addEventListener('abort', abort, {once: true})
+    })
+  }
+
+  close(): Promise<void> {
+    this.closed = true
+    return Promise.resolve()
+  }
+}
+
+class LateArk implements ArkResponsesGateway {
+  #release: (() => void) | null = null
+  readonly #released = new Promise<void>(resolve => { this.#release = resolve })
+  closed = false
+
+  async *stream(): AsyncIterable<ArkEvent> {
+    yield {kind: 'response_started', response_id: 'response-old'}
+    await this.#released
+    yield {kind: 'text_delta', text: 'stale-provider-secret'}
+    yield {kind: 'response_completed', response_id: 'response-old'}
+  }
+
+  release(): void { this.#release?.() }
+  close(): Promise<void> { this.closed = true; return Promise.resolve() }
+}
+
+class FailSendTtsSession implements VolcTtsSession {
+  readonly texts: string[] = []
+  #release: (() => void) | null = null
+  readonly #stopped = new Promise<void>(resolve => { this.#release = resolve })
+  closed = false
+
+  sendText(text: string): Promise<void> {
+    this.texts.push(text)
+    return Promise.reject(new Error('tts-provider-secret'))
+  }
+
+  finish(): Promise<void> { this.#release?.(); return Promise.resolve() }
+  cancel(): Promise<void> { this.#release?.(); return Promise.resolve() }
+  async *events(): AsyncIterable<TtsAudio> { await this.#stopped }
+  close(): Promise<void> { this.closed = true; this.#release?.(); return Promise.resolve() }
+}
+
+class FailAfterAudioTtsSession implements VolcTtsSession {
+  readonly texts: string[] = []
+  #finished = false
+  #release: (() => void) | null = null
+  readonly #finishWait = new Promise<void>(resolve => { this.#release = resolve })
+  closed = false
+
+  sendText(text: string): Promise<void> { this.texts.push(text); return Promise.resolve() }
+  finish(): Promise<void> { this.#finished = true; this.#release?.(); return Promise.resolve() }
+  cancel(): Promise<void> { this.#release?.(); return Promise.resolve() }
+  async *events(): AsyncIterable<TtsAudio> {
+    await this.#finishWait
+    if (!this.#finished) return
+    yield {pcm: new Uint8Array([5, 6])}
+    throw new Error('tts-provider-secret')
+  }
+  close(): Promise<void> { this.closed = true; this.#release?.(); return Promise.resolve() }
+}
+
+class FailSecondSendTtsSession extends FakeTtsSession {
+  #calls = 0
+
+  override sendText(text: string): Promise<void> {
+    this.#calls += 1
+    if (this.#calls === 2) return Promise.reject(new Error('tts-provider-secret'))
+    return super.sendText(text)
+  }
+}
+
+class FailFinishTtsSession extends FakeTtsSession {
+  override finish(): Promise<void> {
+    return Promise.reject(new Error('tts-provider-secret'))
+  }
+}
+
+function ids(...values: readonly string[]): () => string {
+  let index = 0
+  return () => {
+    const value = values[index]
+    if (value === undefined) throw new Error('id fixture exhausted')
+    index += 1
+    return value
+  }
+}
+
+async function collectThroughTerminal(
+  adapter: VolcengineCascadedAdapter,
+  signal = new AbortController().signal,
+): Promise<RealtimeProviderEvent[]> {
+  const seen: RealtimeProviderEvent[] = []
+  for await (const raw of adapter.events(signal)) {
+    const event = raw
+    seen.push(event)
+    if (event.kind === 'response_terminal') return seen
+  }
+  throw new Error('Volcengine event stream ended before a terminal')
+}
+
+function observe(adapter: VolcengineCascadedAdapter): {
+  readonly events: RealtimeProviderEvent[]
+  readonly stop: () => Promise<void>
+} {
+  const controller = new AbortController()
+  const events: RealtimeProviderEvent[] = []
+  const task = (async () => {
+    for await (const raw of adapter.events(controller.signal)) {
+      events.push(raw)
+    }
+  })()
+  return {
+    events,
+    stop: async () => {
+      controller.abort()
+      await settleWithin('Volcengine observer stop', task)
+    },
+  }
+}
+
+async function waitFor(
+  label: string,
+  predicate: () => boolean,
+  milliseconds = 500,
+): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  let stopped = false
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} did not become true`)), milliseconds)
+  })
+  const checking = (async () => {
+    while (!stopped && !predicate()) await new Promise<void>(resolve => setImmediate(resolve))
+  })()
+  try {
+    await Promise.race([checking, expired])
+  } finally {
+    stopped = true
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+function hostItem(
+  host_item_id: string,
+  content = '任务仍在运行',
+): {
+  readonly kind: 'progress'
+  readonly host_item_id: string
+  readonly event_id: string
+  readonly content: string
+  readonly call_id: null
+} {
+  return {kind: 'progress', host_item_id, event_id: `${host_item_id}-event`, content, call_id: null}
+}
+
+const directOptions = (): {
+  readonly confirmationTimeout: null
+  readonly asUserActivation: false
+  readonly signal: AbortSignal
+} => ({
+  confirmationTimeout: null,
+  asUserActivation: false,
+  signal: new AbortController().signal,
+})
+
+function terminalStatus(events: readonly RealtimeProviderEvent[]): string | null {
+  const last = events.at(-1)
+  return last?.kind === 'response_terminal' ? last.status : null
+}
+
+test('cascaded happy path preserves VAD, ASR, Ark, TTS, and normalized event order', async () => {
+  const onset = new Uint8Array([0, 0, 1, 0])
+  const endpointing = new ScriptedEndpointing(
+    [{kind: 'speech_start', pcm: onset}],
+    [{kind: 'speech_end', commit: true}],
+  )
+  const asrSession = new FakeAsrSession(
+    {text: '你', final: false},
+    {text: '你好 Nova', final: true},
+  )
+  const ark = new FakeArk([
+    {kind: 'response_started', response_id: 'response-1'},
+    {kind: 'text_delta', text: '你好，'},
+    {kind: 'text_delta', text: '很高兴见到你。'},
+    {kind: 'response_completed', response_id: 'response-1'},
+  ])
+  const ttsSession = new FakeTtsSession(new Uint8Array([1, 2]))
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing,
+    asr: new FakeAsrClient(asrSession),
+    arkFactory: () => ark,
+    tts: new FakeTtsClient(ttsSession),
+    idFactory: ids('session-1', 'speech-1', 'item-1'),
+  })
+  const connected = await adapter.connect({tools: [], signal: new AbortController().signal})
+  const collecting = collectThroughTerminal(adapter)
+
+  const callerPcm = new Uint8Array([9, 0])
+  await adapter.sendAudio(callerPcm, new AbortController().signal)
+  callerPcm[0] = 7
+  await adapter.sendAudio(new Uint8Array([8, 0]), new AbortController().signal)
+  const events = await settleWithin('Volcengine happy path', collecting)
+
+  assert.deepEqual(connected, {epoch: 1, provider_session_id: 'session-1'})
+  assert.deepEqual(events.map(event => event.kind), [
+    'user_speech_started',
+    'user_speech_ended',
+    'user_transcript_delta',
+    'user_transcript_final',
+    'response_started',
+    'response_transcript_delta',
+    'response_transcript_delta',
+    'response_audio_delta',
+    'response_transcript_final',
+    'response_terminal',
+  ])
+  assert.deepEqual(asrSession.appended, [onset])
+  assert.deepEqual(ark.calls[0]?.inputItems, [{role: 'user', content: '你好 Nova'}])
+  assert.deepEqual(ttsSession.texts, ['你好，', '很高兴见到你。'])
+  assert.equal(ttsSession.closed, true)
+  assert.equal(endpointing.resets, 2, 'connect and utterance completion reset endpointing')
+})
+
+test('Volcengine Guard policy is fixed and cannot inherit the Qwen reconnect policy', () => {
+  assert.deepEqual(VOLCENGINE_GUARD_POLICY, {
+    controlledGuardReconnect: false,
+    guardHistoryRecovery: 'none',
+    guardHistoryPairs: 4,
+  })
+  assert.equal(Object.isFrozen(VOLCENGINE_GUARD_POLICY), true)
+})
+
+test('host inputs and copied Responses tools preserve Python wording and caller ownership', async () => {
+  const ark = new FakeArk([
+    {kind: 'response_started', response_id: 'response-host'},
+    {kind: 'response_completed', response_id: 'response-host'},
+  ])
+  const tool = {
+    type: 'function',
+    function: {
+      name: 'weather__get', description: '天气',
+      parameters: {type: 'object', properties: {city: {type: 'string'}}},
+    },
+  }
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(),
+    asr: new FakeAsrClient(),
+    arkFactory: () => ark,
+    tts: new FakeTtsClient(new FakeTtsSession()),
+    idFactory: ids('session-host', 'provider-host'),
+  })
+  await adapter.connect({tools: [tool], signal: new AbortController().signal})
+  tool.function.name = 'caller-mutated'
+  tool.function.parameters.properties.city.type = 'number'
+  const item = hostItem('progress-host', '第一项')
+  await adapter.injectHostItem(item, directOptions())
+  const collecting = collectThroughTerminal(adapter)
+  await adapter.createResponse({
+    kind: 'host_fact', item, task_summary: null, origin_spoken: false,
+  }, new AbortController().signal)
+  await settleWithin('host response', collecting)
+
+  assert.deepEqual(ark.calls[0]?.inputItems, [
+    {role: 'system', content: 'Nova Audio Agent 任务进度事实：第一项'},
+  ])
+  assert.deepEqual(ark.calls[0]?.tools, [{
+    type: 'function', name: 'weather__get', description: '天气',
+    parameters: {type: 'object', properties: {city: {type: 'string'}}},
+  }])
+})
+
+test('Python-strip blank ASR final fails the item and never starts Ark', async () => {
+  const endpointing = new ScriptedEndpointing(
+    [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}],
+    [{kind: 'speech_end', commit: true}],
+  )
+  const asr = new FakeAsrSession({text: '\u001c\u0085', final: true})
+  const ark = new FakeArk([])
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing, asr: new FakeAsrClient(asr), arkFactory: () => ark,
+    tts: new FakeTtsClient(), idFactory: ids('session-blank', 'speech-blank', 'item-blank'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const watching = observe(adapter)
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await waitFor('blank ASR final', () => watching.events.some(event =>
+    event.kind === 'user_transcript_failed'))
+
+  assert.equal(ark.calls.length, 0)
+  assert.equal(watching.events.some(event => event.kind === 'user_transcript_final'), false)
+  await watching.stop()
+})
+
+test('an ASR append failure is recoverable and a later utterance still completes', async () => {
+  class AppendFailSession implements VolcAsrSession {
+    #release: (() => void) | null = null
+    readonly #stopped = new Promise<void>(resolve => { this.#release = resolve })
+    #appends = 0
+    closed = false
+    append(): Promise<void> {
+      this.#appends += 1
+      return this.#appends === 2
+        ? Promise.reject(new Error('asr-provider-secret'))
+        : Promise.resolve()
+    }
+    finish(): Promise<void> { return Promise.resolve() }
+    async *events(): AsyncIterable<AsrTranscript> { await this.#stopped }
+    close(): Promise<void> { this.closed = true; this.#release?.(); return Promise.resolve() }
+  }
+  const failed = new AppendFailSession()
+  const recovered = new FakeAsrSession({text: '恢复成功', final: true})
+  const endpointing = new ScriptedEndpointing(
+    [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}],
+    [{kind: 'speech_audio', pcm: new Uint8Array([2, 0])}],
+    [{kind: 'speech_end', commit: true}],
+    [{kind: 'speech_start', pcm: new Uint8Array([1, 0])}],
+    [{kind: 'speech_end', commit: true}],
+  )
+  const ark = new FakeArk([
+    {kind: 'response_started', response_id: 'response-recovered'},
+    {kind: 'text_delta', text: '好了。'},
+    {kind: 'response_completed', response_id: 'response-recovered'},
+  ])
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing, asr: new FakeAsrClient(failed, recovered), arkFactory: () => ark,
+    tts: new FakeTtsClient(new FakeTtsSession(new Uint8Array([1, 2]))),
+    idFactory: ids('session-recover', 'speech-fail', 'item-fail', 'speech-ok', 'item-ok'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const watching = observe(adapter)
+
+  await assert.doesNotReject(adapter.sendAudio(
+    new Uint8Array([0, 0]), new AbortController().signal,
+  ))
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await waitFor('recovered response', () => watching.events.some(event =>
+    event.kind === 'response_terminal' && event.status === 'completed'))
+
+  const failure = watching.events.find(event => event.kind === 'provider_error')
+  assert.deepEqual(failure, {
+    kind: 'provider_error', session_epoch: 1,
+    code: 'volcengine_asr_append', recoverable: true,
+  })
+  assert.equal(watching.events.some(event => event.kind === 'user_transcript_failed'), true)
+  assert.equal(failed.closed, true)
+  await watching.stop()
+})
+
+test('ASR receive failure keeps the speech identity until VAD stop releases the floor', async () => {
+  class ReceiveFailSession implements VolcAsrSession {
+    append(): Promise<void> { return Promise.resolve() }
+    finish(): Promise<void> { return Promise.resolve() }
+    async *events(): AsyncIterable<AsrTranscript> {
+      await Promise.resolve()
+      throw new Error('asr-receive-provider-secret')
+    }
+    close(): Promise<void> { return Promise.resolve() }
+  }
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(
+      [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}],
+      [{kind: 'speech_end', commit: true}],
+    ),
+    asr: new FakeAsrClient(new ReceiveFailSession()), arkFactory: () => new FakeArk([]),
+    tts: new FakeTtsClient(),
+    idFactory: ids('session-receive', 'speech-receive', 'item-receive'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const watching = observe(adapter)
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await waitFor('ASR receive failure', () => watching.events.some(event =>
+    event.kind === 'provider_error' && event.code === 'volcengine_asr_receive'))
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await waitFor('speech end after ASR receive failure', () => watching.events.some(event =>
+    event.kind === 'user_speech_ended'))
+
+  assert.equal(watching.events.filter(event => event.kind === 'user_speech_ended').length, 1)
+  assert.equal(watching.events.some(event => event.kind === 'user_transcript_failed'), true)
+  await watching.stop()
+})
+
+test('tool-only output cancels prewarm, while both mixed-output orders fail without exposing tools', async () => {
+  const scenarios: (readonly ArkEvent[])[] = [
+    [
+      {kind: 'response_started', response_id: 'tool-only'},
+      {kind: 'tool_call', item_id: 'item-tool', call_id: 'call-tool',
+        name: 'weather__get', arguments: {city: '上海'}},
+      {kind: 'response_completed', response_id: 'tool-only'},
+    ],
+    [
+      {kind: 'response_started', response_id: 'text-tool'},
+      {kind: 'text_delta', text: '我来查，'},
+      {kind: 'tool_call', item_id: 'item-mixed', call_id: 'call-mixed',
+        name: 'weather__get', arguments: {}},
+      {kind: 'response_completed', response_id: 'text-tool'},
+    ],
+    [
+      {kind: 'response_started', response_id: 'tool-text'},
+      {kind: 'tool_call', item_id: 'item-mixed', call_id: 'call-mixed',
+        name: 'weather__get', arguments: {}},
+      {kind: 'text_delta', text: '不应出现'},
+      {kind: 'response_completed', response_id: 'tool-text'},
+    ],
+  ]
+  for (let index = 0; index < scenarios.length; index += 1) {
+    const ttsSession = new FakeTtsSession()
+    const adapter = new VolcengineCascadedAdapter({
+      endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+      arkFactory: () => new FakeArk(scenarios[index]!),
+      tts: new FakeTtsClient(ttsSession),
+      idFactory: ids(`session-${index}`, `provider-${index}`),
+    })
+    await adapter.connect({tools: [], signal: new AbortController().signal})
+    const item = hostItem(`progress-${index}`)
+    await adapter.injectHostItem(item, directOptions())
+    const collecting = collectThroughTerminal(adapter)
+    await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+      new AbortController().signal)
+    const events = await settleWithin(`tool scenario ${index}`, collecting)
+    if (index === 0) {
+      assert.equal(events.some(event => event.kind === 'tool_call_ready'), true)
+      assert.equal(terminalStatus(events), 'completed')
+    } else {
+      assert.equal(events.some(event => event.kind === 'tool_call_ready'), false)
+      assert.equal(events.some(event => event.kind === 'provider_error'
+        && event.code === 'volcengine_mixed_text_tool' && !event.recoverable), true)
+      assert.equal(terminalStatus(events), 'failed')
+    }
+    assert.equal(ttsSession.cancelled, true)
+  }
+})
+
+test('an unresolved tool resets chaining and a late abandoned output never calls Ark', async () => {
+  const ark = new FakeArk(
+    [
+      {kind: 'response_started', response_id: 'response-tool'},
+      {kind: 'tool_call', item_id: 'item-tool', call_id: 'call-tool',
+        name: 'weather__get', arguments: {}},
+      {kind: 'response_completed', response_id: 'response-tool'},
+    ],
+    [
+      {kind: 'response_started', response_id: 'response-next'},
+      {kind: 'response_completed', response_id: 'response-next'},
+    ],
+  )
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(), arkFactory: () => ark,
+    tts: new FakeTtsClient(new FakeTtsSession(), new FakeTtsSession()),
+    idFactory: ids('session-chain', 'provider-first', 'provider-next', 'provider-late', 'silent-late'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const watching = observe(adapter)
+
+  const first = hostItem('first')
+  await adapter.injectHostItem(first, directOptions())
+  await adapter.createResponse({kind: 'host_fact', item: first, task_summary: null,
+    origin_spoken: false}, new AbortController().signal)
+  await waitFor('first tool terminal', () => watching.events.filter(event =>
+    event.kind === 'response_terminal').length === 1)
+
+  const next = hostItem('next')
+  await adapter.injectHostItem(next, directOptions())
+  await adapter.createResponse({kind: 'host_fact', item: next, task_summary: null,
+    origin_spoken: false}, new AbortController().signal)
+  await waitFor('next terminal', () => watching.events.filter(event =>
+    event.kind === 'response_terminal').length === 2)
+  assert.equal(ark.calls[1]?.previousResponseId, null)
+
+  const late = {
+    kind: 'tool_output' as const,
+    host_item_id: 'late-output', event_id: 'late-event', content: '{"late":true}',
+    call_id: 'call-tool',
+  }
+  await adapter.injectHostItem(late, directOptions())
+  await adapter.createResponse({kind: 'tool_result', item: late, task_summary: null,
+    origin_spoken: false}, new AbortController().signal)
+  await waitFor('late silent terminal', () => watching.events.filter(event =>
+    event.kind === 'response_terminal').length === 3)
+  assert.equal(ark.calls.length, 2)
+  await watching.stop()
+})
+
+test('TTS retries once before audio with every prior chunk, and never retries after audio', async () => {
+  const beforeFirst = new FailSendTtsSession()
+  const beforeSecond = new FakeTtsSession(new Uint8Array([1, 2]))
+  const beforeClient = new FakeTtsClient(beforeFirst, beforeSecond)
+  const beforeAdapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => new FakeArk([
+      {kind: 'response_started', response_id: 'response-before'},
+      {kind: 'text_delta', text: '第一句。'},
+      {kind: 'text_delta', text: '第二句。'},
+      {kind: 'response_completed', response_id: 'response-before'},
+    ]),
+    tts: beforeClient, idFactory: ids('session-before', 'provider-before'),
+  })
+  await beforeAdapter.connect({tools: [], signal: new AbortController().signal})
+  const beforeItem = hostItem('before')
+  await beforeAdapter.injectHostItem(beforeItem, directOptions())
+  const beforeCollect = collectThroughTerminal(beforeAdapter)
+  await beforeAdapter.createResponse({kind: 'host_fact', item: beforeItem,
+    task_summary: null, origin_spoken: false}, new AbortController().signal)
+  const beforeEvents = await settleWithin('TTS before-audio retry', beforeCollect)
+  assert.equal(beforeClient.opens, 2)
+  assert.deepEqual(beforeSecond.texts, ['第一句。', '第二句。'])
+  assert.equal(terminalStatus(beforeEvents), 'completed')
+
+  const afterFirst = new FailAfterAudioTtsSession()
+  const afterClient = new FakeTtsClient(afterFirst, new FakeTtsSession())
+  const afterAdapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => new FakeArk([
+      {kind: 'response_started', response_id: 'response-after'},
+      {kind: 'text_delta', text: '已经出声。'},
+      {kind: 'response_completed', response_id: 'response-after'},
+    ]),
+    tts: afterClient, idFactory: ids('session-after', 'provider-after'),
+  })
+  await afterAdapter.connect({tools: [], signal: new AbortController().signal})
+  const afterItem = hostItem('after')
+  await afterAdapter.injectHostItem(afterItem, directOptions())
+  const afterCollect = collectThroughTerminal(afterAdapter)
+  await afterAdapter.createResponse({kind: 'host_fact', item: afterItem,
+    task_summary: null, origin_spoken: false}, new AbortController().signal)
+  const afterEvents = await settleWithin('TTS after-audio failure', afterCollect)
+  assert.equal(afterClient.opens, 1)
+  assert.equal(afterEvents.some(event => event.kind === 'response_audio_delta'), true)
+  assert.equal(afterEvents.some(event => event.kind === 'provider_error'
+    && event.code === 'volcengine_tts_receive'), true)
+  assert.equal(terminalStatus(afterEvents), 'failed')
+})
+
+test('TTS never opens a third session after the one permitted retry also fails', async () => {
+  const client = new FakeTtsClient(
+    new FailSendTtsSession(),
+    new FailSecondSendTtsSession(),
+    new FakeTtsSession(new Uint8Array([1, 2])),
+  )
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => new FakeArk([
+      {kind: 'response_started', response_id: 'response-retry-once'},
+      {kind: 'text_delta', text: '第一句。'},
+      {kind: 'text_delta', text: '第二句。'},
+      {kind: 'response_completed', response_id: 'response-retry-once'},
+    ]),
+    tts: client, idFactory: ids('session-retry-once', 'provider-retry-once'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('retry-once')
+  await adapter.injectHostItem(item, directOptions())
+  const collecting = collectThroughTerminal(adapter)
+  await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal)
+  const events = await settleWithin('single TTS retry', collecting)
+  assert.equal(client.opens, 2)
+  assert.equal(events.some(event => event.kind === 'provider_error'
+    && event.code === 'volcengine_tts_receive'), true)
+  assert.equal(terminalStatus(events), 'failed')
+})
+
+test('a pre-audio finish failure replays every accumulated text chunk in order', async () => {
+  const first = new FailFinishTtsSession()
+  const second = new FakeTtsSession(new Uint8Array([1, 2]))
+  const client = new FakeTtsClient(first, second)
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => new FakeArk([
+      {kind: 'response_started', response_id: 'response-finish-retry'},
+      {kind: 'text_delta', text: '第一句。'},
+      {kind: 'text_delta', text: '第二句。'},
+      {kind: 'response_completed', response_id: 'response-finish-retry'},
+    ]),
+    tts: client, idFactory: ids('session-finish-retry', 'provider-finish-retry'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('finish-retry')
+  await adapter.injectHostItem(item, directOptions())
+  const collecting = collectThroughTerminal(adapter)
+  await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal)
+  const events = await settleWithin('TTS finish retry replay', collecting)
+  assert.equal(client.opens, 2)
+  assert.deepEqual(second.texts, ['第一句。', '第二句。'])
+  assert.equal(terminalStatus(events), 'completed')
+})
+
+test('exact cancellation is single-terminal; mismatch is safely rejected; telemetry stays caller-owned', async () => {
+  const ark = new BlockingArk()
+  const telemetry = new RecordingTelemetry()
+  const tts = new FakeTtsSession()
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => ark, tts: new FakeTtsClient(tts), telemetry,
+    idFactory: ids('session-cancel', 'provider-cancel', 'cancel-request'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('cancel-item')
+  await adapter.injectHostItem(item, directOptions())
+  const watching = observe(adapter)
+  await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal)
+  await waitFor('blocking response started', () => watching.events.some(event =>
+    event.kind === 'response_started'))
+
+  await adapter.cancelResponse('wrong-response', new AbortController().signal)
+  await waitFor('cancel rejection', () => watching.events.some(event =>
+    event.kind === 'response_cancel_rejected'))
+  await adapter.cancelResponse('response-blocked', new AbortController().signal)
+  await waitFor('cancel terminal', () => watching.events.some(event =>
+    event.kind === 'response_terminal' && event.status === 'cancelled'))
+  assert.equal(watching.events.filter(event => event.kind === 'response_terminal').length, 1)
+
+  const closing = adapter.close()
+  assert.equal(closing, adapter.close())
+  await settleWithin('adapter close', closing)
+  assert.equal(ark.closed, true)
+  assert.equal(telemetry.closed, false)
+  assert.doesNotMatch(JSON.stringify({events: watching.events, telemetry: telemetry.records}),
+    /provider-secret|api-secret|transcript-secret/u)
+  await watching.stop()
+})
+
+test('closing an active response emits one cancelled terminal into its owning epoch', async () => {
+  const ark = new BlockingArk()
+  const telemetry = new RecordingTelemetry()
+  const tts = new FakeTtsSession()
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => ark, tts: new FakeTtsClient(tts), telemetry,
+    idFactory: ids('session-close-active', 'provider-close-active'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('close-active-item')
+  await adapter.injectHostItem(item, directOptions())
+  const watching = observe(adapter)
+  await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal)
+  await waitFor('active response started before close', () => watching.events.some(event =>
+    event.kind === 'response_started'))
+
+  await settleWithin('active response close', adapter.close())
+  await waitFor('close cancellation terminal', () => watching.events.some(event =>
+    event.kind === 'response_terminal' && event.status === 'cancelled'))
+
+  const terminals = watching.events.filter(event => event.kind === 'response_terminal')
+  assert.equal(terminals.length, 1)
+  assert.deepEqual(terminals[0], {
+    kind: 'response_terminal', session_epoch: 1,
+    response_id: 'response-blocked', status: 'cancelled', reason: 'cancelled',
+  })
+  assert.equal(ark.closed, true)
+  assert.equal(tts.cancelled, true)
+  assert.equal(tts.closed, true)
+  assert.equal(telemetry.records.filter(record =>
+    record.kind === 'volcengine.response.terminal').length, 1)
+  await watching.stop()
+})
+
+test('duplicate and 256-item pending bounds reject without evicting an earlier item', async () => {
+  let sequence = 0
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => new FakeArk([]), tts: new FakeTtsClient(),
+    idFactory: () => `bounded-${sequence++}`,
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const first = hostItem('bounded-first')
+  await adapter.injectHostItem(first, directOptions())
+  await assert.rejects(adapter.injectHostItem(first, directOptions()),
+    (error: unknown) => error instanceof Error
+      && 'code' in error && error.code === 'duplicate_host_item')
+  for (let index = 1; index < 256; index += 1) {
+    await adapter.injectHostItem(hostItem(`bounded-${index}`), directOptions())
+  }
+  await assert.rejects(adapter.injectHostItem(hostItem('bounded-over'), directOptions()),
+    (error: unknown) => error instanceof Error
+      && 'code' in error && error.code === 'pending_host_items_full')
+})
+
+test('event queue overflow preserves every prior event, surfaces one stable failure, and terminates',
+  async () => {
+    class FloodAsrSession implements VolcAsrSession {
+      #release: (() => void) | null = null
+      readonly #finished = new Promise<void>(resolve => { this.#release = resolve })
+      append(): Promise<void> { return Promise.resolve() }
+      finish(): Promise<void> { this.#release?.(); return Promise.resolve() }
+      async *events(): AsyncIterable<AsrTranscript> {
+        await this.#finished
+        for (let index = 0; index < 4_100; index += 1) yield {text: '', final: false}
+      }
+      close(): Promise<void> { this.#release?.(); return Promise.resolve() }
+    }
+    const ark = new FakeArk([])
+    const adapter = new VolcengineCascadedAdapter({
+      endpointing: new ScriptedEndpointing(
+        [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}],
+        [{kind: 'speech_end', commit: true}],
+      ),
+      asr: new FakeAsrClient(new FloodAsrSession()),
+      arkFactory: () => ark,
+      tts: new FakeTtsClient(),
+      idFactory: ids('session-overflow', 'speech-overflow', 'item-overflow'),
+      settleTimeoutMs: 50,
+    })
+    await adapter.connect({tools: [], signal: new AbortController().signal})
+    const iterator = adapter.events(new AbortController().signal)[Symbol.asyncIterator]()
+    const first = iterator.next()
+    await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+    const firstResult = await settleWithin('overflow speech start', first)
+    assert.equal(firstResult.done, false)
+    if (!firstResult.done) assert.equal(firstResult.value.kind, 'user_speech_started')
+
+    await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+    await waitFor('overflow cleanup', () => ark.closed)
+    const drained: RealtimeProviderEvent[] = []
+    while (true) {
+      const result = await settleWithin('overflow queue drain', iterator.next())
+      if (result.done) break
+      drained.push(result.value)
+    }
+    assert.equal(drained.filter(event => event.kind === 'user_transcript_delta').length, 4_095)
+    assert.equal(drained[0]?.kind, 'user_speech_ended')
+    assert.deepEqual(drained.at(-1), {
+      kind: 'provider_error', session_epoch: 1,
+      code: 'volcengine_event_overflow', recoverable: false,
+    })
+  })
+
+test('response transcript bound counts Unicode code points rather than UTF-16 units', async () => {
+  const text = '😀'.repeat(3_000)
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => new FakeArk([
+      {kind: 'response_started', response_id: 'response-unicode'},
+      {kind: 'text_delta', text},
+      {kind: 'response_completed', response_id: 'response-unicode'},
+    ]),
+    tts: new FakeTtsClient(new FakeTtsSession(new Uint8Array([1, 2]))),
+    idFactory: ids('session-unicode', 'provider-unicode'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('unicode')
+  await adapter.injectHostItem(item, directOptions())
+  const collecting = collectThroughTerminal(adapter)
+  await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal)
+  const events = await settleWithin('Unicode response bound', collecting)
+  assert.equal(terminalStatus(events), 'completed')
+  assert.equal(events.some(event => event.kind === 'response_transcript_final'
+    && event.text === text), true)
+})
+
+test('queued response audio has an independent 16 MiB aggregate bound', async () => {
+  const pcmBlocks = Array.from({length: 17}, () => new Uint8Array(1_024 * 1_024))
+  const ark = new FakeArk([
+    {kind: 'response_started', response_id: 'response-audio-overflow'},
+    {kind: 'text_delta', text: '会溢出。'},
+    {kind: 'response_completed', response_id: 'response-audio-overflow'},
+  ])
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(), arkFactory: () => ark,
+    tts: new FakeTtsClient(new FakeTtsSession(...pcmBlocks)),
+    idFactory: ids('session-audio-overflow', 'provider-audio-overflow'),
+    settleTimeoutMs: 50,
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('audio-overflow')
+  await adapter.injectHostItem(item, directOptions())
+  const iterator = adapter.events(new AbortController().signal)[Symbol.asyncIterator]()
+  const first = iterator.next()
+  await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal)
+  const firstResult = await settleWithin('audio overflow response start', first)
+  assert.equal(firstResult.done, false)
+  if (!firstResult.done) assert.equal(firstResult.value.kind, 'response_started')
+  await waitFor('audio overflow cleanup', () => ark.closed)
+
+  const drained: RealtimeProviderEvent[] = []
+  while (true) {
+    const result = await settleWithin('audio overflow queue drain', iterator.next())
+    if (result.done) break
+    drained.push(result.value)
+  }
+  assert.equal(drained.filter(event => event.kind === 'response_audio_delta').length, 16)
+  assert.deepEqual(drained.at(-1), {
+    kind: 'provider_error', session_epoch: 1,
+    code: 'volcengine_event_overflow', recoverable: false,
+  })
+})
+
+test('a task settling after an old epoch is revoked cannot enqueue into the fresh epoch', async () => {
+  const oldArk = new LateArk()
+  const newArk = new FakeArk([
+    {kind: 'response_started', response_id: 'response-new'},
+    {kind: 'response_completed', response_id: 'response-new'},
+  ])
+  const arks: ArkResponsesGateway[] = [oldArk, newArk]
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => {
+      const ark = arks.shift()
+      if (ark === undefined) throw new Error('Ark fixture exhausted')
+      return ark
+    },
+    tts: new FakeTtsClient(new FakeTtsSession(), new FakeTtsSession()),
+    idFactory: ids('session-old', 'provider-old', 'session-new', 'provider-new'),
+    settleTimeoutMs: 20,
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const oldItem = hostItem('old')
+  await adapter.injectHostItem(oldItem, directOptions())
+  const oldWatching = observe(adapter)
+  await adapter.createResponse({kind: 'host_fact', item: oldItem,
+    task_summary: null, origin_spoken: false}, new AbortController().signal)
+  await waitFor('old response start', () => oldWatching.events.some(event =>
+    event.kind === 'response_started'))
+  await assert.rejects(settleWithin('bounded stale close', adapter.close()),
+    (error: unknown) => error instanceof Error
+      && 'code' in error && error.code === 'closed')
+  assert.equal(oldArk.closed, true)
+
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const newItem = hostItem('new')
+  await adapter.injectHostItem(newItem, directOptions())
+  const newWatching = observe(adapter)
+  await adapter.createResponse({kind: 'host_fact', item: newItem,
+    task_summary: null, origin_spoken: false}, new AbortController().signal)
+  await waitFor('fresh epoch response', () => newWatching.events.some(event =>
+    event.kind === 'response_terminal'))
+  oldArk.release()
+  await new Promise<void>(resolve => setImmediate(resolve))
+
+  assert.deepEqual(newWatching.events.map(event => event.session_epoch), [2, 2])
+  assert.doesNotMatch(JSON.stringify(newWatching.events), /stale-provider-secret/u)
+  await newWatching.stop()
+  await oldWatching.stop()
+})

@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "weather__get",
+        "description": "天气",
+        "parameters": {"type": "object", "properties": {}}
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "text-happy",
+      "covers": ["text_happy_tts_prewarm_final"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}]],
+      "asr": [{"transcripts": [{"text": "你好", "final": false}, {"text": "你好 Nova", "final": true}]}],
+      "ark": [[{"kind": "started", "response_id": "response-happy"}, {"kind": "text", "text": "你好，"}, {"kind": "text", "text": "世界。"}, {"kind": "completed", "response_id": "response-happy"}]],
+      "tts": [{"audio_b64": ["AQI="]}],
+      "steps": [{"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "tool-only",
+      "covers": ["tool_only"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}]],
+      "asr": [{"transcripts": [{"text": "上海天气", "final": true}]}],
+      "ark": [[{"kind": "started", "response_id": "response-tool"}, {"kind": "yield"}, {"kind": "tool", "item_id": "item-tool", "call_id": "call-tool", "name": "weather__get", "arguments": {"city": "上海"}}, {"kind": "completed", "response_id": "response-tool"}]],
+      "tts": [{}],
+      "steps": [{"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "mixed-text-tool",
+      "covers": ["mixed_text_then_tool"],
+      "ark": [[{"kind": "started", "response_id": "mixed-text-tool"}, {"kind": "text", "text": "我来查，"}, {"kind": "tool", "item_id": "item-mixed", "call_id": "call-mixed", "name": "weather__get", "arguments": {}}]],
+      "tts": [{}],
+      "steps": [{"op": "inject", "item": {"kind": "progress", "host_item_id": "progress-mixed-text", "event_id": "event-mixed-text", "content": "开始"}}, {"op": "create_response", "kind": "host_fact", "host_item_id": "progress-mixed-text", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "mixed-tool-text",
+      "covers": ["mixed_tool_then_text"],
+      "ark": [[{"kind": "started", "response_id": "mixed-tool-text"}, {"kind": "tool", "item_id": "item-mixed", "call_id": "call-mixed", "name": "weather__get", "arguments": {}}, {"kind": "text", "text": "我来查。"}]],
+      "tts": [{}],
+      "steps": [{"op": "inject", "item": {"kind": "progress", "host_item_id": "progress-mixed-tool", "event_id": "event-mixed-tool", "content": "开始"}}, {"op": "create_response", "kind": "host_fact", "host_item_id": "progress-mixed-tool", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "blank-final",
+      "covers": ["blank_final_asr"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}]],
+      "asr": [{"transcripts": [{"text": "\u001c\u0085", "final": true}]}],
+      "steps": [{"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "user_transcript_failed", "count": 1}}]
+    },
+    {
+      "name": "asr-start-recovery",
+      "covers": ["asr_start_failure_recovers"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}], [{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}]],
+      "asr": [{"open_error": true}, {"transcripts": [{"text": "恢复", "final": true}]}],
+      "ark": [[{"kind": "started", "response_id": "recovered-start"}, {"kind": "text", "text": "恢复。"}, {"kind": "completed", "response_id": "recovered-start"}]],
+      "tts": [{"audio_b64": ["AQI="]}],
+      "steps": [{"op": "send_audio", "wait": {"event": "provider_error", "code": "volcengine_asr_start", "count": 1}}, {"op": "send_audio"}, {"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "asr-append-recovery",
+      "covers": ["asr_append_failure_recovers"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}], [], [{"kind": "speech_stopped", "commit": true}], [{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}]],
+      "asr": [{"append_error_at": 2}, {"transcripts": [{"text": "恢复", "final": true}]}],
+      "ark": [[{"kind": "started", "response_id": "recovered-append"}, {"kind": "text", "text": "恢复。"}, {"kind": "completed", "response_id": "recovered-append"}]],
+      "tts": [{"audio_b64": ["AQI="]}],
+      "steps": [{"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "provider_error", "code": "volcengine_asr_append", "count": 1}}, {"op": "send_audio"}, {"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "asr-finish-recovery",
+      "covers": ["asr_finish_failure_recovers"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}], [{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}]],
+      "asr": [{"finish_error": true}, {"transcripts": [{"text": "恢复", "final": true}]}],
+      "ark": [[{"kind": "started", "response_id": "recovered-finish"}, {"kind": "text", "text": "恢复。"}, {"kind": "completed", "response_id": "recovered-finish"}]],
+      "tts": [{"audio_b64": ["AQI="]}],
+      "steps": [{"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "provider_error", "code": "volcengine_asr_finish", "count": 1}}, {"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "asr-receive-recovery",
+      "covers": ["asr_receive_failure_recovers"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}], [{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}]],
+      "asr": [{"events_error": true}, {"transcripts": [{"text": "恢复", "final": true}]}],
+      "ark": [[{"kind": "started", "response_id": "recovered-receive"}, {"kind": "text", "text": "恢复。"}, {"kind": "completed", "response_id": "recovered-receive"}]],
+      "tts": [{"audio_b64": ["AQI="]}],
+      "steps": [{"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "provider_error", "code": "volcengine_asr_receive", "count": 1}}, {"op": "send_audio"}, {"op": "send_audio", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "pending-lifecycle",
+      "covers": ["pending_order_duplicate_consumed"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}]],
+      "asr": [{"transcripts": [{"text": "继续", "final": true}]}],
+      "ark": [[{"kind": "started", "response_id": "pending-response"}, {"kind": "completed", "response_id": "pending-response"}]],
+      "steps": [
+        {"op": "inject", "item": {"kind": "recovery", "host_item_id": "context-1", "event_id": "event-context", "content": "恢复事实"}},
+        {"op": "inject", "item": {"kind": "tool_output", "host_item_id": "tool-1", "event_id": "event-tool", "call_id": "call-1", "content": "{\"ok\":true}"}},
+        {"op": "inject", "expect_error": true, "item": {"kind": "recovery", "host_item_id": "context-1", "event_id": "event-duplicate", "content": "重复"}},
+        {"op": "send_audio"},
+        {"op": "send_audio", "wait": {"event": "response_terminal", "count": 1}},
+        {"op": "create_response", "kind": "host_fact", "host_item_id": "context-1", "wait": {"event": "response_terminal", "count": 2}},
+        {"op": "create_response", "kind": "tool_result", "host_item_id": "tool-1", "wait": {"event": "response_terminal", "count": 3}}
+      ]
+    },
+    {
+      "name": "response-continuation",
+      "covers": ["response_continuation"],
+      "ark": [
+        [{"kind": "started", "response_id": "response-first"}, {"kind": "completed", "response_id": "response-first"}],
+        [{"kind": "started", "response_id": "response-second"}, {"kind": "completed", "response_id": "response-second"}]
+      ],
+      "steps": [
+        {"op": "inject", "item": {"kind": "progress", "host_item_id": "progress-1", "event_id": "event-1", "content": "第一项"}},
+        {"op": "create_response", "kind": "host_fact", "host_item_id": "progress-1", "wait": {"event": "response_terminal", "count": 1}},
+        {"op": "inject", "item": {"kind": "progress", "host_item_id": "progress-2", "event_id": "event-2", "content": "第二项"}},
+        {"op": "create_response", "kind": "host_fact", "host_item_id": "progress-2", "wait": {"event": "response_terminal", "count": 2}}
+      ]
+    },
+    {
+      "name": "unresolved-tool-late-output",
+      "covers": ["unresolved_tool_reset_late_output"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}], [{"kind": "speech_stopped", "commit": true}]],
+      "asr": [{"transcripts": [{"text": "换个问题", "final": true}]}],
+      "ark": [
+        [{"kind": "started", "response_id": "function-response"}, {"kind": "tool", "item_id": "item-tool", "call_id": "call-tool", "name": "weather__get", "arguments": {"city": "上海"}}, {"kind": "completed", "response_id": "function-response"}],
+        [{"kind": "started", "response_id": "user-response"}, {"kind": "completed", "response_id": "user-response"}]
+      ],
+      "tts": [{}],
+      "steps": [
+        {"op": "inject", "item": {"kind": "progress", "host_item_id": "progress-tool", "event_id": "event-tool", "content": "查天气"}},
+        {"op": "create_response", "kind": "host_fact", "host_item_id": "progress-tool", "wait": {"event": "response_terminal", "count": 1}},
+        {"op": "send_audio"},
+        {"op": "send_audio", "wait": {"event": "response_terminal", "count": 2}},
+        {"op": "inject", "item": {"kind": "tool_output", "host_item_id": "late-output", "event_id": "late-event", "call_id": "call-tool", "content": "{\"late\":true}"}},
+        {"op": "create_response", "kind": "tool_result", "host_item_id": "late-output", "wait": {"event": "response_terminal", "count": 3}}
+      ]
+    },
+    {
+      "name": "tts-retry-before-audio",
+      "covers": ["tts_retry_before_audio"],
+      "ark": [[{"kind": "started", "response_id": "retry-before"}, {"kind": "text", "text": "你好。"}, {"kind": "completed", "response_id": "retry-before"}]],
+      "tts": [{"send_error_at": 1}, {"audio_b64": ["BQY="]}],
+      "steps": [{"op": "inject", "item": {"kind": "progress", "host_item_id": "retry-before-item", "event_id": "retry-before-event", "content": "开始"}}, {"op": "create_response", "kind": "host_fact", "host_item_id": "retry-before-item", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "tts-no-retry-after-audio",
+      "covers": ["tts_no_retry_after_audio"],
+      "ark": [[{"kind": "started", "response_id": "retry-after"}, {"kind": "text", "text": "你好。"}, {"kind": "yield"}, {"kind": "completed", "response_id": "retry-after"}]],
+      "tts": [{"audio_before_finish_b64": ["BQY="], "events_error_after_audio": true}, {"audio_b64": ["Bwg="]}],
+      "steps": [{"op": "inject", "item": {"kind": "progress", "host_item_id": "retry-after-item", "event_id": "retry-after-event", "content": "开始"}}, {"op": "create_response", "kind": "host_fact", "host_item_id": "retry-after-item", "wait": {"event": "response_terminal", "count": 1}}]
+    },
+    {
+      "name": "cancel-exact-mismatch",
+      "covers": ["exact_and_mismatched_cancel"],
+      "ark": [[{"kind": "started", "response_id": "response-cancel"}, {"kind": "text", "text": "仍在生成，"}, {"kind": "block"}]],
+      "tts": [{}],
+      "steps": [
+        {"op": "inject", "item": {"kind": "progress", "host_item_id": "cancel-item", "event_id": "cancel-event", "content": "开始"}},
+        {"op": "create_response", "kind": "host_fact", "host_item_id": "cancel-item", "wait": {"event": "response_started", "count": 1}},
+        {"op": "cancel_response", "response_id": "wrong-response", "wait": {"event": "response_cancel_rejected", "count": 1}},
+        {"op": "cancel_response", "response_id": "response-cancel", "wait": {"event": "response_terminal", "count": 1}}
+      ]
+    },
+    {
+      "name": "close-during-asr",
+      "covers": ["close_during_asr"],
+      "vad": [[{"kind": "speech_started", "pre_roll": "input"}]],
+      "asr": [{"block_events": true}],
+      "steps": [{"op": "send_audio", "wait": {"event": "user_speech_started", "count": 1}}, {"op": "close"}]
+    },
+    {
+      "name": "close-during-response",
+      "covers": ["close_during_response"],
+      "ark": [[{"kind": "started", "response_id": "response-close"}, {"kind": "text", "text": "生成中，"}, {"kind": "block"}]],
+      "tts": [{}],
+      "steps": [{"op": "inject", "item": {"kind": "progress", "host_item_id": "close-item", "event_id": "close-event", "content": "开始"}}, {"op": "create_response", "kind": "host_fact", "host_item_id": "close-item", "wait": {"event": "response_started", "count": 1}}, {"op": "close"}]
+    }
+  ]
+}

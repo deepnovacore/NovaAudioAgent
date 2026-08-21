@@ -1,0 +1,3474 @@
+{
+  "scenarios": [
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "你好 Nova",
+              "role": "user"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "close",
+          "session": "asr-1"
+        }
+      ],
+      "events": [
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "text-happy-id-3",
+          "session_epoch": 1,
+          "speech_id": "text-happy-id-2"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "text-happy-id-2"
+        },
+        {
+          "event": "user_transcript_delta",
+          "item_id": "text-happy-id-3",
+          "session_epoch": 1,
+          "text": "你好"
+        },
+        {
+          "event": "user_transcript_final",
+          "item_id": "text-happy-id-3",
+          "session_epoch": 1,
+          "text": "你好 Nova"
+        },
+        {
+          "event": "response_started",
+          "response_id": "response-happy",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "response-happy",
+          "session_epoch": 1,
+          "text": "你好，"
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "response-happy",
+          "session_epoch": 1,
+          "text": "世界。"
+        },
+        {
+          "event": "response_audio_delta",
+          "pcm_b64": "AQI=",
+          "response_id": "response-happy",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_final",
+          "response_id": "response-happy",
+          "session_epoch": 1,
+          "text": "你好，世界。"
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "response-happy",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "text-happy",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "text-happy-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "response-happy"
+      },
+      "steps": [
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 0
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 1
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.partial",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.final",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm.ready",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_audio",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-1",
+          "text": "你好，"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-1",
+          "text": "世界。"
+        },
+        {
+          "op": "finish",
+          "session": "tts-1"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 2,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "上海天气",
+              "role": "user"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "close",
+          "session": "asr-1"
+        }
+      ],
+      "events": [
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "tool-only-id-3",
+          "session_epoch": 1,
+          "speech_id": "tool-only-id-2"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "tool-only-id-2"
+        },
+        {
+          "event": "user_transcript_final",
+          "item_id": "tool-only-id-3",
+          "session_epoch": 1,
+          "text": "上海天气"
+        },
+        {
+          "event": "response_started",
+          "response_id": "response-tool",
+          "session_epoch": 1
+        },
+        {
+          "arguments": {
+            "city": "上海"
+          },
+          "call_id": "call-tool",
+          "event": "tool_call_ready",
+          "item_id": "item-tool",
+          "name": "weather__get",
+          "response_id": "response-tool",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "response-tool",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "tool-only",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "tool-only-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": "call-tool",
+        "previous_response_id": "response-tool"
+      },
+      "steps": [
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 0
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 1
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.final",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.cancel",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.tool_call",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "cancel",
+          "session": "tts-1"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 2,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 任务进度事实：开始",
+              "role": "system"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [],
+      "events": [
+        {
+          "event": "response_started",
+          "response_id": "mixed-text-tool",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "mixed-text-tool",
+          "session_epoch": 1,
+          "text": "我来查，"
+        },
+        {
+          "code": "volcengine_mixed_text_tool",
+          "event": "provider_error",
+          "recoverable": false,
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "mixed_output",
+          "response_id": "mixed-text-tool",
+          "session_epoch": 1,
+          "status": "failed"
+        }
+      ],
+      "name": "mixed-text-tool",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "mixed-text-tool-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": null
+      },
+      "steps": [
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "progress-mixed-text",
+            "provider_item_id": "mixed-text-tool-id-2",
+            "session_epoch": 1
+          },
+          "step": 0
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 1
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm.ready",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.cancel",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "failed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-1",
+          "text": "我来查，"
+        },
+        {
+          "op": "cancel",
+          "session": "tts-1"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 0,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 任务进度事实：开始",
+              "role": "system"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [],
+      "events": [
+        {
+          "event": "response_started",
+          "response_id": "mixed-tool-text",
+          "session_epoch": 1
+        },
+        {
+          "code": "volcengine_mixed_text_tool",
+          "event": "provider_error",
+          "recoverable": false,
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "mixed_output",
+          "response_id": "mixed-tool-text",
+          "session_epoch": 1,
+          "status": "failed"
+        }
+      ],
+      "name": "mixed-tool-text",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "mixed-tool-text-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": null
+      },
+      "steps": [
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "progress-mixed-tool",
+            "provider_item_id": "mixed-tool-text-id-2",
+            "session_epoch": 1
+          },
+          "step": 0
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 1
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.tool_call",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "failed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [],
+      "vad": {
+        "feed_calls": 0,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "close",
+          "session": "asr-1"
+        }
+      ],
+      "events": [
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "blank-final-id-3",
+          "session_epoch": 1,
+          "speech_id": "blank-final-id-2"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "blank-final-id-2"
+        },
+        {
+          "event": "user_transcript_failed",
+          "item_id": "blank-final-id-3",
+          "session_epoch": 1
+        }
+      ],
+      "name": "blank-final",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "blank-final-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": null
+      },
+      "steps": [
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 0
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 1
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.final",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [],
+      "vad": {
+        "feed_calls": 2,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "恢复",
+              "role": "user"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "error",
+          "session": "asr-1"
+        },
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-2"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-2"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-2"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-2"
+        },
+        {
+          "op": "close",
+          "session": "asr-2"
+        }
+      ],
+      "events": [
+        {
+          "code": "volcengine_asr_start",
+          "event": "provider_error",
+          "recoverable": true,
+          "session_epoch": 1
+        },
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "asr-start-recovery-id-5",
+          "session_epoch": 1,
+          "speech_id": "asr-start-recovery-id-4"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "asr-start-recovery-id-4"
+        },
+        {
+          "event": "user_transcript_final",
+          "item_id": "asr-start-recovery-id-5",
+          "session_epoch": 1,
+          "text": "恢复"
+        },
+        {
+          "event": "response_started",
+          "response_id": "recovered-start",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "recovered-start",
+          "session_epoch": 1,
+          "text": "恢复。"
+        },
+        {
+          "event": "response_audio_delta",
+          "pcm_b64": "AQI=",
+          "response_id": "recovered-start",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_final",
+          "response_id": "recovered-start",
+          "session_epoch": 1,
+          "text": "恢复。"
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "recovered-start",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "asr-start-recovery",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "asr-start-recovery-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "recovered-start"
+      },
+      "steps": [
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 0
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 1
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 2
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 3
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.final",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm.ready",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_audio",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-1",
+          "text": "恢复。"
+        },
+        {
+          "op": "finish",
+          "session": "tts-1"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 4,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "恢复",
+              "role": "user"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "error",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "close",
+          "session": "asr-1"
+        },
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-2"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-2"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-2"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-2"
+        },
+        {
+          "op": "close",
+          "session": "asr-2"
+        }
+      ],
+      "events": [
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "asr-append-recovery-id-3",
+          "session_epoch": 1,
+          "speech_id": "asr-append-recovery-id-2"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "asr-append-recovery-id-2"
+        },
+        {
+          "code": "volcengine_asr_append",
+          "event": "provider_error",
+          "recoverable": true,
+          "session_epoch": 1
+        },
+        {
+          "event": "user_transcript_failed",
+          "item_id": "asr-append-recovery-id-3",
+          "session_epoch": 1
+        },
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "asr-append-recovery-id-5",
+          "session_epoch": 1,
+          "speech_id": "asr-append-recovery-id-4"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "asr-append-recovery-id-4"
+        },
+        {
+          "event": "user_transcript_final",
+          "item_id": "asr-append-recovery-id-5",
+          "session_epoch": 1,
+          "text": "恢复"
+        },
+        {
+          "event": "response_started",
+          "response_id": "recovered-append",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "recovered-append",
+          "session_epoch": 1,
+          "text": "恢复。"
+        },
+        {
+          "event": "response_audio_delta",
+          "pcm_b64": "AQI=",
+          "response_id": "recovered-append",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_final",
+          "response_id": "recovered-append",
+          "session_epoch": 1,
+          "text": "恢复。"
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "recovered-append",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "asr-append-recovery",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "asr-append-recovery-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "recovered-append"
+      },
+      "steps": [
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 0
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 1
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 2
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 3
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 4
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.final",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm.ready",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_audio",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-1",
+          "text": "恢复。"
+        },
+        {
+          "op": "finish",
+          "session": "tts-1"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 5,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "恢复",
+              "role": "user"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "finish",
+          "outcome": "error",
+          "session": "asr-1"
+        },
+        {
+          "op": "close",
+          "session": "asr-1"
+        },
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-2"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-2"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-2"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-2"
+        },
+        {
+          "op": "close",
+          "session": "asr-2"
+        }
+      ],
+      "events": [
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "asr-finish-recovery-id-3",
+          "session_epoch": 1,
+          "speech_id": "asr-finish-recovery-id-2"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "asr-finish-recovery-id-2"
+        },
+        {
+          "code": "volcengine_asr_finish",
+          "event": "provider_error",
+          "recoverable": true,
+          "session_epoch": 1
+        },
+        {
+          "event": "user_transcript_failed",
+          "item_id": "asr-finish-recovery-id-3",
+          "session_epoch": 1
+        },
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "asr-finish-recovery-id-5",
+          "session_epoch": 1,
+          "speech_id": "asr-finish-recovery-id-4"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "asr-finish-recovery-id-4"
+        },
+        {
+          "event": "user_transcript_final",
+          "item_id": "asr-finish-recovery-id-5",
+          "session_epoch": 1,
+          "text": "恢复"
+        },
+        {
+          "event": "response_started",
+          "response_id": "recovered-finish",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "recovered-finish",
+          "session_epoch": 1,
+          "text": "恢复。"
+        },
+        {
+          "event": "response_audio_delta",
+          "pcm_b64": "AQI=",
+          "response_id": "recovered-finish",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_final",
+          "response_id": "recovered-finish",
+          "session_epoch": 1,
+          "text": "恢复。"
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "recovered-finish",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "asr-finish-recovery",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "asr-finish-recovery-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "recovered-finish"
+      },
+      "steps": [
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 0
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 1
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 2
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 3
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.final",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm.ready",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_audio",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-1",
+          "text": "恢复。"
+        },
+        {
+          "op": "finish",
+          "session": "tts-1"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 4,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "恢复",
+              "role": "user"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "close",
+          "session": "asr-1"
+        },
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-2"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-2"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-2"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-2"
+        },
+        {
+          "op": "close",
+          "session": "asr-2"
+        }
+      ],
+      "events": [
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "asr-receive-recovery-id-3",
+          "session_epoch": 1,
+          "speech_id": "asr-receive-recovery-id-2"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "asr-receive-recovery-id-2"
+        },
+        {
+          "code": "volcengine_asr_receive",
+          "event": "provider_error",
+          "recoverable": true,
+          "session_epoch": 1
+        },
+        {
+          "event": "user_transcript_failed",
+          "item_id": "asr-receive-recovery-id-3",
+          "session_epoch": 1
+        },
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "asr-receive-recovery-id-5",
+          "session_epoch": 1,
+          "speech_id": "asr-receive-recovery-id-4"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "asr-receive-recovery-id-4"
+        },
+        {
+          "event": "user_transcript_final",
+          "item_id": "asr-receive-recovery-id-5",
+          "session_epoch": 1,
+          "text": "恢复"
+        },
+        {
+          "event": "response_started",
+          "response_id": "recovered-receive",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "recovered-receive",
+          "session_epoch": 1,
+          "text": "恢复。"
+        },
+        {
+          "event": "response_audio_delta",
+          "pcm_b64": "AQI=",
+          "response_id": "recovered-receive",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_final",
+          "response_id": "recovered-receive",
+          "session_epoch": 1,
+          "text": "恢复。"
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "recovered-receive",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "asr-receive-recovery",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "asr-receive-recovery-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "recovered-receive"
+      },
+      "steps": [
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 0
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 1
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 2
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 3
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.final",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm.ready",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_audio",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-1",
+          "text": "恢复。"
+        },
+        {
+          "op": "finish",
+          "session": "tts-1"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 4,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 恢复摘要：恢复事实",
+              "role": "system"
+            },
+            {
+              "call_id": "call-1",
+              "output": "{\"ok\":true}",
+              "type": "function_call_output"
+            },
+            {
+              "content": "继续",
+              "role": "user"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "close",
+          "session": "asr-1"
+        }
+      ],
+      "events": [
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "pending-lifecycle-id-5",
+          "session_epoch": 1,
+          "speech_id": "pending-lifecycle-id-4"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "pending-lifecycle-id-4"
+        },
+        {
+          "event": "user_transcript_final",
+          "item_id": "pending-lifecycle-id-5",
+          "session_epoch": 1,
+          "text": "继续"
+        },
+        {
+          "event": "response_started",
+          "response_id": "pending-response",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "pending-response",
+          "session_epoch": 1,
+          "status": "completed"
+        },
+        {
+          "event": "response_started",
+          "response_id": "pending-lifecycle-id-6",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "pending-lifecycle-id-6",
+          "session_epoch": 1,
+          "status": "completed"
+        },
+        {
+          "event": "response_started",
+          "response_id": "pending-lifecycle-id-7",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "pending-lifecycle-id-7",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "pending-lifecycle",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "pending-lifecycle-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "pending-response"
+      },
+      "steps": [
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "context-1",
+            "provider_item_id": "pending-lifecycle-id-2",
+            "session_epoch": 1
+          },
+          "step": 0
+        },
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "tool-1",
+            "provider_item_id": "pending-lifecycle-id-3",
+            "session_epoch": 1
+          },
+          "step": 1
+        },
+        {
+          "op": "inject",
+          "result": {
+            "error": "VolcengineRealtimeError",
+            "message": "火山实时会话收到重复的宿主项标识"
+          },
+          "step": 2
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 3
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 4
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 5
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 6
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.final",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [],
+      "vad": {
+        "feed_calls": 2,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 任务进度事实：第一项",
+              "role": "system"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        },
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 任务进度事实：第二项",
+              "role": "system"
+            }
+          ],
+          "previous_response_id": "response-first",
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [],
+      "events": [
+        {
+          "event": "response_started",
+          "response_id": "response-first",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "response-first",
+          "session_epoch": 1,
+          "status": "completed"
+        },
+        {
+          "event": "response_started",
+          "response_id": "response-second",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "response-second",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "response-continuation",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "response-continuation-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "response-second"
+      },
+      "steps": [
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "progress-1",
+            "provider_item_id": "response-continuation-id-2",
+            "session_epoch": 1
+          },
+          "step": 0
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 1
+        },
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "progress-2",
+            "provider_item_id": "response-continuation-id-3",
+            "session_epoch": 1
+          },
+          "step": 2
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 3
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [],
+      "vad": {
+        "feed_calls": 0,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 任务进度事实：查天气",
+              "role": "system"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        },
+        {
+          "input_items": [
+            {
+              "content": "换个问题",
+              "role": "user"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "finish",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "close",
+          "session": "asr-1"
+        }
+      ],
+      "events": [
+        {
+          "event": "response_started",
+          "response_id": "function-response",
+          "session_epoch": 1
+        },
+        {
+          "arguments": {
+            "city": "上海"
+          },
+          "call_id": "call-tool",
+          "event": "tool_call_ready",
+          "item_id": "item-tool",
+          "name": "weather__get",
+          "response_id": "function-response",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "function-response",
+          "session_epoch": 1,
+          "status": "completed"
+        },
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "unresolved-tool-late-output-id-4",
+          "session_epoch": 1,
+          "speech_id": "unresolved-tool-late-output-id-3"
+        },
+        {
+          "event": "user_speech_ended",
+          "provider_item_id": null,
+          "session_epoch": 1,
+          "speech_id": "unresolved-tool-late-output-id-3"
+        },
+        {
+          "event": "user_transcript_final",
+          "item_id": "unresolved-tool-late-output-id-4",
+          "session_epoch": 1,
+          "text": "换个问题"
+        },
+        {
+          "event": "response_started",
+          "response_id": "user-response",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "user-response",
+          "session_epoch": 1,
+          "status": "completed"
+        },
+        {
+          "event": "response_started",
+          "response_id": "unresolved-tool-late-output-id-6",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "unresolved-tool-late-output-id-6",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "unresolved-tool-late-output",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "unresolved-tool-late-output-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "user-response"
+      },
+      "steps": [
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "progress-tool",
+            "provider_item_id": "unresolved-tool-late-output-id-2",
+            "session_epoch": 1
+          },
+          "step": 0
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 1
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 2
+        },
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 3
+        },
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "late-output",
+            "provider_item_id": "unresolved-tool-late-output-id-5",
+            "session_epoch": 1
+          },
+          "step": 4
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 5
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.tool_call",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.end",
+          "payload": {
+            "commit": true,
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.final",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [],
+      "vad": {
+        "feed_calls": 2,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 任务进度事实：开始",
+              "role": "system"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [],
+      "events": [
+        {
+          "event": "response_started",
+          "response_id": "retry-before",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "retry-before",
+          "session_epoch": 1,
+          "text": "你好。"
+        },
+        {
+          "event": "response_audio_delta",
+          "pcm_b64": "BQY=",
+          "response_id": "retry-before",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_final",
+          "response_id": "retry-before",
+          "session_epoch": 1,
+          "text": "你好。"
+        },
+        {
+          "event": "response_terminal",
+          "reason": "completed",
+          "response_id": "retry-before",
+          "session_epoch": 1,
+          "status": "completed"
+        }
+      ],
+      "name": "tts-retry-before-audio",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "tts-retry-before-audio-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "retry-before"
+      },
+      "steps": [
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "retry-before-item",
+            "provider_item_id": "tts-retry-before-audio-id-2",
+            "session_epoch": 1
+          },
+          "step": 0
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 1
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm.ready",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.reconnect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_audio",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "completed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "send_text",
+          "outcome": "error",
+          "session": "tts-1",
+          "text": "你好。"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        },
+        {
+          "op": "open",
+          "session": "tts-2"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-2",
+          "text": "你好。"
+        },
+        {
+          "op": "finish",
+          "session": "tts-2"
+        },
+        {
+          "op": "close",
+          "session": "tts-2"
+        }
+      ],
+      "vad": {
+        "feed_calls": 0,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 任务进度事实：开始",
+              "role": "system"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [],
+      "events": [
+        {
+          "event": "response_started",
+          "response_id": "retry-after",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "retry-after",
+          "session_epoch": 1,
+          "text": "你好。"
+        },
+        {
+          "event": "response_audio_delta",
+          "pcm_b64": "BQY=",
+          "response_id": "retry-after",
+          "session_epoch": 1
+        },
+        {
+          "code": "volcengine_response_failed",
+          "event": "provider_error",
+          "recoverable": true,
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "provider_ConnectionError",
+          "response_id": "retry-after",
+          "session_epoch": 1,
+          "status": "failed"
+        }
+      ],
+      "name": "tts-no-retry-after-audio",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "tts-no-retry-after-audio-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": "retry-after"
+      },
+      "steps": [
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "retry-after-item",
+            "provider_item_id": "tts-no-retry-after-audio-id-2",
+            "session_epoch": 1
+          },
+          "step": 0
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 1
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm.ready",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_audio",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "failed"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-1",
+          "text": "你好。"
+        },
+        {
+          "op": "finish",
+          "session": "tts-1"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 0,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 任务进度事实：开始",
+              "role": "system"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [],
+      "events": [
+        {
+          "event": "response_started",
+          "response_id": "response-cancel",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "response-cancel",
+          "session_epoch": 1,
+          "text": "仍在生成，"
+        },
+        {
+          "cancel_request_id": "cancel-exact-mismatch-id-3",
+          "event": "response_cancel_rejected",
+          "reason": "no_active_response",
+          "response_id": "wrong-response",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_terminal",
+          "reason": "cancelled",
+          "response_id": "response-cancel",
+          "session_epoch": 1,
+          "status": "cancelled"
+        }
+      ],
+      "name": "cancel-exact-mismatch",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "cancel-exact-mismatch-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": null
+      },
+      "steps": [
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "cancel-item",
+            "provider_item_id": "cancel-exact-mismatch-id-2",
+            "session_epoch": 1
+          },
+          "step": 0
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 1
+        },
+        {
+          "op": "cancel_response",
+          "result": null,
+          "step": 2
+        },
+        {
+          "op": "cancel_response",
+          "result": null,
+          "step": 3
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm.ready",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.cancel",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.cancel",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "cancelled"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        },
+        {
+          "op": "send_text",
+          "outcome": "ok",
+          "session": "tts-1",
+          "text": "仍在生成，"
+        },
+        {
+          "op": "cancel",
+          "session": "tts-1"
+        },
+        {
+          "op": "close",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 0,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [],
+      "asr_operations": [
+        {
+          "op": "open",
+          "outcome": "ok",
+          "session": "asr-1"
+        },
+        {
+          "op": "append",
+          "outcome": "ok",
+          "pcm_b64": "AAE=",
+          "session": "asr-1"
+        },
+        {
+          "op": "close",
+          "session": "asr-1"
+        }
+      ],
+      "events": [
+        {
+          "event": "user_speech_started",
+          "provider_item_id": "close-during-asr-id-3",
+          "session_epoch": 1,
+          "speech_id": "close-during-asr-id-2"
+        }
+      ],
+      "name": "close-during-asr",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "close-during-asr-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": null
+      },
+      "steps": [
+        {
+          "op": "send_audio",
+          "result": null,
+          "step": 0
+        },
+        {
+          "op": "close",
+          "result": null,
+          "step": 1
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.asr.connect",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.vad.start",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [],
+      "vad": {
+        "feed_calls": 1,
+        "reset_calls": 2
+      }
+    },
+    {
+      "ark_calls": [
+        {
+          "input_items": [
+            {
+              "content": "Nova Audio Agent 任务进度事实：开始",
+              "role": "system"
+            }
+          ],
+          "previous_response_id": null,
+          "tools": [
+            {
+              "description": "天气",
+              "name": "weather__get",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        }
+      ],
+      "asr_operations": [],
+      "events": [
+        {
+          "event": "response_started",
+          "response_id": "response-close",
+          "session_epoch": 1
+        },
+        {
+          "event": "response_transcript_delta",
+          "response_id": "response-close",
+          "session_epoch": 1,
+          "text": "生成中，"
+        },
+        {
+          "event": "response_terminal",
+          "reason": "cancelled",
+          "response_id": "response-close",
+          "session_epoch": 1,
+          "status": "cancelled"
+        }
+      ],
+      "name": "close-during-response",
+      "session": {
+        "epoch": 1,
+        "provider_session_id": "close-during-response-id-1"
+      },
+      "state": {
+        "abandoned_call_ids": [],
+        "consumed_host_ids": [],
+        "pending_host_ids": [],
+        "pending_tool_call_id": null,
+        "previous_response_id": null
+      },
+      "steps": [
+        {
+          "op": "inject",
+          "result": {
+            "host_item_id": "close-item",
+            "provider_item_id": "close-during-response-id-2",
+            "session_epoch": 1
+          },
+          "step": 0
+        },
+        {
+          "op": "create_response",
+          "result": null,
+          "step": 1
+        },
+        {
+          "op": "close",
+          "result": null,
+          "step": 2
+        }
+      ],
+      "telemetry": [
+        {
+          "name": "volcengine.session.connected",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.started",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.tts.prewarm",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.llm.first_text",
+          "payload": {
+            "epoch": 1
+          }
+        },
+        {
+          "name": "volcengine.response.terminal",
+          "payload": {
+            "status": "cancelled"
+          }
+        },
+        {
+          "name": "volcengine.session.closed",
+          "payload": {
+            "epoch": 1
+          }
+        }
+      ],
+      "tts_operations": [
+        {
+          "op": "open",
+          "session": "tts-1"
+        }
+      ],
+      "vad": {
+        "feed_calls": 0,
+        "reset_calls": 2
+      }
+    }
+  ],
+  "schema_version": 1
+}
