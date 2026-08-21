@@ -18,6 +18,8 @@ const BUILD_JAVASCRIPT_FILES = Object.freeze([
   'src/renderer/orb-visual.mjs',
   'src/renderer/settings.mjs',
   'scripts/utility-runtime-smoke.mjs',
+  'scripts/packaged-runtime-import-smoke.cjs',
+  'scripts/run-packaged-import-smoke.mjs',
   'scripts/inspect-package.mjs',
   'scripts/camera-file-integration.mjs',
   'scripts/camera-file-integration-contract.mjs',

@@ -211,8 +211,7 @@ function productionDependencyFile(file) {
     'bun.lock', 'bun.lockb', 'appveyor.yml', '.travis.yml', 'circle.yml', '.nyc_output',
     '.husky', '.github', 'electron-builder.env',
   ])
-  return !lower.startsWith('src/')
-    && !segments.some(segment => builderExcludedNames.has(segment))
+  return !segments.some(segment => builderExcludedNames.has(segment))
     && !/(?:^|\/)(?:test|tests|__tests__|fixtures|coverage|example|examples|powered-test)(?:\/|$)/u.test(lower)
     && !/\.test\.(?:c?m?js|tsx?)(?:\.map)?$/u.test(lower)
     && !/\.(?:iml|hprof|orig|pyc|pyo|rbc|swp|csproj|sln|suo|xproj|cc|d\.ts|mk|a|o|obj|forge-meta|pdb)$/u.test(lower)
@@ -262,6 +261,7 @@ function forbiddenPath(path) {
     || /(?:^|\/)(?:test|tests|__tests__|fixtures|coverage)(?:\/|$)/u.test(lower)
     || /\.test\.(?:c?m?js|tsx?|c?m?ts)(?:\.map)?$/u.test(lower)
     || /(?:^|\/)(?:ffmpeg|ffprobe)(?:\.exe)?$/u.test(lower)
+    || /(?:^|\/)(?:lib)?(?:avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)(?:[-.]|$).*(?:\.dylib|\.so(?:\.\d+)*|\.dll)$/u.test(lower)
     || /node_modules\/[^/]*(?:opencv|ffmpeg-static|python-shell|camera|webcam|video[-_]?codec)[^/]*(?:\/|$)/u
       .test(lower)
 }
@@ -1104,6 +1104,7 @@ async function captureCandidateDirectory(sourceRoot, destinationRoot, deadline) 
             throw new PackageInspectionError('candidate snapshot file rejected')
           }
           await copyAndHashHandle(source, destinationPath, before.size)
+          await chmod(destinationPath, (before.mode & 0o111) === 0 ? 0o400 : 0o500)
           const after = await source.stat()
           const pathAfter = await lstat(sourcePath)
           if (

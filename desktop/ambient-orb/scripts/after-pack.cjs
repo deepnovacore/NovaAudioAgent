@@ -21,10 +21,16 @@ module.exports = async function afterPack(context) {
   } else {
     resourcesRoot = resolve(context.appOutDir, 'resources')
   }
-  const [{ generateNativeResourceManifest }, { parseStrictJson }, { replacePackagedAsar }] = await Promise.all([
+  const [
+    { generateNativeResourceManifest },
+    { parseStrictJson },
+    { replacePackagedAsar },
+    { runPackagedImportSmoke },
+  ] = await Promise.all([
     import('./native-resource-contract.mjs'),
     import('./strict-json.mjs'),
     import('./build-owned-asar.mjs'),
+    import('./run-packaged-import-smoke.mjs'),
   ])
   await replacePackagedAsar({
     sourceRoot: resolve(__dirname, '../build/release-app'),
@@ -42,4 +48,10 @@ module.exports = async function afterPack(context) {
     `${JSON.stringify(manifest)}\n`,
     { encoding: 'utf8', mode: 0o600 },
   )
+  runPackagedImportSmoke({
+    appOutDir: context.appOutDir,
+    resourcesRoot,
+    platform,
+    productFilename: context.packager.appInfo.productFilename,
+  })
 }

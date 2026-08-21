@@ -31,6 +31,8 @@ const EXPECTED_BUILD_SCRIPTS = [
   'src/renderer/orb-visual.mjs',
   'src/renderer/settings.mjs',
   'scripts/utility-runtime-smoke.mjs',
+  'scripts/packaged-runtime-import-smoke.cjs',
+  'scripts/run-packaged-import-smoke.mjs',
   'scripts/inspect-package.mjs',
   'scripts/camera-file-integration.mjs',
   'scripts/camera-file-integration-contract.mjs',
@@ -170,6 +172,12 @@ test('mac, win, and linux platform blocks all exist', () => {
   assert.ok(config.mac, 'expected a mac: block')
   assert.ok(config.win, 'expected a win: block')
   assert.ok(config.linux, 'expected a linux: block')
+})
+
+test('the package lifecycle owns exact staging, native manifest, and packaged import smoke', () => {
+  assert.equal(config.beforeBuild, 'scripts/before-build.cjs')
+  assert.equal(config.afterPack, 'scripts/after-pack.cjs')
+  assert.equal(config.directories.app, 'build/release-app')
 })
 
 test('each platform targets exactly what packaging expects', () => {
@@ -374,7 +382,9 @@ test('desktop build executes syntax checks for production camera and integration
         await mkdir(dirname(target), { recursive: true })
         await writeFile(
           target,
-          file === malformed ? 'export const malformed =' : 'export const valid = true\n',
+          file === malformed
+            ? 'export const malformed ='
+            : file.endsWith('.cjs') ? 'module.exports = true\n' : 'export const valid = true\n',
           'utf8',
         )
       }

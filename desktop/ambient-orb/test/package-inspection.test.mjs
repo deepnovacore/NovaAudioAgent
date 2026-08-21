@@ -291,12 +291,21 @@ test('configured graph follows the target-applicable lock closure without treati
   assert.ok(result.selectedPackages.includes('@livekit/local-inference@0.2.7'))
   assert.ok(result.selectedPackages.includes('@livekit/local-inference-darwin-arm64@0.2.7'))
   assert.ok(result.selectedPackages.includes('fluent-ffmpeg@2.1.3'))
+  assert.deepEqual(
+    result.selectedPackages.filter(value => /ffmpeg/iu.test(value)),
+    ['fluent-ffmpeg@2.1.3'],
+    'only the locked LiveKit public-root JavaScript wrapper exception is selected',
+  )
   assert.ok(!result.selectedPackages.some(value => value.includes('linux-x64')))
   assert.ok(!result.selectedPackages.some(value => value.includes('win32-x64')))
   assert.ok(!result.includedFiles.some(value => /\.test\.(?:c?m?js|ts)$/u.test(value)))
   assert.ok(!result.includedFiles.some(value => value.endsWith('.map')))
   assert.ok(!result.includedFiles.some(value => /\.(?:snap|png|mts)$/u.test(value)))
   assert.ok(!result.includedFiles.some(value => /@livekit\/av-[^/]+\/ffmpeg$/u.test(value)))
+  assert.ok(!result.includedFiles.some(value => (
+    /(?:^|\/)(?:ffmpeg|ffprobe)(?:\.exe)?$/iu.test(value)
+    || /(?:^|\/)(?:lib)?(?:avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)(?:[-.]|$).*(?:\.dylib|\.so(?:\.\d+)*|\.dll)$/iu.test(value)
+  )))
 })
 
 test('artifact-root entry reads bounded manifests from the inspected artifact itself', async () => {
@@ -826,6 +835,14 @@ test('release candidate report binds artifact SHA and rejects an external resour
     body.writeUInt32LE(0xfeedfacf, 0)
     body.writeUInt32LE(0x0100000c, 4)
     body.writeUInt32LE(kind === 'executable' ? 2 : 8, 12)
+    if (kind === 'executable') {
+      body.writeUInt32LE(1, 16)
+      body.writeUInt32LE(24, 20)
+      body.writeUInt32LE(0x32, 32)
+      body.writeUInt32LE(24, 36)
+      body.writeUInt32LE(1, 40)
+      body.writeUInt32LE(0x000c0000, 44)
+    }
     return body
   }
   try {
@@ -922,6 +939,9 @@ test('release candidate report binds artifact SHA and rejects an external resour
       const destination = resolve(resources, path)
       await mkdir(dirname(destination), { recursive: true })
       await writeFile(destination, body)
+      if (path === 'native/codex-sandbox-probe' || path === 'native/macos_voice_io') {
+        await chmod(destination, 0o755)
+      }
     }
     const nativeManifest = await generateNativeResourceManifest({
       resourcesRoot: resources,
@@ -980,6 +1000,7 @@ test('dependency report binds every lock install key to exact canonical file byt
   const sourceFiles = new Map([
     ['node_modules/alpha/package.json', '{"name":"alpha","version":"1.0.0"}\n'],
     ['node_modules/alpha/index.js', 'export const alpha = true\n'],
+    ['node_modules/alpha/src/runtime.js', 'export const requiredAtRuntime = true\n'],
     ['node_modules/alpha/node_modules/beta/package.json', '{"name":"beta","version":"2.0.0"}\n'],
     ['node_modules/alpha/node_modules/beta/index.js', 'export const beta = true\n'],
   ])
@@ -999,6 +1020,10 @@ test('dependency report binds every lock install key to exact canonical file byt
     assert.ok(report.packages.every(value => value.files.every(file => (
       /^[0-9a-f]{64}$/u.test(file.sha256) && file.byte_size > 0
     ))))
+    assert.ok(
+      report.packages[0].files.some(file => file.path === 'src/runtime.js'),
+      'runtime JavaScript under a dependency src directory is part of the exact closure',
+    )
     await mkdir(resolve(artifact, 'build/release'), { recursive: true })
     await writeFile(
       resolve(artifact, 'build/release/production-dependencies-v1.json'),

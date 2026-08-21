@@ -91,6 +91,7 @@ function assertBinaryHeader(header, target, kind) {
     if (!kindMatches) {
       throw new NativeResourceError('native_resource_kind')
     }
+    if (kind === 'executable') assertMacMinimumVersion(header)
     return
   }
   if (target.platform === 'linux') {
@@ -119,6 +120,29 @@ function assertBinaryHeader(header, target, kind) {
   }
 }
 
+function assertMacMinimumVersion(header) {
+  if (header.length < 32) throw new NativeResourceError('native_resource_min_os')
+  const commands = header.readUInt32LE(16)
+  const commandBytes = header.readUInt32LE(20)
+  if (commands === 0 || commands > 64 || commandBytes > header.length - 32) {
+    throw new NativeResourceError('native_resource_min_os')
+  }
+  let offset = 32
+  let minimum = null
+  for (let index = 0; index < commands; index += 1) {
+    if (offset + 8 > 32 + commandBytes) throw new NativeResourceError('native_resource_min_os')
+    const command = header.readUInt32LE(offset)
+    const size = header.readUInt32LE(offset + 4)
+    if (size < 8 || offset + size > 32 + commandBytes) {
+      throw new NativeResourceError('native_resource_min_os')
+    }
+    if (command === 0x32 && size >= 16) minimum = header.readUInt32LE(offset + 12)
+    if (command === 0x24 && size >= 12) minimum = header.readUInt32LE(offset + 8)
+    offset += size
+  }
+  if (minimum !== 0x000c0000) throw new NativeResourceError('native_resource_min_os')
+}
+
 async function hashNativeFile(path, target, kind) {
   let handle
   try {
@@ -131,6 +155,11 @@ async function hashNativeFile(path, target, kind) {
     if (!before.isFile() || before.size <= 0 || before.size > MAX_NATIVE_BYTES) {
       throw new NativeResourceError('native_resource_invalid')
     }
+    if (
+      kind === 'executable'
+      && target.platform !== 'win32'
+      && (before.mode & 0o111) === 0
+    ) throw new NativeResourceError('native_resource_mode')
     const header = Buffer.alloc(Math.min(4096, before.size))
     await handle.read(header, 0, header.length, 0)
     if (kind !== 'data') assertBinaryHeader(header, target, kind)

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import test from 'node:test'
@@ -65,6 +65,12 @@ test('native manifest maps every external native resource exactly once', async (
   const header = Buffer.alloc(64)
   header.writeUInt32LE(0xfeedfacf, 0)
   header.writeUInt32LE(0x0100000c, 4)
+  header.writeUInt32LE(1, 16)
+  header.writeUInt32LE(24, 20)
+  header.writeUInt32LE(0x32, 32)
+  header.writeUInt32LE(24, 36)
+  header.writeUInt32LE(1, 40)
+  header.writeUInt32LE(0x000c0000, 44)
   try {
     for (const expected of expectedNativeResources('darwin-arm64')) {
       const path = resolve(root, expected.relative_path)
@@ -79,6 +85,7 @@ test('native manifest maps every external native resource exactly once', async (
         12,
       )
       await writeFile(path, body)
+      if (expected.kind === 'executable') await chmod(path, 0o755)
     }
     const manifest = await generateNativeResourceManifest({
       resourcesRoot: root,
@@ -135,6 +142,24 @@ test('native manifest maps every external native resource exactly once', async (
     const restoredProbe = Buffer.from(header)
     restoredProbe.writeUInt32LE(2, 12)
     await writeFile(probe, restoredProbe)
+    await chmod(probe, 0o755)
+
+    await chmod(probe, 0o644)
+    await assert.rejects(
+      verifyNativeResourceManifest({ resourcesRoot: root, targetId: 'darwin-arm64' }),
+      error => error.code === 'native_resource_mode',
+    )
+    await chmod(probe, 0o755)
+    const wrongMinimum = Buffer.from(restoredProbe)
+    wrongMinimum.writeUInt32LE(0x000f0000, 44)
+    await writeFile(probe, wrongMinimum)
+    await chmod(probe, 0o755)
+    await assert.rejects(
+      verifyNativeResourceManifest({ resourcesRoot: root, targetId: 'darwin-arm64' }),
+      error => error.code === 'native_resource_min_os',
+    )
+    await writeFile(probe, restoredProbe)
+    await chmod(probe, 0o755)
 
     const duplicate = resolve(root, 'native/orphan-helper')
     await mkdir(resolve(duplicate, '..'), { recursive: true })

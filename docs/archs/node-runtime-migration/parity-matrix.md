@@ -110,6 +110,7 @@ Scorecard and demo caveats:
 | Volcengine ASR/TTS/Ark/protocol | Volcengine component/provider tests | Python-exported fixtures and Node integration tests cover config, PCM, VAD/endpointing fallback, ASR/TTS/Ark sessions, provider lifecycle, and production assembly | Live provider/audio evidence remains pending external evidence |
 | Streaming VAD | Volcengine VAD tests | Deterministic waveform fixtures cover the provider-neutral capability and bounded-silence fallback contracts | Native binding and equivalent segmentation evidence remain pending on every release platform |
 | Audio end-of-turn detection | turn handling, endpointing, interruption, and backchannel tests | Public-import and capability tests reject constructor-only/default-positive evidence and keep fallback explicit | Real `v1-mini` executor, native model, and microphone evidence remain pending external evidence |
+| LiveKit packaged root import | provider packaging and endpointing capability | Exact lock-derived closure includes the public-root-required `fluent-ffmpeg` JavaScript transitive package, but packaged smoke forbids child process/PATH lookup and proves differentiated VAD from fixed PCM assets; no ffmpeg/ffprobe executable or native media library ships | Same exact artifact must pass each target-native import/capability job |
 
 ## Executors and Vision
 
