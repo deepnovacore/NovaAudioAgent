@@ -13,7 +13,9 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "check": "npm run typecheck --workspace @nova-audio-agent/runtime && npm run lint --workspace @nova-audio-agent/runtime",
+    "check": "npm run typecheck --workspace @nova-audio-agent/runtime && npm run lint --workspace @nova-audio-agent/runtime && npm run check:env-contract && npm run check:node-parity",
+    "check:env-contract": "npm run build --workspace @nova-audio-agent/runtime && node runtime/scripts/check-env-contract.mjs --check",
+    "check:node-parity": "node runtime/scripts/node-parity-audit.mjs --check",
     "fixtures:schema": "npm run build --workspace @nova-audio-agent/runtime && node runtime/scripts/generate-fixture-schema.mjs",
     "fixtures:schema:session": "npm run build --workspace @nova-audio-agent/runtime && node runtime/scripts/generate-session-fixture-schema.mjs",
     "fixtures:nfkc": "uv run python scripts/generate_nfkc_vectors.py --export",

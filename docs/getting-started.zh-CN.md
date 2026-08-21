@@ -1,151 +1,115 @@
 # 上手指南
 
-## 安装
+## 当前发布边界
 
-基础环境需要 Python 3.11+、[uv](https://docs.astral.sh/uv/) 与支持 submodule 的 Git；
-Ambient Orb 还需要 macOS、Node.js 22+、麦克风权限和 `codex` 可执行文件。
+本回滚发布期仍以 Python 为默认后端和可执行源码 oracle。Node runtime 只用于显式 opt-in
+开发；源码开发后端开关不是安装版应用的回退承诺。HA/AutoGLM 已在 Node 中退役，只暂留在
+Python 源码回滚路径。遗留 HA 或 AutoGLM 配置只要非空，就会在 provider、进程、设备和桌面
+构造前返回稳定且不泄露凭据的迁移错误。
+
+Node Codex 只使用 app-server；JSONL 仅为 fixture-parser-only 兼容层，不再拥有 Node 进程执行
+路径。Search、Camera、Watch 和 Guard 始终装配，不属于执行器选择项。
+
+## 源码开发安装
 
 ```bash
 git clone --recurse-submodules \
   https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
 cd nova-audio-agent
 uv sync --dev
+npm ci
 cp .env.example .env
 ```
 
-文本模型至少配置 `NOVA_AUDIO_AGENT_MODEL_API_KEY`，搜索配置 `TAVILY_API_KEY`。文本 CLI：
+Python 仍是默认路径：
 
 ```bash
-uv run nova-audio-agent chat --executor fast_sim
+uv run nova-audio-agent --help
+uv run nova-audio-agent demo all
 ```
 
-## 实时语音 provider
-
-启动时通过 `NOVA_AUDIO_AGENT_REALTIME_PROVIDER=qwen|volcengine` 选择，默认是 `qwen`；
-不会在运行中自动 failover。
-
-Qwen 的最小配置：
-
-```dotenv
-NOVA_AUDIO_AGENT_REALTIME_PROVIDER=qwen
-DASHSCOPE_API_KEY=...
-```
-
-火山引擎备选是原生级联管线：
-
-```text
-16 kHz PCM16 → Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0 → 24 kHz PCM16
-```
-
-先安装可选依赖：
+仓库内 Node 检查均可离线、确定性运行：
 
 ```bash
-uv sync --extra vision --extra volcengine --dev
+npm run build --workspace @nova-audio-agent/runtime
+node runtime/dist/src/cli.js diagnose --json
+node runtime/dist/src/cli.js demo all
+node runtime/dist/src/cli.js scorecard fixture check
+uv run python scripts/config_fixture_oracle.py check
+uv run python scripts/product_fixture_oracle.py check
 ```
 
-运行时虽选择 Silero ONNX 模型，但上游 `silero-vad==5.1.2` 目前仍会传递安装 PyTorch 与
-torchaudio，因此这个可选 extra 的安装体积较大。
+`diagnose` 只验证配置，不连接 provider、不启动 Codex、不请求摄像头或麦克风、不启动 Chromium，
+也不输出凭据和路径。产品 fixture 只能用 Python exporter 的显式 `export` 命令更新；普通测试只读。
 
-然后在火山控制台开通 Seed ASR 2.0、目标 Ark 模型与 Seed TTS 2.0，并配置：
+## 实时提供方与执行器
 
-```dotenv
-NOVA_AUDIO_AGENT_REALTIME_PROVIDER=volcengine
-ARK_API_KEY=...
-DOUBAO_ASR_API_KEY=...
-DOUBAO_BIGMODEL_API_KEY=...
-TAVILY_API_KEY=...
-```
+Qwen 是默认实时提供方，Volcengine 是另一套共用 provider-neutral assembly 的实现；真实使用时
+都需要所选 provider 的凭据。Node 可配置执行器为 `fast_sim`、`slow_sim`、`codex`。Codex 的
+ordinary/live/project 模式共用有界 app-server transport。Camera 文件输入只接受主机验证过的
+绝对路径。
 
-如果 ASR 和 TTS 共用同一把 key，可以不填 `DOUBAO_ASR_API_KEY`，程序会复用
-`DOUBAO_BIGMODEL_API_KEY`。凭据不要写入代码、测试或提交历史。
+真实 provider、麦克风/扬声器、Camera、Codex 登录、WindowServer、Windows 后代进程清理、
+clean-machine installer、签名和发布仍是 pending external evidence。
 
-Ark 默认模型是 `doubao-seed-2-0-pro-260215`，使用 Responses API 原生工具调用，开启
-`store` 与 `previous_response_id`，关闭深度思考和并行工具调用。工具结果按原 `call_id`
-回传。若同一响应已经输出普通文本，之后又出现工具调用，适配器会取消 TTS、拒绝执行该工具并
-以失败终止，避免“先说后执行”的副作用。
+## 公共环境变量参考
 
-TTS 在首个自然标点立即 flush，之后按 18 字 soft / 48 字 hard 分块。连接失效时，只有当前
-响应尚未输出任何音频才会重连重试一次；已经输出首音后绝不重试，避免重复播报。
+下表由 `runtime/src/environment-contract.ts` 生成。主机私有握手变量和已退役集成变量不会进入
+表格。兼容提示：`HA_*` 与 `AUTOGLM_*` 已退役，不要在 Node 配置中继续填写其凭据或地址。
 
-### 火山配置
-
-除三项无前缀凭据外，下表变量均带 `NOVA_AUDIO_AGENT_` 前缀：
-
-| 变量 | 默认值 | 用途 |
-|---|---|---|
-| `ARK_API_KEY` | — | Ark Responses API |
-| `DOUBAO_ASR_API_KEY` | 复用 TTS key | Seed ASR |
-| `DOUBAO_BIGMODEL_API_KEY` | — | Seed TTS 2.0 |
-| `VOLCENGINE_ARK_BASE_URL` | Ark API v3 | 必须为 `https://` |
-| `VOLCENGINE_ARK_MODEL` | `doubao-seed-2-0-pro-260215` | LLM 模型 |
-| `VOLCENGINE_ARK_SUPPORT_MODEL` | `doubao-seed-2-0-pro-260215` | 未配置独立模型 key 时供 Watch、Guard、Surrogate、Compressor 使用 |
-| `DOUBAO_ASR_ENDPOINT` | ASR v3 endpoint | 必须为 `wss://` |
-| `DOUBAO_ASR_RESOURCE_ID` | `volc.seedasr.sauc.duration` | 可按账号改为 legacy resource |
-| `DOUBAO_ASR_CHUNK_MS` | `200` | ASR 发包窗口 |
-| `DOUBAO_TTS_ENDPOINT` | 双向流式 TTS endpoint | 必须为 `wss://` |
-| `DOUBAO_TTS_RESOURCE_ID` | `seed-tts-2.0` | TTS resource |
-| `DOUBAO_TTS_VOICE` | `zh_female_vv_uranus_bigtts` | 音色 |
-| `DOUBAO_TTS_OUTPUT_SAMPLE_RATE` | `24000` | PCM16 输出采样率 |
-| `VOLCENGINE_VAD_THRESHOLD` | `0.5` | Silero 阈值 |
-| `VOLCENGINE_VAD_PRE_ROLL_MS` | `260` | 起点前音频 |
-| `VOLCENGINE_VAD_MIN_SPEECH_MS` | `250` | 最短语音 |
-| `VOLCENGINE_VAD_SILENCE_END_MS` | `560` | 判停静音 |
-| `VOLCENGINE_VAD_SPEECH_PAD_MS` | `30` | 语音 padding |
-| `VOLCENGINE_VAD_MAX_UTTERANCE_MS` | `15000` | 强制断句 |
-
-Silero/ONNX 加载失败、凭据缺失或 endpoint 不安全时会拒绝启动，不会静默切到 energy VAD。
-当前不实现声纹、人脸、唤醒词、说话人分离、TSE、A2F 或自动 provider 切换。
-
-## Ambient Orb 与延迟探针
-
-```bash
-./scripts/start_ambient_orb_macos.sh
-```
-
-真实 provider 探针必须显式 opt-in，不进入默认 CI。用下面的方式录制无内容遥测，交互几轮后
-结束进程并生成 p50/p95 报告：
-
-```bash
-NOVA_AUDIO_AGENT_REALTIME_TELEMETRY=/tmp/nova-volcengine.jsonl \
-  ./scripts/start_ambient_orb_macos.sh
-uv run python -m scripts.realtime_probe telemetry-report /tmp/nova-volcengine.jsonl
-```
-
-报告包含 `speech end → ASR final → LLM first text → TTS first audio` 各段耗时。遥测不记录
-凭据、原始音频或完整对话文本。
-
-也可以用一段无压缩、单声道、16 kHz PCM16 WAV 做有界端到端 smoke；没有 `--live` 时脚本
-拒绝发起网络请求，并且不会打印转写或回答内容：
-
-```bash
-uv run python scripts/smoke_volcengine_realtime.py \
-  --live --wav /absolute/path/to/utterance.wav --runs 3
-```
-
-如果要比较 Ark 模型而不发送音频，可以运行有界的合成 function-call 矩阵。脚本必须显式传入
-`--live`，只接受仓库中审核过的模型 allowlist；输出仅包含聚合后的质量、异常类型和耗时（样本少于
-20 个时显示 max，达到 20 个才显示 p95），不打印 prompt、工具参数、工具结果、回答文本、请求 ID
-或凭据。即使 `--models` 没有写 Seed 2.0 Pro，脚本也会自动加入这个基线；不传 `--models` 时只跑
-Seed 2.0 Pro：
-
-```bash
-uv run --extra volcengine python scripts/benchmark_volcengine_llm.py \
-  --live --runs 2 \
-  --models doubao-seed-2-0-pro-260215 doubao-seed-2-1-turbo-260628 \
-  deepseek-v4-pro-ga-260813 deepseek-v4-flash-ga-260731
-```
-
-候选模型只有在总体和每个类别的工具调用通过率都不低于实测基线、并且严重失败为零时才有资格
-替换默认模型。这个 benchmark 不会自动修改生产配置。
-
-其余 Home Assistant、Codex、AutoGLM、摄像头与完整公共配置见
-[英文上手指南](getting-started.md)。
-
-## 验证
-
-```bash
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run pytest -q
-uv build
-```
+<!-- BEGIN GENERATED ENV CONTRACT -->
+| 变量 | 所属 | 必需条件 | 默认 | 说明 |
+|---|---|---|---|---|
+| `NOVA_AUDIO_AGENT_BACKEND` | `source_rollback` | 否 | python | 回滚发布期的源码开发后端开关。 |
+| `NOVA_AUDIO_AGENT_MODEL_BASE_URL` | `core` | 否 | DashScope compatible endpoint | FastBrain 兼容 API 地址。 |
+| `NOVA_AUDIO_AGENT_MODEL_API_KEY` | `core` | 选择该能力时 | 无 | FastBrain API 凭据，也可作为 Qwen 回退凭据。 |
+| `NOVA_AUDIO_AGENT_FAST_MODEL` | `core` | 否 | qwen3-vl-plus | FastBrain 模型。 |
+| `NOVA_AUDIO_AGENT_WATCH_MODEL` | `core` | 否 | fast model | Watch 模型覆盖。 |
+| `NOVA_AUDIO_AGENT_SURROGATE_MODEL` | `core` | 否 | qwen-flash | Surrogate 模型。 |
+| `NOVA_AUDIO_AGENT_COMPRESSOR_MODEL` | `core` | 否 | qwen-flash | 记忆压缩模型。 |
+| `NOVA_AUDIO_AGENT_REALTIME_PROVIDER` | `core` | 否 | qwen | 实时提供方：qwen 或 volcengine。 |
+| `NOVA_AUDIO_AGENT_EXECUTOR` | `core` | 否 | fast_sim | 兼容用单执行器选择器。 |
+| `NOVA_AUDIO_AGENT_EXECUTORS` | `core` | 否 | selected executor | 有序执行器列表。 |
+| `NOVA_AUDIO_AGENT_PROACTIVITY_PRESET` | `core` | 否 | balanced | 主动性预设。 |
+| `NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN` | `core` | 否 | preset | 建议冷却秒数覆盖。 |
+| `NOVA_AUDIO_AGENT_FRESH_WINDOW` | `core` | 否 | preset | 新鲜上下文窗口秒数覆盖。 |
+| `DASHSCOPE_API_KEY` | `qwen` | 选择该能力时 | 无 | Qwen 实时凭据。 |
+| `NOVA_AUDIO_AGENT_QWEN_REALTIME_URL` | `qwen` | 否 | DashScope realtime endpoint | Qwen 安全实时地址。 |
+| `NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL` | `qwen` | 否 | qwen-audio-3.0-realtime-plus | Qwen 实时模型。 |
+| `NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE` | `qwen` | 否 | longanqian | Qwen 实时音色。 |
+| `NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT` | `qwen` | 否 | false | 允许受控 Guard 重连。 |
+| `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY` | `qwen` | 否 | none | Guard 历史恢复模式。 |
+| `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS` | `qwen` | 否 | 4 | Guard 历史对话对数。 |
+| `ARK_API_KEY` | `volcengine` | 选择该能力时 | 无 | 火山方舟凭据。 |
+| `DOUBAO_ASR_API_KEY` | `volcengine` | 否 | Doubao big-model key | 火山 ASR 凭据覆盖。 |
+| `DOUBAO_BIGMODEL_API_KEY` | `volcengine` | 选择该能力时 | 无 | 火山 TTS 及 ASR 回退凭据。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL` | `volcengine` | 否 | Volcengine Ark endpoint | 火山方舟安全地址。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL` | `volcengine` | 否 | doubao-seed-2-0-pro-260215 | 火山主模型。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL` | `volcengine` | 否 | primary model | 火山辅助模型。 |
+| `NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT` | `volcengine` | 否 | Doubao ASR endpoint | 豆包 ASR 安全地址。 |
+| `NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID` | `volcengine` | 否 | volc.seedasr.sauc.duration | 豆包 ASR 资源 ID。 |
+| `NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS` | `volcengine` | 否 | 200 | ASR 输入分块时长。 |
+| `NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT` | `volcengine` | 否 | Doubao TTS endpoint | 豆包 TTS 安全地址。 |
+| `NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID` | `volcengine` | 否 | seed-tts-2.0 | 豆包 TTS 资源 ID。 |
+| `NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE` | `volcengine` | 否 | zh_female_vv_uranus_bigtts | 豆包 TTS 音色。 |
+| `NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE` | `volcengine` | 否 | 24000 | 豆包 TTS 输出采样率。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD` | `volcengine` | 否 | 0.5 | VAD 语音阈值。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS` | `volcengine` | 否 | 260 | VAD 预滚时长。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS` | `volcengine` | 否 | 250 | VAD 最短语音时长。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS` | `volcengine` | 否 | 560 | VAD 静音断句时长。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SPEECH_PAD_MS` | `volcengine` | 否 | 30 | VAD 语音补边。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS` | `volcengine` | 否 | 15000 | VAD 最长话语时长。 |
+| `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` | `codex` | 选择该能力时 | 无 | 主机批准的 Codex 工作区。 |
+| `NOVA_AUDIO_AGENT_CODEX_BIN` | `codex` | 否 | codex | 主机批准的 Codex app-server 可执行文件。 |
+| `NOVA_AUDIO_AGENT_CODEX_API_KEY` | `codex` | 否 | Codex login | 可选 Codex 凭据覆盖。 |
+| `NOVA_AUDIO_AGENT_CODEX_PREWARM` | `codex` | 否 | true | 预热 Codex app-server。 |
+| `NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED` | `codex` | 否 | false | 启用 Codex Projects。 |
+| `NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT` | `codex` | 否 | ~/NovaWorkspaces | 托管项目根目录。 |
+| `NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT` | `codex` | 否 | ~/.nova-audio-agent | 项目状态根目录。 |
+| `NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL` | `codex` | 否 | 30 | Codex 进度间隔秒数。 |
+| `TAVILY_API_KEY` | `search` | 选择该能力时 | 无 | Tavily 搜索凭据。 |
+| `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` | `camera` | 否 | 无 | 桌面确定性视频输入的绝对路径。 |
+| `NOVA_AUDIO_AGENT_REALTIME_TELEMETRY` | `telemetry` | 否 | 无 | 源码运行时遥测输出路径。 |
+| `NOVA_AUDIO_AGENT_REALTIME_TRACE` | `telemetry` | 否 | 0 | 启用源码运行时跟踪记录。 |
+| `NOVA_ORB_OPAQUE` | `core` | 否 | 0 | 使用不透明桌面悬浮球窗口。 |
+<!-- END GENERATED ENV CONTRACT -->

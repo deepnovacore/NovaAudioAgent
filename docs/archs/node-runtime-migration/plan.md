@@ -1,7 +1,8 @@
 # Nova Audio Agent Node Runtime Migration Plan
 
-Status: Stage 0 cleanup complete, Stage 1 foundation active, and provider-neutral Stage 2 groundwork
-started as of 2026-08-19.
+Status: repository implementation has reached Task 8A product-contract closure. Python remains the
+default/source oracle and Node remains opt-in development; Task 8B/8C distribution and external
+acceptance are still pending. Updated 2026-08-21.
 
 ## Outcome
 

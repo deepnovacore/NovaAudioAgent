@@ -1,7 +1,8 @@
 # Nova Audio Agent Node Runtime Migration Backlog
 
-Status: Stage 0 cleanup complete, Stage 1 foundation active, and provider-neutral Stage 2 groundwork
-started as of 2026-08-19.
+Status: repository implementation has reached Task 8A product-contract closure. Task 8B built
+artifacts/platform installers and Task 8C external acceptance/default switch remain open. Updated
+2026-08-21.
 
 The decision-complete implementation sequence lives in
 [`plan.md`](plan.md). Test ownership and the

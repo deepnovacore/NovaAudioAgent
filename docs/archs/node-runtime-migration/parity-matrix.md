@@ -1,7 +1,8 @@
 # Nova Audio Agent Python to Node Parity Matrix
 
-Status: Python baseline recorded; Stage 1 foundation active, provider-neutral Stage 2 groundwork is
-in place, and the pure Volcengine config/audio/codec foundation is gated as of 2026-08-21.
+Status: repository parity implementation through Task 8A is active as of 2026-08-21. Python remains
+the default/source oracle; Node remains opt-in development. Distribution and external acceptance
+are pending external evidence.
 
 ## How to Use This Matrix
 
@@ -34,20 +35,13 @@ Fill this table on `rewrite/node-typescript-runtime` before changing runtime beh
 Any baseline failure must be recorded with an owner and disposition. Do not encode accidental
 failure output as a golden fixture.
 
-Current checkpoint, 2026-08-19. Gates measured on this machine: `npm run check` clean, 273
-runtime tests, 299 Electron tests, Ruff clean, 2,800 pytest cases with exit 0, and five parity
-suites exact in both directions -- 20 runtime fixtures, 18 Qwen normalization scenarios, 7
-prompt-render scenarios plus float and `.1f` vectors, 4 tool-schema scenarios, 5 gateway
-request bodies, and 3 compressor prompts. `npm run runtime:smoke:qwen` passes against the live
-DashScope endpoint.
+Current checkpoint, 2026-08-21. Repository-owned configuration/product fixtures, deterministic
+demos, scorecard evaluation, offline diagnostics, and bilingual environment inventory now have
+Node consumers. Counts and pass claims are recorded from fresh acceptance runs rather than kept as
+static prose here.
 
-Porting progress by Python production line count: about 6,600 ported, about 23,000 remaining,
-6,600 retired or out of scope (Home Assistant, AutoGLM, the evals, the Volcengine benchmark).
-The Node runtime is 9,700 lines of source and 7,200 of tests, so the port is denser than the
-line ratio suggests.
-
-Stage 1 has one blocker left: the GUI-capable Electron utility-process smoke, which needs a
-WindowServer session this environment does not have. Run
+The GUI-capable Electron utility-process smoke still needs a WindowServer session this environment
+does not have. Run
 `npm run smoke:node-backend --workspace @nova-audio-agent/ambient-orb` on a real desktop
 session; it is not recorded as passing until someone does. The production assembly now
 instantiates `CausalRuntime` and serves a renderer over the real transport.
@@ -89,12 +83,12 @@ the foundation that work will build on.
 
 Scorecard and demo caveats:
 
-- `scorecard.py` resolves `tests/snapshots/` by filename at runtime, a production-to-test-tree
-  coupling. The Node port re-homes these snapshots into the versioned fixture directory.
+- Python `scorecard.py` still resolves its rollback snapshots from the test tree. Node consumes only
+  the Python-exported `fixtures/product/v1` copies and never the rollback test tree.
 - `scenario5_codex_status.json` and `scenario6_search_injection.json` are hand-authored and cannot
   be regenerated; they migrate by explicit versioning, never by re-export.
-- `demos.py` has no test coverage today. Deterministic demos need committed fixtures before their
-  row can turn green.
+- Node deterministic demos replay the real reducer from Python-owned product fixtures and assert
+  distinct async, dual-axis, timeout, and proactive invariants.
 
 ## Desktop and Realtime
 
@@ -113,7 +107,7 @@ Scorecard and demo caveats:
 | Telemetry and trace redaction | telemetry/evidence tests | Node unit tests | No credentials or raw protected payloads |
 | Provider-neutral contract and lifecycle | realtime protocol/session tests | Zod and Node lifecycle tests for host items, events, PCM, epoch, reconnect, and close; 26 Python-exported provider-frame session scenarios matching on both legs | Shared contract is used by both production adapters; `accept`, captions, fence/preempt, playback acknowledgement, continuation, and both reconnect paths are ported and gated |
 | Qwen provider protocol | realtime Qwen tests | 18 Python-exported normalization scenarios plus real-loopback transport tests; live smoke passing | Session, playback fencing, and recovery still required above the adapter |
-| Volcengine ASR/TTS/Ark/protocol | Volcengine component/provider tests | Python-exported v1 fixtures now gate host config, directional PCM formats, Seed ASR framing/decoding, shared TTS framing, and text chunking; Node-only tests gate the 10 MiB wire, 1 MiB inflated JSON, strict JSON/UTF-8, and 4,000-code-point limits | Transport, ASR/TTS sessions, Ark, provider assembly, and live smoke remain open; do not treat the pure 7A foundation as provider migration |
+| Volcengine ASR/TTS/Ark/protocol | Volcengine component/provider tests | Python-exported fixtures and Node integration tests cover config, PCM, VAD/endpointing fallback, ASR/TTS/Ark sessions, provider lifecycle, and production assembly | Live provider/audio evidence remains pending external evidence |
 | Streaming VAD | Volcengine VAD tests | LiveKit local VAD waveform fixtures plus native-binding startup tests | Equivalent segmentation tolerances documented on every release platform |
 | Audio end-of-turn detection | turn handling, endpointing, interruption, and backchannel tests | LiveKit `TurnDetector` stream fixtures plus microphone acceptance | Local `v1-mini` is proven through a real inference executor; missing executor/native inference is explicit and bounded, never accepted via the positive default |
 
@@ -123,7 +117,7 @@ Scorecard and demo caveats:
 |---|---|---|---|
 | Fast/slow simulators | sim tests | Node tests and core fixtures | First vertical slice green |
 | Search trust, errors, and redaction | search executor/smoke tests | Node HTTP unit tests plus real production-assembly dispatch with opaque evidence refs; optional live smoke | Same trust and safe error behavior |
-| Codex JSONL and protocol parsing | Codex JSONL/protocol tests | Both Python-owned historical JSONL fixtures reduce to the exact sanitized Node summary; pure Node tests cover bounded incremental JSON-RPC, schema/config fail-closed validation, turn correlation/progress redaction, and exact base/live/project tool contracts | Exact accepted/rejected messages; JSONL remains fixture-parser-only while production process ownership is app-server-only (intentional architecture divergence, transport deferred to the next slice) |
+| Codex JSONL and protocol parsing | Codex JSONL/protocol tests | Both Python-owned historical JSONL fixtures reduce to the exact sanitized Node summary; bounded app-server transport and ordinary/live/project adapters share one production process path | JSONL remains fixture-parser-only while production process ownership is app-server-only (intentional architecture divergence) |
 | Codex app-server lifecycle | app-server/transport/runtime tests | Node fake-process integration tests | Run/steer/cancel ordering preserved |
 | Codex progress and recall | progress status/recall evals | Fixture parity plus gated live eval | Correlation and memory behavior match |
 | Process tree ownership | process-tree/preflight tests | Cross-platform integration and hardware tests | Windows Job Object equivalent verified |

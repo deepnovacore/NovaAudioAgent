@@ -1,0 +1,1735 @@
+{
+  "schema_version": 1,
+  "files": [
+    "desktop/ambient-orb/src/main/app-protocol.mjs",
+    "desktop/ambient-orb/src/main/backend.mjs",
+    "desktop/ambient-orb/src/main/camera-source.mjs",
+    "desktop/ambient-orb/src/main/drag-controller.mjs",
+    "desktop/ambient-orb/src/main/main.mjs",
+    "desktop/ambient-orb/src/main/native-audio.mjs",
+    "desktop/ambient-orb/src/main/security.mjs",
+    "desktop/ambient-orb/src/main/settings-store.mjs",
+    "desktop/ambient-orb/src/main/window-position.mjs",
+    "desktop/ambient-orb/src/renderer/audio.mjs",
+    "desktop/ambient-orb/src/renderer/camera.mjs",
+    "desktop/ambient-orb/src/renderer/capture-worklet.mjs",
+    "desktop/ambient-orb/src/renderer/drag-gesture.mjs",
+    "desktop/ambient-orb/src/renderer/index.mjs",
+    "desktop/ambient-orb/src/renderer/memory-board.mjs",
+    "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+    "desktop/ambient-orb/src/renderer/settings.mjs",
+    "desktop/ambient-orb/src/renderer/state.mjs",
+    "runtime/src/assembly.ts",
+    "runtime/src/calls.ts",
+    "runtime/src/canonical-json.ts",
+    "runtime/src/causal-runtime.ts",
+    "runtime/src/cli.ts",
+    "runtime/src/clock.ts",
+    "runtime/src/codex-app-server-schema.ts",
+    "runtime/src/codex-app-server-transport.ts",
+    "runtime/src/codex-contract.ts",
+    "runtime/src/codex-credential-snapshot.ts",
+    "runtime/src/codex-factory.ts",
+    "runtime/src/codex-host-config.ts",
+    "runtime/src/codex-jsonl.ts",
+    "runtime/src/codex-process-owner.ts",
+    "runtime/src/codex-project-store.ts",
+    "runtime/src/codex-protocol.ts",
+    "runtime/src/codex-safe-json.ts",
+    "runtime/src/codex-turn-projection.ts",
+    "runtime/src/codex-windows-guardian.ts",
+    "runtime/src/config.ts",
+    "runtime/src/context-view.ts",
+    "runtime/src/demos.ts",
+    "runtime/src/desktop-bridge.ts",
+    "runtime/src/desktop-camera-source.ts",
+    "runtime/src/desktop-camera.ts",
+    "runtime/src/desktop-entry.ts",
+    "runtime/src/desktop-realtime.ts",
+    "runtime/src/desktop-service.ts",
+    "runtime/src/desktop-wire.ts",
+    "runtime/src/desktop.ts",
+    "runtime/src/diagnostics.ts",
+    "runtime/src/effects.ts",
+    "runtime/src/environment-contract.ts",
+    "runtime/src/events.ts",
+    "runtime/src/executors/camera.ts",
+    "runtime/src/executors/chromium-frame-source.ts",
+    "runtime/src/executors/codex-common.ts",
+    "runtime/src/executors/codex-live.ts",
+    "runtime/src/executors/codex-project-live.ts",
+    "runtime/src/executors/codex.ts",
+    "runtime/src/executors/frame-source.ts",
+    "runtime/src/executors/search.ts",
+    "runtime/src/executors/watcher.ts",
+    "runtime/src/fixture-host.ts",
+    "runtime/src/fixtures.ts",
+    "runtime/src/floor.ts",
+    "runtime/src/host-executor-capability.ts",
+    "runtime/src/ids.ts",
+    "runtime/src/index.ts",
+    "runtime/src/media-store.ts",
+    "runtime/src/memory.ts",
+    "runtime/src/model-adapters.ts",
+    "runtime/src/model-gateway.ts",
+    "runtime/src/native-file-lock.ts",
+    "runtime/src/playback.ts",
+    "runtime/src/ports.ts",
+    "runtime/src/production-realtime-assembly.ts",
+    "runtime/src/project-root-file.ts",
+    "runtime/src/prompting.ts",
+    "runtime/src/python-number.ts",
+    "runtime/src/python-text.ts",
+    "runtime/src/qwen-realtime-assembly.ts",
+    "runtime/src/realtime-assembly.ts",
+    "runtime/src/realtime/bridge.ts",
+    "runtime/src/realtime/evidence.ts",
+    "runtime/src/realtime/history.ts",
+    "runtime/src/realtime/memory-board.ts",
+    "runtime/src/realtime/project-confirmation.ts",
+    "runtime/src/realtime/protocol.ts",
+    "runtime/src/realtime/provider-session.ts",
+    "runtime/src/realtime/qwen-transport.ts",
+    "runtime/src/realtime/qwen.ts",
+    "runtime/src/realtime/recall.ts",
+    "runtime/src/realtime/service-state.ts",
+    "runtime/src/realtime/service.ts",
+    "runtime/src/realtime/session-fixtures.ts",
+    "runtime/src/realtime/session-state.ts",
+    "runtime/src/realtime/session.ts",
+    "runtime/src/realtime/speech-prep.ts",
+    "runtime/src/realtime/telemetry.ts",
+    "runtime/src/realtime/volcengine/adapter.ts",
+    "runtime/src/realtime/volcengine/ark.ts",
+    "runtime/src/realtime/volcengine/asr.ts",
+    "runtime/src/realtime/volcengine/audio.ts",
+    "runtime/src/realtime/volcengine/endpointing-capability.ts",
+    "runtime/src/realtime/volcengine/livekit-endpointing.ts",
+    "runtime/src/realtime/volcengine/protocol.ts",
+    "runtime/src/realtime/volcengine/provider.ts",
+    "runtime/src/realtime/volcengine/silence-endpointing.ts",
+    "runtime/src/realtime/volcengine/tts.ts",
+    "runtime/src/realtime/volcengine/websocket.ts",
+    "runtime/src/runtime.ts",
+    "runtime/src/scorecard.ts",
+    "runtime/src/sim.ts",
+    "runtime/src/sims.ts",
+    "runtime/src/slots.ts",
+    "runtime/src/suggestions.ts",
+    "runtime/src/tool-schema.ts",
+    "runtime/src/trace.ts",
+    "runtime/src/unicode-casefold.ts",
+    "runtime/src/unicode-normalize.ts",
+    "runtime/src/volcengine-realtime-assembly.ts"
+  ],
+  "occurrences": [
+    {
+      "file": "desktop/ambient-orb/src/main/backend.mjs",
+      "kind": "string_trim",
+      "occurrence_index": 0,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/backend.mjs",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "snippet_sha256": "684f7177f4436806523b0588bd25dd9d7af62284556302eb4af00b755fd21ed6",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/backend.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "d699203e9a71d41825ec7ffe9638890052be8461ce5e6fb8aba945de9d991d19",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/main.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/native-audio.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "4691c2864aa2e27fbefa4838ac86d34ba2bc21b27a71009601904f3bb23eefd4",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "kind": "string_trim",
+      "occurrence_index": 0,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "a0c599a753979a9b275e836876d4a3a8e25208423f02e620cf5036bbe53620d5",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "5112417b26dcabce32653d1f32793b43b5ab7ff07de91af3d7cdcb5799a503ed",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "5112417b26dcabce32653d1f32793b43b5ab7ff07de91af3d7cdcb5799a503ed",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/settings-store.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 5,
+      "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/window-position.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/camera.mjs",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/camera.mjs",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/camera.mjs",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/camera.mjs",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/index.mjs",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "296431bf63c596c188351fa3d195ca0029f7927f67ede184739b73968458d399",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/index.mjs",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "d97923367ff2b2efa5c4c0aba2271bb120a1d45c8c57c4cd1a21030fe63f05bc",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/memory-board.mjs",
+      "kind": "number_format",
+      "occurrence_index": 0,
+      "snippet_sha256": "bfb2853fc94d7bd1c7069adca219e03176b7325307b1a281cc70fbbc94828a93",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "b1f51a511f1da0cd348b8f8598db32e61cb963e5fc69e2b41485bf99590ed75a",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "ba4788b226aa8dc2e6dc74248bb9f618cfa8c959e0c26c147be48f6839a0b088",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "16477688c0e00699c6cfa4497a3612d7e83c532062b64b250fed8908128ed548",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "191e32938d345aa77f6718643a13976be4945f877323bc38526613632de27c40",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/assembly.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "541a3c1e0a03dd417a18efcc5064acf0c141eaa79ba0a4ea4154287c20942157",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/assembly.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "541a3c1e0a03dd417a18efcc5064acf0c141eaa79ba0a4ea4154287c20942157",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/assembly.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "abb8f977d93e6a97329f179c9a3d0639f17d3f5ccc01ab045b2bd12d6a733be9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/calls.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "67344adddccf514638b20450b821103372f41910d51f89982de0a6b52a6013fa",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/causal-runtime.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "0d38ccbd75ad11239502f24e4895af00c69548fe952c210c06dbf0636b59744e",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/cli.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "6c35493a2b937829c9815c39e23af964bc84e5430a7dc104c700bbc0de2b59e3",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/cli.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "6c35493a2b937829c9815c39e23af964bc84e5430a7dc104c700bbc0de2b59e3",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/clock.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "caa79af4db67695cce51988cda2f98423bb7420fbaee8968cd4aca151f55d3a2",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/clock.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "33c45d5b0471cf08b8df4a6df903531786bdfb7c4eb0be709eda242826d036a9",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/clock.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "323748f86a762247e6631bc01c26fb22c63fd0176a2e1db7b0d5b78de228cd86",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/clock.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "caa79af4db67695cce51988cda2f98423bb7420fbaee8968cd4aca151f55d3a2",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-app-server-schema.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "350adbaae5324986b5f038a3873dbd271a5b15f73015f853c236bd2f361de894",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-app-server-schema.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "b0f133669982594516b913d03f4c5e7307bef4035bf5624a234600d977b3f88f",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-app-server-schema.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "b0f133669982594516b913d03f4c5e7307bef4035bf5624a234600d977b3f88f",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-host-config.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 0,
+      "snippet_sha256": "f5feeecfc6e58c061ce8ee0f4d892b6746d496bc2f9a2000a20e8836f0a9c640",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-process-owner.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 0,
+      "snippet_sha256": "f5feeecfc6e58c061ce8ee0f4d892b6746d496bc2f9a2000a20e8836f0a9c640",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-project-store.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "a1b7c6f1aa933f882745c9a905739790931b7fb9a01e49b44d2b4d19e1bf8e39",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-project-store.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "35abdcad55afcb7a02b96df1ca483d6e92d6947c9b1458ea35f2fb4ca330f370",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-project-store.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "a1b7c6f1aa933f882745c9a905739790931b7fb9a01e49b44d2b4d19e1bf8e39",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-safe-json.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 0,
+      "snippet_sha256": "d2efa544579607640c4ad9a7049801e6e26cfc89d12ea29d1e127abd096902a1",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-turn-projection.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "252e00152d43e7ea349c449e397893e7663265daeb90ece90169d16a9950f042",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-turn-projection.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "0c6bbb6e10d8e6490232ffdc9cd5ada82da4560746bd0edcac820732cca018dd",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-turn-projection.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "35ce17d1f94b2813bfcc63fc701cb83ca68ebfb424ef43b4a896282dda9236e0",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-turn-projection.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "07e9dac844eec14cb9672852535f4229dd4f51f4805938ccd7be385a3990032d",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/codex-windows-guardian.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 0,
+      "snippet_sha256": "43d2189fd239d440a5a910f4f1805be2b9cc0e3ef5010863e303fb0e32a5824e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "5192cdb1e1b3bbfaff158fc2001531911a6a4015231675f3ca864fe503860224",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "07d02628ebcdd4702bc1b4bc9856ff3e5da112b76c0ae8e0604e5e2a973537e9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "02ef6d55bb6e95ea4b0c4133cc3260596b8ad90dc1a0e1dd328d125299b10d97",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "1a6ca744ec9381c0728caac989ebc8c7c8f8fb0731a031f58dd4db48dde10cbe",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "a862fcad7dc63ddff1798783018d3e6b597c24b8022248d4a606b2c97aad2650",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
+      "snippet_sha256": "fbdcb621cc7f048810923c6331f519389401e92bdd9c5d14ac69693afee75edc",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 6,
+      "snippet_sha256": "5afe2d377e78446a6561f810ed39e7e79cd6e9b5f1d7545283daaf327103a9bd",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 7,
+      "snippet_sha256": "bb2ddfdc21ccbfe57ce23295bbb8b92ccbc912fd8d051d8169efdf3849b8801c",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 8,
+      "snippet_sha256": "bbdea6e8c35bb25bcb5f8912ccacde9dd2cfef71a02140b4018f09c5742d1a7c",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 9,
+      "snippet_sha256": "2363322a01e8cbed64d90a151d3ded281b44f3080329426ebc7dad3791c32103",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 10,
+      "snippet_sha256": "d2b2b67bf54e29ae1a0eb274df76d51711b783ad02c28cbfe2b212be100f56f5",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 11,
+      "snippet_sha256": "a950e0c404df5c4f960a0233d48142b583e4bfcdcae633bceee0c4993a861216",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 12,
+      "snippet_sha256": "114ef2396c9cef2a3323b6c257760444411cdc5af68e188acd5bd59ef8851566",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 13,
+      "snippet_sha256": "bc961f3e49e2d1ec3b11fc2d709729d99e3ba493eec7a8c16360602b425a2ef6",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 14,
+      "snippet_sha256": "34204d08b787a59c1d3fec0dbcabcbf82ba8019632e0cc83e1644b04bb554d22",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "string_length",
+      "occurrence_index": 15,
+      "snippet_sha256": "a8becc96413c41a97f63b4e8dd27b6c5c62c1de50f2eeef641ff5ef0a3db59f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 16,
+      "snippet_sha256": "9bda2509223eb60f1da77b84d8512fd9a0449d39cf6aa6cc5e2ceb108ab5871c",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/context-view.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "1bc04b5291c26a46d918139138b992d2de976d6851d0893b0476b85bfbdfc6e6",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/context-view.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "0d38ccbd75ad11239502f24e4895af00c69548fe952c210c06dbf0636b59744e",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "c275f70c5b5482b38363f376ca48f2e845fdb97616d23b06996ed0c2c11163ff",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "5edf78d0adb9685d199c1139cc293796b462ab20d043738c52c0c42f56a17586",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "1bc04b5291c26a46d918139138b992d2de976d6851d0893b0476b85bfbdfc6e6",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "f38f50dbfa76a64db16ee2343e7225138da1f399ae716bf71434657dc2bcb2e7",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
+      "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/environment-contract.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "b94f9d20ea0df71692708a0c0f3081e170c13867e3af0e03b38e66bb3cafb0ee",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/search.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "a50e0df63503f2492ed105ecf01983c8e2fa049a7dcd379e7bca6f3fed7a1b37",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/search.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/search.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/search.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "9dd4086bbd93e865ad52c43009e36082f2cbfc3c037bfa001443da2a2f67436a",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/executors/search.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
+      "snippet_sha256": "9dd4086bbd93e865ad52c43009e36082f2cbfc3c037bfa001443da2a2f67436a",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/fixture-host.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "2eb83ffd126906b37346b4ba50115a2a106034b23f2240df8e72323bbf985430",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/fixture-host.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "483434375822442db2bc6e0a20dc554bb45d4ad07846fa4ff2f8e3ce8ea2d777",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/fixture-host.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "34a04005bcaf206eec990bd9637d9fdb6725e0a0c0d4aebf003f17f4c956eb5c",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/fixture-host.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "34a04005bcaf206eec990bd9637d9fdb6725e0a0c0d4aebf003f17f4c956eb5c",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/fixture-host.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
+      "snippet_sha256": "458a4770df2b51b57769fc806cab05bdaf02acce2edd42b90b6dd55dee1ea038",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/fixture-host.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 5,
+      "snippet_sha256": "458a4770df2b51b57769fc806cab05bdaf02acce2edd42b90b6dd55dee1ea038",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/fixtures.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "bf85965c6e0b65a416428b5bb50b5cc4f4515af4e4102587107a2a52907f51ea",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/fixtures.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "bf85965c6e0b65a416428b5bb50b5cc4f4515af4e4102587107a2a52907f51ea",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/fixtures.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "bf85965c6e0b65a416428b5bb50b5cc4f4515af4e4102587107a2a52907f51ea",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/ids.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "bf37c7c208717d6de100ce851b48273f8d5d945c8dc64fc64372087ffcf88ba9",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/ids.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "43e3ece73ff8f4eb23096122eaa99c8a8e84945a0b214662f2123bd6b6f0e692",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/memory.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "bf37c7c208717d6de100ce851b48273f8d5d945c8dc64fc64372087ffcf88ba9",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/memory.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "bf37c7c208717d6de100ce851b48273f8d5d945c8dc64fc64372087ffcf88ba9",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/memory.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "bbdea6e8c35bb25bcb5f8912ccacde9dd2cfef71a02140b4018f09c5742d1a7c",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/model-adapters.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "d6bf08d86f8b27d4d017e6be5f8c26be00796d5b52ba079a51078f60664a485a",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/model-adapters.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "0d38ccbd75ad11239502f24e4895af00c69548fe952c210c06dbf0636b59744e",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/model-gateway.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "ffdb5f5b6d0b95673aac2aac09d5140507b3b58d36b6178a729ff3fe5f1657a5",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/model-gateway.ts",
+      "kind": "number_format",
+      "occurrence_index": 1,
+      "snippet_sha256": "a68bfc8c900801136ef409b58b42fef7009419fd2bde1274bd316bc131394f07",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/model-gateway.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "dde7b529529ea02cec1778d08f97837065ec3d2d081f472a7ca77dff5fa820eb",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/model-gateway.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "f77e45c070b0619090d183b78346c29511b10ab12a10b5ea0b8cb3dbfcff35e1",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/playback.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "30df83f15dea8fbe6074735142dca6eb3c2e180d9c96e7e20fc42280490576b3",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/playback.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/prompting.ts",
+      "kind": "raw_json",
+      "occurrence_index": 0,
+      "snippet_sha256": "f1b555e5b390cd51cefe6e431ffc0c89498c08a12793fd9086ed9a443695f821",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/prompting.ts",
+      "kind": "raw_json",
+      "occurrence_index": 1,
+      "snippet_sha256": "f1b555e5b390cd51cefe6e431ffc0c89498c08a12793fd9086ed9a443695f821",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/prompting.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "cd42404d52ad55ccfa9aca4adc828aa5800ad9d385a0671fbcbf724118320619",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/prompting.ts",
+      "kind": "number_format",
+      "occurrence_index": 3,
+      "snippet_sha256": "19ca349ac8bccb604ff31b1fc992452fc8091eaf7c4f35af7e04eb668465c123",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/prompting.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
+      "snippet_sha256": "0d38ccbd75ad11239502f24e4895af00c69548fe952c210c06dbf0636b59744e",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/python-number.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "cd42404d52ad55ccfa9aca4adc828aa5800ad9d385a0671fbcbf724118320619",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/python-number.ts",
+      "kind": "number_format",
+      "occurrence_index": 1,
+      "snippet_sha256": "1d855ff93e642ad3422a7031ff3f8056a0b70a720142ec05e7403c9292930dd3",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/python-number.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 2,
+      "snippet_sha256": "1b00aefebdba602a48cb3b5b7e68dffc9a2de3673054adbb9f244245d1612659",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/python-text.ts",
+      "kind": "string_trim",
+      "occurrence_index": 0,
+      "snippet_sha256": "173d2d4699d24855a43ef24bd05a3ca7b0e8842b67abdd474cd95684714bf472",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/python-text.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "729ab98fed3c6ebac3c36d8f7339cfec0c09b72ebc76a3b5c7cf88421239a3b1",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime-assembly.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "bbdea6e8c35bb25bcb5f8912ccacde9dd2cfef71a02140b4018f09c5742d1a7c",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime-assembly.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "cb91b34d16ba500b8cc1688448c9e304a2b5622d8836bb01010dd3de58d0bc8b",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime-assembly.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 2,
+      "snippet_sha256": "d2efa544579607640c4ad9a7049801e6e26cfc89d12ea29d1e127abd096902a1",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime-assembly.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 3,
+      "snippet_sha256": "d2efa544579607640c4ad9a7049801e6e26cfc89d12ea29d1e127abd096902a1",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "d7df6b13d7189e185e2c4a685aa2bc20458ccd9ffee288846ef6fd1946ea1030",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "d7df6b13d7189e185e2c4a685aa2bc20458ccd9ffee288846ef6fd1946ea1030",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "0b15d886fd97e6339268f35b4fabd09be0f24d4f8ec125df347fa9780f0993c3",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "16046848e098572e9dcf4fa11c276f580001fff685f4d1822aeb93f9802af097",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "1b08fb6f719e1d782a7c5e6332bfd4769f5fa8bc1a69e12698b5e38d1ac77eb5",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
+      "snippet_sha256": "795ae9fdbebea4cf6c666270cb046ff56185b46f6957112b67396d4e7f29c5d6",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "string_length",
+      "occurrence_index": 6,
+      "snippet_sha256": "b3a12d4202737d38d01c1b52ab69adcaa92ac63025a16c48f78c27d8686fd073",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "string_length",
+      "occurrence_index": 7,
+      "snippet_sha256": "0b15d886fd97e6339268f35b4fabd09be0f24d4f8ec125df347fa9780f0993c3",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "string_length",
+      "occurrence_index": 8,
+      "snippet_sha256": "909b32783209d4997f010f50f76991ec9dfbac7707dbd09abb59a5e55d7d4532",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/project-confirmation.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "459dd998a0e71a87919dfb7568352f58072aa0f44016cd40bcd49002ef001096",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/project-confirmation.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "afc9b31d9f3f3645ae563606e1ddbe4b0e72b247e3bc9dff6251f5ee8961ae48",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/project-confirmation.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "63e32b6d2176db0cfa648a316770d4b39e31bb92bc929ce68e070428d0afe115",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/project-confirmation.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "ff4878df7ace1d24747fed7306db6de4b137e836f0adab873a1778b995326b77",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/project-confirmation.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "63e32b6d2176db0cfa648a316770d4b39e31bb92bc929ce68e070428d0afe115",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/protocol.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "202ea09b7bf108c711f08dfb38368ab8d68d8d420f5e443444ca85cceb8c1dd8",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/protocol.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "99375647e5121cab8a80d5947bebf4fbc336aaa74ea8bddf71fd8efa1074ffc2",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "32c1101e1171c66419a79f7b227137dcb895e4c54329c9be421cf382ac13c9b3",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "202c1b40f4d4a22027a04160984be433127f0c9cbf0617cf9585f4b413fc3043",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 2,
+      "snippet_sha256": "34e0a23569d0befb45f01ca2dabcc70e96c35cd7654068b4e89080e2f72462c0",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "76fefe5208771adc79057ba49a3a4b44b0d11b3bfc4a5e7df57c64c53ff654bf",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "72176a2a16b1128261e404e9c4dc64fc96d71bf3a1eb765e8ae1a6c84f247c37",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 6,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 7,
+      "snippet_sha256": "bcbdd86809e5b5afcf3f758588e155b94dfd215e665c3d1a4e1848bb8f04b16e",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 8,
+      "snippet_sha256": "72176a2a16b1128261e404e9c4dc64fc96d71bf3a1eb765e8ae1a6c84f247c37",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "a602774a31c4f430e6a10120b15d14df4bc28d5e2d2bc72c80e78fddc0192490",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "cd42404d52ad55ccfa9aca4adc828aa5800ad9d385a0671fbcbf724118320619",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 2,
+      "snippet_sha256": "1b00aefebdba602a48cb3b5b7e68dffc9a2de3673054adbb9f244245d1612659",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "cd42404d52ad55ccfa9aca4adc828aa5800ad9d385a0671fbcbf724118320619",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
+      "snippet_sha256": "cd42404d52ad55ccfa9aca4adc828aa5800ad9d385a0671fbcbf724118320619",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 5,
+      "snippet_sha256": "cd42404d52ad55ccfa9aca4adc828aa5800ad9d385a0671fbcbf724118320619",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 6,
+      "snippet_sha256": "cd42404d52ad55ccfa9aca4adc828aa5800ad9d385a0671fbcbf724118320619",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 7,
+      "snippet_sha256": "cd42404d52ad55ccfa9aca4adc828aa5800ad9d385a0671fbcbf724118320619",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "string_length",
+      "occurrence_index": 8,
+      "snippet_sha256": "b4b565588c2a527dc83111754e0ba67cfa8792af99afd4d297640f861b9d06ea",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/recall.ts",
+      "kind": "string_length",
+      "occurrence_index": 9,
+      "snippet_sha256": "d28798d66af791f0e6ab9e794a9c637c5ba8f9acfc24af82b71dc394a470bb9f",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service-state.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "43e07199d0fabf68090847ba105f91902169399f6b20d779c4a9a8f7d84a8a49",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "20e7f550122ee415de2b6d761a474ea5a363cbb575604f18b1fffb269e4cf48a",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "f96edcdd62f2ae0026bf653215e5def7ad15cb1ddcabbf8fa45d1ca6037f52b8",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "e8e901d528b989a403360b8379323876833636076a551d748c493316e71224d9",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "e8e901d528b989a403360b8379323876833636076a551d748c493316e71224d9",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
+      "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "string_length",
+      "occurrence_index": 6,
+      "snippet_sha256": "9712f19075fd780919654ba6f9618fee2a9d44ba301fb29e717d89c2e503fbd0",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 7,
+      "snippet_sha256": "312a76f17befeed056da4dbb995c9d86554a275b67fb89f365088c0a6039e0d9",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 8,
+      "snippet_sha256": "88c621c35cd74d7f42af02c856f028ef45106d5181cd15e91d678c69d7019eb6",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 9,
+      "snippet_sha256": "a947109c5fb07fd3b221a2f220031120b6f5a79089dad0ff6ce5cbe7f27cc781",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 10,
+      "snippet_sha256": "a3e1f4935b0919b346c2caf4da18078a1ebaf6451eb7f7b5dc79c11629b6368c",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 11,
+      "snippet_sha256": "a540ffd17090437f8d94ce8c1d341ca870696286623dee8d4e18cfdcfa78af6a",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session-state.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "55ea09e5715d0a8d9d94018d473bf23b2d7e630c2adb1f1acad3bada74c6fd05",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session-state.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "afc9b31d9f3f3645ae563606e1ddbe4b0e72b247e3bc9dff6251f5ee8961ae48",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session-state.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "d6f80ce3b479ea8b2d1c7d0ea8e39368327be3c2c0446cc4564dde7809081dcd",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session-state.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "afc9b31d9f3f3645ae563606e1ddbe4b0e72b247e3bc9dff6251f5ee8961ae48",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session-state.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "901a0d5e2756036883271e7c20497264d110dd074e5cc830e1d08112d21d9eba",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session-state.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
+      "snippet_sha256": "8cb864ff75af541548bbc905a5326c0ea0942fd878edfa0613bbca0830c07f96",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "5221f61bc9c1717f92943cdf2ebbf5a38cbff30a55469e960cb6df7b3fab923a",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "c6dc469ee7762a3634bff95675a73e385d20b773ed5283d1f637a8a2df59219e",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "4a300b5a3d2751cd9fae1bfa0a638e8e0676d468420334175501ec08033d44e1",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "a79b67760cf038b6562d16127e2cd857d2afc5873e1993ff532124bf1f3cfcc0",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
+      "snippet_sha256": "bb33228ce4eff94dfc84feb8ee7ceabae354a5f2f8a7c4062f79df686ab6d2f7",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 5,
+      "snippet_sha256": "43e3ece73ff8f4eb23096122eaa99c8a8e84945a0b214662f2123bd6b6f0e692",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "string_length",
+      "occurrence_index": 6,
+      "snippet_sha256": "7d873c8fc6bf25a4478ee7410a5a29a78453342c6b0ac3c7b41d5c8f852fb5e8",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/session.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 7,
+      "snippet_sha256": "f34912a1d0fcc21b27e4c2a11adc67d4fa5de69b5f9d4f3aa5bcb2f405950fea",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/volcengine/asr.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "729ab98fed3c6ebac3c36d8f7339cfec0c09b72ebc76a3b5c7cf88421239a3b1",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/volcengine/asr.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "7823cfbd44e796b4f9d47924fc658d49e9ffb40002e173e1d0c44a4afab13f20",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/volcengine/protocol.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "339ae2a002faef16deeb35c72628fd2d8b2be377db6b2720489cc8f1b122e0db",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/realtime/volcengine/tts.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "7823cfbd44e796b4f9d47924fc658d49e9ffb40002e173e1d0c44a4afab13f20",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "bf85965c6e0b65a416428b5bb50b5cc4f4515af4e4102587107a2a52907f51ea",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
+      "snippet_sha256": "bf85965c6e0b65a416428b5bb50b5cc4f4515af4e4102587107a2a52907f51ea",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 2,
+      "snippet_sha256": "bf85965c6e0b65a416428b5bb50b5cc4f4515af4e4102587107a2a52907f51ea",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "b1d6b91b67c2afa5e322988d9462638d354ddf8a1ef79dba987f815c22b4baee",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
+      "snippet_sha256": "9ba4b58cdf0e46e53258f7088d12a0f66e7e686342c6f14a9a9c0deb6f025f91",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 5,
+      "snippet_sha256": "a14669ef70100e720ae699f0d05249b34e6bc2cd35016338a5ac892dbbeb80a1",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "string_length",
+      "occurrence_index": 6,
+      "snippet_sha256": "4a130794bc2c686e5c261d453ab4147ebf152501d9571a087f981476b54b13ba",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "string_length",
+      "occurrence_index": 7,
+      "snippet_sha256": "12f3d41b8a9cfc65bb3ffd5a7ed35e1aaa43c3ab4742b3a7dc4b33c592d3796e",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 8,
+      "snippet_sha256": "622a1cde2507d5c3834f048b3539f97ae63719fef5be4bd084280ef58c678e93",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "string_length",
+      "occurrence_index": 9,
+      "snippet_sha256": "e727a4ea8b19fdc6801662b3c6158f07ec2280976a1ffba20f706b5e235ce4fc",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/runtime.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 10,
+      "snippet_sha256": "0d38ccbd75ad11239502f24e4895af00c69548fe952c210c06dbf0636b59744e",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/scorecard.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "3df8bf611f8eb1a6eb0954ac63beb96909c7779c6de544f1d6dfc61103da0ce4",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/suggestions.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "3c385b5cf40274a83ac5656aa68947d828ac774ee0b6e6be9010869fa3c96939",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/tool-schema.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "06848cba2bb213a53435eaab1d8cf6589bc345cdc650fef192e7a2efc2e71d0b",
+      "disposition": "wire_json",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/tool-schema.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/unicode-normalize.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 0,
+      "snippet_sha256": "4d96cd3582a625dbb2fb465b2df059842486ede5186fcabbe2f39d19ca065d6c",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/unicode-normalize.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 1,
+      "snippet_sha256": "3543be7eaa77c7bb743593dbb2f2dbbb8d80cc757e5ee97573bc66c06a14ab13",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/unicode-normalize.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 2,
+      "snippet_sha256": "8283619623a495cb2e583b79d2096e12e03943187b62ca0dcde1b9141b8a8947",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/unicode-normalize.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 3,
+      "snippet_sha256": "5a50692dd889e4177fa92dda30dae120b0cd7ace24d3919128311499e2c4f8fe",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    },
+    {
+      "file": "runtime/src/unicode-normalize.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 4,
+      "snippet_sha256": "393c35d27681a433fae347573786cf33cef690b0d6aea5511f7c3a9ba1079184",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/node-parity-audit.test.ts"
+    }
+  ]
+}

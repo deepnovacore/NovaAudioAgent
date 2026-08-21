@@ -1,286 +1,118 @@
 # Getting Started
 
-## Requirements
+## Current release boundary
 
-The requirements are listed in the [README Quickstart](../README.md#4-quickstart): Python 3.11+,
-[uv](https://docs.astral.sh/uv/), Git with submodule support, Node.js 22+ for the optional desktop
-app, and macOS for native Ambient Orb audio capture.
+Python is still the default and executable source oracle during this rollback release. The Node
+runtime is an opt-in development backend; the source-development backend switch is not an
+installed-app fallback. HA/AutoGLM are retired in Node and remain only in the temporary Python
+source rollback. A nonempty legacy HA or AutoGLM setting produces a stable, credential-safe
+migration error before provider, process, device, or desktop construction.
 
-Clone the public submodule together with the project:
+Node Codex is app-server-only. JSONL is fixture-parser-only and has no Node process execution path.
+Search, Camera, Watch, and Guard are always assembled and are not executor selector values.
+
+## Install for source development
 
 ```bash
 git clone --recurse-submodules \
   https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
 cd nova-audio-agent
 uv sync --dev
+npm ci
 cp .env.example .env
 ```
 
-At minimum, set `NOVA_AUDIO_AGENT_MODEL_API_KEY`. Search also needs `TAVILY_API_KEY`. Realtime
-voice defaults to Qwen and uses `DASHSCOPE_API_KEY`, falling back to the model key. See
-[Realtime voice providers](#realtime-voice-providers) for the opt-in Volcengine pipeline.
-
-## Chinese-first defaults
-
-Nova is a Chinese-first assistant. The persona (小诺), all four production system prompts, the
-model-facing tool descriptions, CLI error messages, the default realtime voice (`longanqian`), and
-the visual-evaluator prompts are Chinese. The documentation is English, but the running product
-will speak and error in Chinese out of the box. Using it in another language currently means
-replacing the Chinese strings at their sources — the prompt constants in
-`src/nova_audio_agent/prompting.py`, the frontend instructions in
-`src/nova_audio_agent/realtime/qwen.py`, the operation descriptions declared in each executor
-module, the evaluator prompts in `src/nova_audio_agent/executors/watcher.py`, and the CLI messages
-in `src/nova_audio_agent/cli.py` — there is no language switch.
-
-## CLI
+Python remains the default path:
 
 ```bash
 uv run nova-audio-agent --help
-uv run nova-audio-agent demo dual-axis
-uv run nova-audio-agent demo proactive
-uv run nova-audio-agent chat --executor fast_sim
-uv run nova-audio-agent scorecard
+uv run nova-audio-agent demo all
 ```
 
-Supported active executors are `fast_sim`, `slow_sim`, `ha`, `codex`, and `autoglm`. Multiple
-executors can be selected with `NOVA_AUDIO_AGENT_EXECUTORS`, for example `codex,ha`. Around the
-selected executors, four always-on tools are assembled automatically: read-only search, camera
-snapshots, and the Watch and Guard visual monitors.
-
-Camera sources are `auto`, `local`, `disabled`, and `file`. A local camera requires the vision extra:
+The repository-owned Node checks are offline and deterministic:
 
 ```bash
-uv sync --extra vision --dev
-uv run nova-audio-agent chat --camera-source local
+npm run build --workspace @nova-audio-agent/runtime
+node runtime/dist/src/cli.js diagnose --json
+node runtime/dist/src/cli.js demo all
+node runtime/dist/src/cli.js scorecard fixture check
+uv run python scripts/config_fixture_oracle.py check
+uv run python scripts/product_fixture_oracle.py check
 ```
 
-File-backed Watch and Guard are useful without a live camera; the public
-[cat-sofa Guard fixture](../assets/demos/cat-sofa-guard/README.md) includes a reproducible command.
+`diagnose` validates configuration only. It does not connect to a provider, spawn Codex, open a
+camera or microphone, launch Chromium, or disclose credentials and paths. Product fixture updates
+must be produced with the Python exporters' explicit `export` command; ordinary tests are read-only.
 
-## Integrations
+## Realtime providers and executors
 
-A common control plane around replaceable adapters: each adapter owns its credential checks,
-transport timeouts, request normalization, and output sanitization, while Runtime owns the generic
-delegate lifecycle.
+Qwen is the default realtime provider. Volcengine is the alternative provider-neutral assembly;
+both require their selected credentials for live use. The configured Node executor names are
+`fast_sim`, `slow_sim`, and `codex`. Codex ordinary/live/project modes share the bounded app-server
+transport. Camera file input accepts only an absolute host-validated path.
 
-| Integration | What is included |
-|---|---|
-| Deterministic simulation | `fast_sim` and `slow_sim` executors for demos and offline scenarios |
-| Search | Read-only Tavily-backed search exposed as a bounded tool |
-| Home Assistant | Bounded light operations with explicit endpoint, token, and entity configuration |
-| Codex | Long-running workspace tasks with progress, status, and recovery. Two backends: default JSONL (`run`, `status`) on the text CLI; live app-server (`run`, `steer`, `status`) on the realtime path — steering only on the latter |
-| AutoGLM | Experimental iOS browsing through a pinned public upstream submodule and worker protocol |
-| Vision | Local camera or file-backed snapshots, Watch observations, and Guard conditions |
-| Realtime voice | Startup-selectable Qwen Audio Realtime or native Volcengine VAD/ASR/Ark/TTS cascade, with shared response correlation, playback fencing, recovery, and telemetry |
-| Ambient Orb | Sandboxed Electron UI plus a native macOS VoiceProcessingIO helper |
+Live provider, microphone/speaker, camera, Codex login, WindowServer, Windows descendant cleanup,
+clean-machine installer, signing, and publication checks are pending external evidence.
 
-## Configuration reference
+## Public environment reference
 
-All variables use the `NOVA_AUDIO_AGENT_` prefix unless noted. `.env.example` lists the common
-ones; the full set (from `src/nova_audio_agent/config.py`):
+The following block is generated from `runtime/src/environment-contract.ts`. Host-private handshake
+inputs and retired integration variables are intentionally excluded. The retired compatibility
+families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for them to a Node setup.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `MODEL_API_KEY` | — | Text-model key (required for chat and demos) |
-| `MODEL_BASE_URL` | DashScope compatible endpoint | OpenAI-compatible base URL for text models |
-| `FAST_MODEL` | `qwen3-vl-plus` | FastBrain model |
-| `SURROGATE_MODEL` | `qwen-flash` | Surrogate attention-policy model |
-| `COMPRESSOR_MODEL` | `qwen-flash` | Channel-summary compression model |
-| `WATCH_MODEL` | falls back to `FAST_MODEL` | Vision model for the Watch/Guard monitors |
-| `TAVILY_API_KEY` (no prefix) | — | Web search |
-| `DASHSCOPE_API_KEY` (no prefix) | — | Realtime voice |
-| `REALTIME_PROVIDER` | `qwen` | `qwen` or `volcengine`; selected once at startup, with no automatic failover |
-| `QWEN_REALTIME_URL` | DashScope realtime endpoint | Realtime websocket URL |
-| `QWEN_REALTIME_MODEL` | `qwen-audio-3.0-realtime-plus` | Realtime model |
-| `QWEN_REALTIME_VOICE` | `longanqian` | Realtime TTS voice |
-| `QWEN_CONTROLLED_GUARD_RECONNECT` | `false` | Opt-in controlled reconnect around Guard sessions |
-| `QWEN_GUARD_HISTORY_RECOVERY` | `none` | `none` or `packed` history recovery after Guard reconnect |
-| `QWEN_GUARD_HISTORY_PAIRS` | `4` | Recovered history pairs (`1`, `2`, or `4`) |
-| `ARK_API_KEY` (no prefix) | — | Ark Responses API key for the Volcengine LLM |
-| `DOUBAO_ASR_API_KEY` (no prefix) | falls back to `DOUBAO_BIGMODEL_API_KEY` | Seed ASR API key |
-| `DOUBAO_BIGMODEL_API_KEY` (no prefix) | — | Seed TTS 2.0 API key |
-| `VOLCENGINE_ARK_BASE_URL` | Ark API v3 endpoint | HTTPS Ark endpoint |
-| `VOLCENGINE_ARK_MODEL` | `doubao-seed-2-0-pro-260215` | Tool-capable Ark model; thinking is disabled on the voice path |
-| `VOLCENGINE_ARK_SUPPORT_MODEL` | `doubao-seed-2-0-pro-260215` | Ark model used by Watch, Guard, Surrogate, and Compressor when no separate model API key is configured |
-| `DOUBAO_ASR_ENDPOINT` | Seed ASR v3 endpoint | Secure ASR websocket endpoint |
-| `DOUBAO_ASR_RESOURCE_ID` | `volc.seedasr.sauc.duration` | ASR 2.0 resource; may be overridden with the legacy resource when required |
-| `DOUBAO_ASR_CHUNK_MS` | `200` | ASR packet duration |
-| `DOUBAO_TTS_ENDPOINT` | bidirectional TTS endpoint | Secure TTS websocket endpoint |
-| `DOUBAO_TTS_RESOURCE_ID` | `seed-tts-2.0` | TTS resource |
-| `DOUBAO_TTS_VOICE` | `zh_female_vv_uranus_bigtts` | TTS voice |
-| `DOUBAO_TTS_OUTPUT_SAMPLE_RATE` | `24000` | PCM16 playback rate; currently fixed at 24 kHz |
-| `VOLCENGINE_VAD_THRESHOLD` | `0.5` | Silero speech threshold |
-| `VOLCENGINE_VAD_PRE_ROLL_MS` | `260` | Audio retained before speech start |
-| `VOLCENGINE_VAD_MIN_SPEECH_MS` | `250` | Short-utterance rejection threshold |
-| `VOLCENGINE_VAD_SILENCE_END_MS` | `560` | End-of-speech silence |
-| `VOLCENGINE_VAD_SPEECH_PAD_MS` | `30` | Silero speech padding |
-| `VOLCENGINE_VAD_MAX_UTTERANCE_MS` | `15000` | Forced utterance boundary |
-| `EXECUTOR` | `fast_sim` | Legacy single active executor |
-| `EXECUTORS` | empty | Comma-separated active executors (overrides `EXECUTOR`) |
-| `HA_URL`, `HA_TOKEN`, `HA_ENTITY_ID` | — | Home Assistant light control |
-| `CODEX_WORKSPACE` | — | Codex workspace directory (validated before use) |
-| `CODEX_BIN` | `codex` | Codex executable |
-| `CODEX_API_KEY` | — | Optional key passed to the Codex environment |
-| `CODEX_PREWARM` | `true` | Warm the app-server session before the first task (realtime path) |
-| `AUTOGLM_REPO` | `thirdparty/Open-AutoGLM` | Pinned upstream checkout |
-| `AUTOGLM_PYTHON` | `.autoglm-venv/bin/python` | Upstream worker interpreter |
-| `AUTOGLM_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` | AutoGLM API endpoint |
-| `AUTOGLM_MODEL` | `autoglm-phone` | AutoGLM model |
-| `AUTOGLM_API_KEY` | — | AutoGLM API key |
-| `AUTOGLM_WDA_URL` | `http://127.0.0.1:8100` | WebDriverAgent endpoint |
-| `AUTOGLM_DEVICE_ID` | — | Optional device identifier |
-| `DESKTOP_VIDEO_FILE` | — | Ambient Orb development aid: absolute path to a video file used as the camera source when no live camera is available |
-
-## Realtime voice providers
-
-Qwen remains the default and needs no extra audio-model dependencies:
-
-```dotenv
-NOVA_AUDIO_AGENT_REALTIME_PROVIDER=qwen
-DASHSCOPE_API_KEY=...
-```
-
-The alternative Volcengine backend is a native cascade rather than runtime failover:
-
-```text
-16 kHz PCM16 → Silero VAD v5.1.2 → Seed ASR → Doubao Seed 2.0 Pro → Seed TTS 2.0 → 24 kHz PCM16
-```
-
-Enable the Volcengine speech dependencies and configure all three services:
-
-```bash
-uv sync --extra vision --extra volcengine --dev
-```
-
-Although runtime inference selects the ONNX Silero model, upstream `silero-vad==5.1.2` currently
-pulls in PyTorch and torchaudio transitively, so this optional extra is a large installation.
-
-```dotenv
-NOVA_AUDIO_AGENT_REALTIME_PROVIDER=volcengine
-ARK_API_KEY=...
-DOUBAO_ASR_API_KEY=...
-DOUBAO_BIGMODEL_API_KEY=...
-TAVILY_API_KEY=...
-```
-
-`DOUBAO_ASR_API_KEY` may be omitted when the account uses the same API key as
-`DOUBAO_BIGMODEL_API_KEY`. The Ark client uses the Responses API with stored response chaining,
-serial native function calls, and thinking disabled. Tool results return through the original
-`call_id`. A response that mixes already-streamed answer text with a later tool call is rejected
-without executing that call. TTS flushes the first natural punctuation, then uses 18-character
-soft and 48-character hard chunks; a disconnected TTS chunk is retried once only when no audio
-from it has been emitted.
-
-The realtime Responses model and the support model used by Watch, Guard, Surrogate, and Compressor
-are independently configurable. Both default to Seed 2.0 Pro; keeping separate settings prevents
-a future low-latency frontend experiment from silently changing Chat/JSON/vision consumers.
-
-The Volcengine console must have Seed ASR 2.0, Ark access to the configured Seed model, and Seed
-TTS 2.0 enabled. Missing Silero/ONNX dependencies or credentials fail startup. This backend does
-not include speaker verification, face recognition, wake-word detection, diarization, TSE, A2F,
-or automatic provider failover.
-
-For an opt-in latency capture, set an absolute telemetry path while running Ambient Orb, speak
-several turns, then render p50/p95 stage timings:
-
-```bash
-NOVA_AUDIO_AGENT_REALTIME_TELEMETRY=/tmp/nova-volcengine.jsonl \
-  ./scripts/start_ambient_orb_macos.sh
-uv run python -m scripts.realtime_probe telemetry-report /tmp/nova-volcengine.jsonl
-```
-
-The report includes `speech end → ASR final → LLM first text → TTS first audio`. Telemetry records
-only event kinds, timestamps, bounded identifiers, counters, and statuses—never credentials, raw
-audio, or full conversation text. Live provider traffic is always explicit opt-in and is not part
-of default CI.
-
-For a bounded end-to-end smoke run from a known utterance, use an uncompressed mono 16 kHz PCM16
-WAV. The command refuses network calls unless `--live` is present and prints no transcript:
-
-```bash
-uv run python scripts/smoke_volcengine_realtime.py \
-  --live --wav /absolute/path/to/utterance.wav --runs 3
-```
-
-To compare Ark models without sending audio, run the bounded synthetic function-call matrix. It
-requires `--live`, accepts only the repository's reviewed model allowlist, and prints aggregate
-quality/error-class and timing metadata (p95 only with 20+ observations; otherwise max). It does not print prompts, tool arguments, tool
-outputs, response text, request IDs, or credentials. The Seed 2.0 Pro baseline is included even
-when it is omitted from `--models`; without `--models`, it is the only model run:
-
-```bash
-uv run --extra volcengine python scripts/benchmark_volcengine_llm.py \
-  --live --runs 2 \
-  --models doubao-seed-2-0-pro-260215 doubao-seed-2-1-turbo-260628 \
-  deepseek-v4-pro-ga-260813 deepseek-v4-flash-ga-260731
-```
-
-A candidate is eligible only when its overall and every-category function-call pass rates match
-or exceed the measured baseline and it has zero severe failures. The benchmark never changes the
-configured production model automatically.
-
-## Home Assistant
-
-Set `NOVA_AUDIO_AGENT_HA_URL`, `NOVA_AUDIO_AGENT_HA_TOKEN`, and
-`NOVA_AUDIO_AGENT_HA_ENTITY_ID=light.<name>`, then run:
-
-```bash
-uv run nova-audio-agent chat --executor ha
-```
-
-Use a dedicated Home Assistant token with the smallest practical permission scope.
-
-## Codex
-
-Set `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` to an existing workspace and ensure the `codex` executable
-is available. The workspace is resolved and validated before a task starts.
-
-```bash
-uv run nova-audio-agent chat --executor codex
-```
-
-There are two Codex backends. The text CLI above uses the default JSONL transport, whose operations
-are `run` and `status`. The realtime path (Ambient Orb and `build_realtime_assembly`) uses the
-live app-server transport instead: it spawns `codex app-server` over stdio JSON-RPC, keeps the
-session warm (`NOVA_AUDIO_AGENT_CODEX_PREWARM`), and adds the `steer` operation, which appends a
-new user constraint to the in-flight turn (`turn/steer`) without terminating or restarting it.
-Same-turn steering is therefore not exposed by the text CLI; it is available on the realtime path
-and through the explicit `build_codex_live_assembly` entry point used by live evaluations.
-
-## AutoGLM
-
-The upstream source is pinned at `thirdparty/Open-AutoGLM`. Follow its public setup instructions,
-create the configured Python environment, and set `NOVA_AUDIO_AGENT_AUTOGLM_API_KEY` plus an
-optional device ID. Nova Audio Agent invokes the submodule through a bounded worker protocol.
-
-## Ambient Orb
-
-| Platform | Launcher | Notes |
-|---|---|---|
-| macOS | `./scripts/start_ambient_orb_macos.sh` | Shim that execs `start_ambient_orb.sh`; also builds the native VoiceProcessingIO helper |
-| Linux | `./scripts/start_ambient_orb.sh` | Same shared script as macOS; a Wayland session runs the Electron app through XWayland |
-| Windows | `.\scripts\start_ambient_orb.ps1` | PowerShell mirror of the shared script; the AutoGLM executor is unsupported on Windows in v1 |
-
-All three launchers apply the same checks and contract: npm and the Codex CLI on `PATH`, a
-`.env` file at the repository root, a Python interpreter that can `import nova_audio_agent`
-(`NOVA_AUDIO_AGENT_PYTHON` env override, then an active conda environment, then the repository
-`.venv`, then `conda run`), and the same three exported variables
-(`NOVA_AUDIO_AGENT_PYTHON`/`_CODEX_WORKSPACE`/`_ENV_FILE`) before starting the desktop app. The
-desktop UI uses a sandboxed preload bridge and does not expose Node.js to renderer pages.
-
-## Verification
-
-The canonical check sequence is in the
-[README](../README.md#8-development-and-verification):
-
-```bash
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run pytest -q
-uv build
-
-cd desktop/ambient-orb
-npm ci
-npm test
-npm run build
-```
+<!-- BEGIN GENERATED ENV CONTRACT -->
+| Variable | Owner | Required | Default | Description |
+|---|---|---|---|---|
+| `NOVA_AUDIO_AGENT_BACKEND` | `source_rollback` | No | python | Source-development backend switch during the rollback release. |
+| `NOVA_AUDIO_AGENT_MODEL_BASE_URL` | `core` | No | DashScope compatible endpoint | FastBrain compatible API endpoint. |
+| `NOVA_AUDIO_AGENT_MODEL_API_KEY` | `core` | When selected | None | FastBrain API credential; also a Qwen fallback. |
+| `NOVA_AUDIO_AGENT_FAST_MODEL` | `core` | No | qwen3-vl-plus | FastBrain model. |
+| `NOVA_AUDIO_AGENT_WATCH_MODEL` | `core` | No | fast model | Watch model override. |
+| `NOVA_AUDIO_AGENT_SURROGATE_MODEL` | `core` | No | qwen-flash | Surrogate model. |
+| `NOVA_AUDIO_AGENT_COMPRESSOR_MODEL` | `core` | No | qwen-flash | Memory compressor model. |
+| `NOVA_AUDIO_AGENT_REALTIME_PROVIDER` | `core` | No | qwen | Realtime provider: qwen or volcengine. |
+| `NOVA_AUDIO_AGENT_EXECUTOR` | `core` | No | fast_sim | Single executor selector for compatibility. |
+| `NOVA_AUDIO_AGENT_EXECUTORS` | `core` | No | selected executor | Ordered executor list. |
+| `NOVA_AUDIO_AGENT_PROACTIVITY_PRESET` | `core` | No | balanced | Proactivity preset. |
+| `NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN` | `core` | No | preset | Suggestion cooldown override in seconds. |
+| `NOVA_AUDIO_AGENT_FRESH_WINDOW` | `core` | No | preset | Fresh-context window override in seconds. |
+| `DASHSCOPE_API_KEY` | `qwen` | When selected | None | Qwen realtime credential. |
+| `NOVA_AUDIO_AGENT_QWEN_REALTIME_URL` | `qwen` | No | DashScope realtime endpoint | Qwen secure realtime endpoint. |
+| `NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL` | `qwen` | No | qwen-audio-3.0-realtime-plus | Qwen realtime model. |
+| `NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE` | `qwen` | No | longanqian | Qwen realtime voice. |
+| `NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT` | `qwen` | No | false | Allow controlled Guard reconnect. |
+| `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY` | `qwen` | No | none | Guard history recovery mode. |
+| `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS` | `qwen` | No | 4 | Guard history pair count. |
+| `ARK_API_KEY` | `volcengine` | When selected | None | Volcengine Ark credential. |
+| `DOUBAO_ASR_API_KEY` | `volcengine` | No | Doubao big-model key | Volcengine ASR credential override. |
+| `DOUBAO_BIGMODEL_API_KEY` | `volcengine` | When selected | None | Volcengine TTS and ASR fallback credential. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL` | `volcengine` | No | Volcengine Ark endpoint | Volcengine Ark secure endpoint. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL` | `volcengine` | No | doubao-seed-2-0-pro-260215 | Volcengine primary model. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL` | `volcengine` | No | primary model | Volcengine support model. |
+| `NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT` | `volcengine` | No | Doubao ASR endpoint | Doubao ASR secure endpoint. |
+| `NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID` | `volcengine` | No | volc.seedasr.sauc.duration | Doubao ASR resource ID. |
+| `NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS` | `volcengine` | No | 200 | ASR input chunk duration. |
+| `NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT` | `volcengine` | No | Doubao TTS endpoint | Doubao TTS secure endpoint. |
+| `NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID` | `volcengine` | No | seed-tts-2.0 | Doubao TTS resource ID. |
+| `NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE` | `volcengine` | No | zh_female_vv_uranus_bigtts | Doubao TTS voice. |
+| `NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE` | `volcengine` | No | 24000 | Doubao TTS output sample rate. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD` | `volcengine` | No | 0.5 | VAD speech threshold. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS` | `volcengine` | No | 260 | VAD pre-roll duration. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS` | `volcengine` | No | 250 | VAD minimum speech duration. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS` | `volcengine` | No | 560 | VAD silence endpoint duration. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SPEECH_PAD_MS` | `volcengine` | No | 30 | VAD speech padding. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS` | `volcengine` | No | 15000 | VAD maximum utterance duration. |
+| `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` | `codex` | When selected | None | Host-approved Codex workspace. |
+| `NOVA_AUDIO_AGENT_CODEX_BIN` | `codex` | No | codex | Host-approved Codex app-server binary. |
+| `NOVA_AUDIO_AGENT_CODEX_API_KEY` | `codex` | No | Codex login | Optional Codex credential override. |
+| `NOVA_AUDIO_AGENT_CODEX_PREWARM` | `codex` | No | true | Prewarm Codex app-server. |
+| `NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED` | `codex` | No | false | Enable Codex projects. |
+| `NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT` | `codex` | No | ~/NovaWorkspaces | Managed project root. |
+| `NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT` | `codex` | No | ~/.nova-audio-agent | Project state root. |
+| `NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL` | `codex` | No | 30 | Codex progress interval in seconds. |
+| `TAVILY_API_KEY` | `search` | When selected | None | Tavily search credential. |
+| `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` | `camera` | No | None | Absolute deterministic desktop video input. |
+| `NOVA_AUDIO_AGENT_REALTIME_TELEMETRY` | `telemetry` | No | None | Source-runtime telemetry output path. |
+| `NOVA_AUDIO_AGENT_REALTIME_TRACE` | `telemetry` | No | 0 | Enable source-runtime trace records. |
+| `NOVA_ORB_OPAQUE` | `core` | No | 0 | Use an opaque desktop orb window. |
+<!-- END GENERATED ENV CONTRACT -->

@@ -126,6 +126,11 @@ executor 的完成并不待在一个回合制的 `reason → act → observe` �
 
 ## 4. 快速开始
 
+> **迁移状态：** 本回滚发布期仍以 Python 为默认后端和源码 oracle，Node 只供显式 opt-in
+> 源码开发。Node Codex 仅使用 app-server，JSONL 仅为 fixture-parser-only。HA/AutoGLM 已在
+> Node 中退役，只暂留在 Python 源码回滚中。安装包、clean-machine、硬件、签名、Node 默认
+> 切换和发布均为 pending external evidence。
+
 环境要求：Python 3.11+、[uv](https://docs.astral.sh/uv/)、支持子模块的 Git、Node.js 22+
 （可选的桌面应用需要），以及 macOS（Ambient Orb 原生音频采集需要）。
 
@@ -160,7 +165,7 @@ project mode 下每个工作单都会启动新的 app-server 进程，因此有�
 workspace home 会在宿主登录凭据变化时用 owner-only 的原子文件刷新；如果只更新了 workspace
 home 内的凭据，而宿主源没有变化，这次 destination-only 更新会被保留。
 
-克隆仓库及其钉定的 Open-AutoGLM 子模块：
+克隆仓库及临时保留给 Python 源码回滚的子模块：
 
 ```bash
 git clone --recurse-submodules \
@@ -185,8 +190,8 @@ dual-axis 演示的是"一次 FastBrain 调用同时开口与派活"；proactive
 交互式对话可用 `/quit`、`/exit`、文件结束符或 `Ctrl-C` 退出。
 
 小诺是中文优先的：人设、生产提示词、工具描述、CLI 报错与默认音色均为中文。各真实集成——
-确定性模拟器、Tavily 搜索、Home Assistant、Codex（默认 JSONL 后端，realtime 路径另有 live
-app-server 后端）、AutoGLM、摄像头 Watch/Guard 与 Qwen 实时语音——均通过环境变量配置；
+当前 Node 能力包括确定性模拟器、Tavily 搜索、app-server Codex、摄像头 Watch/Guard，以及
+Qwen 或 Volcengine 实时语音；
 逐项安装、注意事项与完整变量参考见[上手指南](docs/getting-started.md)。
 
 ## 5. Ambient Orb
@@ -202,7 +207,8 @@ uv sync --extra vision --dev
 .\scripts\start_ambient_orb.ps1         # Windows
 ```
 
-它会启动 Python realtime 后端并拉起 Electron 渲染器（上下文隔离、沙箱与窄 preload 桥）；需要
+源码启动器会按开发选择启动后端并拉起 Electron 渲染器（上下文隔离、沙箱与窄 preload 桥）；
+回滚发布期默认仍为 Python。它需要
 Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或设置面板中的 `DASHSCOPE_API_KEY`。
 macOS 上还会构建原生 VoiceProcessingIO helper 以获得系统级回声消除；Windows 与 Linux 使用
 Chromium 自带的回声消除。Linux 会话运行在 X11 上（Wayland 会话经由 XWayland）。分平台说明见
@@ -233,7 +239,7 @@ src/nova_audio_agent/realtime/  Qwen 传输、会话桥、恢复、播放与遥�
 desktop/ambient-orb/            Electron UI 与原生 macOS 音频 helper
 tests/                          确定性的单元、场景、协议与仓库测试
 docs/                           公开的架构、论证、指南、状态与设计系列
-thirdparty/Open-AutoGLM/        钉定的公开上游 Git 子模块
+thirdparty/Open-AutoGLM/        Python 源码回滚临时子模块；Node 已退役
 resources/                      本地原始与剪辑媒体；有意被 Git 忽略
 ```
 

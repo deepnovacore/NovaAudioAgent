@@ -2,21 +2,29 @@
 
 Nova Audio Agent is an experimental open-source project at version `0.1.0`.
 
-| Area | Status |
+Python is still the default and source oracle for the rollback release. Node is an opt-in development
+backend; repository implementation does not imply a finished distribution.
+
+| Area | Repository state |
 |---|---|
-| Event-driven runtime, memory, slots, delegates, and floor | Implemented with deterministic tests |
-| Simulator, search, Home Assistant, Codex, camera, Watch, and Guard adapters | Implemented |
-| Qwen Audio Realtime transport and recovery | Implemented; requires provider credentials for live use |
-| Ambient Orb (particle visual, Memory Board, settings panel) | Implemented; tested on macOS, and unit-tested for Windows and Linux |
-| Native VoiceProcessingIO echo cancellation | Implemented on macOS; Windows and Linux use Chromium echo cancellation |
-| AutoGLM iOS worker integration | Experimental; upstream submodule and device setup required; not supported on Windows |
-| Packaging and CI | Python build plus Python and Electron test jobs across macOS, Linux, and Windows; unsigned installer artifacts |
+| Runtime, memory, causal dispatch, Floor, demos, scorecard | Python-owned fixtures with Node consumers |
+| Search, Camera, Watch, Guard | Unconditionally assembled in Node; live camera evidence remains external |
+| Codex | Node production architecture is app-server-only; JSONL is fixture-parser-only |
+| Qwen and Volcengine | Provider-neutral Node assembly exists; credentials and live smokes remain external |
+| HA/AutoGLM | Retired in Node; retained only in the temporary Python source rollback |
+| Desktop | Node remains opt-in; Python stays the default during the rollback window |
 
-The repository does not ship credentials, runtime traces, personal recordings, or live acceptance
-artifacts. Hardware and provider integrations therefore require local verification by each user.
+Repository commands for configuration fixtures, product fixtures, deterministic demos, scorecard,
+and offline diagnostics are documented in the [getting-started guide](getting-started.md).
 
-Known open work includes broader live-provider soak testing, first-run verification of the Windows
-and Linux desktop builds on real hardware, native echo cancellation on those platforms, installer
-signing, and expanding public examples without weakening the runtime invariants. Standalone
-packaging gaps and the planned Node runtime migration are tracked in
-[`node-runtime-migration/backlog.md`](archs/node-runtime-migration/backlog.md).
+## Pending external evidence
+
+- built-artifact dependency/resource inventory and compiled runtime/native helper placement;
+- NSIS, AppImage/deb, and macOS clean-machine startup/shutdown with no Python dependency;
+- real Qwen, Volcengine, Codex login, microphone/speaker, Camera, Watch/Guard, and WindowServer use;
+- Windows descendant cleanup, signing/notarization, publication, and the Node-default switch;
+- one published Node-default release with the explicit Python source rollback.
+
+Only the next release after that rollback window may remove the Python package/tests, uv/pyproject,
+Python launchers, HA/AutoGLM source/tests/env/submodule, realtime probe, backend switch, and Python
+oracle. Until then those files are intentionally present.

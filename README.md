@@ -145,6 +145,12 @@ speakers. The longer rationale is in [Design essence](docs/essence.md) and the
 Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), Git with submodule support,
 Node.js 22+ for the optional desktop application, and macOS for native Ambient Orb audio capture.
 
+> **Migration status:** Python is still the default and source oracle for this rollback release;
+> Node is opt-in for source development. Node Codex is app-server-only and JSONL is
+> fixture-parser-only. HA/AutoGLM are retired in Node and remain temporarily only in the Python
+> source rollback. Installer, clean-machine, hardware, signing, Node-default, and publication gates
+> are pending external evidence.
+
 ### Named Codex workspaces and Sessions
 
 Realtime Codex can opt into isolated named workspaces and persistent Sessions. Project mode is
@@ -184,7 +190,7 @@ Codex prewarm. A persistent workspace home refreshes its saved login when the ho
 changes, using owner-only atomic files; a destination-only credential refresh is preserved while
 the host source is unchanged.
 
-Clone the repository and its pinned Open-AutoGLM submodule:
+Clone the repository and the temporary Python-rollback submodule:
 
 ```bash
 git clone --recurse-submodules \
@@ -210,9 +216,9 @@ and `./scripts/bootstrap_backend.sh` is the Conda alternative. Exit chat with `/
 end-of-file, or `Ctrl-C`.
 
 Nova is Chinese-first: the persona, production prompts, tool descriptions, CLI error messages, and
-default voice are Chinese. Real integrations — deterministic sims, Tavily search, Home Assistant,
-Codex (default JSONL backend, plus the live app-server backend on the realtime path), AutoGLM,
-camera Watch/Guard, and Qwen realtime voice — are configured through environment variables;
+default voice are Chinese. Current Node capabilities — deterministic sims, Tavily search, Codex
+over app-server, camera Watch/Guard, and Qwen or Volcengine realtime voice — are configured through
+environment variables;
 per-integration setup, cautions, and the full variable reference are in
 [Getting started](docs/getting-started.md).
 
@@ -230,8 +236,9 @@ uv sync --extra vision --dev
 .\scripts\start_ambient_orb.ps1         # Windows
 ```
 
-It starts the Python realtime backend and launches the Electron renderer (context isolation,
-sandboxing, and a narrow preload bridge); it requires Node.js, the `codex` executable, microphone
+The source launcher starts the backend selected for development and launches the Electron renderer
+(context isolation, sandboxing, and a narrow preload bridge); Python remains the default during the
+rollback release. It requires Node.js, the `codex` executable, microphone
 permission, and `DASHSCOPE_API_KEY` in `.env` or the settings panel. On macOS it also builds the
 native VoiceProcessingIO helper for system-level echo cancellation; Windows and Linux use
 Chromium's echo cancellation instead. Linux sessions run on X11 (Wayland sessions go through
@@ -265,7 +272,7 @@ src/nova_audio_agent/realtime/  Qwen transport, session bridge, recovery, playba
 desktop/ambient-orb/            Electron UI and native macOS audio helper
 tests/                          Deterministic unit, scenario, protocol, and repository tests
 docs/                           Public architecture, rationale, guides, status, and design series
-thirdparty/Open-AutoGLM/        Pinned public upstream Git submodule
+thirdparty/Open-AutoGLM/        Temporary Python source-rollback submodule; retired in Node
 resources/                      Local raw and edited media; intentionally ignored by Git
 ```
 
