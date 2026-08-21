@@ -84,6 +84,7 @@ test('public LiveKit root imports and exact dependency pins are accepted', () =>
         "export*from'@livekit/agents'",
         "const loadAgents = () => import('@livekit/agents')",
         "const agents = require('@livekit/agents')",
+        'const rootLiteral = `@livekit/agents`',
       ].join('\n'),
     }],
     packageManifests: [{
@@ -198,6 +199,22 @@ test('literal LiveKit module references cannot bypass policy through syntax or s
     {
       path: 'commonjs-require.ts',
       source: "const hidden=require('@livekit/agents/dist/internal.js')",
+    },
+    {
+      path: 'comment-gap-import.ts',
+      source: 'import{hidden}from/*gap*/"@livekit/agents/dist/internal.js"',
+    },
+    {
+      path: 'comment-gap-require.ts',
+      source: 'const hidden=require/*gap*/("@livekit/agents/dist/internal.js")',
+    },
+    {
+      path: 'backtick-import.ts',
+      source: 'const hidden=import(`@livekit/agents/dist/internal.js`)',
+    },
+    {
+      path: 'backtick-require.ts',
+      source: 'const hidden=require(`@livekit/agents/dist/internal.js`)',
     },
   ]
 

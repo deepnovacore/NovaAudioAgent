@@ -62,10 +62,11 @@ export interface LiveKitPolicyViolation {
 }
 
 const LIVEKIT_AGENTS_ROOT = '@livekit/agents'
-const LIVEKIT_LOCAL_INFERENCE = '@livekit/' + 'local-inference'
+const LIVEKIT_LOCAL_INFERENCE = '@livekit' + '/local-inference'
+const LIVEKIT_RTC_NODE = '@livekit' + '/rtc-node'
 const LIVEKIT_DEPENDENCY_VERSIONS = Object.freeze({
-  '@livekit/agents': '1.6.4',
-  '@livekit/rtc-node': '0.13.33',
+  [LIVEKIT_AGENTS_ROOT]: '1.6.4',
+  [LIVEKIT_RTC_NODE]: '0.13.33',
 })
 const DEPENDENCY_SECTIONS = Object.freeze([
   'dependencies',
@@ -78,17 +79,8 @@ const FORBIDDEN_SOURCE_APIS = Object.freeze([
   '_' + 'warmup',
   'inference' + '_' + 'proc',
 ])
-const STATIC_LIVEKIT_IMPORT =
-  /\b(?:import|export)\s*(?:type\s*)?(?:[^'";]*?\bfrom\s*)?['"](@livekit\/[^'"]+)['"]/gu
-const DYNAMIC_LIVEKIT_IMPORT =
-  /\bimport\s*\(\s*['"](@livekit\/[^'"]+)['"]\s*\)/gu
-const LIVEKIT_REQUIRE =
-  /\brequire\s*\(\s*['"](@livekit\/[^'"]+)['"]\s*\)/gu
-const LIVEKIT_MODULE_REFERENCE_PATTERNS = Object.freeze([
-  STATIC_LIVEKIT_IMPORT,
-  DYNAMIC_LIVEKIT_IMPORT,
-  LIVEKIT_REQUIRE,
-])
+const LIVEKIT_STRING_LITERAL =
+  /'(@livekit\/[^'\r\n]*)'|"(@livekit\/[^"\r\n]*)"|`(@livekit\/[^`\r\n]*)`/gu
 
 export function placeholderEndpointingCapability(
   options: PlaceholderEndpointingCapabilityOptions,
@@ -111,7 +103,7 @@ export function scanLiveKitPublicSurface(
   const violations: LiveKitPolicyViolation[] = []
 
   for (const source of inventory.productionSources) {
-    for (const specifier of liveKitImportSpecifiers(source.source)) {
+    for (const specifier of liveKitLiteralSpecifiers(source.source)) {
       if (specifier !== LIVEKIT_AGENTS_ROOT) {
         violations.push(Object.freeze({
           code: 'forbidden_import',
@@ -161,16 +153,13 @@ export function scanLiveKitPublicSurface(
   return Object.freeze(violations)
 }
 
-function liveKitImportSpecifiers(source: string): readonly string[] {
-  const matches: {readonly index: number; readonly specifier: string}[] = []
-  for (const pattern of LIVEKIT_MODULE_REFERENCE_PATTERNS) {
-    for (const match of source.matchAll(pattern)) {
-      const specifier = match[1]
-      if (specifier !== undefined) matches.push({index: match.index, specifier})
-    }
+function liveKitLiteralSpecifiers(source: string): readonly string[] {
+  const specifiers: string[] = []
+  for (const match of source.matchAll(LIVEKIT_STRING_LITERAL)) {
+    const specifier = match[1] ?? match[2] ?? match[3]
+    if (specifier !== undefined) specifiers.push(specifier)
   }
-  matches.sort((left, right) => left.index - right.index)
-  return Object.freeze(matches.map(match => match.specifier))
+  return Object.freeze(specifiers)
 }
 
 function asStringRecord(value: unknown): Record<string, unknown> | null {
