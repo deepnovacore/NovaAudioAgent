@@ -51,6 +51,22 @@ const MAX_CONTAINER_ENTRIES = 10_000
 const MAX_CONTAINER_LISTING_BYTES = 8 * 1024 * 1024
 const MAX_CONTAINER_LISTING_LINES = 100_000
 const MAX_CONTAINER_LINE_BYTES = 16 * 1024
+const MAX_CONTAINER_TOOL_BYTES = 16 * 1024 * 1024
+const DEFAULT_PACKAGE_LOCK = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../package-lock.json',
+)
+const CONTAINER_TOOL_MANIFEST = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../release/inspection-tools-v1.json',
+)
+const CONTAINER_TOOL_PACKAGE_NAMES = new Set(['7zip-bin', '@electron/7zip-bin'])
+const CONTAINER_TOOL_TUPLES = Object.freeze({
+  'darwin-arm64': Object.freeze({ path: 'mac/arm64/7za', binary_kind: 'macho' }),
+  'darwin-x64': Object.freeze({ path: 'mac/x64/7za', binary_kind: 'macho' }),
+  'linux-x64': Object.freeze({ path: 'linux/x64/7za', binary_kind: 'elf' }),
+  'win32-x64': Object.freeze({ path: 'win/x64/7za.exe', binary_kind: 'pe' }),
+})
 
 export class PackageInspectionError extends Error {
   constructor(detail) {
@@ -1365,18 +1381,277 @@ function runBoundedListing(command, arguments_, workingDirectory) {
   return result.stdout
 }
 
-async function resolveLockedSevenZip() {
+function containerToolRejected() {
+  throw new PackageInspectionError('candidate container tool rejected')
+}
+
+function assertContainerToolKeys(record, expected) {
+  if (
+    !isPlainJsonObject(record)
+    || Object.keys(record).sort().join('\0') !== [...expected].sort().join('\0')
+  ) containerToolRejected()
+}
+
+async function readImmutableContainerToolJson(path, maximumBytes) {
+  let handle
   try {
-    const require = createRequire(import.meta.url)
-    const packageRoot = dirname(require.resolve('app-builder-lib/package.json'))
-    const { getPath7za } = require(resolve(packageRoot, 'out/toolsets/7zip.js'))
-    if (typeof getPath7za !== 'function') throw new Error('unavailable')
-    const path7za = await getPath7za()
-    const status = await lstat(path7za)
-    if (!status.isFile() || status.isSymbolicLink()) throw new Error('unavailable')
-    return path7za
+    const pathBefore = await lstat(path)
+    if (!pathBefore.isFile() || pathBefore.isSymbolicLink() || pathBefore.size > maximumBytes) {
+      containerToolRejected()
+    }
+    handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+    const before = await handle.stat()
+    if (
+      !before.isFile()
+      || before.dev !== pathBefore.dev
+      || before.ino !== pathBefore.ino
+      || before.size !== pathBefore.size
+    ) containerToolRejected()
+    const buffer = Buffer.alloc(before.size + 1)
+    const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, 0)
+    const after = await handle.stat()
+    const pathAfter = await lstat(path)
+    if (
+      bytesRead !== before.size
+      || after.dev !== before.dev
+      || after.ino !== before.ino
+      || after.size !== before.size
+      || pathAfter.dev !== before.dev
+      || pathAfter.ino !== before.ino
+      || pathAfter.size !== before.size
+    ) containerToolRejected()
+    return Object.freeze({
+      parsed: parseStrictJson(buffer.subarray(0, bytesRead).toString('utf8')),
+      resolvedPath: await realpath(path),
+    })
   } catch {
-    throw new PackageInspectionError('candidate container extractor unavailable')
+    containerToolRejected()
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+}
+
+function assertOwnedContainerToolEntry(status, { directory = false } = {}) {
+  if (
+    (directory ? !status.isDirectory() : !status.isFile())
+    || status.isSymbolicLink()
+  ) containerToolRejected()
+  if (process.platform !== 'win32') {
+    if ((status.mode & 0o022) !== 0) containerToolRejected()
+    const uid = process.getuid?.()
+    if (uid !== undefined && status.uid !== uid) containerToolRejected()
+  }
+}
+
+function verifyContainerToolBinary(header, { binary_kind: kind, architecture }) {
+  if (kind === 'macho') {
+    const cpu = architecture === 'arm64' ? 0x0100000c
+      : architecture === 'x64' ? 0x01000007 : -1
+    if (header.length < 8 || header.readUInt32LE(0) !== 0xfeedfacf || header.readUInt32LE(4) !== cpu) {
+      containerToolRejected()
+    }
+    return
+  }
+  if (kind === 'elf') {
+    const machine = architecture === 'x64' ? 62 : -1
+    if (
+      header.length < 20
+      || !header.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+      || header[4] !== 2
+      || header[5] !== 1
+      || header.readUInt16LE(18) !== machine
+    ) containerToolRejected()
+    return
+  }
+  if (kind === 'pe') {
+    if (header.length < 64 || header[0] !== 0x4d || header[1] !== 0x5a) containerToolRejected()
+    const offset = header.readUInt32LE(0x3c)
+    const machine = architecture === 'x64' ? 0x8664 : -1
+    if (
+      offset > header.length - 6
+      || header.readUInt32LE(offset) !== 0x00004550
+      || header.readUInt16LE(offset + 4) !== machine
+    ) containerToolRejected()
+    return
+  }
+  containerToolRejected()
+}
+
+export function assertCurrentHostSevenZipBinary(bytes) {
+  try {
+    if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > MAX_CONTAINER_TOOL_BYTES) {
+      containerToolRejected()
+    }
+    const tuple = CONTAINER_TOOL_TUPLES[`${process.platform}-${process.arch}`]
+    if (tuple === undefined) containerToolRejected()
+    verifyContainerToolBinary(bytes.subarray(0, Math.min(bytes.length, 4096)), {
+      ...tuple,
+      architecture: process.arch,
+    })
+    return true
+  } catch {
+    containerToolRejected()
+  }
+}
+
+async function verifySnapshottedSevenZipTool(tool) {
+  let handle
+  try {
+    handle = await open(tool.path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+    const status = await handle.stat()
+    const pathStatus = await lstat(tool.path)
+    if (
+      !status.isFile()
+      || status.dev !== tool.dev
+      || status.ino !== tool.ino
+      || status.size !== tool.size
+      || pathStatus.dev !== tool.dev
+      || pathStatus.ino !== tool.ino
+      || pathStatus.size !== tool.size
+      || await hashHandle(handle, tool.size, 'candidate container tool') !== tool.sha256
+    ) containerToolRejected()
+    const header = Buffer.alloc(Math.min(tool.size, 4096))
+    const { bytesRead } = await handle.read(header, 0, header.length, 0)
+    verifyContainerToolBinary(header.subarray(0, bytesRead), tool)
+  } catch {
+    containerToolRejected()
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+}
+
+export async function snapshotLockedSevenZipTool({
+  lockPath = DEFAULT_PACKAGE_LOCK,
+  privateRoot,
+} = {}) {
+  try {
+    const manifestPath = CONTAINER_TOOL_MANIFEST
+    const platform = process.platform
+    const architecture = process.arch
+    if (typeof privateRoot !== 'string' || privateRoot === '') containerToolRejected()
+    const tuple = CONTAINER_TOOL_TUPLES[`${platform}-${architecture}`]
+    if (tuple === undefined) containerToolRejected()
+    const [lockDocument, toolDocument] = await Promise.all([
+      readImmutableContainerToolJson(lockPath, MAX_ARTIFACT_LIST_BYTES),
+      readImmutableContainerToolJson(manifestPath, MAX_ARTIFACT_MANIFEST_BYTES),
+    ])
+    const lock = lockDocument.parsed
+    const manifest = toolDocument.parsed
+    assertContainerToolKeys(manifest, ['schema_version', 'package', 'tools'])
+    assertContainerToolKeys(manifest.package, ['name', 'version', 'resolved', 'integrity'])
+    if (
+      manifest.schema_version !== 1
+      || !CONTAINER_TOOL_PACKAGE_NAMES.has(manifest.package.name)
+      || typeof manifest.package.version !== 'string'
+      || typeof manifest.package.resolved !== 'string'
+      || typeof manifest.package.integrity !== 'string'
+      || !Array.isArray(manifest.tools)
+    ) containerToolRejected()
+    const tools = new Map()
+    for (const record of manifest.tools) {
+      assertContainerToolKeys(record, [
+        'platform', 'architecture', 'path', 'size', 'sha256', 'binary_kind',
+      ])
+      const key = `${record.platform}-${record.architecture}`
+      const expected = CONTAINER_TOOL_TUPLES[key]
+      if (
+        expected === undefined
+        || tools.has(key)
+        || record.path !== expected.path
+        || record.binary_kind !== expected.binary_kind
+        || !Number.isSafeInteger(record.size)
+        || record.size <= 0
+        || record.size > MAX_CONTAINER_TOOL_BYTES
+        || !/^[0-9a-f]{64}$/u.test(record.sha256)
+      ) containerToolRejected()
+      tools.set(key, record)
+    }
+    const selected = tools.get(`${platform}-${architecture}`)
+    if (selected === undefined) containerToolRejected()
+    if (
+      !isPlainJsonObject(lock)
+      || lock.lockfileVersion !== 3
+      || !isPlainJsonObject(lock.packages)
+    ) containerToolRejected()
+    const suffix = `/node_modules/${manifest.package.name}`
+    const matches = Object.entries(lock.packages).filter(([installKey]) => (
+      installKey === `node_modules/${manifest.package.name}` || installKey.endsWith(suffix)
+    ))
+    if (matches.length !== 1) containerToolRejected()
+    const [installKey, lockRecord] = matches[0]
+    if (
+      validateRelativeFile(installKey) !== installKey
+      || !isPlainJsonObject(lockRecord)
+      || lockRecord.version !== manifest.package.version
+      || lockRecord.resolved !== manifest.package.resolved
+      || lockRecord.integrity !== manifest.package.integrity
+      || lockRecord.dev !== true
+    ) containerToolRejected()
+    const lockRoot = dirname(lockDocument.resolvedPath)
+    const packagePath = resolve(lockRoot, installKey)
+    const packageRoot = await realpath(packagePath)
+    if (packageRoot !== packagePath) containerToolRejected()
+    assertOwnedContainerToolEntry(await lstat(packageRoot), { directory: true })
+    const packageJson = await readImmutableContainerToolJson(
+      resolve(packageRoot, 'package.json'),
+      MAX_ARTIFACT_MANIFEST_BYTES,
+    )
+    if (
+      packageJson.parsed.name !== manifest.package.name
+      || packageJson.parsed.version !== manifest.package.version
+    ) containerToolRejected()
+    let current = packageRoot
+    const segments = selected.path.split('/')
+    for (let index = 0; index < segments.length; index += 1) {
+      current = resolve(current, segments[index])
+      const status = await lstat(current)
+      assertOwnedContainerToolEntry(status, {
+        directory: index < segments.length - 1,
+      })
+    }
+    const toolRoot = await realpath(current)
+    if (toolRoot !== current || !toolRoot.startsWith(`${packageRoot}${sep}`)) containerToolRejected()
+    await mkdir(privateRoot, { recursive: true, mode: 0o700 })
+    const privateStatus = await lstat(privateRoot)
+    assertOwnedContainerToolEntry(privateStatus, { directory: true })
+    if ((await readdir(privateRoot)).length !== 0) containerToolRejected()
+    const destination = resolve(privateRoot, platform === 'win32' ? '7za.exe' : '7za')
+    let source
+    try {
+      source = await open(toolRoot, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+      const before = await source.stat()
+      assertOwnedContainerToolEntry(before)
+      if (before.size !== selected.size) containerToolRejected()
+      const sha256 = await copyAndHashHandle(source, destination, before.size)
+      const after = await source.stat()
+      const pathAfter = await lstat(toolRoot)
+      if (
+        sha256 !== selected.sha256
+        || after.dev !== before.dev
+        || after.ino !== before.ino
+        || after.size !== before.size
+        || pathAfter.dev !== before.dev
+        || pathAfter.ino !== before.ino
+        || pathAfter.size !== before.size
+      ) containerToolRejected()
+    } finally {
+      await source?.close().catch(() => {})
+    }
+    if (process.platform !== 'win32') await chmod(destination, 0o500)
+    const snapshotStatus = await lstat(destination)
+    const result = Object.freeze({
+      path: destination,
+      size: selected.size,
+      sha256: selected.sha256,
+      binary_kind: selected.binary_kind,
+      architecture,
+      dev: snapshotStatus.dev,
+      ino: snapshotStatus.ino,
+    })
+    await verifySnapshottedSevenZipTool(result)
+    return result
+  } catch {
+    containerToolRejected()
   }
 }
 
@@ -1393,7 +1668,7 @@ function runExtractor(command, arguments_, workingDirectory) {
   }
 }
 
-async function extractCandidateContainer(snapshot, format, privateRoot, deadline) {
+async function extractCandidateContainer(snapshot, format, privateRoot, deadline, lockPath) {
   const raw = resolve(privateRoot, 'container-raw')
   const immutable = resolve(privateRoot, 'container-snapshot')
   if (format === 'dmg') {
@@ -1442,18 +1717,25 @@ async function extractCandidateContainer(snapshot, format, privateRoot, deadline
       },
     })
   } else {
-    const path7za = await resolveLockedSevenZip()
+    const tool = await snapshotLockedSevenZipTool({
+      lockPath,
+      privateRoot: resolve(privateRoot, 'container-tool'),
+    })
+    await verifySnapshottedSevenZipTool(tool)
     const listing = runBoundedListing(
-      path7za,
+      tool.path,
       ['l', '-slt', '-ba', '-bd', '--', snapshot],
       privateRoot,
     )
+    await verifySnapshottedSevenZipTool(tool)
     await extractPreflightedContainer({
       format,
       listing,
       destinationRoot: raw,
       extract: async () => {
-        runExtractor(path7za, ['x', '-bd', '-y', `-o${raw}`, '--', snapshot], privateRoot)
+        await verifySnapshottedSevenZipTool(tool)
+        runExtractor(tool.path, ['x', '-bd', '-y', `-o${raw}`, '--', snapshot], privateRoot)
+        await verifySnapshottedSevenZipTool(tool)
       },
     })
   }
@@ -1506,7 +1788,7 @@ async function makePrivateTreeRemovable(root) {
 export async function inspectBuiltArtifact(candidatePath, {
   targetId,
   format,
-  lockPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../package-lock.json'),
+  lockPath = DEFAULT_PACKAGE_LOCK,
 } = {}) {
   const targets = await readReleaseTargets()
   const target = targets.targets.find(value => value.id === targetId)
@@ -1545,7 +1827,13 @@ export async function inspectBuiltArtifact(candidatePath, {
       }
       fileSnapshot = resolve(privateRoot, `candidate${expectedExtension}`)
       artifactIdentity = await captureCandidateFile(candidatePath, fileSnapshot)
-      const container = await extractCandidateContainer(fileSnapshot, format, privateRoot, deadline)
+      const container = await extractCandidateContainer(
+        fileSnapshot,
+        format,
+        privateRoot,
+        deadline,
+        lockPath,
+      )
       snapshotRoot = container.root
       snapshotIdentity = container.identity
     }
@@ -1601,7 +1889,7 @@ export async function inspectBuiltArtifact(candidatePath, {
 
 export async function inspectAsarSnapshot(archivePath, {
   targetId,
-  lockPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../package-lock.json'),
+  lockPath = DEFAULT_PACKAGE_LOCK,
   resourcesRoot,
   requireNative = false,
 } = {}) {

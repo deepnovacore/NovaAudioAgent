@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "package": {
+    "name": "7zip-bin",
+    "version": "5.2.0",
+    "resolved": "https://registry.npmmirror.com/7zip-bin/-/7zip-bin-5.2.0.tgz",
+    "integrity": "sha512-ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A=="
+  },
+  "tools": [
+    {
+      "platform": "darwin",
+      "architecture": "arm64",
+      "path": "mac/arm64/7za",
+      "size": 988208,
+      "sha256": "6f4dd78a82cf574f49118d99be620fd3edcfa9e48971d8523816b7ed20419c47",
+      "binary_kind": "macho"
+    },
+    {
+      "platform": "darwin",
+      "architecture": "x64",
+      "path": "mac/x64/7za",
+      "size": 2941888,
+      "sha256": "434075f6ff5ea9250571033ca06b95d464efcad87a528dd0b224816c86b1a444",
+      "binary_kind": "macho"
+    },
+    {
+      "platform": "linux",
+      "architecture": "x64",
+      "path": "linux/x64/7za",
+      "size": 1457384,
+      "sha256": "afc9448bd0cc2eeda131cce313ef4994f9656417e0a15c8465fcda9ca859b280",
+      "binary_kind": "elf"
+    },
+    {
+      "platform": "win32",
+      "architecture": "x64",
+      "path": "win/x64/7za.exe",
+      "size": 1231360,
+      "sha256": "b0cfdeaf429f5cc53f85123dd8f5a5feb92c19d31aa34df257edf9a26be05f95",
+      "binary_kind": "pe"
+    }
+  ]
+}

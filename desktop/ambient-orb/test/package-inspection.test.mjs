@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, sep } from 'node:path'
 import test from 'node:test'
 
 import { createPackage, createPackageWithOptions, extractAll, listPackage } from '@electron/asar'
@@ -591,6 +591,160 @@ test('container preflight accepts bounded 7z and deb file inventories', () => {
     { path: 'usr', type: 'directory', size: 0 },
     { path: 'usr/app.asar', type: 'file', size: 12 },
   ])
+})
+
+test('installer inspection never executes an ELECTRON_BUILDER_7ZIP_PATH override', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-container-tool-override-'))
+  const candidate = resolve(root, 'candidate.exe')
+  const sentinel = resolve(root, 'override-called')
+  const preload = resolve(root, 'sentinel.cjs')
+  try {
+    await writeFile(candidate, 'not-an-installer')
+    await writeFile(preload, [
+      "const { writeFileSync } = require('node:fs')",
+      "if (process.argv.includes('-slt')) writeFileSync(process.env.NOVA_7ZIP_SENTINEL, 'called')",
+      '',
+    ].join('\n'))
+    const command = spawnSync(process.execPath, [
+      resolve(import.meta.dirname, '../scripts/inspect-package.mjs'),
+      '--artifact', candidate,
+      '--target', 'win32-x64',
+      '--format', 'nsis',
+    ], {
+      cwd: resolve(import.meta.dirname, '../../..'),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ELECTRON_BUILDER_7ZIP_PATH: process.execPath,
+        NODE_OPTIONS: `--require=${preload}`,
+        NOVA_7ZIP_SENTINEL: sentinel,
+      },
+    })
+    assert.notEqual(command.status, 0)
+    assert.equal(
+      command.stderr,
+      'desktop package contract rejected: candidate container listing rejected\n',
+    )
+    await assert.rejects(lstat(sentinel), error => error.code === 'ENOENT')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('locked installer tool snapshots one verified package-owned executable and rejects mutations', async () => {
+  assert.equal(typeof packageInspection.snapshotLockedSevenZipTool, 'function')
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-locked-container-tool-'))
+  const lockPath = resolve(root, 'package-lock.json')
+  const packageRoot = resolve(root, 'node_modules/7zip-bin')
+  const relativeToolPath = process.platform === 'darwin'
+    ? `mac/${process.arch}/7za`
+    : process.platform === 'win32'
+      ? `win/${process.arch}/7za.exe`
+      : `linux/${process.arch}/7za`
+  const toolPath = resolve(packageRoot, relativeToolPath)
+  const installedPackageRoot = resolve(import.meta.dirname, '../../../node_modules/7zip-bin')
+  const toolBytes = await readFile(resolve(installedPackageRoot, relativeToolPath))
+  assert.equal(packageInspection.assertCurrentHostSevenZipBinary(toolBytes), true)
+  const wrongArchitecture = Buffer.from(toolBytes)
+  if (process.platform === 'darwin') {
+    wrongArchitecture.writeUInt32LE(process.arch === 'arm64' ? 0x01000007 : 0x0100000c, 4)
+  } else if (process.platform === 'linux') {
+    wrongArchitecture.writeUInt16LE(183, 18)
+  } else {
+    wrongArchitecture.writeUInt16LE(0xaa64, wrongArchitecture.readUInt32LE(0x3c) + 4)
+  }
+  assert.throws(
+    () => packageInspection.assertCurrentHostSevenZipBinary(wrongArchitecture),
+    error => {
+      assert.equal(
+        error.message,
+        'desktop package contract rejected: candidate container tool rejected',
+      )
+      return true
+    },
+  )
+  const resolved = 'https://registry.npmmirror.com/7zip-bin/-/7zip-bin-5.2.0.tgz'
+  const integrity = 'sha512-ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A=='
+  const writeFixture = async ({ bytes = toolBytes, writeTool = true } = {}) => {
+    await mkdir(dirname(toolPath), { recursive: true })
+    await writeFile(resolve(packageRoot, 'package.json'), JSON.stringify({ name: '7zip-bin', version: '5.2.0' }))
+    if (writeTool) {
+      await writeFile(toolPath, bytes, { mode: 0o700 })
+      await chmod(toolPath, 0o700)
+    }
+    await writeFile(lockPath, JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        'node_modules/7zip-bin': {
+          version: '5.2.0', resolved, integrity, dev: true,
+        },
+      },
+    }))
+  }
+  const snapshotRoot = resolve(root, 'snapshot')
+  const rejectsTool = promise => assert.rejects(promise, error => {
+    assert.equal(
+      error.message,
+      'desktop package contract rejected: candidate container tool rejected',
+    )
+    return true
+  })
+  try {
+    await writeFixture()
+    const snapshot = await packageInspection.snapshotLockedSevenZipTool({
+      lockPath, privateRoot: snapshotRoot,
+    })
+    assert.equal(snapshot.size, toolBytes.length)
+    assert.notEqual(snapshot.path, toolPath)
+    await writeFile(toolPath, Buffer.alloc(toolBytes.length, 0xff))
+    assert.deepEqual(await readFile(snapshot.path), toolBytes)
+
+    await rm(snapshotRoot, { recursive: true, force: true })
+    const changedBytes = Buffer.from(toolBytes)
+    changedBytes[changedBytes.length - 1] ^= 0xff
+    await writeFixture({ bytes: changedBytes })
+    await rejectsTool(packageInspection.snapshotLockedSevenZipTool({
+      lockPath, privateRoot: snapshotRoot,
+    }))
+
+    await rm(snapshotRoot, { recursive: true, force: true })
+    await rm(toolPath, { force: true })
+    await writeFixture({ writeTool: false })
+    await rejectsTool(packageInspection.snapshotLockedSevenZipTool({
+      lockPath, privateRoot: snapshotRoot,
+    }))
+
+    if (process.platform !== 'win32') {
+      await writeFixture()
+      await chmod(toolPath, 0o722)
+      await rejectsTool(packageInspection.snapshotLockedSevenZipTool({
+        lockPath, privateRoot: snapshotRoot,
+      }))
+    }
+
+    await writeFixture()
+    const linkTarget = resolve(dirname(toolPath), 'real-7za')
+    await writeFile(linkTarget, toolBytes, { mode: 0o700 })
+    await rm(toolPath)
+    await symlink('real-7za', toolPath)
+    await rejectsTool(packageInspection.snapshotLockedSevenZipTool({
+      lockPath, privateRoot: snapshotRoot,
+    }))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('committed installer tool identity matches the current locked host binary', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-committed-container-tool-'))
+  try {
+    const snapshot = await packageInspection.snapshotLockedSevenZipTool({ privateRoot: root })
+    assert.match(snapshot.sha256, /^[0-9a-f]{64}$/u)
+    assert.ok(snapshot.size > 0)
+    assert.ok(snapshot.path.startsWith(`${root}${sep}`))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('owned ASAR inspection hashes, lists, and extracts one private snapshot', async () => {
