@@ -15,7 +15,7 @@ import {announceReadiness} from './desktop.js'
 import {selectDesktopCameraSource} from './desktop-camera-source.js'
 import {ChromiumFrameSource} from './executors/chromium-frame-source.js'
 import {RealClock} from './clock.js'
-import {buildQwenRealtimeAssembly} from './qwen-realtime-assembly.js'
+import {buildProductionRealtimeAssembly} from './production-realtime-assembly.js'
 import {NullTelemetry} from './realtime/telemetry.js'
 
 type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource}
@@ -42,6 +42,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
   construct: async ownership => {
     const settings = loadSettings()
     const telemetry = new NullTelemetry()
+    ownership.own(() => telemetry.close())
     const clock = new RealClock()
     // Task 8 replaces this empty packaged catalog and unavailable transport host with audited,
     // signed resources. Until then an explicitly selected Codex fails before provider/socket work.
@@ -75,7 +76,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
           transport,
           clock,
         })
-        return buildQwenRealtimeAssembly({
+        return buildProductionRealtimeAssembly({
           settings,
           telemetry,
           onDiagnostic,

@@ -5,7 +5,7 @@ import {test} from 'node:test'
 import {WebSocket, type RawData} from 'ws'
 import {buildAssembly} from '../src/assembly.js'
 import {VirtualClock} from '../src/clock.js'
-import {settingsSchema} from '../src/config.js'
+import {loadSettings, settingsSchema} from '../src/config.js'
 import {announceReadiness, type DesktopReadiness} from '../src/desktop.js'
 import type {
   CameraCaptureTransport,
@@ -39,6 +39,24 @@ import type {
   RealtimeProvider,
 } from '../src/realtime/protocol.js'
 import {memoryBoardMessage} from '../src/realtime/memory-board.js'
+import {buildProductionRealtimeAssembly} from '../src/production-realtime-assembly.js'
+import {
+  QwenSocketClosedError,
+  type QwenSocket,
+} from '../src/realtime/qwen.js'
+import type {
+  VolcAsrClient,
+  VolcAsrSession,
+  VolcTtsClient,
+  VolcTtsSession,
+} from '../src/realtime/volcengine/adapter.js'
+import type {
+  ArkEvent,
+  ArkResponsesGateway,
+  ArkStreamInput,
+} from '../src/realtime/volcengine/ark.js'
+import type {AsrTranscript} from '../src/realtime/volcengine/asr.js'
+import type {TtsAudio} from '../src/realtime/volcengine/tts.js'
 
 const TOKEN = '0123456789abcdef0123456789abcdef'
 const SETTLE_MS = 1_500
@@ -779,6 +797,156 @@ class ScriptedProvider implements RealtimeProvider {
   }
 }
 
+class DesktopQwenSocket implements QwenSocket {
+  readonly sent: string[] = []
+  readonly audioSent = deferred<void>()
+  closeCalls = 0
+  #closed = false
+  #messages: string[] = [
+    JSON.stringify({type: 'session.created', session: {id: 'desktop-qwen'}}),
+    JSON.stringify({type: 'session.updated', session: {id: 'desktop-qwen'}}),
+  ]
+  #waiting: {
+    readonly resolve: (value: string) => void
+    readonly reject: (error: Error) => void
+  } | undefined
+
+  send(payload: string): Promise<void> {
+    this.sent.push(payload)
+    const parsed = JSON.parse(payload) as {readonly type?: string}
+    if (parsed.type === 'input_audio_buffer.append') this.audioSent.resolve()
+    return Promise.resolve()
+  }
+
+  receive(): Promise<string> {
+    const message = this.#messages.shift()
+    if (message !== undefined) return Promise.resolve(message)
+    if (this.#closed) return Promise.reject(new QwenSocketClosedError())
+    return new Promise<string>((resolve, reject) => { this.#waiting = {resolve, reject} })
+  }
+
+  push(message: unknown): void {
+    const encoded = JSON.stringify(message)
+    const waiting = this.#waiting
+    if (waiting === undefined) this.#messages.push(encoded)
+    else {
+      this.#waiting = undefined
+      waiting.resolve(encoded)
+    }
+  }
+
+  close(): Promise<void> {
+    this.closeCalls += 1
+    this.#closed = true
+    this.#waiting?.reject(new QwenSocketClosedError())
+    this.#waiting = undefined
+    return Promise.resolve()
+  }
+}
+
+class DesktopAsrSession implements VolcAsrSession {
+  readonly appended: Uint8Array[] = []
+  readonly #finished = deferred<void>()
+  closeCalls = 0
+
+  append(pcm: Uint8Array): Promise<void> {
+    this.appended.push(pcm.slice())
+    return Promise.resolve()
+  }
+
+  finish(): Promise<void> { this.#finished.resolve(); return Promise.resolve() }
+
+  async *events(): AsyncIterable<AsrTranscript> {
+    await this.#finished.promise
+    yield {text: '你好 Nova', final: true}
+  }
+
+  close(): Promise<void> {
+    this.closeCalls += 1
+    this.#finished.resolve()
+    return Promise.resolve()
+  }
+}
+
+class DesktopAsrClient implements VolcAsrClient {
+  readonly session: DesktopAsrSession
+  readonly opened = deferred<void>()
+  opens = 0
+
+  constructor(session: DesktopAsrSession) { this.session = session }
+
+  open(): Promise<VolcAsrSession> {
+    this.opens += 1
+    this.opened.resolve()
+    return Promise.resolve(this.session)
+  }
+}
+
+class DesktopTtsSession implements VolcTtsSession {
+  readonly texts: string[] = []
+  readonly #finished = deferred<void>()
+  closeCalls = 0
+  cancelled = false
+
+  sendText(value: string): Promise<void> { this.texts.push(value); return Promise.resolve() }
+  finish(): Promise<void> { this.#finished.resolve(); return Promise.resolve() }
+  cancel(): Promise<void> {
+    this.cancelled = true
+    this.#finished.resolve()
+    return Promise.resolve()
+  }
+
+  async *events(): AsyncIterable<TtsAudio> {
+    await this.#finished.promise
+    if (!this.cancelled) yield {pcm: new Uint8Array([21, 22, 23, 24])}
+  }
+
+  close(): Promise<void> {
+    this.closeCalls += 1
+    this.#finished.resolve()
+    return Promise.resolve()
+  }
+}
+
+class DesktopTtsClient implements VolcTtsClient {
+  readonly session: DesktopTtsSession
+  opens = 0
+
+  constructor(session: DesktopTtsSession) { this.session = session }
+
+  open(): Promise<VolcTtsSession> {
+    this.opens += 1
+    return Promise.resolve(this.session)
+  }
+}
+
+class DesktopArk implements ArkResponsesGateway {
+  readonly calls: ArkStreamInput[] = []
+  closeCalls = 0
+
+  async *stream(input: ArkStreamInput): AsyncIterable<ArkEvent> {
+    this.calls.push(input)
+    await Promise.resolve()
+    yield {kind: 'response_started', response_id: 'volc-response'}
+    yield {kind: 'text_delta', text: '你好，'}
+    yield {kind: 'response_completed', response_id: 'volc-response'}
+  }
+
+  close(): Promise<void> { this.closeCalls += 1; return Promise.resolve() }
+}
+
+function speechThenSilencePcm(): Uint8Array {
+  const frameBytes = 1_024
+  const speechFrames = 8
+  const silenceFrames = 18
+  const result = new Uint8Array((speechFrames + silenceFrames) * frameBytes)
+  const view = new DataView(result.buffer)
+  for (let offset = 0; offset < speechFrames * frameBytes; offset += 2) {
+    view.setInt16(offset, 2_000, true)
+  }
+  return result
+}
+
 interface ReceivedFrame {readonly binary: boolean; readonly bytes: Uint8Array}
 
 function connectDesktop(port: number): Promise<WebSocket> {
@@ -818,6 +986,47 @@ function closeDesktop(socket: WebSocket): Promise<void> {
   socket.close()
   return settleNamed('production desktop close', closed)
     .catch(error => { socket.terminate(); throw error })
+}
+
+function waitDesktopClose(socket: WebSocket, label: string): Promise<number> {
+  return settleNamed(label, new Promise<number>((resolve, reject) => {
+    socket.once('close', code => resolve(code))
+    socket.once('error', reject)
+  }))
+}
+
+async function authenticateDesktop(socket: WebSocket, label: string): Promise<void> {
+  const initial = receiveFrames(socket, 2, `${label} bootstrap`)
+  await sendDesktop(socket, JSON.stringify({type: 'hello', token: TOKEN}), `${label} hello`)
+  assert.deepEqual((await initial).map(frame => text(frame)), [
+    '{"type":"desktop.ready"}',
+    '{"type":"codex.state","state":"idle"}',
+  ])
+}
+
+async function assertDesktopControlOutputs(
+  socket: WebSocket,
+  callbacks: DesktopOutputCallbacks,
+  label: string,
+): Promise<void> {
+  const frames = receiveFrames(socket, 4, `${label} control output`)
+  callbacks.onAudioClear(`${label}-clear`, 2)
+  callbacks.onAudioAlert(`${label}-alert`, 3)
+  callbacks.onCodexState('running')
+  callbacks.onProjectView({
+    workspace_display_name: '项目甲', session_title: '会话乙', pending_confirmation: true,
+  })
+  const payloads: unknown[] = (await frames)
+    .map(frame => JSON.parse(text(frame)) as unknown)
+  assert.deepEqual(payloads, [
+    {type: 'playback.clear', utterance_id: `${label}-clear`, generation_epoch: 2},
+    {type: 'playback.alert', utterance_id: `${label}-alert`, generation_epoch: 3},
+    {type: 'codex.state', state: 'running'},
+    {
+      type: 'codex.project', workspace_display_name: '项目甲',
+      session_title: '会话乙', pending_confirmation: true,
+    },
+  ])
 }
 
 function text(frame: ReceivedFrame): string {
@@ -972,6 +1181,261 @@ test('authenticated fake-provider loopback uses one service for duplex audio and
   }
   assert.equal(provider.closeCalls, 1)
   assert.equal(serveCalls, 1)
+})
+
+test('selected Qwen production assembly uses the authenticated provider-neutral desktop graph', async t => {
+  const providerSocket = new DesktopQwenSocket()
+  const stop = new AbortController()
+  let callbacks: DesktopOutputCallbacks | undefined
+  const composition = buildDesktopRealtimeComposition({
+    token: TOKEN,
+    stop,
+    buildRealtime: output => {
+      callbacks = output
+      return buildProductionRealtimeAssembly({
+        settings: loadSettings({
+          NOVA_AUDIO_AGENT_REALTIME_PROVIDER: 'qwen',
+          NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+          TAVILY_API_KEY: 'search-key',
+        }),
+        connector: () => Promise.resolve(providerSocket),
+        searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
+        ...output,
+        onDiagnostic: () => undefined,
+      })
+    },
+  })
+  let serveCalls = 0
+  const originalServe = composition.realtime.runtime.serve
+    .bind(composition.realtime.runtime)
+  Object.defineProperty(composition.realtime.runtime, 'serve', {
+    configurable: true,
+    value: (signal: AbortSignal): Promise<void> => {
+      serveCalls += 1
+      return originalServe(signal)
+    },
+  })
+  const shutdownTrace: string[] = []
+  const originalServerClose = composition.desktop.server.close
+    .bind(composition.desktop.server)
+  Object.defineProperty(composition.desktop.server, 'close', {
+    configurable: true,
+    value: async (): Promise<void> => {
+      shutdownTrace.push('listener.close')
+      await originalServerClose()
+    },
+  })
+  const originalRealtimeStop = composition.realtime.stop.bind(composition.realtime)
+  Object.defineProperty(composition.realtime, 'stop', {
+    configurable: true,
+    value: async (): Promise<void> => {
+      shutdownTrace.push('realtime.stop')
+      await originalRealtimeStop()
+    },
+  })
+  const announced = deferred<DesktopReadiness>()
+  let announcements = 0
+  const owner = new RealtimeDesktopService({
+    realtime: composition.realtime,
+    desktop: composition.desktop,
+    readyEndpoint: '127.0.0.1:51515',
+    stop,
+    announce: (_endpoint, ready) => {
+      announcements += 1
+      announced.resolve(ready)
+      return Promise.resolve()
+    },
+  })
+  const running = owner.run()
+  const sockets = new Set<WebSocket>()
+  t.after(async () => {
+    await Promise.allSettled([...sockets]
+      .filter(socket => socket.readyState !== WebSocket.CLOSED)
+      .map(socket => closeDesktop(socket)))
+    await settleNamed('Qwen desktop failure cleanup', Promise.allSettled([owner.stop(), running]))
+  })
+  const ready = await settleNamed('Qwen desktop readiness', announced.promise)
+
+  const unauthenticated = await connectDesktop(ready.port)
+  sockets.add(unauthenticated)
+  const rejected = waitDesktopClose(unauthenticated, 'Qwen pre-auth rejection')
+  await sendDesktop(unauthenticated, new Uint8Array([1, 2, 3, 4]), 'Qwen pre-auth PCM')
+  assert.equal(await rejected, 4003)
+  assert.equal(providerSocket.sent.some(payload => payload.includes('input_audio_buffer.append')), false)
+
+  const socket = await connectDesktop(ready.port)
+  sockets.add(socket)
+  await authenticateDesktop(socket, 'Qwen desktop')
+  await sendDesktop(socket, new Uint8Array([1, 2, 3, 4]), 'Qwen authenticated PCM')
+  await settleNamed('Qwen provider audio', providerSocket.audioSent.promise)
+
+  const downlink = receiveFrames(socket, 3, 'Qwen provider output')
+  providerSocket.push({type: 'response.created', response: {id: 'qwen-response'}})
+  providerSocket.push({
+    type: 'response.audio.delta', response_id: 'qwen-response',
+    delta: Buffer.from([5, 6]).toString('base64'),
+  })
+  providerSocket.push({
+    type: 'response.audio_transcript.done', response_id: 'qwen-response', transcript: '你好',
+  })
+  providerSocket.push({
+    type: 'response.done', response: {id: 'qwen-response', status: 'completed'},
+  })
+  const providerFrames = await downlink
+  assert.equal(providerFrames[0]?.binary, true)
+  assert.deepEqual(decodeAudioFrame(providerFrames[0].bytes).pcm, new Uint8Array([5, 6]))
+  assert.match(text(providerFrames[1]!), /"type":"caption".*"text":"你好"/u)
+  assert.match(text(providerFrames[2]!), /"type":"playback\.terminal"/u)
+  await assertDesktopControlOutputs(socket, callbacks!, 'qwen')
+
+  const board = receiveFrames(socket, 1, 'Qwen memory board')
+  await sendDesktop(socket, JSON.stringify({
+    type: 'memory.board.request', request_id: 'qwen-board',
+  }), 'Qwen memory board request')
+  assert.match(text((await board)[0]!), /"type":"memory\.board"/u)
+  await closeDesktop(socket)
+
+  await settleNamed('Qwen repeated desktop stop', Promise.all([owner.stop(), owner.stop()]))
+  await settleNamed('Qwen desktop run', running)
+  await owner.stop()
+  assert.deepEqual(shutdownTrace, ['listener.close', 'realtime.stop'])
+  assert.equal(providerSocket.closeCalls, 1)
+  assert.equal(serveCalls, 1)
+  assert.equal(announcements, 1)
+  await assert.rejects(connectDesktop(ready.port))
+})
+
+test('selected Volc production assembly falls back before ASR on the same authenticated graph', async t => {
+  const trace: string[] = []
+  const asrSession = new DesktopAsrSession()
+  const asr = new DesktopAsrClient(asrSession)
+  const ttsSession = new DesktopTtsSession()
+  const tts = new DesktopTtsClient(ttsSession)
+  const ark = new DesktopArk()
+  const stop = new AbortController()
+  let callbacks: DesktopOutputCallbacks | undefined
+  const composition = buildDesktopRealtimeComposition({
+    token: TOKEN,
+    stop,
+    buildRealtime: output => {
+      callbacks = output
+      return buildProductionRealtimeAssembly({
+        settings: loadSettings({
+          NOVA_AUDIO_AGENT_REALTIME_PROVIDER: 'volcengine',
+          ARK_API_KEY: 'ark-key',
+          DOUBAO_BIGMODEL_API_KEY: 'doubao-key',
+          TAVILY_API_KEY: 'search-key',
+        }),
+        endpointingCapability: () => {
+          trace.push('endpointing.executor_unavailable')
+          return Promise.resolve({result: {
+            schema_version: 1,
+            mode: 'bounded_silence',
+            eot: {available: false, reason: 'executor_unavailable'},
+            vad: {available: false, reason: 'executor_unavailable'},
+            platform: 'darwin',
+            arch: 'arm64',
+          }})
+        },
+        asrClient: () => { trace.push('asr.client'); return asr },
+        ttsClient: () => { trace.push('tts.client'); return tts },
+        arkFactory: () => { trace.push('ark.client'); return ark },
+        searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
+        ...output,
+        onDiagnostic: () => undefined,
+      })
+    },
+  })
+  let serveCalls = 0
+  const originalServe = composition.realtime.runtime.serve
+    .bind(composition.realtime.runtime)
+  Object.defineProperty(composition.realtime.runtime, 'serve', {
+    configurable: true,
+    value: (signal: AbortSignal): Promise<void> => {
+      serveCalls += 1
+      return originalServe(signal)
+    },
+  })
+  const shutdownTrace: string[] = []
+  const originalServerClose = composition.desktop.server.close
+    .bind(composition.desktop.server)
+  Object.defineProperty(composition.desktop.server, 'close', {
+    configurable: true,
+    value: async (): Promise<void> => {
+      shutdownTrace.push('listener.close')
+      await originalServerClose()
+    },
+  })
+  const originalRealtimeStop = composition.realtime.stop.bind(composition.realtime)
+  Object.defineProperty(composition.realtime, 'stop', {
+    configurable: true,
+    value: async (): Promise<void> => {
+      shutdownTrace.push('realtime.stop')
+      await originalRealtimeStop()
+    },
+  })
+  const announced = deferred<DesktopReadiness>()
+  let announcements = 0
+  const owner = new RealtimeDesktopService({
+    realtime: composition.realtime,
+    desktop: composition.desktop,
+    readyEndpoint: '127.0.0.1:51515',
+    stop,
+    announce: (_endpoint, ready) => {
+      trace.push('ready')
+      announcements += 1
+      announced.resolve(ready)
+      return Promise.resolve()
+    },
+  })
+  const running = owner.run()
+  const sockets = new Set<WebSocket>()
+  t.after(async () => {
+    await Promise.allSettled([...sockets]
+      .filter(socket => socket.readyState !== WebSocket.CLOSED)
+      .map(socket => closeDesktop(socket)))
+    await settleNamed('Volc desktop failure cleanup', Promise.allSettled([owner.stop(), running]))
+  })
+  const ready = await settleNamed('Volc desktop readiness', announced.promise)
+  assert.deepEqual(trace.slice(0, 5), [
+    'endpointing.executor_unavailable', 'asr.client', 'tts.client', 'ark.client', 'ready',
+  ])
+  assert.equal(asr.opens, 0)
+
+  const unauthenticated = await connectDesktop(ready.port)
+  sockets.add(unauthenticated)
+  const rejected = waitDesktopClose(unauthenticated, 'Volc pre-auth rejection')
+  await sendDesktop(unauthenticated, new Uint8Array([1, 2, 3, 4]), 'Volc pre-auth PCM')
+  assert.equal(await rejected, 4003)
+  assert.equal(asr.opens, 0)
+
+  const socket = await connectDesktop(ready.port)
+  sockets.add(socket)
+  await authenticateDesktop(socket, 'Volc desktop')
+  const downlink = receiveFrames(socket, 5, 'Volc provider output')
+  await sendDesktop(socket, speechThenSilencePcm(), 'Volc authenticated utterance')
+  await settleNamed('Volc ASR opened after fallback', asr.opened.promise)
+  const providerFrames = await downlink
+  const textFrames = providerFrames.filter(frame => !frame.binary).map(frame => text(frame))
+  const audioFrames = providerFrames.filter(frame => frame.binary)
+  assert.equal(audioFrames.length, 1)
+  assert.deepEqual(decodeAudioFrame(audioFrames[0]!.bytes).pcm, new Uint8Array([21, 22, 23, 24]))
+  assert.equal(textFrames.filter(frame => frame.includes('"type":"caption"')).length, 3)
+  assert.equal(textFrames.filter(frame => frame.includes('"type":"playback.terminal"')).length, 1)
+  assert.equal(asr.opens, 1)
+  assert.equal(tts.opens, 1)
+  assert.equal(ark.calls.length, 1)
+  await assertDesktopControlOutputs(socket, callbacks!, 'volc')
+  await closeDesktop(socket)
+
+  await settleNamed('Volc repeated desktop stop', Promise.all([owner.stop(), owner.stop()]))
+  await settleNamed('Volc desktop run', running)
+  await owner.stop()
+  assert.deepEqual(shutdownTrace, ['listener.close', 'realtime.stop'])
+  assert.equal(ark.closeCalls, 1)
+  assert.equal(serveCalls, 1)
+  assert.equal(announcements, 1)
+  await assert.rejects(connectDesktop(ready.port))
 })
 
 test('composition posts only audible delivery events into the exact runtime and memory board', () => {
