@@ -221,6 +221,26 @@ test('the tray icon resource stays top-level for every platform', () => {
   assert.equal(macHasTray, false, 'the tray resource should not be duplicated under mac:')
 })
 
+test('the project native addon is staged once at its fixed cross-platform resource path', () => {
+  const owners = (config.extraResources ?? []).filter(
+    (entry) => entry.from === 'build/native/project-native/nova_project_native.node'
+      || entry.to === 'native/project-native/nova_project_native.node',
+  )
+  assert.deepEqual(owners, [{
+    from: 'build/native/project-native/nova_project_native.node',
+    to: 'native/project-native/nova_project_native.node',
+  }])
+  for (const platform of ['mac', 'win', 'linux']) {
+    assert.equal(
+      (config[platform].extraResources ?? []).some(
+        (entry) => entry.to === 'native/project-native/nova_project_native.node',
+      ),
+      false,
+      `project native addon must not be duplicated under ${platform}`,
+    )
+  }
+})
+
 test('THIRD_PARTY_NOTICES.md and LICENSES/** ship in files for every platform', () => {
   assert.ok(config.files.includes('THIRD_PARTY_NOTICES.md'), 'expected THIRD_PARTY_NOTICES.md in files')
   assert.ok(config.files.includes('LICENSES/**/*'), 'expected LICENSES/**/* in files')

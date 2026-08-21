@@ -11,6 +11,7 @@
     "smoke:node-backend": "npm run build && electron scripts/utility-runtime-smoke.mjs",
     "icons": "node scripts/make-icons.mjs",
     "build": "node scripts/make-icons.mjs --if-missing && node scripts/build.mjs",
+    "build:native:project": "node scripts/build-project-native.mjs",
     "start": "npm run build && electron .",
     "inspect:package": "node scripts/inspect-built-preview.mjs",
     "inspect:release-package": "node scripts/inspect-built-preview.mjs --require-target-matrix",
@@ -27,6 +28,7 @@
     "7zip-bin": "5.2.0",
     "electron": "43.2.0",
     "electron-builder": "26.15.7",
+    "node-api-headers": "1.9.0",
     "semver": "7.8.5",
     "ws": "8.21.3"
   }

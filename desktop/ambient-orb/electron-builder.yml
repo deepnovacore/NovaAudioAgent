@@ -45,6 +45,8 @@ files:
 extraResources:
   - from: resources/tray
     to: tray
+  - from: build/native/project-native/nova_project_native.node
+    to: native/project-native/nova_project_native.node
 
 mac:
   category: public.app-category.productivity

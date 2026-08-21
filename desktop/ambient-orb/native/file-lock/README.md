@@ -1,9 +1,9 @@
 # Codex project descriptor-lock contract (Task 6D)
 
-Task 6D defines the audited boundary but intentionally does not claim a packaged native helper.
-Until Task 8 builds, signs, loads, and inspects that helper for every Electron architecture,
-production passes `unsupportedNativeFileLocks` and project-store construction fails closed with
-`state_lock_failed`.
+Task 6D defined the audited boundary. Task 8's POSIX Node-API owner is implemented in
+`../project-native/`, compiled against pinned Node-API headers, and loaded under the packaged
+Electron 43.2.0 ABI test. Windows remains fail-closed until its `LockFileEx`/ACL owner passes the
+required Windows release job.
 
 The eventual Node-API binding has one strictly synchronous, nonblocking operation. It accepts an already-open numeric descriptor (or
 the Windows handle retained behind that descriptor), never a path, PID, process name, timeout,
@@ -28,17 +28,16 @@ lifetime. Windows must use exclusive immediate-failure `LockFileEx`, retain the 
 with an owner-only ACL check supplied by the host. Owner death must release the kernel lock. A PID
 file, stale-time heuristic, `mkdir` lock, polling path lock, or automatic downgrade is forbidden.
 
-Task 8 owns the C/C++ source, Node-API ABI build, macOS signing, Windows ACL proof, Electron
-architecture matrix, crash-process tests, package inspection, and clean-machine evidence. This
-directory containing only this contract is therefore evidence of a deliberate fail-closed gap, not
-evidence that native locking or production Codex projects are available.
+The POSIX source, Electron ABI build, cross-process contention, retained-descriptor release, and
+owner-death behavior are repository-owned. Platform signing, Windows ACL proof, the complete
+architecture matrix, and clean-machine evidence remain release gates; this implementation alone is
+not evidence that production Codex projects are available.
 
 ## Descriptor-relative project files
 
-Task 6D also defines a separate host-only `ProjectRootFileAuthority`. Production uses
-`unsupportedProjectRootFiles` and fails store construction closed until Task 8 ships the native
-implementation. The TypeScript test authority exercises the contract only; it is not platform,
-ABI, packaging, or race-freedom evidence.
+Task 6D also defines a separate host-only `ProjectRootFileAuthority`. The same POSIX addon now owns
+that implementation. The TypeScript test authority remains test-only; Windows production stays
+unsupported until its handle-relative implementation and ACL/reparse proofs land.
 
 Every operation accepts a retained, already-validated root descriptor plus store-generated fixed
 basenames. The boundary rejects empty names, `.`, `..`, `/`, `\`, NUL, drive prefixes, and URL-like
@@ -56,5 +55,6 @@ device/inode object and returns `mismatch` rather than deleting a replacement. D
 uses the original retained root descriptor.
 
 Promises, thenables, callbacks, worker requests, retries, path fallbacks, or malformed result
-objects are rejected immediately. POSIX `openat2`/`openat` hardening and Windows handle/ACL/reparse
-semantics, native source, signing, ABI builds, and package inspection remain Task 8 work.
+objects are rejected immediately. POSIX uses the retained root descriptor and `*at` operations;
+Windows handle/ACL/reparse semantics, release signing, and the remaining architecture evidence are
+still explicit Task 8 gates.

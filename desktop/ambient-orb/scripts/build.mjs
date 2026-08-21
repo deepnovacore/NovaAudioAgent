@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process'
 import { checkJavaScriptFiles } from './build-contract.mjs'
 import { buildDependencyReport, inspectConfiguredPackage } from './inspect-package.mjs'
 import { deriveLockedProductionClosure } from './release-dependency-closure.mjs'
+import { buildProjectNativeAddon } from './build-project-native.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 
@@ -42,6 +43,13 @@ await writeFile(
   `${JSON.stringify(dependencyReport)}\n`,
   { encoding: 'utf8', mode: 0o600 },
 )
+
+await buildProjectNativeAddon({
+  packageRoot: root,
+  outputRoot: resolve(root, 'build'),
+  platform: process.platform,
+  arch: process.arch,
+})
 
 checkJavaScriptFiles(root)
 
