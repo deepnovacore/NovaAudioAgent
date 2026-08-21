@@ -1,11 +1,24 @@
 import assert from 'node:assert/strict'
-import {fstatSync, realpathSync} from 'node:fs'
+import {
+  chmodSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmdirSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import {
   chmod,
   lstat,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
@@ -25,12 +38,23 @@ import {
   normalizeProjectSessionTitle,
   normalizeProjectWorkspaceName,
 } from '../src/codex-project-store.js'
-import {hostCodexHomeValue, hostWorkspaceForTest} from '../src/codex-process-owner.js'
+import {
+  hostCodexHomeValue,
+  hostWorkspaceForTest,
+  hostWorkspacePath,
+} from '../src/codex-process-owner.js'
 import {
   unsupportedNativeFileLocks,
   type NativeFileLockAuthority,
   type NativeFileLockResult,
 } from '../src/native-file-lock.js'
+import type {
+  ProjectFileIdentity,
+  ProjectRootFileAuthority,
+  ProjectRootFileCreateResult,
+  ProjectRootFileLookupResult,
+  ProjectRootFileResult,
+} from '../src/project-root-file.js'
 
 async function within<T>(name: string, work: Promise<T>, milliseconds = 2_000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -66,6 +90,330 @@ class DescriptorLockAuthority implements NativeFileLockAuthority {
   }
 }
 
+/** Test-only inode resolver; it is not evidence for the deferred Task-8 native implementation. */
+class DescriptorRelativeRootFileAuthority implements ProjectRootFileAuthority {
+  readonly #roots = new Map<string, {path: string; readonly parent: string}>()
+
+  constructor(paths: readonly string[]) {
+    for (const path of paths) {
+      const info = lstatSync(path, {bigint: true})
+      this.#roots.set(`${info.dev}:${info.ino}`, {path, parent: join(path, '..')})
+    }
+  }
+
+  probe(rootDescriptor: number): ProjectRootFileResult {
+    try {
+      this.#rootPath(rootDescriptor)
+      return {status: 'ok'}
+    } catch {
+      return {status: 'failed'}
+    }
+  }
+
+  matchesAt(rootDescriptor: number, name: string, childDescriptor: number): ProjectRootFileResult {
+    try {
+      const child = fstatSync(childDescriptor, {bigint: true})
+      const root = this.#rootPath(rootDescriptor)
+      const path = join(root, name)
+      const current = lstatSync(path, {bigint: true})
+      if (current.dev !== child.dev || current.ino !== child.ino) return {status: 'mismatch'}
+      if (child.isDirectory()) {
+        this.#roots.set(`${child.dev}:${child.ino}`, {path, parent: root})
+      }
+      return {status: 'ok'}
+    } catch (error) {
+      return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
+    }
+  }
+
+  lookupAt(rootDescriptor: number, name: string): ProjectRootFileLookupResult {
+    try {
+      const info = lstatSync(join(this.#rootPath(rootDescriptor), name), {bigint: true})
+      return {status: 'ok', identity: {device: info.dev, inode: info.ino}}
+    } catch (error) {
+      return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
+    }
+  }
+
+  createFileAt(
+    rootDescriptor: number,
+    name: string,
+    exclusive: boolean,
+  ): ProjectRootFileCreateResult {
+    try {
+      void exclusive
+      const path = join(this.#rootPath(rootDescriptor), name)
+      writeFileSync(path, '', {flag: 'wx', mode: 0o600})
+      chmodSync(path, 0o600)
+      const info = lstatSync(path, {bigint: true})
+      return {status: 'ok', identity: {device: info.dev, inode: info.ino}}
+    } catch (error) {
+      return isErrno(error, 'EEXIST') ? {status: 'exists'} : {status: 'failed'}
+    }
+  }
+
+  mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    try {
+      const path = join(this.#rootPath(rootDescriptor), name)
+      mkdirSync(path, {mode: 0o700})
+      chmodSync(path, 0o700)
+      const info = lstatSync(path, {bigint: true})
+      return {status: 'ok', identity: {device: info.dev, inode: info.ino}}
+    } catch (error) {
+      return isErrno(error, 'EEXIST') ? {status: 'exists'} : {status: 'failed'}
+    }
+  }
+
+  renameAt(rootDescriptor: number, from: string, to: string): ProjectRootFileResult {
+    try {
+      const root = this.#rootPath(rootDescriptor)
+      renameSync(join(root, from), join(root, to))
+      return {status: 'ok'}
+    } catch (error) {
+      return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
+    }
+  }
+
+  unlinkAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
+    kind: 'file' | 'directory',
+  ): ProjectRootFileResult {
+    try {
+      const path = join(this.#rootPath(rootDescriptor), name)
+      const current = lstatSync(path, {bigint: true})
+      if (current.dev !== expected.device || current.ino !== expected.inode) {
+        return {status: 'mismatch'}
+      }
+      if (kind === 'directory') rmdirSync(path)
+      else unlinkSync(path)
+      return {status: 'ok'}
+    } catch (error) {
+      return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
+    }
+  }
+
+  protected pathAt(rootDescriptor: number, name: string): string {
+    return join(this.#rootPath(rootDescriptor), name)
+  }
+
+  #rootPath(descriptor: number): string {
+    const info = fstatSync(descriptor, {bigint: true})
+    const key = `${info.dev}:${info.ino}`
+    const root = this.#roots.get(key)
+    if (root === undefined) throw new Error('unknown test root descriptor')
+    if (samePathIdentity(root.path, info.dev, info.ino)) return root.path
+    for (const entry of readdirSync(root.parent)) {
+      const candidate = join(root.parent, entry)
+      if (samePathIdentity(candidate, info.dev, info.ino)) {
+        root.path = candidate
+        return candidate
+      }
+    }
+    throw new Error('test root descriptor has no path')
+  }
+}
+
+class ReplaceCreatedLockRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  replaced = false
+
+  override createFileAt(
+    rootDescriptor: number,
+    name: string,
+    exclusive: boolean,
+  ): ProjectRootFileCreateResult {
+    const result = super.createFileAt(rootDescriptor, name, exclusive)
+    if (!this.replaced && name === 'codex-projects-v1.lock' && result.status === 'ok') {
+      this.replaced = true
+      const path = this.pathAt(rootDescriptor, name)
+      renameSync(path, `${path}.created-away`)
+      writeFileSync(path, '', {flag: 'wx', mode: 0o600})
+      chmodSync(path, 0o600)
+    }
+    return result
+  }
+}
+
+class ReplaceHomeAfterMkdirRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  replacedPath: string | null = null
+
+  override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    const result = super.mkdirAt(rootDescriptor, name)
+    if (this.replacedPath === null && name.startsWith('home-') && result.status === 'ok') {
+      const path = this.pathAt(rootDescriptor, name)
+      renameSync(path, `${path}.created-away`)
+      mkdirSync(path, {mode: 0o755})
+      chmodSync(path, 0o755)
+      this.replacedPath = path
+    }
+    return result
+  }
+}
+
+class RecordingRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  readonly createdFiles: {readonly name: string; readonly exclusive: boolean}[] = []
+
+  override createFileAt(
+    rootDescriptor: number,
+    name: string,
+    exclusive: boolean,
+  ): ProjectRootFileCreateResult {
+    this.createdFiles.push({name, exclusive})
+    return super.createFileAt(rootDescriptor, name, exclusive)
+  }
+}
+
+class FailTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  override createFileAt(
+    rootDescriptor: number,
+    name: string,
+    exclusive: boolean,
+  ): ProjectRootFileCreateResult {
+    if (exclusive && name.endsWith('.tmp')) return {status: 'failed'}
+    return super.createFileAt(rootDescriptor, name, exclusive)
+  }
+}
+
+class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  failTempCreate = false
+
+  override createFileAt(
+    rootDescriptor: number,
+    name: string,
+    exclusive: boolean,
+  ): ProjectRootFileCreateResult {
+    if (this.failTempCreate && exclusive && name.endsWith('.tmp')) return {status: 'failed'}
+    return super.createFileAt(rootDescriptor, name, exclusive)
+  }
+}
+
+class ReplaceManagedRestoreAfterMkdirRootFileAuthority
+  extends ToggleTempCreateRootFileAuthority {
+  readonly #managedMkdirCounts = new Map<string, number>()
+  replacementPath: string | null = null
+
+  override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    const result = super.mkdirAt(rootDescriptor, name)
+    if (result.status !== 'ok' || !name.startsWith('managed-')) return result
+    const count = (this.#managedMkdirCounts.get(name) ?? 0) + 1
+    this.#managedMkdirCounts.set(name, count)
+    if (count === 2) {
+      const path = this.pathAt(rootDescriptor, name)
+      renameSync(path, `${path}.created-away`)
+      mkdirSync(path, {mode: 0o755})
+      chmodSync(path, 0o755)
+      this.replacementPath = path
+    }
+    return result
+  }
+}
+
+class FailManagedLookupRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  override lookupAt(rootDescriptor: number, name: string): ProjectRootFileLookupResult {
+    if (name.startsWith('managed-')) return {status: 'failed'}
+    return super.lookupAt(rootDescriptor, name)
+  }
+}
+
+class PermissiveManagedMkdirRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  readonly #managedRoot: string
+
+  constructor(stateRoot: string, managedRoot: string) {
+    super([stateRoot, managedRoot])
+    this.#managedRoot = managedRoot
+  }
+
+  override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    const result = super.mkdirAt(rootDescriptor, name)
+    if (result.status === 'ok') chmodSync(join(this.#managedRoot, name), 0o755)
+    return result
+  }
+}
+
+class RejectLockMatchRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  rejectedDescriptor: number | null = null
+
+  override matchesAt(
+    rootDescriptor: number,
+    name: string,
+    childDescriptor: number,
+  ): ProjectRootFileResult {
+    if (name === 'codex-projects-v1.lock') {
+      this.rejectedDescriptor = childDescriptor
+      return {status: 'mismatch'}
+    }
+    return super.matchesAt(rootDescriptor, name, childDescriptor)
+  }
+}
+
+class SwapAroundDescriptorOperationsAuthority extends DescriptorRelativeRootFileAuthority {
+  stateRenameSwapped = false
+  managedMkdirSwapped = false
+  readonly #state: {readonly live: string; readonly away: string; readonly replacement: string}
+  readonly #managed: {readonly live: string; readonly away: string; readonly replacement: string}
+  readonly #managedIdentity: ProjectFileIdentity
+
+  constructor(options: {
+    readonly state: {readonly live: string; readonly away: string; readonly replacement: string}
+    readonly managed: {readonly live: string; readonly away: string; readonly replacement: string}
+  }) {
+    super([options.state.live, options.managed.live])
+    this.#state = options.state
+    this.#managed = options.managed
+    const managed = lstatSync(options.managed.live, {bigint: true})
+    this.#managedIdentity = {device: managed.dev, inode: managed.ino}
+  }
+
+  override renameAt(rootDescriptor: number, from: string, to: string): ProjectRootFileResult {
+    if (this.stateRenameSwapped) return super.renameAt(rootDescriptor, from, to)
+    this.stateRenameSwapped = true
+    return this.#around(this.#state, () => super.renameAt(rootDescriptor, from, to))
+  }
+
+  override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    const root = fstatSync(rootDescriptor, {bigint: true})
+    if (
+      this.managedMkdirSwapped
+      || root.dev !== this.#managedIdentity.device
+      || root.ino !== this.#managedIdentity.inode
+    ) return super.mkdirAt(rootDescriptor, name)
+    this.managedMkdirSwapped = true
+    return this.#around(this.#managed, () => super.mkdirAt(rootDescriptor, name))
+  }
+
+  #around<T>(
+    paths: {readonly live: string; readonly away: string; readonly replacement: string},
+    operation: () => T,
+  ): T {
+    renameSync(paths.live, paths.away)
+    renameSync(paths.replacement, paths.live)
+    try {
+      return operation()
+    } finally {
+      renameSync(paths.live, paths.replacement)
+      renameSync(paths.away, paths.live)
+    }
+  }
+}
+
+function samePathIdentity(path: string, device: bigint, inode: bigint): boolean {
+  try {
+    const info = lstatSync(path, {bigint: true})
+    return !info.isSymbolicLink() && info.dev === device && info.ino === inode
+  } catch {
+    return false
+  }
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === code
+}
+
+function rootFilesForTest(stateRoot: string, managedRoot: string): ProjectRootFileAuthority {
+  return new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot])
+}
+
 class DeferredReleaseLockAuthority implements NativeFileLockAuthority {
   releaseStarted: (() => void) | null = null
   releaseNow: (() => void) | null = null
@@ -93,6 +441,25 @@ class BusyThenDescriptorLockAuthority implements NativeFileLockAuthority {
       return {status: 'busy'}
     }
     return this.#delegate.acquire(descriptor)
+  }
+}
+
+class FailNextReleaseLockAuthority extends DescriptorLockAuthority {
+  failNextRelease = false
+
+  override acquire(descriptor: number): NativeFileLockResult {
+    const acquired = super.acquire(descriptor)
+    if (acquired.status !== 'acquired') return acquired
+    return {
+      status: 'acquired',
+      release: async () => {
+        await acquired.release()
+        if (this.failNextRelease) {
+          this.failNextRelease = false
+          throw new Error('release sentinel')
+        }
+      },
+    }
   }
 }
 
@@ -143,9 +510,9 @@ test('durability and native locking source retain the audited no-fallback primit
     'utf8',
   )
   const ordered = [
-    'constants.O_EXCL | noFollowFlag()',
+    'this.#createFileAt(root, tempName, true',
     'await file.sync()',
-    'await rename(temp, join(this.#stateRoot, PROJECT_STATE_FILE))',
+    'this.#renameAt(root, tempName, PROJECT_STATE_FILE)',
     'await directory.sync()',
   ].map(fragment => storeSource.indexOf(fragment))
   assert.equal(ordered.every(index => index >= 0), true)
@@ -156,6 +523,11 @@ test('durability and native locking source retain the audited no-fallback primit
   assert.match(storeSource, /\(info\.mode & 0o7777\) !== 0o600/u)
   assert.match(storeSource, /return \(mode & 0o022\) !== 0/u)
   assert.match(nativeSource, /acquire\(descriptor: number\)/u)
+  assert.doesNotMatch(nativeSource, /acquire\(descriptor: number\).*Promise/u)
+  assert.doesNotMatch(storeSource, /await this\.#nativeLocks\.acquire/u)
+  assert.doesNotMatch(storeSource, /constants\.O_(?:CREAT|EXCL)/u)
+  assert.match(storeSource, /const directory = this\.#stateRootHandle/u)
+  assert.doesNotMatch(storeSource, /open\(this\.#stateRoot, constants\.O_RDONLY\)/u)
   assert.doesNotMatch(nativeSource, /process\.pid|mkdir|stale|lockfile|path:/iu)
 })
 
@@ -168,6 +540,7 @@ test('native lock unsupported and busy results fail closed without a PID or path
   const roots = {
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
   }
   let store: CodexProjectStore | null = null
   try {
@@ -207,6 +580,501 @@ test('native lock unsupported and busy results fail closed without a PID or path
   }
 })
 
+test('native lock results require exact plain data without invoking getters', async () => {
+  let getterReads = 0
+  class BusyResult {
+    readonly status = 'busy'
+  }
+  const factories: readonly (() => unknown)[] = [
+    () => new BusyResult(),
+    () => ({status: 'busy', detail: 'host-private'}),
+    () => Object.defineProperty({}, 'status', {
+      enumerable: true,
+      get: () => {
+        getterReads += 1
+        return 'busy'
+      },
+    }),
+    () => Object.defineProperties({}, {
+      status: {enumerable: true, value: 'acquired'},
+      release: {
+        enumerable: true,
+        get: () => {
+          getterReads += 1
+          return () => undefined
+        },
+      },
+    }),
+    () => ({status: 'busy', then: () => undefined}),
+    () => new Proxy({status: 'busy'}, {
+      ownKeys: () => { throw new Error('proxy sentinel') },
+    }),
+  ]
+  for (const [index, factory] of factories.entries()) {
+    const root = await mkdtemp(join(tmpdir(), `nova-codex-project-lock-result-${index}-`))
+    const stateRoot = join(root, 'state')
+    const managedRoot = join(root, 'managed')
+    await mkdir(stateRoot, {mode: 0o700})
+    await mkdir(managedRoot, {mode: 0o700})
+    const store = await CodexProjectStore.open({
+      stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+      managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+      nativeLocks: {acquire: () => factory() as NativeFileLockResult},
+      rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    })
+    try {
+      await assert.rejects(
+        within('malformed native result', store.snapshot(), 200),
+        (error: unknown) => error instanceof ProjectStateError
+          && error.code === 'state_lock_failed'
+          && !String(error).includes('sentinel'),
+      )
+    } finally {
+      await store.close()
+      await rm(root, {recursive: true, force: true})
+    }
+  }
+  assert.equal(getterReads, 0)
+})
+
+test('missing, unsupported, asynchronous, and malformed root-file authority fails at open', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-files-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const roots = {
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+  }
+  const authorities: readonly (ProjectRootFileAuthority | undefined)[] = [
+    undefined,
+    {
+      probe: () => ({status: 'unsupported'}),
+      matchesAt: () => ({status: 'unsupported'}),
+      lookupAt: () => ({status: 'unsupported'}),
+      createFileAt: () => ({status: 'unsupported'}),
+      mkdirAt: () => ({status: 'unsupported'}),
+      renameAt: () => ({status: 'unsupported'}),
+      unlinkAt: () => ({status: 'unsupported'}),
+    },
+    {
+      probe: () => new Promise<ProjectRootFileResult>(() => undefined),
+      matchesAt: () => ({status: 'ok'}),
+      lookupAt: () => ({status: 'missing'}),
+      createFileAt: () => ({status: 'ok'}),
+      mkdirAt: () => ({status: 'ok'}),
+      renameAt: () => ({status: 'ok'}),
+      unlinkAt: () => ({status: 'ok'}),
+    } as unknown as ProjectRootFileAuthority,
+    {
+      probe: () => ({status: 'ok', then: () => undefined}),
+      matchesAt: () => ({status: 'ok'}),
+      lookupAt: () => ({status: 'missing'}),
+      createFileAt: () => ({status: 'ok'}),
+      mkdirAt: () => ({status: 'ok'}),
+      renameAt: () => ({status: 'ok'}),
+      unlinkAt: () => ({status: 'ok'}),
+    } as unknown as ProjectRootFileAuthority,
+  ]
+  try {
+    for (const rootFiles of authorities) {
+      let unexpected: CodexProjectStore | null = null
+      try {
+        const options = rootFiles === undefined ? roots : {...roots, rootFiles}
+        unexpected = await within(
+          'root-file authority open failure',
+          CodexProjectStore.open(options),
+          200,
+        )
+        assert.fail('root-file authority unexpectedly opened')
+      } catch (error) {
+        assert.equal(error instanceof ProjectStateError && error.code === 'state_permissions', true)
+      } finally {
+        await unexpected?.close()
+      }
+    }
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('state lock and temp creation use only descriptor-relative fixed basenames', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-create-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  const workspace = join(root, 'workspace')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(workspace, {mode: 0o700})
+  const rootFiles = new RecordingRootFileAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    await store.ensureImported('alpha', hostWorkspaceForTest(await realpath(workspace)))
+    assert.equal(
+      rootFiles.createdFiles.some(item =>
+        item.name === 'codex-projects-v1.lock' && item.exclusive === false),
+      true,
+    )
+    assert.equal(
+      rootFiles.createdFiles.some(item =>
+        item.name.startsWith('.codex-projects-v1.json.')
+          && item.name.endsWith('.tmp')
+          && item.exclusive),
+      true,
+    )
+    for (const item of rootFiles.createdFiles) {
+      assert.equal(/[\\/\0]/u.test(item.name), false)
+      assert.notEqual(item.name, '.')
+      assert.notEqual(item.name, '..')
+      assert.equal(item.name.includes('://'), false)
+      assert.equal(/^[A-Za-z]:/u.test(item.name), false)
+    }
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('malformed descriptor creation fails before native acquire without awaiting host values', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-create-malformed-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const delegate = new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot])
+  const never = new Promise<ProjectRootFileCreateResult>(() => undefined)
+  const rootFiles = {
+    probe: descriptor => delegate.probe(descriptor),
+    matchesAt: (descriptor, name, child) => delegate.matchesAt(descriptor, name, child),
+    lookupAt: (descriptor, name) => delegate.lookupAt(descriptor, name),
+    createFileAt: (() => never) as unknown as ProjectRootFileAuthority['createFileAt'],
+    mkdirAt: (descriptor, name) => delegate.mkdirAt(descriptor, name),
+    renameAt: (descriptor, from, to) => delegate.renameAt(descriptor, from, to),
+    unlinkAt: (descriptor, name, expected, kind) =>
+      delegate.unlinkAt(descriptor, name, expected, kind),
+  } satisfies ProjectRootFileAuthority
+  let acquireCalls = 0
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: {acquire: () => {
+      acquireCalls += 1
+      return {status: 'acquired', release: () => undefined}
+    }},
+    rootFiles,
+  })
+  try {
+    await assert.rejects(
+      within('malformed descriptor create', store.snapshot(), 200),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    assert.equal(acquireCalls, 0)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('a descriptor child mismatch fails before native lock acquisition', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-match-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  let acquireCalls = 0
+  const rootFiles = new RejectLockMatchRootFileAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: {acquire: () => {
+      acquireCalls += 1
+      return {status: 'acquired', release: () => undefined}
+    }},
+    rootFiles,
+  })
+  try {
+    await assert.rejects(
+      store.snapshot(),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    assert.equal(acquireCalls, 0)
+    assert.notEqual(rootFiles.rejectedDescriptor, null)
+    assert.throws(
+      () => fstatSync(rootFiles.rejectedDescriptor!),
+      (error: unknown) => isErrno(error, 'EBADF'),
+    )
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('a newly-created lock must retain its exact descriptor identity before native acquire', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-lock-create-race-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  let acquireCalls = 0
+  const rootFiles = new ReplaceCreatedLockRootFileAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: {acquire: () => {
+      acquireCalls += 1
+      return {status: 'acquired', release: () => undefined}
+    }},
+    rootFiles,
+  })
+  try {
+    await assert.rejects(
+      store.snapshot(),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    assert.equal(rootFiles.replaced, true)
+    assert.equal(acquireCalls, 0)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('swap-away-and-back descriptor operations never write or delete replacement roots', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-swap-back-'))
+  const stateRoot = join(root, 'state')
+  const stateAway = join(root, 'state-away')
+  const externalState = join(root, 'external-state')
+  const managedRoot = join(root, 'managed')
+  const managedAway = join(root, 'managed-away')
+  const externalManaged = join(root, 'external-managed')
+  const workspace = join(root, 'workspace')
+  for (const path of [stateRoot, externalState, managedRoot, externalManaged, workspace]) {
+    await mkdir(path, {mode: 0o700})
+  }
+  await writeFile(join(externalState, 'sentinel.txt'), 'state sentinel')
+  await writeFile(join(externalManaged, 'sentinel.txt'), 'managed sentinel')
+  const rootFiles = new SwapAroundDescriptorOperationsAuthority({
+    state: {live: stateRoot, away: stateAway, replacement: externalState},
+    managed: {live: managedRoot, away: managedAway, replacement: externalManaged},
+  })
+  const ids = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => ids.next().value ?? 'unused-id',
+  })
+  try {
+    await store.ensureImported('registered', hostWorkspaceForTest(await realpath(workspace)))
+    const managed = await store.createManaged('managed')
+    assert.equal(rootFiles.stateRenameSwapped, true)
+    assert.equal(rootFiles.managedMkdirSwapped, true)
+    assert.equal((await lstat(managed.canonical_path)).isDirectory(), true)
+    assert.deepEqual(await readdir(externalState), ['sentinel.txt'])
+    assert.deepEqual(await readdir(externalManaged), ['sentinel.txt'])
+    assert.equal(await readFile(join(externalState, 'sentinel.txt'), 'utf8'), 'state sentinel')
+    assert.equal(await readFile(join(externalManaged, 'sentinel.txt'), 'utf8'), 'managed sentinel')
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('state-root replacement during descriptor acquire cannot redirect state writes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-acquire-swap-'))
+  const stateRoot = join(root, 'state')
+  const retainedRoot = join(root, 'state-retained')
+  const replacementRoot = join(root, 'replacement')
+  const managedRoot = join(root, 'managed')
+  const workspacePath = join(root, 'workspace')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(replacementRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(workspacePath, {mode: 0o700})
+  let swapped = false
+  const nativeLocks: NativeFileLockAuthority = {
+    acquire: () => {
+      if (!swapped) {
+        renameSync(stateRoot, retainedRoot)
+        symlinkSync(replacementRoot, stateRoot, 'dir')
+        swapped = true
+      }
+      return {status: 'acquired', release: () => undefined}
+    },
+  }
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    await assert.rejects(
+      within(
+        'state-root acquire replacement',
+        store.ensureImported('alpha', hostWorkspaceForTest(await realpath(workspacePath))),
+        200,
+      ),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    await assert.rejects(lstat(join(replacementRoot, 'codex-projects-v1.json')), {code: 'ENOENT'})
+    await rm(stateRoot)
+    await rename(retainedRoot, stateRoot)
+    await assert.rejects(
+      store.snapshot(),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('live owner acquisition validates the retained state-root identity before open returns', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-owner-root-swap-'))
+  const stateRoot = join(root, 'state')
+  const retainedRoot = join(root, 'state-retained')
+  const replacementRoot = join(root, 'replacement')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(replacementRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  let swapped = false
+  const nativeLocks: NativeFileLockAuthority = {
+    acquire: () => {
+      if (!swapped) {
+        renameSync(stateRoot, retainedRoot)
+        symlinkSync(replacementRoot, stateRoot, 'dir')
+        swapped = true
+      }
+      return {status: 'acquired', release: () => undefined}
+    },
+  }
+  try {
+    await assert.rejects(
+      CodexProjectStore.open({
+        stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+        managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+        nativeLocks,
+        rootFiles: rootFilesForTest(stateRoot, managedRoot),
+        live: true,
+      }),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    await assert.rejects(lstat(join(replacementRoot, 'codex-projects-v1.json')), {code: 'ENOENT'})
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('state-root replacement after atomic replace is detected and permanently poisons the store', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-commit-swap-'))
+  const stateRoot = join(root, 'state')
+  const retainedRoot = join(root, 'state-retained')
+  const replacementRoot = join(root, 'replacement')
+  const managedRoot = join(root, 'managed')
+  const workspacePath = join(root, 'workspace')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(replacementRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(workspacePath, {mode: 0o700})
+  let swapped = false
+  const durability: string[] = []
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+    onDurabilityStep: step => {
+      durability.push(step)
+      if (step === 'atomic_replace' && !swapped) {
+        renameSync(stateRoot, retainedRoot)
+        symlinkSync(replacementRoot, stateRoot, 'dir')
+        swapped = true
+      }
+    },
+  })
+  try {
+    await assert.rejects(
+      store.ensureImported('alpha', hostWorkspaceForTest(await realpath(workspacePath))),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    assert.equal(durability.includes('dir_fsync'), false)
+    await assert.rejects(
+      store.snapshot(),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    assert.deepEqual(await readdir(replacementRoot), [])
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('an asynchronous or never-settling native acquire is malformed and fails immediately', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-async-lock-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const never = new Promise<NativeFileLockResult>(() => undefined)
+  const nativeLocks = {
+    acquire: () => never,
+  } as unknown as NativeFileLockAuthority
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+  })
+  let closeSettled = false
+  try {
+    await assert.rejects(
+      within('malformed asynchronous native acquire', store.snapshot(), 200),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_lock_failed',
+    )
+    await within('close after malformed asynchronous native acquire', store.close(), 200)
+    closeSettled = true
+  } finally {
+    if (closeSettled) await store.close()
+    else void store.close()
+    const thenableLocks = {
+      acquire: () => ({status: 'busy', then: () => undefined}),
+    } as unknown as NativeFileLockAuthority
+    const thenableStore = await CodexProjectStore.open({
+      stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+      managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+      nativeLocks: thenableLocks,
+      rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    })
+    let thenableClosed = false
+    try {
+      await assert.rejects(
+        within('malformed synchronous thenable acquire', thenableStore.snapshot(), 200),
+        (error: unknown) => error instanceof ProjectStateError
+          && error.code === 'state_lock_failed',
+      )
+      await within('close after malformed synchronous thenable acquire', thenableStore.close(), 200)
+      thenableClosed = true
+    } finally {
+      if (thenableClosed) await thenableStore.close()
+      else void thenableStore.close()
+    }
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('a transaction joins asynchronous native unlock before its promise settles', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-lock-join-'))
   const stateRoot = join(root, 'state')
@@ -221,6 +1089,7 @@ test('a transaction joins asynchronous native unlock before its promise settles'
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
   })
   try {
     let settled = false
@@ -257,6 +1126,7 @@ test('rollback and first-live recovery use one bounded abort-aware descriptor-lo
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
     lockClock: clock,
   } as Parameters<typeof CodexProjectStore.open>[0]
@@ -305,6 +1175,7 @@ test('managed-create rollback opts into the same bounded descriptor-lock wait', 
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => 'workspace-0001',
     lockClock: clock,
   })
@@ -338,6 +1209,7 @@ test('ready and unavailable finalization opt into the same bounded descriptor-lo
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
     lockClock: clock,
   })
@@ -379,6 +1251,7 @@ test('an aborted bounded lock wait settles and is joined before store close retu
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
     lockClock: clock,
   } as Parameters<typeof CodexProjectStore.open>[0]
@@ -428,6 +1301,7 @@ test('a bounded lock wait exhausts one fixed deadline and returns stable state_b
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
     lockClock: clock,
   })
@@ -473,6 +1347,7 @@ test('live owner exclusion and first-transaction recovery are crash-safe and ord
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
   }
   let first: CodexProjectStore | null = null
@@ -517,6 +1392,7 @@ test('registry no-follow, owner mode, byte cap, strict decode, and corrupt-byte 
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
   }
   const expectCode = async (code: string): Promise<void> => {
     const store = await CodexProjectStore.open(options)
@@ -605,6 +1481,7 @@ test('state roots and files reject special permission bits rather than masking t
       stateRoot: hostProjectRootForTest(realpathSync(stateRoot)),
       managedRoot: hostManagedProjectRootForTest(realpathSync(managedRoot)),
       nativeLocks: new DescriptorLockAuthority(),
+      rootFiles: rootFilesForTest(stateRoot, managedRoot),
     })
     try {
       await assert.rejects(
@@ -632,6 +1509,7 @@ test('an owner-controlled 0750 managed root is accepted while group-writable roo
       stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
       managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
       nativeLocks: new DescriptorLockAuthority(),
+      rootFiles: rootFilesForTest(stateRoot, managedRoot),
       idFactory: () => 'workspace-0001',
     })
     try {
@@ -764,6 +1642,7 @@ test('strict v1 decode rejects key, type, cap, reference, and normalized-identit
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
   }
   try {
     for (const mutation of mutations) {
@@ -801,6 +1680,7 @@ test('managed and registered workspace bindings reject symlink replacement at tr
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
   })
   try {
@@ -825,6 +1705,133 @@ test('managed and registered workspace bindings reject symlink replacement at tr
   }
 })
 
+test('workspace bindings pin inode identity and managed workspaces retain owner-only mode', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-inode-binding-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  const registered = join(root, 'registered')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(registered, {mode: 0o700})
+  const ids = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => ids.next().value ?? 'unused-id',
+  })
+  try {
+    const imported = await store.ensureImported(
+      'registered',
+      hostWorkspaceForTest(await realpath(registered)),
+    )
+    await rename(registered, join(root, 'registered-original'))
+    await mkdir(registered, {mode: 0o700})
+    await assert.rejects(
+      store.revalidateWorkspace(imported.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError
+        && error.code === 'workspace_boundary_changed',
+    )
+
+    const managed = await store.createManaged('managed')
+    await chmod(managed.canonical_path, 0o755)
+    await assert.rejects(
+      store.revalidateWorkspace(managed.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError
+        && error.code === 'workspace_boundary_changed',
+    )
+    await chmod(managed.canonical_path, 0o700)
+    await rename(managed.canonical_path, `${managed.canonical_path}-original`)
+    await mkdir(managed.canonical_path, {mode: 0o700})
+    await assert.rejects(
+      store.revalidateWorkspace(managed.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError
+        && error.code === 'workspace_boundary_changed',
+    )
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('workspace inode pins are process-local and a restart establishes a fresh portable baseline', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-inode-restart-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  const registered = join(root, 'registered')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(registered, {mode: 0o700})
+  const options = {
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+  }
+  let first: CodexProjectStore | null = null
+  let restarted: CodexProjectStore | null = null
+  try {
+    first = await CodexProjectStore.open(options)
+    const imported = await first.ensureImported(
+      'registered',
+      hostWorkspaceForTest(await realpath(registered)),
+    )
+    await first.close()
+    first = null
+    await rename(registered, join(root, 'registered-original'))
+    await mkdir(registered, {mode: 0o700})
+
+    restarted = await CodexProjectStore.open(options)
+    assert.equal(
+      hostWorkspacePath(await restarted.revalidateWorkspace(imported.workspace_id)),
+      await realpath(registered),
+    )
+    await rename(registered, join(root, 'registered-second'))
+    await mkdir(registered, {mode: 0o700})
+    await assert.rejects(
+      restarted.revalidateWorkspace(imported.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError
+        && error.code === 'workspace_boundary_changed',
+    )
+  } finally {
+    await first?.close()
+    await restarted?.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('ensureImported preserves the stronger managed workspace binding for an existing record', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-managed-import-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const managed = await store.createManaged('managed')
+    await chmod(managed.canonical_path, 0o755)
+    await assert.rejects(
+      store.ensureImported(
+        'managed again',
+        hostWorkspaceForTest(await realpath(managed.canonical_path)),
+      ),
+      (error: unknown) => error instanceof ProjectStateError
+        && error.code === 'workspace_boundary_changed',
+    )
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('a managed record must remain a direct child even when its replacement path is canonical', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-direct-parent-'))
   const stateRoot = join(root, 'state')
@@ -837,6 +1844,7 @@ test('a managed record must remain a direct child even when its replacement path
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => 'workspace-0001',
   }
   let store: CodexProjectStore | null = null
@@ -874,6 +1882,7 @@ test('managed creation uses only a pinned safe slug and rollback never deletes u
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
   })
   try {
@@ -897,8 +1906,8 @@ test('managed creation uses only a pinned safe slug and rollback never deletes u
   }
 })
 
-test('a managed slug and ID collision is a stable path conflict without overwriting', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-path-conflict-'))
+test('managed mkdir returns the rollback identity without a second path lookup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-managed-create-identity-'))
   const stateRoot = join(root, 'state')
   const managedRoot = join(root, 'managed')
   await mkdir(stateRoot, {mode: 0o700})
@@ -907,7 +1916,191 @@ test('a managed slug and ID collision is a stable path conflict without overwrit
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new FailManagedLookupRootFileAuthority([stateRoot, managedRoot]),
     idFactory: () => 'workspace-0001',
+  })
+  try {
+    const created = await store.createManaged('managed')
+    assert.equal((await lstat(created.canonical_path)).isDirectory(), true)
+    assert.equal(await store.rollbackManagedCreate(created.workspace_id), true)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('managed rollback refuses an empty same-path inode replacement and retains state', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-rollback-inode-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const managed = await store.createManaged('managed')
+    await rename(managed.canonical_path, `${managed.canonical_path}-original`)
+    await mkdir(managed.canonical_path, {mode: 0o700})
+    assert.equal(await store.rollbackManagedCreate(managed.workspace_id), false)
+    assert.equal((await lstat(managed.canonical_path)).isDirectory(), true)
+    assert.equal((await store.resolveWorkspace('managed')).workspace_id, managed.workspace_id)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('a committed create keeps its inode pin when only native release fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-commit-release-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const nativeLocks = new FailNextReleaseLockAuthority()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    nativeLocks.failNextRelease = true
+    await assert.rejects(
+      store.createManaged('managed'),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_lock_failed',
+    )
+    const managed = (await store.listWorkspaces())[0]
+    assert.ok(managed)
+    await rename(managed.canonical_path, `${managed.canonical_path}-original`)
+    await mkdir(managed.canonical_path, {mode: 0o700})
+    await assert.rejects(
+      store.revalidateWorkspace(managed.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError
+        && error.code === 'workspace_boundary_changed',
+    )
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('successful managed rollback clears the exact pin so an absent ID can be reused', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-rollback-pin-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const first = await store.createManaged('first')
+    assert.equal(await store.rollbackManagedCreate(first.workspace_id), true)
+    const second = await store.createManaged('second')
+    assert.equal(second.workspace_id, first.workspace_id)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('a pre-commit rollback failure restores a safe managed child and advances its pin', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-rollback-restore-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const rootFiles = new ToggleTempCreateRootFileAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const managed = await store.createManaged('managed')
+    const before = lstatSync(managed.canonical_path, {bigint: true})
+    rootFiles.failTempCreate = true
+    await assert.rejects(
+      store.rollbackManagedCreate(managed.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
+    )
+    const after = lstatSync(managed.canonical_path, {bigint: true})
+    assert.notEqual(`${after.dev}:${after.ino}`, `${before.dev}:${before.ino}`)
+    assert.equal((after.mode & 0o7777n), 0o700n)
+    assert.equal(
+      hostWorkspacePath(await store.revalidateWorkspace(managed.workspace_id)),
+      managed.canonical_path,
+    )
+    rootFiles.failTempCreate = false
+    assert.equal(await store.rollbackManagedCreate(managed.workspace_id), true)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('rollback restore rejects an immediate mkdir replacement before chmod or pin advance', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-rollback-restore-race-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const rootFiles = new ReplaceManagedRestoreAfterMkdirRootFileAuthority([
+    stateRoot,
+    managedRoot,
+  ])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const managed = await store.createManaged('managed')
+    rootFiles.failTempCreate = true
+    await assert.rejects(
+      store.rollbackManagedCreate(managed.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
+    )
+    assert.notEqual(rootFiles.replacementPath, null)
+    assert.equal(lstatSync(rootFiles.replacementPath!).mode & 0o7777, 0o755)
+    await assert.rejects(
+      store.revalidateWorkspace(managed.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError
+        && error.code === 'workspace_boundary_changed',
+    )
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('a managed slug and ID collision is a stable path conflict without overwriting', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-path-conflict-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const ids = ['prefix-one-123456789012', 'prefix-two-123456789012'][Symbol.iterator]()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => ids.next().value ?? 'unused-id',
   })
   try {
     const first = await store.createManaged('alpha')
@@ -918,6 +2111,234 @@ test('a managed slug and ID collision is a stable path conflict without overwrit
     )
     assert.equal((await store.listWorkspaces()).length, 1)
     assert.equal((await realpath(first.canonical_path)), first.canonical_path)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('ID allocation never overwrites either namespace and has a fixed collision bound', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-id-collision-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  let calls = 0
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => {
+      calls += 1
+      return 'workspace-0001'
+    },
+  })
+  try {
+    const first = await store.createManaged('alpha')
+    const callsAfterFirst = calls
+    await assert.rejects(
+      store.createManaged('beta'),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'id_factory_invalid',
+    )
+    assert.equal(calls - callsAfterFirst, 32)
+    assert.deepEqual((await store.listWorkspaces()).map(item => item.workspace_id), [first.workspace_id])
+    assert.deepEqual(await readdir(managedRoot), [basename(first.canonical_path)])
+    await assert.rejects(
+      store.beginSession(first.workspace_id, null),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'id_factory_invalid',
+    )
+    assert.equal(calls - callsAfterFirst, 64)
+    assert.deepEqual(await store.listSessions(first.workspace_id), [])
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('failed registered creation clears only its new pin so the exact ID can be reused', async () => {
+  for (const method of ['ensureImported', 'registerWorkspace'] as const) {
+    const root = await mkdtemp(join(tmpdir(), `nova-codex-project-${method}-pin-`))
+    const stateRoot = join(root, 'state')
+    const managedRoot = join(root, 'managed')
+    const workspace = join(root, 'workspace')
+    await mkdir(stateRoot, {mode: 0o700})
+    await mkdir(managedRoot, {mode: 0o700})
+    await mkdir(workspace, {mode: 0o700})
+    const rootFiles = new ToggleTempCreateRootFileAuthority([stateRoot, managedRoot])
+    const store = await CodexProjectStore.open({
+      stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+      managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+      nativeLocks: new DescriptorLockAuthority(),
+      rootFiles,
+      idFactory: () => 'workspace-0001',
+    })
+    try {
+      rootFiles.failTempCreate = true
+      await assert.rejects(
+        store[method]('first', hostWorkspaceForTest(await realpath(workspace))),
+        (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
+      )
+      rootFiles.failTempCreate = false
+      const created = await store[method]('second', hostWorkspaceForTest(await realpath(workspace)))
+      assert.equal(created.workspace_id, 'workspace-0001')
+    } finally {
+      await store.close()
+      await rm(root, {recursive: true, force: true})
+    }
+  }
+})
+
+test('a committed registered workspace keeps its exact pin when release fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-register-commit-pin-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  const workspace = join(root, 'workspace')
+  const original = join(root, 'workspace-original')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(workspace, {mode: 0o700})
+  const nativeLocks = new FailNextReleaseLockAuthority()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    nativeLocks.failNextRelease = true
+    await assert.rejects(
+      store.registerWorkspace('registered', hostWorkspaceForTest(await realpath(workspace))),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_lock_failed',
+    )
+    const committed = (await store.listWorkspaces())[0]
+    assert.ok(committed)
+    await rename(workspace, original)
+    await mkdir(workspace, {mode: 0o700})
+    await assert.rejects(
+      store.revalidateWorkspace(committed.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError
+        && error.code === 'workspace_boundary_changed',
+    )
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('managed creation repairs a restrictive umask and leaves no rollback residue', {concurrency: false}, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-umask-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+  })
+  await store.snapshot()
+  const previousUmask = process.umask(0o100)
+  try {
+    const created = await store.createManaged('restricted')
+    assert.equal((await lstat(created.canonical_path)).mode & 0o7777, 0o700)
+    assert.equal(await store.rollbackManagedCreate(created.workspace_id), true)
+    assert.deepEqual(await readdir(managedRoot), [])
+    assert.equal((await readdir(stateRoot)).some(name => name.endsWith('.tmp')), false)
+  } finally {
+    process.umask(previousUmask)
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('managed creation repairs a permissive native mkdir before it can become public', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-mkdir-mode-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new PermissiveManagedMkdirRootFileAuthority(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const created = await store.createManaged('managed')
+    assert.equal((await lstat(created.canonical_path)).mode & 0o7777, 0o700)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('managed creation rolls back an empty child when the subsequent state save fails', {concurrency: false}, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-save-rollback-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new FailTempCreateRootFileAuthority([stateRoot, managedRoot]),
+    idFactory: () => 'workspace-0001',
+  })
+  await store.snapshot()
+  const previousUmask = process.umask(0o777)
+  try {
+    await assert.rejects(
+      store.createManaged('save failure'),
+      (error: unknown) => error instanceof ProjectStateError
+        && error.code === 'state_write_failed',
+    )
+    assert.deepEqual(await readdir(managedRoot), [])
+    assert.equal((await readdir(stateRoot)).some(name => name.endsWith('.tmp')), false)
+  } finally {
+    process.umask(previousUmask)
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('an uncommitted poisoned state root cannot strand an empty managed child', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-poison-rollback-'))
+  const stateRoot = join(root, 'state')
+  const retainedState = join(root, 'state-retained')
+  const replacementState = join(root, 'state-replacement')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(replacementState, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  let swapped = false
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+    onDurabilityStep: step => {
+      if (step === 'temp_open' && !swapped) {
+        renameSync(stateRoot, retainedState)
+        symlinkSync(replacementState, stateRoot, 'dir')
+        swapped = true
+      }
+    },
+  })
+  try {
+    await assert.rejects(
+      store.createManaged('managed'),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    assert.deepEqual(await readdir(managedRoot), [])
+    assert.deepEqual(await readdir(replacementState), [])
+    assert.equal((await readdir(retainedState)).some(name => name.endsWith('.tmp')), false)
   } finally {
     await store.close()
     await rm(root, {recursive: true, force: true})
@@ -954,6 +2375,7 @@ test('project state reloads under a descriptor lock and persists ready sessions 
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     now: () => 100,
     idFactory: () => identifiers.next().value ?? 'unused-id',
     onDurabilityStep: (step: 'temp_open' | 'file_fsync' | 'atomic_replace' | 'dir_fsync') => {
@@ -1013,6 +2435,7 @@ test('persistent homes are private, stable per workspace, and distinct across wo
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
   })
   try {
@@ -1023,6 +2446,34 @@ test('persistent homes are private, stable per workspace, and distinct across wo
     const secondHome = await store.persistentHome(second.workspace_id)
     assert.equal(hostCodexHomeValue(firstHome).path, hostCodexHomeValue(firstAgain).path)
     assert.notEqual(hostCodexHomeValue(firstHome).path, hostCodexHomeValue(secondHome).path)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('persistent home rejects an immediate mkdir replacement before chmod or adoption', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-home-race-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const rootFiles = new ReplaceHomeAfterMkdirRootFileAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const workspace = await store.createManaged('managed')
+    await assert.rejects(
+      store.persistentHome(workspace.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    assert.notEqual(rootFiles.replacedPath, null)
+    assert.equal(lstatSync(rootFiles.replacedPath!).mode & 0o7777, 0o755)
   } finally {
     await store.close()
     await rm(root, {recursive: true, force: true})
@@ -1040,6 +2491,7 @@ test('managed rollback restores the deterministic most-recent survivor on timest
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
     now: () => 100,
   })
@@ -1100,6 +2552,7 @@ test('session retention prunes unavailable before inactive ready and never prune
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => 'session-new1',
     now: () => 1000,
   })
@@ -1130,6 +2583,7 @@ test('default Session numbering increments Python integers beyond Number safe ra
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
   })
   try {
@@ -1160,6 +2614,7 @@ test('rollback and unavailable transitions repair the active Session determinist
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
     now: () => { now += 1; return now },
   })
@@ -1210,6 +2665,7 @@ test('thread identity uses Python code-point bounds and exact returned text', as
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
     idFactory: () => ids.next().value ?? 'unused-id',
   })
   try {
@@ -1252,6 +2708,7 @@ test('live recovery reads Python v1 bytes and writes byte-identical Python canon
       stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
       managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
       nativeLocks: new DescriptorLockAuthority(),
+      rootFiles: rootFilesForTest(stateRoot, managedRoot),
       live: true,
     })
     const snapshot = await store.snapshot()

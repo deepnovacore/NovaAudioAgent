@@ -4,7 +4,7 @@ export type NativeFileLockResult =
 
 /** Host-owned native advisory lock. The descriptor was already opened and validated by TypeScript. */
 export interface NativeFileLockAuthority {
-  acquire(descriptor: number): NativeFileLockResult | Promise<NativeFileLockResult>
+  acquire(descriptor: number): NativeFileLockResult
 }
 
 /** Production stays fail-closed until Task 8 supplies and audits the packaged Node-API module. */
