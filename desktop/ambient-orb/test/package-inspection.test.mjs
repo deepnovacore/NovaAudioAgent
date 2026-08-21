@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import test from 'node:test'
@@ -474,6 +474,107 @@ test('owned ASAR inspection hashes, lists, and extracts one private snapshot', a
     await createPackage(source, resolve(root, 'changed.asar'))
     const changed = await packageInspection.inspectAsarSnapshot(resolve(root, 'changed.asar'))
     assert.notEqual(changed.asar_sha256, first.asar_sha256)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('dependency report binds every lock install key to exact canonical file bytes', async () => {
+  assert.equal(typeof packageInspection.buildDependencyReport, 'function')
+  assert.equal(typeof packageInspection.assertArtifactDependencyReport, 'function')
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-package-dependencies-'))
+  const repository = resolve(root, 'repository')
+  const artifact = resolve(root, 'artifact')
+  const closure = {
+    schema_version: 1,
+    target: 'darwin-arm64',
+    packages: [
+      {
+        name: 'alpha', version: '1.0.0', installKey: 'node_modules/alpha',
+        content_sha256: 'a'.repeat(64),
+      },
+      {
+        name: 'beta', version: '2.0.0', installKey: 'node_modules/alpha/node_modules/beta',
+        content_sha256: 'b'.repeat(64),
+      },
+    ],
+  }
+  const sourceFiles = new Map([
+    ['node_modules/alpha/package.json', '{"name":"alpha","version":"1.0.0"}\n'],
+    ['node_modules/alpha/index.js', 'export const alpha = true\n'],
+    ['node_modules/alpha/node_modules/beta/package.json', '{"name":"beta","version":"2.0.0"}\n'],
+    ['node_modules/alpha/node_modules/beta/index.js', 'export const beta = true\n'],
+  ])
+  try {
+    for (const [path, body] of sourceFiles) {
+      for (const destinationRoot of [repository, artifact]) {
+        const destination = resolve(destinationRoot, path)
+        await mkdir(dirname(destination), { recursive: true })
+        await writeFile(destination, body, 'utf8')
+      }
+    }
+    const report = await packageInspection.buildDependencyReport(repository, closure)
+    assert.deepEqual(report.packages.map(value => value.install_key), [
+      'node_modules/alpha',
+      'node_modules/alpha/node_modules/beta',
+    ])
+    assert.ok(report.packages.every(value => value.files.every(file => (
+      /^[0-9a-f]{64}$/u.test(file.sha256) && file.byte_size > 0
+    ))))
+    await mkdir(resolve(artifact, 'build/release'), { recursive: true })
+    await writeFile(
+      resolve(artifact, 'build/release/production-dependencies-v1.json'),
+      JSON.stringify(report),
+      'utf8',
+    )
+    await assert.doesNotReject(
+      packageInspection.assertArtifactDependencyReport(artifact, closure),
+    )
+
+    await writeFile(resolve(artifact, 'node_modules/alpha/index.js'), 'changed bytes\n', 'utf8')
+    await assert.rejects(
+      packageInspection.assertArtifactDependencyReport(artifact, closure),
+      PackageInspectionError,
+      'same manifest identity with changed bytes must fail',
+    )
+    await writeFile(resolve(artifact, 'node_modules/alpha/index.js'), sourceFiles.get(
+      'node_modules/alpha/index.js',
+    ), 'utf8')
+    await writeFile(resolve(artifact, 'node_modules/alpha/extra.js'), 'extra\n', 'utf8')
+    await assert.rejects(
+      packageInspection.assertArtifactDependencyReport(artifact, closure),
+      PackageInspectionError,
+      'an extra file at a selected install key must fail',
+    )
+    await rm(resolve(artifact, 'node_modules/alpha/extra.js'))
+    await mkdir(resolve(artifact, 'node_modules/shadow'), { recursive: true })
+    await writeFile(
+      resolve(artifact, 'node_modules/shadow/package.json'),
+      '{"name":"alpha","version":"1.0.0"}\n',
+      'utf8',
+    )
+    await assert.rejects(
+      packageInspection.assertArtifactDependencyReport(artifact, closure),
+      PackageInspectionError,
+      'the same name/version at an unselected install key must fail',
+    )
+
+    await mkdir(resolve(repository, 'node_modules/alias-parent/node_modules'), { recursive: true })
+    await symlink(
+      resolve(repository, 'node_modules/alpha'),
+      resolve(repository, 'node_modules/alias-parent/node_modules/alpha'),
+    )
+    await assert.rejects(
+      packageInspection.buildDependencyReport(repository, {
+        ...closure,
+        packages: [...closure.packages, {
+          ...closure.packages[0],
+          installKey: 'node_modules/alias-parent/node_modules/alpha',
+        }],
+      }),
+      PackageInspectionError,
+      'two install keys resolving to one real package must fail',
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }

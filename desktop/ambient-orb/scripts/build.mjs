@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 import { checkJavaScriptFiles } from './build-contract.mjs'
-import { inspectConfiguredPackage } from './inspect-package.mjs'
+import { buildDependencyReport, inspectConfiguredPackage } from './inspect-package.mjs'
 import { deriveLockedProductionClosure } from './release-dependency-closure.mjs'
 
 const root = resolve(import.meta.dirname, '..')
@@ -36,22 +36,12 @@ const closure = await deriveLockedProductionClosure({
 })
 const releaseBuildDirectory = resolve(root, 'build/release')
 await mkdir(releaseBuildDirectory, { recursive: true })
-const dependencyIdentities = [...new Map(closure.packages.map(value => [
-  `${value.name}\0${value.version}\0${value.content_sha256}`,
-  {
-    name: value.name,
-    version: value.version,
-    content_sha256: value.content_sha256,
-  },
-])).values()].sort((left, right) => (
-  left.name < right.name ? -1 : left.name > right.name ? 1
-    : left.version < right.version ? -1 : left.version > right.version ? 1 : 0
-))
-await writeFile(resolve(releaseBuildDirectory, 'production-dependencies-v1.json'), `${JSON.stringify({
-  schema_version: 1,
-  target: closure.target,
-  packages: dependencyIdentities,
-})}\n`, { encoding: 'utf8', mode: 0o600 })
+const dependencyReport = await buildDependencyReport(resolve(root, '../..'), closure)
+await writeFile(
+  resolve(releaseBuildDirectory, 'production-dependencies-v1.json'),
+  `${JSON.stringify(dependencyReport)}\n`,
+  { encoding: 'utf8', mode: 0o600 },
+)
 
 checkJavaScriptFiles(root)
 

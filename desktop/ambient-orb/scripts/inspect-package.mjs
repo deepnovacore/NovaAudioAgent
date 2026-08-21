@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { extractAll, listPackage } from '@electron/asar'
 
 import { deriveLockedProductionClosure } from './release-dependency-closure.mjs'
+import { parseStrictJson } from './strict-json.mjs'
 
 const RUNTIME_PACKAGE = '@nova-audio-agent/runtime'
 const DESKTOP_PACKAGE = '@nova-audio-agent/ambient-orb'
@@ -30,6 +31,7 @@ const MAX_INSPECTED_FILES = 10_000
 const MAX_ARTIFACT_LIST_BYTES = 4 * 1024 * 1024
 const MAX_ARTIFACT_MANIFEST_BYTES = 64 * 1024
 const MAX_ASAR_BYTES = 512 * 1024 * 1024
+const MAX_DEPENDENCY_FILE_BYTES = 256 * 1024 * 1024
 
 export class PackageInspectionError extends Error {
   constructor(detail) {
@@ -147,6 +149,7 @@ async function listFiles(root, { skipTopLevel = [], includeDirectories = false }
         }
         await visit(path, depth + 1)
       } else if (entry.isFile()) files.push(validateRelativeFile(relative(root, path)))
+      else throw new PackageInspectionError('artifact entry type rejected')
       if (files.length + directories.length > MAX_INSPECTED_FILES) {
         throw new PackageInspectionError(`more than ${MAX_INSPECTED_FILES} files`)
       }
@@ -410,7 +413,7 @@ async function findInstalledPackageRoot(packageRoot, name) {
   }
   while (true) {
     try {
-      const manifest = JSON.parse(await readFile(resolve(current, 'package.json'), 'utf8'))
+      const manifest = parseStrictJson(await readFile(resolve(current, 'package.json'), 'utf8'))
       if (manifest.name === name) return { root: current, manifest }
     } catch { /* continue toward the resolved package root */ }
     const parent = dirname(current)
@@ -433,7 +436,7 @@ export async function inspectConfiguredPackage({
     readFile(resolve(packageRoot, 'package.json'), 'utf8'),
     listFiles(packageRoot, { skipTopLevel: ['build', 'dist', 'node_modules'] }),
   ])
-  const packageJson = JSON.parse(packageText)
+  const packageJson = parseStrictJson(packageText)
   const filePatterns = topLevelYamlList(builderText, 'files')
   const desktopIncluded = evaluateBuilderFiles(desktopFiles, filePatterns)
 
@@ -478,7 +481,7 @@ async function readArtifactManifests(artifactRoot, files) {
       `${label} manifest`,
     )
     try {
-      return JSON.parse(body.toString('utf8'))
+      return parseStrictJson(body.toString('utf8'))
     } catch {
       throw new PackageInspectionError(`${label} manifest malformed`)
     }
@@ -547,26 +550,114 @@ async function inspectListedArtifactRoot(listed, artifactRoot, { selectedPackage
   return inspectPackagedFileList(files, { ...manifests, directories, selectedPackages })
 }
 
-function dependencyReportForClosure(closure) {
-  const packages = [...new Map(closure.packages.map(value => [
-    `${value.name}\0${value.version}\0${value.content_sha256}`,
-    {
-      name: value.name,
-      version: value.version,
-      content_sha256: value.content_sha256,
-    },
-  ])).values()].sort((left, right) => (
-    left.name < right.name ? -1 : left.name > right.name ? 1
-      : left.version < right.version ? -1 : left.version > right.version ? 1 : 0
-  ))
-  return {
-    schema_version: 1,
-    target: closure.target,
-    packages,
+function dependencyReportKeys(record, expected, label) {
+  if (
+    !isPlainJsonObject(record)
+    || Object.keys(record).sort().join('\0') !== [...expected].sort().join('\0')
+  ) throw new PackageInspectionError(`${label} rejected`)
+}
+
+async function hashDependencyFile(path) {
+  let handle
+  try {
+    handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+  } catch {
+    throw new PackageInspectionError('production dependency file unavailable')
+  }
+  try {
+    const before = await handle.stat()
+    if (!before.isFile() || before.size < 0 || before.size > MAX_DEPENDENCY_FILE_BYTES) {
+      throw new PackageInspectionError('production dependency file rejected')
+    }
+    return Object.freeze({
+      byte_size: before.size,
+      sha256: await hashHandle(handle, before.size, 'production dependency file'),
+    })
+  } finally {
+    await handle.close().catch(() => {})
   }
 }
 
-async function assertArtifactDependencyReport(artifactRoot, closure) {
+async function dependencyInventory(packageRoot, identity) {
+  let files = (await listFiles(packageRoot, { skipTopLevel: ['node_modules'] }))
+    .filter(productionDependencyFile)
+  if (identity.name === RUNTIME_PACKAGE) {
+    let manifest
+    try {
+      manifest = parseStrictJson(await readFile(resolve(packageRoot, 'package.json'), 'utf8'))
+      files = evaluatePackageFiles(files, manifest.files ?? []).filter(productionDependencyFile)
+    } catch {
+      throw new PackageInspectionError('production dependency inventory rejected')
+    }
+  }
+  if (identity.name === '@livekit/agents') {
+    files = files.filter(file => !/^resources\/[^/]+\.ogg$/u.test(file))
+  }
+  const records = []
+  for (const file of files.sort()) {
+    const hashed = await hashDependencyFile(resolve(packageRoot, file))
+    records.push(Object.freeze({ path: file, ...hashed }))
+  }
+  return Object.freeze({
+    files: Object.freeze(records),
+    content_sha256: createHash('sha256').update(JSON.stringify(records)).digest('hex'),
+  })
+}
+
+export async function buildDependencyReport(repositoryRoot, closure) {
+  const roots = new Set()
+  const packages = []
+  for (const identity of [...closure.packages].sort((left, right) => (
+    left.installKey < right.installKey ? -1 : left.installKey > right.installKey ? 1 : 0
+  ))) {
+    const installKey = validateRelativeFile(identity.installKey)
+    if (!installKey.startsWith('node_modules/')) {
+      throw new PackageInspectionError('production dependency install key rejected')
+    }
+    let packageRoot
+    try {
+      packageRoot = await realpath(resolve(repositoryRoot, installKey))
+    } catch {
+      throw new PackageInspectionError('production dependency unavailable')
+    }
+    if (roots.has(packageRoot)) {
+      throw new PackageInspectionError('production dependency realpath duplicate')
+    }
+    roots.add(packageRoot)
+    const inventory = await dependencyInventory(packageRoot, identity)
+    packages.push(Object.freeze({
+      install_key: installKey,
+      name: identity.name,
+      version: identity.version,
+      lock_identity_sha256: identity.content_sha256,
+      content_sha256: inventory.content_sha256,
+      files: inventory.files,
+    }))
+  }
+  return Object.freeze({
+    schema_version: 1,
+    target: closure.target,
+    packages: Object.freeze(packages),
+  })
+}
+
+function installKeysInArtifact(entries) {
+  const keys = new Set()
+  for (const entry of entries) {
+    const segments = entry.split('/')
+    for (let index = 0; index < segments.length; index += 1) {
+      if (segments[index] !== 'node_modules') continue
+      const first = segments[index + 1]
+      if (!first || first === '.bin') continue
+      const end = first.startsWith('@') ? index + 3 : index + 2
+      if (first.startsWith('@') && !segments[index + 2]) continue
+      keys.add(segments.slice(0, end).join('/'))
+    }
+  }
+  return keys
+}
+
+export async function assertArtifactDependencyReport(artifactRoot, closure) {
   let parsed
   try {
     const body = await readBoundedFile(
@@ -574,38 +665,56 @@ async function assertArtifactDependencyReport(artifactRoot, closure) {
       MAX_ARTIFACT_LIST_BYTES,
       'dependency report',
     )
-    parsed = JSON.parse(body.toString('utf8'))
+    parsed = parseStrictJson(body.toString('utf8'))
   } catch (error) {
     if (error instanceof PackageInspectionError) throw error
     throw new PackageInspectionError('dependency report rejected')
   }
-  if (JSON.stringify(parsed) !== JSON.stringify(dependencyReportForClosure(closure))) {
+  dependencyReportKeys(parsed, ['schema_version', 'target', 'packages'], 'dependency report')
+  if (
+    parsed.schema_version !== 1
+    || parsed.target !== closure.target
+    || !Array.isArray(parsed.packages)
+    || parsed.packages.length !== closure.packages.length
+  ) {
     throw new PackageInspectionError('dependency report rejected')
   }
-  const expected = new Set(parsed.packages.map(record => `${record.name}\0${record.version}`))
-  const found = new Set()
-  const artifactEntries = await listFiles(artifactRoot)
-  for (const file of artifactEntries) {
-    if (!/(?:^|\/)node_modules\/(?:@[^/]+\/)?[^/]+\/package\.json$/u.test(file)) continue
-    let manifest
-    try {
-      manifest = JSON.parse((await readBoundedFile(
-        resolve(artifactRoot, file),
-        MAX_ARTIFACT_MANIFEST_BYTES,
-        'production dependency manifest',
-      )).toString('utf8'))
-    } catch (error) {
-      if (error instanceof PackageInspectionError) throw error
-      throw new PackageInspectionError('production dependency manifest rejected')
-    }
-    const identity = `${manifest.name}\0${manifest.version}`
-    if (!expected.has(identity)) {
-      throw new PackageInspectionError('production dependency manifest rejected')
-    }
-    found.add(identity)
+  const locked = new Map(closure.packages.map(value => [value.installKey, value]))
+  const reported = new Set()
+  for (const record of parsed.packages) {
+    dependencyReportKeys(record, [
+      'install_key', 'name', 'version', 'lock_identity_sha256', 'content_sha256', 'files',
+    ], 'dependency report package')
+    const identity = locked.get(record.install_key)
+    if (
+      !identity
+      || reported.has(record.install_key)
+      || record.name !== identity.name
+      || record.version !== identity.version
+      || record.lock_identity_sha256 !== identity.content_sha256
+      || !/^[0-9a-f]{64}$/u.test(record.content_sha256)
+      || !Array.isArray(record.files)
+    ) throw new PackageInspectionError('dependency report rejected')
+    reported.add(record.install_key)
+    const inventory = await dependencyInventory(resolve(artifactRoot, record.install_key), identity)
+    if (
+      inventory.content_sha256 !== record.content_sha256
+      || JSON.stringify(inventory.files) !== JSON.stringify(record.files)
+    ) throw new PackageInspectionError('production dependency inventory rejected')
   }
-  if ([...expected].some(identity => !found.has(identity))) {
-    throw new PackageInspectionError('production dependency manifest unavailable')
+  if ([...locked.keys()].some(installKey => !reported.has(installKey))) {
+    throw new PackageInspectionError('dependency report rejected')
+  }
+  const artifactEntries = await listFiles(artifactRoot, { includeDirectories: true })
+  const foundInstallKeys = installKeysInArtifact([
+    ...artifactEntries.files,
+    ...artifactEntries.directories,
+  ])
+  if (
+    foundInstallKeys.size !== locked.size
+    || [...foundInstallKeys].some(installKey => !locked.has(installKey))
+  ) {
+    throw new PackageInspectionError('production dependency install key rejected')
   }
 }
 
@@ -635,14 +744,14 @@ async function copyAndHashHandle(source, destination, expectedSize) {
   }
 }
 
-async function hashHandle(handle, expectedSize) {
+async function hashHandle(handle, expectedSize, label = 'ASAR snapshot') {
   const hash = createHash('sha256')
   const buffer = Buffer.allocUnsafe(1024 * 1024)
   let position = 0
   while (position < expectedSize) {
     const amount = Math.min(buffer.byteLength, expectedSize - position)
     const { bytesRead } = await handle.read(buffer, 0, amount, position)
-    if (bytesRead === 0) throw new PackageInspectionError('ASAR snapshot changed')
+    if (bytesRead === 0) throw new PackageInspectionError(`${label} changed`)
     hash.update(buffer.subarray(0, bytesRead))
     position += bytesRead
   }
