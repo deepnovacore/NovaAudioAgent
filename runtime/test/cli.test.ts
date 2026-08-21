@@ -20,13 +20,13 @@ test('Node CLI fixture check runs every committed scenario', async () => {
   assert.equal(output, 'Node fixture parity passed: 20 scenario(s)\n')
 })
 
-test('Node CLI demo emits a verified deterministic runtime snapshot', async () => {
+test('Node CLI fixture replay emits a verified deterministic runtime snapshot', async () => {
   const snapshot = await runDeterministicDemo(fixtureRoot, 'async-delegate-after-user')
   assert.equal(snapshot.executor_effects[0]?.kind, 'dispatch')
   assert.ok(snapshot.applied_events.some(event => event.kind === 'handoff'))
 
   let output = ''
-  assert.equal(await main(['demo', 'floor-defer-preempt'], {
+  assert.equal(await main(['fixture', 'replay', 'floor-defer-preempt'], {
     cwd: repositoryRoot,
     io: {write: text => { output += text }},
   }), 0)

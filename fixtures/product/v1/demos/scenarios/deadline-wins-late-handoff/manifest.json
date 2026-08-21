@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "deadline-wins-late-handoff",
+  "description": "A deadline records unknown, then a late executor handoff remains observable.",
+  "covers": ["runtime.deadline", "runtime.late_handoff", "memory.append_only"],
+  "clock": "virtual",
+  "requires": [],
+  "canonicalization": "exact"
+}

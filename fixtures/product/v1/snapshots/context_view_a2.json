@@ -1,0 +1,131 @@
+{
+  "affordances": [
+    {
+      "conclusive": null,
+      "content": {
+        "question": "要多暗？"
+      },
+      "ref": "intent.q0",
+      "source": "unresolved_question"
+    },
+    {
+      "conclusive": null,
+      "content": {
+        "channel": "slow_sim",
+        "observation": {
+          "room": "客厅",
+          "state": "on"
+        },
+        "outcome": "ok",
+        "ts": 5.5
+      },
+      "ref": "slow_sim:2",
+      "source": "channel_update"
+    }
+  ],
+  "channels": [
+    {
+      "name": "conversation",
+      "omitted": 0,
+      "recent": [
+        {
+          "channel": "conversation",
+          "content": {
+            "text": "帮我把客厅灯调暗点"
+          },
+          "outcome": null,
+          "priority": 100,
+          "refs": [],
+          "seq": 1,
+          "trust": "trusted_user",
+          "ts": 0.0
+        },
+        {
+          "channel": "conversation",
+          "content": {
+            "text": "顺便，今晚适合看什么电影？"
+          },
+          "outcome": null,
+          "priority": 100,
+          "refs": [],
+          "seq": 2,
+          "trust": "trusted_user",
+          "ts": 6.0
+        }
+      ],
+      "summary": null
+    },
+    {
+      "name": "slow_sim",
+      "omitted": 0,
+      "recent": [
+        {
+          "channel": "slow_sim",
+          "content": {
+            "brightness": 30,
+            "room": "客厅"
+          },
+          "outcome": "ok",
+          "priority": 50,
+          "refs": [
+            "conversation:1"
+          ],
+          "seq": 1,
+          "trust": "trusted_system",
+          "ts": 5.0
+        },
+        {
+          "channel": "slow_sim",
+          "content": {
+            "room": "客厅",
+            "state": "on"
+          },
+          "outcome": "ok",
+          "priority": 50,
+          "refs": [
+            "conversation:1"
+          ],
+          "seq": 2,
+          "trust": "trusted_system",
+          "ts": 5.5
+        }
+      ],
+      "summary": null
+    }
+  ],
+  "floor": "idle",
+  "in_flight": [],
+  "now": 7.0,
+  "structured": {
+    "authorization": {
+      "allow": [
+        "客厅灯开关"
+      ],
+      "deny": [],
+      "evidence_refs": [
+        "conversation:1"
+      ],
+      "revision": 1
+    },
+    "goal": {
+      "acceptance_criteria": [
+        "亮度 < 40%"
+      ],
+      "objective": "客厅灯调暗",
+      "revision": 1,
+      "status": "accepted"
+    },
+    "intent": {
+      "constraints": [
+        "不要全关"
+      ],
+      "objective_hypothesis": "把客厅灯调到偏暗",
+      "revision": 2,
+      "uncertainty": 0.4,
+      "unresolved_questions": [
+        "要多暗？"
+      ]
+    }
+  },
+  "trigger_kind": null
+}

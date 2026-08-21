@@ -5,6 +5,8 @@ import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { canonicalJson } from './canonical-json.js'
 import {buildDiagnosticReport} from './diagnostics.js'
+import {runDemos, type DemoName} from './demos.js'
+import {checkScorecardFixtures} from './scorecard.js'
 import { loadRuntimeFixture, type RuntimeFixture } from './fixtures.js'
 import { runRuntimeFixture } from './fixture-host.js'
 import { fixtureManifestRegistry } from './sim.js'
@@ -58,6 +60,7 @@ export async function main(
   const cwd = options.cwd ?? resolve(import.meta.dirname, '../../..')
   const io = options.io ?? {write: text => process.stdout.write(text)}
   const fixtureRoot = resolve(cwd, 'fixtures/runtime/v1')
+  const productFixtureRoot = resolve(cwd, 'fixtures/product/v1')
   const [command, subcommand] = args
   if (command === 'fixture' && subcommand === 'check' && args.length === 2) {
     const count = await checkRuntimeFixtures(fixtureRoot)
@@ -72,13 +75,27 @@ export async function main(
     io.write(`${canonicalJson(report)}\n`)
     return report.ok ? 0 : 1
   }
-  if (command === 'demo' && args.length <= 2) {
-    const scenario = subcommand ?? 'async-delegate-after-user'
+  if (command === 'scorecard' && subcommand === 'fixture'
+    && args[2] === 'check' && args.length === 3) {
+    const count = await checkScorecardFixtures(productFixtureRoot)
+    io.write(`Node scorecard fixture parity passed: ${count} case(s)\n`)
+    return 0
+  }
+  if (command === 'fixture' && subcommand === 'replay' && args.length === 3) {
+    const scenario = args[2]!
     const snapshot = await runDeterministicDemo(fixtureRoot, scenario)
     io.write(`${canonicalJson(snapshot)}\n`)
     return 0
   }
-  io.write('Usage: nova-audio-agent-node fixture check | demo [scenario] | diagnose --json\n')
+  if (command === 'demo' && args.length <= 2) {
+    const name = (subcommand ?? 'all') as DemoName
+    const results = await runDemos([name], productFixtureRoot)
+    for (const result of results) {
+      io.write(`${result.name} ${result.passed ? 'PASS' : 'FAIL'} ${result.detail_code}\n`)
+    }
+    return results.every(result => result.passed) ? 0 : 1
+  }
+  io.write('Usage: nova-audio-agent-node fixture check | fixture replay <scenario> | demo [async|dual-axis|timeout|proactive|all] | scorecard fixture check | diagnose --json\n')
   return 2
 }
 

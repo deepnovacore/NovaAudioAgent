@@ -1,0 +1,168 @@
+{
+  "canonicalization": "exact",
+  "entries": [
+    {
+      "owner": "python",
+      "path": "demos.json",
+      "sha256": "075a1b0eff9f3b06848d4b8131ba4086a8d8dce00c4de49e8a7e5fe05a0c91b9",
+      "source": "/Users/fishwowater/sqxh/nova-audio-agent/.worktrees/node-typescript-runtime/scripts/product_fixture_oracle.py"
+    },
+    {
+      "owner": "python",
+      "path": "demos/scenarios/async-delegate-after-user/expected.json",
+      "sha256": "a9a546b468ac5fe48bef0b15951f1c3cf2d3bbf1b4458edf65826040b6bbdf77",
+      "source": "fixtures/runtime/v1/async-delegate-after-user/expected.json"
+    },
+    {
+      "owner": "python",
+      "path": "demos/scenarios/async-delegate-after-user/input.json",
+      "sha256": "8018cc8fb53a2dddba598bb37a6e08292acfc27c8e395ffa0154ff18ab102fe3",
+      "source": "fixtures/runtime/v1/async-delegate-after-user/input.json"
+    },
+    {
+      "owner": "python",
+      "path": "demos/scenarios/async-delegate-after-user/manifest.json",
+      "sha256": "863fcb38f95a9f8329de2775721555174415c55e30d5a827165189b57bb403b5",
+      "source": "fixtures/runtime/v1/async-delegate-after-user/manifest.json"
+    },
+    {
+      "owner": "python",
+      "path": "demos/scenarios/deadline-wins-late-handoff/expected.json",
+      "sha256": "0829c1e35789a9b0af1fa7efba142430eef228f6d0347d5291b25d2d287dcb98",
+      "source": "fixtures/runtime/v1/deadline-wins-late-handoff/expected.json"
+    },
+    {
+      "owner": "python",
+      "path": "demos/scenarios/deadline-wins-late-handoff/input.json",
+      "sha256": "42ab37b1d9828367a916933a09c8f98412e1bedbf074d81b9f896227c3fc01eb",
+      "source": "fixtures/runtime/v1/deadline-wins-late-handoff/input.json"
+    },
+    {
+      "owner": "python",
+      "path": "demos/scenarios/deadline-wins-late-handoff/manifest.json",
+      "sha256": "0dce48c00c916481a094802318bafc73c3799a0c2a9d1fba73e6fdd4f85816a2",
+      "source": "fixtures/runtime/v1/deadline-wins-late-handoff/manifest.json"
+    },
+    {
+      "owner": "python",
+      "path": "demos/scenarios/progress-surrogate-selection/expected.json",
+      "sha256": "096b455627d1dcd2654f0ca95b296ada829536edbbe7c653ec5361da423274e6",
+      "source": "fixtures/runtime/v1/progress-surrogate-selection/expected.json"
+    },
+    {
+      "owner": "python",
+      "path": "demos/scenarios/progress-surrogate-selection/input.json",
+      "sha256": "c69b8b189146f396e17413c747bcfcb75fce94c792e4751caa5f23386236db70",
+      "source": "fixtures/runtime/v1/progress-surrogate-selection/input.json"
+    },
+    {
+      "owner": "python",
+      "path": "demos/scenarios/progress-surrogate-selection/manifest.json",
+      "sha256": "2736d52774e3a934dcb2b35d4ceca8e92ed44ef78ba262c4b187fc66df9923d1",
+      "source": "fixtures/runtime/v1/progress-surrogate-selection/manifest.json"
+    },
+    {
+      "owner": "python",
+      "path": "schema.json",
+      "sha256": "6386dfb618655d1d03852ff6661f188071c12173d86205891e71ec3f001ddab5",
+      "source": "/Users/fishwowater/sqxh/nova-audio-agent/.worktrees/node-typescript-runtime/scripts/product_fixture_oracle.py"
+    },
+    {
+      "owner": "python",
+      "path": "scorecard.json",
+      "sha256": "16581de3329ca6a5316aeb5a00476499cf13b7d50f8795cbfca2a1d59643c650",
+      "source": "/Users/fishwowater/sqxh/nova-audio-agent/.worktrees/node-typescript-runtime/scripts/product_fixture_oracle.py"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/context_view_a2.json",
+      "sha256": "cc5f4b67964c89685767cd250edcd3bcfa12e8d8bf57e0678d0ce3241dcc8164",
+      "source": "tests/snapshots/context_view_a2.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario1_call1.json",
+      "sha256": "62073faa7898e4d466519c5f29658f135207e1762e7a224592810eef0d057872",
+      "source": "tests/snapshots/scenario1_call1.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario1_call2.json",
+      "sha256": "23e995d84ea42ae63447d46085836781c2116812a8beb5cc76d301ba667ae3d3",
+      "source": "tests/snapshots/scenario1_call2.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario1_call3.json",
+      "sha256": "31ba6fc06b1eac904f4c8dfc3a1ea0a7faab4381e8c6645332c3dfeaf65661b7",
+      "source": "tests/snapshots/scenario1_call3.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario2_call1.json",
+      "sha256": "07c901abc59c991bc682296e580986a3d0ca71106e2e59b4f0eb17c263a78a70",
+      "source": "tests/snapshots/scenario2_call1.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario2_call2.json",
+      "sha256": "106ded8151a56a7e9859e279caf9ff3783d5830ed7af5fba0269fb31867e8ead",
+      "source": "tests/snapshots/scenario2_call2.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario3_call1.json",
+      "sha256": "62073faa7898e4d466519c5f29658f135207e1762e7a224592810eef0d057872",
+      "source": "tests/snapshots/scenario3_call1.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario3_call2.json",
+      "sha256": "20097ade7fc7a3c50674c980bd5ba6b078fdff811e1ec451ea5a89c6e9041bc5",
+      "source": "tests/snapshots/scenario3_call2.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario3_call3.json",
+      "sha256": "7443c2e7a6dc9465c5f27c02bb97335d05b8ebe4c7f51ec2473f5824e4ff5227",
+      "source": "tests/snapshots/scenario3_call3.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario4_call1.json",
+      "sha256": "8c97deb06c851e1f34171040e82e7fe816c82e076588a4be4fbe8fcffa51b3b0",
+      "source": "tests/snapshots/scenario4_call1.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario4_call2.json",
+      "sha256": "fdcbad7a591bbdb6a7473ea9f5579d578594f0375003aa79d479745926b1694c",
+      "source": "tests/snapshots/scenario4_call2.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario4_call3.json",
+      "sha256": "f75b98b722f000cbe2dd0620e2c8d1cfeb21d980e4d24fc3346efb923d437009",
+      "source": "tests/snapshots/scenario4_call3.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario4_watch1.json",
+      "sha256": "4dad2aca17419fc130f8a3eea560ba455fcaee5f21d654ea5e845564935b827a",
+      "source": "tests/snapshots/scenario4_watch1.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario5_codex_status.json",
+      "sha256": "0c19c3ed57d5cbcc76f37080876be1953c0df9e428062f5bfd627edca55d2310",
+      "source": "tests/snapshots/scenario5_codex_status.json"
+    },
+    {
+      "owner": "python",
+      "path": "snapshots/scenario6_search_injection.json",
+      "sha256": "394867634022924490e02fd76bd11e926b2abe3567e43fcf018e373bbfa62822",
+      "source": "tests/snapshots/scenario6_search_injection.json"
+    }
+  ],
+  "schema_version": 1
+}

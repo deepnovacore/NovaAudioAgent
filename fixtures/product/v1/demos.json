@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "detail_code": "async_interleaving_verified",
+      "expected": {
+        "detail_code": "async_interleaving_verified",
+        "name": "async",
+        "passed": true
+      },
+      "name": "async",
+      "scenario": "async-delegate-after-user"
+    },
+    {
+      "detail_code": "dual_axes_verified",
+      "expected": {
+        "detail_code": "dual_axes_verified",
+        "name": "dual-axis",
+        "passed": true
+      },
+      "name": "dual-axis",
+      "scenario": "async-delegate-after-user"
+    },
+    {
+      "detail_code": "timeout_unknown_verified",
+      "expected": {
+        "detail_code": "timeout_unknown_verified",
+        "name": "timeout",
+        "passed": true
+      },
+      "name": "timeout",
+      "scenario": "deadline-wins-late-handoff"
+    },
+    {
+      "detail_code": "proactive_selection_verified",
+      "expected": {
+        "detail_code": "proactive_selection_verified",
+        "name": "proactive",
+        "passed": true
+      },
+      "name": "proactive",
+      "scenario": "progress-surrogate-selection"
+    }
+  ],
+  "names": [
+    "async",
+    "dual-axis",
+    "timeout",
+    "proactive",
+    "all"
+  ],
+  "schema_version": 1
+}
