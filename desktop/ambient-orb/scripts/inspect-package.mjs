@@ -47,6 +47,10 @@ const MAX_CANDIDATE_BYTES = 2 * 1024 * 1024 * 1024
 const MAX_CANDIDATE_FILES = 50_000
 const MAX_CANDIDATE_DEPTH = 64
 const MAX_CANDIDATE_MILLISECONDS = 120_000
+const MAX_CONTAINER_ENTRIES = 10_000
+const MAX_CONTAINER_LISTING_BYTES = 8 * 1024 * 1024
+const MAX_CONTAINER_LISTING_LINES = 100_000
+const MAX_CONTAINER_LINE_BYTES = 16 * 1024
 
 export class PackageInspectionError extends Error {
   constructor(detail) {
@@ -1126,6 +1130,256 @@ async function captureCandidateFile(sourcePath, destinationPath) {
   }
 }
 
+function containerListingRejected() {
+  throw new PackageInspectionError('candidate container listing rejected')
+}
+
+function canonicalContainerPath(path) {
+  if (
+    typeof path !== 'string'
+    || path === ''
+    || path.length > 4096
+    || path.includes('\0')
+    || /[\u0000-\u001f\u007f]/u.test(path)
+    || path.startsWith('/')
+    || path.startsWith('\\')
+    || /^[a-zA-Z]:/u.test(path)
+    || path.startsWith('-')
+  ) containerListingRejected()
+  const stripped = path.startsWith('./') ? path.slice(2) : path
+  const segments = stripped.split(/[\\/]/u)
+  if (
+    segments.length === 0
+    || segments.length > MAX_CANDIDATE_DEPTH
+    || segments.some(segment => (
+      segment === ''
+      || segment === '.'
+      || segment === '..'
+      || segment.includes(':')
+      || segment.endsWith('.')
+      || segment.endsWith(' ')
+    ))
+  ) containerListingRejected()
+  return segments.join('/')
+}
+
+function boundedListingLines(listing) {
+  if (
+    typeof listing !== 'string'
+    || Buffer.byteLength(listing, 'utf8') > MAX_CONTAINER_LISTING_BYTES
+  ) containerListingRejected()
+  const lines = listing.split(/\r?\n/u)
+  if (
+    lines.length > MAX_CONTAINER_LISTING_LINES
+    || lines.some(line => Buffer.byteLength(line, 'utf8') > MAX_CONTAINER_LINE_BYTES)
+  ) containerListingRejected()
+  return lines
+}
+
+function parseSevenZipListing(listing) {
+  const lines = boundedListingLines(listing)
+  const allowedKeys = new Set([
+    'Path', 'Size', 'Packed Size', 'Modified', 'Created', 'Accessed', 'Attributes',
+    'CRC', 'Encrypted', 'Method', 'Block', 'Folder', 'Host OS', 'Version',
+    'Characteristics', 'Offset', 'Physical Size', 'Headers Size', 'Tail Size',
+    'Embedded Stub Size', 'SubType', 'Comment', 'Symbolic Link', 'Hard Link',
+  ])
+  const records = []
+  let fields = new Map()
+  const flush = () => {
+    if (fields.size === 0) return
+    if (
+      fields.has('Symbolic Link')
+      || fields.has('Hard Link')
+      || !fields.has('Path')
+      || !fields.has('Size')
+    ) containerListingRejected()
+    const attributes = fields.get('Attributes') ?? ''
+    const posixMode = /(?:^|\s)([bcdlps-][rwxStTs-]{9})(?:\s|$)/u.exec(attributes)?.[1]
+    if (posixMode !== undefined && posixMode[0] !== '-' && posixMode[0] !== 'd') {
+      containerListingRejected()
+    }
+    const folderField = fields.get('Folder')
+    if (folderField !== undefined && folderField !== '+' && folderField !== '-') {
+      containerListingRejected()
+    }
+    const folder = folderField === '+'
+      || /(?:^|\s)D(?:\s|$)/u.test(attributes)
+      || posixMode?.[0] === 'd'
+    if (folderField === '-' && folder) containerListingRejected()
+    const listedPath = fields.get('Path')
+    const rawPath = folder && /[\\/]$/u.test(listedPath) ? listedPath.slice(0, -1) : listedPath
+    if (folder && (rawPath === '' || rawPath === '.')) {
+      fields = new Map()
+      return
+    }
+    const path = canonicalContainerPath(rawPath)
+    const rawSize = fields.get('Size')
+    if (!/^(?:0|[1-9]\d*)$/u.test(rawSize)) containerListingRejected()
+    const size = Number(rawSize)
+    if (!Number.isSafeInteger(size) || size < 0) containerListingRejected()
+    if (/\bl[rwxStTs-]{9}\b/u.test(attributes) || /(?:^|\s)L(?:\s|$)/u.test(attributes)) {
+      containerListingRejected()
+    }
+    if (folder && size !== 0) containerListingRejected()
+    records.push({ path, raw_path: rawPath, type: folder ? 'directory' : 'file', size })
+    fields = new Map()
+  }
+  for (const line of lines) {
+    if (line === '') {
+      flush()
+      continue
+    }
+    const match = /^([^=]{1,64}) = (.*)$/u.exec(line)
+    if (!match || !allowedKeys.has(match[1]) || fields.has(match[1])) {
+      containerListingRejected()
+    }
+    fields.set(match[1], match[2])
+  }
+  flush()
+  return records
+}
+
+function parseDebListing(listing) {
+  const records = []
+  for (const line of boundedListingLines(listing)) {
+    if (line === '') continue
+    const match = /^([bcdlps-][rwxStTs-]{9})\s+\S+\/\S+\s+(\d+)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+(.+)$/u.exec(line)
+    if (!match || (match[1][0] !== 'd' && match[1][0] !== '-')) {
+      containerListingRejected()
+    }
+    const directory = match[1][0] === 'd'
+    const listedPath = match[3]
+    const rawPath = directory && listedPath.endsWith('/') ? listedPath.slice(0, -1) : listedPath
+    if (directory && (rawPath === '' || rawPath === '.')) continue
+    const path = canonicalContainerPath(rawPath)
+    const size = Number(match[2])
+    if (!Number.isSafeInteger(size) || size < 0 || (directory && size !== 0)) {
+      containerListingRejected()
+    }
+    records.push({ path, raw_path: rawPath, type: directory ? 'directory' : 'file', size })
+  }
+  return records
+}
+
+export function preflightContainerListing({ format, listing }) {
+  const records = format === 'deb'
+    ? parseDebListing(listing)
+    : format === 'nsis' || format === 'appimage'
+      ? parseSevenZipListing(listing)
+      : containerListingRejected()
+  if (records.length === 0 || records.length > MAX_CONTAINER_ENTRIES) {
+    containerListingRejected()
+  }
+  const paths = new Set()
+  const collisionKeys = new Set()
+  const recordTypes = new Map()
+  let expandedBytes = 0
+  for (const record of records) {
+    const collisionKey = record.path.normalize('NFC').toLowerCase()
+    if (paths.has(record.path) || collisionKeys.has(collisionKey)) containerListingRejected()
+    paths.add(record.path)
+    collisionKeys.add(collisionKey)
+    recordTypes.set(record.path, record.type)
+    expandedBytes += record.size
+    if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_CANDIDATE_BYTES) {
+      containerListingRejected()
+    }
+  }
+  for (const record of records) {
+    const segments = record.path.split('/')
+    for (let index = 1; index < segments.length; index += 1) {
+      if (recordTypes.get(segments.slice(0, index).join('/')) === 'file') {
+        containerListingRejected()
+      }
+    }
+  }
+  return Object.freeze(records.map(record => Object.freeze(record)))
+}
+
+function expectedContainerPaths(records) {
+  const expected = new Map()
+  for (const record of records) {
+    const segments = record.path.split('/')
+    for (let index = 1; index < segments.length; index += 1) {
+      const parent = segments.slice(0, index).join('/')
+      if (!expected.has(parent)) expected.set(parent, { type: 'directory', size: undefined })
+    }
+    const prior = expected.get(record.path)
+    if (prior && prior.type !== record.type) containerListingRejected()
+    expected.set(record.path, { type: record.type, size: record.size })
+    if (expected.size > MAX_CANDIDATE_FILES) containerListingRejected()
+  }
+  return expected
+}
+
+export async function extractPreflightedContainer({
+  format,
+  listing,
+  destinationRoot,
+  extract,
+  extractEntry,
+}) {
+  const records = preflightContainerListing({ format, listing })
+  const expected = expectedContainerPaths(records)
+  const operation = extract ?? extractEntry
+  if (typeof destinationRoot !== 'string' || destinationRoot === '' || typeof operation !== 'function') {
+    containerListingRejected()
+  }
+  await mkdir(destinationRoot, { mode: 0o700 })
+  try {
+    await operation(records)
+    const inventory = await candidateTreeInventory(destinationRoot, candidateDeadline())
+    if (inventory.records.length !== expected.size) containerListingRejected()
+    for (const actual of inventory.records) {
+      const wanted = expected.get(actual.path)
+      if (
+        !wanted
+        || actual.type !== wanted.type
+        || (actual.type === 'file' && actual.size !== wanted.size)
+      ) containerListingRejected()
+    }
+    return Object.freeze({ records, sha256: inventory.sha256 })
+  } catch (error) {
+    if (error instanceof PackageInspectionError) throw error
+    throw new PackageInspectionError('candidate container extraction rejected')
+  }
+}
+
+function runBoundedListing(command, arguments_, workingDirectory) {
+  const result = spawnSync(command, arguments_, {
+    cwd: workingDirectory,
+    encoding: 'utf8',
+    maxBuffer: MAX_CONTAINER_LISTING_BYTES,
+    timeout: MAX_CANDIDATE_MILLISECONDS,
+    windowsHide: true,
+  })
+  if (
+    result.status !== 0
+    || result.error
+    || typeof result.stdout !== 'string'
+    || Buffer.byteLength(result.stdout, 'utf8') > MAX_CONTAINER_LISTING_BYTES
+    || result.stderr !== ''
+  ) containerListingRejected()
+  boundedListingLines(result.stdout)
+  return result.stdout
+}
+
+async function resolveLockedSevenZip() {
+  try {
+    const require = createRequire(import.meta.url)
+    const packageRoot = dirname(require.resolve('app-builder-lib/package.json'))
+    const { getPath7za } = require(resolve(packageRoot, 'out/toolsets/7zip.js'))
+    if (typeof getPath7za !== 'function') throw new Error('unavailable')
+    const path7za = await getPath7za()
+    const status = await lstat(path7za)
+    if (!status.isFile() || status.isSymbolicLink()) throw new Error('unavailable')
+    return path7za
+  } catch {
+    throw new PackageInspectionError('candidate container extractor unavailable')
+  }
+}
+
 function runExtractor(command, arguments_, workingDirectory) {
   const result = spawnSync(command, arguments_, {
     cwd: workingDirectory,
@@ -1146,32 +1400,62 @@ async function extractCandidateContainer(snapshot, format, privateRoot, deadline
     if (process.platform !== 'darwin') {
       throw new PackageInspectionError('candidate container platform rejected')
     }
+    const metadata = runBoundedListing(
+      '/usr/bin/hdiutil',
+      ['imageinfo', '-plist', snapshot],
+      privateRoot,
+    )
+    if (
+      !metadata.startsWith('<?xml')
+      || !metadata.includes('<plist')
+      || !metadata.includes('</plist>')
+    ) containerListingRejected()
     const mount = resolve(privateRoot, 'mounted')
     await mkdir(mount, { mode: 0o700 })
     runExtractor('/usr/bin/hdiutil', [
       'attach', snapshot, '-readonly', '-nobrowse', '-mountpoint', mount,
     ], privateRoot)
     try {
+      await candidateTreeInventory(mount, deadline)
       const identity = await captureCandidateDirectory(mount, immutable, deadline)
       return Object.freeze({ root: immutable, identity })
     } finally {
       runExtractor('/usr/bin/hdiutil', ['detach', mount, '-force'], privateRoot)
     }
   }
-  await mkdir(raw, { mode: 0o700 })
   if (format === 'deb') {
     if (process.platform !== 'linux') {
       throw new PackageInspectionError('candidate container platform rejected')
     }
-    runExtractor('/usr/bin/dpkg-deb', ['--extract', snapshot, raw], privateRoot)
+    const metadata = runBoundedListing('/usr/bin/dpkg-deb', ['--info', snapshot], privateRoot)
+    if (
+      !/^ new Debian package, version 2\.0\./mu.test(metadata)
+      || !/^ Package: [a-z0-9][a-z0-9+.-]*$/mu.test(metadata)
+    ) containerListingRejected()
+    const listing = runBoundedListing('/usr/bin/dpkg-deb', ['--contents', snapshot], privateRoot)
+    await extractPreflightedContainer({
+      format,
+      listing,
+      destinationRoot: raw,
+      extract: async () => {
+        runExtractor('/usr/bin/dpkg-deb', ['--extract', snapshot, raw], privateRoot)
+      },
+    })
   } else {
-    let path7za
-    try {
-      path7za = createRequire(import.meta.url)('7zip-bin').path7za
-    } catch {
-      throw new PackageInspectionError('candidate container extractor unavailable')
-    }
-    runExtractor(path7za, ['x', snapshot, `-o${raw}`, '-y'], privateRoot)
+    const path7za = await resolveLockedSevenZip()
+    const listing = runBoundedListing(
+      path7za,
+      ['l', '-slt', '-ba', '-bd', '--', snapshot],
+      privateRoot,
+    )
+    await extractPreflightedContainer({
+      format,
+      listing,
+      destinationRoot: raw,
+      extract: async () => {
+        runExtractor(path7za, ['x', '-bd', '-y', `-o${raw}`, '--', snapshot], privateRoot)
+      },
+    })
   }
   const identity = await captureCandidateDirectory(raw, immutable, deadline)
   return Object.freeze({ root: immutable, identity })

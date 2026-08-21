@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import test from 'node:test'
@@ -470,6 +470,127 @@ test('built candidate CLI emits only a stable bounded rejection', () => {
   assert.notEqual(command.status, 0)
   assert.equal(command.stderr, 'desktop package inspection rejected\n')
   assert.doesNotMatch(command.stderr, /node-typescript-runtime|nova-release-candidate|at async/u)
+})
+
+test('container preflight rejects a compressed bomb before creating extraction output', async () => {
+  assert.equal(typeof packageInspection.extractPreflightedContainer, 'function')
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-container-bomb-'))
+  const raw = resolve(root, 'container-raw')
+  let extractionCalled = false
+  const listing = [
+    'Path = payload.bin',
+    'Size = 2147483649',
+    'Packed Size = 128',
+    'Folder = -',
+    'Attributes = A',
+    '',
+  ].join('\n')
+  try {
+    await assert.rejects(
+      packageInspection.extractPreflightedContainer({
+        format: 'appimage',
+        listing,
+        destinationRoot: raw,
+        extractEntry: async () => { extractionCalled = true },
+      }),
+      error => {
+        assert.equal(error.message, 'desktop package contract rejected: candidate container listing rejected')
+        return true
+      },
+    )
+    assert.equal(extractionCalled, false)
+    await assert.rejects(lstat(raw), error => error.code === 'ENOENT')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('container preflight rejects excessive entries and unsafe paths before extraction', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-container-entries-'))
+  const raw = resolve(root, 'container-raw')
+  const record = index => [
+    `Path = files/f${index}.txt`,
+    'Size = 1',
+    'Packed Size = 1',
+    'Folder = -',
+    'Attributes = A',
+    '',
+  ].join('\n')
+  try {
+    const many = Array.from({ length: 10_001 }, (_, index) => record(index)).join('')
+    await assert.rejects(packageInspection.extractPreflightedContainer({
+      format: 'nsis',
+      listing: many,
+      destinationRoot: raw,
+      extractEntry: async () => assert.fail('must not extract'),
+    }), PackageInspectionError)
+    await assert.rejects(lstat(raw), error => error.code === 'ENOENT')
+
+    for (const path of ['../escape', '/absolute', 'C:\\escape', 'safe/../../escape']) {
+      await assert.rejects(packageInspection.extractPreflightedContainer({
+        format: 'nsis',
+        listing: record(1).replace('files/f1.txt', path),
+        destinationRoot: raw,
+        extractEntry: async () => assert.fail('must not extract'),
+      }), PackageInspectionError, path)
+      await assert.rejects(lstat(raw), error => error.code === 'ENOENT')
+    }
+
+    const invalidListings = [
+      `${record(1)}${record(1)}`,
+      `${record(1).replace('files/f1.txt', 'FILES/F1.TXT')}${record(1)}`,
+      record(1).replace('Attributes = A', 'Attributes = A lrwxr-xr-x'),
+      record(1).replace('files/f1.txt', Array.from({ length: 65 }, () => 'x').join('/')),
+      `${record(1).replace('files/f1.txt', 'parent')}${record(2).replace('files/f2.txt', 'parent/child')}`,
+    ]
+    for (const listing of invalidListings) {
+      await assert.rejects(packageInspection.extractPreflightedContainer({
+        format: 'appimage',
+        listing,
+        destinationRoot: raw,
+        extractEntry: async () => assert.fail('must not extract'),
+      }), PackageInspectionError)
+      await assert.rejects(lstat(raw), error => error.code === 'ENOENT')
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('container preflight accepts bounded 7z and deb file inventories', () => {
+  const sevenZip = packageInspection.preflightContainerListing({
+    format: 'appimage',
+    listing: [
+      'Path = resources',
+      'Size = 0',
+      'Packed Size = 0',
+      'Attributes = D drwxr-xr-x',
+      '',
+      'Path = resources/app.asar',
+      'Size = 12',
+      'Packed Size = 4',
+      'Attributes = A -rw-r--r--',
+      '',
+    ].join('\n'),
+  })
+  assert.deepEqual(sevenZip.map(({ path, type, size }) => ({ path, type, size })), [
+    { path: 'resources', type: 'directory', size: 0 },
+    { path: 'resources/app.asar', type: 'file', size: 12 },
+  ])
+
+  const deb = packageInspection.preflightContainerListing({
+    format: 'deb',
+    listing: [
+      'drwxr-xr-x root/root 0 2026-08-22 00:00 ./',
+      'drwxr-xr-x root/root 0 2026-08-22 00:00 ./usr/',
+      '-rw-r--r-- root/root 12 2026-08-22 00:00 ./usr/app.asar',
+      '',
+    ].join('\n'),
+  })
+  assert.deepEqual(deb.map(({ path, type, size }) => ({ path, type, size })), [
+    { path: 'usr', type: 'directory', size: 0 },
+    { path: 'usr/app.asar', type: 'file', size: 12 },
+  ])
 })
 
 test('owned ASAR inspection hashes, lists, and extracts one private snapshot', async () => {
