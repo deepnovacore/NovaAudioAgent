@@ -80,6 +80,8 @@ export interface VolcengineCascadedAdapterOptions {
   readonly telemetry?: RealtimeTelemetry
   readonly idFactory?: () => string
   readonly settleTimeoutMs?: number
+  /** Host-owned epoch floor when a fresh adapter replaces a closed adapter instance. */
+  readonly initialEpoch?: number
 }
 
 export type VolcengineRealtimeFailureCode =
@@ -244,7 +246,7 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
   readonly #telemetry: RealtimeTelemetry
   readonly #idFactory: () => string
   readonly #settleTimeoutMs: number
-  #epoch = 0
+  #epoch: number
   #state: 'new' | 'connecting' | 'connected' | 'closing' | 'disconnected' = 'new'
   #owner: EpochOwner | null = null
   #audioTail: Promise<void> = Promise.resolve()
@@ -258,7 +260,11 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
     this.#telemetry = options.telemetry ?? new NullTelemetry()
     this.#idFactory = options.idFactory ?? randomUUID
     this.#settleTimeoutMs = options.settleTimeoutMs ?? DEFAULT_VOLCENGINE_SETTLE_MS
+    this.#epoch = options.initialEpoch ?? 0
     if (!Number.isSafeInteger(this.#settleTimeoutMs) || this.#settleTimeoutMs <= 0) {
+      throw new VolcengineRealtimeError('configuration')
+    }
+    if (!Number.isSafeInteger(this.#epoch) || this.#epoch < 0) {
       throw new VolcengineRealtimeError('configuration')
     }
   }
