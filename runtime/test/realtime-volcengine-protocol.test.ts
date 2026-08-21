@@ -121,7 +121,14 @@ function safeConfig(case_: FixtureCase): unknown {
     return {ok: true, config: normalizeConfig(requireVolcengineRealtime(settings))}
   } catch (error) {
     if (error instanceof ConfigurationError && error.message.startsWith('invalid configuration: ')) {
-      return {ok: false, error: 'ValidationError', fields: error.message.slice(23).split(', ')}
+      return {
+        ok: false,
+        error: 'ValidationError',
+        fields: error.message.slice('invalid configuration: '.length).split(', ')
+          .map(field => field.startsWith('NOVA_AUDIO_AGENT_')
+            ? field.slice('NOVA_AUDIO_AGENT_'.length)
+            : field),
+      }
     }
     return {ok: false, error: error instanceof Error ? error.name : 'Error',
       message: error instanceof Error ? error.message : String(error)}
