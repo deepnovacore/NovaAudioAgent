@@ -76,6 +76,7 @@
     "runtime/src/playback.ts",
     "runtime/src/ports.ts",
     "runtime/src/production-realtime-assembly.ts",
+    "runtime/src/project-native-resource.ts",
     "runtime/src/project-root-file.ts",
     "runtime/src/prompting.ts",
     "runtime/src/python-number.ts",
