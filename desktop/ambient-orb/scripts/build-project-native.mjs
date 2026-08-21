@@ -4,10 +4,12 @@ import {mkdir, readFile, realpath, stat} from 'node:fs/promises'
 import {createRequire} from 'node:module'
 import {dirname, resolve} from 'node:path'
 
+import {compileWindowsNative, createWindowsImportLibrary} from './windows-msvc.mjs'
+
 const require = createRequire(import.meta.url)
 const EXPECTED_HEADER_VERSION = '1.9.0'
 
-async function pinnedHeaderDirectory() {
+async function pinnedNodeApiResources() {
   const manifestPath = require.resolve('node-api-headers/package.json')
   const packageRoot = await realpath(dirname(manifestPath))
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
@@ -17,18 +19,51 @@ async function pinnedHeaderDirectory() {
   assert.equal(dirname(include), packageRoot, 'project_native_header_invalid')
   const info = await stat(include)
   assert.equal(info.isDirectory(), true, 'project_native_header_invalid')
-  return include
+  const definition = await realpath(resolve(packageRoot, 'def/node_api.def'))
+  assert.equal(dirname(dirname(definition)), packageRoot, 'project_native_header_invalid')
+  assert.equal((await stat(definition)).isFile(), true, 'project_native_header_invalid')
+  return {include, definition}
 }
 
 export async function buildProjectNativeAddon({packageRoot, outputRoot, platform, arch}) {
-  assert.ok(platform === 'darwin' || platform === 'linux', 'project_native_platform_unsupported')
+  assert.ok(platform === 'darwin' || platform === 'linux' || platform === 'win32', 'project_native_platform_unsupported')
   assert.ok(arch === 'arm64' || arch === 'x64', 'project_native_arch_unsupported')
-  const include = await pinnedHeaderDirectory()
-  const source = resolve(packageRoot, 'native/project-native/project_native_posix.c')
+  const nodeApi = await pinnedNodeApiResources()
+  const source = resolve(
+    packageRoot,
+    platform === 'win32'
+      ? 'native/project-native/project_native_windows.c'
+      : 'native/project-native/project_native_posix.c',
+  )
   const sourceInfo = await stat(source)
   assert.equal(sourceInfo.isFile(), true, 'project_native_source_invalid')
   const destination = resolve(outputRoot, 'native/project-native/nova_project_native.node')
   await mkdir(dirname(destination), {recursive: true})
+
+  if (platform === 'win32') {
+    const importLibrary = resolve(outputRoot, 'native/project-native/node_api.lib')
+    await createWindowsImportLibrary({
+      packageRoot,
+      definition: nodeApi.definition,
+      destination: importLibrary,
+      architecture: arch,
+    })
+    await compileWindowsNative({
+      packageRoot,
+      source,
+      destination,
+      architecture: arch,
+      includeDirectories: [nodeApi.include],
+      definitions: ['NAPI_VERSION=10', 'BUILDING_NODE_EXTENSION'],
+      libraries: [importLibrary, 'Advapi32.lib', 'Delayimp.lib'],
+      linkOptions: ['/DELAYLOAD:NODE.EXE', `/IMPLIB:${destination}.lib`],
+      dll: true,
+    })
+    const outputInfo = await stat(destination)
+    assert.equal(outputInfo.isFile(), true, 'project_native_compile_failed')
+    assert.ok(outputInfo.size > 0, 'project_native_compile_failed')
+    return destination
+  }
 
   const compiler = platform === 'darwin' ? '/usr/bin/clang' : '/usr/bin/cc'
   const common = [
@@ -40,7 +75,7 @@ export async function buildProjectNativeAddon({packageRoot, outputRoot, platform
     '-fvisibility=hidden',
     '-DNAPI_VERSION=10',
     '-DBUILDING_NODE_EXTENSION',
-    `-I${include}`,
+    `-I${nodeApi.include}`,
     source,
   ]
   const args = platform === 'darwin'

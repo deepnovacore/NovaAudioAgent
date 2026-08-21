@@ -8,6 +8,7 @@ import { buildDependencyReport, inspectConfiguredPackage } from './inspect-packa
 import { deriveLockedProductionClosure } from './release-dependency-closure.mjs'
 import { buildProjectNativeAddon } from './build-project-native.mjs'
 import { buildCodexSandboxProbe } from './build-codex-sandbox-probe.mjs'
+import { buildWindowsJobGuardian } from './build-windows-job-guardian.mjs'
 import { stageReleaseApplication } from './stage-release-app.mjs'
 import { stageEndpointingProbeAssets } from './stage-endpointing-probe-assets.mjs'
 
@@ -65,6 +66,14 @@ await buildCodexSandboxProbe({
   platform: process.platform,
   arch: process.arch,
 })
+if (process.platform === 'win32') {
+  await buildWindowsJobGuardian({
+    packageRoot: root,
+    outputRoot: resolve(root, 'build'),
+    platform: process.platform,
+    arch: process.arch,
+  })
+}
 await stageEndpointingProbeAssets({
   repositoryRoot: resolve(root, '../..'),
   outputRoot: resolve(root, 'build'),

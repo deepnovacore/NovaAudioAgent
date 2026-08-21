@@ -10,7 +10,7 @@ import {buildProjectNativeAddon} from '../scripts/build-project-native.mjs'
 const packageRoot = resolve(import.meta.dirname, '..')
 
 test('project native addon builds for and passes behavior under the packaged Electron ABI', {
-  skip: process.platform !== 'darwin',
+  skip: process.platform !== 'darwin' && process.platform !== 'win32',
   timeout: 60_000,
 }, async () => {
   const outputRoot = await mkdtemp(resolve(tmpdir(), 'nova-project-native-'))
@@ -20,7 +20,9 @@ test('project native addon builds for and passes behavior under the packaged Ele
     platform: process.platform,
     arch: process.arch,
   })
-  const electronPath = resolve(packageRoot, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron')
+  const electronPath = process.platform === 'win32'
+    ? resolve(packageRoot, 'node_modules/electron/dist/electron.exe')
+    : resolve(packageRoot, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron')
   const result = spawnSync(electronPath, [
     resolve(import.meta.dirname, 'fixtures/project-native-addon-behavior.cjs'),
     addonPath,

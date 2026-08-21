@@ -3,14 +3,34 @@ import {spawnSync} from 'node:child_process'
 import {chmod, mkdir, stat} from 'node:fs/promises'
 import {dirname, resolve} from 'node:path'
 
+import {compileWindowsNative} from './windows-msvc.mjs'
+
 export async function buildCodexSandboxProbe({packageRoot, outputRoot, platform, arch}) {
-  assert.ok(platform === 'darwin' || platform === 'linux', 'codex_sandbox_probe_platform_unsupported')
+  assert.ok(platform === 'darwin' || platform === 'linux' || platform === 'win32', 'codex_sandbox_probe_platform_unsupported')
   assert.ok(arch === 'arm64' || arch === 'x64', 'codex_sandbox_probe_arch_unsupported')
-  const source = resolve(packageRoot, 'native/codex-sandbox-probe/codex_sandbox_probe_posix.c')
+  const source = resolve(
+    packageRoot,
+    platform === 'win32'
+      ? 'native/codex-sandbox-probe/codex_sandbox_probe_windows.c'
+      : 'native/codex-sandbox-probe/codex_sandbox_probe_posix.c',
+  )
   const sourceInfo = await stat(source)
   assert.equal(sourceInfo.isFile(), true, 'codex_sandbox_probe_source_invalid')
-  const destination = resolve(outputRoot, 'native/codex-sandbox-probe')
+  const destination = resolve(outputRoot, `native/codex-sandbox-probe${platform === 'win32' ? '.exe' : ''}`)
   await mkdir(dirname(destination), {recursive: true})
+  if (platform === 'win32') {
+    await compileWindowsNative({
+      packageRoot,
+      source,
+      destination,
+      architecture: arch,
+      libraries: ['Advapi32.lib', 'Ws2_32.lib'],
+    })
+    const outputInfo = await stat(destination)
+    assert.equal(outputInfo.isFile(), true, 'codex_sandbox_probe_compile_failed')
+    assert.ok(outputInfo.size > 0, 'codex_sandbox_probe_compile_failed')
+    return destination
+  }
   const compiler = platform === 'darwin' ? '/usr/bin/clang' : '/usr/bin/cc'
   const common = [
     '-std=c11',

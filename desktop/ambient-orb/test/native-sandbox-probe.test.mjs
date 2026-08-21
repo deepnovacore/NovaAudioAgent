@@ -11,7 +11,7 @@ import {buildCodexSandboxProbe} from '../scripts/build-codex-sandbox-probe.mjs'
 const packageRoot = resolve(import.meta.dirname, '..')
 
 test('fixed native sandbox probe invokes its child and cannot default an unsandboxed run positive', {
-  skip: process.platform !== 'darwin',
+  skip: process.platform !== 'darwin' && process.platform !== 'win32',
   timeout: 30_000,
 }, async () => {
   const outputRoot = await mkdtemp(resolve(tmpdir(), 'nova-sandbox-probe-build-'))
