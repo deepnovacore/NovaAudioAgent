@@ -16,6 +16,7 @@ import {
   parseCameraError,
   serializeCameraCapture,
 } from './desktop-camera.js'
+import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024
@@ -27,7 +28,9 @@ export const DESKTOP_READY_TIMEOUT_MS = 5_000
 
 const tokenPattern = /^[a-f0-9]{32}$/u
 const readyEndpointPattern = /^127\.0\.0\.1:([0-9]{1,5})$/u
-const identifierSchema = z.string().max(256).refine(value => value.trim().length > 0)
+const identifierSchema = z.string()
+  .refine(value => codePointLengthLikePython(value) <= 256)
+  .refine(value => stripLikePython(value) !== '')
 const renderTimestampSchema = z.number().finite().nonnegative().optional()
 
 const helloSchema = z.object({
@@ -631,7 +634,7 @@ export function parseDesktopControl(raw: string): DesktopControl {
 }
 
 export function parseReadyEndpoint(raw: string): {readonly host: '127.0.0.1', readonly port: number} {
-  const match = readyEndpointPattern.exec(raw.trim())
+  const match = readyEndpointPattern.exec(stripLikePython(raw))
   const port = match === null ? 0 : Number(match[1])
   if (port < 1 || port > 65_535) {
     throw new DesktopProtocolError('desktop readiness endpoint is invalid')

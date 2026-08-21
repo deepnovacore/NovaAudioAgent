@@ -15,6 +15,7 @@ import {
 } from './events.js'
 import { Floor } from './floor.js'
 import type { IdFactory } from './ids.js'
+import {stripLikePython} from './python-text.js'
 import {
   CONVERSATION_CHANNEL,
   USER_PRIORITY,
@@ -1084,7 +1085,7 @@ export class CoreRuntime {
       this.#compressScheduled.delete(event.payload.channel)
       const parsed = compressorOutputSchema.safeParse(output)
       const summary = parsed.success && parsed.data.channel === event.payload.channel
-        ? parsed.data.summary.trim()
+        ? stripLikePython(parsed.data.summary)
         : ''
       if (!parsed.success || parsed.data.channel !== event.payload.channel) {
         this.diagnostics.push({code: 'invalid_compressor_output'})

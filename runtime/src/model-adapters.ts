@@ -22,6 +22,7 @@ import {
   renderFastBrainContext,
 } from './prompting.js'
 import type { CompiledTools, ToolBinding } from './tool-schema.js'
+import {stripLikePython} from './python-text.js'
 
 /** JSON Schema handed to the provider so the Surrogate answers in one shape. */
 export const SURROGATE_SCHEMA: Readonly<Record<string, JsonValue>> = {
@@ -320,6 +321,6 @@ export class GatewayCompressor {
       prompt: compressorPrompt(items),
       ...(signal === undefined ? {} : {signal}),
     })
-    return response.text.trim()
+    return stripLikePython(response.text)
   }
 }

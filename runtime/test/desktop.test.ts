@@ -263,6 +263,22 @@ test('desktop parsers validate credentials without echoing them', () => {
     /too large/u)
   assert.throws(() => parseReadyEndpoint('localhost:4000'), /invalid/u)
   assert.deepEqual(parseReadyEndpoint('127.0.0.1:4000'), {host: '127.0.0.1', port: 4000})
+  assert.deepEqual(parseReadyEndpoint('\u001c127.0.0.1:4000\u0085'),
+    {host: '127.0.0.1', port: 4000})
+})
+
+test('desktop identifiers use Python blank and code-point limits', () => {
+  assert.throws(() => parseDesktopControl(JSON.stringify({
+    type: 'speech.onset',
+    speech_id: '\u001c\u0085',
+  })), /unsupported/u)
+  const speechId = '😀'.repeat(256)
+  const parsed = parseDesktopControl(JSON.stringify({
+    type: 'speech.onset',
+    speech_id: speechId,
+  }))
+  assert.equal(parsed.type, 'speech.onset')
+  if (parsed.type === 'speech.onset') assert.equal(parsed.speech_id, speechId)
 })
 
 test('desktop controls preserve the Python accepted shape and strip unknown evidence', () => {

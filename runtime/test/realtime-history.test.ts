@@ -99,6 +99,16 @@ test('recovery projection excludes noncanonical memory items', () => {
   assert.deepEqual(projected.map(turn => turn.sequence), [5, 6])
 })
 
+test('recovery projection treats Python-only whitespace as blank', () => {
+  const projected = projectRecoveryTurns([
+    user(1, '\u001c\u0085'),
+    assistant(2, 'must not pair'),
+    user(3, '保留'),
+    assistant(4, '回答'),
+  ], {maxPairs: 4})
+  assert.deepEqual(projected.map(turn => turn.sequence), [3, 4])
+})
+
 test('packed recovery drops oldest whole pairs after JSON escaping', () => {
   const turns = Array.from({length: 4}, (_, index) => {
     const pair = index + 1

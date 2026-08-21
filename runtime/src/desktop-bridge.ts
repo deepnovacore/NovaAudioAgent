@@ -37,6 +37,7 @@ import type { PlaybackFrame } from './playback.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
+import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 
 export const DEFAULT_MAX_OUTBOUND_FRAMES = 128
 
@@ -746,7 +747,11 @@ function readRenderTimestamp(
 
 function readIdentifier(value: Record<string, unknown>, field: string): string {
   const candidate = value[field]
-  if (typeof candidate !== 'string' || candidate.trim() === '' || candidate.length > 256) {
+  if (
+    typeof candidate !== 'string'
+    || stripLikePython(candidate) === ''
+    || codePointLengthLikePython(candidate) > 256
+  ) {
     throw new DesktopProtocolError(`desktop ${field} is invalid`)
   }
   return candidate

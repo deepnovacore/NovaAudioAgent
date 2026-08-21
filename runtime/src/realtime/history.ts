@@ -1,11 +1,12 @@
 import { z } from 'zod'
 import { CONVERSATION_CHANNEL, type MemoryItem } from '../memory.js'
+import {stripLikePython} from '../python-text.js'
 
 export const MAX_PACKED_RECOVERY_CONTENT = 3900
 
 const recoveryTurnBase = z.object({
   sequence: z.number().int().positive(),
-  text: z.string().refine(value => value.trim().length > 0, 'recovery text must be non-empty'),
+  text: z.string().refine(value => stripLikePython(value) !== '', 'recovery text must be non-empty'),
   source: z.literal('conversation').default('conversation'),
 }).strict()
 
@@ -43,7 +44,7 @@ export function projectRecoveryTurns(
   for (const item of items) {
     if (item.channel !== CONVERSATION_CHANNEL || item.outcome !== null) continue
     const text = item.content.text
-    if (typeof text !== 'string' || text.trim().length === 0) continue
+    if (typeof text !== 'string' || stripLikePython(text) === '') continue
     if (item.trust === 'trusted_user' && !Object.hasOwn(item.content, 'delivery')) {
       pendingUser = recoveryTurnSchema.parse({
         sequence: item.seq,

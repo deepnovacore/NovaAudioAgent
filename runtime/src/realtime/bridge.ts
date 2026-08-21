@@ -25,6 +25,7 @@ import type { CompiledTools } from '../tool-schema.js'
 import type { HostContextItem, HostResponseIntent } from './protocol.js'
 import type { toolCallReadySchema } from './protocol.js'
 import type { z } from 'zod'
+import {stripLikePython} from '../python-text.js'
 
 /** The provider event this bridge admits. Derived from the schema so the two cannot drift. */
 export type ToolCallReady = z.infer<typeof toolCallReadySchema>
@@ -262,7 +263,7 @@ export class RealtimeRuntimeBridge {
     if (typeof query !== 'string' || typeof scope !== 'string') {
       return this.#refused(call, 'invalid_params')
     }
-    if (query.trim() === '') return this.#refused(call, 'invalid_params')
+    if (stripLikePython(query) === '') return this.#refused(call, 'invalid_params')
     const startedAt = this.#runtime.clock.now()
     const digest = createHmac('sha256', this.#queryDigestKey).update(query, 'utf8').digest('hex')
 
@@ -481,7 +482,7 @@ function boundedSummary(value: JsonValue | undefined): string {
   // Stringified the way the oracle's `str()` does for the shapes that reach here, then trimmed and
   // cut to the bound in code points -- a summary split mid-character would be invalid text.
   const text = typeof value === 'string' ? value : canonicalJson(value ?? null)
-  return [...text.trim()].slice(0, MAX_TASK_SUMMARY).join('')
+  return [...stripLikePython(text)].slice(0, MAX_TASK_SUMMARY).join('')
 }
 
 function diagnosticName(cause: unknown): string {

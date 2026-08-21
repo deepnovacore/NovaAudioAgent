@@ -39,3 +39,8 @@ test('speech preparation clips by Unicode code point without splitting an emoji'
   assert.equal([...prepared.text].length, SPEECH_FINAL_LIMIT)
   assert.ok(!prepared.text.endsWith('\uD83D'))
 })
+
+test('speech preparation uses Python strip semantics at the final boundary', () => {
+  const prepared = prepareForSpeech('\u001c\u0085\ufeff保留 BOM\ufeff\u0085\u001c', {limit: 600})
+  assert.equal(prepared.text, '\ufeff保留 BOM\ufeff')
+})

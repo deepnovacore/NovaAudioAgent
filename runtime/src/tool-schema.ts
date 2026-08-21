@@ -14,6 +14,7 @@ import { z } from 'zod'
 import type { JsonValue } from './events.js'
 import type { StructuredTarget } from './memory.js'
 import type { ExecutorManifest, OpSpec } from './ports.js'
+import {stripLikePython} from './python-text.js'
 
 const WIRE_PART = /^[A-Za-z0-9_-]+$/u
 const MAX_WIRE_NAME = 64
@@ -162,7 +163,7 @@ function compileOp(manifest: ExecutorManifest, op: OpSpec): {
   if ([...wireName].length > MAX_WIRE_NAME) {
     throw new ToolSchemaError(`工具 wire name 超过 ${MAX_WIRE_NAME} 个字符：${wireName}`)
   }
-  if (op.description.trim().length === 0) {
+  if (stripLikePython(op.description) === '') {
     throw new ToolSchemaError(`${manifest.name}.${op.name} 缺 description`)
   }
 

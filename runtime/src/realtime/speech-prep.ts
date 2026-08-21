@@ -1,3 +1,5 @@
+import {collapsePythonWhitespace, stripLikePython} from '../python-text.js'
+
 export const SPEECH_FINAL_LIMIT = 600
 
 const FENCE = /```[\s\S]*?```/gu
@@ -12,7 +14,6 @@ const EMPHASIS = /\*{1,3}|_{2,}/gu
 const LIST_MARKER = /(?:^|(?<=\s))[-*]\s+/gu
 const RULE_RUN = /-{3,}/gu
 const ARROW = /[←→↑↓⇐⇒]|->|=>/gu
-const WHITESPACE = /\s+/gu
 
 const CODE_PLACEHOLDER = '（代码示例略）'
 const LINK_PLACEHOLDER = '（链接略）'
@@ -34,7 +35,7 @@ export function prepareForSpeech(
   prepared = prepared.replace(RULE_RUN, ' ')
   prepared = prepared.replace(LIST_MARKER, '')
   prepared = prepared.replace(ARROW, ' ')
-  prepared = prepared.replace(WHITESPACE, ' ').trim()
+  prepared = stripLikePython(collapsePythonWhitespace(prepared))
 
   const characters = [...prepared]
   if (characters.length <= options.limit) return {text: prepared, truncated: false}

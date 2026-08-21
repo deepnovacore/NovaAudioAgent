@@ -44,6 +44,22 @@ export function stripLikePython(text: string): string {
   return characters.slice(start, end).join('')
 }
 
+/** Collapse Python `\s+` runs to one ASCII space without treating U+FEFF as whitespace. */
+export function collapsePythonWhitespace(text: string): string {
+  let result = ''
+  let inWhitespace = false
+  for (const character of text) {
+    if (isPythonSpace(character)) {
+      if (!inWhitespace) result += ' '
+      inWhitespace = true
+    } else {
+      result += character
+      inWhitespace = false
+    }
+  }
+  return result
+}
+
 /** Count Unicode code points exactly as Python's `len(str)` does. */
 export function codePointLengthLikePython(text: string): number {
   return [...text].length

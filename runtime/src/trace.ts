@@ -4,6 +4,7 @@ import {
   type EventRecord,
 } from './events.js'
 import { canonicalJson } from './canonical-json.js'
+import {stripLikePython} from './python-text.js'
 
 export { canonicalJson } from './canonical-json.js'
 
@@ -35,6 +36,6 @@ export class TraceWriter implements Disposable {
 export function replayTrace(path: string): EventRecord[] {
   return readFileSync(path, 'utf8')
     .split(/\r?\n/u)
-    .filter(line => line.trim().length > 0)
+    .filter(line => stripLikePython(line) !== '')
     .map(line => eventRecordSchema.parse(JSON.parse(line) as unknown))
 }

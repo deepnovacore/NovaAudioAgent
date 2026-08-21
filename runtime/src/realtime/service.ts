@@ -43,6 +43,7 @@ import { ItemDeliveryUncertainError } from './protocol.js'
 import { packRecoveryTurns, projectRecoveryTurns, type RecoveryTurn } from './history.js'
 import { RealtimeDeliveryError, type RealtimeSession } from './session.js'
 import { MAX_CONTINUATION_TASK_SUMMARY, type CaptionFrame } from './session-state.js'
+import {stripLikePython} from '../python-text.js'
 import {
   GUARD_ALERT_DEADLINE_S,
   GUARD_CLEAR_ACK_DEADLINE_S,
@@ -2353,11 +2354,11 @@ export class RealtimeService {
       && !acceptance.sync_result
     ) {
       const summary = acceptance.response_intent.task_summary
-      const display = typeof summary === 'string' && summary.trim() !== ''
+      const display = typeof summary === 'string' && stripLikePython(summary) !== ''
         ? summary
         : `${this.#executorDisplayName(acceptance.executor)} background task`
       this.session.registerDelegate(acceptance.delegate_id, {
-        summary: [...display.trim()].slice(0, MAX_CONTINUATION_TASK_SUMMARY).join(''),
+        summary: [...stripLikePython(display)].slice(0, MAX_CONTINUATION_TASK_SUMMARY).join(''),
         state: 'running',
         channel: acceptance.executor,
       })

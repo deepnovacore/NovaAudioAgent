@@ -19,7 +19,12 @@ import type { JsonValue } from '../events.js'
 import { handoffPolicySchema } from '../memory.js'
 import { executorManifestSchema, opSpecSchema, type ExecutorManifest } from '../ports.js'
 import { pythonFloat } from '../prompting.js'
-import { isWellFormed, stripLikePython } from '../python-text.js'
+import {
+  codePointLengthLikePython,
+  isPythonSpace,
+  isWellFormed,
+  stripLikePython,
+} from '../python-text.js'
 import { isOtherCategory } from '../unicode-tables.js'
 
 const PROVIDER = 'tavily'
@@ -412,9 +417,13 @@ function boundedText(value: unknown, limit: number): string {
  * them.
  */
 function canonicalizeUrl(value: unknown): string {
-  if (typeof value !== 'string' || value === '' || value.length > MAX_URL_CHARS) return ''
+  if (
+    typeof value !== 'string'
+    || value === ''
+    || codePointLengthLikePython(value) > MAX_URL_CHARS
+  ) return ''
   for (const character of value) {
-    if (character.trim() === '') return ''
+    if (isPythonSpace(character)) return ''
     const codePoint = character.codePointAt(0)
     if (codePoint !== undefined && isOtherCategory(codePoint)) return ''
   }

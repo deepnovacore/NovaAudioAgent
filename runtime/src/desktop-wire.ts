@@ -14,7 +14,7 @@
  */
 
 import type { PlaybackCompletion, PlaybackFrame } from './playback.js'
-import {codePointLengthLikePython} from './python-text.js'
+import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
 
@@ -354,7 +354,11 @@ function readNonNegativeInteger(payload: unknown, field: string): number {
  * that no longer matches the one the session holds.
  */
 function plainIdentifier(value: unknown): string {
-  if (typeof value !== 'string' || value.trim() === '' || value.length > 256) {
+  if (
+    typeof value !== 'string'
+    || stripLikePython(value) === ''
+    || codePointLengthLikePython(value) > 256
+  ) {
     throw new DesktopProtocolError('desktop identity is invalid')
   }
   return value

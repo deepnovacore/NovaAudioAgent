@@ -55,6 +55,25 @@ test('product demos fail when the runtime evidence for their invariant is mutate
   dualDocument.ports.fastbrain[0]!.output.action = {act: 'none'}
   await writeFile(dualInput, `${JSON.stringify(dualDocument)}\n`)
   await assert.rejects(runDemo('dual-axis', root), /fixture parity mismatch|unknown dispatch/u)
+
+  await cp(fixtureRoot, root, {recursive: true, force: true})
+  const speechOnlyScenario = 'advance-clock-host-before-model'
+  await cp(
+    resolve(repositoryRoot, `fixtures/runtime/v1/${speechOnlyScenario}`),
+    resolve(root, `demos/scenarios/${speechOnlyScenario}`),
+    {recursive: true},
+  )
+  const demosPath = resolve(root, 'demos.json')
+  const demosDocument = JSON.parse(await readFile(demosPath, 'utf8')) as {
+    cases: {name: string; scenario: string}[]
+  }
+  const dualCase = demosDocument.cases.find(item => item.name === 'dual-axis')
+  assert.ok(dualCase)
+  dualCase.scenario = speechOnlyScenario
+  await writeFile(demosPath, `${JSON.stringify(demosDocument)}\n`)
+  assert.deepEqual(await runDemo('dual-axis', root), {
+    name: 'dual-axis', passed: false, detail_code: 'demo_invariant_failed',
+  })
 })
 
 test('product demo root rejects symlink escape and unknown schema/name', async t => {

@@ -1,5 +1,6 @@
 import { validProgressSummary, type JsonValue } from '../events.js'
 import { CONVERSATION_CHANNEL, type MemoryItem } from '../memory.js'
+import {stripLikePython} from '../python-text.js'
 import { prepareForSpeech, SPEECH_FINAL_LIMIT } from './speech-prep.js'
 
 const GENERIC_SCALAR_KEYS = [
@@ -31,7 +32,7 @@ export function finalSpeechView(outcome: string, content: unknown): string {
   let text: string | undefined
   let upstreamTruncated = false
   if (isObject(finalMessage)) {
-    if (typeof finalMessage.text === 'string' && finalMessage.text.trim().length > 0) {
+    if (typeof finalMessage.text === 'string' && stripLikePython(finalMessage.text) !== '') {
       text = finalMessage.text
     }
     upstreamTruncated = finalMessage.truncated === true
@@ -58,27 +59,27 @@ export function genericFinalSpeechView(
   const values = isObject(content) ? content : {}
   const prose = ['observation', 'summary', 'message']
     .map(key => values[key])
-    .find(value => typeof value === 'string' && value.trim().length > 0)
+    .find(value => typeof value === 'string' && stripLikePython(value) !== '')
   let text: string
   if (outcome === 'ok' && values.hit === true) {
     const condition = values.condition
-    const prefix = typeof condition === 'string' && condition.trim().length > 0
-      ? `${displayName} 报告命中${condition.trim()}`
+    const prefix = typeof condition === 'string' && stripLikePython(condition) !== ''
+      ? `${displayName} 报告命中${stripLikePython(condition)}`
       : `${displayName} 报告命中`
-    text = typeof prose === 'string' ? `${prefix}：${prose.trim()}` : prefix
+    text = typeof prose === 'string' ? `${prefix}：${stripLikePython(prose)}` : prefix
   } else if (outcome === 'ok' && values.hit === false) {
     text = `${displayName} 监控结束，未命中条件`
   } else if (outcome === 'ok') {
     text = typeof prose === 'string'
-      ? `${displayName} 报告：${prose.trim()}`
+      ? `${displayName} 报告：${stripLikePython(prose)}`
       : `${displayName} 报告任务完成`
   } else if (outcome === 'failed') {
     text = `${displayName} 任务失败`
   } else {
     text = `${displayName} 任务结果不确定`
   }
-  if (outcome !== 'ok' && typeof values.error === 'string' && values.error.trim().length > 0) {
-    const category = prepareForSpeech(values.error.trim(), {limit: 80}).text
+  if (outcome !== 'ok' && typeof values.error === 'string' && stripLikePython(values.error) !== '') {
+    const category = prepareForSpeech(stripLikePython(values.error), {limit: 80}).text
     text += `（${category}）`
   }
   return prepareForSpeech(text, {limit: SPEECH_FINAL_LIMIT}).text
@@ -90,7 +91,7 @@ export function safeMemoryEvidence(item: MemoryItem): string | null {
 
   if (item.channel === CONVERSATION_CHANNEL) {
     const text = content.text
-    if (typeof text !== 'string' || text.trim().length === 0) return null
+    if (typeof text !== 'string' || stripLikePython(text) === '') return null
     return nonemptyPrepared(text)
   }
 
@@ -121,7 +122,9 @@ export function safeMemoryEvidence(item: MemoryItem): string | null {
     const value = content[key]
     let rendered: string | undefined
     if (typeof value === 'boolean') rendered = value ? 'true' : 'false'
-    else if (typeof value === 'string' || typeof value === 'number') rendered = String(value).trim()
+    else if (typeof value === 'string' || typeof value === 'number') {
+      rendered = stripLikePython(String(value))
+    }
     if (rendered !== undefined && rendered.length > 0) fields.push(`${key}=${rendered}`)
   }
   if (fields.length === 0) return null
@@ -177,7 +180,7 @@ function searchEvidence(content: Readonly<Record<string, JsonValue>>): string | 
 }
 
 function preparedScalar(value: unknown, limit: number): string {
-  if (typeof value !== 'string' || value.trim().length === 0) return ''
+  if (typeof value !== 'string' || stripLikePython(value) === '') return ''
   return prepareForSpeech(value, {limit}).text
 }
 

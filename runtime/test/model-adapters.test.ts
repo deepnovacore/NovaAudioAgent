@@ -229,3 +229,11 @@ test('the compressor trims its answer and sends the schema-free request', async 
   assert.equal(gateway.completions[0]?.jsonSchema, undefined)
   assert.equal(gateway.completions[0]?.prompt, '[]')
 })
+
+test('the compressor strips exactly the whitespace Python strips', async () => {
+  const compressor = new GatewayCompressor({
+    gateway: new ScriptedGateway([], '\u001c\u0085\ufeffsummary\ufeff\u0085\u001c'),
+    model: 'qwen-flash',
+  })
+  assert.equal(await compressor.compress([]), '\ufeffsummary\ufeff')
+})
