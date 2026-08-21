@@ -33,6 +33,8 @@ const EXPECTED_BUILD_SCRIPTS = [
   'scripts/utility-runtime-smoke.mjs',
   'scripts/packaged-runtime-import-smoke.cjs',
   'scripts/run-packaged-import-smoke.mjs',
+  'scripts/packaged-production-codex-smoke.cjs',
+  'scripts/run-packaged-codex-smoke.mjs',
   'scripts/inspect-package.mjs',
   'scripts/camera-file-integration.mjs',
   'scripts/camera-file-integration-contract.mjs',
@@ -262,6 +264,21 @@ test('the fixed sandbox probe is staged once outside ASAR for every platform', (
   assert.deepEqual(config.win.extraResources.filter(
     entry => String(entry.to).includes('codex-sandbox-probe'),
   ), [{from: 'build/native/codex-sandbox-probe.exe', to: 'native/codex-sandbox-probe.exe'}])
+})
+
+test('the Windows Job guardian is staged once only for Windows', () => {
+  assert.equal((config.extraResources ?? []).some(
+    entry => String(entry.to).includes('windows-job-guardian'),
+  ), false)
+  assert.equal((config.mac.extraResources ?? []).some(
+    entry => String(entry.to).includes('windows-job-guardian'),
+  ), false)
+  assert.equal((config.linux.extraResources ?? []).some(
+    entry => String(entry.to).includes('windows-job-guardian'),
+  ), false)
+  assert.deepEqual(config.win.extraResources.filter(
+    entry => String(entry.to).includes('windows-job-guardian'),
+  ), [{from: 'build/native/windows-job-guardian.exe', to: 'native/windows-job-guardian.exe'}])
 })
 
 test('the immutable endpointing capability assets are staged once at a fixed external path', () => {

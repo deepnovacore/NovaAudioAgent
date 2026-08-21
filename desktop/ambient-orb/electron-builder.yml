@@ -84,6 +84,8 @@ win:
   extraResources:
     - from: build/native/codex-sandbox-probe.exe
       to: native/codex-sandbox-probe.exe
+    - from: build/native/windows-job-guardian.exe
+      to: native/windows-job-guardian.exe
 
 nsis:
   oneClick: false
