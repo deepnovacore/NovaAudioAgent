@@ -5,7 +5,7 @@ import {canonicalJson} from '../src/canonical-json.js'
 import {buildDiagnosticReport, diagnosticReportSchema} from '../src/diagnostics.js'
 import {main} from '../src/cli.js'
 
-test('diagnostics are stable, offline, and treat unselected search as unavailable', async () => {
+test('diagnostics require the credential for the unconditionally assembled Search adapter', async () => {
   const environment = {
     NOVA_AUDIO_AGENT_BACKEND: 'node',
     NOVA_AUDIO_AGENT_MODEL_API_KEY: 'sentinel-model-secret',
@@ -15,18 +15,33 @@ test('diagnostics are stable, offline, and treat unselected search as unavailabl
   assert.deepEqual(report, {
     schema_version: 1,
     runtime: 'node',
-    ok: true,
+    ok: false,
     checks: [
       {id: 'node.version', status: 'pass', code: 'node_version_supported'},
       {id: 'configuration.retirement', status: 'pass', code: 'active_configuration'},
       {id: 'configuration.parse', status: 'pass', code: 'configuration_valid'},
       {id: 'provider.qwen', status: 'pass', code: 'qwen_configuration_valid'},
       {id: 'executors.contract', status: 'pass', code: 'executor_configuration_valid'},
-      {id: 'search.credential', status: 'unavailable', code: 'search_credential_missing'},
+      {id: 'search.credential', status: 'fail', code: 'search_credential_missing'},
       {id: 'camera.source', status: 'pass', code: 'camera_local_selected'},
     ],
   })
   assert.equal(canonicalJson(report).includes('sentinel'), false)
+})
+
+test('diagnostics pass the required Search check without probing Tavily', async () => {
+  const report = await buildDiagnosticReport({
+    environment: {
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-secret',
+      TAVILY_API_KEY: 'search-secret',
+    },
+    nodeVersion: 'v22.12.0',
+  })
+  assert.equal(report.ok, true)
+  assert.deepEqual(report.checks[5], {
+    id: 'search.credential', status: 'pass', code: 'search_credential_present',
+  })
+  assert.equal(canonicalJson(report).includes('secret'), false)
 })
 
 test('diagnostics fail only selected required provider configuration', async () => {
@@ -111,6 +126,7 @@ test('diagnose CLI emits one canonical line with exact exit behavior', async () 
   const environment = {
     NOVA_AUDIO_AGENT_BACKEND: 'node',
     NOVA_AUDIO_AGENT_MODEL_API_KEY: 'sentinel-secret',
+    TAVILY_API_KEY: 'sentinel-search-secret',
   }
   const expected = await buildDiagnosticReport({environment, nodeVersion: 'v22.12.0'})
   assert.equal(await main(['diagnose', '--json'], {

@@ -5,7 +5,7 @@
       "owner": "python",
       "path": "demos.json",
       "sha256": "075a1b0eff9f3b06848d4b8131ba4086a8d8dce00c4de49e8a7e5fe05a0c91b9",
-      "source": "/Users/fishwowater/sqxh/nova-audio-agent/.worktrees/node-typescript-runtime/scripts/product_fixture_oracle.py"
+      "source": "scripts/product_fixture_oracle.py"
     },
     {
       "owner": "python",
@@ -65,13 +65,13 @@
       "owner": "python",
       "path": "schema.json",
       "sha256": "6386dfb618655d1d03852ff6661f188071c12173d86205891e71ec3f001ddab5",
-      "source": "/Users/fishwowater/sqxh/nova-audio-agent/.worktrees/node-typescript-runtime/scripts/product_fixture_oracle.py"
+      "source": "scripts/product_fixture_oracle.py"
     },
     {
       "owner": "python",
       "path": "scorecard.json",
       "sha256": "16581de3329ca6a5316aeb5a00476499cf13b7d50f8795cbfca2a1d59643c650",
-      "source": "/Users/fishwowater/sqxh/nova-audio-agent/.worktrees/node-typescript-runtime/scripts/product_fixture_oracle.py"
+      "source": "scripts/product_fixture_oracle.py"
     },
     {
       "owner": "python",

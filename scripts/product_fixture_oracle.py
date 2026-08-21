@@ -270,7 +270,12 @@ def _build_tree(destination: Path) -> None:
     for relative in ("demos.json", "scorecard.json", "schema.json"):
         payload = (destination / relative).read_bytes()
         manifest_entries.append(
-            {"path": relative, "source": __file__, "owner": "python", "sha256": _sha256(payload)}
+            {
+                "path": relative,
+                "source": "scripts/product_fixture_oracle.py",
+                "owner": "python",
+                "sha256": _sha256(payload),
+            }
         )
     for path in sorted((destination / "demos" / "scenarios").rglob("*.json")):
         payload = path.read_bytes()

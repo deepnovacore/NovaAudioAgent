@@ -150,7 +150,7 @@ function executorCheck(settings: Settings): DiagnosticCheck {
 
 function searchCheck(settings: Settings): DiagnosticCheck {
   return stripLikePython(settings.tavily_api_key ?? '') === ''
-    ? check('search.credential', 'unavailable', 'search_credential_missing')
+    ? check('search.credential', 'fail', 'search_credential_missing')
     : check('search.credential', 'pass', 'search_credential_present')
 }
 
