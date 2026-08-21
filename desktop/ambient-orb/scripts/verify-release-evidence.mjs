@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { parseStrictJson } from './strict-json.mjs'
+
 export const RELEASE_GATE_IDS = Object.freeze([
   'repository_full',
   'package_inventory',
@@ -126,6 +128,10 @@ export function verifyCandidateLedger(ledger, {
     ) throw new ReleaseEvidenceError('artifact_invalid')
     artifacts.set(artifact.target, artifact.sha256)
   }
+  if (
+    artifacts.size !== ARTIFACT_TARGETS.size
+    || [...ARTIFACT_TARGETS].some(target => !artifacts.has(target))
+  ) throw new ReleaseEvidenceError('artifact_matrix_invalid')
 
   const records = new Map()
   for (const record of ledger.evidence) {
@@ -201,7 +207,7 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
     : null
   const run = ledgerPath === null
     ? Promise.reject(new ReleaseEvidenceError('usage_invalid'))
-    : readFile(ledgerPath, 'utf8').then(text => verifyCandidateLedger(JSON.parse(text)))
+    : readFile(ledgerPath, 'utf8').then(text => verifyCandidateLedger(parseStrictJson(text)))
   run.then(
     result => {
       process.stdout.write(`${JSON.stringify(result)}\n`)

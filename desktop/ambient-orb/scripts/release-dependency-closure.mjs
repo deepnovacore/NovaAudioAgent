@@ -4,12 +4,48 @@ import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { parseStrictJson } from './strict-json.mjs'
+
 const RUNTIME_PACKAGE = '@nova-audio-agent/runtime'
 const { satisfies: semverSatisfies } = createRequire(import.meta.url)('semver')
 const REQUIRED_RUNTIME_VERSIONS = Object.freeze({
   '@livekit/agents': '1.6.4',
   '@livekit/rtc-node': '0.13.33',
 })
+const CANONICAL_TARGETS = Object.freeze([
+  Object.freeze({
+    id: 'darwin-arm64', platform: 'darwin', architecture: 'arm64', libc: 'none',
+    installers: Object.freeze(['dmg', 'app']),
+    native_resources: Object.freeze([
+      'project_native_addon', 'codex_sandbox_probe', 'macos_voice_io',
+      'livekit_local_inference', 'livekit_rtc',
+    ]),
+  }),
+  Object.freeze({
+    id: 'darwin-x64', platform: 'darwin', architecture: 'x64', libc: 'none',
+    installers: Object.freeze(['dmg', 'app']),
+    native_resources: Object.freeze([
+      'project_native_addon', 'codex_sandbox_probe', 'macos_voice_io',
+      'livekit_local_inference', 'livekit_rtc',
+    ]),
+  }),
+  Object.freeze({
+    id: 'win32-x64', platform: 'win32', architecture: 'x64', libc: 'none',
+    installers: Object.freeze(['nsis']),
+    native_resources: Object.freeze([
+      'windows_job_guardian', 'project_native_addon', 'codex_sandbox_probe',
+      'livekit_local_inference', 'livekit_rtc',
+    ]),
+  }),
+  Object.freeze({
+    id: 'linux-x64-gnu', platform: 'linux', architecture: 'x64', libc: 'glibc',
+    installers: Object.freeze(['appimage', 'deb']),
+    native_resources: Object.freeze([
+      'project_native_addon', 'codex_sandbox_probe',
+      'livekit_local_inference', 'livekit_rtc',
+    ]),
+  }),
+])
 
 export class ReleaseDependencyError extends Error {
   constructor(code) {
@@ -35,7 +71,7 @@ export async function readReleaseTargets(path = resolve(
 )) {
   let parsed
   try {
-    parsed = JSON.parse(await readFile(path, 'utf8'))
+    parsed = parseStrictJson(await readFile(path, 'utf8'))
   } catch {
     throw new ReleaseDependencyError('target_manifest_invalid')
   }
@@ -47,7 +83,6 @@ export async function readReleaseTargets(path = resolve(
   if (parsed.electron.version !== '43.2.0' || parsed.electron.module_abi !== 148) {
     throw new ReleaseDependencyError('target_manifest_invalid')
   }
-  const ids = new Set()
   for (const target of parsed.targets) {
     exactKeys(target, [
       'id', 'platform', 'architecture', 'libc', 'installers', 'native_resources',
@@ -61,12 +96,11 @@ export async function readReleaseTargets(path = resolve(
       || target.installers.some(value => typeof value !== 'string')
       || !Array.isArray(target.native_resources)
       || target.native_resources.some(value => typeof value !== 'string')
-      || ids.has(target.id)
     ) throw new ReleaseDependencyError('target_manifest_invalid')
-    ids.add(target.id)
   }
-  const required = ['darwin-arm64', 'darwin-x64', 'win32-x64', 'linux-x64-gnu']
-  if (required.some(id => !ids.has(id))) throw new ReleaseDependencyError('target_manifest_invalid')
+  if (JSON.stringify(parsed.targets) !== JSON.stringify(CANONICAL_TARGETS)) {
+    throw new ReleaseDependencyError('target_manifest_invalid')
+  }
   return Object.freeze({
     schema_version: 1,
     electron: Object.freeze({ ...parsed.electron }),
@@ -154,7 +188,7 @@ export async function deriveLockedProductionClosure({
   if (!target) throw new ReleaseDependencyError('unsupported_target')
   let lock
   try {
-    lock = JSON.parse(await readFile(lockPath, 'utf8'))
+    lock = parseStrictJson(await readFile(lockPath, 'utf8'))
   } catch {
     throw new ReleaseDependencyError('lock_invalid')
   }

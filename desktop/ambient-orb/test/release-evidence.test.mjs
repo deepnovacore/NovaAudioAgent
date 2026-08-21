@@ -14,6 +14,17 @@ function artifact() {
   return { target: 'darwin-arm64:app', sha256: SHA_A }
 }
 
+const ARTIFACT_TARGETS = [
+  'darwin-arm64:app', 'darwin-arm64:dmg',
+  'darwin-x64:app', 'darwin-x64:dmg',
+  'win32-x64:nsis',
+  'linux-x64-gnu:appimage', 'linux-x64-gnu:deb',
+]
+
+function artifactMatrix() {
+  return ARTIFACT_TARGETS.map(target => ({ target, sha256: SHA_A }))
+}
+
 function evidence(gateId, overrides = {}) {
   const evidenceClass = gateId === 'repository_full'
     ? 'deterministic'
@@ -54,7 +65,7 @@ test('missing external evidence stays pending and cannot become a release claim'
     schema_version: 1,
     release_version: '0.1.0-rc.1',
     commit: '1'.repeat(40),
-    artifacts: [artifact()],
+    artifacts: artifactMatrix(),
     evidence: [],
   }, { now: NOW })
   assert.equal(result.status, 'pending')
@@ -62,13 +73,28 @@ test('missing external evidence stays pending and cannot become a release claim'
   assert.deepEqual(result.pending_gate_ids, [...RELEASE_GATE_IDS].sort())
 })
 
+test('a candidate ledger requires the exact closed artifact matrix', () => {
+  assert.throws(
+    () => verifyCandidateLedger({
+      schema_version: 1,
+      release_version: '0.1.0-rc.1',
+      commit: '1'.repeat(40),
+      artifacts: [artifact()],
+      evidence: [],
+    }, { now: NOW }),
+    error => error.code === 'artifact_matrix_invalid',
+  )
+})
+
 test('test trust can prove schema mechanics but production rejects the same unsigned ledger', () => {
-  const records = RELEASE_GATE_IDS.map(gateId => evidence(gateId))
+  const records = ARTIFACT_TARGETS.flatMap(target => RELEASE_GATE_IDS.map(gateId => evidence(gateId, {
+    target,
+  })))
   const ledger = {
     schema_version: 1,
     release_version: '0.1.0-rc.1',
     commit: '1'.repeat(40),
-    artifacts: [artifact()],
+    artifacts: artifactMatrix(),
     evidence: records,
   }
   const trusted = verifyCandidateLedger(ledger, {
@@ -89,7 +115,7 @@ test('cross-artifact and free-form evidence fail closed without leaking supplied
     schema_version: 1,
     release_version: '0.1.0-rc.1',
     commit: '1'.repeat(40),
-    artifacts: [artifact()],
+    artifacts: artifactMatrix(),
     evidence: [evidence('repository_full', { artifact_sha256: SHA_B })],
   }
   assert.throws(
