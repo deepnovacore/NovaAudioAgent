@@ -1,8 +1,9 @@
-import { chmod, rename, writeFile } from 'node:fs/promises'
+import { chmod, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { generateNativeResourceManifest, NativeResourceError } from './native-resource-contract.mjs'
+import { parseStrictJson } from './strict-json.mjs'
 
 function option(name) {
   const index = process.argv.indexOf(name)
@@ -14,9 +15,12 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
   const resourcesRoot = option('--resources-root')
   const targetId = option('--target')
   const output = option('--output')
-  const run = !resourcesRoot || !targetId || !output
+  const dependencyReportPath = option('--dependency-report')
+  const run = !resourcesRoot || !targetId || !output || !dependencyReportPath
     ? Promise.reject(new NativeResourceError('usage_invalid'))
-    : generateNativeResourceManifest({ resourcesRoot, targetId }).then(async manifest => {
+    : readFile(dependencyReportPath, 'utf8').then(parseStrictJson).then(dependencyReport => (
+      generateNativeResourceManifest({ resourcesRoot, targetId, dependencyReport })
+    )).then(async manifest => {
       const destination = resolve(output)
       const temporary = resolve(dirname(destination), '.native-resources-v1.json.tmp')
       await writeFile(temporary, `${JSON.stringify(manifest)}\n`, { encoding: 'utf8', mode: 0o600 })

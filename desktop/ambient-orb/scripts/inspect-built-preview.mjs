@@ -1,39 +1,80 @@
-import { lstat, readdir } from 'node:fs/promises'
+import { lstat, readdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { inspectAsarSnapshot, PackageInspectionError } from './inspect-package.mjs'
+import { inspectBuiltArtifact, PackageInspectionError } from './inspect-package.mjs'
 
+async function main() {
 const root = resolve(import.meta.dirname, '../dist')
 const targetId = process.platform === 'darwin'
   ? `darwin-${process.arch}`
   : process.platform === 'win32'
     ? `win32-${process.arch}`
     : `linux-${process.arch}-gnu`
-let archive
-if (process.platform === 'darwin') {
+const candidates = []
+  if (process.platform === 'darwin') {
   const applicationRoot = resolve(root, `mac-${process.arch}`)
   const applications = (await readdir(applicationRoot, { withFileTypes: true }))
     .filter(entry => entry.isDirectory() && entry.name.endsWith('.app'))
-  if (applications.length !== 1) throw new PackageInspectionError('produced application rejected')
-  archive = resolve(applicationRoot, applications[0].name, 'Contents/Resources/app.asar')
+    if (applications.length !== 1) throw new PackageInspectionError('produced application rejected')
+    candidates.push({ path: resolve(applicationRoot, applications[0].name), format: 'app' })
+    for (const entry of await readdir(root, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.dmg')) {
+        candidates.push({ path: resolve(root, entry.name), format: 'dmg' })
+      }
+    }
 } else {
-  const unpacked = process.platform === 'win32' ? 'win-unpacked' : 'linux-unpacked'
-  archive = resolve(root, unpacked, 'resources/app.asar')
+  const entries = await readdir(root, { withFileTypes: true })
+  if (process.platform === 'win32') {
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.exe')) {
+        candidates.push({ path: resolve(root, entry.name), format: 'nsis' })
+      }
+    }
+  } else {
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      if (entry.name.endsWith('.AppImage')) {
+        candidates.push({ path: resolve(root, entry.name), format: 'appimage' })
+      } else if (entry.name.endsWith('.deb')) {
+        candidates.push({ path: resolve(root, entry.name), format: 'deb' })
+      }
+    }
+  }
 }
-let status
-try {
-  status = await lstat(archive)
-} catch {
-  throw new PackageInspectionError('produced application unavailable')
+  const requireTargetMatrix = process.argv.length === 3
+    && process.argv[2] === '--require-target-matrix'
+  const expectedCount = process.platform === 'linux' || (process.platform === 'darwin' && requireTargetMatrix)
+    ? 2
+    : 1
+if (candidates.length !== expectedCount) {
+  throw new PackageInspectionError('produced candidate matrix rejected')
 }
-if (!status.isFile() || status.isSymbolicLink()) {
-  throw new PackageInspectionError('produced application rejected')
+const reports = []
+for (const candidate of candidates.sort((left, right) => (
+  left.format < right.format ? -1 : left.format > right.format ? 1 : 0
+))) {
+  const status = await lstat(candidate.path)
+  if (status.isSymbolicLink()) throw new PackageInspectionError('produced candidate rejected')
+  reports.push(await inspectBuiltArtifact(candidate.path, {
+    targetId,
+    format: candidate.format,
+  }))
 }
-const report = await inspectAsarSnapshot(archive, { targetId })
-process.stdout.write(`${JSON.stringify({
-  result_code: 'passed',
-  target: targetId,
-  asar_sha256: report.asar_sha256,
-  unpacked_sha256: report.unpacked_sha256,
-  file_count: report.file_count,
-})}\n`)
+  const result = Object.freeze({
+    schema_version: 1,
+    result_code: 'passed',
+    target: targetId,
+    artifacts: reports,
+  })
+  await writeFile(
+    resolve(root, `release-inspection-${targetId}.json`),
+    `${JSON.stringify(result)}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  )
+  process.stdout.write(`${JSON.stringify(result)}\n`)
+}
+
+main().catch(() => {
+  process.stderr.write('desktop package inspection rejected\n')
+  process.exitCode = 1
+})

@@ -1,14 +1,24 @@
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import { createRequire } from 'node:module'
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from 'node:fs/promises'
+import {
+  chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, readlink, realpath, rm, symlink,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, matchesGlob, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { extractAll, listPackage } from '@electron/asar'
+import { extractAll, getRawHeader, listPackage } from '@electron/asar'
 
-import { deriveLockedProductionClosure } from './release-dependency-closure.mjs'
+import {
+  deriveLockedProductionClosure,
+  readReleaseTargets,
+} from './release-dependency-closure.mjs'
+import {
+  NativeResourceError,
+  verifyNativeResourceManifest,
+} from './native-resource-contract.mjs'
 import { parseStrictJson } from './strict-json.mjs'
 
 const RUNTIME_PACKAGE = '@nova-audio-agent/runtime'
@@ -31,13 +41,22 @@ const MAX_INSPECTED_FILES = 10_000
 const MAX_ARTIFACT_LIST_BYTES = 4 * 1024 * 1024
 const MAX_ARTIFACT_MANIFEST_BYTES = 64 * 1024
 const MAX_ASAR_BYTES = 512 * 1024 * 1024
+const MAX_ASAR_HEADER_BYTES = 16 * 1024 * 1024
 const MAX_DEPENDENCY_FILE_BYTES = 256 * 1024 * 1024
+const MAX_CANDIDATE_BYTES = 2 * 1024 * 1024 * 1024
+const MAX_CANDIDATE_FILES = 50_000
+const MAX_CANDIDATE_DEPTH = 64
+const MAX_CANDIDATE_MILLISECONDS = 120_000
 
 export class PackageInspectionError extends Error {
   constructor(detail) {
     super(`desktop package contract rejected: ${detail}`)
     this.name = 'PackageInspectionError'
   }
+}
+
+function sameArray(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 function normalized(path) {
@@ -716,6 +735,7 @@ export async function assertArtifactDependencyReport(artifactRoot, closure) {
   ) {
     throw new PackageInspectionError('production dependency install key rejected')
   }
+  return parsed
 }
 
 async function copyAndHashHandle(source, destination, expectedSize) {
@@ -758,12 +778,121 @@ async function hashHandle(handle, expectedSize, label = 'ASAR snapshot') {
   return hash.digest('hex')
 }
 
+async function preflightAsarHeader(snapshot, archiveSize) {
+  let handle
+  try {
+    handle = await open(snapshot, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+    const prefix = Buffer.alloc(8)
+    const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0)
+    if (bytesRead !== prefix.length) throw new PackageInspectionError('ASAR header rejected')
+    const headerSize = prefix.readUInt32LE(4)
+    if (
+      prefix.readUInt32LE(0) !== 4
+      || headerSize <= 0
+      || headerSize > MAX_ASAR_HEADER_BYTES
+      || headerSize + 8 > archiveSize
+    ) throw new PackageInspectionError('ASAR header rejected')
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+
+  let raw
+  let header
+  try {
+    raw = getRawHeader(snapshot)
+    header = parseStrictJson(raw.headerString)
+  } catch {
+    throw new PackageInspectionError('ASAR header rejected')
+  }
+  if (
+    raw.headerSize <= 0
+    || raw.headerSize > MAX_ASAR_HEADER_BYTES
+    || !isPlainJsonObject(header)
+    || Object.keys(header).join('\0') !== 'files'
+    || !isPlainJsonObject(header.files)
+  ) throw new PackageInspectionError('ASAR header rejected')
+
+  const unpackedFiles = []
+  const packedRanges = []
+  let count = 0
+  let declaredBytes = 0
+  const visit = (files, prefix, depth, inheritedUnpacked = false) => {
+    if (depth > 32 || !isPlainJsonObject(files)) {
+      throw new PackageInspectionError('ASAR header rejected')
+    }
+    for (const [name, node] of Object.entries(files)) {
+      if (
+        name === ''
+        || name === '.'
+        || name === '..'
+        || name.includes('/')
+        || name.includes('\\')
+        || name.includes('\0')
+        || !isPlainJsonObject(node)
+      ) throw new PackageInspectionError('ASAR header rejected')
+      count += 1
+      if (count > MAX_INSPECTED_FILES) throw new PackageInspectionError('ASAR header rejected')
+      const path = prefix === '' ? name : `${prefix}/${name}`
+      if (node.link !== undefined) throw new PackageInspectionError('ASAR header rejected')
+      if (node.files !== undefined) {
+        const keys = Object.keys(node).sort().join('\0')
+        if (keys !== 'files' && keys !== 'files\0unpacked') {
+          throw new PackageInspectionError('ASAR header rejected')
+        }
+        if (node.unpacked !== undefined && node.unpacked !== true) {
+          throw new PackageInspectionError('ASAR header rejected')
+        }
+        visit(node.files, path, depth + 1, inheritedUnpacked || node.unpacked === true)
+        continue
+      }
+      const keys = Object.keys(node)
+      if (
+        !keys.includes('size')
+        || keys.some(key => !['size', 'offset', 'integrity', 'unpacked', 'executable'].includes(key))
+        || !Number.isSafeInteger(node.size)
+        || node.size < 0
+        || node.size > MAX_ASAR_BYTES
+        || (node.executable !== undefined && typeof node.executable !== 'boolean')
+      ) throw new PackageInspectionError('ASAR header rejected')
+      declaredBytes += node.size
+      if (declaredBytes > MAX_ASAR_BYTES) throw new PackageInspectionError('ASAR header rejected')
+      const unpacked = inheritedUnpacked || node.unpacked === true
+      if (unpacked) {
+        if (node.offset !== undefined || (node.unpacked !== undefined && node.unpacked !== true)) {
+          throw new PackageInspectionError('ASAR header rejected')
+        }
+        unpackedFiles.push(path)
+        continue
+      }
+      if (typeof node.offset !== 'string' || !/^(?:0|[1-9]\d*)$/u.test(node.offset)) {
+        throw new PackageInspectionError('ASAR header rejected')
+      }
+      const offset = Number(node.offset)
+      if (!Number.isSafeInteger(offset)) throw new PackageInspectionError('ASAR header rejected')
+      packedRanges.push({ offset, end: offset + node.size })
+    }
+  }
+  visit(header.files, '', 1)
+  const payloadBytes = archiveSize - 8 - raw.headerSize
+  packedRanges.sort((left, right) => left.offset - right.offset)
+  let priorEnd = 0
+  for (const range of packedRanges) {
+    if (range.offset < priorEnd || range.end > payloadBytes) {
+      throw new PackageInspectionError('ASAR header rejected')
+    }
+    priorEnd = range.end
+  }
+  return Object.freeze({ count, unpackedFiles: Object.freeze(unpackedFiles.sort()) })
+}
+
 async function snapshotUnpackedTree(sourceRoot, destinationRoot) {
   let rootStatus
   try {
     rootStatus = await lstat(sourceRoot)
   } catch (error) {
-    if (error?.code === 'ENOENT') return Object.freeze({ count: 0, sha256: null })
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({ count: 0, sha256: null, files: Object.freeze([]) })
+    }
     throw new PackageInspectionError('ASAR unpacked tree unavailable')
   }
   if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) {
@@ -820,12 +949,377 @@ async function snapshotUnpackedTree(sourceRoot, destinationRoot) {
   }
   await visit(sourceRoot, destinationRoot, '', 0)
   const sha256 = createHash('sha256').update(JSON.stringify(records)).digest('hex')
-  return Object.freeze({ count: records.length, sha256 })
+  return Object.freeze({
+    count: records.length,
+    sha256,
+    files: Object.freeze(records.map(record => record.path)),
+  })
+}
+
+function candidateDeadline() {
+  return Date.now() + MAX_CANDIDATE_MILLISECONDS
+}
+
+function assertCandidateDeadline(deadline) {
+  if (Date.now() > deadline) throw new PackageInspectionError('candidate snapshot timed out')
+}
+
+function assertSafeSymlink(relativePath, target) {
+  if (
+    typeof target !== 'string'
+    || target === ''
+    || target.includes('\0')
+    || target.includes('\\')
+    || target.startsWith('/')
+  ) throw new PackageInspectionError('candidate snapshot link rejected')
+  const sentinel = resolve('/candidate-snapshot')
+  const destination = resolve(sentinel, dirname(relativePath), target)
+  if (destination !== sentinel && !destination.startsWith(`${sentinel}/`)) {
+    throw new PackageInspectionError('candidate snapshot link rejected')
+  }
+}
+
+async function candidateTreeInventory(root, deadline) {
+  const records = []
+  let totalBytes = 0
+  const visit = async (directory, prefix, depth) => {
+    assertCandidateDeadline(deadline)
+    if (depth > MAX_CANDIDATE_DEPTH) {
+      throw new PackageInspectionError('candidate snapshot depth rejected')
+    }
+    let entries
+    try {
+      entries = await readdir(directory, { withFileTypes: true })
+    } catch {
+      throw new PackageInspectionError('candidate snapshot unavailable')
+    }
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
+    for (const entry of entries) {
+      const relativePath = validateRelativeFile(prefix === '' ? entry.name : `${prefix}/${entry.name}`)
+      const path = resolve(directory, entry.name)
+      if (entry.isDirectory()) {
+        records.push({ path: relativePath, type: 'directory' })
+        await visit(path, relativePath, depth + 1)
+      } else if (entry.isSymbolicLink()) {
+        const target = await readlink(path)
+        assertSafeSymlink(relativePath, target)
+        records.push({
+          path: relativePath,
+          type: 'link',
+          sha256: createHash('sha256').update(target).digest('hex'),
+        })
+      } else if (entry.isFile()) {
+        let handle
+        try {
+          handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+          const status = await handle.stat()
+          if (!status.isFile() || status.size < 0) {
+            throw new PackageInspectionError('candidate snapshot file rejected')
+          }
+          totalBytes += status.size
+          if (totalBytes > MAX_CANDIDATE_BYTES) {
+            throw new PackageInspectionError('candidate snapshot bytes rejected')
+          }
+          records.push({
+            path: relativePath,
+            type: 'file',
+            size: status.size,
+            sha256: await hashHandle(handle, status.size, 'candidate snapshot file'),
+          })
+        } finally {
+          await handle?.close().catch(() => {})
+        }
+      } else throw new PackageInspectionError('candidate snapshot entry rejected')
+      if (records.length > MAX_CANDIDATE_FILES) {
+        throw new PackageInspectionError('candidate snapshot entries rejected')
+      }
+    }
+  }
+  await visit(root, '', 0)
+  return Object.freeze({
+    records: Object.freeze(records),
+    sha256: createHash('sha256').update(JSON.stringify(records)).digest('hex'),
+  })
+}
+
+async function captureCandidateDirectory(sourceRoot, destinationRoot, deadline) {
+  const initial = await candidateTreeInventory(sourceRoot, deadline)
+  await mkdir(destinationRoot, { mode: 0o700 })
+  const copy = async (sourceDirectory, destinationDirectory, prefix, depth) => {
+    assertCandidateDeadline(deadline)
+    if (depth > MAX_CANDIDATE_DEPTH) {
+      throw new PackageInspectionError('candidate snapshot depth rejected')
+    }
+    const entries = await readdir(sourceDirectory, { withFileTypes: true })
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
+    for (const entry of entries) {
+      const relativePath = validateRelativeFile(prefix === '' ? entry.name : `${prefix}/${entry.name}`)
+      const sourcePath = resolve(sourceDirectory, entry.name)
+      const destinationPath = resolve(destinationDirectory, entry.name)
+      if (entry.isDirectory()) {
+        await mkdir(destinationPath, { mode: 0o700 })
+        await copy(sourcePath, destinationPath, relativePath, depth + 1)
+        await chmod(destinationPath, 0o500)
+      } else if (entry.isSymbolicLink()) {
+        const target = await readlink(sourcePath)
+        assertSafeSymlink(relativePath, target)
+        await symlink(target, destinationPath)
+      } else if (entry.isFile()) {
+        let source
+        try {
+          source = await open(sourcePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+          const before = await source.stat()
+          if (!before.isFile() || before.size < 0) {
+            throw new PackageInspectionError('candidate snapshot file rejected')
+          }
+          await copyAndHashHandle(source, destinationPath, before.size)
+          const after = await source.stat()
+          const pathAfter = await lstat(sourcePath)
+          if (
+            after.dev !== before.dev
+            || after.ino !== before.ino
+            || after.size !== before.size
+            || pathAfter.dev !== before.dev
+            || pathAfter.ino !== before.ino
+            || pathAfter.size !== before.size
+          ) throw new PackageInspectionError('candidate snapshot changed')
+        } finally {
+          await source?.close().catch(() => {})
+        }
+      } else throw new PackageInspectionError('candidate snapshot entry rejected')
+    }
+  }
+  await copy(sourceRoot, destinationRoot, '', 0)
+  await chmod(destinationRoot, 0o500)
+  const [sourceAfter, snapshot] = await Promise.all([
+    candidateTreeInventory(sourceRoot, deadline),
+    candidateTreeInventory(destinationRoot, deadline),
+  ])
+  if (
+    JSON.stringify(sourceAfter.records) !== JSON.stringify(initial.records)
+    || JSON.stringify(snapshot.records) !== JSON.stringify(initial.records)
+  ) throw new PackageInspectionError('candidate snapshot changed')
+  return snapshot
+}
+
+async function captureCandidateFile(sourcePath, destinationPath) {
+  let source
+  try {
+    source = await open(sourcePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+  } catch {
+    throw new PackageInspectionError('candidate artifact unavailable')
+  }
+  try {
+    const before = await source.stat()
+    if (!before.isFile() || before.size <= 0 || before.size > MAX_CANDIDATE_BYTES) {
+      throw new PackageInspectionError('candidate artifact rejected')
+    }
+    const sha256 = await copyAndHashHandle(source, destinationPath, before.size)
+    const after = await source.stat()
+    if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size) {
+      throw new PackageInspectionError('candidate artifact changed')
+    }
+    await chmod(destinationPath, 0o400)
+    return Object.freeze({ size: before.size, sha256 })
+  } finally {
+    await source?.close().catch(() => {})
+  }
+}
+
+function runExtractor(command, arguments_, workingDirectory) {
+  const result = spawnSync(command, arguments_, {
+    cwd: workingDirectory,
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    timeout: MAX_CANDIDATE_MILLISECONDS,
+    windowsHide: true,
+  })
+  if (result.status !== 0 || result.error) {
+    throw new PackageInspectionError('candidate container extraction rejected')
+  }
+}
+
+async function extractCandidateContainer(snapshot, format, privateRoot, deadline) {
+  const raw = resolve(privateRoot, 'container-raw')
+  const immutable = resolve(privateRoot, 'container-snapshot')
+  if (format === 'dmg') {
+    if (process.platform !== 'darwin') {
+      throw new PackageInspectionError('candidate container platform rejected')
+    }
+    const mount = resolve(privateRoot, 'mounted')
+    await mkdir(mount, { mode: 0o700 })
+    runExtractor('/usr/bin/hdiutil', [
+      'attach', snapshot, '-readonly', '-nobrowse', '-mountpoint', mount,
+    ], privateRoot)
+    try {
+      const identity = await captureCandidateDirectory(mount, immutable, deadline)
+      return Object.freeze({ root: immutable, identity })
+    } finally {
+      runExtractor('/usr/bin/hdiutil', ['detach', mount, '-force'], privateRoot)
+    }
+  }
+  await mkdir(raw, { mode: 0o700 })
+  if (format === 'deb') {
+    if (process.platform !== 'linux') {
+      throw new PackageInspectionError('candidate container platform rejected')
+    }
+    runExtractor('/usr/bin/dpkg-deb', ['--extract', snapshot, raw], privateRoot)
+  } else {
+    let path7za
+    try {
+      path7za = createRequire(import.meta.url)('7zip-bin').path7za
+    } catch {
+      throw new PackageInspectionError('candidate container extractor unavailable')
+    }
+    runExtractor(path7za, ['x', snapshot, `-o${raw}`, '-y'], privateRoot)
+  }
+  const identity = await captureCandidateDirectory(raw, immutable, deadline)
+  return Object.freeze({ root: immutable, identity })
+}
+
+async function locateApplicationResources(applicationRoot, targetId, deadline) {
+  const inventory = await candidateTreeInventory(applicationRoot, deadline)
+  const expectedSuffix = targetId.startsWith('darwin-')
+    ? 'Contents/Resources/app.asar'
+    : 'resources/app.asar'
+  const archives = inventory.records.filter(record => (
+    record.type === 'file'
+    && (record.path === expectedSuffix || record.path.endsWith(`/${expectedSuffix}`))
+  ))
+  const everyAsar = inventory.records.filter(record => (
+    record.type === 'file' && basename(record.path) === 'app.asar'
+  ))
+  if (archives.length !== 1 || everyAsar.length !== 1) {
+    throw new PackageInspectionError('candidate application resource tree rejected')
+  }
+  return resolve(applicationRoot, dirname(archives[0].path))
+}
+
+async function requireNativeManifest(resourcesRoot) {
+  try {
+    const status = await lstat(resolve(resourcesRoot, 'native-resources-v1.json'))
+    if (!status.isFile() || status.isSymbolicLink()) throw new Error('invalid')
+  } catch {
+    throw new PackageInspectionError('native resource manifest missing')
+  }
+}
+
+async function makePrivateTreeRemovable(root) {
+  let entries
+  try {
+    entries = await readdir(root, { withFileTypes: true })
+  } catch (error) {
+    if (error?.code === 'ENOENT') return
+    throw new PackageInspectionError('private candidate cleanup failed')
+  }
+  await chmod(root, 0o700)
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue
+    await makePrivateTreeRemovable(resolve(root, entry.name))
+  }
+}
+
+export async function inspectBuiltArtifact(candidatePath, {
+  targetId,
+  format,
+  lockPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../package-lock.json'),
+} = {}) {
+  const targets = await readReleaseTargets()
+  const target = targets.targets.find(value => value.id === targetId)
+  if (!target || !target.installers.includes(format)) {
+    throw new PackageInspectionError('candidate target or format rejected')
+  }
+  const deadline = candidateDeadline()
+  const privateRoot = await mkdtemp(resolve(tmpdir(), 'nova-release-candidate-'))
+  let snapshotRoot
+  let snapshotIdentity
+  let artifactIdentity
+  let fileSnapshot
+  try {
+    let status
+    try {
+      status = await lstat(candidatePath)
+    } catch {
+      throw new PackageInspectionError('candidate artifact unavailable')
+    }
+    if (format === 'app') {
+      if (!status.isDirectory() || status.isSymbolicLink()) {
+        throw new PackageInspectionError('candidate application rejected')
+      }
+      snapshotRoot = resolve(privateRoot, 'application-snapshot')
+      artifactIdentity = await captureCandidateDirectory(candidatePath, snapshotRoot, deadline)
+      snapshotIdentity = artifactIdentity
+    } else {
+      if (!status.isFile() || status.isSymbolicLink()) {
+        throw new PackageInspectionError('candidate installer rejected')
+      }
+      const expectedExtension = format === 'dmg' ? '.dmg'
+        : format === 'nsis' ? '.exe'
+          : format === 'appimage' ? '.AppImage' : '.deb'
+      if (!candidatePath.endsWith(expectedExtension)) {
+        throw new PackageInspectionError('candidate installer format rejected')
+      }
+      fileSnapshot = resolve(privateRoot, `candidate${expectedExtension}`)
+      artifactIdentity = await captureCandidateFile(candidatePath, fileSnapshot)
+      const container = await extractCandidateContainer(fileSnapshot, format, privateRoot, deadline)
+      snapshotRoot = container.root
+      snapshotIdentity = container.identity
+    }
+    const resourcesRoot = await locateApplicationResources(snapshotRoot, targetId, deadline)
+    await requireNativeManifest(resourcesRoot)
+    const report = await inspectAsarSnapshot(resolve(resourcesRoot, 'app.asar'), {
+      targetId,
+      lockPath,
+      resourcesRoot,
+      requireNative: true,
+    })
+    const snapshotAfter = await candidateTreeInventory(snapshotRoot, deadline)
+    if (snapshotAfter.sha256 !== snapshotIdentity.sha256) {
+      throw new PackageInspectionError('candidate snapshot changed')
+    }
+    if (format !== 'app') {
+      const handle = await open(fileSnapshot, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+      try {
+        if (await hashHandle(handle, artifactIdentity.size, 'candidate artifact') !== artifactIdentity.sha256) {
+          throw new PackageInspectionError('candidate artifact changed')
+        }
+      } finally {
+        await handle.close().catch(() => {})
+      }
+    }
+    return Object.freeze({
+      schema_version: 1,
+      result_code: 'passed',
+      target: targetId,
+      format,
+      artifact_sha256: artifactIdentity.sha256,
+      asar_sha256: report.asar_sha256,
+      unpacked_sha256: report.unpacked_sha256,
+      file_count: report.file_count,
+      native_resource_count: report.native_resource_count,
+      dependency_report_sha256: report.dependency_report_sha256,
+      dependency_identities: report.dependency_identities,
+      native_manifest_sha256: report.native_manifest_sha256,
+      native_resources: report.native_resources,
+    })
+  } finally {
+    await makePrivateTreeRemovable(privateRoot)
+    await rm(privateRoot, { recursive: true, force: true })
+    try {
+      await lstat(privateRoot)
+      throw new PackageInspectionError('private candidate cleanup failed')
+    } catch (error) {
+      if (error instanceof PackageInspectionError) throw error
+      if (error?.code !== 'ENOENT') throw new PackageInspectionError('private candidate cleanup failed')
+    }
+  }
 }
 
 export async function inspectAsarSnapshot(archivePath, {
   targetId,
   lockPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../package-lock.json'),
+  resourcesRoot,
+  requireNative = false,
 } = {}) {
   if (typeof archivePath !== 'string' || archivePath === '' || basename(archivePath) === '') {
     throw new PackageInspectionError('ASAR artifact required')
@@ -852,13 +1346,19 @@ export async function inspectAsarSnapshot(archivePath, {
     await source.close()
     source = undefined
     await chmod(snapshot, 0o400)
+    const header = await preflightAsarHeader(snapshot, before.size)
     const unpacked = await snapshotUnpackedTree(`${archivePath}.unpacked`, `${snapshot}.unpacked`)
+    if (!sameArray(header.unpackedFiles, unpacked.files)) {
+      throw new PackageInspectionError('ASAR unpacked tree rejected')
+    }
 
     let listed
     try {
       listed = listPackage(snapshot)
+      if (listed.length !== header.count) throw new PackageInspectionError('ASAR header rejected')
       extractAll(snapshot, extracted)
-    } catch {
+    } catch (error) {
+      if (error instanceof PackageInspectionError) throw error
       throw new PackageInspectionError('ASAR snapshot rejected')
     }
     const snapshotHandle = await open(snapshot, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
@@ -874,12 +1374,32 @@ export async function inspectAsarSnapshot(archivePath, {
     }
     if (verifiedHash !== asarSha256) throw new PackageInspectionError('ASAR snapshot changed')
     let selectedPackages = []
+    let dependencyReport
+    let nativeResourceCount = 0
+    let nativeManifestSha256 = null
+    let nativeResources = []
     if (targetId !== undefined) {
       const closure = await deriveLockedProductionClosure({ lockPath, targetId })
-      await assertArtifactDependencyReport(extracted, closure)
+      dependencyReport = await assertArtifactDependencyReport(extracted, closure)
       selectedPackages = closure.packages.map(value => `${value.name}@${value.version}`)
     }
     const inspected = await inspectListedArtifactRoot(listed, extracted, { selectedPackages })
+    if (requireNative) {
+      if (typeof resourcesRoot !== 'string' || resourcesRoot === '') {
+        throw new PackageInspectionError('native resource root required')
+      }
+      try {
+        const native = await verifyNativeResourceManifest({ resourcesRoot, targetId, dependencyReport })
+        nativeResourceCount = native.resource_count
+        nativeManifestSha256 = native.manifest_sha256
+        nativeResources = native.resources
+      } catch (error) {
+        if (error instanceof NativeResourceError) {
+          throw new PackageInspectionError(error.code.replaceAll('_', ' '))
+        }
+        throw error
+      }
+    }
     return Object.freeze({
       asar_sha256: asarSha256,
       cameraIncluded: inspected.cameraIncluded,
@@ -887,6 +1407,20 @@ export async function inspectAsarSnapshot(archivePath, {
       file_count: inspected.includedFiles.length,
       unpacked_file_count: unpacked.count,
       unpacked_sha256: unpacked.sha256,
+      native_resource_count: nativeResourceCount,
+      native_manifest_sha256: nativeManifestSha256,
+      native_resources: nativeResources,
+      dependency_report_sha256: dependencyReport === undefined
+        ? null
+        : createHash('sha256').update(JSON.stringify(dependencyReport)).digest('hex'),
+      dependency_identities: dependencyReport === undefined
+        ? Object.freeze([])
+        : Object.freeze(dependencyReport.packages.map(record => Object.freeze({
+          install_key: record.install_key,
+          name: record.name,
+          version: record.version,
+          content_sha256: record.content_sha256,
+        }))),
       productionDependencies: inspected.productionDependencies,
     })
   } finally {
@@ -906,10 +1440,14 @@ const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''
 if (invokedPath === fileURLToPath(import.meta.url)) {
   const run = process.argv.length === 2
     ? inspectConfiguredPackage()
-    : process.argv.length === 6
-      && process.argv[2] === '--asar'
+    : process.argv.length === 8
+      && process.argv[2] === '--artifact'
       && process.argv[4] === '--target'
-      ? inspectAsarSnapshot(process.argv[3], { targetId: process.argv[5] })
+      && process.argv[6] === '--format'
+      ? inspectBuiltArtifact(process.argv[3], {
+        targetId: process.argv[5],
+        format: process.argv[7],
+      })
     : Promise.reject(new PackageInspectionError(
       'release inspection requires one produced artifact',
     ))

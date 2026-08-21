@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import test from 'node:test'
 
-import { createPackage, extractAll, listPackage } from '@electron/asar'
+import { createPackage, createPackageWithOptions, extractAll, listPackage } from '@electron/asar'
 
 import * as packageInspection from '../scripts/inspect-package.mjs'
+import { generateNativeResourceManifest } from '../scripts/native-resource-contract.mjs'
+import { deriveLockedProductionClosure } from '../scripts/release-dependency-closure.mjs'
 
 const {
   PackageInspectionError,
@@ -457,6 +459,19 @@ test('release inspection cannot cross-pair an ASAR listing with a different extr
   }
 })
 
+test('built candidate CLI emits only a stable bounded rejection', () => {
+  const command = spawnSync(process.execPath, [
+    resolve(import.meta.dirname, '../scripts/inspect-built-preview.mjs'),
+  ], {
+    cwd: resolve(import.meta.dirname, '..'),
+    encoding: 'utf8',
+    timeout: 30_000,
+  })
+  assert.notEqual(command.status, 0)
+  assert.equal(command.stderr, 'desktop package inspection rejected\n')
+  assert.doesNotMatch(command.stderr, /node-typescript-runtime|nova-release-candidate|at async/u)
+})
+
 test('owned ASAR inspection hashes, lists, and extracts one private snapshot', async () => {
   assert.equal(typeof packageInspection.inspectAsarSnapshot, 'function')
   const root = await mkdtemp(resolve(tmpdir(), 'nova-package-owned-asar-'))
@@ -474,6 +489,189 @@ test('owned ASAR inspection hashes, lists, and extracts one private snapshot', a
     await createPackage(source, resolve(root, 'changed.asar'))
     const changed = await packageInspection.inspectAsarSnapshot(resolve(root, 'changed.asar'))
     assert.notEqual(changed.asar_sha256, first.asar_sha256)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('owned ASAR inspection rejects excessive header depth before extraction', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-package-deep-asar-'))
+  const source = resolve(root, 'source')
+  const archive = resolve(root, 'deep.asar')
+  try {
+    await writeArtifactRoot(source)
+    let directory = source
+    for (let depth = 0; depth < 34; depth += 1) directory = resolve(directory, `d${depth}`)
+    await mkdir(directory, { recursive: true })
+    await writeFile(resolve(directory, 'payload.js'), 'export {}\n', 'utf8')
+    await createPackage(source, archive)
+    await assert.rejects(
+      packageInspection.inspectAsarSnapshot(archive),
+      error => error instanceof PackageInspectionError && /ASAR header rejected/u.test(error.message),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('release candidate inspection owns the complete application snapshot and requires native manifest', async () => {
+  assert.equal(typeof packageInspection.inspectBuiltArtifact, 'function')
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-package-candidate-'))
+  const source = resolve(root, 'source')
+  const application = resolve(root, 'Candidate.app')
+  const resources = resolve(application, 'Contents/Resources')
+  try {
+    await writeArtifactRoot(source)
+    await mkdir(resources, { recursive: true })
+    await createPackage(source, resolve(resources, 'app.asar'))
+    await assert.rejects(
+      packageInspection.inspectBuiltArtifact(application, {
+        targetId: 'darwin-arm64',
+        format: 'app',
+      }),
+      error => (
+        error instanceof PackageInspectionError
+        && /native resource manifest missing/u.test(error.message)
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('release candidate report binds artifact SHA and rejects an external resource swap', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-package-candidate-complete-'))
+  const source = resolve(root, 'source')
+  const application = resolve(root, 'Candidate.app')
+  const resources = resolve(application, 'Contents/Resources')
+  const lockPath = resolve(root, 'package-lock.json')
+  const fakeMach = kind => {
+    const body = Buffer.alloc(64)
+    body.writeUInt32LE(0xfeedfacf, 0)
+    body.writeUInt32LE(0x0100000c, 4)
+    body.writeUInt32LE(kind === 'executable' ? 2 : 8, 12)
+    return body
+  }
+  try {
+    await writeArtifactRoot(source)
+    const packageFiles = new Map([
+      ['node_modules/@livekit/local-inference/package.json', JSON.stringify({
+        name: '@livekit/local-inference', version: '0.2.7',
+      })],
+      ['node_modules/@livekit/local-inference-darwin-arm64/package.json', JSON.stringify({
+        name: '@livekit/local-inference-darwin-arm64', version: '0.2.7',
+      })],
+      [
+        'node_modules/@livekit/local-inference-darwin-arm64/local-inference.darwin-arm64.node',
+        fakeMach('node_addon'),
+      ],
+      ['node_modules/@livekit/rtc-ffi-bindings/package.json', JSON.stringify({
+        name: '@livekit/rtc-ffi-bindings', version: '0.13.33',
+      })],
+      ['node_modules/@livekit/rtc-ffi-bindings-darwin-arm64/package.json', JSON.stringify({
+        name: '@livekit/rtc-ffi-bindings-darwin-arm64', version: '0.13.33',
+      })],
+      [
+        'node_modules/@livekit/rtc-ffi-bindings-darwin-arm64/rtc-node.darwin-arm64.node',
+        fakeMach('node_addon'),
+      ],
+    ])
+    for (const [path, body] of packageFiles) {
+      const destination = resolve(source, path)
+      await mkdir(dirname(destination), { recursive: true })
+      await writeFile(destination, body)
+    }
+    const lock = {
+      lockfileVersion: 3,
+      packages: {
+        'desktop/ambient-orb': {
+          name: '@nova-audio-agent/ambient-orb',
+          dependencies: { '@nova-audio-agent/runtime': '0.1.0' },
+        },
+        'node_modules/@nova-audio-agent/runtime': { link: true, resolved: 'node/runtime' },
+        'node/runtime': {
+          name: '@nova-audio-agent/runtime', version: '0.1.0',
+          dependencies: {
+            '@livekit/agents': '1.6.4', '@livekit/rtc-node': '0.13.33',
+            ws: '8.21.3', zod: '4.4.3',
+          },
+        },
+        'node_modules/@livekit/agents': {
+          version: '1.6.4', dependencies: { '@livekit/local-inference': '0.2.7' },
+        },
+        'node_modules/@livekit/local-inference': {
+          version: '0.2.7',
+          optionalDependencies: { '@livekit/local-inference-darwin-arm64': '0.2.7' },
+        },
+        'node_modules/@livekit/local-inference-darwin-arm64': {
+          version: '0.2.7', os: ['darwin'], cpu: ['arm64'],
+        },
+        'node_modules/@livekit/rtc-node': {
+          version: '0.13.33', dependencies: { '@livekit/rtc-ffi-bindings': '0.13.33' },
+        },
+        'node_modules/@livekit/rtc-ffi-bindings': {
+          version: '0.13.33',
+          optionalDependencies: { '@livekit/rtc-ffi-bindings-darwin-arm64': '0.13.33' },
+        },
+        'node_modules/@livekit/rtc-ffi-bindings-darwin-arm64': {
+          version: '0.13.33', os: ['darwin'], cpu: ['arm64'],
+        },
+        'node_modules/ws': { version: '8.21.3' },
+        'node_modules/zod': { version: '4.4.3' },
+      },
+    }
+    await writeFile(lockPath, JSON.stringify(lock), 'utf8')
+    const closure = await deriveLockedProductionClosure({ lockPath, targetId: 'darwin-arm64' })
+    const dependencyReport = await packageInspection.buildDependencyReport(source, closure)
+    await mkdir(resolve(source, 'build/release'), { recursive: true })
+    await writeFile(
+      resolve(source, 'build/release/production-dependencies-v1.json'),
+      JSON.stringify(dependencyReport),
+      'utf8',
+    )
+    await mkdir(resources, { recursive: true })
+    await createPackageWithOptions(source, resolve(resources, 'app.asar'), {
+      unpack: '**/*.node',
+    })
+    const external = new Map([
+      ['native/project-native/nova_project_native.node', fakeMach('node_addon')],
+      ['native/codex-sandbox-probe', fakeMach('executable')],
+      ['native/macos_voice_io', fakeMach('executable')],
+    ])
+    for (const [path, body] of external) {
+      const destination = resolve(resources, path)
+      await mkdir(dirname(destination), { recursive: true })
+      await writeFile(destination, body)
+    }
+    const nativeManifest = await generateNativeResourceManifest({
+      resourcesRoot: resources,
+      targetId: 'darwin-arm64',
+      dependencyReport,
+    })
+    await writeFile(
+      resolve(resources, 'native-resources-v1.json'),
+      JSON.stringify(nativeManifest),
+      'utf8',
+    )
+    const report = await packageInspection.inspectBuiltArtifact(application, {
+      targetId: 'darwin-arm64',
+      format: 'app',
+      lockPath,
+    })
+    assert.match(report.artifact_sha256, /^[0-9a-f]{64}$/u)
+    assert.equal(report.native_resource_count, 5)
+
+    await writeFile(resolve(resources, 'native/codex-sandbox-probe'), fakeMach('executable'))
+    await writeFile(resolve(resources, 'native/codex-sandbox-probe'), Buffer.concat([
+      fakeMach('executable'), Buffer.from('changed'),
+    ]))
+    await assert.rejects(
+      packageInspection.inspectBuiltArtifact(application, {
+        targetId: 'darwin-arm64', format: 'app', lockPath,
+      }),
+      PackageInspectionError,
+      'external bytes cannot be swapped behind an old manifest',
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }

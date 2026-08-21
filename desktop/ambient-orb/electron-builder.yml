@@ -3,6 +3,7 @@ productName: Nova Audio Agent Ambient Orb
 electronVersion: 43.2.0
 asar: true
 npmRebuild: false
+afterPack: scripts/after-pack.cjs
 
 directories:
   output: dist

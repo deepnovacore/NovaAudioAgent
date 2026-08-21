@@ -14,10 +14,10 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            package_script: package:mac
+            package_script: package:mac:candidate
             artifact_name: candidate-darwin-arm64
           - os: macos-13
-            package_script: package:mac
+            package_script: package:mac:candidate
             artifact_name: candidate-darwin-x64
           - os: windows-latest
             package_script: package:win
@@ -39,7 +39,7 @@ jobs:
       - run: npm run test:runtime
       - run: npm run test:desktop
       - run: npm run ${{ matrix.package_script }}
-      - run: npm run inspect:package --workspace @nova-audio-agent/ambient-orb
+      - run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
