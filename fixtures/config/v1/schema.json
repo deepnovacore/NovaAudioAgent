@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "Nova configuration fixture v1",
+  "type": "object"
+}

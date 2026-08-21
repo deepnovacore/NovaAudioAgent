@@ -91,11 +91,11 @@ test('selected Codex settings preserve the established host environment defaults
   })
 })
 
-test('Codex working interval uses Python whitespace and keeps both inclusive bounds', () => {
-  assert.equal(loadSettings({
+test('Codex working interval follows Pydantic numeric whitespace and keeps both bounds', () => {
+  assert.throws(() => loadSettings({
     NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
     NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: '\u001c5\u0085',
-  }).codex_working_interval, 5)
+  }), /CODEX_WORKING_INTERVAL/u)
   assert.equal(loadSettings({
     NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
     NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: '600',
@@ -132,6 +132,99 @@ test('retired executors return explicit removal errors', () => {
   assert.throws(
     () => loadSettings({NOVA_AUDIO_AGENT_EXECUTORS: 'codex,autoglm'}),
     /was removed/u,
+  )
+})
+
+test('retired executor selection wins, is case-insensitive, and preserves configured order', () => {
+  for (const [environment, capability] of [
+    [{NOVA_AUDIO_AGENT_EXECUTOR: ' HA '}, 'ha'],
+    [{NOVA_AUDIO_AGENT_EXECUTOR: 'AutoGLM'}, 'autoglm'],
+    [{NOVA_AUDIO_AGENT_EXECUTORS: 'codex, AutoGLM , HA'}, 'autoglm'],
+    [{NOVA_AUDIO_AGENT_EXECUTORS: 'fast_sim,HA,autoglm'}, 'ha'],
+  ] as const) {
+    assert.throws(
+      () => loadSettings(environment),
+      error => {
+        const projected = error as ConfigurationError & {
+          readonly code?: string
+          readonly fields?: readonly string[]
+        }
+        return projected instanceof ConfigurationError
+          && projected.code === 'retired_capability'
+          && projected.message === `executor '${capability}' was removed from the Node runtime`
+          && projected.fields === undefined
+      },
+    )
+  }
+})
+
+test('nonempty retired configuration fails safely while Python whitespace stays inert', () => {
+  const retired = [
+    ['NOVA_AUDIO_AGENT_HA_URL', 'ha'],
+    ['NOVA_AUDIO_AGENT_HA_TOKEN', 'ha'],
+    ['NOVA_AUDIO_AGENT_HA_ENTITY_ID', 'ha'],
+    ['NOVA_AUDIO_AGENT_AUTOGLM_REPO', 'autoglm'],
+    ['NOVA_AUDIO_AGENT_AUTOGLM_PYTHON', 'autoglm'],
+    ['NOVA_AUDIO_AGENT_AUTOGLM_BASE_URL', 'autoglm'],
+    ['NOVA_AUDIO_AGENT_AUTOGLM_MODEL', 'autoglm'],
+    ['NOVA_AUDIO_AGENT_AUTOGLM_API_KEY', 'autoglm'],
+    ['NOVA_AUDIO_AGENT_AUTOGLM_WDA_URL', 'autoglm'],
+    ['NOVA_AUDIO_AGENT_AUTOGLM_DEVICE_ID', 'autoglm'],
+  ] as const
+  for (const [field, capability] of retired) {
+    assert.doesNotThrow(() => loadSettings({[field]: '\u001c\u0085'}))
+    assert.throws(
+      () => loadSettings({[field]: '\ufeffsentinel-secret-path-url-device'}),
+      error => {
+        const projected = error as ConfigurationError & {
+          readonly code?: string
+          readonly fields?: readonly string[]
+        }
+        return projected instanceof ConfigurationError
+          && projected.code === 'retired_configuration'
+          && projected.message
+            === `retired capability '${capability}' configuration is not supported: ${field}`
+          && Object.isFrozen(projected.fields)
+          && projected.fields?.length === 1
+          && projected.fields[0] === field
+          && !projected.message.includes('sentinel')
+      },
+    )
+  }
+})
+
+test('retired configuration fields use canonical code-point order and selector precedence', () => {
+  assert.throws(
+    () => loadSettings({
+      NOVA_AUDIO_AGENT_AUTOGLM_WDA_URL: 'sentinel-url',
+      NOVA_AUDIO_AGENT_AUTOGLM_API_KEY: 'sentinel-secret',
+    }),
+    error => {
+      const projected = error as ConfigurationError & {
+        readonly code?: string
+        readonly fields?: readonly string[]
+      }
+      return projected instanceof ConfigurationError
+        && projected.code === 'retired_configuration'
+        && projected.fields?.join(',')
+          === 'NOVA_AUDIO_AGENT_AUTOGLM_API_KEY,NOVA_AUDIO_AGENT_AUTOGLM_WDA_URL'
+    },
+  )
+  assert.throws(
+    () => loadSettings({
+      NOVA_AUDIO_AGENT_EXECUTOR: 'HA',
+      NOVA_AUDIO_AGENT_HA_TOKEN: 'sentinel-secret',
+    }),
+    error => {
+      const projected = error as ConfigurationError & {
+        readonly code?: string
+        readonly fields?: readonly string[]
+      }
+      return projected instanceof ConfigurationError
+        && projected.code === 'retired_capability'
+        && projected.fields === undefined
+        && !projected.message.includes('sentinel')
+    },
   )
 })
 

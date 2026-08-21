@@ -4,6 +4,7 @@ import { readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { canonicalJson } from './canonical-json.js'
+import {buildDiagnosticReport} from './diagnostics.js'
 import { loadRuntimeFixture, type RuntimeFixture } from './fixtures.js'
 import { runRuntimeFixture } from './fixture-host.js'
 import { fixtureManifestRegistry } from './sim.js'
@@ -47,7 +48,12 @@ export async function runDeterministicDemo(
 
 export async function main(
   args: readonly string[],
-  options: {readonly cwd?: string; readonly io?: CliIo} = {},
+  options: {
+    readonly cwd?: string
+    readonly io?: CliIo
+    readonly environment?: NodeJS.ProcessEnv
+    readonly nodeVersion?: string
+  } = {},
 ): Promise<number> {
   const cwd = options.cwd ?? resolve(import.meta.dirname, '../../..')
   const io = options.io ?? {write: text => process.stdout.write(text)}
@@ -58,13 +64,21 @@ export async function main(
     io.write(`Node fixture parity passed: ${count} scenario(s)\n`)
     return 0
   }
+  if (command === 'diagnose' && subcommand === '--json' && args.length === 2) {
+    const report = await buildDiagnosticReport({
+      environment: options.environment ?? process.env,
+      nodeVersion: options.nodeVersion ?? process.version,
+    })
+    io.write(`${canonicalJson(report)}\n`)
+    return report.ok ? 0 : 1
+  }
   if (command === 'demo' && args.length <= 2) {
     const scenario = subcommand ?? 'async-delegate-after-user'
     const snapshot = await runDeterministicDemo(fixtureRoot, scenario)
     io.write(`${canonicalJson(snapshot)}\n`)
     return 0
   }
-  io.write('Usage: nova-audio-agent-node fixture check | demo [scenario]\n')
+  io.write('Usage: nova-audio-agent-node fixture check | demo [scenario] | diagnose --json\n')
   return 2
 }
 

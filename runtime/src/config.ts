@@ -1,12 +1,13 @@
 import { z } from 'zod'
 import { stripLikePython } from './python-text.js'
+import {findRetiredConfiguration} from './environment-contract.js'
 
 const backendSchema = z.enum(['python', 'node'])
 export const proactivityPresetSchema = z.enum(['conservative', 'balanced', 'eager'])
 const realtimeProviderSchema = z.enum(['qwen', 'volcengine'])
 const qwenGuardHistoryRecoverySchema = z.enum(['none', 'packed'])
 const qwenGuardHistoryPairsSchema = z.union([z.literal(1), z.literal(2), z.literal(4)])
-const executorNameSchema = z.enum(['fast_sim', 'slow_sim', 'codex', 'ha', 'autoglm'])
+const executorNameSchema = z.enum(['fast_sim', 'slow_sim', 'codex'])
 const volcFloatSchema = z.custom<number>(value => typeof value === 'number')
 
 export const settingsSchema = z.object({
@@ -14,10 +15,10 @@ export const settingsSchema = z.object({
   model_base_url: z.url().default('https://dashscope.aliyuncs.com/compatible-mode/v1'),
   model_api_key: z.string().nullable().default(null),
   tavily_api_key: z.string().nullable().default(null),
-  fast_model: z.string().min(1).default('qwen3-vl-plus'),
-  watch_model: z.string().min(1).nullable().default(null),
-  surrogate_model: z.string().min(1).default('qwen-flash'),
-  compressor_model: z.string().min(1).default('qwen-flash'),
+  fast_model: z.string().default('qwen3-vl-plus'),
+  watch_model: z.string().nullable().default(null),
+  surrogate_model: z.string().default('qwen-flash'),
+  compressor_model: z.string().default('qwen-flash'),
   realtime_provider: realtimeProviderSchema.default('qwen'),
   qwen_realtime_url: z.string().default('wss://dashscope.aliyuncs.com/api-ws/v1/realtime'),
   qwen_realtime_model: z.string().default('qwen-audio-3.0-realtime-plus'),
@@ -108,14 +109,40 @@ const proactivityPresets: Readonly<Record<Settings['proactivity_preset'], Proact
   eager: {cooldown: 30, fresh_window: 45},
 }
 
+export type ConfigurationErrorCode =
+  | 'invalid_configuration'
+  | 'retired_capability'
+  | 'retired_configuration'
+
 export class ConfigurationError extends Error {
-  constructor(message: string) {
+  readonly fields: readonly string[] | undefined
+
+  constructor(
+    message: string,
+    readonly code: ConfigurationErrorCode = 'invalid_configuration',
+    fields?: readonly string[],
+  ) {
     super(message)
     this.name = 'ConfigurationError'
+    this.fields = fields === undefined ? undefined : Object.freeze([...fields])
   }
 }
 
 export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Settings {
+  const retired = findRetiredConfiguration(environment)
+  if (retired !== null) {
+    if (retired.fields.length === 0) {
+      throw new ConfigurationError(
+        `executor '${retired.capability}' was removed from the Node runtime`,
+        'retired_capability',
+      )
+    }
+    throw new ConfigurationError(
+      `retired capability '${retired.capability}' configuration is not supported: ${retired.fields.join(', ')}`,
+      'retired_configuration',
+      retired.fields,
+    )
+  }
   const configuredExecutor = optionalString(environment.NOVA_AUDIO_AGENT_EXECUTOR)
   const executor = configuredExecutor === undefined || configuredExecutor.length === 0
     ? 'fast_sim'
@@ -127,10 +154,10 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     model_base_url: optionalString(environment.NOVA_AUDIO_AGENT_MODEL_BASE_URL),
     model_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_MODEL_API_KEY),
     tavily_api_key: optionalSecret(environment.TAVILY_API_KEY),
-    fast_model: optionalString(environment.NOVA_AUDIO_AGENT_FAST_MODEL),
-    watch_model: optionalSecret(environment.NOVA_AUDIO_AGENT_WATCH_MODEL),
-    surrogate_model: optionalString(environment.NOVA_AUDIO_AGENT_SURROGATE_MODEL),
-    compressor_model: optionalString(environment.NOVA_AUDIO_AGENT_COMPRESSOR_MODEL),
+    fast_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_FAST_MODEL),
+    watch_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_WATCH_MODEL),
+    surrogate_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_SURROGATE_MODEL),
+    compressor_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_COMPRESSOR_MODEL),
     realtime_provider: optionalString(environment.NOVA_AUDIO_AGENT_REALTIME_PROVIDER),
     qwen_realtime_url: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL),
     qwen_realtime_model: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL),
@@ -202,18 +229,13 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
       ),
     } : {}),
     proactivity_preset: optionalString(environment.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET),
-    codex_working_interval: optionalNumber(
+    codex_working_interval: optionalPydanticFloat(
       environment.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL,
-      'NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL',
     ),
-    suggestion_cooldown: optionalNumber(
+    suggestion_cooldown: optionalPydanticFloat(
       environment.NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN,
-      'NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN',
     ),
-    fresh_window: optionalNumber(
-      environment.NOVA_AUDIO_AGENT_FRESH_WINDOW,
-      'NOVA_AUDIO_AGENT_FRESH_WINDOW',
-    ),
+    fresh_window: optionalPydanticFloat(environment.NOVA_AUDIO_AGENT_FRESH_WINDOW),
   }
   const withoutUndefined = Object.fromEntries(
     Object.entries(candidate).filter(([, value]) => value !== undefined),
@@ -222,13 +244,8 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
   if (!result.success) {
     const fields = [...new Set(result.error.issues.map(issue => String(issue.path[0] ?? 'settings')))]
       .sort(compareStrings)
-      .map(field => field.toUpperCase())
+      .map(configurationFieldName)
     throw new ConfigurationError(`invalid configuration: ${fields.join(', ')}`)
-  }
-  for (const name of result.data.executors) {
-    if (name === 'ha' || name === 'autoglm') {
-      throw new ConfigurationError(`executor '${name}' was removed from the Node runtime`)
-    }
   }
   return result.data
 }
@@ -363,20 +380,6 @@ function optionalQwenGuardHistoryPairs(value: string | undefined): 1 | 2 | 4 | s
   return value
 }
 
-function optionalNumber(value: string | undefined, variable: string): number | undefined {
-  if (value === undefined) return undefined
-  const normalized = stripLikePython(value)
-  if (normalized.length === 0) {
-    throw new ConfigurationError(`${variable} must be a number`)
-  }
-  if (!/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/u.test(normalized)) {
-    throw new ConfigurationError(`${variable} must be a number`)
-  }
-  const parsed = Number(normalized)
-  if (!Number.isFinite(parsed)) throw new ConfigurationError(`${variable} must be finite`)
-  return parsed
-}
-
 const pydanticNumericSpace = '[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680'
   + '\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]'
 const underscoredDigits = '[0-9](?:_?[0-9])*'
@@ -441,4 +444,15 @@ function secureEndpoint(value: string, scheme: 'https' | 'wss', name: string): s
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
+}
+
+function configurationFieldName(field: string): string {
+  const aliases: Readonly<Record<string, string>> = {
+    ark_api_key: 'ARK_API_KEY',
+    dashscope_api_key: 'DASHSCOPE_API_KEY',
+    doubao_asr_api_key: 'DOUBAO_ASR_API_KEY',
+    doubao_bigmodel_api_key: 'DOUBAO_BIGMODEL_API_KEY',
+    tavily_api_key: 'TAVILY_API_KEY',
+  }
+  return aliases[field] ?? `NOVA_AUDIO_AGENT_${field.toUpperCase()}`
 }

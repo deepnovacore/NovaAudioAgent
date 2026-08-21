@@ -1,0 +1,163 @@
+{
+  "cases": [
+    {
+      "action": "load",
+      "environment": {},
+      "id": "defaults"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "ARK_API_KEY": "fixture-ark-key",
+        "DASHSCOPE_API_KEY": "fixture-dash-key",
+        "DOUBAO_ASR_API_KEY": "fixture-asr-key",
+        "DOUBAO_BIGMODEL_API_KEY": "fixture-tts-key",
+        "NOVA_AUDIO_AGENT_CODEX_API_KEY": "fixture-codex-key",
+        "NOVA_AUDIO_AGENT_CODEX_BIN": "/fixture/bin/codex",
+        "NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT": "/fixture/managed",
+        "NOVA_AUDIO_AGENT_CODEX_PREWARM": "false",
+        "NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED": "true",
+        "NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT": "/fixture/state",
+        "NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL": "5",
+        "NOVA_AUDIO_AGENT_CODEX_WORKSPACE": "/fixture/workspace",
+        "NOVA_AUDIO_AGENT_COMPRESSOR_MODEL": "compressor",
+        "NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS": "320",
+        "NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT": "wss://asr.example/ws/",
+        "NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID": "asr-resource",
+        "NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT": "wss://tts.example/ws/",
+        "NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE": "24000",
+        "NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID": "tts-resource",
+        "NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE": "tts-voice",
+        "NOVA_AUDIO_AGENT_EXECUTOR": "codex",
+        "NOVA_AUDIO_AGENT_EXECUTORS": "slow_sim,codex",
+        "NOVA_AUDIO_AGENT_FAST_MODEL": "fast-astral-😀",
+        "NOVA_AUDIO_AGENT_FRESH_WINDOW": "9.25",
+        "NOVA_AUDIO_AGENT_MODEL_API_KEY": "fixture-model-key",
+        "NOVA_AUDIO_AGENT_MODEL_BASE_URL": "https://model.example/v1",
+        "NOVA_AUDIO_AGENT_PROACTIVITY_PRESET": "eager",
+        "NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT": "true",
+        "NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS": "2",
+        "NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY": "packed",
+        "NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL": "qwen-model",
+        "NOVA_AUDIO_AGENT_QWEN_REALTIME_URL": "wss://qwen.example/realtime",
+        "NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE": "voice",
+        "NOVA_AUDIO_AGENT_REALTIME_PROVIDER": "volcengine",
+        "NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN": "7.5",
+        "NOVA_AUDIO_AGENT_SURROGATE_MODEL": "surrogate",
+        "NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL": "https://ark.example/v3/",
+        "NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL": "ark-primary",
+        "NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL": "ark-support",
+        "NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS": "16000",
+        "NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS": "280",
+        "NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS": "300",
+        "NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS": "600",
+        "NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SPEECH_PAD_MS": "40",
+        "NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD": "0.75",
+        "NOVA_AUDIO_AGENT_WATCH_MODEL": "watch-😀",
+        "TAVILY_API_KEY": "fixture-tavily-key"
+      },
+      "id": "all_preserved_overrides"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL": "\u001c5",
+        "NOVA_AUDIO_AGENT_EXECUTORS": "\u001cslow_sim, fast_sim ",
+        "NOVA_AUDIO_AGENT_FAST_MODEL": "\u001cfast",
+        "NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN": "\u001c0",
+        "TAVILY_API_KEY": "\u001ctavily"
+      },
+      "id": "python_only_whitespace"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "NOVA_AUDIO_AGENT_EXECUTORS": "\u001cslow_sim, fast_sim ",
+        "NOVA_AUDIO_AGENT_FAST_MODEL": "\u001cfast",
+        "NOVA_AUDIO_AGENT_WATCH_MODEL": "\u001cwatch",
+        "TAVILY_API_KEY": "\u001ctavily"
+      },
+      "id": "python_only_string_whitespace"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "NOVA_AUDIO_AGENT_FAST_MODEL": "﻿fast﻿",
+        "NOVA_AUDIO_AGENT_WATCH_MODEL": "﻿watch﻿",
+        "TAVILY_API_KEY": "﻿key﻿"
+      },
+      "id": "bom_is_not_python_whitespace"
+    },
+    {
+      "action": "provider",
+      "environment": {
+        "NOVA_AUDIO_AGENT_MODEL_API_KEY": "fixture-model-key"
+      },
+      "id": "qwen_fallback_key"
+    },
+    {
+      "action": "provider",
+      "environment": {
+        "ARK_API_KEY": "fixture-ark-key",
+        "DOUBAO_BIGMODEL_API_KEY": "fixture-tts-key",
+        "NOVA_AUDIO_AGENT_REALTIME_PROVIDER": "volcengine"
+      },
+      "id": "volcengine_fallback_asr_key"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT": " true "
+      },
+      "id": "qwen_boolean_does_not_strip"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS": " 2 "
+      },
+      "id": "qwen_history_does_not_strip"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL": "600",
+        "NOVA_AUDIO_AGENT_FRESH_WINDOW": "0",
+        "NOVA_AUDIO_AGENT_SUGGESTION_COOLDOWN": "0"
+      },
+      "id": "numeric_inclusive_bounds"
+    },
+    {
+      "action": "load",
+      "environment": {
+        "NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL": "601"
+      },
+      "id": "numeric_out_of_bounds"
+    },
+    {
+      "action": "provider",
+      "environment": {
+        "ARK_API_KEY": "fixture-ark-key",
+        "DOUBAO_BIGMODEL_API_KEY": "fixture-tts-key",
+        "NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT": "https://invalid.example/asr",
+        "NOVA_AUDIO_AGENT_REALTIME_PROVIDER": "volcengine"
+      },
+      "id": "volcengine_secure_endpoint_rejected"
+    },
+    {
+      "action": "desktop_video",
+      "environment": {
+        "NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE": "/fixture/cat-sofa.mp4"
+      },
+      "id": "desktop_video_absolute"
+    },
+    {
+      "action": "desktop_video",
+      "environment": {
+        "NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE": "fixture/cat-sofa.mp4"
+      },
+      "id": "desktop_video_relative_rejected"
+    }
+  ],
+  "schema_version": 1
+}
