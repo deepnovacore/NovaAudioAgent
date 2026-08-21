@@ -31,7 +31,12 @@ const DESKTOP_MANIFEST = Object.freeze({
 const RUNTIME_MANIFEST = Object.freeze({
   name: '@nova-audio-agent/runtime',
   files: ['dist/src'],
-  dependencies: { ws: '8.21.3', zod: '4.4.3' },
+  dependencies: {
+    '@livekit/agents': '1.6.4',
+    '@livekit/rtc-node': '0.13.33',
+    ws: '8.21.3',
+    zod: '4.4.3',
+  },
 })
 
 function inspectArtifact(files, overrides = {}) {
@@ -53,6 +58,8 @@ async function writeArtifactRoot(root, {
     ['src/renderer/camera.mjs', 'export const camera = true\n'],
     ['node_modules/@nova-audio-agent/runtime/package.json', JSON.stringify(runtimeManifest)],
     ['node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js', 'export {}\n'],
+    ['node_modules/@livekit/agents/package.json', '{"name":"@livekit/agents"}\n'],
+    ['node_modules/@livekit/rtc-node/package.json', '{"name":"@livekit/rtc-node"}\n'],
     ['node_modules/ws/package.json', '{"name":"ws"}\n'],
     ['node_modules/zod/package.json', '{"name":"zod"}\n'],
   ])
@@ -125,6 +132,8 @@ function validArtifactFiles() {
     'src/renderer/camera.mjs',
     'node_modules/@nova-audio-agent/runtime/package.json',
     'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
+    'node_modules/@livekit/agents/package.json',
+    'node_modules/@livekit/rtc-node/package.json',
     'node_modules/ws/package.json',
     'node_modules/zod/package.json',
     'package.json',
@@ -138,6 +147,8 @@ test('artifact file-list entry point catches missing camera/runtime and forbidde
     'node_modules/@nova-audio-agent/runtime/package.json',
     'src/renderer/camera.mjs',
     'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
+    'node_modules/@livekit/agents/package.json',
+    'node_modules/@livekit/rtc-node/package.json',
     'node_modules/ws/package.json',
     'node_modules/zod/package.json',
   ]) {
@@ -265,25 +276,15 @@ test('desktop and runtime peer surfaces cannot widen the production closure', ()
   }))
 })
 
-test('actual configured graph derives camera and runtime from config plus installed content', async () => {
-  const result = await inspectConfiguredPackage()
-  assert.equal(result.cameraIncluded, true)
-  assert.equal(result.runtimeIncluded, true)
-  assert.ok(result.includedFiles.includes('src/renderer/camera.mjs'))
-  assert.ok(result.includedFiles.includes(
-    'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
-  ))
-  assert.ok(result.includedFiles.includes('node_modules/ws/package.json'))
-  assert.ok(result.includedFiles.includes('node_modules/zod/package.json'))
-  for (const fixture of [
-    'assets/demos/cat-sofa-guard/cat-sofa-guard.mp4',
-    'assets/demos/cat-sofa-guard/first.png',
-    'assets/demos/cat-sofa-guard/last.png',
-  ]) {
-    assert.equal(result.includedFiles.includes(fixture), false, fixture)
-  }
-  assert.deepEqual(result.productionDependencies, ['@nova-audio-agent/runtime'])
-  assert.equal(result.forbidden.length, 0)
+test('configured graph remains fail-closed until LiveKit artifact policy is reviewed', async () => {
+  await assert.rejects(
+    inspectConfiguredPackage(),
+    error => {
+      assert.ok(error instanceof PackageInspectionError)
+      assert.match(error.message, /node_modules\/@livekit\/agents\/dist\/ffmpeg/u)
+      return true
+    },
+  )
 })
 
 test('artifact-root entry reads bounded manifests from the inspected artifact itself', async () => {

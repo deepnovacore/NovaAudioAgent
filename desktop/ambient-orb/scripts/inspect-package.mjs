@@ -9,7 +9,12 @@ const DESKTOP_MANIFEST_FILE = 'package.json'
 const RUNTIME_MANIFEST_FILE = `node_modules/${RUNTIME_PACKAGE}/package.json`
 const REQUIRED_CAMERA_FILE = 'src/renderer/camera.mjs'
 const REQUIRED_RUNTIME_FILE = `node_modules/${RUNTIME_PACKAGE}/dist/src/desktop-entry.js`
-const EXPECTED_RUNTIME_DEPENDENCIES = Object.freeze(['ws', 'zod'])
+const EXPECTED_RUNTIME_DEPENDENCIES = Object.freeze([
+  '@livekit/agents',
+  '@livekit/rtc-node',
+  'ws',
+  'zod',
+])
 const REQUIRED_RUNTIME_DEPENDENCY_FILES = Object.freeze(
   EXPECTED_RUNTIME_DEPENDENCIES.map(name => `node_modules/${name}/package.json`),
 )

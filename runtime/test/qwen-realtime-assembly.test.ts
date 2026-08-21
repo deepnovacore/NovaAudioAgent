@@ -259,6 +259,26 @@ test('Qwen factory builds a realtime-frontbrain core while ordinary assembly kee
   assert.equal(connector.calls.length, 0)
 })
 
+test('Qwen factory construction does not invoke an unrelated LiveKit agents loader', () => {
+  const connector = recordingConnector()
+  let agentsLoaderCalls = 0
+  const input = {
+    ...qwenOptions(
+      settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
+      connector.connector,
+    ),
+    agentsLoader: () => {
+      agentsLoaderCalls += 1
+      return Promise.reject(new Error('LiveKit agents loader was not expected'))
+    },
+  }
+
+  buildQwenRealtimeAssembly(input)
+
+  assert.equal(agentsLoaderCalls, 0)
+  assert.equal(connector.calls.length, 0)
+})
+
 test('Qwen composition registers the exact Codex resource and starts prewarm after service', async () => {
   const connector = recordingConnector()
   const adapter = new CodexLiveAdapter(new CompositionCodexTransport())
