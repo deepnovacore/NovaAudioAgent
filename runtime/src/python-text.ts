@@ -44,6 +44,11 @@ export function stripLikePython(text: string): string {
   return characters.slice(start, end).join('')
 }
 
+/** Count Unicode code points exactly as Python's `len(str)` does. */
+export function codePointLengthLikePython(text: string): number {
+  return [...text].length
+}
+
 /**
  * Whether a string can be encoded as UTF-8 at all.
  *

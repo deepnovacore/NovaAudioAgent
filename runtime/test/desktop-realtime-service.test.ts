@@ -521,6 +521,37 @@ test('entry maps invalid construction to one fixed diagnostic and no readiness',
   assert.deepEqual(diagnostics, ['[runtime-diagnostic] assembly_failed'])
 })
 
+test('entry rolls back every partially constructed owner in reverse order within grace', async () => {
+  const trace: string[] = []
+  const diagnostics: string[] = []
+  const never = new Promise<void>(() => undefined)
+  interface ConstructionOwnership {
+    own(cleanup: () => void | Promise<void>): () => void
+  }
+  const exitCode = await runDesktopEntry({
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:51515',
+    stop: new AbortController(),
+    cleanupGraceMs: 15,
+    construct: (ownership?: ConstructionOwnership) => {
+      ownership?.own(() => { trace.push('first') })
+      ownership?.own(() => { trace.push('second'); return never })
+      ownership?.own(() => { trace.push('third'); return Promise.reject(new Error('cleanup')) })
+      throw new Error('primary construction failure')
+    },
+    announce: () => Promise.reject(new Error('readiness must not run')),
+    onDiagnostic: line => diagnostics.push(line),
+  })
+
+  assert.equal(exitCode, 2)
+  assert.deepEqual(trace, ['third', 'second', 'first'])
+  assert.deepEqual(diagnostics, [
+    '[runtime-diagnostic] desktop_construction_cleanup_failed',
+    '[runtime-diagnostic] desktop_construction_cleanup_abandoned',
+    '[runtime-diagnostic] assembly_failed',
+  ])
+})
+
 test('entry awaits fallible host resource construction before any realtime or listener phase', async () => {
   const trace: string[] = []
   const stop = new AbortController()

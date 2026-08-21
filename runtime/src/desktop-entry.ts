@@ -39,7 +39,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
     {signal},
   ),
   onDiagnostic,
-  construct: async () => {
+  construct: async ownership => {
     const settings = loadSettings()
     const telemetry = new NullTelemetry()
     const clock = new RealClock()
@@ -60,6 +60,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
           clock,
           idFactory: () => randomUUID().replaceAll('-', ''),
         })
+    if (codexResource !== null) ownership.own(() => codexResource.close())
     const camera = selectDesktopCameraSource(process.env)
     const composition = buildDesktopRealtimeComposition({
       token,

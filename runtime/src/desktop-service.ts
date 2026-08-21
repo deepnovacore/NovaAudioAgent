@@ -423,11 +423,18 @@ export interface DesktopEntryConstruction {
   readonly closeAuxiliary?: () => void | Promise<void>
 }
 
+export interface DesktopConstructionOwnership {
+  /** Retain construction cleanup until the returned graph has acquired lifecycle ownership. */
+  own(cleanup: () => void | Promise<void>): () => void
+}
+
 export interface DesktopEntryOptions {
   readonly token: string
   readonly readyEndpoint: string
   readonly stop: AbortController
-  readonly construct: () => DesktopEntryConstruction | Promise<DesktopEntryConstruction>
+  readonly construct: (
+    ownership: DesktopConstructionOwnership,
+  ) => DesktopEntryConstruction | Promise<DesktopEntryConstruction>
   readonly announce: (
     endpoint: string,
     readiness: DesktopReadiness,
@@ -439,10 +446,15 @@ export interface DesktopEntryOptions {
 
 /** Run the production entry without leaking configuration or dependency errors to stderr. */
 export async function runDesktopEntry(options: DesktopEntryOptions): Promise<0 | 2> {
+  let ownership: DesktopConstructionLedger | null = null
   try {
+    ownership = new DesktopConstructionLedger(
+      options.cleanupGraceMs ?? DESKTOP_OWNER_SHUTDOWN_GRACE_MS,
+      options.onDiagnostic,
+    )
     validateDesktopToken(options.token)
     parseReadyEndpoint(options.readyEndpoint)
-    const constructed = await options.construct()
+    const constructed = await options.construct(ownership)
     const owner = new RealtimeDesktopService({
       realtime: constructed.realtime,
       desktop: constructed.desktop,
@@ -455,15 +467,93 @@ export async function runDesktopEntry(options: DesktopEntryOptions): Promise<0 |
       ...(options.cleanupGraceMs === undefined ? {} : {cleanupGraceMs: options.cleanupGraceMs}),
       onDiagnostic: options.onDiagnostic,
     })
+    ownership.commit()
     await owner.run()
     return 0
   } catch {
+    await ownership?.rollback()
     try {
       options.onDiagnostic('[runtime-diagnostic] assembly_failed')
     } catch {
       // A diagnostic sink must not convert a bounded entry failure into an unhandled rejection.
     }
     return 2
+  }
+}
+
+interface ConstructionCleanup {
+  readonly cleanup: () => void | Promise<void>
+  active: boolean
+}
+
+class DesktopConstructionLedger implements DesktopConstructionOwnership {
+  readonly #cleanups: ConstructionCleanup[] = []
+  readonly #cleanupGraceMs: number
+  readonly #onDiagnostic: (line: string) => void
+  #sealed = false
+  #rollbackOperation: Promise<void> | null = null
+
+  constructor(cleanupGraceMs: number, onDiagnostic: (line: string) => void) {
+    if (!Number.isFinite(cleanupGraceMs) || cleanupGraceMs <= 0) {
+      throw new TypeError('desktop cleanup grace must be positive and finite')
+    }
+    this.#cleanupGraceMs = cleanupGraceMs
+    this.#onDiagnostic = onDiagnostic
+  }
+
+  own(cleanup: () => void | Promise<void>): () => void {
+    if (this.#sealed || typeof cleanup !== 'function') {
+      throw new TypeError('desktop construction ownership is closed')
+    }
+    const entry: ConstructionCleanup = {cleanup, active: true}
+    this.#cleanups.push(entry)
+    return (): void => { entry.active = false }
+  }
+
+  commit(): void {
+    this.#sealed = true
+    for (const entry of this.#cleanups) entry.active = false
+  }
+
+  rollback(): Promise<void> {
+    if (this.#rollbackOperation !== null) return this.#rollbackOperation
+    if (this.#sealed) return Promise.resolve()
+    this.#sealed = true
+    this.#rollbackOperation = this.#rollbackFresh()
+    return this.#rollbackOperation
+  }
+
+  async #rollbackFresh(): Promise<void> {
+    for (let index = this.#cleanups.length - 1; index >= 0; index -= 1) {
+      const entry = this.#cleanups[index]!
+      if (!entry.active) continue
+      entry.active = false
+      const result = await this.#cleanupWithinGrace(entry.cleanup)
+      if (result.kind === 'rejected') {
+        this.#emitDiagnostic('desktop_construction_cleanup_failed')
+      } else if (result.kind === 'abandoned') {
+        this.#emitDiagnostic('desktop_construction_cleanup_abandoned')
+      }
+    }
+  }
+
+  async #cleanupWithinGrace(cleanup: () => void | Promise<void>): Promise<CleanupResult> {
+    const settled = settleCleanup(cleanup)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<CleanupResult>(resolve => {
+      timer = setTimeout(() => resolve({kind: 'abandoned'}), this.#cleanupGraceMs)
+    })
+    const result = await Promise.race([settled, deadline])
+    if (timer !== undefined) clearTimeout(timer)
+    return result
+  }
+
+  #emitDiagnostic(diagnostic: string): void {
+    try {
+      this.#onDiagnostic(`[runtime-diagnostic] ${diagnostic}`)
+    } catch {
+      // Construction rollback remains all-attempted when diagnostics fail.
+    }
   }
 }
 

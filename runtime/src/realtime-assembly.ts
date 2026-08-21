@@ -202,16 +202,19 @@ export class RealtimeAssembly {
     }
 
     let firstFailure: {readonly error: unknown} | null = null
+    let cleanupComplete = true
     const service = await this.#cleanupWithinGrace(
       () => this.service.close(),
       'assembly_service_close_abandoned',
     )
+    if (service.kind !== 'resolved') cleanupComplete = false
     if (service.kind === 'rejected') firstFailure = {error: service.error}
 
     const core = await this.#cleanupWithinGrace(
       () => this.core.stop(),
       'assembly_core_stop_abandoned',
     )
+    if (core.kind !== 'resolved') cleanupComplete = false
     if (firstFailure === null && core.kind === 'rejected') firstFailure = {error: core.error}
 
     if (this.#codexResource !== undefined) {
@@ -219,17 +222,19 @@ export class RealtimeAssembly {
         () => this.#codexResource!.close(),
         'codex_close_abandoned',
       )
+      if (codex.kind !== 'resolved') cleanupComplete = false
       if (firstFailure === null && codex.kind === 'rejected') firstFailure = {error: codex.error}
     } else if (this.#projectAdapter !== undefined) {
       const project = await this.#cleanupWithinGrace(
         () => this.#projectAdapter!.close(),
         'assembly_project_adapter_close_abandoned',
       )
+      if (project.kind !== 'resolved') cleanupComplete = false
       if (firstFailure === null && project.kind === 'rejected') firstFailure = {error: project.error}
     }
     this.#unsubscribeProjectView?.()
 
-    this.#state = 'stopped'
+    if (cleanupComplete) this.#state = 'stopped'
     if (firstFailure !== null) throw firstFailure.error
   }
 

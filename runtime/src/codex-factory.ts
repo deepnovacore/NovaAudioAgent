@@ -124,7 +124,7 @@ export async function createCodexAssemblyResource(
   if (!available) {
     throw new CodexHostConfigurationError('codex_host_unavailable')
   }
-  if (options.config.projectsEnabled) {
+  if (options.composition === 'realtime' && options.config.projectsEnabled) {
     return await createProjectResource(options)
   }
   const mode = options.composition === 'ordinary' ? 'ordinary' : 'live'
@@ -308,7 +308,12 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
 
   close(): Promise<void> {
     if (this.#closeOperation !== null) return this.#closeOperation
-    this.#closeOperation = this.adapter.close()
-    return this.#closeOperation
+    const work = this.adapter.close()
+    const projectClose = work.catch(error => {
+      if (this.#closeOperation === projectClose) this.#closeOperation = null
+      throw error
+    })
+    this.#closeOperation = projectClose
+    return projectClose
   }
 }

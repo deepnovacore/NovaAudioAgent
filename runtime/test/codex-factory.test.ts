@@ -33,6 +33,7 @@ import {resolveCodexHostConfig, type CodexHostCatalog} from '../src/codex-host-c
 import {CodexHostConfigurationError} from '../src/codex-host-config.js'
 import {VirtualClock} from '../src/clock.js'
 import {loadSettings} from '../src/config.js'
+import type {ProjectCodexAdapter} from '../src/executors/codex-project-live.js'
 import type {NativeFileLockAuthority, NativeFileLockResult} from '../src/native-file-lock.js'
 import type {PublicProjectView} from '../src/codex-project-store.js'
 import type {
@@ -258,6 +259,39 @@ function hostConfig(t: TestContext): ReturnType<typeof resolveCodexHostConfig> {
   }), catalog)
 }
 
+function projectHostConfig(t: TestContext): {
+  readonly config: NonNullable<ReturnType<typeof resolveCodexHostConfig>>
+  readonly stateRoot: string
+  readonly managedRoot: string
+} {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nova-codex-project-factory-')))
+  const binary = join(root, 'codex-host')
+  const workspace = join(root, 'workspace')
+  const managedRoot = join(root, 'managed')
+  const stateRoot = join(root, 'state')
+  writeFileSync(binary, '#!/fixture\n', {mode: 0o700})
+  chmodSync(binary, 0o700)
+  for (const path of [workspace, managedRoot, stateRoot]) {
+    mkdirSync(path, {mode: 0o700})
+    chmodSync(path, 0o700)
+  }
+  t.after(() => { rmSync(root, {recursive: true, force: true}) })
+  const config = resolveCodexHostConfig(loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
+    NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'true',
+    NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
+    NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
+  }), {
+    canonicalBinaries: [binary],
+    canonicalWorkspaces: [workspace],
+    defaultBinary: binary,
+    homeDirectory: root,
+  })
+  assert.ok(config !== null)
+  return {config, stateRoot, managedRoot}
+}
+
 test('one app-server factory selects exact ordinary and realtime live adapters', async t => {
   const config = hostConfig(t)
   assert.ok(config !== null)
@@ -342,32 +376,25 @@ test('configured Codex rejects an unavailable or malformed host transport before
   assert.equal(unavailableCreates, 0)
 })
 
-test('project mode opens one live store, imports the host workspace, and exposes only public view', async t => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nova-codex-project-factory-')))
-  const binary = join(root, 'codex-host')
-  const workspace = join(root, 'workspace')
-  const managedRoot = join(root, 'managed')
-  const stateRoot = join(root, 'state')
-  writeFileSync(binary, '#!/fixture\n', {mode: 0o700})
-  chmodSync(binary, 0o700)
-  for (const path of [workspace, managedRoot, stateRoot]) {
-    mkdirSync(path, {mode: 0o700})
-    chmodSync(path, 0o700)
-  }
-  t.after(() => { rmSync(root, {recursive: true, force: true}) })
-  const config = resolveCodexHostConfig(loadSettings({
-    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
-    NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'true',
-    NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
-    NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
-  }), {
-    canonicalBinaries: [binary],
-    canonicalWorkspaces: [workspace],
-    defaultBinary: binary,
-    homeDirectory: root,
+test('ordinary composition never upgrades to project mode from the realtime projects setting', async t => {
+  const {config} = projectHostConfig(t)
+  const transportFactory = new RecordingTransportFactory()
+  const resource = await createCodexAssemblyResource({
+    config,
+    composition: 'ordinary',
+    transportFactory,
+    clock: new VirtualClock(),
+    idFactory: () => 'ordinary-project-setting-id',
   })
-  assert.ok(config !== null)
+
+  assert.equal(resource.mode, 'ordinary')
+  assert.deepEqual(resource.adapter.manifest.ops.map(operation => operation.name), ['run', 'status'])
+  assert.equal(transportFactory.calls[0]?.mode, 'ordinary')
+  await resource.close()
+})
+
+test('project mode opens one live store, imports the host workspace, and exposes only public view', async t => {
+  const {config, stateRoot, managedRoot} = projectHostConfig(t)
   const transportFactory = new RecordingTransportFactory()
   const views: unknown[] = []
   const factoryOptions = {
@@ -404,6 +431,16 @@ test('project mode opens one live store, imports the host workspace, and exposes
   assert.equal(resource.start(), projectStart)
   await projectStart
   assert.equal(transportFactory.calls.length, 0, 'project start never prewarms stale session authority')
+  const adapter = resource.adapter as ProjectCodexAdapter
+  const closeAdapter = adapter.close.bind(adapter)
+  let closeCalls = 0
+  Object.defineProperty(adapter, 'close', {value: (): Promise<void> => {
+    closeCalls += 1
+    return closeCalls === 1
+      ? Promise.reject(new Error('retained project cleanup'))
+      : closeAdapter()
+  }})
+  await assert.rejects(resource.close(), /retained project cleanup/u)
   await resource.close()
-  await resource.close()
+  assert.equal(closeCalls, 2)
 })

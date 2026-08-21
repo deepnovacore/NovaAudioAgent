@@ -814,6 +814,47 @@ test('Codex resource starts after provider service and closes after service and 
   assert.equal(actions.filter(item => item === 'codex:close').length, 1)
 })
 
+test('a failed Codex close remains physically retryable through the realtime owner', async () => {
+  const adapter: ExecutorAdapter = {
+    manifest: CODEX_LIVE_MANIFEST,
+    dispatch: (): Promise<ExecutorHandoff> => Promise.resolve({
+      outcome: 'failed',
+      trust: 'trusted_system',
+      content: {code: 'not_run'},
+    }),
+  }
+  const closeFailure = new Error('retained Codex cleanup')
+  let closeCalls = 0
+  const resource: CodexAssemblyResource = {
+    adapter,
+    mode: 'live',
+    projectView: null,
+    start: () => Promise.resolve(),
+    close: () => {
+      closeCalls += 1
+      return closeCalls === 1 ? Promise.reject(closeFailure) : Promise.resolve()
+    },
+  }
+  const realtime = buildRealtimeAssembly({
+    core: buildAssembly({
+      settings: settingsSchema.parse({executors: ['codex']}),
+      clock: new VirtualClock(),
+      gateway: new NeverCalledGateway(),
+      searchTransport: new NeverCalledSearch(),
+      frameSource: new RecordingFrameSource(),
+      executors: [adapter],
+    }),
+    provider: new AbortAwareProvider(),
+    codexResource: resource,
+    onDiagnostic: () => undefined,
+  })
+
+  await realtime.start()
+  await assert.rejects(realtime.stop(), error => error === closeFailure)
+  await realtime.stop()
+  assert.equal(closeCalls, 2)
+})
+
 test('service start failure rolls core back, preserves the primary error, and remains retryable', async () => {
   // Mutations caught: swallowing/replacing the connect error, omitting rollback, terminally closing
   // the shared provider session, or retaining a rejected start promise breaks this retry.

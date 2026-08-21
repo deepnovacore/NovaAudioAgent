@@ -160,6 +160,22 @@ function runCase(spec: Case): Record<string, unknown> {
   }
 }
 
+test('Codex project view bounds Python code points rather than UTF-16 units', () => {
+  const workspace = '𐐀'.repeat(61)
+  const parsed = JSON.parse(codexProjectMessage({
+    workspace_display_name: workspace,
+    session_title: null,
+    pending_confirmation: false,
+  })) as {readonly workspace_display_name: string}
+  assert.equal(parsed.workspace_display_name, workspace)
+
+  assert.throws(() => codexProjectMessage({
+    workspace_display_name: '𐐀'.repeat(121),
+    session_title: null,
+    pending_confirmation: false,
+  }), DesktopProtocolError)
+})
+
 test('every desktop wire case matches the Python-exported golden, byte for byte', () => {
   const divergent: string[] = []
   for (const [index, spec] of document.cases.entries()) {

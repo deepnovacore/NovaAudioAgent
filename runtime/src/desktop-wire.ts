@@ -14,6 +14,7 @@
  */
 
 import type { PlaybackCompletion, PlaybackFrame } from './playback.js'
+import {codePointLengthLikePython} from './python-text.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
 
@@ -196,7 +197,7 @@ export function codexStateMessage(state: CodexState): string {
 export function codexProjectMessage(view: PublicProjectView): string {
   for (const value of [view.workspace_display_name, view.session_title]) {
     if (value === null) continue
-    if (typeof value !== 'string' || value === '' || value.length > 120) {
+    if (typeof value !== 'string' || value === '' || codePointLengthLikePython(value) > 120) {
       throw new DesktopProtocolError('desktop Codex project view is invalid')
     }
   }
