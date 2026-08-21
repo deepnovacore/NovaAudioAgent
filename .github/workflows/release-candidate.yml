@@ -1,0 +1,47 @@
+name: Release candidate evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform-candidate:
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            package_script: package:mac
+            artifact_name: candidate-darwin-arm64
+          - os: macos-13
+            package_script: package:mac
+            artifact_name: candidate-darwin-x64
+          - os: windows-latest
+            package_script: package:win
+            artifact_name: candidate-win32-x64
+          - os: ubuntu-latest
+            package_script: package:linux
+            artifact_name: candidate-linux-x64-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@11.6.0
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:runtime
+      - run: npm run test:desktop
+      - run: npm run ${{ matrix.package_script }}
+      - run: npm run inspect:package --workspace @nova-audio-agent/ambient-orb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: desktop/ambient-orb/dist/**
+          if-no-files-found: error

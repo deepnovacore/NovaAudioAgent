@@ -168,6 +168,12 @@ test('artifact file-list entry point catches missing camera/runtime and forbidde
     'node_modules/ffmpeg-static/ffmpeg',
     'node_modules/python-shell/index.js',
     'node_modules/node-webcam/index.js',
+    'node_modules/example/test/private.js',
+    'node_modules/example/dist/private.test.js',
+    'node_modules/example/dist/private.js.map',
+    'node_modules/example/src/private.ts',
+    'node_modules/example/demo.png',
+    'node_modules/example/fake-app-server.js',
   ]) {
     assert.throws(
       () => inspectArtifact([...validArtifactFiles(), forbidden]),
@@ -285,6 +291,10 @@ test('configured graph follows the target-applicable lock closure without treati
   assert.ok(result.selectedPackages.includes('fluent-ffmpeg@2.1.3'))
   assert.ok(!result.selectedPackages.some(value => value.includes('linux-x64')))
   assert.ok(!result.selectedPackages.some(value => value.includes('win32-x64')))
+  assert.ok(!result.includedFiles.some(value => /\.test\.(?:c?m?js|ts)$/u.test(value)))
+  assert.ok(!result.includedFiles.some(value => value.endsWith('.map')))
+  assert.ok(!result.includedFiles.some(value => /\.(?:snap|png|mts)$/u.test(value)))
+  assert.ok(!result.includedFiles.some(value => /@livekit\/av-[^/]+\/ffmpeg$/u.test(value)))
 })
 
 test('artifact-root entry reads bounded manifests from the inspected artifact itself', async () => {

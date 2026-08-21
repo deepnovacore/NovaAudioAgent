@@ -133,7 +133,6 @@ function lockedIdentity(name, installKey, manifest) {
     throw new ReleaseDependencyError('locked_dependency_invalid')
   }
   const identity = JSON.stringify({
-    install_key: installKey,
     integrity: manifest.integrity ?? null,
     name,
     version: manifest.version,

@@ -12,6 +12,30 @@ files:
   - package.json
   - THIRD_PARTY_NOTICES.md
   - LICENSES/**/*
+  - build/release/production-dependencies-v1.json
+  - '!node_modules/**/test/**/*'
+  - '!node_modules/**/tests/**/*'
+  - '!node_modules/**/__tests__/**/*'
+  - '!node_modules/**/fixtures/**/*'
+  - '!node_modules/**/coverage/**/*'
+  - '!node_modules/**/*.test.js'
+  - '!node_modules/**/*.test.cjs'
+  - '!node_modules/**/*.test.mjs'
+  - '!node_modules/**/*.map'
+  - '!node_modules/**/*.ts'
+  - '!node_modules/**/*.cts'
+  - '!node_modules/**/*.mts'
+  - '!node_modules/**/*.snap'
+  - '!node_modules/**/*.png'
+  - '!node_modules/@livekit/agents/resources/*.ogg'
+  - '!node_modules/@livekit/av-darwin-arm64/**/*'
+  - '!node_modules/@livekit/av-darwin-x64/**/*'
+  - '!node_modules/@livekit/av-linux-arm64/**/*'
+  - '!node_modules/@livekit/av-linux-x64/**/*'
+  - '!node_modules/@livekit/av-win32-x64/**/*'
+  - '!node_modules/@nova-audio-agent/runtime/**/*'
+  - node_modules/@nova-audio-agent/runtime/package.json
+  - node_modules/@nova-audio-agent/runtime/dist/src/**/*.js
 
 # The tray reads these with nativeImage.createFromPath, so they stay outside
 # the asar and top-level (every platform's tray needs them), while the

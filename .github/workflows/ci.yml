@@ -14,7 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    timeout-minutes: 30
     env:
       NOVA_AUDIO_AGENT_TEST_TIME_BUDGET: "14.0"
       NOVA_AUDIO_AGENT_FIXTURE_REPLAY_BUDGET: "6.0"
@@ -41,6 +41,7 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -71,6 +72,7 @@ jobs:
             script: package:win
             artifact: ambient-orb-win
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -81,6 +83,7 @@ jobs:
       - run: npm install --global npm@11.6.0
       - run: npm ci
       - run: npm run ${{ matrix.script }}
+      - run: npm run inspect:package --workspace @nova-audio-agent/ambient-orb
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

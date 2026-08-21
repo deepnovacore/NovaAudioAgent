@@ -11,7 +11,7 @@
       "architecture": "arm64",
       "libc": "none",
       "installers": ["dmg", "app"],
-      "native_resources": ["project_file_lock", "project_root_files", "codex_sandbox_probe", "macos_voice_io", "livekit_local_inference", "livekit_rtc"]
+      "native_resources": ["project_native_addon", "codex_sandbox_probe", "macos_voice_io", "livekit_local_inference", "livekit_rtc"]
     },
     {
       "id": "darwin-x64",
@@ -19,7 +19,7 @@
       "architecture": "x64",
       "libc": "none",
       "installers": ["dmg", "app"],
-      "native_resources": ["project_file_lock", "project_root_files", "codex_sandbox_probe", "macos_voice_io", "livekit_local_inference", "livekit_rtc"]
+      "native_resources": ["project_native_addon", "codex_sandbox_probe", "macos_voice_io", "livekit_local_inference", "livekit_rtc"]
     },
     {
       "id": "win32-x64",
@@ -27,7 +27,7 @@
       "architecture": "x64",
       "libc": "none",
       "installers": ["nsis"],
-      "native_resources": ["windows_job_guardian", "project_file_lock", "project_root_files", "codex_sandbox_probe", "livekit_local_inference", "livekit_rtc"]
+      "native_resources": ["windows_job_guardian", "project_native_addon", "codex_sandbox_probe", "livekit_local_inference", "livekit_rtc"]
     },
     {
       "id": "linux-x64-gnu",
@@ -35,7 +35,7 @@
       "architecture": "x64",
       "libc": "glibc",
       "installers": ["appimage", "deb"],
-      "native_resources": ["project_file_lock", "project_root_files", "codex_sandbox_probe", "livekit_local_inference", "livekit_rtc"]
+      "native_resources": ["project_native_addon", "codex_sandbox_probe", "livekit_local_inference", "livekit_rtc"]
     }
   ]
 }
