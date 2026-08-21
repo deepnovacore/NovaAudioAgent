@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/snakers4/silero-vad",
+    "commit": "806dcba3f0b5d95282d0889a074954a2f8c6397b",
+    "path": "tests/data/test.wav",
+    "sha256": "89f17d9c94c4b31eb320f424628bcbc920abaddbee6e2760fd868bfb1d9a2e47"
+  },
+  "extraction": {
+    "source_samples": 32000,
+    "appended_zero_samples": 10240,
+    "total_samples": 42240,
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "sample_format": "pcm_s16le",
+    "bytes_per_sample": 2,
+    "byte_count": 84480
+  },
+  "outputs": {
+    "speech-16k-s16le.pcm": {
+      "sha256": "5ecb547c0ffbfba27f9705bf4de7ecafd5343c3a86c23ecd2d347a7618a8a962"
+    },
+    "silence-16k-s16le.pcm": {
+      "sha256": "354c4c84336b04e0bd855bd6a2be99d114760ee7f398953471694f42cb88f30e"
+    }
+  },
+  "license": {
+    "spdx": "MIT",
+    "file": "LICENSE.silero-vad.txt"
+  }
+}
