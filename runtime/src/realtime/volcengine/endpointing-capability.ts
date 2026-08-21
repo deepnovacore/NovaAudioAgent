@@ -52,6 +52,7 @@ export interface LiveKitVadEvent {
 
 export interface LiveKitVadStream extends AsyncIterable<LiveKitVadEvent> {
   updateInputStream(audioStream: ReadableStream<LiveKitAudioFrame>): void
+  flush(): void
   close(): void
 }
 
@@ -480,14 +481,18 @@ async function observeFixture(
           executor,
         })
         modelValid = detector.model === 'turn-detector-v1-mini'
-        const [language, threshold] = await Promise.all([
-          detector.supportsLanguage('zh'),
-          detector.unlikelyThreshold('zh'),
-        ])
+        const [language, threshold] = await raceAbort(
+          Promise.all([
+            detector.supportsLanguage('zh'),
+            detector.unlikelyThreshold('zh'),
+          ]),
+          signal,
+        )
         metadataValid = language && finiteProbability(threshold)
         turnStream = detector.stream()
         modelValid = modelValid && turnStream.model === 'turn-detector-v1-mini'
-      } catch {
+      } catch (error) {
+        if (error === ABORTED) throw error
         metadataValid = false
       }
     }
@@ -527,6 +532,7 @@ async function observeFixture(
         const prediction = await predictionWithDeadline(turnStream, clock, signal)
         probability = prediction.endOfTurnProbability
       } catch (error) {
+        if (error === ABORTED) throw error
         timedOut = error === TIMEOUT
       }
       eotObservation = {
@@ -541,19 +547,24 @@ async function observeFixture(
   } finally {
     if (vadStream !== undefined) {
       try {
+        vadStream.flush()
+      } catch {
+        cleanupFailed = true
+      }
+      try {
         vadStream.close()
       } catch {
         cleanupFailed = true
       }
     }
     if (readerTask !== undefined && !await settleUnderSignal(readerTask, signal)) cleanupFailed = true
-    if (turnStream !== undefined) {
+    if (turnStream !== undefined || detector !== undefined) {
       const ownedTurnStream = turnStream
-      if (!await closeUnderSignal(() => ownedTurnStream.aclose(), signal)) cleanupFailed = true
-    }
-    if (detector !== undefined) {
       const ownedDetector = detector
-      if (!await closeUnderSignal(() => ownedDetector.aclose(), signal)) cleanupFailed = true
+      if (!await closeUnderSignal(
+        () => closeEotResourcesInOrder(ownedTurnStream, ownedDetector),
+        signal,
+      )) cleanupFailed = true
     }
     if (vad !== undefined) {
       const ownedVad = vad
@@ -704,6 +715,28 @@ async function closeUnderSignal(operation: () => Promise<void>, signal: AbortSig
   } catch {
     return false
   }
+}
+
+async function closeEotResourcesInOrder(
+  stream: LiveKitTurnStream | undefined,
+  detector: LiveKitTurnDetector | undefined,
+): Promise<void> {
+  let cleanupFailed = false
+  if (stream !== undefined) {
+    try {
+      await stream.aclose()
+    } catch {
+      cleanupFailed = true
+    }
+  }
+  if (detector !== undefined) {
+    try {
+      await detector.aclose()
+    } catch {
+      cleanupFailed = true
+    }
+  }
+  if (cleanupFailed) throw new Error('endpointing cleanup failed')
 }
 
 async function settleUnderSignal(promise: Promise<void>, signal: AbortSignal): Promise<boolean> {
@@ -876,12 +909,16 @@ async function loadCapabilityFixtures(
   ]
   for (const directory of candidates) {
     try {
-      const [speech, silence] = await Promise.all([
-        readFile(join(directory, 'speech-16k-s16le.pcm')),
-        readFile(join(directory, 'silence-16k-s16le.pcm')),
-      ])
+      const [speech, silence] = await raceAbort(
+        Promise.all([
+          readFile(join(directory, 'speech-16k-s16le.pcm'), {signal}),
+          readFile(join(directory, 'silence-16k-s16le.pcm'), {signal}),
+        ]),
+        signal,
+      )
       return copyAndValidateFixtures({speech, silence})
-    } catch {
+    } catch (error) {
+      if (signal.aborted || error === ABORTED) throw ABORTED
       continue
     }
   }

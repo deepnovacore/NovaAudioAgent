@@ -48,6 +48,8 @@ interface Scenario {
   readonly threshold?: number | undefined
   readonly closeFails?: boolean
   readonly jobExecutor?: LiveKitExecutor
+  readonly metadataHang?: () => void
+  readonly secondTurnCloseGate?: Promise<void>
 }
 
 interface SurfaceState {
@@ -63,6 +65,7 @@ interface SurfaceState {
   vadStreams: number
   turnStreams: number
   vadStreamCloses: number
+  vadStreamFlushes: number
   vadCloses: number
   turnStreamCloses: number
   detectorCloses: number
@@ -70,10 +73,13 @@ interface SurfaceState {
   turnEndInputs: number
   predictionsAfterEndInput: number
   latePredictionResolvers: ((prediction: {readonly endOfTurnProbability: number}) => void)[]
+  turnStreamClosePending: number
+  turnStreamDoubleCloses: number
+  detectorClosesWhileTurnStreamPending: number
 }
 
 class ProbeClock implements Clock {
-  readonly #timeout: 'none' | 'prediction' | 'total'
+  readonly #timeout: 'none' | 'prediction' | 'total' | 'manual'
   readonly #cadenceGate: Promise<void> | undefined
   readonly #cadenceRelease: (() => void) | undefined
   #totalResolve: (() => void) | undefined
@@ -83,7 +89,10 @@ class ProbeClock implements Clock {
   waits = 0
   active = 0
 
-  constructor(timeout: 'none' | 'prediction' | 'total' = 'none', gateCadence = false) {
+  constructor(
+    timeout: 'none' | 'prediction' | 'total' | 'manual' = 'none',
+    gateCadence = false,
+  ) {
     this.#timeout = timeout
     if (gateCadence) {
       let release: (() => void) | undefined
@@ -100,13 +109,17 @@ class ProbeClock implements Clock {
     this.#cadenceRelease?.()
   }
 
+  expireTotal(): void {
+    this.#totalResolve?.()
+  }
+
   sleep(duration: number, signal?: AbortSignal): Promise<void> {
     this.waits += 1
     if (signal?.aborted === true) return Promise.reject(abortError())
     if (this.#timeout === 'prediction' && duration === 1.25) {
       return Promise.resolve()
     }
-    if (this.#timeout === 'total' && duration === 10) {
+    if ((this.#timeout === 'total' || this.#timeout === 'manual') && duration === 10) {
       this.active += 1
       return new Promise((resolve, reject) => {
         this.#totalResolve = () => {
@@ -212,6 +225,7 @@ function createSurface(
     vadStreams: 0,
     turnStreams: 0,
     vadStreamCloses: 0,
+    vadStreamFlushes: 0,
     vadCloses: 0,
     turnStreamCloses: 0,
     detectorCloses: 0,
@@ -219,6 +233,9 @@ function createSurface(
     turnEndInputs: 0,
     predictionsAfterEndInput: 0,
     latePredictionResolvers: [],
+    turnStreamClosePending: 0,
+    turnStreamDoubleCloses: 0,
+    detectorClosesWhileTurnStreamPending: 0,
   }
 
   class FrameByteStream {
@@ -297,6 +314,10 @@ function createSurface(
       return
     }
 
+    flush(): void {
+      state.vadStreamFlushes += 1
+    }
+
     close(): void {
       if (this.#closed) return
       this.#closed = true
@@ -344,11 +365,15 @@ function createSurface(
   class TurnStream implements LiveKitTurnStream {
     readonly model = scenario.model ?? 'turn-detector-v1-mini'
     readonly #executor: LiveKitExecutor
+    readonly #ordinal: number
     #speech = false
     #ended = false
+    #closeStarted = false
+    #closed = false
 
-    constructor(executor: LiveKitExecutor) {
+    constructor(executor: LiveKitExecutor, ordinal: number) {
       this.#executor = executor
+      this.#ordinal = ordinal
     }
 
     pushAudio(frame: LiveKitAudioFrame): void {
@@ -407,16 +432,37 @@ function createSurface(
       }
     }
 
-    aclose(): Promise<void> {
+    async aclose(): Promise<void> {
+      if (this.#closeStarted) {
+        state.turnStreamDoubleCloses += 1
+        throw new Error('ERR_INVALID_STATE: WritableStream is closed')
+      }
+      this.#closeStarted = true
       state.turnStreamCloses += 1
-      if (scenario.closeFails) return Promise.reject(new Error('/secret/eot/stream/close'))
-      return Promise.resolve()
+      try {
+        if (scenario.secondTurnCloseGate !== undefined && this.#ordinal === 2) {
+          state.turnStreamClosePending += 1
+          try {
+            await scenario.secondTurnCloseGate
+          } finally {
+            state.turnStreamClosePending -= 1
+          }
+        }
+        if (scenario.closeFails) throw new Error('/secret/eot/stream/close')
+      } finally {
+        this.#closed = true
+      }
+    }
+
+    get closed(): boolean {
+      return this.#closed
     }
   }
 
   class Detector implements LiveKitTurnDetector {
     readonly model = scenario.model ?? 'turn-detector-v1-mini'
     readonly #executor: LiveKitExecutor
+    readonly #streams: TurnStream[] = []
 
     constructor(options: {
       readonly version: 'v1-mini'
@@ -429,23 +475,35 @@ function createSurface(
 
     supportsLanguage(language: string): Promise<boolean> {
       void language
+      if (scenario.metadataHang !== undefined) {
+        scenario.metadataHang()
+        return new Promise(() => undefined)
+      }
       return Promise.resolve(scenario.language ?? true)
     }
 
     unlikelyThreshold(language: string): Promise<number | undefined> {
       void language
+      if (scenario.metadataHang !== undefined) return new Promise(() => undefined)
       return Promise.resolve(Object.hasOwn(scenario, 'threshold') ? scenario.threshold : 0.45)
     }
 
     stream(): LiveKitTurnStream {
       state.turnStreams += 1
-      return new TurnStream(this.#executor)
+      const stream = new TurnStream(this.#executor, state.turnStreams)
+      this.#streams.push(stream)
+      return stream
     }
 
-    aclose(): Promise<void> {
+    async aclose(): Promise<void> {
+      if (state.turnStreamClosePending > 0) {
+        state.detectorClosesWhileTurnStreamPending += 1
+      }
       state.detectorCloses += 1
-      if (scenario.closeFails) return Promise.reject(new Error('/secret/eot/detector/close'))
-      return Promise.resolve()
+      await Promise.allSettled(this.#streams.filter(stream => !stream.closed).map(async stream => {
+        await stream.aclose()
+      }))
+      if (scenario.closeFails) throw new Error('/secret/eot/detector/close')
     }
   }
 
@@ -486,6 +544,22 @@ function loaderFor(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const STILL_PENDING = Symbol('still_pending')
+
+async function settleWithin<T>(promise: Promise<T>, milliseconds: number): Promise<T | typeof STILL_PENDING> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof STILL_PENDING>(resolve => {
+        timer = setTimeout(() => { resolve(STILL_PENDING) }, milliseconds)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 async function readyProbe(options: {
@@ -789,6 +863,23 @@ test('the 10-second total deadline includes loading and returns a stable timeout
   assert.equal(clock.active, 0)
 })
 
+test('the total deadline interrupts never-settling detector metadata', async () => {
+  const clock = new ProbeClock('manual')
+  const completion = await settleWithin(readyProbe({
+    clock,
+    scenario: {metadataHang: () => { clock.expireTotal() }},
+  }), 100)
+
+  assert.notEqual(completion, STILL_PENDING)
+  if (completion === STILL_PENDING) return
+  assert.deepEqual(completion.result.eot, {available: false, reason: 'timeout'})
+  assert.deepEqual(completion.result.vad, {available: false, reason: 'timeout'})
+  assert.equal(completion.state.vadStreamFlushes, 1)
+  assert.equal(completion.state.vadStreamCloses, 1)
+  assert.equal(completion.state.detectorCloses, 1)
+  assert.equal(clock.active, 0)
+})
+
 test('typed executor model unavailability is stable and never includes its payload', async () => {
   const nonce = 'MODEL-NONCE-/private/model.bin-transcript'
   const executor = new RecordingExecutor({modelUnavailable: true, nonce})
@@ -809,6 +900,53 @@ test('per-prediction timeout is bounded and closes every created public resource
   assert.equal(state.vadCloses, 2)
   assert.equal(state.turnStreamCloses, 2)
   assert.equal(state.detectorCloses, 2)
+  assert.equal(clock.active, 0)
+})
+
+test('owner abort keeps stream and detector cleanup strictly sequenced', async () => {
+  const clock = new ProbeClock('manual')
+  let releaseSecondClose: (() => void) | undefined
+  const secondCloseGate = new Promise<void>(resolve => { releaseSecondClose = resolve })
+  let executorCalls = 0
+  const executor: LiveKitExecutor = {
+    doInference(_method: string, data: unknown): Promise<unknown> {
+      executorCalls += 1
+      if (executorCalls === 2) {
+        clock.expireTotal()
+        return new Promise(() => undefined)
+      }
+      return Promise.resolve({
+        probability: isRecord(data) && data.speech === true ? 0.85 : 0.1,
+      })
+    },
+  }
+  const probe = readyProbe({
+    clock,
+    executor,
+    scenario: {secondTurnCloseGate: secondCloseGate},
+  })
+
+  try {
+    const completion = await settleWithin(probe, 100)
+    assert.notEqual(completion, STILL_PENDING)
+    if (completion === STILL_PENDING) return
+    assert.deepEqual(completion.result.eot, {available: false, reason: 'timeout'})
+    assert.deepEqual(completion.result.vad, {available: false, reason: 'timeout'})
+    assert.equal(executorCalls, 2)
+    assert.equal(completion.state.vadStreamFlushes, 2)
+    assert.equal(completion.state.detectorClosesWhileTurnStreamPending, 0)
+    assert.equal(completion.state.turnStreamDoubleCloses, 0)
+    assert.equal(completion.state.detectorCloses, 1)
+  } finally {
+    releaseSecondClose?.()
+  }
+
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  const completed = await probe
+  assert.equal(completed.state.turnStreamCloses, 2)
+  assert.equal(completed.state.detectorCloses, 2)
+  assert.equal(completed.state.detectorClosesWhileTurnStreamPending, 0)
+  assert.equal(completed.state.turnStreamDoubleCloses, 0)
   assert.equal(clock.active, 0)
 })
 
