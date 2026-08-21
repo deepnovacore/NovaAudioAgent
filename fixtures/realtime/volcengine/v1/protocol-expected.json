@@ -166,6 +166,16 @@
       },
       "ok": true
     },
+    "empty-user-and-password-endpoint-rejected": {
+      "error": "ConfigurationError",
+      "message": "NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT 必须是安全的 wss:// 地址",
+      "ok": false
+    },
+    "empty-userinfo-endpoint-rejected": {
+      "error": "ConfigurationError",
+      "message": "NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT 必须是安全的 wss:// 地址",
+      "ok": false
+    },
     "integer-exponent-rejected": {
       "error": "ValidationError",
       "fields": [

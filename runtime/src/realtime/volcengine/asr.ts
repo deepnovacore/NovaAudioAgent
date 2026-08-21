@@ -1,5 +1,6 @@
 import { gzipSync, gunzipSync } from 'node:zlib'
 import { isWellFormed, stripLikePython } from '../../python-text.js'
+import { MAX_REALTIME_PCM_BYTES } from '../protocol.js'
 import { MAX_VOLCENGINE_WIRE_FRAME_BYTES, type Pcm16MonoFrame } from './audio.js'
 
 export const MAX_VOLCENGINE_JSON_BYTES = 1_024 * 1_024
@@ -53,7 +54,8 @@ export class DoubaoAsrProtocol {
     if (input.audio.format.sampleRate !== 16_000
       || input.audio.format.encoding !== 'pcm_s16le' || input.audio.format.channels !== 1
       || !(input.audio.pcm instanceof Uint8Array) || input.audio.pcm.byteLength === 0
-      || input.audio.pcm.byteLength % 2 !== 0) {
+      || input.audio.pcm.byteLength % 2 !== 0
+      || input.audio.pcm.byteLength > MAX_REALTIME_PCM_BYTES) {
       throw new DoubaoAsrError('豆包 ASR 音频参数无效')
     }
     const flags = input.final ? 0x03 : 0x01

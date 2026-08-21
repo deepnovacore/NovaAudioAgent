@@ -420,6 +420,10 @@ function requiredSetting(value: string, name: string): string {
 function secureEndpoint(value: string, scheme: 'https' | 'wss', name: string): string {
   let normalized = stripLikePython(value)
   while (normalized.endsWith('/')) normalized = normalized.slice(0, -1)
+  const schemeSeparator = normalized.indexOf('://')
+  const authorityTail = schemeSeparator < 0 ? '' : normalized.slice(schemeSeparator + 3)
+  const authorityEnd = authorityTail.search(/[/?#]/u)
+  const authority = authorityEnd < 0 ? authorityTail : authorityTail.slice(0, authorityEnd)
   let parsed: URL | null = null
   try {
     parsed = new URL(normalized)
@@ -427,7 +431,8 @@ function secureEndpoint(value: string, scheme: 'https' | 'wss', name: string): s
     // The fixed error below deliberately does not retain the submitted URL.
   }
   const valid = parsed?.protocol === `${scheme}:` && parsed.hostname.length > 0
-    && parsed.username.length === 0 && parsed.password.length === 0 && parsed.hash.length === 0
+    && !authority.includes('@') && parsed.username.length === 0 && parsed.password.length === 0
+    && parsed.hash.length === 0
   if (!valid) {
     throw new ConfigurationError(`${name} 必须是安全的 ${scheme}:// 地址`)
   }

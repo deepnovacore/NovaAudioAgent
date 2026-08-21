@@ -56,6 +56,24 @@
       "action": "resolve"
     },
     {
+      "id": "empty-userinfo-endpoint-rejected",
+      "settings": {
+        "ark_api_key": "ark",
+        "doubao_bigmodel_api_key": "tts_fallback",
+        "doubao_tts_endpoint": "wss://@speech.example/tts"
+      },
+      "action": "resolve"
+    },
+    {
+      "id": "empty-user-and-password-endpoint-rejected",
+      "settings": {
+        "ark_api_key": "ark",
+        "doubao_bigmodel_api_key": "tts_fallback",
+        "doubao_tts_endpoint": "wss://:@speech.example/tts"
+      },
+      "action": "resolve"
+    },
+    {
       "id": "bom-is-not-python-whitespace",
       "settings": {
         "ark_api_key": "ark",

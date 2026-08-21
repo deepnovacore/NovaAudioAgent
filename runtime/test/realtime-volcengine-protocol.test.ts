@@ -12,6 +12,7 @@ import {
 } from '../src/config.js'
 import { volcengineInputPcm } from '../src/realtime/volcengine/audio.js'
 import { MAX_VOLCENGINE_WIRE_FRAME_BYTES } from '../src/realtime/volcengine/audio.js'
+import { MAX_REALTIME_PCM_BYTES } from '../src/realtime/protocol.js'
 import {
   DoubaoAsrError,
   DoubaoAsrProtocol,
@@ -174,6 +175,23 @@ test('ASR encoding and decoding match the Python-exported golden', () => {
   }
   assert.equal(canonicalJson(encoded), canonicalJson(expected.asr_encode))
   assert.equal(canonicalJson(decoded), canonicalJson(expected.asr_decode))
+})
+
+test('ASR audio revalidates the provider-neutral PCM byte cap', () => {
+  const protocol = new DoubaoAsrProtocol()
+  assert.doesNotThrow(() => protocol.audio({
+    sequence: 1,
+    audio: volcengineInputPcm(new Uint8Array(MAX_REALTIME_PCM_BYTES)),
+    final: false,
+  }))
+  assert.throws(() => protocol.audio({
+    sequence: 1,
+    audio: {
+      format: {encoding: 'pcm_s16le', sampleRate: 16_000, channels: 1},
+      pcm: new Uint8Array(MAX_REALTIME_PCM_BYTES + 2),
+    },
+    final: false,
+  }), DoubaoAsrError)
 })
 
 function awaitImportGunzip(payload: Uint8Array): Buffer {
