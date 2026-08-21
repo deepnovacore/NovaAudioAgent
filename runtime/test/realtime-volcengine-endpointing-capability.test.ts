@@ -33,7 +33,7 @@ const FIXTURE_DIRECTORY = join(
 const SUPPORTED_RUNTIME = Object.freeze({platform: 'darwin', arch: 'arm64'})
 
 interface Scenario {
-  readonly vad?: 'differentiated' | 'identical' | 'noop'
+  readonly vad?: 'differentiated' | 'identical' | 'noop' | 'deferred'
   readonly eot?:
     | 'differentiated'
     | 'identical'
@@ -279,6 +279,7 @@ function createSurface(
   class VadStream implements LiveKitVadStream, AsyncIterator<LiveKitVadEvent> {
     readonly #events: LiveKitVadEvent[] = []
     readonly #waiters: ((result: IteratorResult<LiveKitVadEvent>) => void)[] = []
+    readonly #boundaryFrames: LiveKitAudioFrame[] = []
     #closed = false
 
     updateInputStream(audioStream: ReadableStream<LiveKitAudioFrame>): void {
@@ -292,18 +293,27 @@ function createSurface(
       let trailingSilenceFrames = 0
       for await (const frame of audioStream) {
         frames.push(frame)
-        if (this.#closed || scenario.vad === 'noop') continue
+        if (scenario.vad === 'deferred') {
+          await new Promise<void>(resolve => { setImmediate(resolve) })
+          await new Promise<void>(resolve => { setImmediate(resolve) })
+        }
+        if (this.#closed || frame.samplesPerChannel < 512) continue
         const speech = frame.data.some(sample => sample !== 0)
-        const probability = scenario.vad === 'identical' ? 0.5 : speech ? 0.9 : 0.1
+        const probability = scenario.vad === 'noop'
+          ? 0
+          : scenario.vad === 'identical' ? 0.5 : speech ? 0.9 : 0.1
         this.#emit({type: 1, probability, frames: [frame]})
+        if (scenario.vad === 'noop') continue
         if (speech && !started) {
           started = true
+          this.#boundaryFrames.push(frame)
           this.#emit({type: 0, probability, frames: [frame]})
         }
         if (started && !ended) {
           trailingSilenceFrames = speech ? 0 : trailingSilenceFrames + 1
           if (trailingSilenceFrames >= 18) {
             ended = true
+            this.#boundaryFrames.push(...frames)
             this.#emit({type: 2, probability, frames: frames.slice()})
           }
         }
@@ -316,6 +326,9 @@ function createSurface(
 
     flush(): void {
       state.vadStreamFlushes += 1
+      if (scenario.vad === 'deferred') {
+        for (const frame of this.#boundaryFrames) frame.data.fill(0)
+      }
     }
 
     close(): void {
@@ -794,6 +807,16 @@ test('only differentiated VAD and delegated EOT inference can report ready', asy
       && options.sampleRate === 16_000
       && options.executor !== executor
   )), true)
+})
+
+test('async VAD input pumping completes before the probe flushes and closes', async () => {
+  const {result, state} = await readyProbe({scenario: {vad: 'deferred'}})
+
+  assert.equal(result.mode, 'livekit_v1_mini')
+  assert.deepEqual(result.vad, {available: true, reason: 'ready'})
+  assert.deepEqual(result.eot, {available: true, reason: 'ready'})
+  assert.equal(state.vadStreamFlushes, 2)
+  assert.equal(state.vadStreamCloses, 2)
 })
 
 test('constructor-only/no-op VAD and zero-call default-positive EOT fail closed', async () => {

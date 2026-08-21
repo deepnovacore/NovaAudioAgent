@@ -196,6 +196,7 @@ const FRAME_CADENCE_SECONDS = 0.032
 const TOTAL_TIMEOUT_SECONDS = 10
 const PREDICTION_TIMEOUT_SECONDS = 1.25
 const FIXTURE_BYTES = 84_480
+const EXPECTED_VAD_INFERENCE_EVENTS = 82
 const SPEECH_SHA256 = '5ecb547c0ffbfba27f9705bf4de7ecafd5343c3a86c23ecd2d347a7618a8a962'
 const SILENCE_SHA256 = '354c4c84336b04e0bd855bd6a2be99d114760ee7f398953471694f42cb88f30e'
 class CapabilityTimeoutError extends Error {
@@ -238,6 +239,12 @@ interface VadObservation {
   readonly endCount: number
   readonly startBeforeEnd: boolean
   readonly speechFramesContainAudio: boolean
+}
+
+interface VadObservedEvent {
+  readonly type: number
+  readonly probability: number
+  readonly framesContainAudio: boolean
 }
 
 interface EotObservation {
@@ -400,8 +407,20 @@ async function probeUnderDeadline(
   }
 
   const counting = executor === undefined ? undefined : countingExecutor(executor)
-  const speech = await observeFixture(surface, fixtureSet.speech, counting, clock, signal)
-  const silence = await observeFixture(surface, fixtureSet.silence, counting, clock, signal)
+  const speech = await observeFixture(
+    surface,
+    fixtureSet.speech,
+    counting,
+    clock,
+    signal,
+  )
+  const silence = await observeFixture(
+    surface,
+    fixtureSet.silence,
+    counting,
+    clock,
+    signal,
+  )
   const vad = classifyVad(speech, silence)
   const eot = executor === undefined
     ? unavailableComponent('executor_unavailable')
@@ -451,8 +470,9 @@ async function observeFixture(
   let turnStream: LiveKitTurnStream | undefined
   let vadNativeMissing = false
   let cleanupFailed = false
-  const vadEvents: LiveKitVadEvent[] = []
+  const vadEvents: VadObservedEvent[] = []
   let readerTask: Promise<void> | undefined
+  let readerBarrier: Promise<boolean> | undefined
   let eotObservation: EotObservation | undefined
   try {
     try {
@@ -466,7 +486,13 @@ async function observeFixture(
         deactivationThreshold: 0.35,
       })
       vadStream = vad.stream()
-      readerTask = readVadEvents(vadStream, vadEvents)
+      const reader = readVadEvents(
+        vadStream,
+        vadEvents,
+        surface.VADEventType,
+      )
+      readerTask = reader.task
+      readerBarrier = reader.barrier
     } catch {
       vadNativeMissing = true
     }
@@ -520,8 +546,10 @@ async function observeFixture(
       await clock.sleep(FRAME_CADENCE_SECONDS, signal)
     }
     vadController?.close()
-    await Promise.resolve()
-    await Promise.resolve()
+    if (readerBarrier !== undefined) {
+      const barrierReached = await raceAbort(readerBarrier, signal)
+      if (!barrierReached) cleanupFailed = true
+    }
 
     if (turnStream !== undefined) {
       const callsBefore = executor?.calls ?? 0
@@ -579,16 +607,51 @@ async function observeFixture(
   }
 }
 
-async function readVadEvents(
+interface VadEventReader {
+  readonly task: Promise<void>
+  readonly barrier: Promise<boolean>
+}
+
+function readVadEvents(
   stream: LiveKitVadStream,
-  target: LiveKitVadEvent[],
-): Promise<void> {
-  for await (const event of stream) target.push(event)
+  target: VadObservedEvent[],
+  eventTypes: LiveKitAgentsPublicSurface['VADEventType'],
+): VadEventReader {
+  let settleBarrier: ((reached: boolean) => void) | undefined
+  let barrierSettled = false
+  const barrier = new Promise<boolean>(resolve => { settleBarrier = resolve })
+  const settle = (reached: boolean): void => {
+    if (barrierSettled) return
+    barrierSettled = true
+    settleBarrier?.(reached)
+  }
+  const task = (async () => {
+    let inferenceCount = 0
+    try {
+      for await (const event of stream) {
+        target.push({
+          type: event.type,
+          probability: event.probability,
+          framesContainAudio: event.frames.some(frame => (
+            frame.data.some(sample => sample !== 0)
+          )),
+        })
+        if (event.type === eventTypes.INFERENCE_DONE) inferenceCount += 1
+        if (inferenceCount >= EXPECTED_VAD_INFERENCE_EVENTS) settle(true)
+      }
+      settle(false)
+    } catch (error) {
+      settle(false)
+      throw error
+    }
+  })()
+  void task.catch(() => undefined)
+  return {task, barrier}
 }
 
 function summarizeVad(
   surface: LiveKitAgentsPublicSurface,
-  events: readonly LiveKitVadEvent[],
+  events: readonly VadObservedEvent[],
 ): VadObservation {
   const starts = events.flatMap((event, index) => (
     event.type === surface.VADEventType.START_OF_SPEECH ? [index] : []
@@ -606,7 +669,7 @@ function summarizeVad(
     speechFramesContainAudio: events
       .filter(event => event.type === surface.VADEventType.START_OF_SPEECH
         || event.type === surface.VADEventType.END_OF_SPEECH)
-      .some(event => event.frames.some(frame => frame.data.some(sample => sample !== 0))),
+      .some(event => event.framesContainAudio),
   }
 }
 
