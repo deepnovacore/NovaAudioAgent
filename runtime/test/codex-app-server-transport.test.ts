@@ -174,6 +174,34 @@ test('preflight and live schema failures happen before app-server spawn', async 
   }
 })
 
+test('API key is visible only to credential snapshot preparation, never preflight or schema probes', async () => {
+  const seen: unknown[] = []
+  let preparedApiKey: unknown
+  const transport = createTransport({spawn: async () => new MemoryAppServerOwner([])}, {
+    preflightRunner: {run: async config => {
+      seen.push((config as {readonly apiKey?: unknown}).apiKey)
+      return safePreflightReport()
+    }},
+    schemaProbe: {generate: async config => {
+      seen.push((config as {readonly apiKey?: unknown}).apiKey)
+      return supportedSchemaBundle()
+    }},
+    prepare: async input => {
+      preparedApiKey = input.apiKey
+      return {} as never
+    },
+  })
+  const result = await transport.run(
+    {workOrder: 'credential boundary'},
+    {},
+    {expiresAtMs: Date.now() + 5_000},
+  )
+  assert.equal(result.classification, 'completed')
+  assert.deepEqual(seen, [null, null])
+  assert.equal(preparedApiKey, 'api-key-sentinel')
+  await transport.close()
+})
+
 test('preflight is hard-capped and caller cancellation settles before spawn', async () => {
   let timeoutMs = 0
   const report = safePreflightReport()
@@ -2655,7 +2683,7 @@ function createTransport(
       yieldIo(): Promise<void>
     }
     readonly developerInstructions?: string | null
-    readonly prepare?: () => Promise<never>
+    readonly prepare?: (input: {readonly apiKey: string | null}) => Promise<never>
     readonly removeEphemeralHome?: () => Promise<void>
   } = {},
 ): OwnedCodexAppServerTransport {

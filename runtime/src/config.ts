@@ -27,6 +27,13 @@ export const settingsSchema = z.object({
   qwen_guard_history_pairs: qwenGuardHistoryPairsSchema.default(4),
   executor: executorNameSchema.default('fast_sim'),
   executors: z.array(executorNameSchema).min(1),
+  codex_workspace: z.string().nullable().default(null),
+  codex_bin: z.string().default('codex'),
+  codex_api_key: z.string().nullable().default(null),
+  codex_prewarm: z.boolean().default(true),
+  codex_projects_enabled: z.boolean().default(false),
+  codex_managed_root: z.string().default('~/NovaWorkspaces'),
+  codex_project_state_root: z.string().default('~/.nova-audio-agent'),
   proactivity_preset: proactivityPresetSchema.default('balanced'),
   codex_working_interval: z.number().finite().min(5).max(600).default(30),
   suggestion_cooldown: z.number().finite().nonnegative().nullable().default(null),
@@ -68,6 +75,7 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     ? 'fast_sim'
     : configuredExecutor
   const executors = parseExecutors(environment.NOVA_AUDIO_AGENT_EXECUTORS, executor)
+  const codexSelected = executors.includes('codex')
   const candidate = {
     backend: optionalString(environment.NOVA_AUDIO_AGENT_BACKEND),
     model_base_url: optionalString(environment.NOVA_AUDIO_AGENT_MODEL_BASE_URL),
@@ -91,6 +99,19 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     ),
     executor,
     executors,
+    ...(codexSelected ? {
+      codex_workspace: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_WORKSPACE),
+      codex_bin: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_BIN),
+      codex_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_API_KEY),
+      codex_prewarm: optionalBoolean(environment.NOVA_AUDIO_AGENT_CODEX_PREWARM),
+      codex_projects_enabled: optionalBoolean(
+        environment.NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED,
+      ),
+      codex_managed_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT),
+      codex_project_state_root: optionalString(
+        environment.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT,
+      ),
+    } : {}),
     proactivity_preset: optionalString(environment.NOVA_AUDIO_AGENT_PROACTIVITY_PRESET),
     codex_working_interval: optionalNumber(
       environment.NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL,
@@ -197,8 +218,11 @@ function optionalQwenGuardHistoryPairs(value: string | undefined): 1 | 2 | 4 | s
 
 function optionalNumber(value: string | undefined, variable: string): number | undefined {
   if (value === undefined) return undefined
-  const normalized = value.trim()
+  const normalized = stripLikePython(value)
   if (normalized.length === 0) {
+    throw new ConfigurationError(`${variable} must be a number`)
+  }
+  if (!/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/u.test(normalized)) {
     throw new ConfigurationError(`${variable} must be a number`)
   }
   const parsed = Number(normalized)

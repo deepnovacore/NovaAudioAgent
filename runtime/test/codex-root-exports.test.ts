@@ -24,5 +24,10 @@ test('the runtime package root does not export Codex authority bypasses or test 
     'splitCredentialAtomicTargetForTest',
     'windowsGuardianHelperForTest',
     'windowsGuardianHelperPath',
+    'resolveCodexHostConfig',
+    'codexCredentialApiKey',
+    'createCodexAssemblyResource',
+    'OwnedCodexBackendTransportFactory',
+    'unavailableCodexBackendTransportFactory',
   ]) assert.equal(Object.hasOwn(runtime, name), false, name)
 })

@@ -521,6 +521,31 @@ test('entry maps invalid construction to one fixed diagnostic and no readiness',
   assert.deepEqual(diagnostics, ['[runtime-diagnostic] assembly_failed'])
 })
 
+test('entry awaits fallible host resource construction before any realtime or listener phase', async () => {
+  const trace: string[] = []
+  const stop = new AbortController()
+  stop.abort()
+  const realtime = new ControlledRealtime(trace)
+  const desktop = new ControlledDesktop(trace)
+  const construct = (() => Promise.resolve({realtime, desktop})) as unknown as () => {
+    readonly realtime: DesktopRealtimeOwner
+    readonly desktop: DesktopRealtimeTransportOwner
+  }
+  const diagnostics: string[] = []
+  const exitCode = await runDesktopEntry({
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:51515',
+    stop,
+    construct,
+    announce: () => { trace.push('ready'); return Promise.resolve() },
+    onDiagnostic: line => diagnostics.push(line),
+  })
+
+  assert.equal(exitCode, 0)
+  assert.deepEqual(trace, ['server:close', 'realtime:stop'])
+  assert.deepEqual(diagnostics, [])
+})
+
 test('utility shutdown messages and parent EOF converge on the shared abort owner', () => {
   assert.equal(isDesktopShutdownMessage({type: 'nova.shutdown'}), true)
   assert.equal(isDesktopShutdownMessage({data: {type: 'nova.shutdown'}}), true)

@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { buildAssembly } from '../src/assembly.js'
+import type {CodexAssemblyResource} from '../src/codex-factory.js'
+import type {
+  CodexAppServerTransport,
+  SafePreflightReport,
+  SteerTransportResult,
+  TransportOutcome,
+} from '../src/codex-app-server-transport.js'
 import { VirtualClock } from '../src/clock.js'
 import { ConfigurationError, loadSettings, type Settings } from '../src/config.js'
 import {buildDesktopRealtimeComposition} from '../src/desktop-service.js'
@@ -28,6 +35,7 @@ import {
   type QwenSocket,
 } from '../src/realtime/qwen.js'
 import type { CompiledTools } from '../src/tool-schema.js'
+import {CodexLiveAdapter} from '../src/executors/codex-live.js'
 
 async function settleNamed<T>(
   name: string,
@@ -43,6 +51,15 @@ async function settleNamed<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer)
   }
+}
+
+function deferred<T = void>(): {
+  readonly promise: Promise<T>
+  readonly resolve: (value: T | PromiseLike<T>) => void
+} {
+  let resolve: ((value: T | PromiseLike<T>) => void) | undefined
+  const promise = new Promise<T>(promiseResolve => { resolve = promiseResolve })
+  return {promise, resolve: resolve!}
 }
 
 class RecordingIds implements IdFactory {
@@ -92,6 +109,25 @@ class NeverGateway implements ModelGateway {
     void request
     return Promise.reject(new Error('completion was not expected'))
   }
+}
+
+class CompositionCodexTransport implements CodexAppServerTransport {
+  preflight(): Promise<SafePreflightReport> {
+    return Promise.resolve({
+      version: '0.145.0', root_matches: true, mount: 'workspace_only',
+      subprocess: 'contained', network: 'blocked',
+    })
+  }
+  prewarm(): Promise<SafePreflightReport | null> {
+    return Promise.resolve(null)
+  }
+  run(): Promise<TransportOutcome> {
+    return Promise.reject(new Error('Codex run was not expected'))
+  }
+  steer(): Promise<SteerTransportResult> {
+    return Promise.resolve({code: 'no_active_turn', written: false})
+  }
+  close(): Promise<void> { return Promise.resolve() }
 }
 
 class HandshakeSocket implements QwenSocket {
@@ -221,6 +257,42 @@ test('Qwen factory builds a realtime-frontbrain core while ordinary assembly kee
   ordinary.runtime.core.apply(ordinaryInput)
   assert.equal(ordinary.runtime.core.slots.inflight.fast, true)
   assert.equal(connector.calls.length, 0)
+})
+
+test('Qwen composition registers the exact Codex resource and starts prewarm after service', async () => {
+  const connector = recordingConnector()
+  const adapter = new CodexLiveAdapter(new CompositionCodexTransport())
+  const prewarmEntered = deferred<void>()
+  const prewarmGate = deferred<void>()
+  let closes = 0
+  const resource: CodexAssemblyResource = {
+    adapter,
+    mode: 'live',
+    projectView: null,
+    start: () => {
+      prewarmEntered.resolve()
+      return prewarmGate.promise
+    },
+    close: () => { closes += 1; return adapter.close() },
+  }
+  const input = {
+    ...qwenOptions(settings({
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    }), connector.connector),
+    codexResource: resource,
+  }
+  const realtime = buildQwenRealtimeAssembly(input)
+  assert.equal(realtime.runtime.executors.get('codex'), adapter)
+
+  const starting = realtime.start()
+  await settleNamed('provider service before Codex prewarm', prewarmEntered.promise)
+  await settleNamed('Codex prewarm does not delay realtime start', starting)
+  assert.equal(connector.calls.length, 1)
+
+  prewarmGate.resolve()
+  await realtime.stop()
+  assert.equal(closes, 1)
 })
 
 test('Qwen factory preserves resource identity, explicit Guard settings, and one start path', async () => {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly } from './assembly.js'
+import type {CodexAssemblyResource} from './codex-factory.js'
 import { canonicalJson } from './canonical-json.js'
 import type { JsonValue } from './events.js'
 import type {ProjectCodexAdapter} from './executors/codex-project-live.js'
@@ -51,6 +52,7 @@ export interface RealtimeAssemblyOptions {
     originRef: string,
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly projectExpiryStepTimeoutMs?: number
+  readonly codexResource?: CodexAssemblyResource
 }
 
 type LifecycleState = 'new' | 'starting' | 'started' | 'stopping' | 'stopped'
@@ -81,6 +83,7 @@ export class RealtimeAssembly {
 
   readonly #onDiagnostic: (line: string) => void
   readonly #projectAdapter: ProjectCodexAdapter | undefined
+  readonly #codexResource: CodexAssemblyResource | undefined
   readonly #unsubscribeProjectView: (() => void) | undefined
   #state: LifecycleState = 'new'
   #startOperation: Promise<void> | null = null
@@ -97,6 +100,7 @@ export class RealtimeAssembly {
     readonly onDiagnostic: (line: string) => void
     readonly projectAdapter?: ProjectCodexAdapter
     readonly onProjectView?: (view: ProjectConfirmationView) => void
+    readonly codexResource?: CodexAssemblyResource
   }) {
     this.core = input.core
     this.provider = input.provider
@@ -109,6 +113,7 @@ export class RealtimeAssembly {
     this.tools = input.core.tools
     this.#onDiagnostic = input.onDiagnostic
     this.#projectAdapter = input.projectAdapter
+    this.#codexResource = input.codexResource
     this.#unsubscribeProjectView = input.projectAdapter === undefined || input.onProjectView === undefined
       ? undefined
       : input.projectAdapter.observeProjectView(input.onProjectView)
@@ -179,7 +184,16 @@ export class RealtimeAssembly {
       }
       throw error
     }
-    if (this.#state === 'starting') this.#state = 'started'
+    if (this.#state === 'starting') {
+      this.#state = 'started'
+      if (this.#codexResource !== undefined) {
+        try {
+          void this.#codexResource.start().catch(() => undefined)
+        } catch {
+          // A live prewarm is advisory. A real launch remains lazy on first delegation.
+        }
+      }
+    }
   }
 
   async #stopAfter(starting: Promise<void> | null): Promise<void> {
@@ -200,7 +214,13 @@ export class RealtimeAssembly {
     )
     if (firstFailure === null && core.kind === 'rejected') firstFailure = {error: core.error}
 
-    if (this.#projectAdapter !== undefined) {
+    if (this.#codexResource !== undefined) {
+      const codex = await this.#cleanupWithinGrace(
+        () => this.#codexResource!.close(),
+        'codex_close_abandoned',
+      )
+      if (firstFailure === null && codex.kind === 'rejected') firstFailure = {error: codex.error}
+    } else if (this.#projectAdapter !== undefined) {
       const project = await this.#cleanupWithinGrace(
         () => this.#projectAdapter!.close(),
         'assembly_project_adapter_close_abandoned',
@@ -257,7 +277,17 @@ export class RealtimeAssembly {
 /** Build the provider-neutral realtime resources in their ownership order. */
 export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): RealtimeAssembly {
   const core = options.core
-  const projectAdapter = options.projectAdapter
+  const resourceAdapter = options.codexResource?.adapter
+  if (
+    options.codexResource !== undefined
+    && core.runtime.executors.get('codex') !== resourceAdapter
+  ) throw new AssemblyError('Codex resource must be the registered codex executor')
+  if (options.projectAdapter !== undefined && options.codexResource !== undefined) {
+    throw new AssemblyError('manual project adapter cannot be combined with Codex resource')
+  }
+  const projectAdapter = options.codexResource?.mode === 'project'
+    ? asProjectAdapter(resourceAdapter)
+    : options.projectAdapter
   if (projectAdapter !== undefined) {
     if (options.projectConfirmation !== undefined || options.commitProjectOperation !== undefined) {
       throw new AssemblyError('project adapter cannot be combined with manual project wiring')
@@ -351,7 +381,19 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     onDiagnostic,
     ...(projectAdapter === undefined ? {} : {projectAdapter}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
+    ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
   })
+}
+
+function asProjectAdapter(adapter: unknown): ProjectCodexAdapter {
+  if (
+    typeof adapter !== 'object'
+    || adapter === null
+    || !('confirmationController' in adapter)
+    || !('commitConfirmed' in adapter)
+    || !('publicProjectView' in adapter)
+  ) throw new AssemblyError('project Codex resource has an invalid adapter')
+  return adapter as ProjectCodexAdapter
 }
 
 function validateProviderToolView(

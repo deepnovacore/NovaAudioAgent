@@ -1,6 +1,7 @@
 /** Production Qwen composition above the provider-neutral realtime owner. */
 
-import { buildAssembly, type AssemblyOptions } from './assembly.js'
+import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
+import type {CodexAssemblyResource} from './codex-factory.js'
 import { RealClock } from './clock.js'
 import { requireQwenRealtime } from './config.js'
 import { MonotonicIdFactory } from './ids.js'
@@ -29,6 +30,8 @@ export interface BuildQwenRealtimeAssemblyOptions
   > {
   /** Deterministic test seam; production uses the bounded WebSocket connector. */
   readonly connector?: QwenConnector
+  /** Host-resolved Codex resource; never derived from provider or renderer input. */
+  readonly codexResource?: CodexAssemblyResource
 }
 
 /**
@@ -40,6 +43,17 @@ export interface BuildQwenRealtimeAssemblyOptions
 export function buildQwenRealtimeAssembly(
   options: BuildQwenRealtimeAssemblyOptions,
 ): RealtimeAssembly {
+  const codexSelected = options.settings.executors.includes('codex')
+  if (codexSelected !== (options.codexResource !== undefined)) {
+    throw new AssemblyError('realtime Codex resource selection mismatch')
+  }
+  if (options.codexResource?.mode === 'ordinary') {
+    throw new AssemblyError('ordinary Codex resource cannot enter realtime composition')
+  }
+  if (
+    options.codexResource !== undefined
+    && options.settings.codex_projects_enabled !== (options.codexResource.mode === 'project')
+  ) throw new AssemblyError('realtime Codex project mode mismatch')
   const qwen = requireQwenRealtime(options.settings)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
@@ -59,7 +73,12 @@ export function buildQwenRealtimeAssembly(
     ...(options.sink === undefined ? {} : {sink: options.sink}),
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
     ...(options.media === undefined ? {} : {media: options.media}),
-    ...(options.executors === undefined ? {} : {executors: options.executors}),
+    ...((options.executors === undefined && options.codexResource === undefined)
+      ? {}
+      : {executors: [
+          ...(options.executors ?? []),
+          ...(options.codexResource === undefined ? [] : [options.codexResource.adapter]),
+        ]}),
     ...(options.searchTransport === undefined ? {} : {searchTransport: options.searchTransport}),
     ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
@@ -103,5 +122,6 @@ export function buildQwenRealtimeAssembly(
     ...(options.projectExpiryStepTimeoutMs === undefined
       ? {}
       : {projectExpiryStepTimeoutMs: options.projectExpiryStepTimeoutMs}),
+    ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
   })
 }

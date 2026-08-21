@@ -427,7 +427,7 @@ export interface DesktopEntryOptions {
   readonly token: string
   readonly readyEndpoint: string
   readonly stop: AbortController
-  readonly construct: () => DesktopEntryConstruction
+  readonly construct: () => DesktopEntryConstruction | Promise<DesktopEntryConstruction>
   readonly announce: (
     endpoint: string,
     readiness: DesktopReadiness,
@@ -442,7 +442,7 @@ export async function runDesktopEntry(options: DesktopEntryOptions): Promise<0 |
   try {
     validateDesktopToken(options.token)
     parseReadyEndpoint(options.readyEndpoint)
-    const constructed = options.construct()
+    const constructed = await options.construct()
     const owner = new RealtimeDesktopService({
       realtime: constructed.realtime,
       desktop: constructed.desktop,

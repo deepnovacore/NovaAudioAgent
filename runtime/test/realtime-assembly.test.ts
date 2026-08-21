@@ -11,7 +11,8 @@ import {
   buildRealtimeAssembly,
 } from '../src/realtime-assembly.js'
 import { VirtualClock } from '../src/clock.js'
-import {CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
+import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
+import type {CodexAssemblyResource} from '../src/codex-factory.js'
 import { settingsSchema } from '../src/config.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../src/causal-runtime.js'
 import type {ProjectCodexAdapter} from '../src/executors/codex-project-live.js'
@@ -769,6 +770,48 @@ test('concurrent starts acquire core, provider, and runtime serving exactly once
   assert.equal(serveCalls, 1)
 
   await settleNamed('concurrent start cleanup', realtime.stop())
+})
+
+test('Codex resource starts after provider service and closes after service and core', async () => {
+  const actions: string[] = []
+  const adapter: ExecutorAdapter = {
+    manifest: CODEX_LIVE_MANIFEST,
+    dispatch: (): Promise<ExecutorHandoff> => Promise.resolve({
+      outcome: 'failed',
+      trust: 'trusted_system',
+      content: {code: 'not_run'},
+    }),
+  }
+  const resource: CodexAssemblyResource = {
+    adapter,
+    mode: 'live',
+    projectView: null,
+    start: () => { actions.push('codex:start'); return Promise.resolve() },
+    close: () => { actions.push('codex:close'); return Promise.resolve() },
+  }
+  const frame = new RecordingFrameSource(actions)
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock: new VirtualClock(),
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    frameSource: frame,
+    executors: [adapter],
+  })
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider: new AbortAwareProvider(actions),
+    codexResource: resource,
+    onDiagnostic: () => undefined,
+  })
+
+  await realtime.start()
+  assert.ok(actions.indexOf('provider:connect') < actions.indexOf('codex:start'))
+  await realtime.stop()
+  assert.ok(actions.indexOf('provider:close') < actions.indexOf('core:stop'))
+  assert.ok(actions.indexOf('core:stop') < actions.indexOf('codex:close'))
+  await realtime.stop()
+  assert.equal(actions.filter(item => item === 'codex:close').length, 1)
 })
 
 test('service start failure rolls core back, preserves the primary error, and remains retryable', async () => {

@@ -38,6 +38,76 @@ test('numeric overrides reject negative, non-finite, and out-of-range values', (
   )
 })
 
+test('selected Codex settings preserve the established host environment defaults and overrides', () => {
+  const defaults = loadSettings({NOVA_AUDIO_AGENT_EXECUTOR: 'codex'}) as unknown as Record<
+    string,
+    unknown
+  >
+  assert.deepEqual({
+    workspace: defaults.codex_workspace,
+    binary: defaults.codex_bin,
+    apiKey: defaults.codex_api_key,
+    prewarm: defaults.codex_prewarm,
+    projects: defaults.codex_projects_enabled,
+    managedRoot: defaults.codex_managed_root,
+    stateRoot: defaults.codex_project_state_root,
+  }, {
+    workspace: null,
+    binary: 'codex',
+    apiKey: null,
+    prewarm: true,
+    projects: false,
+    managedRoot: '~/NovaWorkspaces',
+    stateRoot: '~/.nova-audio-agent',
+  })
+
+  const explicit = loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: '\u001c/private/workspace\u0085',
+    NOVA_AUDIO_AGENT_CODEX_BIN: '\u001c/private/bin/codex\u0085',
+    NOVA_AUDIO_AGENT_CODEX_API_KEY: '\u001csecret\u0085',
+    NOVA_AUDIO_AGENT_CODEX_PREWARM: 'false',
+    NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'true',
+    NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: '\u001c/private/managed\u0085',
+    NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '\u001c/private/state\u0085',
+  }) as unknown as Record<string, unknown>
+  assert.deepEqual({
+    workspace: explicit.codex_workspace,
+    binary: explicit.codex_bin,
+    apiKey: explicit.codex_api_key,
+    prewarm: explicit.codex_prewarm,
+    projects: explicit.codex_projects_enabled,
+    managedRoot: explicit.codex_managed_root,
+    stateRoot: explicit.codex_project_state_root,
+  }, {
+    workspace: '/private/workspace',
+    binary: '/private/bin/codex',
+    apiKey: 'secret',
+    prewarm: false,
+    projects: true,
+    managedRoot: '/private/managed',
+    stateRoot: '/private/state',
+  })
+})
+
+test('Codex working interval uses Python whitespace and keeps both inclusive bounds', () => {
+  assert.equal(loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: '\u001c5\u0085',
+  }).codex_working_interval, 5)
+  assert.equal(loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: '600',
+  }).codex_working_interval, 600)
+  assert.throws(
+    () => loadSettings({
+      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+      NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: '\ufeff5\ufeff',
+    }),
+    /NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL/u,
+  )
+})
+
 test('executor list is trimmed, ordered, unique, and non-empty', () => {
   assert.deepEqual(loadSettings({NOVA_AUDIO_AGENT_EXECUTORS: ' slow_sim , codex '}).executors, [
     'slow_sim',
@@ -77,6 +147,23 @@ test('configuration failures never echo secret values', () => {
   }
   assert.equal(message.includes(secret), false)
   assert.match(message, /BACKEND/u)
+})
+
+test('a non-Codex configuration never reads the Codex credential environment slot', () => {
+  let reads = 0
+  const environment = new Proxy<NodeJS.ProcessEnv>({
+    NOVA_AUDIO_AGENT_EXECUTOR: 'fast_sim',
+  }, {
+    get(target, key, receiver) {
+      if (key === 'NOVA_AUDIO_AGENT_CODEX_API_KEY') {
+        reads += 1
+        throw new Error('Codex secret must stay lazy')
+      }
+      return Reflect.get(target, key, receiver) as string | undefined
+    },
+  })
+  assert.equal(loadSettings(environment).executors[0], 'fast_sim')
+  assert.equal(reads, 0)
 })
 
 test('the unprefixed Tavily credential is preserved for production assembly', () => {

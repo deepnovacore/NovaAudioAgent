@@ -77,7 +77,13 @@ export interface CodexAppServerLaunchConfig {
   readonly developerInstructions: string | null
   readonly resumeThreadId: string | null
   readonly persistent: boolean
+  readonly workingInterval?: number
 }
+
+type ValidatedCodexAppServerLaunchConfig = Omit<
+  CodexAppServerLaunchConfig,
+  'workingInterval'
+> & {readonly workingInterval: number}
 
 export interface TransportDeadline {
   readonly expiresAtMs: number
@@ -234,7 +240,7 @@ export class CodexTransportError extends Error {
 }
 
 export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
-  readonly #config: CodexAppServerLaunchConfig
+  readonly #config: ValidatedCodexAppServerLaunchConfig
   readonly #processFactory: CodexProcessOwnerFactory
   readonly #credentials: CredentialProvider
   readonly #preflightRunner: CodexHostPreflightRunner
@@ -310,7 +316,10 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     try {
       const established = await this.#startEstablish(deadline)
       session = established.session
-      const projection = new AppServerTurnProjection({clock: this.#scheduler.clock})
+      const projection = new AppServerTurnProjection({
+        clock: this.#scheduler.clock,
+        workingInterval: this.#config.workingInterval,
+      })
       this.#bindThread(projection, session.threadResponse)
       await this.#scheduler.yieldIo()
       if (session.failureCause !== null) throw session.failureCause
@@ -373,6 +382,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
         }
       const projection = new AppServerTurnProjection({
         clock: this.#scheduler.clock,
+        workingInterval: this.#config.workingInterval,
         ...(progress === undefined ? {} : {onProgress: progress}),
       })
       session.projection = projection
@@ -583,10 +593,14 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   async #performPreflight(deadline: TransportDeadline): Promise<SafePreflightReport> {
     const hardDeadline = Math.min(deadline.expiresAtMs, Date.now() + CODEX_PREFLIGHT_LIMIT_MS)
     const bounded = {...deadline, expiresAtMs: hardDeadline}
+    const probeConfig: ValidatedCodexAppServerLaunchConfig = Object.freeze({
+      ...this.#config,
+      apiKey: null,
+    })
     let report: unknown
     try {
       report = await runWithin(
-        this.#preflightRunner.run(this.#config, Math.max(0, hardDeadline - Date.now())),
+        this.#preflightRunner.run(probeConfig, Math.max(0, hardDeadline - Date.now())),
         bounded,
         'preflight_timeout',
       )
@@ -597,7 +611,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     let bundle: Readonly<Record<string, unknown>>
     try {
       bundle = await runWithin(
-        this.#schemaProbe.generate(this.#config, Math.max(0, hardDeadline - Date.now())),
+        this.#schemaProbe.generate(probeConfig, Math.max(0, hardDeadline - Date.now())),
         bounded,
         'preflight_timeout',
       )
@@ -1398,7 +1412,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
   }
 }
 
-function validateLaunchConfig(config: CodexAppServerLaunchConfig): CodexAppServerLaunchConfig {
+function validateLaunchConfig(config: CodexAppServerLaunchConfig): ValidatedCodexAppServerLaunchConfig {
   hostWorkspacePath(config.workspace)
   const home = hostCodexHomeValue(config.codexHome)
   if (home.ephemeral === config.persistent) throw new CodexTransportError('workspace_invalid')
@@ -1424,7 +1438,16 @@ function validateLaunchConfig(config: CodexAppServerLaunchConfig): CodexAppServe
     developerInstructions,
     resumeThreadId,
     persistent: config.persistent,
+    workingInterval: validateWorkingInterval(config.workingInterval),
   })
+}
+
+function validateWorkingInterval(value: number | undefined): number {
+  const interval = value ?? 30
+  if (!Number.isFinite(interval) || interval < 5 || interval > 600) {
+    throw new CodexTransportError('workspace_invalid')
+  }
+  return interval
 }
 
 function validateThreadId(value: string): string {
