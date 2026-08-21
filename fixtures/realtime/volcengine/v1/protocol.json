@@ -92,6 +92,20 @@
         "doubao_asr_chunk_ms": "2e2"
       },
       "action": "load"
+    },
+    {
+      "id": "integer-fraction-underscore-rejected",
+      "settings": {
+        "doubao_asr_chunk_ms": "1_0.0_0"
+      },
+      "action": "load"
+    },
+    {
+      "id": "signed-nan-loads-before-resolver-validation",
+      "settings": {
+        "volcengine_vad_threshold": "+NaN"
+      },
+      "action": "load"
     }
   ],
   "asr_encode": [

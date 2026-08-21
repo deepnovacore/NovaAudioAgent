@@ -173,6 +173,13 @@
       ],
       "ok": false
     },
+    "integer-fraction-underscore-rejected": {
+      "error": "ValidationError",
+      "fields": [
+        "DOUBAO_ASR_CHUNK_MS"
+      ],
+      "ok": false
+    },
     "missing-ark-precedes-tts": {
       "error": "ConfigurationError",
       "message": "缺少 ARK_API_KEY",
@@ -194,6 +201,9 @@
       "ok": true
     },
     "resolver-only-invalid-endpoint-loads": {
+      "ok": true
+    },
+    "signed-nan-loads-before-resolver-validation": {
       "ok": true
     },
     "userinfo-endpoint-rejected": {

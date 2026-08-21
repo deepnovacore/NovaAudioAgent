@@ -381,7 +381,7 @@ const pydanticNumericSpace = '[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680'
   + '\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]'
 const underscoredDigits = '[0-9](?:_?[0-9])*'
 const pydanticIntegerPattern = new RegExp(
-  `^${pydanticNumericSpace}*[+-]?${underscoredDigits}(?:\\.0(?:_?0)*)?${pydanticNumericSpace}*$`,
+  `^${pydanticNumericSpace}*[+-]?${underscoredDigits}(?:\\.0+)?${pydanticNumericSpace}*$`,
   'u',
 )
 const pydanticFloatPattern = new RegExp(
@@ -404,7 +404,7 @@ function optionalPydanticFloat(value: string | undefined): number | string | und
   if (!pydanticFloatPattern.test(value)) return value
   const normalized = value.replace(pydanticNumericEdges, '').replaceAll('_', '')
   const parsed = Number(normalized.toLowerCase().replace('infinity', 'Infinity').replace('inf', 'Infinity'))
-  return Number.isNaN(parsed) && normalized.toLowerCase() !== 'nan' ? value : parsed
+  return Number.isNaN(parsed) && !/^[+-]?nan$/iu.test(normalized) ? value : parsed
 }
 
 function rawEnvironmentValue(value: string | undefined): string | undefined {
