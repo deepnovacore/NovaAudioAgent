@@ -248,6 +248,25 @@ test('aggregate-byte and single-frame bounds fail before queue admission', async
   }
 })
 
+test('wire-frame limit is enforced by ws before an oversized message reaches the adapter',
+  async () => {
+    const harness = await socketHarness()
+    const controller = new AbortController()
+    try {
+      const socket = await connect(harness.endpoint, controller.signal, {maxFrameBytes: 2})
+      const peer = await harness.peer
+      const peerClosed = new Promise<number>(resolve => {
+        peer.once('close', code => resolve(code))
+      })
+      peer.send(new Uint8Array([1, 2, 3]))
+      await assert.rejects(settleWithin('ws payload rejection', socket.receive()),
+        hasCode('overflow'))
+      assert.equal(await settleWithin('ws payload close code', peerClosed), 1009)
+    } finally {
+      await harness.close()
+    }
+  })
+
 test('peer close settles a waiter once and redacts the close reason', async () => {
   const harness = await socketHarness()
   const controller = new AbortController()

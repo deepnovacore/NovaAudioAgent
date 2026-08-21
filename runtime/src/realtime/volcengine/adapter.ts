@@ -273,6 +273,7 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
     throwIfAborted(options.signal)
     this.#state = 'connecting'
     this.#closePromise = null
+    this.#audioTail = Promise.resolve()
     const epoch = this.#epoch + 1
     let ark: ArkResponsesGateway | null = null
     try {
@@ -305,7 +306,10 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
       this.#record('volcengine.session.connected', {epoch})
       return {epoch, provider_session_id: sessionId}
     } catch (error) {
-      if (ark !== null) await ark.close().catch(() => undefined)
+      if (ark !== null) {
+        const closingArk = ark
+        await safeCallWithin(() => closingArk.close(), this.#settleTimeoutMs)
+      }
       if (this.#owner?.epoch === epoch) this.#owner = null
       this.#finishConnectFailure()
       if (error instanceof VolcengineRealtimeError) throw error
@@ -464,12 +468,14 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
     if (this.#state === 'new' || this.#state === 'disconnected') return Promise.resolve()
     this.#state = 'closing'
     const owner = this.#owner
+    const audioTail = this.#audioTail
     this.#closePromise = (async () => {
       let failed = false
       if (owner !== null) {
         owner.revoked = true
         this.#emitClosingTerminal(owner)
         owner.controller.abort()
+        failed = !(await settleWithin(audioTail, this.#settleTimeoutMs)) || failed
         failed = !(await this.#cleanupOwner(owner)) || failed
         owner.queue.close()
         this.#record('volcengine.session.closed', {epoch: owner.epoch})
@@ -969,36 +975,55 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
     }
   }
 
-  async #cancelTts(owner: EpochOwner, active: ActiveResponse): Promise<void> {
+  async #cancelTts(owner: EpochOwner, active: ActiveResponse): Promise<boolean> {
     const state = active.tts
-    if (state === null) return
+    if (state === null) return true
     const hadResource = state.openPromise !== null || state.session !== null || state.receiveTask !== null
-    await this.#releaseTtsState(state, true)
-    if (hadResource) this.#record('volcengine.tts.cancel', {epoch: owner.epoch})
     active.tts = null
+    const successful = await this.#releaseTtsState(state, true)
+    if (hadResource) this.#record('volcengine.tts.cancel', {epoch: owner.epoch})
+    return successful
   }
 
-  async #releaseTtsState(state: ActiveTts, cancel: boolean): Promise<void> {
+  async #releaseTtsState(state: ActiveTts, cancel: boolean): Promise<boolean> {
+    let successful = true
     const open = state.openPromise
     state.openPromise = null
     state.controller.abort()
     let session = state.session
     state.session = null
     if (open !== null) {
-      const opened = await settleValue(open, this.#settleTimeoutMs)
-      if (opened !== null && session === null) session = opened
-      if (opened === null) {
+      const openSettled = await settleWithin(open, this.#settleTimeoutMs)
+      if (openSettled) {
+        try {
+          session ??= await open
+        } catch {
+          // A failed prewarm owns no provider resource.
+        }
+      } else {
+        successful = false
         void open.then(async late => {
-          await late.cancel().catch(() => undefined)
-          await late.close().catch(() => undefined)
+          await safeCallWithin(() => late.cancel(), this.#settleTimeoutMs)
+          await safeCallWithin(() => late.close(), this.#settleTimeoutMs)
         }, () => undefined)
       }
     }
-    if (cancel && session !== null) await session.cancel().catch(() => undefined)
+    if (cancel && session !== null) {
+      successful = await safeCallWithin(
+        () => session.cancel(), this.#settleTimeoutMs,
+      ) && successful
+    }
     const receive = state.receiveTask
     state.receiveTask = null
-    if (receive !== null) await settleWithin(receive, this.#settleTimeoutMs)
-    if (session !== null) await session.close().catch(() => undefined)
+    if (receive !== null) {
+      successful = await settleWithin(receive, this.#settleTimeoutMs) && successful
+    }
+    if (session !== null) {
+      successful = await safeCallWithin(
+        () => session.close(), this.#settleTimeoutMs,
+      ) && successful
+    }
+    return successful
   }
 
   async #emitTerminal(
@@ -1017,6 +1042,7 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
   }
 
   #takeResponseInputs(owner: EpochOwner, intent: HostResponseIntent): JsonObject[] {
+    if (!owner.pending.has(intent.item.host_item_id)) return []
     const selected: JsonObject[] = []
     for (const [hostId, pending] of [...owner.pending]) {
       let include = hostId === intent.item.host_item_id
@@ -1105,17 +1131,24 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
     if (response !== null) {
       response.controller.abort()
       successful = await settleWithin(response.task, this.#settleTimeoutMs) && successful
+      successful = await this.#cancelTts(owner, response) && successful
       if (owner.response === response) owner.response = null
     }
     const asr = owner.asr
     if (asr !== null) {
       asr.controller.abort()
-      successful = await safeCall(() => asr.session.close()) && successful
+      successful = await safeCallWithin(
+        () => asr.session.close(), this.#settleTimeoutMs,
+      ) && successful
       successful = await settleWithin(asr.task, this.#settleTimeoutMs) && successful
       if (owner.asr === asr) owner.asr = null
     }
-    successful = await safeCall(() => owner.ark.close()) && successful
-    successful = await safeCall(async () => { await this.#endpointing.reset() }) && successful
+    successful = await safeCallWithin(
+      () => owner.ark.close(), this.#settleTimeoutMs,
+    ) && successful
+    successful = await safeCallWithin(
+      async () => { await this.#endpointing.reset() }, this.#settleTimeoutMs,
+    ) && successful
     return successful
   }
 
@@ -1204,23 +1237,23 @@ async function settleWithin(task: Promise<unknown>, timeoutMs: number): Promise<
   }
 }
 
-async function settleValue<T>(task: Promise<T>, timeoutMs: number): Promise<T | null> {
+async function safeCallWithin(
+  operation: () => Promise<void>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let task: Promise<void>
+  try {
+    task = operation()
+  } catch {
+    return false
+  }
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
-      task.then(value => value, () => null),
-      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), timeoutMs) }),
+      task.then(() => true, () => false),
+      new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs) }),
     ])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
-  }
-}
-
-async function safeCall(operation: () => Promise<void>): Promise<boolean> {
-  try {
-    await operation()
-    return true
-  } catch {
-    return false
   }
 }

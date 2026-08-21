@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   DoubaoTtsClient,
   DoubaoTtsFailure,
+  DoubaoTtsSession,
 } from '../src/realtime/volcengine/tts.js'
 import { EventType, MessageType, VolcMessage } from '../src/realtime/volcengine/protocol.js'
 import {
@@ -313,3 +314,26 @@ test('TTS close always attempts finish-connection, closes in finally, and shares
   assert.equal(socket.closeCalls, 1)
   assert.equal(VolcMessage.unmarshal(socket.sent.at(-1)!).event, EventType.FINISH_CONNECTION)
 })
+
+test('TTS close reaches the socket within its bound when an earlier write never settles',
+  async () => {
+    const socket = new ScriptedSocket([])
+    let release: (() => void) | undefined
+    socket.blockSends(new Promise<void>(resolve => { release = resolve }))
+    const session = new DoubaoTtsSession({
+      socket, sessionId: 'blocked-session', voice: 'fixture-voice', sampleRate: 24_000,
+      receiveTimeoutMs: 100, idFactory: ids('blocked-task'),
+    })
+    const blocked = session.sendText('阻塞。')
+    void blocked.catch(() => undefined)
+    await new Promise<void>(resolve => setImmediate(resolve))
+
+    try {
+      await assert.rejects(settleWithin('bounded blocked-write close', session.close(), 1_300),
+        (error: unknown) => error instanceof DoubaoTtsFailure && error.code === 'close')
+      assert.equal(socket.closeCalls, 1)
+    } finally {
+      release?.()
+      await settleWithin('blocked write release', blocked.catch(() => undefined))
+    }
+  })

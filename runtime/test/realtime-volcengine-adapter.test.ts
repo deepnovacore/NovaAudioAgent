@@ -5,6 +5,7 @@ import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
 import {
   VOLCENGINE_GUARD_POLICY,
   VolcengineCascadedAdapter,
+  VolcengineRealtimeError,
   type VolcAsrClient,
   type VolcAsrSession,
   type VolcEndpointingEvent,
@@ -866,6 +867,160 @@ test('closing an active response emits one cancelled terminal into its owning ep
   await watching.stop()
 })
 
+test('close bounds a stuck response and directly releases its active TTS resources', async () => {
+  class BlockingSendTtsSession extends FakeTtsSession {
+    sendCalls = 0
+    #release: (() => void) | null = null
+    readonly #blocked = new Promise<void>(resolve => { this.#release = resolve })
+
+    override sendText(text: string): Promise<void> {
+      this.texts.push(text)
+      this.sendCalls += 1
+      return this.#blocked
+    }
+
+    release(): void { this.#release?.() }
+  }
+  const tts = new BlockingSendTtsSession()
+  const ark = new FakeArk([
+    {kind: 'response_started', response_id: 'response-stuck-tts'},
+    {kind: 'text_delta', text: '开始。'},
+    {kind: 'response_completed', response_id: 'response-stuck-tts'},
+  ])
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => ark, tts: new FakeTtsClient(tts),
+    idFactory: ids('session-stuck-tts', 'provider-stuck-tts'), settleTimeoutMs: 20,
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('stuck-tts')
+  await adapter.injectHostItem(item, directOptions())
+  await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal)
+  await waitFor('stuck TTS send', () => tts.sendCalls === 1)
+
+  await assert.rejects(settleWithin('bounded stuck TTS close', adapter.close(), 150),
+    (error: unknown) => error instanceof VolcengineRealtimeError && error.code === 'closed')
+  assert.equal(tts.cancelled, true)
+  assert.equal(tts.closed, true)
+  tts.release()
+})
+
+test('close bounds pending endpoint work and gives a fresh epoch an independent audio tail',
+  async () => {
+    class BlockingFirstEndpointing implements VolcEndpointingPort {
+      calls = 0
+      #release: (() => void) | null = null
+      readonly #blocked = new Promise<void>(resolve => { this.#release = resolve })
+      feed(): Promise<readonly VolcEndpointingEvent[]> {
+        this.calls += 1
+        if (this.calls !== 1) return Promise.resolve([])
+        return this.#blocked.then(() => [])
+      }
+      reset(): Promise<void> { return Promise.resolve() }
+      close(): Promise<void> { return Promise.resolve() }
+      release(): void { this.#release?.() }
+    }
+    const endpointing = new BlockingFirstEndpointing()
+    const arks = [new FakeArk([]), new FakeArk([])]
+    const adapter = new VolcengineCascadedAdapter({
+      endpointing, asr: new FakeAsrClient(), tts: new FakeTtsClient(),
+      arkFactory: () => arks.shift() ?? new FakeArk([]),
+      idFactory: ids('session-audio-old', 'session-audio-new'), settleTimeoutMs: 20,
+    })
+    await adapter.connect({tools: [], signal: new AbortController().signal})
+    const oldAudio = adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+    void oldAudio.catch(() => undefined)
+    await waitFor('old endpoint feed', () => endpointing.calls === 1)
+    try {
+      await assert.rejects(settleWithin('bounded endpoint close', adapter.close(), 150),
+        (error: unknown) => error instanceof VolcengineRealtimeError && error.code === 'closed')
+      await adapter.connect({tools: [], signal: new AbortController().signal})
+      await settleWithin('fresh audio tail', adapter.sendAudio(
+        new Uint8Array([0, 0]), new AbortController().signal,
+      ), 100)
+      assert.equal(endpointing.calls, 2)
+    } finally {
+      endpointing.release()
+      await settleWithin('old endpoint feed release', oldAudio.catch(() => undefined))
+      await adapter.close().catch(() => undefined)
+    }
+  })
+
+test('close bounds every injected teardown even when Ark and endpoint reset ignore cancellation',
+  async () => {
+    let releaseArk: (() => void) | undefined
+    let releaseReset: (() => void) | undefined
+    const arkBlocked = new Promise<void>(resolve => { releaseArk = resolve })
+    const resetBlocked = new Promise<void>(resolve => { releaseReset = resolve })
+    let resetCalls = 0
+    const endpointing: VolcEndpointingPort = {
+      feed: () => Promise.resolve([]),
+      reset: () => {
+        resetCalls += 1
+        return resetCalls === 1 ? Promise.resolve() : resetBlocked
+      },
+      close: () => Promise.resolve(),
+    }
+    const ark: ArkResponsesGateway = {
+      stream: () => new FakeArk([]).stream({
+        inputItems: [], tools: [], previousResponseId: null,
+      }),
+      close: () => arkBlocked,
+    }
+    const adapter = new VolcengineCascadedAdapter({
+      endpointing, asr: new FakeAsrClient(), tts: new FakeTtsClient(),
+      arkFactory: () => ark, idFactory: ids('session-stuck-cleanup'), settleTimeoutMs: 20,
+    })
+    await adapter.connect({tools: [], signal: new AbortController().signal})
+    try {
+      await assert.rejects(settleWithin('bounded injected cleanup', adapter.close(), 150),
+        (error: unknown) => error instanceof VolcengineRealtimeError && error.code === 'closed')
+      assert.equal(resetCalls, 2)
+    } finally {
+      releaseArk?.()
+      releaseReset?.()
+    }
+  })
+
+test('close bounds a stuck ASR close and still releases the remaining epoch resources', async () => {
+  class BlockingCloseAsrSession extends FakeAsrSession {
+    closeCalls = 0
+    #releaseClose: (() => void) | null = null
+    readonly #blockedClose = new Promise<void>(resolve => { this.#releaseClose = resolve })
+
+    override async close(): Promise<void> {
+      this.closeCalls += 1
+      await this.#blockedClose
+      await super.close()
+    }
+
+    releaseClose(): void { this.#releaseClose?.() }
+  }
+  const asr = new BlockingCloseAsrSession()
+  const endpointing = new ScriptedEndpointing([
+    {kind: 'speech_start', pcm: new Uint8Array([0, 0])},
+  ])
+  const ark = new FakeArk([])
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing, asr: new FakeAsrClient(asr), tts: new FakeTtsClient(),
+    arkFactory: () => ark, idFactory: ids(
+      'session-stuck-asr', 'speech-stuck-asr', 'item-stuck-asr',
+    ), settleTimeoutMs: 20,
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  try {
+    await assert.rejects(settleWithin('bounded ASR cleanup', adapter.close(), 150),
+      (error: unknown) => error instanceof VolcengineRealtimeError && error.code === 'closed')
+    assert.equal(asr.closeCalls, 1)
+    assert.equal(ark.closed, true)
+    assert.equal(endpointing.resets, 2)
+  } finally {
+    asr.releaseClose()
+  }
+})
+
 test('duplicate and 256-item pending bounds reject without evicting an earlier item', async () => {
   let sequence = 0
   const adapter = new VolcengineCascadedAdapter({
@@ -885,6 +1040,38 @@ test('duplicate and 256-item pending bounds reject without evicting an earlier i
   await assert.rejects(adapter.injectHostItem(hostItem('bounded-over'), directOptions()),
     (error: unknown) => error instanceof Error
       && 'code' in error && error.code === 'pending_host_items_full')
+})
+
+test('a missing target cannot consume recovery context or start Ark', async () => {
+  const ark = new FakeArk([
+    {kind: 'response_started', response_id: 'response-should-not-start'},
+    {kind: 'response_completed', response_id: 'response-should-not-start'},
+  ])
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    arkFactory: () => ark, tts: new FakeTtsClient(),
+    idFactory: ids('session-missing-target', 'provider-recovery', 'provider-guard'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  await adapter.injectHostItem({
+    kind: 'recovery', host_item_id: 'recovery-only', event_id: 'recovery-event',
+    content: '旧会话恢复。', call_id: null,
+  }, directOptions())
+  const missing = hostItem('missing-target')
+  await assert.rejects(adapter.createResponse({
+    kind: 'host_fact', item: missing, task_summary: null, origin_spoken: false,
+  }, new AbortController().signal),
+  (error: unknown) => error instanceof VolcengineRealtimeError
+      && error.code === 'missing_host_input')
+  assert.equal(ark.calls.length, 0)
+
+  const guard = hostItem('guard-after-missing')
+  await adapter.injectHostItem(guard, directOptions())
+  await adapter.createResponse({kind: 'host_fact', item: guard,
+    task_summary: null, origin_spoken: false}, new AbortController().signal)
+  await waitFor('recovery retained after missing target', () => ark.calls.length === 1)
+  assert.equal(ark.calls[0]?.inputItems.length, 2)
+  await adapter.close()
 })
 
 test('event queue overflow preserves every prior event, surfaces one stable failure, and terminates',

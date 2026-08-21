@@ -328,20 +328,18 @@ export class DoubaoTtsSession {
 
   async #performClose(): Promise<void> {
     let failed = false
+    const controller = new AbortController()
     try {
-      await this.#serialized(async () => {
-        try {
-          await this.#socket.send(message(EventType.FINISH_CONNECTION))
-        } catch {
-          failed = true
-        }
-      })
+      const finish = this.#serialized(() =>
+        this.#socket.send(message(EventType.FINISH_CONNECTION), controller.signal))
+      failed = !(await ttsOperationWithin(
+        () => finish, DEFAULT_VOLC_CLOSE_TIMEOUT_MS,
+      )) || failed
     } finally {
-      try {
-        await this.#socket.close()
-      } catch {
-        failed = true
-      }
+      controller.abort()
+      failed = !(await ttsOperationWithin(
+        () => this.#socket.close(), DEFAULT_VOLC_CLOSE_TIMEOUT_MS,
+      )) || failed
     }
     if (failed) throw new DoubaoTtsFailure('close')
   }
@@ -397,6 +395,27 @@ function throwTtsIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted !== true) return
   if (signal.reason instanceof Error) throw signal.reason
   throw new DOMException('This operation was aborted', 'AbortError')
+}
+
+async function ttsOperationWithin(
+  operation: () => Promise<void>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let task: Promise<void>
+  try {
+    task = operation()
+  } catch {
+    return false
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      task.then(() => true, () => false),
+      new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs) }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 function ttsPositiveMilliseconds(value: number): boolean {

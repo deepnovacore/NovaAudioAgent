@@ -90,8 +90,11 @@ class WebSocketVolcBinarySocket implements VolcBinarySocket {
     this.#queuedBytes += frame.byteLength
   }
 
-  readonly #onError = (): void => {
-    this.#fail(new VolcSocketFailure('network'))
+  readonly #onError = (error: Error): void => {
+    const code = 'code' in error ? error.code : undefined
+    this.#fail(new VolcSocketFailure(
+      code === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH' ? 'overflow' : 'network',
+    ))
   }
 
   readonly #onClose = (): void => {
@@ -277,6 +280,7 @@ export const webSocketVolcBinaryConnector: VolcBinaryConnector = options =>
       socket = new WebSocket(options.endpoint, {
         headers: {...options.headers},
         handshakeTimeout: options.openTimeoutMs,
+        maxPayload: options.maxFrameBytes,
         perMessageDeflate: false,
       })
     } catch {
