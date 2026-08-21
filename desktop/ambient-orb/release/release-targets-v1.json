@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "electron": {
+    "version": "43.2.0",
+    "module_abi": 148
+  },
+  "targets": [
+    {
+      "id": "darwin-arm64",
+      "platform": "darwin",
+      "architecture": "arm64",
+      "libc": "none",
+      "installers": ["dmg", "app"],
+      "native_resources": ["project_file_lock", "project_root_files", "codex_sandbox_probe", "macos_voice_io", "livekit_local_inference", "livekit_rtc"]
+    },
+    {
+      "id": "darwin-x64",
+      "platform": "darwin",
+      "architecture": "x64",
+      "libc": "none",
+      "installers": ["dmg", "app"],
+      "native_resources": ["project_file_lock", "project_root_files", "codex_sandbox_probe", "macos_voice_io", "livekit_local_inference", "livekit_rtc"]
+    },
+    {
+      "id": "win32-x64",
+      "platform": "win32",
+      "architecture": "x64",
+      "libc": "none",
+      "installers": ["nsis"],
+      "native_resources": ["windows_job_guardian", "project_file_lock", "project_root_files", "codex_sandbox_probe", "livekit_local_inference", "livekit_rtc"]
+    },
+    {
+      "id": "linux-x64-gnu",
+      "platform": "linux",
+      "architecture": "x64",
+      "libc": "glibc",
+      "installers": ["appimage", "deb"],
+      "native_resources": ["project_file_lock", "project_root_files", "codex_sandbox_probe", "livekit_local_inference", "livekit_rtc"]
+    }
+  ]
+}

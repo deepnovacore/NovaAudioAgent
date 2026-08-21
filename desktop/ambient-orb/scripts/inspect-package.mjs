@@ -1,7 +1,14 @@
+import { createHash } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
 import { createRequire } from 'node:module'
-import { lstat, open, readdir, readFile } from 'node:fs/promises'
-import { dirname, matchesGlob, relative, resolve, sep } from 'node:path'
+import { chmod, lstat, mkdtemp, open, readdir, readFile, realpath, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, matchesGlob, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { extractAll, listPackage } from '@electron/asar'
+
+import { deriveLockedProductionClosure } from './release-dependency-closure.mjs'
 
 const RUNTIME_PACKAGE = '@nova-audio-agent/runtime'
 const DESKTOP_PACKAGE = '@nova-audio-agent/ambient-orb'
@@ -21,6 +28,7 @@ const REQUIRED_RUNTIME_DEPENDENCY_FILES = Object.freeze(
 const MAX_INSPECTED_FILES = 10_000
 const MAX_ARTIFACT_LIST_BYTES = 4 * 1024 * 1024
 const MAX_ARTIFACT_MANIFEST_BYTES = 64 * 1024
+const MAX_ASAR_BYTES = 512 * 1024 * 1024
 
 export class PackageInspectionError extends Error {
   constructor(detail) {
@@ -149,6 +157,14 @@ async function listFiles(root, { skipTopLevel = [], includeDirectories = false }
   return includeDirectories ? { files, directories } : files
 }
 
+function productionDependencyFile(file) {
+  const lower = file.toLowerCase()
+  return !lower.startsWith('src/')
+    && !/(?:^|\/)(?:test|tests|__tests__|fixtures|coverage)(?:\/|$)/u.test(lower)
+    && !/\.test\.(?:c?m?js|tsx?)(?:\.map)?$/u.test(lower)
+    && !lower.endsWith('.map')
+}
+
 async function readBoundedFile(path, maximumBytes, label) {
   let handle
   try {
@@ -177,8 +193,8 @@ function forbiddenPath(path) {
     || lower === 'uv.lock'
     || lower.includes('/nova_audio_agent/')
     || lower.includes('cat-sofa-guard')
-    || /(?:^|\/)(?:ffmpeg|opencv)(?:$|[._/-])/u.test(lower)
-    || /node_modules\/[^/]*(?:opencv|ffmpeg|python|camera|webcam|video[-_]?codec)[^/]*(?:\/|$)/u
+    || /(?:^|\/)(?:ffmpeg|ffprobe)(?:\.exe)?$/u.test(lower)
+    || /node_modules\/[^/]*(?:opencv|ffmpeg-static|python-shell|camera|webcam|video[-_]?codec)[^/]*(?:\/|$)/u
       .test(lower)
 }
 
@@ -309,7 +325,7 @@ function assertAllowedNodeModules(paths, allowedPackages, { directories = false 
         name = `${first}/${second}`
       }
       if (!name || name.endsWith('/') || !allowedPackages.has(name)) {
-        throw new PackageInspectionError('unexpected production package')
+        throw new PackageInspectionError(`unexpected production package: ${name || '<invalid>'}`)
       }
     }
   }
@@ -321,6 +337,7 @@ export function inspectPackagedFileList(includedFiles, {
   filePatterns = [],
   extraResources = [],
   directories = [],
+  selectedPackages = [],
 } = {}) {
   const files = [...new Set(includedFiles.map(validateRelativeFile))].sort()
   const artifactDirectories = [...new Set(directories.map(validateRelativeFile))].sort()
@@ -344,10 +361,16 @@ export function inspectPackagedFileList(includedFiles, {
   const runtimeDependencies = manifestDependencies(runtimeManifest, RUNTIME_PACKAGE, 'runtime')
   const dependencies = assertDependencyContract(productionDependencies, runtimeDependencies)
   assertRuntimeFilesContract(files, runtimeManifest)
-  assertAllowedNodeModules(files, new Set([...dependencies.production, ...dependencies.runtime]))
+  const selectedNames = selectedPackages.map(value => value.split('@').slice(0, -1).join('@'))
+  const allowedPackages = new Set([
+    ...dependencies.production,
+    ...dependencies.runtime,
+    ...selectedNames,
+  ])
+  assertAllowedNodeModules(files, allowedPackages)
   assertAllowedNodeModules(
     artifactDirectories,
-    new Set([...dependencies.production, ...dependencies.runtime]),
+    allowedPackages,
     { directories: true },
   )
   const uniqueForbidden = [...new Set(forbidden)]
@@ -357,6 +380,7 @@ export function inspectPackagedFileList(includedFiles, {
     runtimeIncluded: true,
     includedFiles: Object.freeze(files),
     productionDependencies: Object.freeze(dependencies.production),
+    selectedPackages: Object.freeze([...selectedPackages].sort()),
     forbidden: Object.freeze([]),
   })
 }
@@ -383,6 +407,11 @@ async function findInstalledPackageRoot(packageRoot, name) {
 
 export async function inspectConfiguredPackage({
   packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
+  targetId = process.platform === 'darwin'
+    ? `darwin-${process.arch}`
+    : process.platform === 'win32'
+      ? `win32-${process.arch}`
+      : `linux-${process.arch}-gnu`,
 } = {}) {
   const [builderText, packageText, desktopFiles] = await Promise.all([
     readFile(resolve(packageRoot, 'electron-builder.yml'), 'utf8'),
@@ -397,18 +426,25 @@ export async function inspectConfiguredPackage({
   const runtimeFiles = await listFiles(runtime.root, { skipTopLevel: ['node_modules'] })
   const runtimeIncluded = evaluatePackageFiles(runtimeFiles, runtime.manifest.files ?? [])
     .map(file => `node_modules/${RUNTIME_PACKAGE}/${file}`)
-  const runtimeDependencies = Object.keys(runtime.manifest.dependencies ?? {}).sort()
-  const dependencyIncluded = (await Promise.all(runtimeDependencies.map(async name => {
-    const dependency = await findInstalledPackageRoot(runtime.root, name)
-    const files = await listFiles(dependency.root, { skipTopLevel: ['node_modules'] })
-    return files.map(file => `node_modules/${name}/${file}`)
-  }))).flat()
+  const repositoryRoot = resolve(packageRoot, '../..')
+  const closure = await deriveLockedProductionClosure({
+    lockPath: resolve(repositoryRoot, 'package-lock.json'),
+    targetId,
+  })
+  const dependencyIncluded = (await Promise.all(closure.packages
+    .filter(value => value.name !== RUNTIME_PACKAGE)
+    .map(async value => {
+      const dependencyRoot = await realpath(resolve(repositoryRoot, value.installKey))
+      const files = await listFiles(dependencyRoot, { skipTopLevel: ['node_modules'] })
+      return files.filter(productionDependencyFile).map(file => `${value.installKey}/${file}`)
+    }))).flat()
 
   return inspectPackagedFileList([...desktopIncluded, ...runtimeIncluded, ...dependencyIncluded], {
     desktopManifest: packageJson,
     runtimeManifest: runtime.manifest,
     filePatterns,
     extraResources: yamlResourceSources(builderText),
+    selectedPackages: closure.packages.map(value => `${value.name}@${value.version}`),
   })
 }
 
@@ -467,6 +503,10 @@ async function readArtifactFileList(path) {
 
 export async function inspectArtifactFileList(fileListPath, artifactRoot) {
   const listed = await readArtifactFileList(fileListPath)
+  return await inspectListedArtifactRoot(listed, artifactRoot)
+}
+
+async function inspectListedArtifactRoot(listed, artifactRoot) {
   if (typeof artifactRoot !== 'string' || artifactRoot === '') {
     throw new PackageInspectionError('artifact root required')
   }
@@ -475,7 +515,8 @@ export async function inspectArtifactFileList(fileListPath, artifactRoot) {
   }
   const files = []
   const directories = []
-  for (const entry of new Set(listed.map(validateRelativeFile))) {
+  const listPath = value => typeof value === 'string' && value.startsWith('/') ? value.slice(1) : value
+  for (const entry of new Set(listed.map(listPath).map(validateRelativeFile))) {
     let status
     try {
       status = await lstat(resolve(artifactRoot, entry))
@@ -490,21 +531,120 @@ export async function inspectArtifactFileList(fileListPath, artifactRoot) {
   return inspectPackagedFileList(files, { ...manifests, directories })
 }
 
+async function copyAndHashHandle(source, destination, expectedSize) {
+  const output = await open(destination, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o400)
+  const hash = createHash('sha256')
+  const buffer = Buffer.allocUnsafe(1024 * 1024)
+  let position = 0
+  try {
+    while (position < expectedSize) {
+      const amount = Math.min(buffer.byteLength, expectedSize - position)
+      const { bytesRead } = await source.read(buffer, 0, amount, position)
+      if (bytesRead === 0) throw new PackageInspectionError('ASAR snapshot changed')
+      hash.update(buffer.subarray(0, bytesRead))
+      let written = 0
+      while (written < bytesRead) {
+        const result = await output.write(buffer, written, bytesRead - written, position + written)
+        if (result.bytesWritten === 0) throw new PackageInspectionError('ASAR snapshot unavailable')
+        written += result.bytesWritten
+      }
+      position += bytesRead
+    }
+    await output.sync()
+    return hash.digest('hex')
+  } finally {
+    await output.close().catch(() => {})
+  }
+}
+
+async function hashHandle(handle, expectedSize) {
+  const hash = createHash('sha256')
+  const buffer = Buffer.allocUnsafe(1024 * 1024)
+  let position = 0
+  while (position < expectedSize) {
+    const amount = Math.min(buffer.byteLength, expectedSize - position)
+    const { bytesRead } = await handle.read(buffer, 0, amount, position)
+    if (bytesRead === 0) throw new PackageInspectionError('ASAR snapshot changed')
+    hash.update(buffer.subarray(0, bytesRead))
+    position += bytesRead
+  }
+  return hash.digest('hex')
+}
+
+export async function inspectAsarSnapshot(archivePath) {
+  if (typeof archivePath !== 'string' || archivePath === '' || basename(archivePath) === '') {
+    throw new PackageInspectionError('ASAR artifact required')
+  }
+  const privateRoot = await mkdtemp(resolve(tmpdir(), 'nova-release-asar-'))
+  const snapshot = resolve(privateRoot, 'app.asar')
+  const extracted = resolve(privateRoot, 'extracted')
+  let source
+  try {
+    try {
+      source = await open(archivePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+    } catch {
+      throw new PackageInspectionError('ASAR artifact unavailable')
+    }
+    const before = await source.stat()
+    if (!before.isFile() || before.size <= 0 || before.size > MAX_ASAR_BYTES) {
+      throw new PackageInspectionError('ASAR artifact rejected')
+    }
+    const asarSha256 = await copyAndHashHandle(source, snapshot, before.size)
+    const afterCopy = await source.stat()
+    if (afterCopy.dev !== before.dev || afterCopy.ino !== before.ino || afterCopy.size !== before.size) {
+      throw new PackageInspectionError('ASAR artifact changed')
+    }
+    await source.close()
+    source = undefined
+    await chmod(snapshot, 0o400)
+
+    let listed
+    try {
+      listed = listPackage(snapshot)
+      extractAll(snapshot, extracted)
+    } catch {
+      throw new PackageInspectionError('ASAR snapshot rejected')
+    }
+    const snapshotHandle = await open(snapshot, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+    let verifiedHash
+    try {
+      const snapshotStatus = await snapshotHandle.stat()
+      if (!snapshotStatus.isFile() || snapshotStatus.size !== before.size) {
+        throw new PackageInspectionError('ASAR snapshot changed')
+      }
+      verifiedHash = await hashHandle(snapshotHandle, before.size)
+    } finally {
+      await snapshotHandle.close().catch(() => {})
+    }
+    if (verifiedHash !== asarSha256) throw new PackageInspectionError('ASAR snapshot changed')
+    const inspected = await inspectListedArtifactRoot(listed, extracted)
+    return Object.freeze({
+      asar_sha256: asarSha256,
+      cameraIncluded: inspected.cameraIncluded,
+      runtimeIncluded: inspected.runtimeIncluded,
+      file_count: inspected.includedFiles.length,
+      productionDependencies: inspected.productionDependencies,
+    })
+  } finally {
+    await source?.close().catch(() => {})
+    await rm(privateRoot, { recursive: true, force: true })
+    try {
+      await lstat(privateRoot)
+      throw new PackageInspectionError('private extraction cleanup failed')
+    } catch (error) {
+      if (error instanceof PackageInspectionError) throw error
+      if (error?.code !== 'ENOENT') throw new PackageInspectionError('private extraction cleanup failed')
+    }
+  }
+}
+
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''
 if (invokedPath === fileURLToPath(import.meta.url)) {
   const run = process.argv.length === 2
     ? inspectConfiguredPackage()
-    : process.argv.length === 4 && process.argv[2] === '--file-list'
-      ? Promise.reject(new PackageInspectionError('artifact root required with file list'))
-      : process.argv.length === 4 && process.argv[2] === '--artifact-root'
-        ? inspectArtifactRoot(process.argv[3])
-        : process.argv.length === 6
-          && process.argv[2] === '--file-list'
-          && process.argv[4] === '--artifact-root'
-          ? inspectArtifactFileList(process.argv[3], process.argv[5])
-          : Promise.reject(new PackageInspectionError(
-            'usage: inspect-package [--artifact-root root | --file-list list --artifact-root root]',
-          ))
+    : Promise.reject(new PackageInspectionError(
+      'release inspection requires one produced artifact',
+    ))
   run.then(
     result => process.stdout.write(`${JSON.stringify(result)}\n`),
     error => {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
@@ -276,15 +277,14 @@ test('desktop and runtime peer surfaces cannot widen the production closure', ()
   }))
 })
 
-test('configured graph remains fail-closed until LiveKit artifact policy is reviewed', async () => {
-  await assert.rejects(
-    inspectConfiguredPackage(),
-    error => {
-      assert.ok(error instanceof PackageInspectionError)
-      assert.match(error.message, /node_modules\/@livekit\/agents\/dist\/ffmpeg/u)
-      return true
-    },
-  )
+test('configured graph follows the target-applicable lock closure without treating package filenames as executables', async () => {
+  const result = await inspectConfiguredPackage({ targetId: 'darwin-arm64' })
+  assert.ok(result.selectedPackages.includes('@livekit/agents@1.6.4'))
+  assert.ok(result.selectedPackages.includes('@livekit/local-inference@0.2.7'))
+  assert.ok(result.selectedPackages.includes('@livekit/local-inference-darwin-arm64@0.2.7'))
+  assert.ok(result.selectedPackages.includes('fluent-ffmpeg@2.1.3'))
+  assert.ok(!result.selectedPackages.some(value => value.includes('linux-x64')))
+  assert.ok(!result.selectedPackages.some(value => value.includes('win32-x64')))
 })
 
 test('artifact-root entry reads bounded manifests from the inspected artifact itself', async () => {
@@ -414,6 +414,56 @@ test('real ASAR listings admit structural directories but reject an extra packag
       PackageInspectionError,
       'root inspection must retain the same undeclared directory evidence',
     )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('release inspection cannot cross-pair an ASAR listing with a different extraction root', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-package-cross-pair-'))
+  const sourceA = resolve(root, 'source-a')
+  const sourceB = resolve(root, 'source-b')
+  const archiveA = resolve(root, 'a.asar')
+  const extractedB = resolve(root, 'extracted-b')
+  const listFile = resolve(root, 'a-list.json')
+  try {
+    await writeArtifactRoot(sourceA)
+    await writeArtifactRoot(sourceB)
+    await writeFile(resolve(sourceB, 'src/renderer/camera.mjs'), 'export const fromB = true\n')
+    await createPackage(sourceA, archiveA)
+    await createPackage(sourceB, resolve(root, 'b.asar'))
+    extractAll(resolve(root, 'b.asar'), extractedB)
+    await writeFile(listFile, JSON.stringify(listPackage(archiveA)), 'utf8')
+
+    const command = spawnSync(process.execPath, [
+      resolve(import.meta.dirname, '../scripts/inspect-package.mjs'),
+      '--file-list', listFile,
+      '--artifact-root', extractedB,
+    ], { encoding: 'utf8' })
+    assert.notEqual(command.status, 0, 'a caller-supplied list/root pair is not a release API')
+    assert.doesNotMatch(command.stderr, /cross-pair|source-a|source-b|extracted-b/u)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('owned ASAR inspection hashes, lists, and extracts one private snapshot', async () => {
+  assert.equal(typeof packageInspection.inspectAsarSnapshot, 'function')
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-package-owned-asar-'))
+  const source = resolve(root, 'source')
+  const archive = resolve(root, 'app.asar')
+  try {
+    await writeArtifactRoot(source)
+    await createPackage(source, archive)
+    const first = await packageInspection.inspectAsarSnapshot(archive)
+    assert.match(first.asar_sha256, /^[0-9a-f]{64}$/u)
+    assert.equal(first.cameraIncluded, true)
+    assert.equal(first.runtimeIncluded, true)
+
+    await writeFile(resolve(source, 'src/renderer/camera.mjs'), 'export const changed = true\n')
+    await createPackage(source, resolve(root, 'changed.asar'))
+    const changed = await packageInspection.inspectAsarSnapshot(resolve(root, 'changed.asar'))
+    assert.notEqual(changed.asar_sha256, first.asar_sha256)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
