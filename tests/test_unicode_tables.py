@@ -23,6 +23,7 @@ from nova_audio_agent.ports import valid_progress_summary
 
 PINNED_UNICODE_VERSION = "15.0.0"
 GENERATED_TABLE = Path("runtime/src/unicode-tables.ts")
+CASEFOLD_HELPER = Path("runtime/src/unicode-casefold.ts")
 
 #: Cn at 15.0.0, assigned symbols at 16.0. The generated table must keep rejecting
 #: these so Node agrees with this interpreter.
@@ -39,7 +40,7 @@ def test_this_interpreter_still_carries_the_pinned_unicode_version() -> None:
     )
 
 
-@pytest.mark.parametrize("prefix", ["C", "P"])
+@pytest.mark.parametrize("prefix", ["C", "P", "L", "N"])
 def test_the_generated_node_table_declares_the_same_pin(prefix: str) -> None:
     # Each table records its own range and code-point counts, and both are re-derived here rather
     # than trusted: a table generated against a different interpreter would otherwise pass.
@@ -61,6 +62,24 @@ def test_the_punctuation_table_covers_what_confirmation_matching_strips() -> Non
     # answer for the characters a Chinese confirmation utterance actually carries.
     for character in "。，、！？：；（）「」『』——…":
         assert unicodedata.category(character).startswith("P"), character
+
+
+def test_project_casefold_exception_table_matches_every_python_scalar() -> None:
+    source = CASEFOLD_HELPER.read_text(encoding="utf-8")
+    encoded = re.search(r"^const CASEFOLD_EXCEPTIONS = '([^']*)'$", source, re.MULTILINE)
+    assert encoded is not None
+    declared = {
+        int(origin, 16): "".join(chr(int(value, 16)) for value in folded.split(","))
+        for entry in encoded.group(1).split(";")
+        for origin, folded in [entry.split(":", maxsplit=1)]
+    }
+    expected = {
+        code_point: chr(code_point).casefold()
+        for code_point in range(0x110000)
+        if not 0xD800 <= code_point <= 0xDFFF
+        and chr(code_point).casefold() != chr(code_point).lower()
+    }
+    assert declared == expected
 
 
 def test_code_points_assigned_after_the_pin_are_still_rejected() -> None:

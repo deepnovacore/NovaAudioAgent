@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { validProgressSummary } from '../src/events.js'
 import {
+  LETTER_CATEGORY_RANGE_COUNT,
+  NUMBER_CATEGORY_RANGE_COUNT,
   OTHER_CATEGORY_RANGE_COUNT,
   PINNED_UNICODE_VERSION,
   PUNCTUATION_CATEGORY_RANGE_COUNT,
   hasOtherCategory,
   hasPunctuationCategory,
+  isLetterCategory,
+  isNumberCategory,
   isOtherCategory,
   isPunctuationCategory,
 } from '../src/unicode-tables.js'
@@ -122,4 +126,19 @@ test('a string predicate finds punctuation anywhere in it', () => {
   assert.equal(hasPunctuationCategory(''), false)
   // An astral character must not be split into surrogates by the scan.
   assert.equal(hasPunctuationCategory('\u{1f600}'), false)
+})
+
+test('pinned letter and number categories implement Python isalnum without ambient ICU', () => {
+  assert.equal(LETTER_CATEGORY_RANGE_COUNT, 659)
+  assert.equal(NUMBER_CATEGORY_RANGE_COUNT, 137)
+  for (const codePoint of [0x41, 0x00aa, 0x4e00, 0x10400]) {
+    assert.equal(isLetterCategory(codePoint), true, `U+${codePoint.toString(16)}`)
+  }
+  for (const codePoint of [0x30, 0x00b2, 0x0bf0, 0x2160, 0x1d7ce]) {
+    assert.equal(isNumberCategory(codePoint), true, `U+${codePoint.toString(16)}`)
+  }
+  for (const codePoint of [0x20, 0x2d, 0x301, 0x24, 0x1f600]) {
+    assert.equal(isLetterCategory(codePoint), false, `U+${codePoint.toString(16)}`)
+    assert.equal(isNumberCategory(codePoint), false, `U+${codePoint.toString(16)}`)
+  }
 })

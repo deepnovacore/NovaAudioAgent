@@ -147,3 +147,100 @@ export function hasPunctuationCategory(value: string): boolean {
   }
   return false
 }
+
+// L*: Lu, Ll, Lt, Lm, Lo.
+// every kind of letter -- one half of Python `str.isalnum()` used by project slugs.
+// 659 ranges covering 136104 code points.
+const ENCODED_LETTER_CATEGORY_RANGES = ''
+  + '41.19,6.19,2f.0,a.0,4.0,5.16,1.1e,1.1c9,4.b,e.4,7.0,1.0,81.4,1.1,2.3,1.0,6.0,1.2,1.0,1.13,1.52,1'
+  + '.8a,8.a5,1.25,2.0,6.28,47.1a,4.3,2d.2a,23.1,1.62,1.0,f.1,7.1,a.2,2.0,10.0,1.1d,1d.58,b.0,18.20,9'
+  + '.1,4.0,5.15,4.0,9.0,3.0,17.18,7.a,5.17,1.5,11.29,3a.35,3.0,12.0,7.9,f.f,4.7,2.1,2.15,1.6,1.0,3.3'
+  + ',3.0,10.0,d.1,1.2,e.1,a.0,8.5,4.1,2.15,1.6,1.1,1.1,1.1,1f.3,1.0,13.2,10.8,1.2,1.15,1.6,1.1,1.4,3'
+  + '.0,12.0,f.1,17.0,b.7,2.1,2.15,1.6,1.1,1.4,3.0,1e.1,1.2,f.0,11.0,1.5,3.2,1.3,3.1,1.0,1.1,3.1,3.2,'
+  + '3.b,16.0,34.7,1.2,1.16,1.f,3.0,1a.2,2.0,2.1,1e.0,4.7,1.2,1.16,1.9,1.4,3.0,1f.1,1.1,f.1,11.8,1.2,'
+  + '1.28,2.0,10.0,5.2,8.2,18.5,5.11,3.17,1.8,1.0,2.6,3a.2f,1.1,c.6,3a.1,1.0,1.4,1.17,1.0,1.9,1.1,9.0'
+  + ',2.4,1.0,15.3,20.0,3f.7,1.23,1b.4,73.2a,14.0,10.5,4.3,3.0,3.1,7.2,4.c,c.0,11.25,1.0,5.0,2.2a,1.1'
+  + '4c,1.3,2.6,1.0,1.3,2.28,1.3,2.20,1.3,2.6,1.0,1.3,2.e,1.38,1.3,2.42,25.f,10.55,2.5,3.26b,2.10,1.1'
+  + '9,5.4a,6.7,7.11,d.12,e.11,e.c,1.2,f.33,23.0,4.0,43.58,7.4,2.21,1.0,5.45,a.1e,31.1d,2.4,b.2b,4.19'
+  + ',36.16,9.34,52.0,5d.2e,11.7,36.1d,d.1,a.2b,1a.23,29.2,a.23,2.8,7.2a,2.2,29.3,1.5,1.1,3.0,5.bf,40'
+  + '.115,2.5,2.25,2.5,2.7,1.0,1.0,1.0,1.1e,2.34,1.6,1.0,3.2,1.6,3.3,2.5,4.c,5.2,1.6,74.0,d.0,10.c,65'
+  + '.0,4.0,2.9,1.0,3.4,6.0,1.0,1.0,1.3,1.a,2.3,5.4,4.0,34.1,a7b.e4,6.3,3.1,c.25,1.0,5.0,2.37,7.0,10.'
+  + '16,9.6,1.6,1.6,1.6,1.6,1.6,1.6,1.6,50.0,1d5.1,2a.4,5.1,4.55,6.2,1.59,1.3,5.2a,1.5d,11.1f,30.f,20'
+  + '0.19bf,40.568c,43.2d,2.10c,3.f,a.1,14.2e,10.1e,2.45,31.8,2.66,2.3f,5.1,1.0,1.4,18.f,1.2,1.3,1.16'
+  + ',1d.33,e.31,3e.5,3.0,1.1,b.1b,a.16,19.1c,7.2e,1c.0,10.4,1.9,a.4,1.28,17.2,1.7,14.16,3.0,3.31,1.0'
+  + ',3.1,2.4,2.0,1.0,18.2,2.a,7.2,c.5,2.5,2.5,9.6,1.6,1.2a,1.d,6.72,1d.2ba3,c.16,4.30,2104.16d,2.69,'
+  + '26.6,c.4,5.0,1.9,1.c,1.4,1.0,1.1,1.1,1.6b,21.16a,12.3f,2.35,28.b,74.4,1.86,24.19,6.19,b.58,3.5,2'
+  + '.5,2.5,2.2,23.b,1.19,1.12,1.1,1.e,2.d,22.7a,185.1c,3.30,2f.1f,d.13,1.7,6.25,a.1d,2.23,4.7,30.9d,'
+  + '12.23,4.23,4.27,8.33,c.a,1.e,1.6,1.1,1.a,1.e,1.6,1.1,43.136,9.15,a.7,18.5,1.29,1.8,45.5,2.0,1.2b'
+  + ',1.1,3.0,2.16,a.16,9.1e,41.12,1.1,a.15,a.19,46.37,6.1,40.0,f.3,1.2,1.1c,2a.1c,3.1c,23.7,1.1b,1b.'
+  + '35,a.15,a.12,d.11,6e.48,37.32,d.32,d.23,15c.29,6.1,4e.1c,a.0,8.15,2a.11,2e.14,1b.16,c.34,39.1,2.'
+  + '0,d.2c,20.18,1a.23,1d.0,2.0,8.22,3.0,c.2f,e.3,15.0,1.0,23.11,1.18,13.1,3f.6,1.0,1.3,1.e,1.9,7.2e'
+  + ',26.7,2.1,2.15,1.6,1.1,1.4,3.0,12.0,c.4,9e.34,12.3,14.2,1e.2f,14.1,1.0,b8.2e,29.3,24.2f,14.0,3b.'
+  + '2a,d.0,47.1a,25.6,b9.2b,74.3f,1f.7,2.0,2.7,1.1,1.17,f.0,1.0,5e.7,2.26,10.0,1.0,1c.0,a.27,7.0,15.'
+  + '0,b.2d,13.0,12.48,107.8,1.24,11.0,31.1d,70.6,1.1,1.25,15.0,19.5,1.1,1.1f,e.0,147.12,f.0,1.c,1.21'
+  + ',7c.0,4f.399,e6.c3,a4c.60,f.42f,11.5,fb9.246,21b9.238,7.1e,11.4e,11.1d,12.2f,10.3,1f.14,5.12,2b0'
+  + '.3f,80.4a,5.0,42.c,40.1,1.0,1c.17f7,8.4d5,2a.8,22e7.3,1.6,1.1,1.122,f.0,1d.2,2.0,e.3,8.18b,904.6'
+  + 'a,5.c,3.8,7.9,1766.54,1.46,1.1,2.0,2.1,2.3,1.b,1.0,1.6,1.40,1.3,2.7,1.6,1.1b,1.3,1.4,1.0,3.6,1.1'
+  + '53,2.18,1.18,1.1e,1.18,1.1e,1.18,1.1e,1.18,1.1e,1.18,1.7,734.1e,6.5,105.3d,92.2c,a.6,10.0,141.1d'
+  + ',12.2b,1e4.1b,2f4.6,1.3,1.1,1.e,1.c4,3b.43,7.0,4b4.3,1.1a,1.1,1.0,2.0,1.9,1.3,1.0,1.0,6.0,4.0,1.'
+  + '0,1.0,1.2,1.1,1.0,2.0,1.0,1.0,1.0,1.0,1.1,1.0,2.3,1.6,1.3,1.3,1.0,1.9,1.10,5.2,1.4,1.10,1144.a6d'
+  + 'f,20.1039,6.dd,2.1681,e.1d30,c1f.21d,5e2.134a,5.105f'
+
+const L_RANGES = decodeRanges(ENCODED_LETTER_CATEGORY_RANGES)
+
+export const LETTER_CATEGORY_RANGE_COUNT = L_RANGES.starts.length
+
+/**
+ * Whether one code point's Unicode 15.0.0 general category starts with L.
+ *
+ * Equivalent to Python `unicodedata.category(chr(cp)).startswith('L')` at the pinned
+ * version, and deliberately NOT equivalent to `/\p{L}/u`, which tracks whatever
+ * Unicode version the host ICU carries.
+ */
+export function isLetterCategory(codePoint: number): boolean {
+  return contains(L_RANGES, codePoint)
+}
+
+/** Whether any character in the string is in a L category at the pinned version. */
+export function hasLetterCategory(value: string): boolean {
+  for (const character of value) {
+    if (isLetterCategory(character.codePointAt(0)!)) return true
+  }
+  return false
+}
+
+// N*: Nd, Nl, No.
+// every kind of number -- one half of Python `str.isalnum()` used by project slugs.
+// 137 ranges covering 1831 code points.
+const ENCODED_NUMBER_CATEGORY_RANGES = ''
+  + '30.9,78.1,5.0,2.2,5a1.9,86.9,c6.9,19c.9,76.9,4.5,6c.9,76.9,76.9,2.5,6e.c,73.9,8.6,67.9,68.6,7.12'
+  + ',6d.9,60.9,76.9,46.13,10c.9,46.9,2cf.13,371.2,ef.9,6.9,16.9,12c.9,80.a,a5.9,6.9,b6.9,56.9,86.9,6'
+  + '.9,416.0,3.5,6.9,c6.32,2.4,2d6.3b,4e.15,276.1d,569.0,309.0,19.8,e.2,157.3,8a.9,1e.7,1.e,20.9,27.'
+  + 'e,7360.9,bc.9,140.5,9a.9,26.9,c6.9,16.9,56.9,196.9,5316.9,1ed.2c,c.38,11.1,155.1a,24.3,1d.0,8.0,'
+  + '86.4,ca.9,3ae.7,19.6,27.8,4b.4,16.5,a0.1,2.f,2.2d,40.8,34.1,1e.2,4b.4,68.7,18.7,29.6,14a.5,30.9,'
+  + '126.1e,9e.9,2a.3,70.6,86.1d,80.9,3c.9,90.9,7.13,fb.9,156.9,76.9,176.9,66.9,66.b,1a4.12,5d.9,2f6.'
+  + '1c,e3.9,46.9,1a6.9,66.14,42b.6e,45f1.9,56.9,86.9,1.6,31e.16,6429.13,c.13,6c.18,455.31,940.9,1a6.'
+  + '9,1f6.9,3cd.8,80.9,317.3a,1.2,1.3,4c.2c,1.e,3c2.c,ae3.9'
+
+const N_RANGES = decodeRanges(ENCODED_NUMBER_CATEGORY_RANGES)
+
+export const NUMBER_CATEGORY_RANGE_COUNT = N_RANGES.starts.length
+
+/**
+ * Whether one code point's Unicode 15.0.0 general category starts with N.
+ *
+ * Equivalent to Python `unicodedata.category(chr(cp)).startswith('N')` at the pinned
+ * version, and deliberately NOT equivalent to `/\p{N}/u`, which tracks whatever
+ * Unicode version the host ICU carries.
+ */
+export function isNumberCategory(codePoint: number): boolean {
+  return contains(N_RANGES, codePoint)
+}
+
+/** Whether any character in the string is in a N category at the pinned version. */
+export function hasNumberCategory(value: string): boolean {
+  for (const character of value) {
+    if (isNumberCategory(character.codePointAt(0)!)) return true
+  }
+  return false
+}

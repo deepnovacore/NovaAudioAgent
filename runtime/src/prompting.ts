@@ -9,6 +9,7 @@
  */
 
 import { compareCodePoints } from './canonical-json.js'
+import { pythonFloat } from './python-number.js'
 import type { Affordance, ContextView } from './context-view.js'
 import type { JsonValue } from './events.js'
 
@@ -149,21 +150,7 @@ function pythonString(value: string): string {
  * only because the field is known to be a float; a number inside a `content` dict is
  * not, which is recorded as a divergence in the migration backlog.
  */
-export function pythonFloat(value: number): string {
-  if (!Number.isFinite(value)) {
-    throw new TypeError(`prompt float must be finite: ${value}`)
-  }
-  if (value === 0) return Object.is(value, -0) ? '-0.0' : '0.0'
-  const magnitude = Math.abs(value)
-  if (magnitude >= 1e16 || magnitude < 1e-4) {
-    const [mantissa, exponent] = value.toExponential().split('e')
-    const sign = exponent!.startsWith('-') ? '-' : '+'
-    const digits = exponent!.replace(/^[+-]/, '').padStart(2, '0')
-    return `${mantissa!}e${sign}${digits}`
-  }
-  const rendered = String(value)
-  return rendered.includes('.') ? rendered : `${rendered}.0`
-}
+export {pythonFloat}
 
 /**
  * Python `f"{value:.1f}"`, which rounds half to even on the exact binary64 value.

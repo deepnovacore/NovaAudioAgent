@@ -141,6 +141,16 @@ def test_unsafe_existing_registry_mode_fails_closed(tmp_path: Path) -> None:
         store.snapshot()
 
 
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX ownership contract")
+def test_state_root_rejects_special_permission_bits(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    state_root.mkdir(mode=0o700)
+    state_root.chmod(0o1700)
+
+    with pytest.raises(ProjectStateError, match="state_permissions"):
+        _store(tmp_path).snapshot()
+
+
 @pytest.mark.parametrize(
     "name",
     ["", "../escape", "a/b", "a\\b", "file://x", "C:\\x", "\x00"],
@@ -239,6 +249,18 @@ def test_default_session_titles_are_speakable_workspace_ordinals(tmp_path: Path)
     second = store.begin_session(workspace.workspace_id, None)
 
     assert (first.display_title, second.display_title) == ("任务 1", "任务 2")
+
+
+def test_default_session_titles_increment_arbitrary_precision_python_integers(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    workspace = store.ensure_imported("alpha", _workspace(tmp_path, "alpha"))
+    store.begin_session(workspace.workspace_id, "任务 9007199254740993")
+
+    generated = store.begin_session(workspace.workspace_id, None)
+
+    assert generated.display_title == "任务 9007199254740994"
 
 
 def test_session_retention_prunes_unavailable_before_inactive_ready(
@@ -445,6 +467,16 @@ def test_managed_root_must_not_be_group_or_world_writable(tmp_path: Path) -> Non
 
     with pytest.raises(ProjectStateError, match="managed_root_unsafe"):
         _store(tmp_path).create_managed("alpha")
+
+
+def test_managed_root_accepts_owner_controlled_group_read_execute(tmp_path: Path) -> None:
+    managed = tmp_path / "managed"
+    managed.mkdir(mode=0o750)
+    managed.chmod(0o750)
+
+    created = _store(tmp_path).create_managed("alpha")
+
+    assert Path(created.canonical_path).parent == managed
 
 
 @pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX ownership contract")

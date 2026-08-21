@@ -56,6 +56,24 @@ TABLES: tuple[Table, ...] = (
         purpose="every kind of punctuation -- the set `realtime/project_confirmation.py` strips "
         "before matching a confirmation utterance",
     ),
+    Table(
+        prefix="L",
+        constant="ENCODED_LETTER_CATEGORY_RANGES",
+        count_export="LETTER_CATEGORY_RANGE_COUNT",
+        code_point_predicate="isLetterCategory",
+        string_predicate="hasLetterCategory",
+        categories="Lu, Ll, Lt, Lm, Lo",
+        purpose="every kind of letter -- one half of Python `str.isalnum()` used by project slugs",
+    ),
+    Table(
+        prefix="N",
+        constant="ENCODED_NUMBER_CATEGORY_RANGES",
+        count_export="NUMBER_CATEGORY_RANGE_COUNT",
+        code_point_predicate="isNumberCategory",
+        string_predicate="hasNumberCategory",
+        categories="Nd, Nl, No",
+        purpose="every kind of number -- one half of Python `str.isalnum()` used by project slugs",
+    ),
 )
 
 
