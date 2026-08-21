@@ -79,9 +79,16 @@ const FORBIDDEN_SOURCE_APIS = Object.freeze([
   'inference' + '_' + 'proc',
 ])
 const STATIC_LIVEKIT_IMPORT =
-  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]*?\s+from\s+)?['"](@livekit\/[^'"]+)['"]/gu
+  /\b(?:import|export)\s*(?:type\s*)?(?:[^'";]*?\bfrom\s*)?['"](@livekit\/[^'"]+)['"]/gu
 const DYNAMIC_LIVEKIT_IMPORT =
   /\bimport\s*\(\s*['"](@livekit\/[^'"]+)['"]\s*\)/gu
+const LIVEKIT_REQUIRE =
+  /\brequire\s*\(\s*['"](@livekit\/[^'"]+)['"]\s*\)/gu
+const LIVEKIT_MODULE_REFERENCE_PATTERNS = Object.freeze([
+  STATIC_LIVEKIT_IMPORT,
+  DYNAMIC_LIVEKIT_IMPORT,
+  LIVEKIT_REQUIRE,
+])
 
 export function placeholderEndpointingCapability(
   options: PlaceholderEndpointingCapabilityOptions,
@@ -156,13 +163,11 @@ export function scanLiveKitPublicSurface(
 
 function liveKitImportSpecifiers(source: string): readonly string[] {
   const matches: {readonly index: number; readonly specifier: string}[] = []
-  for (const match of source.matchAll(STATIC_LIVEKIT_IMPORT)) {
-    const specifier = match[1]
-    if (specifier !== undefined) matches.push({index: match.index, specifier})
-  }
-  for (const match of source.matchAll(DYNAMIC_LIVEKIT_IMPORT)) {
-    const specifier = match[1]
-    if (specifier !== undefined) matches.push({index: match.index, specifier})
+  for (const pattern of LIVEKIT_MODULE_REFERENCE_PATTERNS) {
+    for (const match of source.matchAll(pattern)) {
+      const specifier = match[1]
+      if (specifier !== undefined) matches.push({index: match.index, specifier})
+    }
   }
   matches.sort((left, right) => left.index - right.index)
   return Object.freeze(matches.map(match => match.specifier))

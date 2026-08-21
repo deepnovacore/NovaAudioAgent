@@ -81,7 +81,9 @@ test('public LiveKit root imports and exact dependency pins are accepted', () =>
       path: 'allowed.ts',
       source: [
         "import type {ipc} from '@livekit/agents'",
+        "export*from'@livekit/agents'",
         "const loadAgents = () => import('@livekit/agents')",
+        "const agents = require('@livekit/agents')",
       ].join('\n'),
     }],
     packageManifests: [{
@@ -177,6 +179,36 @@ test('private LiveKit inventory is rejected with stable violations', () => {
       value: '@livekit/rtc-node@latest',
     },
   ])
+})
+
+test('literal LiveKit module references cannot bypass policy through syntax or spacing', () => {
+  const references = [
+    {
+      path: 'compact-import.ts',
+      source: "import{hidden}from'@livekit/agents/dist/internal.js'",
+    },
+    {
+      path: 'compact-export.ts',
+      source: "export{hidden}from'@livekit/agents/dist/internal.js'",
+    },
+    {
+      path: 'import-equals.ts',
+      source: "import hidden = require('@livekit/agents/dist/internal.js')",
+    },
+    {
+      path: 'commonjs-require.ts',
+      source: "const hidden=require('@livekit/agents/dist/internal.js')",
+    },
+  ]
+
+  assert.deepEqual(scanLiveKitPublicSurface({
+    productionSources: references,
+    packageManifests: [],
+  }), references.map(reference => ({
+    code: 'forbidden_import',
+    path: reference.path,
+    value: '@livekit/agents/dist/internal.js',
+  })))
 })
 
 test('repository production sources and workspace manifests obey the public boundary', async () => {
