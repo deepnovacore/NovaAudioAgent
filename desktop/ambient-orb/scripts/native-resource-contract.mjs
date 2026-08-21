@@ -67,6 +67,10 @@ export function expectedNativeResources(targetId) {
       `app.asar.unpacked/node_modules/@livekit/rtc-ffi-bindings-${target.suffix}/${rtcName}`,
       'node_addon',
     ),
+    resource('livekit_probe_manifest', 'endpointing/volcengine-v1/MANIFEST.json', 'data'),
+    resource('livekit_probe_license', 'endpointing/volcengine-v1/LICENSE.silero-vad.txt', 'data'),
+    resource('livekit_probe_silence', 'endpointing/volcengine-v1/silence-16k-s16le.pcm', 'data'),
+    resource('livekit_probe_speech', 'endpointing/volcengine-v1/speech-16k-s16le.pcm', 'data'),
   )
   return Object.freeze(resources)
 }
@@ -129,7 +133,7 @@ async function hashNativeFile(path, target, kind) {
     }
     const header = Buffer.alloc(Math.min(4096, before.size))
     await handle.read(header, 0, header.length, 0)
-    assertBinaryHeader(header, target, kind)
+    if (kind !== 'data') assertBinaryHeader(header, target, kind)
     const hash = createHash('sha256')
     const buffer = Buffer.allocUnsafe(1024 * 1024)
     let position = 0
@@ -250,6 +254,11 @@ async function nativeSurface(resourcesRoot) {
       root: resolve(resourcesRoot, 'app.asar.unpacked'),
       prefix: 'app.asar.unpacked',
       everyFile: false,
+    },
+    {
+      root: resolve(resourcesRoot, 'endpointing/volcengine-v1'),
+      prefix: 'endpointing/volcengine-v1',
+      everyFile: true,
     },
   ]
   const visit = async (root, directory, prefix, everyFile, depth) => {

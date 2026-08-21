@@ -33,6 +33,8 @@ test('release targets require each canonical tuple, installer, and resource exac
         native_resources: [
           'project_native_addon', 'codex_sandbox_probe', 'macos_voice_io',
           'livekit_local_inference', 'livekit_rtc',
+          'livekit_probe_manifest', 'livekit_probe_license',
+          'livekit_probe_silence', 'livekit_probe_speech',
         ],
       },
       {
@@ -41,6 +43,8 @@ test('release targets require each canonical tuple, installer, and resource exac
         native_resources: [
           'project_native_addon', 'codex_sandbox_probe', 'macos_voice_io',
           'livekit_local_inference', 'livekit_rtc',
+          'livekit_probe_manifest', 'livekit_probe_license',
+          'livekit_probe_silence', 'livekit_probe_speech',
         ],
       },
       {
@@ -49,6 +53,8 @@ test('release targets require each canonical tuple, installer, and resource exac
         native_resources: [
           'windows_job_guardian', 'project_native_addon', 'codex_sandbox_probe',
           'livekit_local_inference', 'livekit_rtc',
+          'livekit_probe_manifest', 'livekit_probe_license',
+          'livekit_probe_silence', 'livekit_probe_speech',
         ],
       },
       {
@@ -57,6 +63,8 @@ test('release targets require each canonical tuple, installer, and resource exac
         native_resources: [
           'project_native_addon', 'codex_sandbox_probe',
           'livekit_local_inference', 'livekit_rtc',
+          'livekit_probe_manifest', 'livekit_probe_license',
+          'livekit_probe_silence', 'livekit_probe_speech',
         ],
       },
     ],

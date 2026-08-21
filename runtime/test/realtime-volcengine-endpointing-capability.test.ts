@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
-import {readFile} from 'node:fs/promises'
+import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import type {ReadableStream} from 'node:stream/web'
 import {test} from 'node:test'
@@ -637,6 +638,50 @@ test('pinned endpointing fixtures preserve authority, format, length, and hashes
   })
   assert.deepEqual(manifest.license, {spdx: 'MIT', file: 'LICENSE.silero-vad.txt'})
   assert.match(await readFile(join(FIXTURE_DIRECTORY, 'LICENSE.silero-vad.txt'), 'utf8'), /^MIT License\n/u)
+})
+
+test('a packaged runtime loads only its fixed resourcesPath endpointing assets', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-endpointing-resources-'))
+  const directory = join(root, 'endpointing', 'volcengine-v1')
+  const original = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+  try {
+    await mkdir(directory, {recursive: true})
+    const loaded = await fixtures()
+    await Promise.all([
+      writeFile(join(directory, 'speech-16k-s16le.pcm'), loaded.speech),
+      writeFile(join(directory, 'silence-16k-s16le.pcm'), loaded.silence),
+    ])
+    Object.defineProperty(process, 'resourcesPath', {
+      configurable: true,
+      enumerable: false,
+      value: root,
+    })
+    const created = createSurface({vad: 'differentiated'})
+    const result = await probeEndpointingCapability({
+      executor: new RecordingExecutor(),
+      signal: new AbortController().signal,
+      agentsLoader: loaderFor(created.surface, created.state),
+      clock: new ProbeClock(),
+      runtime: SUPPORTED_RUNTIME,
+      cache: createEndpointingCapabilityCache(),
+    })
+    assert.deepEqual(result.vad, {available: true, reason: 'ready'})
+
+    await writeFile(join(directory, 'speech-16k-s16le.pcm'), Buffer.alloc(84_480))
+    const rejected = await probeEndpointingCapability({
+      executor: new RecordingExecutor(),
+      signal: new AbortController().signal,
+      agentsLoader: loaderFor(created.surface, created.state),
+      clock: new ProbeClock(),
+      runtime: SUPPORTED_RUNTIME,
+      cache: createEndpointingCapabilityCache(),
+    })
+    assert.deepEqual(rejected.vad, {available: false, reason: 'inconclusive'})
+  } finally {
+    if (original === undefined) delete (process as NodeJS.Process & {resourcesPath?: string}).resourcesPath
+    else Object.defineProperty(process, 'resourcesPath', original)
+    await rm(root, {recursive: true, force: true})
+  }
 })
 
 test('unsupported platform and musl Linux fail before package loading', async () => {

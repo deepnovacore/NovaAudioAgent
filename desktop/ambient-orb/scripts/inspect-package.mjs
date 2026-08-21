@@ -202,9 +202,20 @@ async function listFiles(root, { skipTopLevel = [], includeDirectories = false }
 
 function productionDependencyFile(file) {
   const lower = file.toLowerCase()
+  const segments = lower.split('/')
+  const builderExcludedNames = new Set([
+    '.git', '.hg', '.svn', 'cvs', 'rcs', 'sccs', '__pycache__', '.ds_store', 'thumbs.db',
+    '.gitignore', '.gitkeep', '.gitattributes', '.npmignore', '.idea', '.vs', '.flowconfig',
+    '.jshintrc', '.eslintrc', '.circleci', '.yarn-integrity', '.yarn-metadata.json',
+    'yarn-error.log', 'yarn.lock', 'package-lock.json', 'npm-debug.log', 'pnpm-lock.yaml',
+    'bun.lock', 'bun.lockb', 'appveyor.yml', '.travis.yml', 'circle.yml', '.nyc_output',
+    '.husky', '.github', 'electron-builder.env',
+  ])
   return !lower.startsWith('src/')
-    && !/(?:^|\/)(?:test|tests|__tests__|fixtures|coverage)(?:\/|$)/u.test(lower)
+    && !segments.some(segment => builderExcludedNames.has(segment))
+    && !/(?:^|\/)(?:test|tests|__tests__|fixtures|coverage|example|examples|powered-test)(?:\/|$)/u.test(lower)
     && !/\.test\.(?:c?m?js|tsx?)(?:\.map)?$/u.test(lower)
+    && !/\.(?:iml|hprof|orig|pyc|pyo|rbc|swp|csproj|sln|suo|xproj|cc|d\.ts|mk|a|o|obj|forge-meta|pdb)$/u.test(lower)
     && !lower.endsWith('.map')
     && !lower.endsWith('.snap')
     && !lower.endsWith('.png')

@@ -21,10 +21,15 @@ module.exports = async function afterPack(context) {
   } else {
     resourcesRoot = resolve(context.appOutDir, 'resources')
   }
-  const [{ generateNativeResourceManifest }, { parseStrictJson }] = await Promise.all([
+  const [{ generateNativeResourceManifest }, { parseStrictJson }, { replacePackagedAsar }] = await Promise.all([
     import('./native-resource-contract.mjs'),
     import('./strict-json.mjs'),
+    import('./build-owned-asar.mjs'),
   ])
+  await replacePackagedAsar({
+    sourceRoot: resolve(__dirname, '../build/release-app'),
+    archivePath: resolve(resourcesRoot, 'app.asar'),
+  })
   const reportPath = resolve(__dirname, '../build/release/production-dependencies-v1.json')
   const dependencyReport = parseStrictJson(await readFile(reportPath, 'utf8'))
   const manifest = await generateNativeResourceManifest({

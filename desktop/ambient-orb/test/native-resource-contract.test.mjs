@@ -20,6 +20,10 @@ test('supported targets have closed host-owned and dependency-owned native resou
       'macos_voice_io',
       'livekit_local_inference',
       'livekit_rtc',
+      'livekit_probe_manifest',
+      'livekit_probe_license',
+      'livekit_probe_silence',
+      'livekit_probe_speech',
     ],
   )
   assert.deepEqual(
@@ -30,6 +34,10 @@ test('supported targets have closed host-owned and dependency-owned native resou
       'codex_sandbox_probe',
       'livekit_local_inference',
       'livekit_rtc',
+      'livekit_probe_manifest',
+      'livekit_probe_license',
+      'livekit_probe_silence',
+      'livekit_probe_speech',
     ],
   )
   assert.throws(() => expectedNativeResources('renderer-selected-target'), NativeResourceError)
@@ -61,6 +69,10 @@ test('native manifest maps every external native resource exactly once', async (
     for (const expected of expectedNativeResources('darwin-arm64')) {
       const path = resolve(root, expected.relative_path)
       await mkdir(resolve(path, '..'), { recursive: true })
+      if (expected.kind === 'data') {
+        await writeFile(path, Buffer.from(`fixed-${expected.id}`, 'utf8'))
+        continue
+      }
       const body = Buffer.from(header)
       body.writeUInt32LE(
         expected.kind === 'executable' ? 2 : expected.id === 'livekit_rtc' ? 6 : 8,

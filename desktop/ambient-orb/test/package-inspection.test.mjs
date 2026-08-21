@@ -462,6 +462,7 @@ test('release inspection cannot cross-pair an ASAR listing with a different extr
 test('built candidate CLI emits only a stable bounded rejection', () => {
   const command = spawnSync(process.execPath, [
     resolve(import.meta.dirname, '../scripts/inspect-built-preview.mjs'),
+    '--caller-selected-artifact',
   ], {
     cwd: resolve(import.meta.dirname, '..'),
     encoding: 'utf8',
@@ -912,6 +913,10 @@ test('release candidate report binds artifact SHA and rejects an external resour
       ['native/project-native/nova_project_native.node', fakeMach('node_addon')],
       ['native/codex-sandbox-probe', fakeMach('executable')],
       ['native/macos_voice_io', fakeMach('executable')],
+      ['endpointing/volcengine-v1/MANIFEST.json', Buffer.from('manifest')],
+      ['endpointing/volcengine-v1/LICENSE.silero-vad.txt', Buffer.from('license')],
+      ['endpointing/volcengine-v1/silence-16k-s16le.pcm', Buffer.from('silence')],
+      ['endpointing/volcengine-v1/speech-16k-s16le.pcm', Buffer.from('speech')],
     ])
     for (const [path, body] of external) {
       const destination = resolve(resources, path)
@@ -934,7 +939,7 @@ test('release candidate report binds artifact SHA and rejects an external resour
       lockPath,
     })
     assert.match(report.artifact_sha256, /^[0-9a-f]{64}$/u)
-    assert.equal(report.native_resource_count, 5)
+    assert.equal(report.native_resource_count, 9)
 
     await writeFile(resolve(resources, 'native/codex-sandbox-probe'), fakeMach('executable'))
     await writeFile(resolve(resources, 'native/codex-sandbox-probe'), Buffer.concat([

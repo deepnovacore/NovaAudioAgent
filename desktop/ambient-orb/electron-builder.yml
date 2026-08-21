@@ -2,10 +2,12 @@ appId: ai.deepnovacore.nova-audio-agent.orb
 productName: Nova Audio Agent Ambient Orb
 electronVersion: 43.2.0
 asar: true
-npmRebuild: false
+npmRebuild: true
+beforeBuild: scripts/before-build.cjs
 afterPack: scripts/after-pack.cjs
 
 directories:
+  app: build/release-app
   output: dist
 
 files:
@@ -14,6 +16,8 @@ files:
   - THIRD_PARTY_NOTICES.md
   - LICENSES/**/*
   - build/release/production-dependencies-v1.json
+  - node_modules
+  - node_modules/**/*
   - '!node_modules/**/test/**/*'
   - '!node_modules/**/tests/**/*'
   - '!node_modules/**/__tests__/**/*'
@@ -45,6 +49,13 @@ files:
 extraResources:
   - from: resources/tray
     to: tray
+  - from: build/endpointing/volcengine-v1
+    to: endpointing/volcengine-v1
+    filter:
+      - MANIFEST.json
+      - LICENSE.silero-vad.txt
+      - silence-16k-s16le.pcm
+      - speech-16k-s16le.pcm
   - from: build/native/project-native/nova_project_native.node
     to: native/project-native/nova_project_native.node
 
@@ -63,11 +74,16 @@ mac:
   extraResources:
     - from: build/macos_voice_io
       to: native/macos_voice_io
+    - from: build/native/codex-sandbox-probe
+      to: native/codex-sandbox-probe
 
 win:
   target:
     - nsis
   icon: build/icon.ico
+  extraResources:
+    - from: build/native/codex-sandbox-probe.exe
+      to: native/codex-sandbox-probe.exe
 
 nsis:
   oneClick: false
@@ -81,6 +97,9 @@ linux:
   icon: build/icons
   executableName: nova-ambient-orb
   synopsis: "Nova ambient voice orb"
+  extraResources:
+    - from: build/native/codex-sandbox-probe
+      to: native/codex-sandbox-probe
 
 deb:
   recommends:

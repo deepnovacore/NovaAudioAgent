@@ -7,6 +7,9 @@ import { checkJavaScriptFiles } from './build-contract.mjs'
 import { buildDependencyReport, inspectConfiguredPackage } from './inspect-package.mjs'
 import { deriveLockedProductionClosure } from './release-dependency-closure.mjs'
 import { buildProjectNativeAddon } from './build-project-native.mjs'
+import { buildCodexSandboxProbe } from './build-codex-sandbox-probe.mjs'
+import { stageReleaseApplication } from './stage-release-app.mjs'
+import { stageEndpointingProbeAssets } from './stage-endpointing-probe-assets.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 
@@ -38,17 +41,33 @@ const closure = await deriveLockedProductionClosure({
 const releaseBuildDirectory = resolve(root, 'build/release')
 await mkdir(releaseBuildDirectory, { recursive: true })
 const dependencyReport = await buildDependencyReport(resolve(root, '../..'), closure)
+const dependencyReportPath = resolve(releaseBuildDirectory, 'production-dependencies-v1.json')
 await writeFile(
-  resolve(releaseBuildDirectory, 'production-dependencies-v1.json'),
+  dependencyReportPath,
   `${JSON.stringify(dependencyReport)}\n`,
   { encoding: 'utf8', mode: 0o600 },
 )
+await stageReleaseApplication({
+  packageRoot: root,
+  repositoryRoot: resolve(root, '../..'),
+  dependencyReport,
+})
 
 await buildProjectNativeAddon({
   packageRoot: root,
   outputRoot: resolve(root, 'build'),
   platform: process.platform,
   arch: process.arch,
+})
+await buildCodexSandboxProbe({
+  packageRoot: root,
+  outputRoot: resolve(root, 'build'),
+  platform: process.platform,
+  arch: process.arch,
+})
+await stageEndpointingProbeAssets({
+  repositoryRoot: resolve(root, '../..'),
+  outputRoot: resolve(root, 'build'),
 })
 
 checkJavaScriptFiles(root)
@@ -67,6 +86,8 @@ if (process.platform === 'darwin') {
   const native = spawnSync('/usr/bin/swiftc', [
     resolve(root, 'native/macos_voice_io.swift'),
     '-O',
+    '-target',
+    `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macosx12.0`,
     '-framework',
     'AudioToolbox',
     '-o',

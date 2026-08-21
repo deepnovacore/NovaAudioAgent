@@ -241,6 +241,46 @@ test('the project native addon is staged once at its fixed cross-platform resour
   }
 })
 
+test('the fixed sandbox probe is staged once outside ASAR for every platform', () => {
+  assert.equal((config.extraResources ?? []).some(
+    entry => String(entry.to).includes('codex-sandbox-probe'),
+  ), false)
+  assert.deepEqual(config.mac.extraResources.filter(
+    entry => String(entry.to).includes('codex-sandbox-probe'),
+  ), [{from: 'build/native/codex-sandbox-probe', to: 'native/codex-sandbox-probe'}])
+  assert.deepEqual(config.linux.extraResources.filter(
+    entry => String(entry.to).includes('codex-sandbox-probe'),
+  ), [{from: 'build/native/codex-sandbox-probe', to: 'native/codex-sandbox-probe'}])
+  assert.deepEqual(config.win.extraResources.filter(
+    entry => String(entry.to).includes('codex-sandbox-probe'),
+  ), [{from: 'build/native/codex-sandbox-probe.exe', to: 'native/codex-sandbox-probe.exe'}])
+})
+
+test('the immutable endpointing capability assets are staged once at a fixed external path', () => {
+  const matches = (config.extraResources ?? []).filter(
+    entry => entry.to === 'endpointing/volcengine-v1',
+  )
+  assert.deepEqual(matches, [{
+    from: 'build/endpointing/volcengine-v1',
+    to: 'endpointing/volcengine-v1',
+    filter: [
+      'MANIFEST.json',
+      'LICENSE.silero-vad.txt',
+      'silence-16k-s16le.pcm',
+      'speech-16k-s16le.pcm',
+    ],
+  }])
+  for (const platform of ['mac', 'win', 'linux']) {
+    assert.equal(
+      (config[platform].extraResources ?? []).some(
+        entry => String(entry.to).includes('endpointing'),
+      ),
+      false,
+      `endpointing assets must not be duplicated under ${platform}`,
+    )
+  }
+})
+
 test('THIRD_PARTY_NOTICES.md and LICENSES/** ship in files for every platform', () => {
   assert.ok(config.files.includes('THIRD_PARTY_NOTICES.md'), 'expected THIRD_PARTY_NOTICES.md in files')
   assert.ok(config.files.includes('LICENSES/**/*'), 'expected LICENSES/**/* in files')

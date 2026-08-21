@@ -4,6 +4,9 @@ import { resolve } from 'node:path'
 import { inspectBuiltArtifact, PackageInspectionError } from './inspect-package.mjs'
 
 async function main() {
+if (process.argv.length > 3 || (process.argv.length === 3 && process.argv[2] !== '--require-target-matrix')) {
+  throw new PackageInspectionError('usage rejected')
+}
 const root = resolve(import.meta.dirname, '../dist')
 const targetId = process.platform === 'darwin'
   ? `darwin-${process.arch}`

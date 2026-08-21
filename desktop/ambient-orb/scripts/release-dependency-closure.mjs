@@ -19,6 +19,8 @@ const CANONICAL_TARGETS = Object.freeze([
     native_resources: Object.freeze([
       'project_native_addon', 'codex_sandbox_probe', 'macos_voice_io',
       'livekit_local_inference', 'livekit_rtc',
+      'livekit_probe_manifest', 'livekit_probe_license',
+      'livekit_probe_silence', 'livekit_probe_speech',
     ]),
   }),
   Object.freeze({
@@ -27,6 +29,8 @@ const CANONICAL_TARGETS = Object.freeze([
     native_resources: Object.freeze([
       'project_native_addon', 'codex_sandbox_probe', 'macos_voice_io',
       'livekit_local_inference', 'livekit_rtc',
+      'livekit_probe_manifest', 'livekit_probe_license',
+      'livekit_probe_silence', 'livekit_probe_speech',
     ]),
   }),
   Object.freeze({
@@ -35,6 +39,8 @@ const CANONICAL_TARGETS = Object.freeze([
     native_resources: Object.freeze([
       'windows_job_guardian', 'project_native_addon', 'codex_sandbox_probe',
       'livekit_local_inference', 'livekit_rtc',
+      'livekit_probe_manifest', 'livekit_probe_license',
+      'livekit_probe_silence', 'livekit_probe_speech',
     ]),
   }),
   Object.freeze({
@@ -43,6 +49,8 @@ const CANONICAL_TARGETS = Object.freeze([
     native_resources: Object.freeze([
       'project_native_addon', 'codex_sandbox_probe',
       'livekit_local_inference', 'livekit_rtc',
+      'livekit_probe_manifest', 'livekit_probe_license',
+      'livekit_probe_silence', 'livekit_probe_speech',
     ]),
   }),
 ])

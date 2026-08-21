@@ -12,6 +12,7 @@
     "icons": "node scripts/make-icons.mjs",
     "build": "node scripts/make-icons.mjs --if-missing && node scripts/build.mjs",
     "build:native:project": "node scripts/build-project-native.mjs",
+    "build:native:sandbox-probe": "node scripts/build-codex-sandbox-probe.mjs",
     "start": "npm run build && electron .",
     "inspect:package": "node scripts/inspect-built-preview.mjs",
     "inspect:release-package": "node scripts/inspect-built-preview.mjs --require-target-matrix",
