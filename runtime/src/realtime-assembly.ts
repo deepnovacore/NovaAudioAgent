@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly } from './assembly.js'
 import { canonicalJson } from './canonical-json.js'
 import type { JsonValue } from './events.js'
+import type {ProjectCodexAdapter} from './executors/codex-project-live.js'
 import {
   PlaybackRegistry,
   type PlaybackCompletion,
@@ -44,6 +45,7 @@ export interface RealtimeAssemblyOptions {
   readonly guardHistoryRecovery?: GuardHistoryRecovery
   readonly guardHistoryPairs?: number
   readonly projectConfirmation?: ProjectConfirmationController
+  readonly projectAdapter?: ProjectCodexAdapter
   readonly commitProjectOperation?: (
     operation: ConfirmedProjectOperation,
     originRef: string,
@@ -78,6 +80,8 @@ export class RealtimeAssembly {
   readonly tools: CompiledTools
 
   readonly #onDiagnostic: (line: string) => void
+  readonly #projectAdapter: ProjectCodexAdapter | undefined
+  readonly #unsubscribeProjectView: (() => void) | undefined
   #state: LifecycleState = 'new'
   #startOperation: Promise<void> | null = null
   #stopOperation: Promise<void> | null = null
@@ -91,6 +95,8 @@ export class RealtimeAssembly {
     readonly bridge: RealtimeRuntimeBridge
     readonly service: RealtimeService
     readonly onDiagnostic: (line: string) => void
+    readonly projectAdapter?: ProjectCodexAdapter
+    readonly onProjectView?: (view: ProjectConfirmationView) => void
   }) {
     this.core = input.core
     this.provider = input.provider
@@ -102,6 +108,10 @@ export class RealtimeAssembly {
     this.runtime = input.core.runtime
     this.tools = input.core.tools
     this.#onDiagnostic = input.onDiagnostic
+    this.#projectAdapter = input.projectAdapter
+    this.#unsubscribeProjectView = input.projectAdapter === undefined || input.onProjectView === undefined
+      ? undefined
+      : input.projectAdapter.observeProjectView(input.onProjectView)
   }
 
   start(): Promise<void> {
@@ -146,6 +156,9 @@ export class RealtimeAssembly {
 
   async #startFresh(): Promise<void> {
     try {
+      if (this.#projectAdapter !== undefined) {
+        await this.#projectAdapter.initialize()
+      }
       await this.core.start()
     } catch (error) {
       if (this.#state === 'starting') this.#state = 'new'
@@ -186,6 +199,15 @@ export class RealtimeAssembly {
       'assembly_core_stop_abandoned',
     )
     if (firstFailure === null && core.kind === 'rejected') firstFailure = {error: core.error}
+
+    if (this.#projectAdapter !== undefined) {
+      const project = await this.#cleanupWithinGrace(
+        () => this.#projectAdapter!.close(),
+        'assembly_project_adapter_close_abandoned',
+      )
+      if (firstFailure === null && project.kind === 'rejected') firstFailure = {error: project.error}
+    }
+    this.#unsubscribeProjectView?.()
 
     this.#state = 'stopped'
     if (firstFailure !== null) throw firstFailure.error
@@ -235,6 +257,27 @@ export class RealtimeAssembly {
 /** Build the provider-neutral realtime resources in their ownership order. */
 export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): RealtimeAssembly {
   const core = options.core
+  const projectAdapter = options.projectAdapter
+  if (projectAdapter !== undefined) {
+    if (options.projectConfirmation !== undefined || options.commitProjectOperation !== undefined) {
+      throw new AssemblyError('project adapter cannot be combined with manual project wiring')
+    }
+    if (core.runtime.executors.get('codex') !== projectAdapter) {
+      throw new AssemblyError('project adapter must be the registered codex executor')
+    }
+  }
+  const projectConfirmation = projectAdapter?.confirmationController ?? options.projectConfirmation
+  const commitProjectOperation = projectAdapter === undefined
+    ? options.commitProjectOperation
+    : ((operation: ConfirmedProjectOperation, originRef: string) => projectAdapter.commitConfirmed(
+        operation,
+        originRef,
+        (request, reason, capability) => core.runtime.dispatchExternal(
+          request,
+          reason,
+          capability,
+        ),
+      ))
   const provider = options.provider
   const providerSession = new RealtimeProviderSession(provider)
   const providerTools = options.providerToolView?.(core.tools) ?? core.tools
@@ -282,12 +325,15 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       ? {}
       : {guardHistoryRecovery: options.guardHistoryRecovery}),
     ...(options.guardHistoryPairs === undefined ? {} : {guardHistoryPairs: options.guardHistoryPairs}),
-    ...(options.projectConfirmation === undefined
+    ...(projectConfirmation === undefined
       ? {}
-      : {projectConfirmation: options.projectConfirmation}),
-    ...(options.commitProjectOperation === undefined
+      : {projectConfirmation}),
+    ...(commitProjectOperation === undefined
       ? {}
-      : {commitProjectOperation: options.commitProjectOperation}),
+      : {commitProjectOperation}),
+    ...(projectAdapter === undefined
+      ? {}
+      : {projectViewProvider: (pending: boolean) => projectAdapter.publicProjectView(pending)}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.projectExpiryStepTimeoutMs === undefined
       ? {}
@@ -303,6 +349,8 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     bridge,
     service,
     onDiagnostic,
+    ...(projectAdapter === undefined ? {} : {projectAdapter}),
+    ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
   })
 }
 

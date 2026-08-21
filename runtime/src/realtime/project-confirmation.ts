@@ -15,6 +15,7 @@
  */
 
 import type { Clock } from '../clock.js'
+import {isPythonSpace} from '../python-text.js'
 import { isOtherCategory, isPunctuationCategory } from '../unicode-tables.js'
 import { normalizeNfkcPinned } from '../unicode-normalize.js'
 
@@ -169,7 +170,7 @@ export class ProjectConfirmationController {
     if (typeof nonce !== 'string' || nonce === '' || nonce.length > 128) {
       throw new TypeError('invalid confirmation nonce')
     }
-    const proposal: ProjectProposal = {
+    const proposal: ProjectProposal = Object.freeze({
       ...input,
       nonce,
       expires_at: this.#clock.now() + EXPIRY_SECONDS,
@@ -179,7 +180,7 @@ export class ProjectConfirmationController {
         input.session_title,
         input.work_order !== null,
       ),
-    }
+    })
     this.#proposal = proposal
     this.#reserved = null
     this.#retryCount = 0
@@ -429,7 +430,7 @@ function outcome(
 }
 
 function confirmedFrom(proposal: ProjectProposal): ConfirmedProjectOperation {
-  return {
+  return Object.freeze({
     action: proposal.action,
     workspace_display_name: proposal.workspace_display_name,
     workspace_id: proposal.workspace_id,
@@ -438,7 +439,7 @@ function confirmedFrom(proposal: ProjectProposal): ConfirmedProjectOperation {
     work_order: proposal.work_order,
     origin_ref: proposal.origin_ref,
     nonce: proposal.nonce,
-  }
+  })
 }
 
 /**
@@ -494,18 +495,6 @@ function normalizedUtterance(text: unknown): string {
     result += character
   }
   return result
-}
-
-/**
- * Whether Python's `str.isspace()` would be true for this character.
- *
- * `trim()` and `isspace()` differ on U+FEFF, which `trim` calls whitespace and Python does not -- but
- * U+FEFF is category Cf, so the control-character filter beside this one removes it either way. The
- * divergence is therefore absorbed here, and a test proves that for every code point rather than
- * leaving it as an argument.
- */
-function isPythonSpace(character: string): boolean {
-  return character.trim() === ''
 }
 
 function validatePrepared(input: {

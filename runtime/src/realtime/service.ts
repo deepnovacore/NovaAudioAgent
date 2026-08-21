@@ -167,6 +167,7 @@ export interface RealtimeServiceOptions {
     originRef: string,
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly onProjectView?: (view: ProjectConfirmationView) => void
+  readonly projectViewProvider?: (pendingConfirmation: boolean) => ProjectConfirmationView
   /**
    * How long one expiry cleanup step may take before it is abandoned.
    *
@@ -212,6 +213,9 @@ export class RealtimeService {
     }>)
     | undefined
   readonly #onProjectView: ((view: ProjectConfirmationView) => void) | undefined
+  readonly #projectViewProvider:
+    | ((pendingConfirmation: boolean) => ProjectConfirmationView)
+    | undefined
   readonly #projectExpiryStepTimeoutMs: number
 
   /** A binary min-heap ordered by `compareQueuedHostResponses`, matching the oracle's `heapq`. */
@@ -344,6 +348,7 @@ export class RealtimeService {
     this.#projectConfirmation = options.projectConfirmation
     this.#commitProjectOperation = options.commitProjectOperation
     this.#onProjectView = options.onProjectView
+    this.#projectViewProvider = options.projectViewProvider
     this.#projectExpiryStepTimeoutMs = options.projectExpiryStepTimeoutMs
       ?? PROJECT_EXPIRY_STEP_TIMEOUT_S * 1_000
     // Subscribed at construction: a proposal can expire before anything else happens, and the observer
@@ -2983,7 +2988,9 @@ export class RealtimeService {
     const controller = this.#projectConfirmation
     if (controller === undefined) return
     try {
-      this.#onProjectView?.(controller.view)
+      this.#onProjectView?.(
+        this.#projectViewProvider?.(controller.pending) ?? controller.view,
+      )
     } catch {
       // A renderer that cannot accept the view must not prevent the state change that produced it.
     }

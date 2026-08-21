@@ -270,6 +270,31 @@ test('an unheld operation cannot be claimed', () => {
   )
 })
 
+test('proposal and confirmed commit capability are immutable snapshots', () => {
+  const controller = new ProjectConfirmationController({
+    clock: new VirtualClock(),
+    idFactory: () => 'immutable-nonce',
+  })
+  const proposal = controller.prepare({
+    action: 'create',
+    workspace_display_name: 'alpha',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: 'exact work',
+    origin_ref: 'conversation:1',
+  })
+  assert.equal(Object.isFrozen(proposal), true)
+  assert.equal(controller.reserveUserItem({epoch: 1, itemId: 'confirm'}), true)
+  const accepted = controller.acceptTranscript({epoch: 1, itemId: 'confirm', text: '确认'})
+  assert.ok(accepted.operation)
+  assert.equal(Object.isFrozen(accepted.operation), true)
+  assert.throws(() => {
+    ;(accepted.operation as {action: string}).action = 'select'
+  }, TypeError)
+  assert.equal(accepted.operation.action, 'create')
+})
+
 test('a nonce that is empty or oversized is refused', () => {
   for (const nonce of ['', 'x'.repeat(129)]) {
     const controller = new ProjectConfirmationController({

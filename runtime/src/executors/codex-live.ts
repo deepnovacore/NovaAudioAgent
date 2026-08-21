@@ -20,6 +20,8 @@ import {
   AdapterDeadlineError,
   CodexAdapterClosedError,
   CodexAdapterCore,
+  type CodexAdapterSharedState,
+  type ValidatedCodexDisposition,
   awaitOperation,
   createOperationDeadline,
   failureHandoff,
@@ -35,6 +37,7 @@ export class CodexLiveAdapter implements ExecutorAdapter {
   readonly manifest = CODEX_LIVE_MANIFEST
   readonly #core: CodexAdapterCore
   readonly #scheduler: CodexAdapterScheduler | undefined
+  readonly #onValidatedOutcome: ((outcome: ValidatedCodexDisposition) => void) | undefined
   #prewarmTask: Promise<void> | null = null
   #prewarmController: AbortController | null = null
   #prewarmReport: Readonly<Record<string, unknown>> | null = null
@@ -46,11 +49,20 @@ export class CodexLiveAdapter implements ExecutorAdapter {
   readonly #steerTasks = new Set<Promise<ExecutorHandoff>>()
   #closePromise: Promise<void> | null = null
 
-  constructor(transport: CodexAppServerTransport, scheduler?: CodexAdapterScheduler) {
+  constructor(
+    transport: CodexAppServerTransport,
+    scheduler?: CodexAdapterScheduler,
+    host?: {
+      readonly sharedState?: CodexAdapterSharedState
+      readonly onValidatedOutcome?: (outcome: ValidatedCodexDisposition) => void
+    },
+  ) {
     this.#scheduler = scheduler
+    this.#onValidatedOutcome = host?.onValidatedOutcome
     this.#core = new CodexAdapterCore(transport, {
       live: true,
       ...(scheduler === undefined ? {} : {scheduler}),
+      ...(host?.sharedState === undefined ? {} : {sharedState: host.sharedState}),
     })
   }
 
@@ -134,6 +146,9 @@ export class CodexLiveAdapter implements ExecutorAdapter {
           return ready ?? undefined
         },
         onTurnBound: () => { this.#activeTurn = true },
+        ...(this.#onValidatedOutcome === undefined
+          ? {}
+          : {onValidatedOutcome: this.#onValidatedOutcome}),
       })
     } finally {
       this.#activeTurn = false

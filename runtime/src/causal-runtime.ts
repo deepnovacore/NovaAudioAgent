@@ -2,6 +2,7 @@ import type { Clock } from './clock.js'
 import type { EventInput, EventRecord, JsonValue } from './events.js'
 import type { IdFactory } from './ids.js'
 import { CONVERSATION_CHANNEL, type Memory } from './memory.js'
+import {bindHostExecutorCapability} from './host-executor-capability.js'
 import type {
   Delegate,
   DelegateRequest,
@@ -93,6 +94,7 @@ export class CausalRuntime {
   readonly #tasks = new Set<OwnedTask>()
   readonly #observers = new Set<RuntimeObserver>()
   readonly #pendingUserInputs = new Map<number, PendingUserInput>()
+  readonly #hostExecutorCapabilities = new Map<string, object>()
   readonly #shutdownGrace: number
   #state: 'new' | 'serving' | 'closed' = 'new'
   #acceptCompletions = true
@@ -176,10 +178,19 @@ export class CausalRuntime {
    * delegate id synchronously -- an accepted proposal has to be correlated with the work it started
    * before the next turn, and an event round trip would not have produced the id yet.
    */
-  dispatchExternal(request: DelegateRequest, reason: WakeReason): RuntimeDispatchResult {
+  dispatchExternal(
+    request: DelegateRequest,
+    reason: WakeReason,
+    hostCapability?: object,
+  ): RuntimeDispatchResult {
     if (this.#state === 'closed') return {accepted: false, delegate_id: null, problem: 'closed'}
     const admission = this.core.dispatchExternal(request, reason)
-    if (admission.accepted) this.#notifyWork()
+    if (admission.accepted) {
+      if (hostCapability !== undefined && admission.delegate_id !== null) {
+        this.#hostExecutorCapabilities.set(admission.delegate_id, hostCapability)
+      }
+      this.#notifyWork()
+    }
     return admission
   }
 
@@ -255,6 +266,7 @@ export class CausalRuntime {
       for (const pending of this.#pendingUserInputs.values()) pending.reject(stopped)
       this.#pendingUserInputs.clear()
       await this.#shutdownTasks()
+      this.#hostExecutorCapabilities.clear()
     }
     if (this.#failure !== undefined) throw this.#failure
   }
@@ -290,7 +302,8 @@ export class CausalRuntime {
     const adapter = this.#executors.get(delegate.executor)
     if (adapter === undefined) throw new Error(`executor adapter is not connected: ${delegate.executor}`)
     this.#ownTask(
-      signal => adapter.dispatch(delegate.op, structuredClone(delegate.request), {
+      signal => {
+        const context: ExecutorDispatchContext = {
         clock: this.#clock,
         delegate: structuredClone(delegate),
         signal,
@@ -300,7 +313,12 @@ export class CausalRuntime {
         observe: payload => this.#postDecoration(() => {
           this.core.postExecutorObservation(dispatchIndex, payload, this.#clock.now())
         }),
-      }),
+        }
+        const capability = this.#hostExecutorCapabilities.get(delegate.delegate_id)
+        this.#hostExecutorCapabilities.delete(delegate.delegate_id)
+        if (capability !== undefined) bindHostExecutorCapability(context, capability)
+        return adapter.dispatch(delegate.op, structuredClone(delegate.request), context)
+      },
       output => this.core.postExecutorResult(dispatchIndex, output, this.#clock.now()),
       () => this.core.postExecutorCompletion(dispatchIndex, {
         outcome: 'unknown',

@@ -11,9 +11,13 @@ import {
   buildRealtimeAssembly,
 } from '../src/realtime-assembly.js'
 import { VirtualClock } from '../src/clock.js'
+import {CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
 import { settingsSchema } from '../src/config.js'
+import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../src/causal-runtime.js'
+import type {ProjectCodexAdapter} from '../src/executors/codex-project-live.js'
 import type { Frame, FrameSource } from '../src/executors/watcher.js'
 import type { JsonValue } from '../src/events.js'
+import {consumeHostExecutorCapability} from '../src/host-executor-capability.js'
 import type {
   CompleteRequest,
   GatewayCompletion,
@@ -30,6 +34,7 @@ import type { SearchTransport } from '../src/executors/search.js'
 import { RealtimeRuntimeBridge } from '../src/realtime/bridge.js'
 import {
   ProjectConfirmationController,
+  type ConfirmedProjectOperation,
   type ProjectConfirmationView,
 } from '../src/realtime/project-confirmation.js'
 import type {
@@ -580,6 +585,156 @@ test('callbacks route once through the single playback, session, bridge, and ser
   assert.deepEqual(diagnostics, [])
 
   await settleNamed('callback assembly stop', realtime.stop())
+})
+
+test('project adapter wiring carries one confirmed identity through the real realtime runtime', async () => {
+  const clock = new VirtualClock(0)
+  const confirmation = new ProjectConfirmationController({
+    clock,
+    idFactory: () => 'assembly-confirmation',
+  })
+  const captured: {
+    operation: ConfirmedProjectOperation | null
+    capability: object | null
+    context: ExecutorDispatchContext | null
+    origin: string | null
+  } = {operation: null, capability: null, context: null, origin: null}
+  let closeCalls = 0
+  const viewObservers = new Set<(view: ProjectConfirmationView) => void>()
+  let activeWorkspace = 'alpha'
+  let activeSession = 'Task'
+  const adapterShape: ExecutorAdapter & {
+    readonly confirmationController: ProjectConfirmationController
+    commitConfirmed: ProjectCodexAdapter['commitConfirmed']
+    publicProjectView: ProjectCodexAdapter['publicProjectView']
+    initialize: ProjectCodexAdapter['initialize']
+    observeProjectView: ProjectCodexAdapter['observeProjectView']
+    close: ProjectCodexAdapter['close']
+  } = {
+    manifest: CODEX_PROJECT_MANIFEST,
+    confirmationController: confirmation,
+    dispatch: (
+      op: string,
+      _request: Readonly<Record<string, JsonValue>>,
+      context: ExecutorDispatchContext,
+    ): Promise<ExecutorHandoff> => {
+      captured.context = context
+      captured.capability = consumeHostExecutorCapability(context) ?? null
+      return Promise.resolve({
+        outcome: 'ok', trust: 'trusted_system', content: {op, code: 'completed'}, refs: [],
+      })
+    },
+    commitConfirmed: (operation, originRef, runtimeDispatch) => {
+      captured.operation = operation
+      captured.origin = originRef
+      if (!confirmation.claimConfirmed(operation)) {
+        return Promise.resolve({accepted: false, code: 'confirmation_invalid'})
+      }
+      const admission = runtimeDispatch({
+        executor: 'codex',
+        op: 'run',
+        request: {work_order: operation.work_order ?? ''},
+        origin_ref: originRef,
+      }, {
+        kind: 'realtime_tool',
+        priority: 100,
+        routing_class: 'user_awaited',
+        origin: null,
+        selected_suggestion: null,
+      }, operation)
+      return Promise.resolve({
+        accepted: admission.accepted,
+        code: admission.accepted ? 'accepted' : 'runtime_rejected',
+        ...(admission.delegate_id === null ? {} : {delegate_id: admission.delegate_id}),
+      })
+    },
+    publicProjectView: pending => Object.freeze({
+      workspace_display_name: activeWorkspace,
+      session_title: activeSession,
+      pending_confirmation: pending,
+    }),
+    initialize: () => {
+      for (const observer of viewObservers) observer(adapterShape.publicProjectView(false))
+      return Promise.resolve()
+    },
+    observeProjectView: observer => {
+      viewObservers.add(observer)
+      return () => { viewObservers.delete(observer) }
+    },
+    close: () => {
+      closeCalls += 1
+      return Promise.resolve()
+    },
+  }
+  const projectAdapter = adapterShape as unknown as ProjectCodexAdapter
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock,
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    executors: [adapterShape],
+  })
+  const views: ProjectConfirmationView[] = []
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider: new AbortAwareProvider(),
+    projectAdapter,
+    onProjectView: view => { views.push(view) },
+  })
+  await realtime.start()
+  try {
+    const proposal = confirmation.prepare({
+      action: 'create',
+      workspace_display_name: 'beta',
+      workspace_id: null,
+      session_title: null,
+      session_id: null,
+      work_order: 'exact work',
+      origin_ref: 'conversation:proposal',
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_speech_started',
+      session_epoch: 1,
+      speech_id: 'speech-confirm',
+      provider_item_id: 'item-confirm',
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_speech_ended',
+      session_epoch: 1,
+      speech_id: 'speech-confirm',
+      provider_item_id: 'item-confirm',
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_transcript_final',
+      session_epoch: 1,
+      item_id: 'item-confirm',
+      text: '确认',
+    })
+    await waitNamed('confirmed project executor dispatch', () => captured.capability !== null)
+    assert.equal(captured.operation, captured.capability)
+    assert.equal(captured.operation?.nonce, proposal.nonce)
+    assert.equal(captured.context?.delegate.origin_ref, captured.origin)
+    assert.equal(captured.context?.delegate.routing_class, 'user_awaited')
+    assert.deepEqual(views.at(-1), {
+      workspace_display_name: 'alpha',
+      session_title: 'Task',
+      pending_confirmation: false,
+    })
+    assert.deepEqual(Object.keys(views.at(-1) ?? {}).sort(), [
+      'pending_confirmation', 'session_title', 'workspace_display_name',
+    ])
+    activeWorkspace = 'beta'
+    activeSession = 'New task'
+    for (const observer of viewObservers) observer(adapterShape.publicProjectView(false))
+    assert.deepEqual(views.at(-1), {
+      workspace_display_name: 'beta',
+      session_title: 'New task',
+      pending_confirmation: false,
+    })
+  } finally {
+    await realtime.stop()
+  }
+  assert.equal(closeCalls, 1)
 })
 
 test('concurrent starts acquire core, provider, and runtime serving exactly once', async () => {

@@ -114,26 +114,47 @@ interface ValidatedOutcome {
   }> | null
 }
 
+/** Host-internal lifecycle state shared by sequential Codex adapter facades. */
+export interface CodexAdapterSharedState {
+  status: CodexStatusSnapshot
+}
+
+export interface ValidatedCodexDisposition {
+  readonly classification: ValidatedOutcome['classification']
+  readonly code: CodexTransportCode
+  readonly turnStartWritten: boolean
+}
+
+export function createCodexAdapterSharedState(): CodexAdapterSharedState {
+  return {status: initialSnapshot()}
+}
+
 export class CodexAdapterCore {
   readonly #transport: CodexAppServerTransport
   readonly #live: boolean
   readonly #scheduler: CodexAdapterScheduler
-  #status: CodexStatusSnapshot
+  readonly #sharedState: CodexAdapterSharedState
   #runActive = false
   #runToken: object | null = null
   #latestProgress: ExecutorProgress | null = null
 
   constructor(
     transport: CodexAppServerTransport,
-    options: {readonly live: boolean; readonly scheduler?: CodexAdapterScheduler},
+    options: {
+      readonly live: boolean
+      readonly scheduler?: CodexAdapterScheduler
+      readonly sharedState?: CodexAdapterSharedState
+    },
   ) {
     this.#transport = transport
     this.#live = options.live
     this.#scheduler = options.scheduler ?? DEFAULT_SCHEDULER
-    this.#status = initialSnapshot()
+    this.#sharedState = options.sharedState ?? createCodexAdapterSharedState()
   }
 
-  get status(): CodexStatusSnapshot { return this.#status }
+  get #status(): CodexStatusSnapshot { return this.#sharedState.status }
+  set #status(value: CodexStatusSnapshot) { this.#sharedState.status = value }
+  get status(): CodexStatusSnapshot { return this.#sharedState.status }
   get runActive(): boolean { return this.#runActive }
   get transport(): CodexAppServerTransport { return this.#transport }
 
@@ -161,6 +182,7 @@ export class CodexAdapterCore {
         signal: AbortSignal,
       ) => Promise<Readonly<Record<string, unknown>> | undefined>
       readonly onTurnBound?: () => void
+      readonly onValidatedOutcome?: (outcome: ValidatedCodexDisposition) => void
     } = {},
   ): Promise<ExecutorHandoff> {
     if (this.#runActive) return failureHandoff('busy', 'run')
@@ -287,6 +309,15 @@ export class CodexAdapterCore {
       let admitted = validateOutcome(rawOutcome)
       if (readWrittenBoundary(rawOutcome, 'turnStartWritten') === true) sideEffectSeen = true
       if (admitted !== null && sideEffectSeen && !admitted.turnStartWritten) admitted = null
+      if (admitted !== null) {
+        try {
+          options.onValidatedOutcome?.(Object.freeze({
+            classification: admitted.classification,
+            code: admitted.code,
+            turnStartWritten: admitted.turnStartWritten,
+          }))
+        } catch { /* host disposition observers are advisory */ }
+      }
       const written = sideEffectSeen
       const evidence = admitted?.classification === 'completed'
         ? createCompletionEvidence(admitted)

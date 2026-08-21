@@ -580,6 +580,28 @@ export class CodexProjectStore {
     })
   }
 
+  /** Select the exact workspace that a user confirmed, with validation and mutation under one lock. */
+  async selectWorkspaceExact(
+    displayName: string,
+    workspaceId: string,
+  ): Promise<WorkspaceRecord> {
+    const name = normalizeProjectWorkspaceName(displayName)
+    return await this.#transaction(async state => {
+      const found = state.workspaces.get(workspaceId)
+      if (found?.normalized_name !== name.normalized) {
+        throw new ProjectStateError('workspace_boundary_changed')
+      }
+      const binding = found.origin === 'managed'
+        ? await this.#validateManagedWorkspaceBinding(found.canonical_path)
+        : await validateRegisteredWorkspace(found.canonical_path, 'workspace_boundary_changed')
+      this.#pinWorkspaceIdentity(found.workspace_id, binding.identity)
+      const record = Object.freeze({...found, last_used_at: this.#stamp()})
+      state.workspaces.set(record.workspace_id, record)
+      state.activeWorkspaceId = record.workspace_id
+      return [record, true]
+    })
+  }
+
   async revalidateWorkspace(workspaceId: string): Promise<HostWorkspace> {
     return await this.#transaction(async state => {
       const workspace = state.workspaces.get(workspaceId)
@@ -596,6 +618,40 @@ export class CodexProjectStore {
       this.#pinWorkspaceIdentity(workspaceId, binding.identity)
       const {hostWorkspaceFromConfig} = await import('./codex-process-owner.js')
       return [hostWorkspaceFromConfig(binding.canonical, [binding.canonical]), false]
+    })
+  }
+
+  /** Revalidate and activate the exact persisted resume target immediately before process setup. */
+  async prepareSessionResume(
+    workspaceId: string,
+    sessionId: string,
+    threadId: string,
+  ): Promise<HostWorkspace> {
+    const expectedThread = validateThreadId(threadId)
+    return await this.#transaction(async state => {
+      const workspace = state.workspaces.get(workspaceId)
+      const session = state.sessions.get(sessionId)
+      if (workspace === undefined || session?.workspace_id !== workspaceId) {
+        throw new ProjectStateError('session_workspace_mismatch')
+      }
+      if (
+        session.state !== 'ready'
+        || session.codex_thread_id !== expectedThread
+      ) throw new ProjectStateError('session_unavailable')
+      const binding = workspace.origin === 'managed'
+        ? await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
+        : await validateRegisteredWorkspace(workspace.canonical_path, 'workspace_boundary_changed')
+      this.#pinWorkspaceIdentity(workspaceId, binding.identity)
+      const stamp = this.#stamp()
+      state.sessions.set(sessionId, Object.freeze({...session, last_used_at: stamp}))
+      state.workspaces.set(workspaceId, Object.freeze({
+        ...workspace,
+        active_session_id: sessionId,
+        last_used_at: stamp,
+      }))
+      state.activeWorkspaceId = workspaceId
+      const {hostWorkspaceFromConfig} = await import('./codex-process-owner.js')
+      return [hostWorkspaceFromConfig(binding.canonical, [binding.canonical]), true]
     })
   }
 

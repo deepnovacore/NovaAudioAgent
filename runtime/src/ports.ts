@@ -21,8 +21,8 @@ export const delegateSchema = delegateRequestSchema.extend({
   dispatched_at: z.number().finite(),
 }).strict()
 
-export type DelegateRequest = z.infer<typeof delegateRequestSchema> & {readonly private?: unknown}
-export type Delegate = z.infer<typeof delegateSchema> & {readonly private?: unknown}
+export type DelegateRequest = z.infer<typeof delegateRequestSchema>
+export type Delegate = z.infer<typeof delegateSchema>
 
 export const executorHandoffSchema = z.object({
   outcome: outcomeSchema,
