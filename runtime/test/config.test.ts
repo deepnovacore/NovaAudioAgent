@@ -4,6 +4,7 @@ import {
   ConfigurationError,
   loadSettings,
   requireQwenRealtime,
+  requireVolcengineRealtime,
   resolveProactivity,
 } from '../src/config.js'
 
@@ -337,6 +338,60 @@ test('Qwen boolean and Guard enum settings do not strip their raw environment va
     assert.throws(
       () => loadSettings({[variable]: value}),
       error => error instanceof ConfigurationError && error.message.includes(variable.slice(17)),
+    )
+  }
+})
+
+test('Volcengine resolver returns a new immutable value and never aliases settings', () => {
+  const settings = loadSettings({
+    ARK_API_KEY: 'ark-key',
+    DOUBAO_BIGMODEL_API_KEY: 'tts-key',
+  })
+  const first = requireVolcengineRealtime(settings)
+  const second = requireVolcengineRealtime(settings)
+  assert.notEqual(first, second)
+  assert.equal(Object.isFrozen(first), true)
+  assert.deepEqual(first, second)
+})
+
+test('Volcengine resolver errors never echo credentials or submitted endpoints', () => {
+  const sentinel = 'sentinel-volc-secret-or-endpoint'
+  let message = ''
+  try {
+    requireVolcengineRealtime(loadSettings({
+      ARK_API_KEY: sentinel,
+      DOUBAO_BIGMODEL_API_KEY: sentinel,
+      NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT: `https://${sentinel}.example/asr`,
+    }))
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error)
+  }
+  assert.equal(message.includes(sentinel), false)
+  assert.equal(message, 'NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT 必须是安全的 wss:// 地址')
+})
+
+test('Volcengine numeric relationships retain the Python resolver errors', () => {
+  const credentials = {ARK_API_KEY: 'ark-key', DOUBAO_BIGMODEL_API_KEY: 'tts-key'}
+  const cases: readonly [NodeJS.ProcessEnv, string][] = [
+    [{NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS: '0'},
+      'NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS 必须为正整数'],
+    [{NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE: '16000'},
+      'NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE 必须为 24000'],
+    [{NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD: 'NaN'},
+      'NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD 必须在 (0, 1] 内'],
+    [{NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS: '-1'},
+      '火山 VAD pre-roll 与 speech pad 不能为负数'],
+    [{NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS: '0'},
+      '火山 VAD min speech 与 silence end 必须为正整数'],
+    [{
+      NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS: '251',
+      NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS: '250',
+    }, '火山 VAD max utterance 不能短于 min speech'],
+  ]
+  for (const [environment, expected] of cases) {
+    assert.throws(
+      () => requireVolcengineRealtime(loadSettings({...credentials, ...environment})),
+      error => error instanceof ConfigurationError && error.message === expected,
     )
   }
 })

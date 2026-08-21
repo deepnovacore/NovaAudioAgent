@@ -1,0 +1,296 @@
+{
+  "asr_decode": {
+    "empty-final": {
+      "frame_b64": "EZMRAAAAAAMAAAAWH4sIAAAAAAACE6uuBQBDv6ajAgAAAA==",
+      "result": {
+        "final": true,
+        "text": ""
+      }
+    },
+    "ignored-frame": {
+      "frame_b64": "EZAQAAAAAAYAAAASeyJ0ZXh0IjoiaWdub3JlZCJ9",
+      "result": null
+    },
+    "invalid-nested-string-falls-back": {
+      "frame_b64": "EZERAAAAAAQAAAA+H4sIAAAAAAACE6tWKkiszMlPTInPLU5XslLKyy/RzSrOz1PSUSpJrSgBiijkl5akFiko1QIAdoe9CysAAAA=",
+      "result": {
+        "final": false,
+        "text": "outer"
+      }
+    },
+    "negative-sequence-final": {
+      "frame_b64": "EZEQAP////4AAAAreyJyZXN1bHQiOnsidXR0ZXJhbmNlcyI6W3sidGV4dCI6Ik5vdmEifV19fQ==",
+      "result": {
+        "final": true,
+        "text": "Nova"
+      }
+    },
+    "nested-list-python-strip-and-trailing": {
+      "frame_b64": "EZERAAAAAAEAAABcH4sIAAAAAAACE6tWKkiszMlPTInPLU5XsqpWSs5PSVWyUjIygAAlHaWi1OLSnBIlq+hqpZLUCiBD6VDrk70LlGp14AJPl+6NKTUwMExWqo2trQUAbsGybFQAAACquw==",
+      "result": {
+        "final": false,
+        "text": "你好"
+      }
+    },
+    "nested-provider-error": {
+      "frame_b64": "EZERAAAAAAUAAABOH4sIAAAAAAACE6tWKkiszMlPTInPLU5XsqpWSs5PSVWyMjEw0FHKTS0uTkwH8pSKU/NKMvNSc3QLivLLMlNSi3RhcrW1ALM6uudCAAAA",
+      "result": {
+        "error": "DoubaoAsrError",
+        "message": "豆包 ASR 请求失败"
+      }
+    }
+  },
+  "asr_encode": {
+    "final-audio": {
+      "header": [
+        17,
+        35,
+        17,
+        0
+      ],
+      "payload": "BQYHCA==",
+      "payload_size_matches": true,
+      "sequence": -3
+    },
+    "full-request": {
+      "header": [
+        17,
+        17,
+        17,
+        0
+      ],
+      "payload": {
+        "audio": {
+          "bits": 16,
+          "channel": 1,
+          "codec": "raw",
+          "format": "pcm",
+          "rate": 16000
+        },
+        "request": {
+          "enable_itn": true,
+          "enable_punc": true,
+          "model_name": "bigmodel",
+          "result_type": "full",
+          "show_utterances": true
+        },
+        "user": {
+          "uid": "fixture-user-id"
+        }
+      },
+      "payload_size_matches": true,
+      "sequence": 1
+    },
+    "intermediate-audio": {
+      "header": [
+        17,
+        33,
+        17,
+        0
+      ],
+      "payload": "AQIDBA==",
+      "payload_size_matches": true,
+      "sequence": 2
+    }
+  },
+  "config": {
+    "bom-is-not-python-whitespace": {
+      "config": {
+        "ark_api_key": "ark",
+        "ark_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "ark_model": "﻿",
+        "ark_support_model": "doubao-seed-2-0-pro-260215",
+        "asr_api_key": "tts_fallback",
+        "asr_chunk_ms": 200,
+        "asr_endpoint": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+        "asr_resource_id": "volc.seedasr.sauc.duration",
+        "tts_api_key": "tts_fallback",
+        "tts_endpoint": "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
+        "tts_output_sample_rate": 24000,
+        "tts_resource_id": "seed-tts-2.0",
+        "tts_voice": "zh_female_vv_uranus_bigtts",
+        "vad_max_utterance_ms": 15000,
+        "vad_min_speech_ms": 250,
+        "vad_pre_roll_ms": 260,
+        "vad_silence_end_ms": 560,
+        "vad_speech_pad_ms": 30,
+        "vad_threshold": 0.5
+      },
+      "ok": true
+    },
+    "dedicated-key-and-overrides": {
+      "config": {
+        "ark_api_key": "ark",
+        "ark_base_url": "https://ark.example/v3/?region=cn",
+        "ark_model": "model-a",
+        "ark_support_model": "model-b",
+        "asr_api_key": "asr_dedicated",
+        "asr_chunk_ms": 200,
+        "asr_endpoint": "wss://speech.example/asr?mode=full",
+        "asr_resource_id": "asr-resource",
+        "tts_api_key": "tts_fallback",
+        "tts_endpoint": "wss://speech.example/tts/path",
+        "tts_output_sample_rate": 24000,
+        "tts_resource_id": "tts-resource",
+        "tts_voice": "voice-a",
+        "vad_max_utterance_ms": 1500,
+        "vad_min_speech_ms": 250,
+        "vad_pre_roll_ms": 260,
+        "vad_silence_end_ms": 560,
+        "vad_speech_pad_ms": 30,
+        "vad_threshold": 0.5
+      },
+      "ok": true
+    },
+    "defaults-and-fallback": {
+      "config": {
+        "ark_api_key": "ark",
+        "ark_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "ark_model": "doubao-seed-2-0-pro-260215",
+        "ark_support_model": "doubao-seed-2-0-pro-260215",
+        "asr_api_key": "tts_fallback",
+        "asr_chunk_ms": 200,
+        "asr_endpoint": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+        "asr_resource_id": "volc.seedasr.sauc.duration",
+        "tts_api_key": "tts_fallback",
+        "tts_endpoint": "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
+        "tts_output_sample_rate": 24000,
+        "tts_resource_id": "seed-tts-2.0",
+        "tts_voice": "zh_female_vv_uranus_bigtts",
+        "vad_max_utterance_ms": 15000,
+        "vad_min_speech_ms": 250,
+        "vad_pre_roll_ms": 260,
+        "vad_silence_end_ms": 560,
+        "vad_speech_pad_ms": 30,
+        "vad_threshold": 0.5
+      },
+      "ok": true
+    },
+    "integer-exponent-rejected": {
+      "error": "ValidationError",
+      "fields": [
+        "DOUBAO_ASR_CHUNK_MS"
+      ],
+      "ok": false
+    },
+    "missing-ark-precedes-tts": {
+      "error": "ConfigurationError",
+      "message": "缺少 ARK_API_KEY",
+      "ok": false
+    },
+    "missing-tts": {
+      "error": "ConfigurationError",
+      "message": "缺少 DOUBAO_BIGMODEL_API_KEY",
+      "ok": false
+    },
+    "pydantic-numeric-u001c-rejected": {
+      "error": "ValidationError",
+      "fields": [
+        "DOUBAO_ASR_CHUNK_MS"
+      ],
+      "ok": false
+    },
+    "pydantic-numeric-u0085": {
+      "ok": true
+    },
+    "resolver-only-invalid-endpoint-loads": {
+      "ok": true
+    },
+    "userinfo-endpoint-rejected": {
+      "error": "ConfigurationError",
+      "message": "NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT 必须是安全的 wss:// 地址",
+      "ok": false
+    }
+  },
+  "schema_version": 1,
+  "text_chunker": {
+    "first-and-soft-boundaries": {
+      "finish": [
+        "继续说到这里。再来"
+      ],
+      "push": [
+        [
+          "你好，"
+        ],
+        []
+      ]
+    },
+    "hard-code-point-boundary": {
+      "finish": [
+        "🙂"
+      ],
+      "push": [
+        [
+          "🙂🙂🙂🙂🙂"
+        ]
+      ]
+    },
+    "newline-boundary": {
+      "finish": [
+        "二行"
+      ],
+      "push": [
+        [
+          "一行\n"
+        ]
+      ]
+    }
+  },
+  "tts_codec": {
+    "audio-with-sequence": {
+      "frame_b64": "EbEAAIAAAAAAAAAEAQIDBA==",
+      "result": {
+        "connect_id": null,
+        "error_code": null,
+        "event": null,
+        "message_type": 11,
+        "payload_b64": "AQIDBA==",
+        "sequence": -2147483648,
+        "session_id": null
+      }
+    },
+    "client-session-cjk": {
+      "frame_b64": "ERQQAAAAAGQAAAAK5Lya6K+d8J+ZggAAAAJ7fQ==",
+      "result": {
+        "connect_id": null,
+        "error_code": null,
+        "event": 100,
+        "message_type": 1,
+        "payload_b64": "e30=",
+        "sequence": null,
+        "session_id": "会话🙂"
+      }
+    },
+    "error-uint32": {
+      "frame_b64": "EfAAAP////8AAAAA",
+      "result": {
+        "connect_id": null,
+        "error_code": 4294967295,
+        "event": null,
+        "message_type": 15,
+        "payload_b64": "",
+        "sequence": null,
+        "session_id": null
+      }
+    },
+    "server-connection": {
+      "frame_b64": "EZQAAAAAADIAAAAK6L+e5o6l8J+ZggAAAAJ7fQ==",
+      "result": {
+        "connect_id": "连接🙂",
+        "error_code": null,
+        "event": 50,
+        "message_type": 9,
+        "payload_b64": "e30=",
+        "sequence": null,
+        "session_id": null
+      }
+    },
+    "trailing-rejected": {
+      "frame_b64": "EbAAAAAAAAIBAgM=",
+      "result": {
+        "error": "VolcProtocolError",
+        "message": "豆包语音返回了尾随协议数据"
+      }
+    }
+  }
+}

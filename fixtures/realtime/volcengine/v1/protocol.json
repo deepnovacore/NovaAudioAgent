@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "config": [
+    {
+      "id": "defaults-and-fallback",
+      "settings": {
+        "ark_api_key": "ark",
+        "doubao_bigmodel_api_key": "tts_fallback"
+      },
+      "action": "resolve"
+    },
+    {
+      "id": "dedicated-key-and-overrides",
+      "settings": {
+        "ark_api_key": "\u001cark\u0085",
+        "doubao_asr_api_key": "\u001casr_dedicated\u0085",
+        "doubao_bigmodel_api_key": "\u001ctts_fallback\u0085",
+        "volcengine_ark_base_url": "\u001chttps://ark.example/v3/?region=cn///\u0085",
+        "volcengine_ark_model": "\u001cmodel-a\u0085",
+        "volcengine_ark_support_model": "\u001cmodel-b\u0085",
+        "doubao_asr_endpoint": "\u001cwss://speech.example/asr?mode=full///\u0085",
+        "doubao_asr_resource_id": "\u001casr-resource\u0085",
+        "doubao_asr_chunk_ms": "2_00.0",
+        "doubao_tts_endpoint": "\u001cwss://speech.example/tts/path///\u0085",
+        "doubao_tts_resource_id": "\u001ctts-resource\u0085",
+        "doubao_tts_voice": "\u001cvoice-a\u0085",
+        "doubao_tts_output_sample_rate": "24_000.0",
+        "volcengine_vad_threshold": "5e-1",
+        "volcengine_vad_pre_roll_ms": "+2_60",
+        "volcengine_vad_min_speech_ms": "250.0",
+        "volcengine_vad_silence_end_ms": "5_60",
+        "volcengine_vad_speech_pad_ms": "30",
+        "volcengine_vad_max_utterance_ms": "1_500.0"
+      },
+      "action": "resolve"
+    },
+    {
+      "id": "missing-ark-precedes-tts",
+      "settings": {},
+      "action": "resolve"
+    },
+    {
+      "id": "missing-tts",
+      "settings": {
+        "ark_api_key": "ark"
+      },
+      "action": "resolve"
+    },
+    {
+      "id": "userinfo-endpoint-rejected",
+      "settings": {
+        "ark_api_key": "ark",
+        "doubao_bigmodel_api_key": "tts_fallback",
+        "doubao_tts_endpoint": "wss://user:sentinel-provider-secret@speech.example/tts"
+      },
+      "action": "resolve"
+    },
+    {
+      "id": "bom-is-not-python-whitespace",
+      "settings": {
+        "ark_api_key": "ark",
+        "doubao_bigmodel_api_key": "tts_fallback",
+        "volcengine_ark_model": "\ufeff"
+      },
+      "action": "resolve"
+    },
+    {
+      "id": "resolver-only-invalid-endpoint-loads",
+      "settings": {
+        "volcengine_ark_base_url": "http://sentinel-provider.example/v3",
+        "volcengine_vad_threshold": "2"
+      },
+      "action": "load"
+    },
+    {
+      "id": "pydantic-numeric-u0085",
+      "settings": {
+        "doubao_asr_chunk_ms": "\u0085200\u0085"
+      },
+      "action": "load"
+    },
+    {
+      "id": "pydantic-numeric-u001c-rejected",
+      "settings": {
+        "doubao_asr_chunk_ms": "\u001c200\u001c"
+      },
+      "action": "load"
+    },
+    {
+      "id": "integer-exponent-rejected",
+      "settings": {
+        "doubao_asr_chunk_ms": "2e2"
+      },
+      "action": "load"
+    }
+  ],
+  "asr_encode": [
+    {"id": "full-request", "kind": "full", "sequence": 1, "sample_rate": 16000},
+    {"id": "intermediate-audio", "kind": "audio", "sequence": 2, "pcm_b64": "AQIDBA==", "final": false},
+    {"id": "final-audio", "kind": "audio", "sequence": 3, "pcm_b64": "BQYHCA==", "final": true}
+  ],
+  "asr_decode": [
+    {
+      "id": "nested-list-python-strip-and-trailing",
+      "sequence": 1,
+      "flags": 1,
+      "compressed": true,
+      "body": {"payload_msg": {"code": "20000000", "result": [{"text": "\u0085你"}, {"text": "好\u001c"}]}},
+      "trailing_b64": "qrs="
+    },
+    {
+      "id": "negative-sequence-final",
+      "sequence": -2,
+      "flags": 1,
+      "compressed": false,
+      "body": {"result": {"utterances": [{"text": "Nova"}]}}
+    },
+    {
+      "id": "empty-final",
+      "sequence": 3,
+      "flags": 3,
+      "compressed": true,
+      "body": {}
+    },
+    {
+      "id": "invalid-nested-string-falls-back",
+      "sequence": 4,
+      "flags": 1,
+      "compressed": true,
+      "body": {"payload_msg": "not-json", "text": " outer "}
+    },
+    {
+      "id": "nested-provider-error",
+      "sequence": 5,
+      "flags": 1,
+      "compressed": true,
+      "body": {"payload_msg": {"code": 400, "message": "sentinel-provider-message"}}
+    },
+    {
+      "id": "ignored-frame",
+      "sequence": 6,
+      "flags": 0,
+      "compressed": false,
+      "body": {"text": "ignored"}
+    }
+  ],
+  "tts_codec": [
+    {
+      "id": "client-session-cjk",
+      "action": "marshal-roundtrip",
+      "message_type": 1,
+      "event": 100,
+      "session_id": "会话🙂",
+      "payload_b64": "e30="
+    },
+    {
+      "id": "server-connection",
+      "action": "marshal-roundtrip",
+      "message_type": 9,
+      "event": 50,
+      "connect_id": "连接🙂",
+      "payload_b64": "e30="
+    },
+    {
+      "id": "audio-with-sequence",
+      "action": "unmarshal",
+      "message_type": 11,
+      "flags": 1,
+      "sequence": -2147483648,
+      "payload_b64": "AQIDBA=="
+    },
+    {
+      "id": "error-uint32",
+      "action": "unmarshal",
+      "message_type": 15,
+      "flags": 0,
+      "error_code": 4294967295,
+      "payload_b64": ""
+    },
+    {
+      "id": "trailing-rejected",
+      "action": "unmarshal",
+      "message_type": 11,
+      "flags": 0,
+      "payload_b64": "AQI=",
+      "trailing_b64": "Aw=="
+    }
+  ],
+  "text_chunker": [
+    {"id": "first-and-soft-boundaries", "push": ["你好，继续", "说到这里。再来"], "finish": true},
+    {"id": "hard-code-point-boundary", "soft_limit": 4, "hard_limit": 5, "push": ["🙂🙂🙂🙂🙂🙂"], "finish": true},
+    {"id": "newline-boundary", "push": ["一行\n二行"], "finish": true}
+  ]
+}

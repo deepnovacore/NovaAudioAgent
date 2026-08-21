@@ -1,7 +1,7 @@
 # Nova Audio Agent Python to Node Parity Matrix
 
-Status: Python baseline recorded; Stage 1 foundation active and provider-neutral Stage 2 groundwork
-started as of 2026-08-19.
+Status: Python baseline recorded; Stage 1 foundation active, provider-neutral Stage 2 groundwork is
+in place, and the pure Volcengine config/audio/codec foundation is gated as of 2026-08-21.
 
 ## How to Use This Matrix
 
@@ -113,7 +113,7 @@ Scorecard and demo caveats:
 | Telemetry and trace redaction | telemetry/evidence tests | Node unit tests | No credentials or raw protected payloads |
 | Provider-neutral contract and lifecycle | realtime protocol/session tests | Zod and Node lifecycle tests for host items, events, PCM, epoch, reconnect, and close; 26 Python-exported provider-frame session scenarios matching on both legs | Shared contract is used by both production adapters; `accept`, captions, fence/preempt, playback acknowledgement, continuation, and both reconnect paths are ported and gated |
 | Qwen provider protocol | realtime Qwen tests | 18 Python-exported normalization scenarios plus real-loopback transport tests; live smoke passing | Session, playback fencing, and recovery still required above the adapter |
-| Volcengine ASR/TTS/Ark/protocol | Volcengine component/provider tests | Provider-frame fixtures plus live smoke | All deterministic cases green |
+| Volcengine ASR/TTS/Ark/protocol | Volcengine component/provider tests | Python-exported v1 fixtures now gate host config, directional PCM formats, Seed ASR framing/decoding, shared TTS framing, and text chunking; Node-only tests gate the 10 MiB wire, 1 MiB inflated JSON, strict JSON/UTF-8, and 4,000-code-point limits | Transport, ASR/TTS sessions, Ark, provider assembly, and live smoke remain open; do not treat the pure 7A foundation as provider migration |
 | Streaming VAD | Volcengine VAD tests | LiveKit local VAD waveform fixtures plus native-binding startup tests | Equivalent segmentation tolerances documented on every release platform |
 | Audio end-of-turn detection | turn handling, endpointing, interruption, and backchannel tests | LiveKit `TurnDetector` stream fixtures plus microphone acceptance | Local `v1-mini` is proven through a real inference executor; missing executor/native inference is explicit and bounded, never accepted via the positive default |
 
