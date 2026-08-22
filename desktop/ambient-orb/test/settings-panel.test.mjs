@@ -1,10 +1,158 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { createSettingsController } from '../src/renderer/settings-controller.mjs'
 
 const html = await readFile(new URL('../src/renderer/settings.html', import.meta.url), 'utf8')
 const script = await readFile(new URL('../src/renderer/settings.mjs', import.meta.url), 'utf8')
+const controllerScript = await readFile(new URL('../src/renderer/settings-controller.mjs', import.meta.url), 'utf8')
 const css = await readFile(new URL('../src/renderer/settings.css', import.meta.url), 'utf8')
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function publicView(overrides = {}) {
+  return {
+    saved: true,
+    palette: 'ember',
+    proactivity: 'balanced',
+    codexHeartbeatSeconds: 30,
+    pipelineMode: 'integrated',
+    integratedProvider: 'qwen',
+    integratedModel: 'qwen-realtime',
+    integratedVoice: 'longanqian',
+    cascadedEndpointingProvider: 'auto',
+    cascadedAsrProvider: 'volcengine',
+    cascadedLlmProvider: 'qwen',
+    cascadedLlmModels: { qwen: 'qwen-flash', ark: 'ark-pro' },
+    cascadedTtsProvider: 'volcengine',
+    cascadedTtsVoice: 'uranus',
+    secretsPresent: {},
+    keyringAvailable: true,
+    rejectedSecrets: [],
+    ...overrides,
+  }
+}
+
+test('queued secret saves wait for their own bridge response and retain its rejection', async () => {
+  const first = deferred()
+  const second = deferred()
+  const calls = []
+  const controller = createSettingsController({
+    api: { set: patch => {
+      calls.push(patch)
+      return calls.length === 1 ? first.promise : second.promise
+    } },
+    render: () => {},
+    status: () => {},
+  })
+  controller.setView(publicView())
+  controller.setDraft('dashscopeApiKey', 'first-key')
+  const firstSave = controller.saveSecrets({ dashscopeApiKey: 'first-key' })
+  controller.setDraft('arkApiKey', 'bad-key')
+  const queuedSave = controller.saveSecrets({ arkApiKey: 'bad-key' })
+  first.resolve(publicView())
+  const firstResult = await firstSave
+  assert.deepEqual(firstResult.cleared, ['dashscopeApiKey'])
+  assert.equal(calls.length, 2, 'the queued caller begins only after the first response')
+  second.resolve(publicView({ rejectedSecrets: ['arkApiKey'] }))
+  const queuedResult = await queuedSave
+  assert.deepEqual(queuedResult.rejected, ['arkApiKey'])
+  assert.deepEqual(queuedResult.cleared, [])
+})
+
+test('an earlier accepted secret response cannot clear a newer value in that field', async () => {
+  const pending = deferred()
+  const controller = createSettingsController({
+    api: { set: () => pending.promise },
+    render: () => {},
+    status: () => {},
+  })
+  controller.setView(publicView())
+  controller.setDraft('dashscopeApiKey', 'old-key')
+  const firstSave = controller.saveSecrets({ dashscopeApiKey: 'old-key' })
+  controller.setDraft('dashscopeApiKey', 'new-key')
+  pending.resolve(publicView())
+  const result = await firstSave
+  assert.deepEqual(result.accepted, ['dashscopeApiKey'])
+  assert.deepEqual(result.cleared, [], 'the newer plaintext draft must remain for its own save')
+  assert.equal(controller.getDraft('dashscopeApiKey'), 'new-key')
+})
+
+test('a dirty text draft survives a stale response and can be saved afterwards', async () => {
+  const first = deferred()
+  const second = deferred()
+  const calls = []
+  const renders = []
+  const controller = createSettingsController({
+    api: { set: patch => {
+      calls.push(patch)
+      return calls.length === 1 ? first.promise : second.promise
+    } },
+    render: (view, drafts) => renders.push({ view, drafts }),
+    status: () => {},
+  })
+  controller.setView(publicView())
+  const savePalette = controller.push({ palette: 'graphite' }, '配色已更新')
+  controller.setDraft('integratedModel', 'typed-later')
+  const saveModel = controller.push({ integratedModel: 'typed-later' }, '已保存')
+  first.resolve(publicView({ palette: 'graphite', integratedModel: 'stale-server-value' }))
+  await savePalette
+  assert.equal(renders.at(-1).drafts.integratedModel, 'typed-later')
+  assert.deepEqual(calls[1], { integratedModel: 'typed-later' })
+  second.resolve(publicView({ palette: 'graphite', integratedModel: 'typed-later' }))
+  await saveModel
+  assert.equal(controller.getDraft('integratedModel'), undefined)
+})
+
+test('pipeline and provider selections render locally before their deferred save', () => {
+  const renders = []
+  const controller = createSettingsController({
+    api: { set: () => new Promise(() => {}) },
+    render: (view) => renders.push(view),
+    status: () => {},
+  })
+  controller.setView(publicView())
+  controller.applyLocal({ pipelineMode: 'cascaded' })
+  controller.applyLocal({ cascadedLlmProvider: 'ark' })
+  const immediate = renders.at(-1)
+  assert.equal(immediate.pipelineMode, 'cascaded')
+  assert.equal(immediate.cascadedLlmProvider, 'ark')
+  assert.equal(immediate.cascadedLlmModels.ark, 'ark-pro')
+})
+
+test('nested queued model patches retain both provider leaves', async () => {
+  const first = deferred()
+  const second = deferred()
+  const calls = []
+  const controller = createSettingsController({
+    api: { set: patch => {
+      calls.push(patch)
+      return calls.length === 1 ? first.promise : second.promise
+    } },
+    render: () => {},
+    status: () => {},
+  })
+  controller.setView(publicView())
+  const palette = controller.push({ palette: 'graphite' }, '配色已更新')
+  const qwen = controller.push({ cascadedLlmModels: { qwen: 'qwen-new' } }, '已保存')
+  const ark = controller.push({ cascadedLlmModels: { ark: 'ark-new' } }, '已保存')
+  first.resolve(publicView({ palette: 'graphite' }))
+  await palette
+  assert.deepEqual(calls[1], { cascadedLlmModels: { qwen: 'qwen-new', ark: 'ark-new' } })
+  second.resolve(publicView({
+    palette: 'graphite',
+    cascadedLlmModels: { qwen: 'qwen-new', ark: 'ark-new' },
+  }))
+  await Promise.all([qwen, ark])
+})
 
 test('the settings page ships the same locked-down CSP as the memory board', () => {
   const board = /* the panel must not loosen anything the board already forbids */ [
@@ -70,6 +218,7 @@ test('every API key is a password field with a badge, hint, and clear button', (
   ]) {
     assert.match(html, new RegExp(`<input type="password" id="${key}"[^>]*placeholder="留空保持不变"`))
     assert.match(html, new RegExp(`<span class="badge" id="badge-${key}">未设置</span>`))
+    assert.match(html, new RegExp(`<span class="key-usage" id="usage-${key}">`))
     assert.match(html, new RegExp(`<button type="button" class="clear" data-key="${key}">清除</button>`))
   }
   assert.match(html, /DashScope/)
@@ -100,9 +249,9 @@ test('pipeline selection shows the integrated path or the cascaded nodes', () =>
 })
 
 test('the active cascaded model follows its provider and preserves the other model', () => {
-  assert.match(script, /cascadedLlmModel\.value = view\.cascadedLlmModels\?\.\[view\.cascadedLlmProvider\] \?\? ''/)
-  assert.match(script, /cascadedLlmModels: \{ \[cascadedLlmProvider\.value\]: cascadedLlmModel\.value \}/)
-  assert.match(script, /mergePatch\(pendingPatch, patch\)/)
+  assert.match(script, /llmDraftKey\(view\.cascadedLlmProvider\)/)
+  assert.match(script, /cascadedLlmModels: \{ \[provider\]: value \}/)
+  assert.match(controllerScript, /merged\[field\] = bothObjects \? \{ \.\.\.existing, \.\.\.value \} : value/)
 })
 
 test('key usage labels are derived from public pipeline selection only', () => {
@@ -132,13 +281,9 @@ test('the panel writes secrets forward only and never reads a value back', () =>
   assert.match(script, /secretsPresent/)
   assert.match(script, /已设置/)
   assert.match(script, /未设置/)
-  assert.match(script, /input\.value = ''/)
+  assert.match(script, /if \(input\.value === secrets\[key\]\) input\.value = ''/)
   assert.doesNotMatch(script, /\.secrets\b|\.data\b|decrypt/)
-  const passwordWrites = [...script.matchAll(/input\.value = ([^\n]+)/g)].map(match => match[1])
-  assert.ok(passwordWrites.length > 0)
-  for (const written of passwordWrites) {
-    assert.equal(written, "''", 'the only write into a password field clears it')
-  }
+  assert.doesNotMatch(controllerScript, /\.secrets\b|ciphertext|decrypt/)
 })
 
 test('the keyring warning is driven by the flag main reports', () => {
@@ -160,17 +305,16 @@ test('a change made mid-save is coalesced and flushed, never dropped', () => {
   // it: a slider nudged twice in a second kept only the first value. Now the
   // newest patch per field waits in `pendingPatch` and is pushed as soon as the
   // in-flight save resolves.
-  assert.match(script, /let saving = false/)
-  assert.match(script, /let pendingPatch = null/)
-  assert.match(script, /if \(saving\) \{\n\s*pendingPatch = mergePatch\(pendingPatch, patch\)/)
-  assert.doesNotMatch(script, /if \(saving\) \{\n\s*render\(/)
+  assert.match(script, /createSettingsController/)
+  assert.match(controllerScript, /let inFlight = null/)
+  assert.match(controllerScript, /let pending = null/)
+  assert.match(controllerScript, /pending\.patch = mergePatch\(pending\.patch, patch\)/)
   // The flush happens after the save settles, and the merge goes one level
   // deeper wherever a field carries an object, so two key edits queued behind
   // the same save cannot erase each other.
-  assert.match(script, /if \(pendingPatch\)/)
-  assert.match(script, /void push\(nextPatch, nextNote\)/)
-  assert.match(script, /function mergePatch\(base, next\)/)
-  assert.match(script, /merged\[field\] = bothObjects \? \{ \.\.\.existing, \.\.\.value \} : value/)
+  assert.match(controllerScript, /resolveBatch\(batch, \{ saved, view: remoteView \}\)/)
+  assert.match(controllerScript, /void flush\(\)/)
+  assert.match(controllerScript, /function mergePatch\(base, next\)/)
 })
 
 test('saveSecrets clears only the fields the save actually accepted', () => {
@@ -179,10 +323,10 @@ test('saveSecrets clears only the fields the save actually accepted', () => {
   // vanished from the screen with 密钥已保存 showing and no other signal but
   // the 未设置 badge. Now a field is cleared only if it is not in the rejected
   // set the response names.
-  assert.match(script, /const \{ saved, view \} = await push\(\{ secrets \}, '密钥已保存'\)/)
-  assert.match(script, /const rejected = new Set\(view\?\.rejectedSecrets \?\? \[\]\)/)
-  assert.match(script, /for \(const key of Object\.keys\(secrets\)\) \{/)
-  assert.match(script, /if \(!rejected\.has\(key\)\) input\.value = ''/)
+  assert.match(script, /const result = await controller\.saveSecrets\(secrets\)/)
+  assert.match(script, /for \(const key of result\.cleared\) \{/)
+  assert.match(script, /if \(input\.value === secrets\[key\]\) input\.value = ''/)
+  assert.match(controllerScript, /const cleared = accepted\.filter\(key => clearDraftIfEqual\(key, secrets\[key\]\)\)/)
 })
 
 test('saveSecrets names any rejected key by its panel label and only reports success when nothing was rejected', () => {
@@ -194,15 +338,16 @@ test('saveSecrets names any rejected key by its panel label and only reports suc
   assert.match(script, /arkApiKey: 'Ark',/)
   assert.match(script, /doubaoBigmodelApiKey: '豆包大模型',/)
   assert.match(script, /doubaoAsrApiKey: '豆包 ASR',/)
-  // The error line is gated on `rejected.size`, so an all-accepted save keeps
-  // the plain 密钥已保存 note `push` already set and never reaches this branch.
-  assert.match(script, /if \(rejected\.size\) \{/)
+  // Each exact queued request retains its own rejection list. The renderer
+  // names only keys this save submitted, so a coalesced neighbour cannot make
+  // a different field's error appear in its status line.
+  assert.match(script, /if \(result\.rejected\.length\) \{/)
   assert.match(
     script,
     /statusLabel\.textContent = `部分密钥未保存\(含非法字符\): \$\{labels\.join\('、'\)\}`/,
   )
   assert.match(
     script,
-    /const labels = SECRET_KEYS\.filter\(key => rejected\.has\(key\)\)\.map\(key => SECRET_LABELS\[key\]\)/,
+    /const labels = result\.rejected\.map\(key => SECRET_LABELS\[key\]\)/,
   )
 })
