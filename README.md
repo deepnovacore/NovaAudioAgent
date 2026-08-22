@@ -191,6 +191,42 @@ Codex prewarm. A persistent workspace home refreshes its saved login when the ho
 changes, using owner-only atomic files; a destination-only credential refresh is preserved while
 the host source is unchanged.
 
+### Workspace memory graph and optional MyContext evidence
+
+The Node runtime has an opt-in workspace memory graph. Nova's graph is project-wide and
+lightweight: it automatically maintains workspace identity and relationship/navigation context
+from Nova's own confirmed lifecycle and typed task events. It remembers the project map; it does
+not copy repository-native engineering instructions or automatically inspect another workspace.
+
+```bash
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH=~/.nova-audio-agent/workspace-graph.sqlite
+
+# Optional. This must be a separately supplied Nova-compatible read-only adapter base URL.
+NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
+```
+
+The optional MyContext boundary adds a different, person-wide source: multi-source evidence from
+chats, documents, meetings, and people. Nova may request it only for explicit evidence recall
+about the same authoritative current workspace—for example, a user asking "why?" or asking for a
+source. It never participates in startup, workspace open/switch, default recall, the Context
+Header, Recall Pack, proactive confidence, tool routing, or actions. Returned text is local,
+read-only, source-labelled, untrusted, non-persistent, and non-proactive; it cannot mutate Nova's
+graph, workspace identity, task state, or another workspace.
+
+The URL must serve Nova's strict `nova_workspace_evidence` schema-version-1 capability and lookup
+contract. The raw upstream MyContext `/capabilities` v2 is not accepted: it exposes general query
+commands but does not attest exact Nova workspace scope. Nova does not ship an adapter executable
+and does not guess compatibility from `/ask` results. Installing MyContext alone does not enable Nova enrichment;
+the local Nova-compatible read-only adapter handshake must succeed, and an
+explicit evidence-recall caller must request the data. Provider failure is a visible degraded
+empty result and never blocks ordinary voice or project work.
+
+This integration is an HTTP client boundary and does not copy or bundle MyContext code or runtime.
+Upstream MyContext is licensed under the Elastic License 2.0. A separate legal and distribution
+review is required before reusing, bundling, or shipping any upstream MyContext code or runtime;
+configuring this client is not such distribution approval.
+
 Clone the repository and the temporary Python-rollback submodule:
 
 ```bash

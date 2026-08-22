@@ -29,6 +29,12 @@ test('workspace graph settings default off and accept only loopback MyContext en
   assert.throws(() => loadSettings({
     NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL: 'https://example.com/context',
   }), /NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL/u)
+  assert.throws(() => loadSettings({
+    NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL: 'http://127.0.0.1:7412/v1?token=secret',
+  }), /NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL/u)
+  assert.throws(() => loadSettings({
+    NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL: 'http://127.0.0.1:7412/v1#fragment',
+  }), /NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL/u)
 })
 
 test('proactivity presets and individual overrides preserve the Python table', () => {

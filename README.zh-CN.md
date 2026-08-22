@@ -166,6 +166,37 @@ project mode 下每个工作单都会启动新的 app-server 进程，因此有�
 workspace home 会在宿主登录凭据变化时用 owner-only 的原子文件刷新；如果只更新了 workspace
 home 内的凭据，而宿主源没有变化，这次 destination-only 更新会被保留。
 
+### Workspace 记忆图谱与可选 MyContext 证据
+
+Node runtime 提供一套 opt-in 的 workspace 记忆图谱。Nova 图谱是面向项目全景且轻量的：它根据
+Nova 自己已经确认的 workspace 生命周期和类型化任务事件，自动维护 workspace 身份、项目关联和
+导航上下文。它记住的是项目地图；不会复制仓库内的工程指令，也不会自动检查另一个 workspace。
+
+```bash
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH=~/.nova-audio-agent/workspace-graph.sqlite
+
+# 可选；必须指向另行提供的 Nova 兼容的只读 adapter base URL。
+NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
+```
+
+可选的 MyContext 边界补充的是另一种、以人为中心的全景来源：来自聊天、文档、会议和人物的多源
+证据。Nova 只能在同一个权威当前 workspace 中，为显式证据召回而请求它，例如用户追问“为什么”
+或要求查看来源。它不参与启动、workspace 打开/切换、默认召回、Context Header、Recall Pack、
+主动建议置信度、工具路由或任何 action。返回文本留在本地，只读且带来源标签，同时被视为
+不受信任、不持久化且不主动；它不能修改 Nova 图谱、workspace 身份、任务状态或另一个 workspace。
+
+该 URL 必须提供 Nova `nova_workspace_evidence` schema version 1 的严格能力握手和查询契约。
+上游 MyContext 原始 `/capabilities` v2 不兼容：它公开的是通用查询命令，不能证明 Nova 所要求的
+精确 workspace scope。Nova 当前不提供 adapter 可执行文件，也不会根据 `/ask` 结果猜测兼容。
+只安装 MyContext 不会启用 Nova enrichment；本地 Nova 兼容的只读 adapter 必须先成功握手，并由
+显式证据召回的调用方真正发起请求。provider 故障只返回可见的降级空结果，不阻塞普通语音或
+项目工作。
+
+这项集成只是 HTTP client 边界，不复制或捆绑 MyContext 代码及运行时。上游 MyContext 采用
+Elastic License 2.0；未来复用、捆绑或随产品交付任何上游 MyContext 代码或运行时之前，必须另行
+完成法律与分发审查。配置这个 client 本身不代表已经获得分发批准。
+
 克隆仓库及临时保留给 Python 源码回滚的子模块：
 
 ```bash

@@ -7,6 +7,7 @@ import {
   WorkspaceGraphService,
   type WorkspaceGraphServiceDiagnostic,
 } from './service.js'
+import {MyContextProvider} from './provider.js'
 
 export type WorkspaceGraphFactoryDiagnostic =
   | WorkspaceGraphServiceDiagnostic
@@ -19,9 +20,15 @@ export function workspaceGraphServiceFromSettings(
   if (!settings.workspace_graph_enabled) return undefined
   try {
     const path = graphDatabasePath(settings.workspace_graph_path)
+    const personalContextProvider = settings.mycontext_provider_url === null
+      ? undefined
+      : new MyContextProvider({base_url: settings.mycontext_provider_url})
     return new WorkspaceGraphService({
       path,
       on_diagnostic: onDiagnostic,
+      ...(personalContextProvider === undefined
+        ? {}
+        : {personal_context_provider: personalContextProvider}),
     })
   } catch {
     try { onDiagnostic('workspace_graph_configuration_invalid') } catch { /* advisory */ }

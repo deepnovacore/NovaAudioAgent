@@ -2,6 +2,13 @@ import {randomUUID} from 'node:crypto'
 import {z} from 'zod'
 
 import {
+  codePointLengthLikePython,
+  isWellFormed,
+  stripLikePython,
+} from '../python-text.js'
+import {normalizeNfkcPinned} from '../unicode-normalize.js'
+import {isOtherCategory} from '../unicode-tables.js'
+import {
   WorkspaceIdentityResolver,
   applyWorkspaceIdentityDeltas,
   emptyWorkspaceIdentityState,
@@ -21,6 +28,10 @@ import {
 } from './projector.js'
 import {GraphRecall, type GraphRecallResult} from './recall.js'
 import {ContextBudgeter, type GraphContext} from './context.js'
+import type {
+  PersonalContextProvider,
+  ProviderEnrichmentResult,
+} from './provider.js'
 import {SensitiveContentPolicy, SensitivePathPolicy} from './sensitivity.js'
 import {
   WorkspaceGraphStoreClient,
@@ -32,6 +43,10 @@ export const MAX_WORKSPACE_GRAPH_PENDING_OPERATIONS = 64
 const WORKSPACE_GRAPH_SERVICE_DRAIN_GRACE_MS = 250
 const EXPLANATION_EVIDENCE_LIMIT = 8
 const STALE_AFTER_MS = 90 * 24 * 60 * 60 * 1_000
+const PROVIDER_SCOPE_MAX_CODE_POINTS = 239
+const PROVIDER_SCOPE_MAX_BYTES = 956
+const PROVIDER_QUERY_MAX_CODE_POINTS = 4_096
+const PROVIDER_QUERY_MAX_BYTES = 8_192
 
 export type WorkspaceGraphServiceDiagnostic =
   | 'workspace_graph_open_failed'
@@ -68,6 +83,7 @@ export interface WorkspaceGraphServiceOptions {
   readonly operation_id_factory?: () => ReturnType<typeof randomUUID>
   readonly on_diagnostic?: (code: WorkspaceGraphServiceDiagnostic) => void
   readonly store_client?: WorkspaceGraphStoreClient
+  readonly personal_context_provider?: PersonalContextProvider
 }
 
 export interface OpenWorkspaceInput {
@@ -83,6 +99,12 @@ export interface TurnContextInput {
   readonly workspace_instance_id: string
   readonly utterance: string
   readonly preferences: readonly string[]
+}
+
+export interface ExplicitRecallEnrichmentInput {
+  readonly workspace_instance_id: string
+  readonly query: string
+  readonly limit: number
 }
 
 export interface TaskCompletionRelationCue {
@@ -119,6 +141,26 @@ const openWorkspaceInputSchema = z.object({
   now: z.number().finite().nonnegative(),
 }).strict()
 
+const explicitRecallEnrichmentInputSchema = z.object({
+  workspace_instance_id: z.string().min(1).max(239).regex(/\S/u),
+  query: z.string().min(1).max(4_096).regex(/\S/u),
+  limit: z.number().int().positive(),
+}).strict()
+
+const unavailableProviderResult: ProviderEnrichmentResult = Object.freeze({
+  evidence: Object.freeze([]),
+  omitted_evidence: 0,
+  degraded: true,
+  diagnostic: 'unavailable',
+})
+
+const rejectedProviderResult: ProviderEnrichmentResult = Object.freeze({
+  evidence: Object.freeze([]),
+  omitted_evidence: 0,
+  degraded: true,
+  diagnostic: 'protocol',
+})
+
 interface HintLocation {
   readonly source_logical_id: string
   readonly target_logical_id: string
@@ -133,6 +175,7 @@ export class WorkspaceGraphService {
   readonly #operationIdFactory: () => ReturnType<typeof randomUUID>
   readonly #diagnostic: (code: WorkspaceGraphServiceDiagnostic) => void
   readonly #pathPolicy: SensitivePathPolicy
+  readonly #personalContextProvider: PersonalContextProvider | undefined
   readonly #contentPolicy = new SensitiveContentPolicy()
   readonly #budgeter = new ContextBudgeter()
   #identityState: WorkspaceIdentityState = emptyWorkspaceIdentityState()
@@ -155,6 +198,8 @@ export class WorkspaceGraphService {
   #pendingOperations = 0
   #state: ServiceState = 'new'
   #closeOperation: Promise<void> | null = null
+  #currentWorkspaceInstanceId: string | null = null
+  #workspaceScopeGeneration = 0
 
   constructor(options: WorkspaceGraphServiceOptions) {
     if (typeof options.path !== 'string' || options.path.length === 0) {
@@ -167,6 +212,7 @@ export class WorkspaceGraphService {
     this.#idFactory = options.id_factory ?? (() => randomUUID())
     this.#operationIdFactory = options.operation_id_factory ?? (() => randomUUID())
     this.#diagnostic = options.on_diagnostic ?? (() => undefined)
+    this.#personalContextProvider = options.personal_context_provider
     this.#pathPolicy = new SensitivePathPolicy(
       options.denied_roots === undefined ? {} : {deniedRoots: options.denied_roots},
     )
@@ -198,6 +244,10 @@ export class WorkspaceGraphService {
 
   openWorkspace(input: OpenWorkspaceInput): Promise<WorkspaceResolutionDecision> {
     const admitted = parseOpenWorkspaceInput(input)
+    // A confirmed host switch revokes the previous provider scope before any queued store work.
+    // Until the new instance is committed and published, explicit provider recall is unavailable.
+    this.#currentWorkspaceInstanceId = null
+    const scopeGeneration = ++this.#workspaceScopeGeneration
     return this.#enqueue(async () => this.#withStaleRetries(async () => {
       const decision = new WorkspaceIdentityResolver(this.#identityState, {
         pathPolicy: this.#pathPolicy,
@@ -209,7 +259,10 @@ export class WorkspaceGraphService {
         ...(admitted.branch === undefined ? {} : {branch: admitted.branch}),
         now: admitted.now,
       })
-      if (decision.kind !== 'resolved') return decision
+      if (decision.kind !== 'resolved') {
+        this.#currentWorkspaceInstanceId = null
+        return decision
+      }
       const observation: Observation = {
         observation_id: this.#idFactory(),
         observation_type: 'workspace_opened',
@@ -229,6 +282,12 @@ export class WorkspaceGraphService {
         projection_deltas: [],
       }, this.#operationIdFactory())
       await this.#reloadState()
+      if (scopeGeneration === this.#workspaceScopeGeneration) {
+        this.#currentWorkspaceInstanceId = this.#publishedIdentityState.workspace_instances.some(
+          candidate => candidate.instance_id === decision.instance.instance_id
+            && candidate.status === 'active',
+        ) ? decision.instance.instance_id : null
+      }
       return decision
     }))
   }
@@ -338,6 +397,65 @@ export class WorkspaceGraphService {
     }, recall, input.preferences)
   }
 
+  async enrichAfterExplicitRecall(
+    input: ExplicitRecallEnrichmentInput,
+  ): Promise<ProviderEnrichmentResult> {
+    if (this.#state !== 'open' || this.#personalContextProvider === undefined) {
+      return unavailableProviderResult
+    }
+    const admitted = parseExplicitRecallEnrichmentInput(input)
+    if (admitted === null) return rejectedProviderResult
+    const workspaceInstanceId = safeProviderInput(
+      'workspace_instance_id', admitted.workspace_instance_id,
+      PROVIDER_SCOPE_MAX_CODE_POINTS, PROVIDER_SCOPE_MAX_BYTES,
+      this.#pathPolicy, this.#contentPolicy,
+    )
+    const query = safeProviderInput(
+      'query', admitted.query,
+      PROVIDER_QUERY_MAX_CODE_POINTS, PROVIDER_QUERY_MAX_BYTES,
+      this.#pathPolicy, this.#contentPolicy,
+    )
+    if (
+      workspaceInstanceId === null
+      || query === null
+      || this.#currentWorkspaceInstanceId !== workspaceInstanceId
+    ) return rejectedProviderResult
+    const instance = this.#publishedIdentityState.workspace_instances.find(candidate => (
+      candidate.instance_id === workspaceInstanceId && candidate.status === 'active'
+    ))
+    if (instance === undefined) return rejectedProviderResult
+    const workspace = this.#publishedIdentityState.logical_workspaces.find(candidate => (
+      candidate.logical_workspace_id === instance.logical_workspace_id
+    ))
+    if (workspace === undefined) return rejectedProviderResult
+    const logicalWorkspaceId = safeProviderInput(
+      'logical_workspace_id', workspace.logical_workspace_id,
+      PROVIDER_SCOPE_MAX_CODE_POINTS, PROVIDER_SCOPE_MAX_BYTES,
+      this.#pathPolicy, this.#contentPolicy,
+    )
+    const workspaceName = safeProviderInput(
+      'workspace_name', workspace.display_name,
+      PROVIDER_SCOPE_MAX_CODE_POINTS, PROVIDER_SCOPE_MAX_BYTES,
+      this.#pathPolicy, this.#contentPolicy,
+    )
+    if (logicalWorkspaceId === null || workspaceName === null) return rejectedProviderResult
+    const scopeGeneration = this.#workspaceScopeGeneration
+    try {
+      const result = await this.#personalContextProvider.lookupWorkspaceEvidence({
+        logical_workspace_id: logicalWorkspaceId,
+        workspace_name: workspaceName,
+        query,
+        limit: Math.min(admitted.limit, 8),
+      })
+      return this.#currentWorkspaceInstanceId === workspaceInstanceId
+        && this.#workspaceScopeGeneration === scopeGeneration
+        ? result
+        : rejectedProviderResult
+    } catch {
+      return unavailableProviderResult
+    }
+  }
+
   explainHint(hintId: string): Promise<readonly EvidenceRef[]> {
     const admittedHintId = z.string().min(1).max(239).safeParse(hintId)
     if (!admittedHintId.success) {
@@ -363,6 +481,8 @@ export class WorkspaceGraphService {
   close(): Promise<void> {
     if (this.#closeOperation !== null) return this.#closeOperation
     if (this.#state === 'closed') return Promise.resolve()
+    this.#currentWorkspaceInstanceId = null
+    this.#workspaceScopeGeneration += 1
     const operation = this.#closeFresh()
     this.#closeOperation = operation
     return operation
@@ -488,6 +608,58 @@ function parseTaskCompletionInput(input: TaskCompletionInput): z.infer<typeof ta
     // Hostile accessors and proxies collapse to the fixed public input error.
   }
   throw new WorkspaceGraphServiceError('GRAPH_SERVICE_INVALID_INPUT')
+}
+
+function parseExplicitRecallEnrichmentInput(
+  input: ExplicitRecallEnrichmentInput,
+): z.infer<typeof explicitRecallEnrichmentInputSchema> | null {
+  try {
+    const parsed = explicitRecallEnrichmentInputSchema.safeParse(input)
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
+}
+
+function safeProviderInput(
+  field: string,
+  value: string,
+  maxCodePoints: number,
+  maxBytes: number,
+  pathPolicy: SensitivePathPolicy,
+  contentPolicy: SensitiveContentPolicy,
+): string | null {
+  if (!isWellFormed(value)) return null
+  const normalized = normalizeNfkcPinned(value)
+  if (
+    !isWellFormed(normalized)
+    || value === ''
+    || stripLikePython(value) !== value
+    || stripLikePython(normalized) !== normalized
+    || codePointLengthLikePython(value) > maxCodePoints
+    || codePointLengthLikePython(normalized) > maxCodePoints
+    || utf8Length(value) > maxBytes
+    || utf8Length(normalized) > maxBytes
+    || containsOtherCategory(value)
+    || containsOtherCategory(normalized)
+    || contentPolicy.scrub(field, value).kind !== 'clean'
+    || contentPolicy.scrub(field, normalized).kind !== 'clean'
+    || pathPolicy.scrubText(field, value).kind !== 'clean'
+    || pathPolicy.scrubText(field, normalized).kind !== 'clean'
+  ) return null
+  return value
+}
+
+function containsOtherCategory(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0)
+    if (codePoint !== undefined && isOtherCategory(codePoint)) return true
+  }
+  return false
+}
+
+function utf8Length(value: string): number {
+  return new TextEncoder().encode(value).byteLength
 }
 
 function requireSafeIdentity(

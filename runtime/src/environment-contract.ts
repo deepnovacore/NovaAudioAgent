@@ -77,7 +77,7 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL', 'codex', false, true, 'never', '30', 'Codex progress interval in seconds.', 'Codex 进度间隔秒数。'],
   ['NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED', 'core', false, true, 'never', 'false', 'Enable the local read-only workspace memory graph.', '启用本地只读工作区记忆图谱。'],
   ['NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH', 'core', false, true, 'never', '~/.nova-audio-agent/workspace-graph.sqlite', 'Workspace memory graph database path.', '工作区记忆图谱数据库路径。'],
-  ['NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL', 'core', false, true, 'never', null, 'Optional loopback-only MyContext provider URL.', '可选的仅限本机回环 MyContext provider 地址。'],
+  ['NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL', 'core', false, true, 'never', null, 'Optional loopback-only Nova-compatible read-only MyContext adapter base URL.', '可选的仅限本机回环、Nova 兼容的只读 MyContext adapter base URL。'],
   ['TAVILY_API_KEY', 'search', true, true, 'when_selected', null, 'Tavily search credential.', 'Tavily 搜索凭据。'],
   ['NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE', 'camera', false, true, 'never', null, 'Absolute deterministic desktop video input.', '桌面确定性视频输入的绝对路径。'],
   ['NOVA_AUDIO_AGENT_REALTIME_TELEMETRY', 'telemetry', false, true, 'never', null, 'Source-runtime telemetry output path.', '源码运行时遥测输出路径。'],

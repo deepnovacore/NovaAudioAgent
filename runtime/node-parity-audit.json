@@ -133,6 +133,7 @@
     "runtime/src/workspace-graph/identity.ts",
     "runtime/src/workspace-graph/models.ts",
     "runtime/src/workspace-graph/projector.ts",
+    "runtime/src/workspace-graph/provider.ts",
     "runtime/src/workspace-graph/recall.ts",
     "runtime/src/workspace-graph/sensitivity.ts",
     "runtime/src/workspace-graph/service.ts",

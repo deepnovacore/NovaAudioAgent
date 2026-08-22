@@ -10,6 +10,11 @@ import {
   emptyWorkspaceIdentityState,
 } from '../src/workspace-graph/identity.js'
 import type {WorkspaceGraphProjectionState} from '../src/workspace-graph/projector.js'
+import type {
+  PersonalContextProvider,
+  ProviderEnrichmentResult,
+  WorkspaceEvidenceLookupInput,
+} from '../src/workspace-graph/provider.js'
 import {WorkspaceGraphService} from '../src/workspace-graph/service.js'
 import {
   WorkspaceGraphStoreClient,
@@ -493,4 +498,232 @@ test('service close force-owns an already-open worker whose queued mutation neve
   } finally {
     await client.close()
   }
+})
+
+test('provider remains absent from open, switch, context, board snapshot, and default recall paths', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-provider-lazy-'))
+  const calls: WorkspaceEvidenceLookupInput[] = []
+  const provider: PersonalContextProvider = {
+    lookupWorkspaceEvidence: input => {
+      calls.push(input)
+      return Promise.resolve(Object.freeze({
+        evidence: Object.freeze([]), omitted_evidence: 0, degraded: false, diagnostic: null,
+      }))
+    },
+  }
+  const service = new WorkspaceGraphService({
+    path: join(directory, 'graph.sqlite'), personal_context_provider: provider,
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  assert.equal(calls.length, 0)
+  await service.open()
+  const current = await service.openWorkspace({
+    path: '/safe/current', repository_fingerprint: 'host-current', now: 1,
+  })
+  assert.equal(current.kind, 'resolved')
+  service.contextForTurn({
+    session_epoch: 1,
+    workspace_instance_id: current.instance.instance_id,
+    utterance: 'why is this related',
+    preferences: [],
+  })
+  JSON.stringify(service.publishedSnapshot)
+  assert.equal(calls.length, 0)
+})
+
+test('explicit enrichment derives scope from the authoritative current published workspace only', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-provider-scope-'))
+  const calls: WorkspaceEvidenceLookupInput[] = []
+  const returned: ProviderEnrichmentResult = Object.freeze({
+    evidence: Object.freeze([Object.freeze({
+      provider: 'mycontext',
+      source: 'provider',
+      trust: 'untrusted_external',
+      source_ref: Object.freeze({provider: 'mycontext', ref: 'opaque-source'}),
+      occurred_at: 3,
+      confidence: 0.7,
+      text: 'A meeting contains supporting evidence.',
+    })]),
+    omitted_evidence: 0,
+    degraded: false,
+    diagnostic: null,
+  })
+  const provider: PersonalContextProvider = {
+    lookupWorkspaceEvidence: input => {
+      calls.push(input)
+      return Promise.resolve(returned)
+    },
+  }
+  const service = new WorkspaceGraphService({
+    path: join(directory, 'graph.sqlite'), personal_context_provider: provider,
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const first = await service.openWorkspace({
+    path: '/safe/first', repository_fingerprint: 'host-first', now: 1,
+  })
+  const second = await service.openWorkspace({
+    path: '/safe/second', repository_fingerprint: 'host-second', now: 2,
+  })
+  assert.equal(first.kind, 'resolved')
+  assert.equal(second.kind, 'resolved')
+
+  const before = JSON.stringify(service.publishedSnapshot)
+  const rejected = await service.enrichAfterExplicitRecall({
+    workspace_instance_id: first.instance.instance_id,
+    query: 'why is this related?',
+    limit: 4,
+  })
+  assert.equal(rejected.diagnostic, 'protocol')
+  assert.equal(calls.length, 0)
+
+  const accepted = await service.enrichAfterExplicitRecall({
+    workspace_instance_id: second.instance.instance_id,
+    query: 'why is this related?',
+    limit: 4,
+  })
+  assert.equal(accepted, returned)
+  assert.deepEqual(calls, [{
+    logical_workspace_id: second.logical_workspace.logical_workspace_id,
+    workspace_name: second.logical_workspace.display_name,
+    query: 'why is this related?',
+    limit: 4,
+  }])
+  assert.equal(JSON.stringify(service.publishedSnapshot), before)
+})
+
+test('invalid, unknown, not-current, and provider-throwing explicit recall degrade without mutation', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-provider-degrade-'))
+  let calls = 0
+  const provider: PersonalContextProvider = {
+    lookupWorkspaceEvidence: () => {
+      calls += 1
+      return Promise.reject(new Error('endpoint and secret provider failure'))
+    },
+  }
+  const service = new WorkspaceGraphService({
+    path: join(directory, 'graph.sqlite'), personal_context_provider: provider,
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const current = await service.openWorkspace({
+    path: '/safe/current', repository_fingerprint: 'host-current', now: 1,
+  })
+  assert.equal(current.kind, 'resolved')
+  const revision = service.publishedSnapshot.publication_revision
+  for (const input of [
+    {workspace_instance_id: 'unknown', query: 'why?', limit: 1},
+    {workspace_instance_id: current.instance.instance_id, query: 'token=sk_abcdefghijklmnop', limit: 1},
+    {workspace_instance_id: current.instance.instance_id, query: 'ｔｏｋｅｎ＝abcdefghijklmnop', limit: 1},
+    {workspace_instance_id: current.instance.instance_id, query: '／home／user／.ssh／id_rsa', limit: 1},
+    {workspace_instance_id: current.instance.instance_id, query: 'why\u202e?', limit: 1},
+    {workspace_instance_id: current.instance.instance_id, query: 'why\u0001?', limit: 1},
+    {workspace_instance_id: current.instance.instance_id, query: 'why\ud800?', limit: 1},
+    {workspace_instance_id: current.instance.instance_id, query: 'ﷺ'.repeat(3_000), limit: 1},
+    {workspace_instance_id: current.instance.instance_id, query: 'x'.repeat(5_000), limit: 1},
+  ]) {
+    const result = await service.enrichAfterExplicitRecall(input)
+    assert.equal(result.diagnostic, 'protocol')
+  }
+  assert.equal(calls, 0)
+  const failure = await service.enrichAfterExplicitRecall({
+    workspace_instance_id: current.instance.instance_id, query: 'why?', limit: 1,
+  })
+  assert.deepEqual(failure, {
+    evidence: [], omitted_evidence: 0, degraded: true, diagnostic: 'unavailable',
+  })
+  assert.equal(calls, 1)
+  assert.equal(service.publishedSnapshot.publication_revision, revision)
+})
+
+test('a pending or completed workspace switch revokes prior provider scope immediately', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-provider-revoke-'))
+  const path = join(directory, 'graph.sqlite')
+  let providerCalls = 0
+  const pendingProvider = deferred<ProviderEnrichmentResult>()
+  const provider: PersonalContextProvider = {
+    lookupWorkspaceEvidence: () => {
+      providerCalls += 1
+      return providerCalls === 1
+        ? pendingProvider.promise
+        : Promise.resolve(Object.freeze({
+          evidence: Object.freeze([]), omitted_evidence: 0, degraded: false, diagnostic: null,
+        }))
+    },
+  }
+  const service = new WorkspaceGraphService({path, personal_context_provider: provider})
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const first = await service.openWorkspace({
+    path: '/safe/first', repository_fingerprint: 'host-first', now: 1,
+  })
+  assert.equal(first.kind, 'resolved')
+
+  const inFlightRecall = service.enrichAfterExplicitRecall({
+    workspace_instance_id: first.instance.instance_id, query: 'why?', limit: 1,
+  })
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(providerCalls, 1)
+
+  const release = await holdWriteLock(path)
+  const switching = service.openWorkspace({
+    path: '/safe/second', repository_fingerprint: 'host-second', now: 2,
+  })
+  const revoked = await service.enrichAfterExplicitRecall({
+    workspace_instance_id: first.instance.instance_id, query: 'why again?', limit: 1,
+  })
+  assert.equal(revoked.diagnostic, 'protocol')
+  assert.equal(providerCalls, 1)
+
+  pendingProvider.resolve(Object.freeze({
+    evidence: Object.freeze([]), omitted_evidence: 0, degraded: false, diagnostic: null,
+  }))
+  assert.equal((await inFlightRecall).diagnostic, 'protocol', 'late old-scope result must be discarded')
+  await release()
+  assert.equal((await switching).kind, 'resolved')
+})
+
+test('an in-flight provider result is stale after reopening even the same workspace instance', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-provider-generation-'))
+  const pendingProvider = deferred<ProviderEnrichmentResult>()
+  const provider: PersonalContextProvider = {
+    lookupWorkspaceEvidence: () => pendingProvider.promise,
+  }
+  const service = new WorkspaceGraphService({
+    path: join(directory, 'graph.sqlite'), personal_context_provider: provider,
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const current = await service.openWorkspace({
+    path: '/safe/current', repository_fingerprint: 'host-current', now: 1,
+  })
+  assert.equal(current.kind, 'resolved')
+  const recall = service.enrichAfterExplicitRecall({
+    workspace_instance_id: current.instance.instance_id, query: 'why?', limit: 1,
+  })
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  const reopened = await service.openWorkspace({
+    path: '/safe/current', repository_fingerprint: 'host-current', now: 2,
+  })
+  assert.equal(reopened.kind, 'resolved')
+  assert.equal(reopened.instance.instance_id, current.instance.instance_id)
+  pendingProvider.resolve(Object.freeze({
+    evidence: Object.freeze([]), omitted_evidence: 0, degraded: false, diagnostic: null,
+  }))
+  assert.equal((await recall).diagnostic, 'protocol')
 })

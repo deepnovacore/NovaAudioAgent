@@ -13,9 +13,13 @@ const loopbackUrlSchema = z.string().url().refine(value => {
   try {
     const parsed = new URL(value)
     return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
-      && (parsed.hostname === '127.0.0.1' || parsed.hostname === '::1' || parsed.hostname === 'localhost')
+      && (parsed.hostname === '127.0.0.1'
+        || parsed.hostname === '::1'
+        || parsed.hostname === '[::1]'
+        || parsed.hostname === 'localhost')
       && parsed.username === ''
       && parsed.password === ''
+      && parsed.search === ''
       && parsed.hash === ''
   } catch {
     return false
