@@ -89,3 +89,32 @@ Output: build succeeded; all 20 sensitivity tests passed (`pass 20`, `fail 0`); 
 - Authorization and Proxy-Authorization are redacted through line end for every scheme. Cookie/Set-Cookie continue to redact through line end, their test now proves that only preceding and next-line safe context is retained, and bare forms of both headers reject after redaction.
 - Credential query-name detection normalizes underscore/hyphen variants and includes `client_secret`; filename detection recognizes exact concatenated credential tokens while the `tokenizer.ts` false-positive guard remains allowed.
 - Quoted JSON-like assignment keys are handled by the same field-local redaction path. Tests use safe boolean/custom assertions around sensitive spans, preventing future failing output from echoing a secret.
+
+## Security review fix round 2
+
+### RED
+
+Command:
+
+```sh
+npm run build --workspace @nova-audio-agent/runtime && node --test runtime/dist/test/workspace-graph-sensitivity.test.js
+```
+
+Output: 24 tests ran; 4 failed as intended. A quoted Chinese `"密码"` JSON key remained clean, and empty Cookie, Set-Cookie, Authorization, and Proxy-Authorization headers incorrectly consumed the following safe line. The failures reported only a fixed test description or the safe `clean`/`rejected` result kind.
+
+### GREEN
+
+Commands:
+
+```sh
+npm run build --workspace @nova-audio-agent/runtime && node --test --test-name-pattern='quoted Chinese credential keys' runtime/dist/test/workspace-graph-sensitivity.test.js
+npm run build --workspace @nova-audio-agent/runtime && node --test --test-name-pattern='safe line after' runtime/dist/test/workspace-graph-sensitivity.test.js
+npm run build --workspace @nova-audio-agent/runtime && node --test runtime/dist/test/workspace-graph-sensitivity.test.js && npm run lint --workspace @nova-audio-agent/runtime && git diff --check
+```
+
+Output: both isolated regressions passed. Final verification built successfully; all 24 sensitivity tests passed (`pass 24`, `fail 0`); ESLint and `git diff --check` completed without findings.
+
+### Fix review
+
+- The Chinese assignment detector now accepts either bare `密码` or a consistently quoted `"密码"` key and redacts its value without returning the span.
+- Authorization, Proxy-Authorization, Cookie, and Set-Cookie now use horizontal whitespace (`[ \t]*`) around their colons. They still redact all same-line header material, while a newline ends the header and leaves the following safe line clean.

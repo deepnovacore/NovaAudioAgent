@@ -64,11 +64,11 @@ export class SensitiveContentPolicy {
       matches += 1
       return '[redacted]'
     })
-    scrubbed = replaceAll(scrubbed, /\b(?:proxy-)?authorization\s*:\s*[^\r\n]+/giu, () => {
+    scrubbed = replaceAll(scrubbed, /\b(?:proxy-)?authorization[ \t]*:[ \t]*[^\r\n]+/giu, () => {
       matches += 1
       return '[redacted]'
     })
-    scrubbed = scrubbed.replace(/(\b(?:set-cookie|cookie)\s*:\s*)[^\r\n]+/giu, (_match, prefix: string) => {
+    scrubbed = scrubbed.replace(/(\b(?:set-cookie|cookie)[ \t]*:[ \t]*)[^\r\n]+/giu, (_match, prefix: string) => {
       matches += 1
       return `${prefix}[redacted]`
     })
@@ -76,7 +76,7 @@ export class SensitiveContentPolicy {
       matches += 1
       return '[redacted]'
     })
-    scrubbed = replaceAll(scrubbed, /密码\s*(?:=|:|：)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gu, () => {
+    scrubbed = replaceAll(scrubbed, /(?:密码|["']密码["'])[ \t]*(?:=|:|：)[ \t]*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gu, () => {
       matches += 1
       return '[redacted]'
     })

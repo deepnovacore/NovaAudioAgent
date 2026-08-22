@@ -181,6 +181,16 @@ test('redacts quoted credential keys in JSON-like content', () => {
   assert.ok(!result.value.includes(credential), 'quoted credential value was returned')
 })
 
+test('redacts quoted Chinese credential keys in JSON-like content', () => {
+  const policy = new SensitiveContentPolicy()
+  const credential = 'credential-value-12345'
+  const result = policy.scrub('detail', `deployed {"密码": "${credential}"}`)
+
+  assert.ok(result.kind === 'redacted', 'quoted Chinese credential key was not redacted')
+  if (result.kind !== 'redacted') return
+  assert.ok(!result.value.includes(credential), 'quoted Chinese credential value was returned')
+})
+
 test('returns clean fields byte-identically', () => {
   const policy = new SensitiveContentPolicy()
   const value = 'commit 0123456789abcdef0123456789abcdef01234567 completed successfully with a detailed explanation'
@@ -204,4 +214,23 @@ test('rejects a bare set-cookie header after its value is redacted', () => {
   const policy = new SensitiveContentPolicy()
 
   assert.deepEqual(policy.scrub('detail', 'Set-Cookie: session=credential-value-12345'), {kind: 'rejected'})
+})
+
+test('does not redact the safe line after an empty cookie header', () => {
+  const policy = new SensitiveContentPolicy()
+
+  assert.deepEqual(policy.scrub('detail', 'Cookie:\nafter'), {kind: 'clean'})
+})
+
+test('does not redact the safe line after an empty set-cookie header', () => {
+  const policy = new SensitiveContentPolicy()
+
+  assert.deepEqual(policy.scrub('detail', 'Set-Cookie:\nafter'), {kind: 'clean'})
+})
+
+test('does not redact the safe line after empty authorization headers', () => {
+  const policy = new SensitiveContentPolicy()
+
+  assert.deepEqual(policy.scrub('detail', 'Authorization:\nafter'), {kind: 'clean'})
+  assert.deepEqual(policy.scrub('detail', 'Proxy-Authorization:\nafter'), {kind: 'clean'})
 })
