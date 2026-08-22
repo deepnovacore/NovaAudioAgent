@@ -449,6 +449,74 @@ test('normalized denied-root text is absent from live WAL and DB without overmat
   assert.equal((await allowedStore.client.listObservations())[0]?.summary, `opened ${allowedPath}`)
 })
 
+test('later absolute traversal tokens cannot persist whitespace-bearing denied-root bytes', async t => {
+  const deniedRoot = '/private/My Folder'
+  const repeatedRoot = '/private//My Folder'
+  const literalMarker = 'literal-raw-marker.txt'
+  const repeatedMarker = 'repeated-raw-marker.txt'
+  const forbiddenBytes = [deniedRoot, repeatedRoot, literalMarker, repeatedMarker]
+  const {client, path} = await createStore(t, {deniedRoots: [deniedRoot]})
+
+  await client.appendObservation(workspaceOpened(
+    'literal-adversarial-suffix',
+    `opened ${deniedRoot}/${literalMarker} and /../../safe`,
+  ))
+  await client.appendObservation(workspaceOpened(
+    'repeated-adversarial-suffix',
+    `opened ${repeatedRoot}/${repeatedMarker} and /../../safe`,
+  ))
+
+  const canonicalObservations = JSON.stringify(await client.listObservations())
+  assert.deepEqual(
+    forbiddenBytes.map(forbidden => canonicalObservations.includes(forbidden)),
+    [false, false, false, false],
+  )
+  assert.deepEqual(
+    await Promise.all(forbiddenBytes.map(forbidden => fileContains(`${path}-wal`, forbidden))),
+    [false, false, false, false],
+  )
+
+  await closeStore(client)
+  assert.deepEqual(
+    await Promise.all(forbiddenBytes.map(forbidden => fileContains(path, forbidden))),
+    [false, false, false, false],
+  )
+})
+
+test('same-candidate traversal cannot persist whitespace-bearing denied-root bytes', async t => {
+  const deniedRoot = '/private/My Folder'
+  const repeatedRoot = '/private//My Folder'
+  const literalMarker = 'literal-direct-raw-marker.txt'
+  const repeatedMarker = 'repeated-direct-raw-marker.txt'
+  const forbiddenBytes = [deniedRoot, repeatedRoot, literalMarker, repeatedMarker]
+  const {client, path} = await createStore(t, {deniedRoots: [deniedRoot]})
+
+  await client.appendObservation(workspaceOpened(
+    'literal-direct-traversal',
+    `opened ${deniedRoot}/${literalMarker}/../../safe`,
+  ))
+  await client.appendObservation(workspaceOpened(
+    'repeated-direct-traversal',
+    `opened ${repeatedRoot}/${repeatedMarker}/../../safe`,
+  ))
+
+  const canonicalObservations = JSON.stringify(await client.listObservations())
+  assert.deepEqual(
+    forbiddenBytes.map(forbidden => canonicalObservations.includes(forbidden)),
+    [false, false, false, false],
+  )
+  assert.deepEqual(
+    await Promise.all(forbiddenBytes.map(forbidden => fileContains(`${path}-wal`, forbidden))),
+    [false, false, false, false],
+  )
+
+  await closeStore(client)
+  assert.deepEqual(
+    await Promise.all(forbiddenBytes.map(forbidden => fileContains(path, forbidden))),
+    [false, false, false, false],
+  )
+})
+
 test('compaction bounds derived rows without deleting observations or locking later writes', async t => {
   const {client} = await createStore(t)
   for (let index = 0; index < 4; index += 1) {

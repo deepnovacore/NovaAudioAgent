@@ -29,6 +29,9 @@ const credentialQueryName = new Set([
   'refreshtoken',
 ])
 const absolutePathSpan = /(?:[A-Za-z]:[\\/]|\/)[^\s<>"'`()\[\]{},;!?]+/gu
+const absolutePathStart = /[A-Za-z]:[\\/]|[\\/]/gu
+const absolutePathStartBoundary = /[\s<>"'`()\[\]{},;!?=:]/u
+const pathCandidateBoundary = /[\s<>"'`()\[\]{},;!?\\/]/gu
 
 /** Denies locations that must never be discovered or represented in graph state. */
 export class SensitivePathPolicy {
@@ -98,15 +101,38 @@ function escapeRegExp(value: string): string {
 
 function lineContainsDeniedRoot(line: string, deniedRoots: readonly string[]): boolean {
   if (deniedRoots.length === 0) return false
-  const absoluteStart = /[A-Za-z]:[\\/]|[\\/]/gu
-  for (const match of line.matchAll(absoluteStart)) {
-    const start = match.index
-    if (start > 0 && !/[\s<>"'`()\[\]{},;!?=:]/u.test(line[start - 1] ?? '')) continue
-    const candidate = line.slice(start)
+  for (const candidate of boundedAbsolutePathCandidates(line)) {
     const normalized = normalizePath(candidate)
     if (deniedRoots.some(root => pathIsWithin(normalized, root))) return true
   }
   return false
+}
+
+/**
+ * Emits plausible absolute-path spans without letting later text rewrite an
+ * earlier path during normalization. A span never crosses the next absolute
+ * path start. Because supported paths may contain spaces, every generic text
+ * or component boundary is also exposed as a possible end before the complete
+ * span. This keeps later traversal from erasing an already-denied prefix.
+ */
+function *boundedAbsolutePathCandidates(line: string): Generator<string> {
+  const starts: number[] = []
+  for (const match of line.matchAll(absolutePathStart)) {
+    const start = match.index
+    if (start > 0 && !absolutePathStartBoundary.test(line[start - 1] ?? '')) continue
+    starts.push(start)
+  }
+
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = starts[index]
+    if (start === undefined) continue
+    const end = starts[index + 1]
+    const span = line.slice(start, end)
+    for (const boundary of span.matchAll(pathCandidateBoundary)) {
+      if (boundary.index > 0) yield span.slice(0, boundary.index)
+    }
+    yield span
+  }
 }
 
 /** Removes credential-bearing spans while retaining the non-sensitive field context. */

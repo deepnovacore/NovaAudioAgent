@@ -50,6 +50,77 @@ test('configured-root text matching normalizes separators and preserves componen
   assert.deepEqual(policy.scrubText('summary', `opened ${allowed} successfully`), {kind: 'clean'})
 })
 
+test('later absolute traversal tokens cannot hide whitespace-bearing denied roots', () => {
+  const policy = new SensitivePathPolicy({deniedRoots: ['/private/My Folder']})
+  const cases = [
+    {
+      root: '/private/My Folder',
+      marker: 'literal-raw-marker.txt',
+    },
+    {
+      root: '/private//My Folder',
+      marker: 'repeated-raw-marker.txt',
+    },
+  ] as const
+
+  const results = cases.map(fixture => ({
+    fixture,
+    result: policy.scrubText(
+      'summary',
+      `opened ${fixture.root}/${fixture.marker} and /../../safe`,
+    ),
+  }))
+
+  assert.deepEqual(
+    results.map(({result}) => result.kind === 'clean'),
+    [false, false],
+    'literal and repeated-separator denied roots were missed',
+  )
+  for (const {fixture, result} of results) {
+    if (result.kind !== 'redacted') continue
+    assert.equal(result.value.includes(fixture.root), false)
+    assert.equal(result.value.includes(fixture.marker), false)
+  }
+})
+
+test('same-candidate traversal cannot erase an encountered whitespace-bearing denied root', () => {
+  const policy = new SensitivePathPolicy({deniedRoots: ['/private/My Folder']})
+  assert.equal(
+    policy.allows('/private/My Folder/raw-marker.txt/../../safe'),
+    true,
+    'filesystem reachability must still use the fully normalized path',
+  )
+  const cases = [
+    {
+      root: '/private/My Folder',
+      marker: 'literal-direct-raw-marker.txt',
+    },
+    {
+      root: '/private//My Folder',
+      marker: 'repeated-direct-raw-marker.txt',
+    },
+  ] as const
+
+  const results = cases.map(fixture => ({
+    fixture,
+    result: policy.scrubText(
+      'summary',
+      `opened ${fixture.root}/${fixture.marker}/../../safe`,
+    ),
+  }))
+
+  assert.deepEqual(
+    results.map(({result}) => result.kind === 'clean'),
+    [false, false],
+    'traversal erased literal or repeated-separator denied-root prefixes',
+  )
+  for (const {fixture, result} of results) {
+    if (result.kind !== 'redacted') continue
+    assert.equal(result.value.includes(fixture.root), false)
+    assert.equal(result.value.includes(fixture.marker), false)
+  }
+})
+
 test('denies descendants whose names begin with parent traversal characters', () => {
   const policy = new SensitivePathPolicy({deniedRoots: ['/repo/private']})
   const path = '/repo/private/..vault/notes.md'
