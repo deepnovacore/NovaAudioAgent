@@ -7,15 +7,27 @@ const TOKEN_PATTERN = /^[a-f0-9]{32}$/
 const READY_ENDPOINT_PATTERN = /^127\.0\.0\.1:([0-9]{1,5})$/
 const NEWLINE = 0x0a
 
-// Mirrors settings-store.mjs's DEFAULT_SETTINGS for exactly the three fields this
-// module injects. Duplicated rather than imported: backend.mjs stays importable
+// Mirrors settings-store.mjs's DEFAULT_SETTINGS for the runtime-facing fields
+// this module injects. Duplicated rather than imported: backend.mjs stays importable
 // without the settings-store module (and its node:fs/node:crypto surface) ever
 // loading, and a missing/corrupt settings file must never produce the literal
 // string "undefined" in a child's environment.
 const SETTINGS_DEFAULTS = Object.freeze({
   proactivity: 'balanced',
   codexHeartbeatSeconds: 30,
-  voice: 'longanqian',
+  pipelineMode: 'integrated',
+  integratedProvider: 'qwen',
+  integratedModel: 'qwen-audio-3.0-realtime-plus',
+  integratedVoice: 'longanqian',
+  cascadedEndpointingProvider: 'auto',
+  cascadedAsrProvider: 'volcengine',
+  cascadedLlmProvider: 'qwen',
+  cascadedLlmModels: Object.freeze({
+    qwen: 'qwen-flash',
+    ark: 'doubao-seed-2-0-pro-260215',
+  }),
+  cascadedTtsProvider: 'volcengine',
+  cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
 })
 
 // Duplicated from settings-store.mjs for the same reason SETTINGS_DEFAULTS is:
@@ -34,7 +46,16 @@ const SECRET_ENV_MAP = Object.freeze({
   tavilyApiKey: 'TAVILY_API_KEY',
   modelApiKey: 'NOVA_AUDIO_AGENT_MODEL_API_KEY',
   codexApiKey: 'NOVA_AUDIO_AGENT_CODEX_API_KEY',
+  arkApiKey: 'ARK_API_KEY',
+  doubaoBigmodelApiKey: 'DOUBAO_BIGMODEL_API_KEY',
+  doubaoAsrApiKey: 'DOUBAO_ASR_API_KEY',
 })
+
+const ALWAYS_ACTIVE_SECRET_KEYS = Object.freeze([
+  'tavilyApiKey',
+  'modelApiKey',
+  'codexApiKey',
+])
 
 /**
  * How long one connection may hold a file descriptor without authenticating.
@@ -138,7 +159,7 @@ export function backendLaunchSpec({
   const proactivity = settings?.proactivity ?? SETTINGS_DEFAULTS.proactivity
   const codexHeartbeatSeconds = settings?.codexHeartbeatSeconds
     ?? SETTINGS_DEFAULTS.codexHeartbeatSeconds
-  const voice = settings?.voice ?? SETTINGS_DEFAULTS.voice
+  const pipelineMode = settings?.pipelineMode ?? SETTINGS_DEFAULTS.pipelineMode
   const env = {
     ...parentEnv,
     NOVA_AUDIO_AGENT_DESKTOP_TOKEN: token,
@@ -148,7 +169,36 @@ export function backendLaunchSpec({
     NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
     NOVA_AUDIO_AGENT_PROACTIVITY_PRESET: proactivity,
     NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),
-    NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: voice,
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: pipelineMode,
+  }
+  if (pipelineMode === 'cascaded') {
+    const llmProvider = settings?.cascadedLlmProvider
+      ?? SETTINGS_DEFAULTS.cascadedLlmProvider
+    const rememberedModels = settings?.cascadedLlmModels
+    const activeModel = rememberedModels?.[llmProvider]
+      ?? SETTINGS_DEFAULTS.cascadedLlmModels[llmProvider]
+      ?? SETTINGS_DEFAULTS.cascadedLlmModels.qwen
+    Object.assign(env, {
+      NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER: settings?.cascadedEndpointingProvider
+        ?? SETTINGS_DEFAULTS.cascadedEndpointingProvider,
+      NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER: settings?.cascadedAsrProvider
+        ?? SETTINGS_DEFAULTS.cascadedAsrProvider,
+      NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: llmProvider,
+      NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: activeModel,
+      NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER: settings?.cascadedTtsProvider
+        ?? SETTINGS_DEFAULTS.cascadedTtsProvider,
+      NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE: settings?.cascadedTtsVoice
+        ?? SETTINGS_DEFAULTS.cascadedTtsVoice,
+    })
+  } else {
+    Object.assign(env, {
+      NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER: settings?.integratedProvider
+        ?? SETTINGS_DEFAULTS.integratedProvider,
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL: settings?.integratedModel
+        ?? SETTINGS_DEFAULTS.integratedModel,
+      NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: settings?.integratedVoice
+        ?? SETTINGS_DEFAULTS.integratedVoice,
+    })
   }
   // The inherited fd-3 readiness pipe is gone: stdio stops at stderr and the
   // backend dials back instead, so a stale parent value must never imply one.
@@ -162,7 +212,20 @@ export function backendLaunchSpec({
   // and the value actually injected is the trimmed one, so accidental
   // surrounding whitespace in a pasted key is cleaned up too.
   if (decryptedSecrets && typeof decryptedSecrets === 'object') {
+    const activeSecretKeys = new Set(ALWAYS_ACTIVE_SECRET_KEYS)
+    if (pipelineMode === 'cascaded') {
+      const llmProvider = settings?.cascadedLlmProvider
+        ?? SETTINGS_DEFAULTS.cascadedLlmProvider
+      activeSecretKeys.add(llmProvider === 'ark' ? 'arkApiKey' : 'dashscopeApiKey')
+      activeSecretKeys.add('doubaoBigmodelApiKey')
+      // Optional override only. When absent, the runtime falls back to the
+      // big-model key; Main does not synthesize a duplicate secret value.
+      activeSecretKeys.add('doubaoAsrApiKey')
+    } else {
+      activeSecretKeys.add('dashscopeApiKey')
+    }
     for (const [secretKey, envName] of Object.entries(SECRET_ENV_MAP)) {
+      if (!activeSecretKeys.has(secretKey)) continue
       const value = decryptedSecrets[secretKey]
       if (typeof value !== 'string') continue
       const trimmed = value.trim()

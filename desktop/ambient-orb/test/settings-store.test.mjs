@@ -19,6 +19,16 @@ import {
   secretsPresent,
 } from '../src/main/settings-store.mjs'
 
+const ALL_SECRET_KEYS = Object.freeze([
+  'dashscopeApiKey',
+  'tavilyApiKey',
+  'modelApiKey',
+  'codexApiKey',
+  'arkApiKey',
+  'doubaoBigmodelApiKey',
+  'doubaoAsrApiKey',
+])
+
 // The store never imports Electron: the keychain arrives as this three-method
 // codec, so every secrets path is exercised without a real safeStorage.
 function fakeCodec({ available = true } = {}) {
@@ -61,19 +71,23 @@ async function withTempDirectory(run) {
 
 test('the default settings are the documented schema', () => {
   assert.deepEqual(DEFAULT_SETTINGS, {
-    version: 1,
+    version: 2,
     palette: 'ember',
     proactivity: 'balanced',
     codexHeartbeatSeconds: 30,
-    voice: 'longanqian',
+    pipelineMode: 'integrated',
+    integratedProvider: 'qwen',
+    integratedModel: 'qwen-audio-3.0-realtime-plus',
+    integratedVoice: 'longanqian',
+    cascadedEndpointingProvider: 'auto',
+    cascadedAsrProvider: 'volcengine',
+    cascadedLlmProvider: 'qwen',
+    cascadedLlmModels: { qwen: 'qwen-flash', ark: 'doubao-seed-2-0-pro-260215' },
+    cascadedTtsProvider: 'volcengine',
+    cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
     secrets: {},
   })
-  assert.deepEqual([...SECRET_KEYS], [
-    'dashscopeApiKey',
-    'tavilyApiKey',
-    'modelApiKey',
-    'codexApiKey',
-  ])
+  assert.deepEqual([...SECRET_KEYS], ALL_SECRET_KEYS)
 })
 
 test('normalizeSettings rebuilds defaults from nothing at all', () => {
@@ -89,17 +103,67 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     palette: 'graphite',
     proactivity: 'reckless',
     codexHeartbeatSeconds: 45,
-    voice: '  longxiaochun  ',
+    pipelineMode: 'cascaded',
+    integratedProvider: 'not-qwen',
+    integratedModel: '  qwen-realtime-custom  ',
+    integratedVoice: '  longxiaochun  ',
+    cascadedEndpointingProvider: 'manual',
+    cascadedAsrProvider: 'volcengine',
+    cascadedLlmProvider: 'ark',
+    cascadedLlmModels: {
+      qwen: '  qwen-plus  ',
+      ark: '  doubao-custom  ',
+    },
+    cascadedTtsProvider: 'not-volcengine',
+    cascadedTtsVoice: '  zh_female_custom  ',
   })
 
   assert.deepEqual(normalized, {
-    version: 1,
+    version: 2,
     palette: 'graphite',
     proactivity: 'balanced',
     codexHeartbeatSeconds: 45,
-    voice: 'longxiaochun',
+    pipelineMode: 'cascaded',
+    integratedProvider: 'qwen',
+    integratedModel: 'qwen-realtime-custom',
+    integratedVoice: 'longxiaochun',
+    cascadedEndpointingProvider: 'auto',
+    cascadedAsrProvider: 'volcengine',
+    cascadedLlmProvider: 'ark',
+    cascadedLlmModels: { qwen: 'qwen-plus', ark: 'doubao-custom' },
+    cascadedTtsProvider: 'volcengine',
+    cascadedTtsVoice: 'zh_female_custom',
     secrets: {},
   })
+})
+
+test('normalizeSettings defaults every invalid v2 field independently', () => {
+  const normalized = normalizeSettings({
+    pipelineMode: 'parallel',
+    integratedProvider: 'ark',
+    integratedModel: '',
+    integratedVoice: 'bad\nvoice',
+    cascadedEndpointingProvider: null,
+    cascadedAsrProvider: 'qwen',
+    cascadedLlmProvider: 'openai',
+    cascadedLlmModels: { qwen: '', ark: 'x'.repeat(65) },
+    cascadedTtsProvider: 'qwen',
+    cascadedTtsVoice: 42,
+  })
+
+  assert.equal(normalized.pipelineMode, DEFAULT_SETTINGS.pipelineMode)
+  assert.equal(normalized.integratedProvider, DEFAULT_SETTINGS.integratedProvider)
+  assert.equal(normalized.integratedModel, DEFAULT_SETTINGS.integratedModel)
+  assert.equal(normalized.integratedVoice, DEFAULT_SETTINGS.integratedVoice)
+  assert.equal(
+    normalized.cascadedEndpointingProvider,
+    DEFAULT_SETTINGS.cascadedEndpointingProvider,
+  )
+  assert.equal(normalized.cascadedAsrProvider, DEFAULT_SETTINGS.cascadedAsrProvider)
+  assert.equal(normalized.cascadedLlmProvider, DEFAULT_SETTINGS.cascadedLlmProvider)
+  assert.deepEqual(normalized.cascadedLlmModels, DEFAULT_SETTINGS.cascadedLlmModels)
+  assert.equal(normalized.cascadedTtsProvider, DEFAULT_SETTINGS.cascadedTtsProvider)
+  assert.equal(normalized.cascadedTtsVoice, DEFAULT_SETTINGS.cascadedTtsVoice)
 })
 
 test('normalizeSettings drops unknown keys instead of carrying them forward', () => {
@@ -111,12 +175,21 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
   })
 
   assert.deepEqual(Object.keys(normalized).sort(), [
+    'cascadedAsrProvider',
+    'cascadedEndpointingProvider',
+    'cascadedLlmModels',
+    'cascadedLlmProvider',
+    'cascadedTtsProvider',
+    'cascadedTtsVoice',
     'codexHeartbeatSeconds',
+    'integratedModel',
+    'integratedProvider',
+    'integratedVoice',
     'palette',
+    'pipelineMode',
     'proactivity',
     'secrets',
     'version',
-    'voice',
   ])
 })
 
@@ -132,15 +205,39 @@ test('normalizeSettings rejects rather than clamps an out-of-range heartbeat', (
   }
 })
 
-test('normalizeSettings bounds the voice name and refuses control characters', () => {
-  assert.equal(normalizeSettings({ voice: 'longcheng' }).voice, 'longcheng')
-  assert.equal(normalizeSettings({ voice: '   ' }).voice, 'longanqian')
-  assert.equal(normalizeSettings({ voice: 'x'.repeat(65) }).voice, 'longanqian')
-  assert.equal(normalizeSettings({ voice: 'long\nanqian' }).voice, 'longanqian')
-  assert.equal(normalizeSettings({ voice: 42 }).voice, 'longanqian')
-  assert.equal(normalizeSettings({ voice: 'x'.repeat(64) }).voice, 'x'.repeat(64))
-  assert.equal(normalizeSettings({ voice: '😀'.repeat(64) }).voice, '😀'.repeat(64))
-  assert.equal(normalizeSettings({ voice: '😀'.repeat(65) }).voice, 'longanqian')
+test('normalizeSettings bounds every model and voice string and refuses control characters', () => {
+  for (const field of ['integratedModel', 'integratedVoice', 'cascadedTtsVoice']) {
+    assert.equal(normalizeSettings({ [field]: '  custom-value  ' })[field], 'custom-value')
+    assert.equal(normalizeSettings({ [field]: 'x'.repeat(64) })[field], 'x'.repeat(64))
+    assert.equal(normalizeSettings({ [field]: '😀'.repeat(64) })[field], '😀'.repeat(64))
+    for (const bad of ['', '   ', 'x'.repeat(65), '😀'.repeat(65), 'bad\nvalue', 42]) {
+      assert.equal(normalizeSettings({ [field]: bad })[field], DEFAULT_SETTINGS[field])
+    }
+  }
+})
+
+test('normalizeSettings treats cascadedLlmModels as a strict independent two-provider map', () => {
+  assert.deepEqual(normalizeSettings({
+    cascadedLlmModels: { qwen: 'qwen-max', ark: 'ark-custom', extra: 'drop-me' },
+  }).cascadedLlmModels, { qwen: 'qwen-max', ark: 'ark-custom' })
+
+  assert.deepEqual(normalizeSettings({
+    cascadedLlmModels: { qwen: 'qwen-max' },
+  }).cascadedLlmModels, {
+    qwen: 'qwen-max',
+    ark: DEFAULT_SETTINGS.cascadedLlmModels.ark,
+  })
+  assert.deepEqual(normalizeSettings({
+    cascadedLlmModels: { qwen: 'bad\nmodel', ark: 'ark-custom' },
+  }).cascadedLlmModels, {
+    qwen: DEFAULT_SETTINGS.cascadedLlmModels.qwen,
+    ark: 'ark-custom',
+  })
+  for (const bad of [null, [], 'qwen-flash']) {
+    assert.deepEqual(normalizeSettings({ cascadedLlmModels: bad }).cascadedLlmModels, {
+      ...DEFAULT_SETTINGS.cascadedLlmModels,
+    })
+  }
 })
 
 test('normalizeSettings falls back per field to a caller-supplied base', () => {
@@ -148,14 +245,25 @@ test('normalizeSettings falls back per field to a caller-supplied base', () => {
     palette: 'graphite',
     proactivity: 'eager',
     codexHeartbeatSeconds: 90,
-    voice: 'longcheng',
+    pipelineMode: 'cascaded',
+    integratedModel: 'integrated-kept',
+    cascadedLlmProvider: 'ark',
+    cascadedLlmModels: { qwen: 'qwen-kept', ark: 'ark-kept' },
   })
-  const merged = normalizeSettings({ palette: 'ember', proactivity: 'nonsense' }, base)
+  const merged = normalizeSettings({
+    palette: 'ember',
+    proactivity: 'nonsense',
+    integratedModel: '',
+    cascadedLlmModels: { qwen: 'qwen-next', ark: '' },
+  }, base)
 
   assert.equal(merged.palette, 'ember')
   assert.equal(merged.proactivity, 'eager')
   assert.equal(merged.codexHeartbeatSeconds, 90)
-  assert.equal(merged.voice, 'longcheng')
+  assert.equal(merged.pipelineMode, 'cascaded')
+  assert.equal(merged.integratedModel, 'integrated-kept')
+  assert.equal(merged.cascadedLlmProvider, 'ark')
+  assert.deepEqual(merged.cascadedLlmModels, { qwen: 'qwen-next', ark: 'ark-kept' })
 })
 
 test('normalizeSettings keeps only well-formed secret entries', () => {
@@ -165,6 +273,9 @@ test('normalizeSettings keeps only well-formed secret entries', () => {
       tavilyApiKey: { enc: 'none', data: 'aGk=' },
       modelApiKey: { enc: 'rot13', data: 'aGk=' },
       codexApiKey: { enc: 'none', data: 'not base64!' },
+      arkApiKey: { enc: 'safeStorage', data: 'YXJr' },
+      doubaoBigmodelApiKey: { enc: 'none', data: 'ZG91YmFv' },
+      doubaoAsrApiKey: { enc: 'safeStorage', data: 'YXNy' },
       strayKey: { enc: 'none', data: 'aGk=' },
     },
   })
@@ -172,6 +283,9 @@ test('normalizeSettings keeps only well-formed secret entries', () => {
   assert.deepEqual(normalized.secrets, {
     dashscopeApiKey: { enc: 'safeStorage', data: 'c2VhbGVk' },
     tavilyApiKey: { enc: 'none', data: 'aGk=' },
+    arkApiKey: { enc: 'safeStorage', data: 'YXJr' },
+    doubaoBigmodelApiKey: { enc: 'none', data: 'ZG91YmFv' },
+    doubaoAsrApiKey: { enc: 'safeStorage', data: 'YXNy' },
   })
 })
 
@@ -182,6 +296,9 @@ test('normalizeSettings rejects secret entries that are not objects or lack data
       tavilyApiKey: { enc: 'none' },
       modelApiKey: { enc: 'none', data: '' },
       codexApiKey: null,
+      arkApiKey: [],
+      doubaoBigmodelApiKey: { enc: 'none', data: 'not base64!' },
+      doubaoAsrApiKey: { enc: 'rot13', data: 'YXNy' },
     },
   })
 
@@ -197,11 +314,20 @@ test('publicSettings never carries the secrets object', () => {
   const view = publicSettings(settings)
 
   assert.deepEqual(Object.keys(view).sort(), [
+    'cascadedAsrProvider',
+    'cascadedEndpointingProvider',
+    'cascadedLlmModels',
+    'cascadedLlmProvider',
+    'cascadedTtsProvider',
+    'cascadedTtsVoice',
     'codexHeartbeatSeconds',
+    'integratedModel',
+    'integratedProvider',
+    'integratedVoice',
     'palette',
+    'pipelineMode',
     'proactivity',
     'version',
-    'voice',
   ])
   assert.doesNotMatch(JSON.stringify(view), /sk-visible|sealed/)
 })
@@ -218,6 +344,9 @@ test('secretsPresent reports booleans for every key and leaks no ciphertext', ()
     tavilyApiKey: false,
     modelApiKey: false,
     codexApiKey: true,
+    arkApiKey: false,
+    doubaoBigmodelApiKey: false,
+    doubaoAsrApiKey: false,
   })
   assert.doesNotMatch(JSON.stringify(secretsPresent(settings)), /sk-dash|sk-codex|sealed/)
   assert.deepEqual(secretsPresent(undefined), {
@@ -225,7 +354,30 @@ test('secretsPresent reports booleans for every key and leaks no ciphertext', ()
     tavilyApiKey: false,
     modelApiKey: false,
     codexApiKey: false,
+    arkApiKey: false,
+    doubaoBigmodelApiKey: false,
+    doubaoAsrApiKey: false,
   })
+})
+
+test('all seven secret fields seal, report presence, round-trip, and clear independently', () => {
+  const codec = fakeCodec()
+  const values = Object.fromEntries(ALL_SECRET_KEYS.map(key => [key, `${key}-value`]))
+  const stored = applySettingsUpdate(DEFAULT_SETTINGS, { secrets: values }, codec)
+
+  assert.deepEqual(secretsPresent(stored), Object.fromEntries(ALL_SECRET_KEYS.map(key => [key, true])))
+  for (const key of ALL_SECRET_KEYS) {
+    assert.equal(stored.secrets[key].enc, 'safeStorage')
+    assert.equal(readSecret(stored, key, codec), `${key}-value`)
+  }
+
+  const cleared = applySettingsUpdate(
+    stored,
+    { secrets: Object.fromEntries(ALL_SECRET_KEYS.map(key => [key, ''])) },
+    codec,
+  )
+  assert.deepEqual(cleared.secrets, {})
+  assert.deepEqual(secretsPresent(cleared), Object.fromEntries(ALL_SECRET_KEYS.map(key => [key, false])))
 })
 
 test('applySettingsUpdate seals plaintext through the codec and round-trips it back', () => {
@@ -498,7 +650,8 @@ test('applySettingsUpdate keeps unspecified fields and refuses malformed secret 
     palette: 'graphite',
     proactivity: 'eager',
     codexHeartbeatSeconds: 75,
-    voice: 'longcheng',
+    integratedVoice: 'longcheng',
+    cascadedTtsVoice: 'zh_female_kept',
   }, codec)
   const updated = applySettingsUpdate(stored, {
     codexHeartbeatSeconds: 9000,
@@ -508,7 +661,8 @@ test('applySettingsUpdate keeps unspecified fields and refuses malformed secret 
   assert.equal(updated.palette, 'graphite')
   assert.equal(updated.proactivity, 'eager')
   assert.equal(updated.codexHeartbeatSeconds, 75, 'an out-of-range patch keeps the stored value')
-  assert.equal(updated.voice, 'longcheng')
+  assert.equal(updated.integratedVoice, 'longcheng')
+  assert.equal(updated.cascadedTtsVoice, 'zh_female_kept')
   assert.deepEqual(updated.secrets, {})
   // Both a wrong-typed value and an over-length one are named as rejected,
   // not just refused silently.
@@ -556,7 +710,8 @@ test('saveSettings round-trips through loadSettings and leaves no temporary behi
       palette: 'graphite',
       proactivity: 'conservative',
       codexHeartbeatSeconds: 60,
-      voice: 'longcheng',
+      integratedVoice: 'longcheng',
+      cascadedTtsVoice: 'zh_female_custom',
       secrets: { dashscopeApiKey: 'sk-round-trip' },
     }, fakeCodec())
 
@@ -607,7 +762,7 @@ test('the next save rewrites a plaintext entry on disk as ciphertext', async () 
     // so the migration is atomic with the save rather than a separate rewrite.
     await saveSettings(file, applySettingsUpdate(
       await loadSettings(file),
-      { voice: 'longcheng' },
+      { integratedVoice: 'longcheng' },
       fakeCodec(),
     ))
 
@@ -620,7 +775,7 @@ test('the next save rewrites a plaintext entry on disk as ciphertext', async () 
       'the plaintext-equivalent base64 is gone from the file',
     )
     const reloaded = await loadSettings(file)
-    assert.equal(reloaded.voice, 'longcheng')
+    assert.equal(reloaded.integratedVoice, 'longcheng')
     assert.equal(readSecret(reloaded, 'modelApiKey', fakeCodec()), 'sk-stale')
   })
 })
@@ -663,7 +818,7 @@ test('the settings writer serializes overlapping saves against the latest state'
       // The second patch arrives while the first write is still in flight —
       // exactly the race. Without a queue it snapshots the pre-first state and
       // the palette change is lost when the second write commits.
-      if (writes.length === 1) second = writer({ voice: 'longcheng' })
+      if (writes.length === 1) second = writer({ integratedVoice: 'longcheng' })
       await Promise.resolve()
       await Promise.resolve()
       return next
@@ -675,9 +830,9 @@ test('the settings writer serializes overlapping saves against the latest state'
 
   assert.equal(first.palette, 'graphite')
   assert.equal(merged.palette, 'graphite', 'the second patch merged onto the committed first')
-  assert.equal(merged.voice, 'longcheng')
+  assert.equal(merged.integratedVoice, 'longcheng')
   assert.equal(current.palette, 'graphite')
-  assert.equal(current.voice, 'longcheng')
+  assert.equal(current.integratedVoice, 'longcheng')
   assert.equal(writes.length, 2, 'both patches reached disk')
 })
 

@@ -1,22 +1,31 @@
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
-// One schema version so far; `normalizeSettings` always stamps it, which is what
-// makes a future migration a change in exactly one place.
-export const SETTINGS_VERSION = 1
+// Version 2 deliberately replaces, rather than migrates, the original shared-
+// voice schema. `normalizeSettings` always rebuilds and stamps this shape.
+export const SETTINGS_VERSION = 2
 
 export const SECRET_KEYS = Object.freeze([
   'dashscopeApiKey',
   'tavilyApiKey',
   'modelApiKey',
   'codexApiKey',
+  'arkApiKey',
+  'doubaoBigmodelApiKey',
+  'doubaoAsrApiKey',
 ])
 
 export const PALETTES = Object.freeze(['ember', 'graphite'])
 export const PROACTIVITY_LEVELS = Object.freeze(['conservative', 'balanced', 'eager'])
+export const PIPELINE_MODES = Object.freeze(['integrated', 'cascaded'])
+export const INTEGRATED_PROVIDERS = Object.freeze(['qwen'])
+export const CASCADED_ENDPOINTING_PROVIDERS = Object.freeze(['auto'])
+export const CASCADED_ASR_PROVIDERS = Object.freeze(['volcengine'])
+export const CASCADED_LLM_PROVIDERS = Object.freeze(['qwen', 'ark'])
+export const CASCADED_TTS_PROVIDERS = Object.freeze(['volcengine'])
 export const HEARTBEAT_MIN_SECONDS = 15
 export const HEARTBEAT_MAX_SECONDS = 120
-export const MAX_VOICE_LENGTH = 64
+export const MAX_MODEL_OR_VOICE_LENGTH = 64
 // A key is a token, not a document: anything longer is a paste accident or an
 // attempt to grow the settings file, and is refused rather than stored.
 export const MAX_SECRET_LENGTH = 4096
@@ -27,12 +36,30 @@ export const DEFAULT_SETTINGS = Object.freeze({
   palette: 'ember',
   proactivity: 'balanced',
   codexHeartbeatSeconds: 30,
-  voice: 'longanqian',
+  pipelineMode: 'integrated',
+  integratedProvider: 'qwen',
+  integratedModel: 'qwen-audio-3.0-realtime-plus',
+  integratedVoice: 'longanqian',
+  cascadedEndpointingProvider: 'auto',
+  cascadedAsrProvider: 'volcengine',
+  cascadedLlmProvider: 'qwen',
+  cascadedLlmModels: Object.freeze({
+    qwen: 'qwen-flash',
+    ark: 'doubao-seed-2-0-pro-260215',
+  }),
+  cascadedTtsProvider: 'volcengine',
+  cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
   secrets: Object.freeze({}),
 })
 
 const PALETTE_SET = new Set(PALETTES)
 const PROACTIVITY_SET = new Set(PROACTIVITY_LEVELS)
+const PIPELINE_MODE_SET = new Set(PIPELINE_MODES)
+const INTEGRATED_PROVIDER_SET = new Set(INTEGRATED_PROVIDERS)
+const CASCADED_ENDPOINTING_PROVIDER_SET = new Set(CASCADED_ENDPOINTING_PROVIDERS)
+const CASCADED_ASR_PROVIDER_SET = new Set(CASCADED_ASR_PROVIDERS)
+const CASCADED_LLM_PROVIDER_SET = new Set(CASCADED_LLM_PROVIDERS)
+const CASCADED_TTS_PROVIDER_SET = new Set(CASCADED_TTS_PROVIDERS)
 const SECRET_KEY_SET = new Set(SECRET_KEYS)
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 // Control characters would survive into an env value handed to a child process.
@@ -62,12 +89,44 @@ function validHeartbeat(value) {
   return value
 }
 
-function validVoice(value) {
+function enumValidator(values) {
+  return value => values.has(value) ? value : null
+}
+
+const validPipelineMode = enumValidator(PIPELINE_MODE_SET)
+const validIntegratedProvider = enumValidator(INTEGRATED_PROVIDER_SET)
+const validCascadedEndpointingProvider = enumValidator(CASCADED_ENDPOINTING_PROVIDER_SET)
+const validCascadedAsrProvider = enumValidator(CASCADED_ASR_PROVIDER_SET)
+const validCascadedLlmProvider = enumValidator(CASCADED_LLM_PROVIDER_SET)
+const validCascadedTtsProvider = enumValidator(CASCADED_TTS_PROVIDER_SET)
+
+function validModelOrVoice(value) {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
-  if (trimmed === '' || [...trimmed].length > MAX_VOICE_LENGTH) return null
+  if (trimmed === '' || [...trimmed].length > MAX_MODEL_OR_VOICE_LENGTH) return null
   if (CONTROL_CHARACTERS.test(trimmed)) return null
   return trimmed
+}
+
+function normalizeCascadedLlmModels(raw, base) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const fallback = base && typeof base === 'object' && !Array.isArray(base)
+    ? base
+    : DEFAULT_SETTINGS.cascadedLlmModels
+  return {
+    qwen: pick(
+      source.qwen,
+      fallback.qwen,
+      DEFAULT_SETTINGS.cascadedLlmModels.qwen,
+      validModelOrVoice,
+    ),
+    ark: pick(
+      source.ark,
+      fallback.ark,
+      DEFAULT_SETTINGS.cascadedLlmModels.ark,
+      validModelOrVoice,
+    ),
+  }
 }
 
 // Stored form only: `{enc, data}` where data is base64 ciphertext. Plaintext
@@ -112,7 +171,64 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
       DEFAULT_SETTINGS.codexHeartbeatSeconds,
       validHeartbeat,
     ),
-    voice: pick(source.voice, fallback.voice, DEFAULT_SETTINGS.voice, validVoice),
+    pipelineMode: pick(
+      source.pipelineMode,
+      fallback.pipelineMode,
+      DEFAULT_SETTINGS.pipelineMode,
+      validPipelineMode,
+    ),
+    integratedProvider: pick(
+      source.integratedProvider,
+      fallback.integratedProvider,
+      DEFAULT_SETTINGS.integratedProvider,
+      validIntegratedProvider,
+    ),
+    integratedModel: pick(
+      source.integratedModel,
+      fallback.integratedModel,
+      DEFAULT_SETTINGS.integratedModel,
+      validModelOrVoice,
+    ),
+    integratedVoice: pick(
+      source.integratedVoice,
+      fallback.integratedVoice,
+      DEFAULT_SETTINGS.integratedVoice,
+      validModelOrVoice,
+    ),
+    cascadedEndpointingProvider: pick(
+      source.cascadedEndpointingProvider,
+      fallback.cascadedEndpointingProvider,
+      DEFAULT_SETTINGS.cascadedEndpointingProvider,
+      validCascadedEndpointingProvider,
+    ),
+    cascadedAsrProvider: pick(
+      source.cascadedAsrProvider,
+      fallback.cascadedAsrProvider,
+      DEFAULT_SETTINGS.cascadedAsrProvider,
+      validCascadedAsrProvider,
+    ),
+    cascadedLlmProvider: pick(
+      source.cascadedLlmProvider,
+      fallback.cascadedLlmProvider,
+      DEFAULT_SETTINGS.cascadedLlmProvider,
+      validCascadedLlmProvider,
+    ),
+    cascadedLlmModels: normalizeCascadedLlmModels(
+      source.cascadedLlmModels,
+      fallback.cascadedLlmModels,
+    ),
+    cascadedTtsProvider: pick(
+      source.cascadedTtsProvider,
+      fallback.cascadedTtsProvider,
+      DEFAULT_SETTINGS.cascadedTtsProvider,
+      validCascadedTtsProvider,
+    ),
+    cascadedTtsVoice: pick(
+      source.cascadedTtsVoice,
+      fallback.cascadedTtsVoice,
+      DEFAULT_SETTINGS.cascadedTtsVoice,
+      validModelOrVoice,
+    ),
     secrets: normalizeSecrets(source.secrets),
   }
 }
@@ -126,7 +242,16 @@ export function publicSettings(settings) {
     palette: normalized.palette,
     proactivity: normalized.proactivity,
     codexHeartbeatSeconds: normalized.codexHeartbeatSeconds,
-    voice: normalized.voice,
+    pipelineMode: normalized.pipelineMode,
+    integratedProvider: normalized.integratedProvider,
+    integratedModel: normalized.integratedModel,
+    integratedVoice: normalized.integratedVoice,
+    cascadedEndpointingProvider: normalized.cascadedEndpointingProvider,
+    cascadedAsrProvider: normalized.cascadedAsrProvider,
+    cascadedLlmProvider: normalized.cascadedLlmProvider,
+    cascadedLlmModels: { ...normalized.cascadedLlmModels },
+    cascadedTtsProvider: normalized.cascadedTtsProvider,
+    cascadedTtsVoice: normalized.cascadedTtsVoice,
   }
 }
 
@@ -255,7 +380,16 @@ export function applySettingsUpdate(current, patch, codec) {
     palette: source.palette,
     proactivity: source.proactivity,
     codexHeartbeatSeconds: source.codexHeartbeatSeconds,
-    voice: source.voice,
+    pipelineMode: source.pipelineMode,
+    integratedProvider: source.integratedProvider,
+    integratedModel: source.integratedModel,
+    integratedVoice: source.integratedVoice,
+    cascadedEndpointingProvider: source.cascadedEndpointingProvider,
+    cascadedAsrProvider: source.cascadedAsrProvider,
+    cascadedLlmProvider: source.cascadedLlmProvider,
+    cascadedLlmModels: source.cascadedLlmModels,
+    cascadedTtsProvider: source.cascadedTtsProvider,
+    cascadedTtsVoice: source.cascadedTtsVoice,
   }, stored)
   const { secrets, rejected } = updatedSecrets(stored.secrets, source.secrets, codec)
   next.secrets = resealPlaintext(secrets, codec)
