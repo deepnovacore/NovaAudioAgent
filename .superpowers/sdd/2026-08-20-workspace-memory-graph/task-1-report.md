@@ -50,3 +50,42 @@ Output: build succeeded; all 13 sensitivity tests passed (`pass 13`, `fail 0`); 
 ## Concerns
 
 - The full runtime suite was started after linting but this execution environment stops a single command after about 30 seconds while unrelated long-running integration tests are still active. The required focused test/build command and runtime lint both completed successfully. No task-local failures were observed.
+
+## Security review fix round 1
+
+### RED
+
+Command:
+
+```sh
+npm run build --workspace @nova-audio-agent/runtime && node --test runtime/dist/test/workspace-graph-sensitivity.test.js
+```
+
+Output: 18 tests ran; 5 failed as intended and safely reproduced the review findings: a `..vault` denied-root descendant was allowed, `accessToken.json` was allowed, Basic/Digest/Proxy authorization values remained visible, `client_secret` URLs were not treated as credential-bearing, and quoted JSON credential keys were clean. Failure messages used only fixed descriptions or result kinds; they did not emit a denied basename or raw secret.
+
+### GREEN
+
+Commands:
+
+```sh
+npm run build --workspace @nova-audio-agent/runtime && node --test --test-name-pattern='descendants whose names begin' runtime/dist/test/workspace-graph-sensitivity.test.js
+npm run build --workspace @nova-audio-agent/runtime && node --test --test-name-pattern='concatenated credential filenames' runtime/dist/test/workspace-graph-sensitivity.test.js
+npm run build --workspace @nova-audio-agent/runtime && node --test --test-name-pattern='complete authorization header values' runtime/dist/test/workspace-graph-sensitivity.test.js
+npm run build --workspace @nova-audio-agent/runtime && node --test --test-name-pattern='client secret query credentials' runtime/dist/test/workspace-graph-sensitivity.test.js
+npm run build --workspace @nova-audio-agent/runtime && node --test --test-name-pattern='quoted credential keys' runtime/dist/test/workspace-graph-sensitivity.test.js
+```
+
+Each isolated regression test passed after its minimal fix. Final verification:
+
+```sh
+npm run build --workspace @nova-audio-agent/runtime && node --test runtime/dist/test/workspace-graph-sensitivity.test.js && npm run lint --workspace @nova-audio-agent/runtime && git diff --check
+```
+
+Output: build succeeded; all 20 sensitivity tests passed (`pass 20`, `fail 0`); ESLint and `git diff --check` completed without findings.
+
+### Fix review
+
+- Denied-root containment now treats only exact parent traversal segments (`..`, `../`, `..\\`) as outside; ordinary descendants such as `..vault` remain inside the denied root.
+- Authorization and Proxy-Authorization are redacted through line end for every scheme. Cookie/Set-Cookie continue to redact through line end, their test now proves that only preceding and next-line safe context is retained, and bare forms of both headers reject after redaction.
+- Credential query-name detection normalizes underscore/hyphen variants and includes `client_secret`; filename detection recognizes exact concatenated credential tokens while the `tokenizer.ts` false-positive guard remains allowed.
+- Quoted JSON-like assignment keys are handled by the same field-local redaction path. Tests use safe boolean/custom assertions around sensitive spans, preventing future failing output from echoing a secret.

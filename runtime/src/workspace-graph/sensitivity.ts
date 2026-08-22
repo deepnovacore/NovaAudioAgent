@@ -11,6 +11,23 @@ export interface SensitivePathPolicyOptions {
 
 const credentialComponent = /(?:^|[._-])(?:credential|credentials|secret|secrets|password|passwd|token|tokens|api[-_]?key|private[-_]?key|key|keys)(?:$|[._-])/iu
 const privateKeyComponent = /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|p12|pfx))$/iu
+const concatenatedCredentialName = new Set([
+  'accesstoken',
+  'refreshtoken',
+  'clientsecret',
+  'apikey',
+  'privatekey',
+])
+const credentialQueryName = new Set([
+  'token',
+  'secret',
+  'password',
+  'credential',
+  'clientsecret',
+  'apikey',
+  'accesstoken',
+  'refreshtoken',
+])
 
 /** Denies locations that must never be discovered or represented in graph state. */
 export class SensitivePathPolicy {
@@ -47,7 +64,7 @@ export class SensitiveContentPolicy {
       matches += 1
       return '[redacted]'
     })
-    scrubbed = replaceAll(scrubbed, /\b(?:proxy-)?authorization\s*:\s*(?:bearer\s+)?[^\s,;]+/giu, () => {
+    scrubbed = replaceAll(scrubbed, /\b(?:proxy-)?authorization\s*:\s*[^\r\n]+/giu, () => {
       matches += 1
       return '[redacted]'
     })
@@ -55,7 +72,7 @@ export class SensitiveContentPolicy {
       matches += 1
       return `${prefix}[redacted]`
     })
-    scrubbed = replaceAll(scrubbed, /\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)\s*(?:=|:)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu, () => {
+    scrubbed = replaceAll(scrubbed, /(?:\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)\b|["'](?:password|passwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)["'])\s*(?:=|:)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu, () => {
       matches += 1
       return '[redacted]'
     })
@@ -89,6 +106,7 @@ function isSensitiveComponent(component: string): boolean {
     || normalized === '.gnupg'
     || credentialComponent.test(normalized)
     || privateKeyComponent.test(normalized)
+    || normalized.split(/[._-]+/u).some(part => concatenatedCredentialName.has(part))
 }
 
 function isSupportedAbsolute(path: string): boolean {
@@ -107,7 +125,10 @@ function pathIsWithin(candidate: string, root: string): boolean {
   const windowsPath = win32.isAbsolute(candidate) || win32.isAbsolute(root)
   const operations = windowsPath ? win32 : {isAbsolute, relative}
   const relativePath = operations.relative(root, candidate)
-  return relativePath === '' || (!relativePath.startsWith('..') && !operations.isAbsolute(relativePath))
+  const outsideRoot = relativePath === '..'
+    || relativePath.startsWith('../')
+    || relativePath.startsWith('..\\')
+  return relativePath === '' || (!outsideRoot && !operations.isAbsolute(relativePath))
 }
 
 function urlCarriesCredentials(value: string): boolean {
@@ -116,13 +137,7 @@ function urlCarriesCredentials(value: string): boolean {
     if (url.username !== '' || url.password !== '') return true
     return [...url.searchParams.keys()].some(key => {
       const normalized = key.replace(/[_-]/gu, '').toLowerCase()
-      return normalized === 'token'
-        || normalized === 'secret'
-        || normalized === 'password'
-        || normalized === 'credential'
-        || normalized === 'apikey'
-        || normalized === 'accesstoken'
-        || normalized === 'refreshtoken'
+      return credentialQueryName.has(normalized)
     })
   } catch {
     return false
