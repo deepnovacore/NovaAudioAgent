@@ -2,10 +2,17 @@ import type { Clock } from '../../clock.js'
 import type { JsonObject } from '../protocol.js'
 import { codePointLengthLikePython } from '../../python-text.js'
 import type { JsonValue } from '../../events.js'
-import type { CascadedLlmEvent, CascadedLlmFactory, CascadedLlmInput, CascadedLlmSession, CascadedLlmTool } from './llm.js'
+import {
+  MAX_CASCADED_LLM_HISTORY_CODEPOINTS,
+  MAX_CASCADED_LLM_HISTORY_ITEMS,
+  type CascadedLlmEvent,
+  type CascadedLlmFactory,
+  type CascadedLlmInput,
+  type CascadedLlmSession,
+  type CascadedLlmTool,
+} from './llm.js'
 
-export const MAX_CASCADED_LLM_HISTORY_ITEMS = 64
-export const MAX_CASCADED_LLM_HISTORY_CODEPOINTS = 131_072
+export {MAX_CASCADED_LLM_HISTORY_CODEPOINTS, MAX_CASCADED_LLM_HISTORY_ITEMS} from './llm.js'
 const MAX_LINE_BYTES = 256 * 1024
 const MAX_EVENT_BYTES = 512 * 1024
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -125,6 +132,11 @@ class Session implements CascadedLlmSession {
   #checkResults(inputs: readonly CascadedLlmInput[], unresolved: readonly Message[]): void {
     const calls = unresolved.flatMap(item => item.tool_calls ?? []).map(item => item.id).sort(), results = inputs.filter((item): item is Extract<CascadedLlmInput, {kind: 'tool_result'}> => item.kind === 'tool_result').map(item => item.call_id).sort()
     if (calls.length === 0 || calls.length !== results.length || calls.some((call, index) => call !== results[index]) || results.length !== inputs.length) throw fail('protocol')
+  }
+  abandonPendingResponse(): Promise<void> {
+    if (this.#closed) return Promise.reject(fail('closed'))
+    this.#unresolved = null
+    return Promise.resolve()
   }
   #trim(unresolved: readonly Message[]): void { while (true) { const measured = size([...this.#history, unresolved]); if (measured.items <= MAX_CASCADED_LLM_HISTORY_ITEMS && measured.codepoints <= MAX_CASCADED_LLM_HISTORY_CODEPOINTS) return; if (this.#history.length === 0) throw fail('overflow'); this.#history.shift() } }
   async *#events(active: Active): AsyncIterable<Record<string, unknown>> {

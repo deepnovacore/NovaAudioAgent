@@ -96,6 +96,49 @@ test('Ark maps common inputs and tools, returns common events, and keeps chainin
   await session.close()
 })
 
+test('Ark abandons only an unfinished tool continuation before an unrelated response', async () => {
+  const requests: Record<string, unknown>[] = []
+  const responses = [
+    sse(
+      {type: 'response.created', response: {id: 'ark-text-1'}},
+      {type: 'response.output_text.delta', delta: '先前答案'},
+      {type: 'response.completed', response: {id: 'ark-text-1'}},
+    ),
+    sse(
+      {type: 'response.created', response: {id: 'ark-tool-2'}},
+      {type: 'response.output_item.done', item: {
+        type: 'function_call', id: 'item-2', call_id: 'call-2', name: 'weather', arguments: '{}',
+      }},
+      {type: 'response.completed', response: {id: 'ark-tool-2'}},
+    ),
+    sse(
+      {type: 'response.created', response: {id: 'ark-unrelated-3'}},
+      {type: 'response.completed', response: {id: 'ark-unrelated-3'}},
+    ),
+  ]
+  const session = createArkCascadedLlmFactory({
+    baseUrl: 'https://ark.example/api/v3', apiKey: 'ark-secret', model: 'ark-model',
+    instructions: 'instructions',
+    fetchImpl: (_url, init) => {
+      requests.push(JSON.parse(init?.body as string) as Record<string, unknown>)
+      return Promise.resolve(responses.shift()!)
+    },
+  }).open()
+
+  await collect(session.stream({inputs: [{kind: 'user_text', text: 'first'}], tools: [],
+    signal: new AbortController().signal}))
+  await session.abandonPendingResponse()
+  await collect(session.stream({inputs: [{kind: 'user_text', text: 'needs tool'}], tools: [],
+    signal: new AbortController().signal}))
+  await session.abandonPendingResponse()
+  await collect(session.stream({inputs: [{kind: 'user_text', text: 'unrelated'}], tools: [],
+    signal: new AbortController().signal}))
+
+  assert.equal(requests[1]?.previous_response_id, 'ark-text-1')
+  assert.equal('previous_response_id' in requests[2]!, false)
+  await session.close()
+})
+
 test('Ark clears private chaining after a protocol failure and exposes only a safe common failure', async () => {
   const requests: Record<string, unknown>[] = []
   const responses = [

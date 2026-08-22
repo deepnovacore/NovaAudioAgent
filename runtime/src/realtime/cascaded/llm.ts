@@ -1,6 +1,10 @@
 import type { JsonValue } from '../../events.js'
 import type { JsonObject } from '../protocol.js'
 
+export const MAX_CASCADED_LLM_HISTORY_ITEMS = 64
+export const MAX_CASCADED_LLM_HISTORY_CODEPOINTS = 131_072
+export const GUARD_ACTIVATION_PREFIX = 'Nova Audio Agent 宿主激活事实：'
+
 export type CascadedLlmInput =
   | {readonly kind: 'user_text'; readonly text: string}
   | {readonly kind: 'host_context'; readonly content: string}
@@ -26,6 +30,8 @@ export interface CascadedLlmSession {
     readonly tools: readonly CascadedLlmTool[]
     readonly signal: AbortSignal
   }): AsyncIterable<CascadedLlmEvent>
+  /** Discards only an unfinished response continuation, retaining completed history. */
+  abandonPendingResponse(): Promise<void>
   close(): Promise<void>
 }
 

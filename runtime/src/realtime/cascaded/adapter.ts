@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {jsonValueSchema} from '../../events.js'
 import {codePointLengthLikePython, stripLikePython} from '../../python-text.js'
-import { GUARD_ACTIVATION_PREFIX } from '../qwen.js'
 import {
   MAX_REALTIME_PCM_BYTES,
   MAX_REALTIME_TEXT,
@@ -24,6 +23,7 @@ import type {
   CascadedLlmSession,
   CascadedLlmTool,
 } from './llm.js'
+import {GUARD_ACTIVATION_PREFIX} from './llm.js'
 import type {
   AsrClient,
   AsrSession,
@@ -71,8 +71,8 @@ export class CascadedRealtimeError extends Error {
   readonly code: CascadedRealtimeFailureCode
 
   constructor(code: CascadedRealtimeFailureCode) {
-    super(`Volcengine realtime ${code} failure`)
-    this.name = 'VolcengineRealtimeError'
+    super(`Cascaded realtime ${code} failure`)
+    this.name = 'CascadedRealtimeError'
     this.code = code
   }
 }
@@ -266,6 +266,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
   #owner: EpochOwner | null = null
   #audioTail: Promise<void> = Promise.resolve()
   #closePromise: Promise<void> | null = null
+  #llmClosePromise: Promise<void> | null = null
 
   constructor(options: CascadedRealtimeAdapterOptions) {
     this.#endpointing = options.endpointing
@@ -296,12 +297,10 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     this.#closePromise = null
     this.#audioTail = Promise.resolve()
     const epoch = this.#epoch + 1
-    let ownsLlm = false
     try {
       const tools = options.tools.map(schema => cascadedToolSchema(structuredClone(schema)))
       const sessionId = this.#freshId()
       const llm = this.#llm
-      ownsLlm = true
       const owner: EpochOwner = {
         epoch,
         sessionId,
@@ -327,9 +326,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       this.#record('volcengine.session.connected', {epoch})
       return {epoch, provider_session_id: sessionId}
     } catch (error) {
-      if (ownsLlm) {
-        await safeCallWithin(() => this.#llm.close(), this.#settleTimeoutMs)
-      }
+      await safeCallWithin(() => this.#closeLlm(), this.#settleTimeoutMs)
       if (this.#owner?.epoch === epoch) this.#owner = null
       this.#finishConnectFailure()
       if (error instanceof CascadedRealtimeError) throw error
@@ -451,7 +448,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     }
     const inputs = this.#takeResponseInputs(owner, intent)
     if (inputs.length === 0) throw new CascadedRealtimeError('missing_host_input')
-    this.#resolvePendingToolCall(owner, inputs)
+    await this.#resolvePendingToolCall(owner, inputs)
     this.#startResponse(owner, inputs)
     await Promise.resolve()
   }
@@ -490,7 +487,15 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
 
   close(): Promise<void> {
     if (this.#closePromise !== null) return this.#closePromise
-    if (this.#state === 'new' || this.#state === 'disconnected') return Promise.resolve()
+    if (this.#state === 'new' || this.#state === 'disconnected') {
+      this.#state = 'disconnected'
+      this.#closePromise = (async () => {
+        if (!(await safeCallWithin(() => this.#closeLlm(), this.#settleTimeoutMs))) {
+          throw new CascadedRealtimeError('closed')
+        }
+      })()
+      return this.#closePromise
+    }
     this.#state = 'closing'
     const owner = this.#owner
     const audioTail = this.#audioTail
@@ -718,7 +723,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     }
     const {inputs, consumedIds} = this.#takeUserResponseInputs(owner)
     this.#markConsumed(owner, consumedIds)
-    this.#resolvePendingToolCall(owner, inputs)
+    await this.#resolvePendingToolCall(owner, inputs)
     this.#startResponse(owner, [...inputs, {kind: 'user_text', text}])
   }
 
@@ -1107,7 +1112,10 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     }
   }
 
-  #resolvePendingToolCall(owner: EpochOwner, inputs: readonly CascadedLlmInput[]): void {
+  async #resolvePendingToolCall(
+    owner: EpochOwner,
+    inputs: readonly CascadedLlmInput[],
+  ): Promise<void> {
     const callId = owner.pendingToolCallId
     if (callId === null) return
     if (inputs.some(input => input.kind === 'tool_result' && input.call_id === callId)) {
@@ -1122,6 +1130,17 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       owner.abandonedCalls.delete(oldest)
     }
     owner.pendingToolCallId = null
+    if (!(await safeCallWithin(
+      () => owner.llm.abandonPendingResponse(), this.#settleTimeoutMs,
+    ))) {
+      owner.revoked = true
+      owner.controller.abort()
+      await this.#cleanupOwner(owner)
+      owner.queue.close()
+      if (this.#owner === owner) this.#owner = null
+      this.#state = 'disconnected'
+      throw new CascadedRealtimeError('closed')
+    }
   }
 
   #emit(owner: EpochOwner, event: RealtimeProviderEvent): Promise<void> {
@@ -1164,13 +1183,16 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       successful = await settleWithin(asr.task, this.#settleTimeoutMs) && successful
       if (owner.asr === asr) owner.asr = null
     }
-    successful = await safeCallWithin(
-      () => owner.llm.close(), this.#settleTimeoutMs,
-    ) && successful
+    successful = await safeCallWithin(() => this.#closeLlm(), this.#settleTimeoutMs) && successful
     successful = await safeCallWithin(
       async () => { await this.#endpointing.reset() }, this.#settleTimeoutMs,
     ) && successful
     return successful
+  }
+
+  #closeLlm(): Promise<void> {
+    this.#llmClosePromise ??= Promise.resolve().then(() => this.#llm.close())
+    return this.#llmClosePromise
   }
 
   #requiredOwner(): EpochOwner {

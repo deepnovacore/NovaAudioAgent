@@ -2,13 +2,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   createQwenCascadedLlmFactory,
-  MAX_CASCADED_LLM_HISTORY_CODEPOINTS,
-  MAX_CASCADED_LLM_HISTORY_ITEMS,
   QwenCascadedLlmFailure,
 } from '../src/realtime/cascaded/qwen-llm.js'
-import type {
-  CascadedLlmEvent,
-  CascadedLlmSession,
+import {
+  MAX_CASCADED_LLM_HISTORY_CODEPOINTS,
+  MAX_CASCADED_LLM_HISTORY_ITEMS,
+  type CascadedLlmEvent,
+  type CascadedLlmSession,
 } from '../src/realtime/cascaded/llm.js'
 
 interface Capture {
@@ -139,6 +139,39 @@ test('Qwen joins fragmented tool calls and retains a matched tool result with it
       && (calls[0] as Record<string, unknown>).id === 'call-1'
   }))
   assert.ok(messages.some(message => message.role === 'tool' && message.tool_call_id === 'call-1'))
+})
+
+test('Qwen abandons unresolved tool state without discarding completed bounded history', async () => {
+  const requests: Record<string, unknown>[] = []
+  const responses = [
+    sse([{id: 'response-text', choices: [{delta: {content: 'remembered'}, finish_reason: 'stop'}]}]),
+    sse([{id: 'response-tool', choices: [{delta: {tool_calls: [{index: 0, id: 'call-abandoned',
+      function: {name: 'weather', arguments: '{}'}}]}, finish_reason: 'tool_calls'}]}]),
+    sse([{id: 'response-unrelated', choices: [{delta: {content: 'fresh'}, finish_reason: 'stop'}]}]),
+  ]
+  const session = createQwenCascadedLlmFactory({
+    baseUrl: 'https://dashscope.example/v1', apiKey: 'dash-secret', model: 'qwen-flash',
+    instructions: 'instructions', fetchImpl: (_url, init) => {
+      requests.push(JSON.parse(init?.body as string) as Record<string, unknown>)
+      return Promise.resolve(responses.shift()!)
+    },
+  }).open()
+  const run = (text: string) => collect(session.stream({
+    inputs: [{kind: 'user_text' as const, text}], tools: [], signal: new AbortController().signal,
+  }))
+
+  await run('completed user turn')
+  await run('abandoned tool turn')
+  await session.abandonPendingResponse()
+  await run('unrelated user turn')
+
+  const messages = requests[2]?.messages as Record<string, unknown>[]
+  assert.ok(messages.some(item => item.role === 'user' && item.content === 'completed user turn'))
+  assert.ok(messages.some(item => item.role === 'assistant' && item.content === 'remembered'))
+  assert.ok(messages.some(item => item.role === 'user' && item.content === 'unrelated user turn'))
+  assert.equal(messages.some(item => item.content === 'abandoned tool turn'), false)
+  assert.equal(messages.some(item => Array.isArray(item.tool_calls)), false)
+  await session.close()
 })
 
 test('Qwen rejects mixed text/tool output, malformed arguments, and mismatched tool results', async () => {

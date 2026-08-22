@@ -341,6 +341,7 @@ class EmptyLlm implements CascadedLlmSession {
     await Promise.resolve()
     return
   }
+  abandonPendingResponse(): Promise<void> { return Promise.resolve() }
   close(): Promise<void> { return Promise.resolve() }
 }
 

@@ -83,6 +83,7 @@ function toolSchema(tool: CascadedLlmTool): JsonObject {
 class Session implements CascadedLlmSession {
   readonly #gateway: ArkResponsesGateway
   #previousResponseId: string | null = null
+  #pendingToolContinuation = false
   #closed = false
 
   constructor(gateway: ArkResponsesGateway) {
@@ -98,6 +99,7 @@ class Session implements CascadedLlmSession {
     if (input.signal.aborted) throw fail('aborted')
     let responseId: string | null = null
     let terminal = false
+    let toolSeen = false
     try {
       for await (const event of this.#gateway.stream({
         inputItems: input.inputs.map(inputItem),
@@ -111,16 +113,19 @@ class Session implements CascadedLlmSession {
           yield event
         } else if (event.kind === 'text_delta' || event.kind === 'tool_call') {
           if (responseId === null) throw fail('protocol')
+          if (event.kind === 'tool_call') toolSeen = true
           yield event
         } else if (event.kind === 'response_completed') {
           if (responseId === null || event.response_id !== responseId) throw fail('protocol')
           this.#previousResponseId = event.response_id
+          this.#pendingToolContinuation = toolSeen
           terminal = true
           yield event
           return
         } else {
           if (responseId !== null && event.response_id !== responseId) throw fail('protocol')
           this.#previousResponseId = null
+          this.#pendingToolContinuation = false
           terminal = true
           yield event
           return
@@ -134,6 +139,7 @@ class Session implements CascadedLlmSession {
           ? fail(error.code, error.statusCode)
           : fail(this.#closed ? 'closed' : input.signal.aborted ? 'aborted' : 'network')
       this.#previousResponseId = null
+      this.#pendingToolContinuation = false
       if (responseId !== null && !terminal) {
         yield {kind: 'response_failed', response_id: responseId, code: stable.code}
         return
@@ -142,9 +148,17 @@ class Session implements CascadedLlmSession {
     }
   }
 
+  abandonPendingResponse(): Promise<void> {
+    if (this.#closed) return Promise.reject(fail('closed'))
+    if (this.#pendingToolContinuation) this.#previousResponseId = null
+    this.#pendingToolContinuation = false
+    return Promise.resolve()
+  }
+
   async close(): Promise<void> {
     this.#closed = true
     this.#previousResponseId = null
+    this.#pendingToolContinuation = false
     await this.#gateway.close()
   }
 }

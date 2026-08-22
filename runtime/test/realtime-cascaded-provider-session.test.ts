@@ -105,6 +105,8 @@ class EpochLlm implements CascadedLlmSession {
     for (const event of this.#events) yield structuredClone(event)
   }
 
+  abandonPendingResponse(): Promise<void> { return Promise.resolve() }
+
   close(): Promise<void> {
     this.closed = true
     return Promise.resolve()
@@ -126,6 +128,8 @@ class BlockingEpochLlm implements CascadedLlmSession {
     }))
     throw new DOMException('aborted', 'AbortError')
   }
+
+  abandonPendingResponse(): Promise<void> { return Promise.resolve() }
 
   close(): Promise<void> {
     this.closed = true
@@ -408,3 +412,36 @@ test('partial connect failure rolls constructed resources back in reverse order 
     assert.equal(identity.epoch, 1)
     await provider.close()
   })
+
+test('adapter-connect failure closes each constructed owner once in reverse order', async () => {
+  const operations: string[] = []
+  const llm = new EpochLlm()
+  const originalClose = llm.close.bind(llm)
+  llm.close = () => {
+    operations.push('llm.close')
+    return originalClose()
+  }
+  const provider = new CascadedRealtimeProvider({
+    endpointingFactory: () => {
+      operations.push('endpointing')
+      return Promise.resolve({
+        feed: () => Promise.resolve([]), reset: () => undefined,
+        close: () => { operations.push('endpointing.close'); return Promise.resolve() },
+      })
+    },
+    asrFactory: {openClient: () => { operations.push('asr'); return unusedAsr }},
+    llmFactory: {open: () => { operations.push('llm'); return llm }},
+    ttsFactory: {openClient: () => { operations.push('tts'); return tts }},
+    idFactory: () => 'never-reached',
+  })
+
+  await assert.rejects(provider.connect({
+    tools: [{type: 'invalid'}], signal: new AbortController().signal,
+  }), error => error instanceof CascadedRealtimeError && error.code === 'configuration'
+    && error.name === 'CascadedRealtimeError'
+    && error.message === 'Cascaded realtime configuration failure')
+  assert.deepEqual(operations, [
+    'endpointing', 'asr', 'llm', 'tts', 'llm.close', 'endpointing.close',
+  ])
+  assert.equal(llm.closed, true)
+})

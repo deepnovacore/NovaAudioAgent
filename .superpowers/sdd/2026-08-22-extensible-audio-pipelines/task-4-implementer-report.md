@@ -123,3 +123,100 @@ The adapter suite retains all 23 original behavior tests and adds the mandated s
 ## Concerns / known out-of-scope state
 
 I also ran the migrated production/Volcengine assembly suites. Eleven tests fail before reaching the assembly/owner code because Task 1 intentionally retired `NOVA_AUDIO_AGENT_REALTIME_PROVIDER`; those suites still construct legacy selector settings pending Task 5. This is pre-existing planned migration state, not a Task 4 owner failure. The build, typecheck, lint, task-focused suites, concrete implementation suites, Ark suites, and Python oracle are GREEN.
+
+---
+
+## Fix round 1: continuation abandonment and early-connect ownership
+
+### Status and controller ruling
+
+Implemented both review findings without restoring an old-path shim or adding provider-specific state to the generic owner. The earlier controller ruling still applies: the old Volcengine owner paths remain deleted, and the minimal assembly/consumer migration remains the replacement boundary. This fix touched only the common LLM/owner implementation, Ark and Qwen adapters, and the surviving fakes/tests needed by the required interface.
+
+### RED evidence
+
+Production was left unchanged while regressions were added for Ark, Qwen, the generic owner, and provider rollback. The first build failed for the intended missing common lifecycle operation:
+
+```text
+$ npm test -- --test-name-pattern='abandons|adapter-connect failure|unresolved tool resets' ...
+test/realtime-cascaded-ark-llm.test.ts(132,17): error TS2339:
+  Property 'abandonPendingResponse' does not exist on type 'CascadedLlmSession'.
+test/realtime-cascaded-qwen-llm.test.ts(165,17): error TS2339:
+  Property 'abandonPendingResponse' does not exist on type 'CascadedLlmSession'.
+exit 2
+```
+
+The early-connect regression was designed to fail on the pre-fix invalid-tool branch: after endpointing, ASR, LLM, TTS, and adapter construction, adapter `connect()` failed before the old ownership flag and omitted `llm.close` from reverse rollback.
+
+### GREEN evidence
+
+The focused new regressions passed after implementation:
+
+```text
+✔ an unresolved tool resets chaining and a late abandoned output never calls LLM
+✔ an abandoned-continuation reset failure is bounded and closes the owner
+✔ Ark abandons only an unfinished tool continuation before an unrelated response
+✔ Qwen abandons unresolved tool state without discarding completed bounded history
+✔ adapter-connect failure closes each constructed owner once in reverse order
+```
+
+Final requested verification from the repository root:
+
+```text
+$ npm run build --workspace @nova-audio-agent/runtime
+exit 0
+$ npm run lint --workspace @nova-audio-agent/runtime
+exit 0
+$ npm run typecheck --workspace @nova-audio-agent/runtime
+exit 0
+$ node --test <Task 2 Qwen + Task 3 Ark semantic/wire + Task 4 matrix/oracle>
+146 tests, 146 pass, 0 fail
+$ git diff --check
+exit 0
+```
+
+This includes all 132 previously passing focused/oracle behaviors plus the Task 2 Qwen suite and five new regressions.
+
+### Behavior preservation and fixes
+
+- [x] Added provider-neutral `CascadedLlmSession.abandonPendingResponse()`; no provider response IDs cross the common boundary.
+- [x] Generic owner calls the lifecycle operation only when replacing an unfinished tool chain with unrelated work; a matching `tool_result` continues normally.
+- [x] Ark clears an unfinished tool response's private `previousResponseId`; a no-op abandonment after a completed text response preserves normal chaining.
+- [x] Qwen clears only unresolved tool-call messages and retains completed, bounded history.
+- [x] Late output for an abandoned call remains silently suppressed and never invokes the LLM.
+- [x] Lifecycle rejection/non-cooperation is settle-time bounded, revokes the epoch, and runs the same bounded owner cleanup path before exposing stable `closed`.
+- [x] Adapter owns its injected LLM immediately and closes it through one idempotent promise, including invalid tools, throwing IDs, partial construction, normal close, and provider rollback.
+- [x] The provider regression observes exact reverse closable-resource order and exactly one LLM close: `llm.close`, then `endpointing.close`.
+- [x] History item/code-point bounds and the host guard prefix now live in the provider-neutral LLM contract; generic cascaded code imports no Qwen module.
+- [x] `CascadedRealtimeError` now exposes the generic name `CascadedRealtimeError` and generic stable message; oracle projection accepts the legacy fixture name but compares the generic observable.
+- [x] Queue/audio bounds, ASR flow, TTS chunk/retry, cancellation, reconnect, monotonic epochs, fencing, telemetry, cleanup, and all 17 Python oracle scenarios remain GREEN.
+
+### Files changed in fix round 1
+
+Production:
+
+- `runtime/src/realtime/cascaded/llm.ts`
+- `runtime/src/realtime/cascaded/adapter.ts`
+- `runtime/src/realtime/cascaded/ark-llm.ts`
+- `runtime/src/realtime/cascaded/qwen-llm.ts`
+- `runtime/src/realtime/qwen.ts`
+
+Tests/fakes:
+
+- `runtime/test/realtime-cascaded-adapter.test.ts`
+- `runtime/test/realtime-cascaded-provider-session.test.ts`
+- `runtime/test/realtime-cascaded-ark-llm.test.ts`
+- `runtime/test/realtime-cascaded-qwen-llm.test.ts`
+- `runtime/test/realtime-volcengine-adapter-oracle.test.ts`
+- `runtime/test/realtime-volcengine-livekit-endpointing.test.ts`
+- `runtime/test/realtime-volcengine-silence-endpointing.test.ts`
+
+No files were deleted in this fix round.
+
+### Self-review and concerns
+
+- Confirmed abandonment is semantic and provider-neutral; Ark/Qwen private continuation models remain encapsulated.
+- Confirmed Qwen abandonment does not clear completed history and Ark unrelated work is unchained after an abandoned tool response.
+- Confirmed LLM close is single-owner/idempotent across adapter connect failure plus provider rollback, with no direct provider double-close.
+- Confirmed all common-session fakes implement the new lifecycle operation and the Python oracle fake mirrors its semantics.
+- Confirmed generic cascaded source has no Qwen import.
+- No new concerns. The previously recorded Task 5 legacy selector-test state is unchanged and outside this fix matrix.

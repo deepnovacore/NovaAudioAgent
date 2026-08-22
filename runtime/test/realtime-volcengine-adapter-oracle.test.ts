@@ -312,6 +312,12 @@ class ScriptedLlm implements CascadedLlmSession {
     void responseId
   }
 
+  abandonPendingResponse(): Promise<void> {
+    if (this.#pendingToolCallId !== null) this.#previousResponseId = null
+    this.#pendingToolCallId = null
+    return Promise.resolve()
+  }
+
   close(): Promise<void> {
     this.closed = true
     this.#previousResponseId = null
@@ -607,8 +613,10 @@ function normalizeEndpointDeviation(name: string, actual: readonly Row[]): Row[]
 function normalizedStepResult(result: unknown): unknown {
   if (result === null || typeof result !== 'object' || Array.isArray(result)) return result
   const row = result as Row
-  if (row.error !== 'VolcengineRealtimeError') return structuredClone(row)
-  return {error: 'VolcengineRealtimeError', code: 'duplicate_host_item'}
+  if (row.error !== 'VolcengineRealtimeError' && row.error !== 'CascadedRealtimeError') {
+    return structuredClone(row)
+  }
+  return {error: 'CascadedRealtimeError', code: 'duplicate_host_item'}
 }
 
 function cascadedTelemetry(rows: readonly Row[]): Row[] {

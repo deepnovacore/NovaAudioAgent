@@ -112,6 +112,7 @@ class FakeLlm implements CascadedLlmSession {
   readonly calls: LlmStreamInput[] = []
   readonly #eventSets: (readonly CascadedLlmEvent[])[]
   closed = false
+  abandons = 0
 
   constructor(...eventSets: (readonly CascadedLlmEvent[])[]) {
     this.#eventSets = [...eventSets]
@@ -121,6 +122,11 @@ class FakeLlm implements CascadedLlmSession {
     this.calls.push(structuredClone(input))
     await Promise.resolve()
     for (const event of this.#eventSets.shift() ?? []) yield structuredClone(event)
+  }
+
+  abandonPendingResponse(): Promise<void> {
+    this.abandons += 1
+    return Promise.resolve()
   }
 
   close(): Promise<void> {
@@ -211,6 +217,8 @@ class BlockingLlm implements CascadedLlmSession {
     })
   }
 
+  abandonPendingResponse(): Promise<void> { return Promise.resolve() }
+
   close(): Promise<void> {
     this.closed = true
     return Promise.resolve()
@@ -230,6 +238,7 @@ class LateLlm implements CascadedLlmSession {
   }
 
   release(): void { this.#release?.() }
+  abandonPendingResponse(): Promise<void> { return Promise.resolve() }
   close(): Promise<void> { this.closed = true; return Promise.resolve() }
 }
 
@@ -726,6 +735,7 @@ test('an unresolved tool resets chaining and a late abandoned output never calls
     origin_spoken: false}, new AbortController().signal)
   await waitFor('next terminal', () => watching.events.filter(event =>
     event.kind === 'response_terminal').length === 2)
+  assert.equal(llm.abandons, 1)
   assert.deepEqual(llm.calls[1]?.inputs.at(-1), {
     kind: 'host_context', content: 'Nova Audio Agent 任务进度事实：任务仍在运行',
   })
@@ -742,6 +752,40 @@ test('an unresolved tool resets chaining and a late abandoned output never calls
     event.kind === 'response_terminal').length === 3)
   assert.equal(llm.calls.length, 2)
   await watching.stop()
+})
+
+test('an abandoned-continuation reset failure is bounded and closes the owner', async () => {
+  class BlockingAbandonLlm extends FakeLlm {
+    override abandonPendingResponse(): Promise<void> {
+      return new Promise<void>(() => undefined)
+    }
+  }
+  const llm = new BlockingAbandonLlm([
+    {kind: 'response_started', response_id: 'response-tool'},
+    {kind: 'tool_call', item_id: 'item-tool', call_id: 'call-tool', name: 'weather', arguments: {}},
+    {kind: 'response_completed', response_id: 'response-tool'},
+  ])
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(), llm,
+    tts: new FakeTtsClient(new FakeTtsSession()),
+    idFactory: ids('session-abandon-failure', 'provider-first', 'provider-next'),
+    settleTimeoutMs: 10,
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const first = hostItem('first')
+  await adapter.injectHostItem(first, directOptions())
+  const terminal = collectThroughTerminal(adapter)
+  await adapter.createResponse({kind: 'host_fact', item: first, task_summary: null,
+    origin_spoken: false}, new AbortController().signal)
+  await terminal
+
+  const next = hostItem('next')
+  await adapter.injectHostItem(next, directOptions())
+  await assert.rejects(settleWithin('abandon reset failure', adapter.createResponse({
+    kind: 'host_fact', item: next, task_summary: null, origin_spoken: false,
+  }, new AbortController().signal), 150),
+  (error: unknown) => error instanceof CascadedRealtimeError && error.code === 'closed')
+  assert.equal(llm.closed, true)
 })
 
 test('TTS retries once before audio with every prior chunk, and never retries after audio', async () => {
@@ -1030,6 +1074,7 @@ test('close bounds every injected teardown even when LLM and endpoint reset igno
       stream: () => new FakeLlm([]).stream({
         inputs: [], tools: [], signal: new AbortController().signal,
       }),
+      abandonPendingResponse: () => Promise.resolve(),
       close: () => arkBlocked,
     }
     const adapter = new CascadedRealtimeAdapter({
