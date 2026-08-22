@@ -233,10 +233,12 @@ npm run start:client
 
 The launcher always starts the Node runtime and Electron renderer with context isolation,
 sandboxing, and a narrow preload bridge. It requires Node.js, the `codex` executable, microphone
-permission, and both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in `.env` or the invoking shell;
-shell variables take precedence over `.env`. On macOS it also builds the native VoiceProcessingIO
-helper for system-level echo cancellation; Windows and Linux use Chromium's echo cancellation
-instead. Linux sessions run on X11 (Wayland sessions go through XWayland). See
+permission, and `TAVILY_API_KEY` in `.env` or the invoking shell; shell variables take precedence
+over `.env`. `DASHSCOPE_API_KEY` is required only for integrated Qwen and cascaded Qwen. Cascaded
+Ark requires `ARK_API_KEY` for its LLM plus `DOUBAO_BIGMODEL_API_KEY` for Volcengine TTS and ASR
+fallback; `DOUBAO_ASR_API_KEY` is an optional ASR override. On macOS it also builds the native
+VoiceProcessingIO helper for system-level echo cancellation; Windows and Linux use Chromium's echo
+cancellation instead. Linux sessions run on X11 (Wayland sessions go through XWayland). See
 [Getting started](docs/getting-started.md) for the per-platform notes.
 
 Both the local-camera default and `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback use Chromium's

@@ -72,6 +72,15 @@ test('audio pipeline docs distinguish the selectable topology, credentials, and 
   assert.match(chinese, /下次启动/u)
   assert.match(chinese, /可选.*在线 smoke/u)
 
+  const englishReadme = documents.get('README.md')!
+  const chineseReadme = documents.get('README.zh-CN.md')!
+  assert.match(englishReadme, /DASHSCOPE_API_KEY.*integrated Qwen.*cascaded Qwen/isu)
+  assert.match(englishReadme, /cascaded\s+Ark.*ARK_API_KEY.*DOUBAO_BIGMODEL_API_KEY/isu)
+  assert.doesNotMatch(englishReadme, /launcher.*requires[^.]*DASHSCOPE_API_KEY.*TAVILY_API_KEY/isu)
+  assert.match(chineseReadme, /DASHSCOPE_API_KEY.*集成 Qwen.*级联 Qwen/su)
+  assert.match(chineseReadme, /级联 Ark.*ARK_API_KEY.*DOUBAO_BIGMODEL_API_KEY/su)
+  assert.doesNotMatch(chineseReadme, /启动器.*需要[^。]*DASHSCOPE_API_KEY.*TAVILY_API_KEY/su)
+
   for (const [file, text] of documents) {
     assert.doesNotMatch(text, /NOVA_AUDIO_AGENT_(?:REALTIME_PROVIDER|VOLCENGINE_ARK_MODEL|VOLCENGINE_ARK_SUPPORT_MODEL)/u, file)
   }

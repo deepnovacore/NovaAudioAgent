@@ -191,7 +191,7 @@ provider 或打开设备。
 小诺是中文优先的：人设、生产提示词、工具描述、CLI 报错与默认音色均为中文。各真实集成——
 当前 Node 能力包括确定性模拟器、Tavily 搜索、app-server Codex、摄像头 Watch/Guard，以及
 集成或级联实时语音；
-逐项安装、注意事项与完整变量参考见[上手指南](docs/getting-started.md)。
+逐项安装、注意事项与完整变量参考见[上手指南](docs/getting-started.zh-CN.md)。
 
 ## 5. Ambient Orb
 
@@ -203,11 +203,12 @@ npm run start:client
 ```
 
 启动器固定使用 Node 运行时，并拉起带上下文隔离、沙箱与窄 preload 桥的 Electron 渲染器。它需要
-Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或启动 shell 中的
-`DASHSCOPE_API_KEY` 与 `TAVILY_API_KEY`；shell 变量优先于 `.env`。macOS 上还会构建原生
-VoiceProcessingIO helper 以获得系统级回声消除；Windows 与 Linux 使用 Chromium 自带的回声
-消除。Linux 会话运行在 X11 上（Wayland 会话经由 XWayland）。分平台说明见
-[上手指南](docs/getting-started.md)。
+Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或启动 shell 中的 `TAVILY_API_KEY`；shell
+变量优先于 `.env`。`DASHSCOPE_API_KEY` 只在集成 Qwen 和级联 Qwen 时必需。级联 Ark 的 LLM 需要
+`ARK_API_KEY`，并为火山 TTS 与 ASR 回退需要 `DOUBAO_BIGMODEL_API_KEY`；
+`DOUBAO_ASR_API_KEY` 是可选 ASR 覆盖。macOS 上还会构建原生 VoiceProcessingIO helper 以获得系统级
+回声消除；Windows 与 Linux 使用 Chromium 自带的回声消除。Linux 会话运行在 X11 上（Wayland 会话
+经由 XWayland）。分平台说明见[上手指南](docs/getting-started.zh-CN.md)。
 
 默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 视频回放均使用 Chromium 摄像头链路。
 
