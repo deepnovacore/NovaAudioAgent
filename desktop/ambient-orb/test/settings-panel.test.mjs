@@ -9,6 +9,16 @@ const script = await readFile(new URL('../src/renderer/settings.mjs', import.met
 const controllerScript = await readFile(new URL('../src/renderer/settings-controller.mjs', import.meta.url), 'utf8')
 const css = await readFile(new URL('../src/renderer/settings.css', import.meta.url), 'utf8')
 
+const ALL_SECRET_KEYS = [
+  'dashscopeApiKey',
+  'tavilyApiKey',
+  'modelApiKey',
+  'codexApiKey',
+  'arkApiKey',
+  'doubaoBigmodelApiKey',
+  'doubaoAsrApiKey',
+]
+
 function deferred() {
   let resolve
   let reject
@@ -127,18 +137,80 @@ test('secret values and key names never enter controller render drafts', async (
   }
 })
 
+test('all seven presence booleans survive initial and confirmed public views', async () => {
+  const initialPresence = {
+    dashscopeApiKey: true,
+    tavilyApiKey: false,
+    modelApiKey: true,
+    codexApiKey: false,
+    arkApiKey: true,
+    doubaoBigmodelApiKey: false,
+    doubaoAsrApiKey: true,
+  }
+  const confirmedPresence = {
+    dashscopeApiKey: false,
+    tavilyApiKey: true,
+    modelApiKey: false,
+    codexApiKey: true,
+    arkApiKey: false,
+    doubaoBigmodelApiKey: true,
+    doubaoAsrApiKey: false,
+  }
+  const renders = []
+  const controller = createSettingsController({
+    api: { set: async () => publicView({ secretsPresent: confirmedPresence }) },
+    render: view => renders.push(view),
+    status: () => {},
+  })
+
+  controller.setView(publicView({ secretsPresent: initialPresence }))
+  assert.deepEqual(renders.at(-1).secretsPresent, initialPresence)
+
+  const result = await controller.push({ palette: 'graphite' }, '配色已更新')
+  assert.deepEqual(result.view.secretsPresent, confirmedPresence)
+  assert.deepEqual(renders.at(-1).secretsPresent, confirmedPresence)
+})
+
+test('presence metadata keeps only known own boolean data properties without invoking getters', async () => {
+  let getterCalls = 0
+  const hostilePresence = Object.create({ dashscopeApiKey: true })
+  Object.defineProperties(hostilePresence, {
+    tavilyApiKey: { enumerable: true, value: false },
+    modelApiKey: { enumerable: true, value: true },
+    codexApiKey: {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        return 'accessor-secret'
+      },
+    },
+    arkApiKey: { enumerable: true, value: 'plaintext-secret' },
+    doubaoBigmodelApiKey: { enumerable: true, value: null },
+    doubaoAsrApiKey: { enumerable: true, value: 1 },
+    extra: { enumerable: true, value: 'extra-secret' },
+  })
+  const expected = { tavilyApiKey: false, modelApiKey: true }
+  const renders = []
+  const controller = createSettingsController({
+    api: { set: async () => publicView({ secretsPresent: hostilePresence }) },
+    render: view => renders.push(view),
+    status: () => {},
+  })
+
+  controller.setView(publicView({ secretsPresent: hostilePresence }))
+  assert.equal(getterCalls, 0)
+  assert.deepEqual(renders.at(-1).secretsPresent, expected)
+
+  const result = await controller.push({ palette: 'graphite' }, '配色已更新')
+  assert.equal(getterCalls, 0)
+  assert.deepEqual(result.view.secretsPresent, expected)
+  assert.deepEqual(renders.at(-1).secretsPresent, expected)
+  assert.doesNotMatch(JSON.stringify(renders), /accessor-secret|plaintext-secret|extra-secret/)
+})
+
 test('every public controller boundary strips all secret keys without touching legitimate nested state', async () => {
-  const secretKeys = [
-    'dashscopeApiKey',
-    'tavilyApiKey',
-    'modelApiKey',
-    'codexApiKey',
-    'arkApiKey',
-    'doubaoBigmodelApiKey',
-    'doubaoAsrApiKey',
-  ]
   const sentinel = 'hostile-secret-sentinel'
-  for (const key of secretKeys) {
+  for (const key of ALL_SECRET_KEYS) {
     const snapshots = []
     const calls = []
     const controller = createSettingsController({

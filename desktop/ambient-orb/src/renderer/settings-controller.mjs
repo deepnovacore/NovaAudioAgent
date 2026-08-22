@@ -12,10 +12,10 @@ export function mergePatch(base, next) {
   return merged
 }
 
-// This is the single boundary denylist for Settings secrets. Public renderer
-// state may not carry these keys at any depth; only a direct `secrets` write
-// payload is allowed to cross the bridge.
-const SECRET_KEYS = new Set([
+// Direct secret fields and the root `secrets` map are never public state. The
+// same names are legitimate boolean fields inside `secretsPresent`, so that
+// presence-only shape is sanitized separately instead of recursively denied.
+const SECRET_KEY_NAMES = [
   'dashscopeApiKey',
   'tavilyApiKey',
   'modelApiKey',
@@ -23,19 +23,51 @@ const SECRET_KEYS = new Set([
   'arkApiKey',
   'doubaoBigmodelApiKey',
   'doubaoAsrApiKey',
-])
+]
+const SECRET_KEYS = new Set(SECRET_KEY_NAMES)
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function publicPatch(value) {
-  if (Array.isArray(value)) return value.map(publicPatch)
+function publicValue(value) {
+  if (Array.isArray(value)) {
+    const safe = []
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+      if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) continue
+      safe[key] = publicValue(descriptor.value)
+    }
+    return safe
+  }
   if (!isRecord(value)) return value
   const safe = {}
-  for (const [key, nested] of Object.entries(value)) {
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) continue
+    safe[key] = publicValue(descriptor.value)
+  }
+  return safe
+}
+
+function presenceMap(value) {
+  const safe = {}
+  if (!isRecord(value)) return safe
+  for (const key of SECRET_KEY_NAMES) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) continue
+    if (typeof descriptor.value === 'boolean') safe[key] = descriptor.value
+  }
+  return safe
+}
+
+function publicPatch(value) {
+  if (!isRecord(value)) return publicValue(value)
+  const safe = {}
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) continue
     if (key === 'secrets' || SECRET_KEYS.has(key)) continue
-    safe[key] = publicPatch(nested)
+    safe[key] = key === 'secretsPresent'
+      ? presenceMap(descriptor.value)
+      : publicValue(descriptor.value)
   }
   return safe
 }
@@ -43,11 +75,16 @@ function publicPatch(value) {
 function writePatch(value) {
   if (!isRecord(value)) return {}
   const safe = {}
-  for (const [key, nested] of Object.entries(value)) {
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) continue
     if (SECRET_KEYS.has(key)) continue
     // The direct write-only map must reach Main unchanged; it is never merged
     // into public state or a render snapshot.
-    safe[key] = key === 'secrets' ? nested : publicPatch(nested)
+    safe[key] = key === 'secrets'
+      ? descriptor.value
+      : key === 'secretsPresent'
+        ? presenceMap(descriptor.value)
+        : publicValue(descriptor.value)
   }
   return safe
 }
@@ -64,7 +101,7 @@ export function createSettingsController({ api, render, status }) {
     const snapshot = {}
     for (const [field, value] of drafts) {
       if (field === 'secrets' || SECRET_KEYS.has(field)) continue
-      snapshot[field] = publicPatch(value)
+      snapshot[field] = field === 'secretsPresent' ? presenceMap(value) : publicValue(value)
     }
     return snapshot
   }
