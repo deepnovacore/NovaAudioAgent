@@ -193,6 +193,195 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
   ])
 })
 
+test('normalizeSettings reads only own enumerable top-level data properties', () => {
+  let getterCalls = 0
+  const inherited = {
+    palette: 'graphite',
+    proactivity: 'eager',
+    integratedModel: 'inherited-model',
+  }
+  const raw = Object.create(inherited)
+  Object.defineProperties(raw, {
+    codexHeartbeatSeconds: { value: 45, enumerable: true },
+    pipelineMode: {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        return 'cascaded'
+      },
+    },
+    integratedVoice: { value: 'hidden-voice', enumerable: false },
+  })
+  Object.defineProperty(raw, Symbol('hostile'), {
+    enumerable: true,
+    get() {
+      getterCalls += 1
+      return 'symbol-value'
+    },
+  })
+
+  const normalized = normalizeSettings(raw)
+
+  assert.equal(getterCalls, 0)
+  assert.equal(normalized.codexHeartbeatSeconds, 45)
+  assert.equal(normalized.palette, 'ember')
+  assert.equal(normalized.proactivity, 'balanced')
+  assert.equal(normalized.pipelineMode, 'integrated')
+  assert.equal(normalized.integratedModel, 'qwen-audio-3.0-realtime-plus')
+  assert.equal(normalized.integratedVoice, 'longanqian')
+})
+
+test('normalizeSettings reads remembered models only from own enumerable data properties', () => {
+  let getterCalls = 0
+  const models = Object.create({ qwen: 'inherited-qwen' })
+  Object.defineProperties(models, {
+    ark: {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        return 'getter-ark'
+      },
+    },
+    qwenHidden: { value: 'hidden', enumerable: false },
+  })
+  Object.defineProperty(models, Symbol('hostile'), {
+    enumerable: true,
+    get() {
+      getterCalls += 1
+      return 'symbol-model'
+    },
+  })
+
+  const normalized = normalizeSettings({ cascadedLlmModels: models })
+
+  assert.equal(getterCalls, 0)
+  assert.deepEqual(normalized.cascadedLlmModels, {
+    qwen: 'qwen-flash',
+    ark: 'doubao-seed-2-0-pro-260215',
+  })
+
+  const partiallyHidden = {}
+  Object.defineProperties(partiallyHidden, {
+    qwen: { value: 'qwen-own', enumerable: true },
+    ark: { value: 'ark-hidden', enumerable: false },
+  })
+  assert.deepEqual(normalizeSettings({
+    cascadedLlmModels: partiallyHidden,
+  }).cascadedLlmModels, {
+    qwen: 'qwen-own',
+    ark: 'doubao-seed-2-0-pro-260215',
+  })
+})
+
+test('normalizeSettings drops hostile secret maps and entries without invoking getters', () => {
+  let getterCalls = 0
+  const secrets = Object.create({
+    dashscopeApiKey: { enc: 'none', data: 'aW5oZXJpdGVk' },
+  })
+  Object.defineProperties(secrets, {
+    tavilyApiKey: {
+      value: { enc: 'none', data: 'dGF2aWx5' },
+      enumerable: true,
+    },
+    arkApiKey: {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        return { enc: 'none', data: 'YXJr' }
+      },
+    },
+    codexApiKey: {
+      value: { enc: 'none', data: 'Y29kZXg=' },
+      enumerable: false,
+    },
+  })
+  const hostileEntry = {}
+  Object.defineProperties(hostileEntry, {
+    enc: {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        return 'none'
+      },
+    },
+    data: { value: 'ZG91YmFv', enumerable: true },
+  })
+  Object.defineProperty(secrets, 'doubaoBigmodelApiKey', {
+    value: hostileEntry,
+    enumerable: true,
+  })
+  Object.defineProperty(secrets, Symbol('hostile'), {
+    enumerable: true,
+    get() {
+      getterCalls += 1
+      return 'symbol-secret'
+    },
+  })
+
+  const normalized = normalizeSettings({ secrets })
+
+  assert.equal(getterCalls, 0)
+  assert.deepEqual(normalized.secrets, {
+    tavilyApiKey: { enc: 'none', data: 'dGF2aWx5' },
+  })
+})
+
+test('normalizeSettings applies descriptor-only rules to caller-supplied base values', () => {
+  let getterCalls = 0
+  const base = Object.create({ pipelineMode: 'cascaded' })
+  Object.defineProperties(base, {
+    palette: { value: 'graphite', enumerable: true },
+    integratedModel: {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        return 'getter-model'
+      },
+    },
+    integratedVoice: { value: 'hidden-voice', enumerable: false },
+    cascadedLlmModels: {
+      enumerable: true,
+      value: Object.create({ qwen: 'inherited-qwen', ark: 'inherited-ark' }),
+    },
+  })
+
+  const normalized = normalizeSettings({
+    palette: 'invalid',
+    integratedModel: '',
+    integratedVoice: '',
+    cascadedLlmModels: { qwen: '', ark: '' },
+  }, base)
+
+  assert.equal(getterCalls, 0)
+  assert.equal(normalized.palette, 'graphite')
+  assert.equal(normalized.pipelineMode, 'integrated')
+  assert.equal(normalized.integratedModel, 'qwen-audio-3.0-realtime-plus')
+  assert.equal(normalized.integratedVoice, 'longanqian')
+  assert.deepEqual(normalized.cascadedLlmModels, {
+    qwen: 'qwen-flash',
+    ark: 'doubao-seed-2-0-pro-260215',
+  })
+})
+
+test('normalizeSettings fails closed for descriptor-hostile and revoked proxy shapes', () => {
+  const hostile = new Proxy({}, {
+    get() {
+      throw new Error('ordinary property read must never happen')
+    },
+    getOwnPropertyDescriptor() {
+      throw new Error('descriptor unavailable')
+    },
+  })
+  const { proxy: revoked, revoke } = Proxy.revocable({}, {})
+  revoke()
+
+  assert.deepEqual(normalizeSettings(hostile), DEFAULT_SETTINGS)
+  assert.deepEqual(normalizeSettings(revoked), DEFAULT_SETTINGS)
+  assert.deepEqual(normalizeSettings({ cascadedLlmModels: hostile }), DEFAULT_SETTINGS)
+  assert.deepEqual(normalizeSettings({ secrets: hostile }), DEFAULT_SETTINGS)
+  assert.deepEqual(normalizeSettings({}, hostile), DEFAULT_SETTINGS)
+})
+
 test('normalizeSettings rejects rather than clamps an out-of-range heartbeat', () => {
   assert.equal(normalizeSettings({ codexHeartbeatSeconds: 15 }).codexHeartbeatSeconds, 15)
   assert.equal(normalizeSettings({ codexHeartbeatSeconds: 120 }).codexHeartbeatSeconds, 120)
@@ -214,6 +403,31 @@ test('normalizeSettings bounds every model and voice string and refuses control 
       assert.equal(normalizeSettings({ [field]: bad })[field], DEFAULT_SETTINGS[field])
     }
   }
+})
+
+test('normalizeSettings rejects leading and trailing controls before trimming model and voice values', () => {
+  for (const field of ['integratedModel', 'integratedVoice', 'cascadedTtsVoice']) {
+    for (const bad of ['\nvalid-value', 'valid-value\r', '\tvalid-value', 'valid-value\u007f']) {
+      assert.equal(
+        normalizeSettings({ [field]: bad })[field],
+        DEFAULT_SETTINGS[field],
+        `${field} rejects ${JSON.stringify(bad)} from the raw input`,
+      )
+    }
+  }
+
+  assert.deepEqual(normalizeSettings({
+    cascadedLlmModels: { qwen: '\nqwen-custom', ark: 'ark-valid' },
+  }).cascadedLlmModels, {
+    qwen: 'qwen-flash',
+    ark: 'ark-valid',
+  })
+  assert.deepEqual(normalizeSettings({
+    cascadedLlmModels: { qwen: 'qwen-valid', ark: 'ark-custom\r' },
+  }).cascadedLlmModels, {
+    qwen: 'qwen-valid',
+    ark: 'doubao-seed-2-0-pro-260215',
+  })
 })
 
 test('normalizeSettings treats cascadedLlmModels as a strict independent two-provider map', () => {

@@ -64,6 +64,35 @@ const SECRET_KEY_SET = new Set(SECRET_KEYS)
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 // Control characters would survive into an env value handed to a child process.
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
+const MISSING_PROPERTY = Symbol('missing property')
+const INVALID_PROPERTY = Symbol('invalid property')
+
+function isRecord(value) {
+  if (!value || typeof value !== 'object') return false
+  try {
+    return !Array.isArray(value)
+  } catch {
+    return false
+  }
+}
+
+// Values cross a storage/IPC trust boundary here. Reading with `object[key]`
+// would walk prototypes or execute accessors; descriptors let us accept only
+// the JSON-shaped properties the schema promises. A hostile Proxy may refuse
+// even descriptor inspection, in which case that field simply fails closed.
+function ownEnumerableDataValue(object, key) {
+  if (!isRecord(object)) return MISSING_PROPERTY
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key)
+    if (!descriptor) return MISSING_PROPERTY
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
+      return INVALID_PROPERTY
+    }
+    return descriptor.value
+  } catch {
+    return INVALID_PROPERTY
+  }
+}
 
 // Each validator answers the value it accepts, or null. `pick` then walks
 // candidate → caller's base → schema default, so one bad field never drags a
@@ -102,27 +131,25 @@ const validCascadedTtsProvider = enumValidator(CASCADED_TTS_PROVIDER_SET)
 
 function validModelOrVoice(value) {
   if (typeof value !== 'string') return null
+  if (CONTROL_CHARACTERS.test(value)) return null
   const trimmed = value.trim()
   if (trimmed === '' || [...trimmed].length > MAX_MODEL_OR_VOICE_LENGTH) return null
-  if (CONTROL_CHARACTERS.test(trimmed)) return null
   return trimmed
 }
 
 function normalizeCascadedLlmModels(raw, base) {
-  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
-  const fallback = base && typeof base === 'object' && !Array.isArray(base)
-    ? base
-    : DEFAULT_SETTINGS.cascadedLlmModels
+  const source = isRecord(raw) ? raw : {}
+  const fallback = isRecord(base) ? base : DEFAULT_SETTINGS.cascadedLlmModels
   return {
     qwen: pick(
-      source.qwen,
-      fallback.qwen,
+      ownEnumerableDataValue(source, 'qwen'),
+      ownEnumerableDataValue(fallback, 'qwen'),
       DEFAULT_SETTINGS.cascadedLlmModels.qwen,
       validModelOrVoice,
     ),
     ark: pick(
-      source.ark,
-      fallback.ark,
+      ownEnumerableDataValue(source, 'ark'),
+      ownEnumerableDataValue(fallback, 'ark'),
       DEFAULT_SETTINGS.cascadedLlmModels.ark,
       validModelOrVoice,
     ),
@@ -133,19 +160,20 @@ function normalizeCascadedLlmModels(raw, base) {
 // never has this shape, so a plaintext value that somehow reached the file is
 // dropped rather than round-tripped.
 function validSecretEntry(entry) {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
-  if (entry.enc !== 'safeStorage' && entry.enc !== 'none') return null
-  const { data } = entry
+  if (!isRecord(entry)) return null
+  const enc = ownEnumerableDataValue(entry, 'enc')
+  const data = ownEnumerableDataValue(entry, 'data')
+  if (enc !== 'safeStorage' && enc !== 'none') return null
   if (typeof data !== 'string' || data === '' || data.length > MAX_CIPHERTEXT_BASE64) return null
   if (data.length % 4 !== 0 || !BASE64.test(data)) return null
-  return { enc: entry.enc, data }
+  return { enc, data }
 }
 
 function normalizeSecrets(raw) {
   const secrets = {}
-  if (!raw || typeof raw !== 'object') return secrets
+  if (!isRecord(raw)) return secrets
   for (const key of SECRET_KEYS) {
-    const entry = validSecretEntry(raw[key])
+    const entry = validSecretEntry(ownEnumerableDataValue(raw, key))
     if (entry) secrets[key] = entry
   }
   return secrets
@@ -154,82 +182,87 @@ function normalizeSecrets(raw) {
 // Rebuilds the object rather than editing it: unknown keys have no path
 // into the result, whatever the file on disk happens to contain.
 export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
-  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
-  const fallback = base && typeof base === 'object' && !Array.isArray(base) ? base : DEFAULT_SETTINGS
+  const source = isRecord(raw) ? raw : {}
+  const fallback = isRecord(base) ? base : DEFAULT_SETTINGS
   return {
     version: SETTINGS_VERSION,
-    palette: pick(source.palette, fallback.palette, DEFAULT_SETTINGS.palette, validPalette),
+    palette: pick(
+      ownEnumerableDataValue(source, 'palette'),
+      ownEnumerableDataValue(fallback, 'palette'),
+      DEFAULT_SETTINGS.palette,
+      validPalette,
+    ),
     proactivity: pick(
-      source.proactivity,
-      fallback.proactivity,
+      ownEnumerableDataValue(source, 'proactivity'),
+      ownEnumerableDataValue(fallback, 'proactivity'),
       DEFAULT_SETTINGS.proactivity,
       validProactivity,
     ),
     codexHeartbeatSeconds: pick(
-      source.codexHeartbeatSeconds,
-      fallback.codexHeartbeatSeconds,
+      ownEnumerableDataValue(source, 'codexHeartbeatSeconds'),
+      ownEnumerableDataValue(fallback, 'codexHeartbeatSeconds'),
       DEFAULT_SETTINGS.codexHeartbeatSeconds,
       validHeartbeat,
     ),
     pipelineMode: pick(
-      source.pipelineMode,
-      fallback.pipelineMode,
+      ownEnumerableDataValue(source, 'pipelineMode'),
+      ownEnumerableDataValue(fallback, 'pipelineMode'),
       DEFAULT_SETTINGS.pipelineMode,
       validPipelineMode,
     ),
     integratedProvider: pick(
-      source.integratedProvider,
-      fallback.integratedProvider,
+      ownEnumerableDataValue(source, 'integratedProvider'),
+      ownEnumerableDataValue(fallback, 'integratedProvider'),
       DEFAULT_SETTINGS.integratedProvider,
       validIntegratedProvider,
     ),
     integratedModel: pick(
-      source.integratedModel,
-      fallback.integratedModel,
+      ownEnumerableDataValue(source, 'integratedModel'),
+      ownEnumerableDataValue(fallback, 'integratedModel'),
       DEFAULT_SETTINGS.integratedModel,
       validModelOrVoice,
     ),
     integratedVoice: pick(
-      source.integratedVoice,
-      fallback.integratedVoice,
+      ownEnumerableDataValue(source, 'integratedVoice'),
+      ownEnumerableDataValue(fallback, 'integratedVoice'),
       DEFAULT_SETTINGS.integratedVoice,
       validModelOrVoice,
     ),
     cascadedEndpointingProvider: pick(
-      source.cascadedEndpointingProvider,
-      fallback.cascadedEndpointingProvider,
+      ownEnumerableDataValue(source, 'cascadedEndpointingProvider'),
+      ownEnumerableDataValue(fallback, 'cascadedEndpointingProvider'),
       DEFAULT_SETTINGS.cascadedEndpointingProvider,
       validCascadedEndpointingProvider,
     ),
     cascadedAsrProvider: pick(
-      source.cascadedAsrProvider,
-      fallback.cascadedAsrProvider,
+      ownEnumerableDataValue(source, 'cascadedAsrProvider'),
+      ownEnumerableDataValue(fallback, 'cascadedAsrProvider'),
       DEFAULT_SETTINGS.cascadedAsrProvider,
       validCascadedAsrProvider,
     ),
     cascadedLlmProvider: pick(
-      source.cascadedLlmProvider,
-      fallback.cascadedLlmProvider,
+      ownEnumerableDataValue(source, 'cascadedLlmProvider'),
+      ownEnumerableDataValue(fallback, 'cascadedLlmProvider'),
       DEFAULT_SETTINGS.cascadedLlmProvider,
       validCascadedLlmProvider,
     ),
     cascadedLlmModels: normalizeCascadedLlmModels(
-      source.cascadedLlmModels,
-      fallback.cascadedLlmModels,
+      ownEnumerableDataValue(source, 'cascadedLlmModels'),
+      ownEnumerableDataValue(fallback, 'cascadedLlmModels'),
     ),
     cascadedTtsProvider: pick(
-      source.cascadedTtsProvider,
-      fallback.cascadedTtsProvider,
+      ownEnumerableDataValue(source, 'cascadedTtsProvider'),
+      ownEnumerableDataValue(fallback, 'cascadedTtsProvider'),
       DEFAULT_SETTINGS.cascadedTtsProvider,
       validCascadedTtsProvider,
     ),
     cascadedTtsVoice: pick(
-      source.cascadedTtsVoice,
-      fallback.cascadedTtsVoice,
+      ownEnumerableDataValue(source, 'cascadedTtsVoice'),
+      ownEnumerableDataValue(fallback, 'cascadedTtsVoice'),
       DEFAULT_SETTINGS.cascadedTtsVoice,
       validModelOrVoice,
     ),
-    secrets: normalizeSecrets(source.secrets),
+    secrets: normalizeSecrets(ownEnumerableDataValue(source, 'secrets')),
   }
 }
 
@@ -324,10 +357,14 @@ function sealSecret(plaintext, codec) {
 function updatedSecrets(stored, updates, codec) {
   const secrets = { ...stored }
   const rejected = []
-  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return { secrets, rejected }
+  if (!isRecord(updates)) return { secrets, rejected }
   for (const key of SECRET_KEYS) {
-    if (!Object.hasOwn(updates, key)) continue
-    const value = updates[key]
+    const value = ownEnumerableDataValue(updates, key)
+    if (value === MISSING_PROPERTY) continue
+    if (value === INVALID_PROPERTY) {
+      rejected.push(key)
+      continue
+    }
     if (typeof value !== 'string' || [...value].length > MAX_SECRET_LENGTH) {
       rejected.push(key)
       continue
@@ -375,23 +412,30 @@ function resealPlaintext(secrets, codec) {
 // so a caller can tell "silently kept the old value" apart from "saved".
 export function applySettingsUpdate(current, patch, codec) {
   const stored = normalizeSettings(current)
-  const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}
+  const source = isRecord(patch) ? patch : {}
   const next = normalizeSettings({
-    palette: source.palette,
-    proactivity: source.proactivity,
-    codexHeartbeatSeconds: source.codexHeartbeatSeconds,
-    pipelineMode: source.pipelineMode,
-    integratedProvider: source.integratedProvider,
-    integratedModel: source.integratedModel,
-    integratedVoice: source.integratedVoice,
-    cascadedEndpointingProvider: source.cascadedEndpointingProvider,
-    cascadedAsrProvider: source.cascadedAsrProvider,
-    cascadedLlmProvider: source.cascadedLlmProvider,
-    cascadedLlmModels: source.cascadedLlmModels,
-    cascadedTtsProvider: source.cascadedTtsProvider,
-    cascadedTtsVoice: source.cascadedTtsVoice,
+    palette: ownEnumerableDataValue(source, 'palette'),
+    proactivity: ownEnumerableDataValue(source, 'proactivity'),
+    codexHeartbeatSeconds: ownEnumerableDataValue(source, 'codexHeartbeatSeconds'),
+    pipelineMode: ownEnumerableDataValue(source, 'pipelineMode'),
+    integratedProvider: ownEnumerableDataValue(source, 'integratedProvider'),
+    integratedModel: ownEnumerableDataValue(source, 'integratedModel'),
+    integratedVoice: ownEnumerableDataValue(source, 'integratedVoice'),
+    cascadedEndpointingProvider: ownEnumerableDataValue(
+      source,
+      'cascadedEndpointingProvider',
+    ),
+    cascadedAsrProvider: ownEnumerableDataValue(source, 'cascadedAsrProvider'),
+    cascadedLlmProvider: ownEnumerableDataValue(source, 'cascadedLlmProvider'),
+    cascadedLlmModels: ownEnumerableDataValue(source, 'cascadedLlmModels'),
+    cascadedTtsProvider: ownEnumerableDataValue(source, 'cascadedTtsProvider'),
+    cascadedTtsVoice: ownEnumerableDataValue(source, 'cascadedTtsVoice'),
   }, stored)
-  const { secrets, rejected } = updatedSecrets(stored.secrets, source.secrets, codec)
+  const { secrets, rejected } = updatedSecrets(
+    stored.secrets,
+    ownEnumerableDataValue(source, 'secrets'),
+    codec,
+  )
   next.secrets = resealPlaintext(secrets, codec)
   next.rejectedSecrets = rejected
   return next

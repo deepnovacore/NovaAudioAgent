@@ -121,3 +121,76 @@ The environment object has one assignment per active node selector. Inactive pan
 - Confirmed integrated, cascaded Qwen, and cascaded Ark launch tests include inactive credentials to prove they are not injected by panel overrides.
 - Confirmed no secret value or ciphertext was added to logs or return values.
 - No Task 6 implementation concern remains. The existing Settings renderer still targets schema v1 by design and is reserved for Task 7, per scope.
+
+## Fix round 1: descriptor-only input and raw control rejection
+
+### Scope and root cause
+
+- Public, nested-model, base, secret-map, and secret-entry normalization used ordinary property reads. Those reads traversed prototypes and executed accessors before validation.
+- Model/voice and backend secret validation checked control characters only after `trim()`, so leading or trailing C0/DEL characters were removed before the safety check.
+
+### RED evidence
+
+Descriptor-boundary command:
+
+```bash
+node --test desktop/ambient-orb/test/settings-store.test.mjs
+```
+
+Observed before the descriptor fix: 37 passed, 5 failed. The failures demonstrated invoked top-level, nested-model, secret-map/entry, and base getters, plus an uncaught descriptor-hostile Proxy.
+
+Raw-control commands:
+
+```bash
+node --test --test-name-pattern='leading and trailing controls' desktop/ambient-orb/test/settings-store.test.mjs
+node --test --test-name-pattern='raw boundary controls' desktop/ambient-orb/test/backend.test.mjs
+```
+
+Observed before the raw-input fix: Settings 0 passed/1 failed; backend 0 passed/2 failed. Boundary controls were trimmed away and the resulting values replaced schema defaults or valid inherited environment keys.
+
+### GREEN evidence
+
+Descriptor-boundary command after the fix:
+
+```bash
+node --test desktop/ambient-orb/test/settings-store.test.mjs
+```
+
+Observed: 42 passed, 0 failed.
+
+Focused raw-control commands after the fix:
+
+```bash
+node --test --test-name-pattern='leading and trailing controls' desktop/ambient-orb/test/settings-store.test.mjs
+node --test --test-name-pattern='raw boundary controls' desktop/ambient-orb/test/backend.test.mjs
+```
+
+Observed: Settings 1 passed, 0 failed; backend 2 passed, 0 failed.
+
+Complete socket-enabled Main/security command:
+
+```bash
+node --test desktop/ambient-orb/test/settings-store.test.mjs desktop/ambient-orb/test/backend.test.mjs desktop/ambient-orb/test/preload.test.mjs desktop/ambient-orb/test/main-security.test.mjs desktop/ambient-orb/test/security.test.mjs
+```
+
+Observed: 145 passed, 0 failed.
+
+Static verification:
+
+```bash
+node --check desktop/ambient-orb/src/main/settings-store.mjs
+node --check desktop/ambient-orb/src/main/backend.mjs
+node --check desktop/ambient-orb/src/main/main.mjs
+git diff --check
+```
+
+Observed: all commands exited 0.
+
+### Implementation and self-review
+
+- Added one fail-closed descriptor extractor that accepts only own enumerable data properties. Missing and invalid properties remain distinct so update patches still preserve unspecified values and independently reject malformed secret fields.
+- Applied descriptor-only extraction to every known top-level field, both remembered model entries, caller-supplied base fields, secret-map members, stored secret entry `enc`/`data`, and renderer-shaped update patches.
+- Accessors, inherited values, symbols, non-enumerable values, descriptor-hostile Proxies, and revoked Proxies do not execute or escape normalization.
+- Model/voice values and all seven active backend secret overrides now reject controls on the raw string before trimming. Unsafe overrides are omitted, preserving valid parent environment values.
+- Existing safeStorage behavior, atomic/queued writes, opportunistic re-sealing, presence-only public views, provider selection, and secret-free diagnostics remain unchanged.
+- No fix-round concern remains.

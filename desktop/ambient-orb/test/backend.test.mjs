@@ -485,6 +485,63 @@ test('launch spec omits a decrypted secret carrying a control character', () => 
   }
 })
 
+test('integrated launch rejects raw boundary controls in every active secret override', () => {
+  const parentEnv = {
+    DASHSCOPE_API_KEY: 'parent-dash',
+    TAVILY_API_KEY: 'parent-tavily',
+    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'parent-model',
+    NOVA_AUDIO_AGENT_CODEX_API_KEY: 'parent-codex',
+  }
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv,
+    settings: SETTINGS_V2,
+    decryptedSecrets: {
+      dashscopeApiKey: '\ndash-override',
+      tavilyApiKey: 'tavily-override\r',
+      modelApiKey: '\tmodel-override',
+      codexApiKey: 'codex-override\u007f',
+    },
+  })
+
+  assert.equal(spec.env.DASHSCOPE_API_KEY, 'parent-dash')
+  assert.equal(spec.env.TAVILY_API_KEY, 'parent-tavily')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_MODEL_API_KEY, 'parent-model')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_API_KEY, 'parent-codex')
+})
+
+test('cascaded Ark launch rejects raw boundary controls in every new secret override', () => {
+  const parentEnv = {
+    ARK_API_KEY: 'parent-ark',
+    DOUBAO_BIGMODEL_API_KEY: 'parent-doubao',
+    DOUBAO_ASR_API_KEY: 'parent-asr',
+  }
+  const spec = backendLaunchSpec({
+    python: '/venv/bin/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv,
+    settings: {
+      ...SETTINGS_V2,
+      pipelineMode: 'cascaded',
+      cascadedLlmProvider: 'ark',
+    },
+    decryptedSecrets: {
+      arkApiKey: '\nark-override',
+      doubaoBigmodelApiKey: 'doubao-override\r',
+      doubaoAsrApiKey: '\tasr-override',
+    },
+  })
+
+  assert.equal(spec.env.ARK_API_KEY, 'parent-ark')
+  assert.equal(spec.env.DOUBAO_BIGMODEL_API_KEY, 'parent-doubao')
+  assert.equal(spec.env.DOUBAO_ASR_API_KEY, 'parent-asr')
+})
+
 test('launch spec injects a decrypted secret with its surrounding whitespace trimmed', () => {
   const spec = backendLaunchSpec({
     python: '/venv/bin/python',

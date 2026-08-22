@@ -228,11 +228,12 @@ export function backendLaunchSpec({
       if (!activeSecretKeys.has(secretKey)) continue
       const value = decryptedSecrets[secretKey]
       if (typeof value !== 'string') continue
+      if (CONTROL_CHARACTERS.test(value)) continue
       const trimmed = value.trim()
       // A control character in the value would make Node reject the whole
       // spawn, so the key is dropped exactly like an empty one: the launch
       // proceeds, and whatever the parent environment holds keeps winning.
-      if (trimmed && !CONTROL_CHARACTERS.test(trimmed)) env[envName] = trimmed
+      if (trimmed) env[envName] = trimmed
     }
   }
   return backend === 'node'
