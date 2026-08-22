@@ -1,4 +1,4 @@
-import { isAbsolute, win32 } from 'node:path'
+import { createHash } from 'node:crypto'
 
 import { z } from 'zod'
 
@@ -18,8 +18,9 @@ import {
 } from './models.js'
 import { SensitiveContentPolicy, SensitivePathPolicy } from './sensitivity.js'
 
-export const WORKSPACE_GRAPH_SCHEMA_VERSION = 1
+export const WORKSPACE_GRAPH_SCHEMA_VERSION = 2
 const DERIVED_TABLE_ROW_CAP = 128
+const OPERATION_RECEIPT_CAP = 4096
 
 type GraphSqlInput = null | number | bigint | string | NodeJS.ArrayBufferView
 type GraphSqlOutput = null | number | bigint | string | NodeJS.NonSharedUint8Array
@@ -55,12 +56,15 @@ export interface PublishedGraphSnapshot {
 }
 
 export const PublishedGraphSnapshotSchema = z.object({
-  schema_version: z.number().int().positive(),
+  schema_version: z.literal(WORKSPACE_GRAPH_SCHEMA_VERSION),
   publication_revision: z.number().int().nonnegative(),
   degraded: z.boolean(),
   logical_workspaces: z.array(LogicalWorkspaceSchema),
   workspace_instances: z.array(WorkspaceInstanceSchema),
-  relations: z.array(RelationCardSchema),
+  relations: z.array(RelationCardSchema.refine(
+    relation => relation.status === 'active' || relation.status === 'weak',
+    {message: 'published relations must be active or weak'},
+  )),
   aliases: z.array(z.object({
     alias: z.string().min(1),
     logical_workspace_id: z.string().min(1),
@@ -69,6 +73,8 @@ export const PublishedGraphSnapshotSchema = z.object({
 
 export interface WorkspaceGraphStoreOptions {
   readonly deniedRoots?: readonly string[]
+  readonly publicationRevisionFloor?: number
+  readonly afterRelationStatement?: () => void
 }
 
 export interface WorkspaceGraphStoreDiagnostics {
@@ -80,12 +86,51 @@ export interface WorkspaceGraphStoreDiagnostics {
   readonly workspace_instances: number
   readonly relation_cards: number
   readonly relation_evidence: number
+  readonly operation_receipts: number
 }
 
 export interface WorkspaceGraphCompactionResult {
   readonly derived_rows_before: number
   readonly derived_rows_after: number
 }
+
+const operationTypeSchema = z.enum([
+  'append_observation',
+  'replace_card',
+  'upsert_relation',
+  'suppress_relation',
+  'compact',
+])
+
+const receiptRelationResultSchema = z.object({
+  kind: z.literal('relation'),
+  source_logical_id: z.string().min(1),
+  target_logical_id: z.string().min(1),
+  relation_type: relationTypeSchema,
+  revision: z.number().int().nonnegative(),
+  status: z.enum(['active', 'weak', 'stale', 'suppressed']),
+}).strict()
+
+export const OperationReceiptResultSchema = z.discriminatedUnion('kind', [
+  z.object({kind: z.literal('none')}).strict(),
+  z.object({kind: z.literal('observation'), evidence: EvidenceRefSchema}).strict(),
+  receiptRelationResultSchema,
+  z.object({
+    kind: z.literal('compaction'),
+    derived_rows_before: z.number().int().nonnegative(),
+    derived_rows_after: z.number().int().nonnegative(),
+  }).strict(),
+])
+
+export const OperationReceiptSchema = z.object({
+  operation_id: z.string().uuid(),
+  operation_type: operationTypeSchema,
+  result: OperationReceiptResultSchema,
+}).strict()
+
+export type OperationReceipt = z.infer<typeof OperationReceiptSchema>
+type OperationReceiptResult = z.infer<typeof OperationReceiptResultSchema>
+type OperationType = z.infer<typeof operationTypeSchema>
 
 export type WorkspaceGraphStoreErrorCode =
   | 'STORE_ALREADY_OPEN'
@@ -96,6 +141,8 @@ export type WorkspaceGraphStoreErrorCode =
   | 'STORE_INVALID_RELATION'
   | 'STORE_MIGRATION_FAILED'
   | 'STORE_NOT_FOUND'
+  | 'STORE_INVALID_OPERATION'
+  | 'STORE_OPERATION_CONFLICT'
   | 'STORE_READ_FAILED'
   | 'STORE_SCHEMA_UNSUPPORTED'
   | 'STORE_SENSITIVE_CONTENT_REJECTED'
@@ -112,6 +159,8 @@ const storeErrorMessages: Readonly<Record<WorkspaceGraphStoreErrorCode, string>>
   STORE_INVALID_RELATION: 'invalid workspace graph relation',
   STORE_MIGRATION_FAILED: 'workspace graph schema migration failed',
   STORE_NOT_FOUND: 'workspace graph record was not found',
+  STORE_INVALID_OPERATION: 'workspace graph operation is invalid',
+  STORE_OPERATION_CONFLICT: 'workspace graph operation replay conflict',
   STORE_READ_FAILED: 'workspace graph read failed',
   STORE_SCHEMA_UNSUPPORTED: 'workspace graph schema version is unsupported',
   STORE_SENSITIVE_CONTENT_REJECTED: 'workspace graph sensitive content was rejected',
@@ -135,6 +184,7 @@ export class WorkspaceGraphStore {
   readonly #databaseFactory: GraphDatabaseFactory
   readonly #pathPolicy: SensitivePathPolicy
   readonly #contentPolicy = new SensitiveContentPolicy()
+  readonly #afterRelationStatement: (() => void) | undefined
   #database: GraphDatabase | undefined
   #publicationRevision = 0
 
@@ -148,6 +198,8 @@ export class WorkspaceGraphStore {
     this.#pathPolicy = new SensitivePathPolicy(
       options.deniedRoots === undefined ? {} : {deniedRoots: options.deniedRoots},
     )
+    this.#publicationRevision = options.publicationRevisionFloor ?? 0
+    this.#afterRelationStatement = options.afterRelationStatement
   }
 
   open(): void {
@@ -160,6 +212,10 @@ export class WorkspaceGraphStore {
       database.exec('PRAGMA journal_mode=WAL')
       this.#migrate(database)
       this.#database = database
+      this.#publicationRevision = Math.max(
+        this.#publicationRevision,
+        this.#latestReceiptSequence(database),
+      )
     } catch (error) {
       try {
         database?.close()
@@ -182,7 +238,7 @@ export class WorkspaceGraphStore {
     }
   }
 
-  appendObservation(input: Observation): EvidenceRef {
+  appendObservation(input: Observation, operationId: string): EvidenceRef {
     const parsed = ObservationSchema.safeParse(input)
     if (!parsed.success) throw new WorkspaceGraphStoreError('STORE_INVALID_OBSERVATION')
     const observation = this.#sanitizeObservation(parsed.data)
@@ -194,23 +250,17 @@ export class WorkspaceGraphStore {
       observed_at: observation.occurred_at,
     } satisfies EvidenceRef
 
-    const existing = this.#read(() => database.prepare(`
-      SELECT payload_json FROM observations WHERE source = ? AND ref = ?
-    `).get(evidence.source, evidence.ref))
-    if (existing !== undefined) {
-      if (stringColumn(existing, 'payload_json') !== payload) {
-        throw new WorkspaceGraphStoreError('STORE_IDEMPOTENCY_CONFLICT')
-      }
-      return evidence
-    }
-
-    this.#write(database, () => {
-      database.prepare(`
+    return this.#writeWithReceipt(database, operationId, 'append_observation', observation, receipt => {
+      if (receipt.kind !== 'observation') throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+      return receipt.evidence
+    }, () => {
+      const inserted = database.prepare(`
         INSERT INTO observations(
           observation_id, observation_type, occurred_at, source, ref, trust,
           logical_workspace_id, workspace_instance_id, related_logical_workspace_id,
           summary, outcome, payload_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source, ref) DO NOTHING
       `).run(
         observation.observation_id,
         observation.observation_type,
@@ -225,30 +275,59 @@ export class WorkspaceGraphStore {
         observation.outcome,
         payload,
       )
+      if (inserted.changes === 0 || inserted.changes === 0n) {
+        const existing = database.prepare(`
+          SELECT payload_json FROM observations WHERE source = ? AND ref = ?
+        `).get(evidence.source, evidence.ref)
+        if (existing === undefined || stringColumn(existing, 'payload_json') !== payload) {
+          throw new WorkspaceGraphStoreError('STORE_IDEMPOTENCY_CONFLICT')
+        }
+      }
+      return {result: evidence, receipt: {kind: 'observation', evidence}}
     })
-    return evidence
   }
 
-  replaceCard(input: WorkspaceCard): void {
+  replaceCard(input: WorkspaceCard, operationId: string): void {
     if (isLogicalWorkspaceInput(input)) {
       const parsed = LogicalWorkspaceSchema.safeParse(input)
       if (!parsed.success) throw new WorkspaceGraphStoreError('STORE_INVALID_CARD')
-      this.#replaceLogicalWorkspace(parsed.data)
+      const database = this.#requireDatabase()
+      this.#writeWithReceipt(database, operationId, 'replace_card', parsed.data, receipt => {
+        if (receipt.kind !== 'none') throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+      }, () => {
+        this.#replaceLogicalWorkspace(database, parsed.data)
+        return {result: undefined, receipt: {kind: 'none'}}
+      })
       return
     }
     const parsed = WorkspaceInstanceSchema.safeParse(input)
     if (!parsed.success) throw new WorkspaceGraphStoreError('STORE_INVALID_CARD')
-    this.#replaceWorkspaceInstance(parsed.data)
+    const database = this.#requireDatabase()
+    this.#writeWithReceipt(database, operationId, 'replace_card', parsed.data, receipt => {
+      if (receipt.kind !== 'none') throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    }, () => {
+      this.#replaceWorkspaceInstance(database, parsed.data)
+      return {result: undefined, receipt: {kind: 'none'}}
+    })
   }
 
-  upsertRelation(input: RelationCard, expectedRevision?: number): RelationCard {
+  upsertRelation(input: RelationCard, expectedRevision: number | undefined, operationId: string): RelationCard {
     const relation = this.#sanitizeRelation(input)
     if (expectedRevision !== undefined && (!Number.isInteger(expectedRevision) || expectedRevision < 0)) {
       throw new WorkspaceGraphStoreError('STORE_STALE_REVISION')
     }
     const database = this.#requireDatabase()
-    this.#write(database, () => {
+    return this.#writeWithReceipt(
+      database,
+      operationId,
+      'upsert_relation',
+      {relation, expected_revision: expectedRevision ?? null},
+      receipt => this.#relationFromReceipt(database, receipt),
+      () => {
       const existing = this.#relationRow(database, relation)
+      if (existing !== undefined && expectedRevision === undefined) {
+        throw new WorkspaceGraphStoreError('STORE_STALE_REVISION')
+      }
       if (expectedRevision !== undefined) {
         if (existing === undefined || numberColumn(existing, 'revision') !== expectedRevision) {
           throw new WorkspaceGraphStoreError('STORE_STALE_REVISION')
@@ -261,8 +340,9 @@ export class WorkspaceGraphStore {
       for (const evidence of relation.evidence_refs) {
         this.#writeRelationEvidence(database, relation, evidence)
       }
-    })
-    return relation
+        return {result: relation, receipt: relationReceipt(relation)}
+      },
+    )
   }
 
   suppressRelation(
@@ -270,15 +350,25 @@ export class WorkspaceGraphStore {
     targetId: string,
     relationType: RelationCard['relation_type'],
     input: EvidenceRef,
+    operationId: string,
   ): RelationCard {
     const parsedEvidence = EvidenceRefSchema.safeParse(input)
     const parsedType = relationTypeSchema.safeParse(relationType)
     if (!parsedEvidence.success || !parsedType.success) {
       throw new WorkspaceGraphStoreError('STORE_INVALID_RELATION')
     }
+    this.#assertSafeIdentity('source_logical_id', sourceId)
+    this.#assertSafeIdentity('target_logical_id', targetId)
+    this.#assertSafeIdentity('evidence_source', parsedEvidence.data.source)
+    this.#assertSafeIdentity('evidence_ref', parsedEvidence.data.ref)
     const database = this.#requireDatabase()
-    let suppressed: RelationCard | undefined
-    this.#write(database, () => {
+    return this.#writeWithReceipt(
+      database,
+      operationId,
+      'suppress_relation',
+      {sourceId, targetId, relationType: parsedType.data, evidence: parsedEvidence.data},
+      receipt => this.#relationFromReceipt(database, receipt),
+      () => {
       const row = database.prepare(`
         SELECT payload_json FROM relation_cards
         WHERE source_logical_id = ? AND target_logical_id = ? AND relation_type = ?
@@ -289,7 +379,7 @@ export class WorkspaceGraphStore {
       const hasEvidence = current.evidence_refs.some(item => (
         item.source === evidence.source && item.ref === evidence.ref
       ))
-      suppressed = RelationCardSchema.parse({
+      const suppressed = RelationCardSchema.parse({
         ...current,
         evidence_refs: hasEvidence ? current.evidence_refs : [...current.evidence_refs, evidence],
         last_seen_at: Math.max(current.last_seen_at, evidence.observed_at),
@@ -298,15 +388,21 @@ export class WorkspaceGraphStore {
       })
       this.#writeRelation(database, suppressed)
       this.#writeRelationEvidence(database, suppressed, evidence)
-    })
-    if (suppressed === undefined) throw new WorkspaceGraphStoreError('STORE_WRITE_FAILED')
-    return suppressed
+        return {result: suppressed, receipt: relationReceipt(suppressed)}
+      },
+    )
   }
 
-  compact(): WorkspaceGraphCompactionResult {
+  compact(operationId: string): WorkspaceGraphCompactionResult {
     const database = this.#requireDatabase()
-    const before = this.#derivedRowCount(database)
-    this.#write(database, () => {
+    return this.#writeWithReceipt(database, operationId, 'compact', {}, receipt => {
+      if (receipt.kind !== 'compaction') throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+      return {
+        derived_rows_before: receipt.derived_rows_before,
+        derived_rows_after: receipt.derived_rows_after,
+      }
+    }, () => {
+      const before = this.#derivedRowCount(database)
       this.#compactTable(
         database,
         'workspace_instances',
@@ -315,8 +411,17 @@ export class WorkspaceGraphStore {
         'last_seen_at ASC, instance_id ASC',
       )
       this.#compactRelations(database)
+      this.#compactOperationReceipts(database)
+      const result = {derived_rows_before: before, derived_rows_after: this.#derivedRowCount(database)}
+      return {result, receipt: {kind: 'compaction', ...result}}
     })
-    return {derived_rows_before: before, derived_rows_after: this.#derivedRowCount(database)}
+  }
+
+  getOperationReceipt(operationId: string): OperationReceipt | undefined {
+    const parsedId = z.string().uuid().safeParse(operationId)
+    if (!parsedId.success) throw new WorkspaceGraphStoreError('STORE_INVALID_OPERATION')
+    const database = this.#requireDatabase()
+    return this.#read(() => this.#operationReceipt(database, parsedId.data)?.receipt)
   }
 
   publishSnapshot(): PublishedGraphSnapshot {
@@ -476,6 +581,7 @@ export class WorkspaceGraphStore {
       workspace_instances: this.#tableCount(database, 'workspace_instances'),
       relation_cards: this.#tableCount(database, 'relation_cards'),
       relation_evidence: this.#tableCount(database, 'relation_evidence'),
+      operation_receipts: this.#tableCount(database, 'operation_receipts'),
     }))
   }
 
@@ -559,12 +665,20 @@ export class WorkspaceGraphStore {
             REFERENCES relation_cards(source_logical_id, target_logical_id, relation_type)
             ON DELETE CASCADE
         ) STRICT;
+        CREATE TABLE IF NOT EXISTS operation_receipts(
+          receipt_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          operation_id TEXT NOT NULL UNIQUE,
+          operation_type TEXT NOT NULL,
+          input_digest TEXT NOT NULL,
+          committed_at INTEGER NOT NULL,
+          result_json TEXT NOT NULL
+        ) STRICT;
       `)
       const version = this.#schemaVersion(database)
       if (version > WORKSPACE_GRAPH_SCHEMA_VERSION) {
         throw new WorkspaceGraphStoreError('STORE_SCHEMA_UNSUPPORTED')
       }
-      if (version === 0) {
+      if (version < WORKSPACE_GRAPH_SCHEMA_VERSION) {
         database.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)')
           .run(WORKSPACE_GRAPH_SCHEMA_VERSION, Date.now())
       }
@@ -583,38 +697,77 @@ export class WorkspaceGraphStore {
   }
 
   #sanitizeObservation(observation: Observation): Observation {
-    if (
-      observation.summary !== null
-      && isPathLike(observation.summary)
-      && !this.#pathPolicy.allows(observation.summary)
-    ) {
-      throw new WorkspaceGraphStoreError('STORE_SENSITIVE_PATH_DENIED')
+    const identityFields: readonly (readonly [string, string | null])[] = [
+      ['observation_id', observation.observation_id],
+      ['observation_type', observation.observation_type],
+      ['source', observation.source],
+      ['trust', observation.trust],
+      ['logical_workspace_id', observation.logical_workspace_id],
+      ['workspace_instance_id', observation.workspace_instance_id],
+      ['related_logical_workspace_id', observation.related_logical_workspace_id],
+      ['outcome', observation.outcome],
+    ]
+    for (const [field, value] of identityFields) {
+      if (value !== null) this.#assertSafeIdentity(field, value)
+    }
+    for (const evidence of observation.evidence_refs) {
+      this.#assertSafeIdentity('evidence_source', evidence.source)
+      this.#assertSafeIdentity('evidence_ref', evidence.ref)
     }
     if (observation.summary === null) return observation
-    const scrubbed = this.#contentPolicy.scrub('summary', observation.summary)
-    if (scrubbed.kind === 'clean') return observation
+    const content = this.#contentPolicy.scrub('summary', observation.summary)
+    if (content.kind === 'rejected') return ObservationSchema.parse({...observation, summary: null})
+    const contentSafe = content.kind === 'redacted' ? content.value : observation.summary
+    const path = this.#pathPolicy.scrubText('summary', contentSafe)
+    if (content.kind === 'clean' && path.kind === 'clean') return observation
     return ObservationSchema.parse({
       ...observation,
-      summary: scrubbed.kind === 'redacted' ? scrubbed.value : null,
+      summary: path.kind === 'rejected'
+        ? null
+        : path.kind === 'redacted'
+          ? path.value
+          : contentSafe,
     })
+  }
+
+  #assertSafeIdentity(field: string, value: string): void {
+    if (this.#contentPolicy.scrub(field, value).kind !== 'clean') {
+      throw new WorkspaceGraphStoreError('STORE_SENSITIVE_CONTENT_REJECTED')
+    }
+    if (this.#pathPolicy.scrubText(field, value).kind !== 'clean') {
+      throw new WorkspaceGraphStoreError('STORE_SENSITIVE_PATH_DENIED')
+    }
   }
 
   #sanitizeRelation(input: RelationCard): RelationCard {
     const parsed = RelationCardSchema.safeParse(input)
     if (!parsed.success) throw new WorkspaceGraphStoreError('STORE_INVALID_RELATION')
-    const scrubbed = this.#contentPolicy.scrub('reason', parsed.data.reason)
-    if (scrubbed.kind === 'rejected') {
+    this.#assertSafeIdentity('source_logical_id', parsed.data.source_logical_id)
+    this.#assertSafeIdentity('target_logical_id', parsed.data.target_logical_id)
+    for (const evidence of parsed.data.evidence_refs) {
+      this.#assertSafeIdentity('evidence_source', evidence.source)
+      this.#assertSafeIdentity('evidence_ref', evidence.ref)
+    }
+    const content = this.#contentPolicy.scrub('reason', parsed.data.reason)
+    if (content.kind === 'rejected') {
       throw new WorkspaceGraphStoreError('STORE_SENSITIVE_CONTENT_REJECTED')
     }
-    if (scrubbed.kind === 'clean') return parsed.data
-    const redacted = RelationCardSchema.safeParse({...parsed.data, reason: scrubbed.value})
+    const contentSafe = content.kind === 'redacted' ? content.value : parsed.data.reason
+    const path = this.#pathPolicy.scrubText('reason', contentSafe)
+    if (content.kind === 'clean' && path.kind === 'clean') return parsed.data
+    const redacted = RelationCardSchema.safeParse({
+      ...parsed.data,
+      reason: path.kind === 'rejected'
+        ? '[redacted]'
+        : path.kind === 'redacted'
+          ? path.value
+          : contentSafe,
+    })
     if (!redacted.success) throw new WorkspaceGraphStoreError('STORE_INVALID_RELATION')
     return redacted.data
   }
 
-  #replaceLogicalWorkspace(workspace: LogicalWorkspace): void {
-    const database = this.#requireDatabase()
-    this.#write(database, () => {
+  #replaceLogicalWorkspace(database: GraphDatabase, workspace: LogicalWorkspace): void {
       database.prepare(`
         INSERT INTO logical_workspaces(
           logical_workspace_id, display_name, canonical_remote,
@@ -636,12 +789,9 @@ export class WorkspaceGraphStore {
         workspace.revision,
         canonicalJson(workspace),
       )
-    })
   }
 
-  #replaceWorkspaceInstance(instance: WorkspaceInstance): void {
-    const database = this.#requireDatabase()
-    this.#write(database, () => {
+  #replaceWorkspaceInstance(database: GraphDatabase, instance: WorkspaceInstance): void {
       database.prepare(`
         INSERT INTO workspace_instances(
           instance_id, logical_workspace_id, display_name, path_label, branch,
@@ -671,7 +821,6 @@ export class WorkspaceGraphStore {
         instance.revision,
         canonicalJson(instance),
       )
-    })
   }
 
   #relationRow(database: GraphDatabase, relation: RelationCard): Record<string, GraphSqlOutput> | undefined {
@@ -707,6 +856,7 @@ export class WorkspaceGraphStore {
       relation.revision,
       canonicalJson(relation),
     )
+    this.#afterRelationStatement?.()
   }
 
   #writeRelationEvidence(database: GraphDatabase, relation: RelationCard, evidence: EvidenceRef): void {
@@ -752,9 +902,21 @@ export class WorkspaceGraphStore {
       WHERE (source_logical_id, target_logical_id, relation_type) IN (
         SELECT source_logical_id, target_logical_id, relation_type
         FROM relation_cards
-        WHERE status IN ('stale', 'suppressed')
+        WHERE status = 'stale'
         ORDER BY last_seen_at, source_logical_id, target_logical_id, relation_type
         LIMIT ?
+      )
+    `).run(remove)
+  }
+
+  #compactOperationReceipts(database: GraphDatabase): void {
+    const count = this.#tableCount(database, 'operation_receipts')
+    const remove = Math.max(0, count - (OPERATION_RECEIPT_CAP - 1))
+    if (remove === 0) return
+    database.prepare(`
+      DELETE FROM operation_receipts WHERE receipt_sequence IN (
+        SELECT receipt_sequence FROM operation_receipts
+        ORDER BY receipt_sequence ASC LIMIT ?
       )
     `).run(remove)
   }
@@ -785,16 +947,90 @@ export class WorkspaceGraphStore {
     return RelationCardSchema.parse(JSON.parse(payload))
   }
 
-  #write(database: GraphDatabase, operation: () => void): void {
+  #writeWithReceipt<Result>(
+    database: GraphDatabase,
+    operationId: string,
+    operationType: OperationType,
+    input: unknown,
+    replay: (receipt: OperationReceiptResult) => Result,
+    operation: () => {readonly result: Result; readonly receipt: OperationReceiptResult},
+  ): Result {
+    const parsedId = z.string().uuid().safeParse(operationId)
+    if (!parsedId.success) throw new WorkspaceGraphStoreError('STORE_INVALID_OPERATION')
+    const inputDigest = createHash('sha256').update(canonicalJson(input)).digest('hex')
     try {
       database.exec('BEGIN IMMEDIATE')
-      operation()
+      const existing = this.#operationReceipt(database, parsedId.data)
+      if (existing !== undefined) {
+        if (existing.receipt.operation_type !== operationType || existing.inputDigest !== inputDigest) {
+          throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+        }
+        const result = replay(existing.receipt.result)
+        database.exec('COMMIT')
+        return result
+      }
+      const completed = operation()
+      const receipt = OperationReceiptSchema.parse({
+        operation_id: parsedId.data,
+        operation_type: operationType,
+        result: completed.receipt,
+      })
+      database.prepare(`
+        INSERT INTO operation_receipts(
+          operation_id, operation_type, input_digest, committed_at, result_json
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(
+        receipt.operation_id,
+        receipt.operation_type,
+        inputDigest,
+        Date.now(),
+        canonicalJson(receipt.result),
+      )
       database.exec('COMMIT')
+      return completed.result
     } catch (error) {
       rollback(database)
       if (error instanceof WorkspaceGraphStoreError) throw error
       throw new WorkspaceGraphStoreError('STORE_WRITE_FAILED')
     }
+  }
+
+  #operationReceipt(
+    database: GraphDatabase,
+    operationId: string,
+  ): {readonly receipt: OperationReceipt; readonly inputDigest: string} | undefined {
+    const row = database.prepare(`
+      SELECT operation_type, input_digest, result_json
+      FROM operation_receipts WHERE operation_id = ?
+    `).get(operationId)
+    if (row === undefined) return undefined
+    const result: unknown = JSON.parse(stringColumn(row, 'result_json')) as unknown
+    const receipt = OperationReceiptSchema.parse({
+      operation_id: operationId,
+      operation_type: stringColumn(row, 'operation_type'),
+      result,
+    })
+    return {receipt, inputDigest: stringColumn(row, 'input_digest')}
+  }
+
+  #relationFromReceipt(database: GraphDatabase, receipt: OperationReceiptResult): RelationCard {
+    if (receipt.kind !== 'relation') throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    const row = database.prepare(`
+      SELECT payload_json FROM relation_cards
+      WHERE source_logical_id = ? AND target_logical_id = ? AND relation_type = ?
+    `).get(receipt.source_logical_id, receipt.target_logical_id, receipt.relation_type)
+    if (row === undefined) throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    const relation = this.#parseRelationPayload(stringColumn(row, 'payload_json'))
+    if (relation.revision !== receipt.revision || relation.status !== receipt.status) {
+      throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    }
+    return relation
+  }
+
+  #latestReceiptSequence(database: GraphDatabase): number {
+    const row = database.prepare('SELECT MAX(receipt_sequence) AS sequence FROM operation_receipts').get()
+    if (row === undefined || row.sequence === null) return 0
+    return numberColumn(row, 'sequence')
   }
 
   #read<Value>(operation: () => Value): Value {
@@ -824,10 +1060,6 @@ function isLogicalWorkspaceInput(input: WorkspaceCard): input is LogicalWorkspac
   return 'logical_workspace_id' in input && 'aliases' in input
 }
 
-function isPathLike(value: string): boolean {
-  return isAbsolute(value) || win32.isAbsolute(value)
-}
-
 function stringColumn(
   row: Record<string, GraphSqlOutput> | undefined,
   key: string,
@@ -852,4 +1084,15 @@ function compareAliases(left: PublishedGraphAlias, right: PublishedGraphAlias): 
   return alias === 0
     ? compareCodePoints(left.logical_workspace_id, right.logical_workspace_id)
     : alias
+}
+
+function relationReceipt(relation: RelationCard): OperationReceiptResult {
+  return {
+    kind: 'relation',
+    source_logical_id: relation.source_logical_id,
+    target_logical_id: relation.target_logical_id,
+    relation_type: relation.relation_type,
+    revision: relation.revision,
+    status: relation.status,
+  }
 }

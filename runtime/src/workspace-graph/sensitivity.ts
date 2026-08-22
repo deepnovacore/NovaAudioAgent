@@ -28,6 +28,7 @@ const credentialQueryName = new Set([
   'accesstoken',
   'refreshtoken',
 ])
+const absolutePathSpan = /(?:[A-Za-z]:[\\/]|\/)[^\s<>"'`()\[\]{},;!?]+/gu
 
 /** Denies locations that must never be discovered or represented in graph state. */
 export class SensitivePathPolicy {
@@ -50,6 +51,19 @@ export class SensitivePathPolicy {
   redactLabel(path: string): string | null {
     if (!this.allows(path)) return null
     return basenameForPath(normalizePath(path))
+  }
+
+  /** Redacts denied absolute path spans embedded in otherwise safe free text. */
+  scrubText(_field: string, value: string): ScrubResult {
+    let matches = 0
+    const scrubbed = value.replace(absolutePathSpan, path => {
+      if (this.allows(path)) return path
+      matches += 1
+      return '[redacted]'
+    })
+    if (matches === 0) return {kind: 'clean'}
+    if (!hasMeaningfulContent(scrubbed)) return {kind: 'rejected'}
+    return {kind: 'redacted', value: scrubbed, matches}
   }
 }
 

@@ -1,15 +1,25 @@
+import { randomUUID } from 'node:crypto'
 import { Worker, type WorkerOptions } from 'node:worker_threads'
 
-import type {
-  EvidenceRef,
-  LogicalWorkspace,
-  Observation,
-  RelationCard,
-  WorkspaceInstance,
+import { z } from 'zod'
+
+import {
+  EvidenceRefSchema,
+  LogicalWorkspaceSchema,
+  ObservationSchema,
+  RelationCardSchema,
+  WorkspaceInstanceSchema,
+  type EvidenceRef,
+  type LogicalWorkspace,
+  type Observation,
+  type RelationCard,
+  type WorkspaceInstance,
 } from './models.js'
 import {
   PublishedGraphSnapshotSchema,
+  OperationReceiptSchema,
   WORKSPACE_GRAPH_SCHEMA_VERSION,
+  type OperationReceipt,
   type PublishedGraphSnapshot,
   type WorkspaceCard,
   type WorkspaceGraphCompactionResult,
@@ -50,6 +60,8 @@ const clientErrorMessages: Readonly<Record<WorkspaceGraphStoreClientErrorCode, s
   STORE_INVALID_RELATION: 'invalid workspace graph relation',
   STORE_MIGRATION_FAILED: 'workspace graph schema migration failed',
   STORE_NOT_FOUND: 'workspace graph record was not found',
+  STORE_INVALID_OPERATION: 'workspace graph operation is invalid',
+  STORE_OPERATION_CONFLICT: 'workspace graph operation replay conflict',
   STORE_READ_FAILED: 'workspace graph read failed',
   STORE_SCHEMA_UNSUPPORTED: 'workspace graph schema version is unsupported',
   STORE_SENSITIVE_CONTENT_REJECTED: 'workspace graph sensitive content was rejected',
@@ -72,7 +84,18 @@ interface PendingRequest {
   readonly resolve: (value: unknown) => void
   readonly reject: (error: WorkspaceGraphStoreClientError) => void
   readonly expectsPublication: boolean
+  readonly validateResult: RpcResultValidator<unknown>
+  readonly request: StoreRequest
+  readonly recoverable: boolean
 }
+
+interface StoreRequest extends Readonly<Record<string, unknown>> {
+  readonly kind: 'request'
+  readonly request_id: number
+  readonly operation: string
+}
+
+type RpcResultValidator<Result> = (value: unknown) => Result
 
 interface WorkerSuccess {
   readonly kind: 'response'
@@ -111,30 +134,63 @@ const publishingOperations = new Set([
   'compact',
 ])
 
+const recoverableOperations = new Set([
+  'append_observation',
+  'replace_card',
+  'upsert_relation',
+  'suppress_relation',
+  'compact',
+])
+
+const nullResult: RpcResultValidator<void> = value => {
+  if (value !== null) throw new TypeError('invalid null RPC result')
+}
+
+const compactionResultSchema = z.object({
+  derived_rows_before: z.number().int().nonnegative(),
+  derived_rows_after: z.number().int().nonnegative(),
+}).strict()
+
+const diagnosticsSchema = z.object({
+  schema_version: z.literal(WORKSPACE_GRAPH_SCHEMA_VERSION),
+  journal_mode: z.string(),
+  foreign_keys: z.boolean(),
+  observations: z.number().int().nonnegative(),
+  logical_workspaces: z.number().int().nonnegative(),
+  workspace_instances: z.number().int().nonnegative(),
+  relation_cards: z.number().int().nonnegative(),
+  relation_evidence: z.number().int().nonnegative(),
+  operation_receipts: z.number().int().nonnegative(),
+}).strict()
+
+function schemaResult<Schema extends z.ZodType>(schema: Schema): RpcResultValidator<z.output<Schema>> {
+  return value => schema.parse(value)
+}
+
 export class WorkspaceGraphStoreClient {
-  readonly #worker: WorkspaceGraphWorker
+  readonly #workerFactory: (url: URL, options: WorkerOptions) => WorkspaceGraphWorker
+  readonly #workerUrl = new URL('./store-worker.js', import.meta.url)
+  readonly #workerData: {
+    readonly path: string
+    readonly deniedRoots: readonly string[]
+  }
+  #worker: WorkspaceGraphWorker
   readonly #pending = new Map<number, PendingRequest>()
   #nextRequestId = 1
   #publishedSnapshot = initialSnapshot()
   #failed = false
   #closed = false
   #expectedExit = false
+  #recovering = false
 
   constructor(path: string, options: WorkspaceGraphStoreClientOptions = {}) {
-    const workerOptions: WorkerOptions = {
-      workerData: {
-        path,
-        deniedRoots: options.deniedRoots === undefined ? [] : [...options.deniedRoots],
-      },
+    this.#workerData = {
+      path,
+      deniedRoots: options.deniedRoots === undefined ? [] : [...options.deniedRoots],
     }
-    const workerFactory = options.workerFactory
+    this.#workerFactory = options.workerFactory
       ?? ((url: URL, configured: WorkerOptions) => new Worker(url, configured))
-    this.#worker = workerFactory(new URL('./store-worker.js', import.meta.url), workerOptions)
-    this.#worker.on('message', message => this.#handleMessage(message))
-    this.#worker.on('error', () => this.#fail('WORKER_ERROR'))
-    this.#worker.on('exit', () => {
-      if (!this.#expectedExit) this.#fail('WORKER_EXITED')
-    })
+    this.#worker = this.#spawnWorker()
   }
 
   get publishedSnapshot(): PublishedGraphSnapshot {
@@ -142,7 +198,7 @@ export class WorkspaceGraphStoreClient {
   }
 
   async open(): Promise<void> {
-    await this.#request('open', {})
+    await this.#request('open', {}, nullResult)
   }
 
   async close(): Promise<void> {
@@ -150,7 +206,7 @@ export class WorkspaceGraphStoreClient {
     this.#closed = true
     if (!this.#failed) {
       try {
-        await this.#requestWhileClosing('close', {})
+        await this.#requestWhileClosing('close', {}, nullResult)
       } catch {
         // Closing is idempotent and does not replace the already reported worker failure.
       }
@@ -163,18 +219,30 @@ export class WorkspaceGraphStoreClient {
     }
   }
 
-  appendObservation(observation: Observation): Promise<EvidenceRef> {
-    return this.#request('append_observation', {observation})
+  appendObservation(observation: Observation, operationId = randomUUID()): Promise<EvidenceRef> {
+    return this.#request(
+      'append_observation',
+      {observation, operationId},
+      schemaResult(EvidenceRefSchema),
+    )
   }
 
-  async replaceCard(card: WorkspaceCard): Promise<void> {
-    await this.#request('replace_card', {card})
+  async replaceCard(card: WorkspaceCard, operationId = randomUUID()): Promise<void> {
+    await this.#request('replace_card', {card, operationId}, nullResult)
   }
 
-  upsertRelation(card: RelationCard, expectedRevision?: number): Promise<RelationCard> {
+  upsertRelation(
+    card: RelationCard,
+    expectedRevision?: number,
+    operationId = randomUUID(),
+  ): Promise<RelationCard> {
     return expectedRevision === undefined
-      ? this.#request('upsert_relation', {card})
-      : this.#request('upsert_relation', {card, expectedRevision})
+      ? this.#request('upsert_relation', {card, operationId}, schemaResult(RelationCardSchema))
+      : this.#request(
+        'upsert_relation',
+        {card, expectedRevision, operationId},
+        schemaResult(RelationCardSchema),
+      )
   }
 
   suppressRelation(
@@ -182,47 +250,69 @@ export class WorkspaceGraphStoreClient {
     targetId: string,
     relationType: RelationCard['relation_type'],
     evidence: EvidenceRef,
+    operationId = randomUUID(),
   ): Promise<RelationCard> {
     return this.#request('suppress_relation', {
       sourceId,
       targetId,
       relationType,
       evidence,
-    })
+      operationId,
+    }, schemaResult(RelationCardSchema))
   }
 
-  compact(): Promise<WorkspaceGraphCompactionResult> {
-    return this.#request('compact', {})
+  compact(operationId = randomUUID()): Promise<WorkspaceGraphCompactionResult> {
+    return this.#request('compact', {operationId}, schemaResult(compactionResultSchema))
+  }
+
+  getOperationReceipt(operationId: string): Promise<OperationReceipt | undefined> {
+    return this.#request(
+      'get_operation_receipt',
+      {operationId},
+      schemaResult(OperationReceiptSchema.optional()),
+    )
   }
 
   listObservations(): Promise<readonly Observation[]> {
-    return this.#request('list_observations', {})
+    return this.#request('list_observations', {}, schemaResult(z.array(ObservationSchema)))
   }
 
   getObservation(source: Observation['source'], ref: string): Promise<Observation | undefined> {
-    return this.#request('get_observation', {source, ref})
+    return this.#request('get_observation', {source, ref}, schemaResult(ObservationSchema.optional()))
   }
 
   listLogicalWorkspaces(): Promise<readonly LogicalWorkspace[]> {
-    return this.#request('list_logical_workspaces', {})
+    return this.#request('list_logical_workspaces', {}, schemaResult(z.array(LogicalWorkspaceSchema)))
   }
 
   getLogicalWorkspace(logicalWorkspaceId: string): Promise<LogicalWorkspace | undefined> {
-    return this.#request('get_logical_workspace', {logicalWorkspaceId})
+    return this.#request(
+      'get_logical_workspace',
+      {logicalWorkspaceId},
+      schemaResult(LogicalWorkspaceSchema.optional()),
+    )
   }
 
   listWorkspaceInstances(logicalWorkspaceId?: string): Promise<readonly WorkspaceInstance[]> {
     return logicalWorkspaceId === undefined
-      ? this.#request('list_workspace_instances', {})
-      : this.#request('list_workspace_instances', {logicalWorkspaceId})
+      ? this.#request('list_workspace_instances', {}, schemaResult(z.array(WorkspaceInstanceSchema)))
+      : this.#request(
+        'list_workspace_instances',
+        {logicalWorkspaceId},
+        schemaResult(z.array(WorkspaceInstanceSchema)),
+      )
   }
 
   getWorkspaceInstance(instanceId: string): Promise<WorkspaceInstance | undefined> {
-    return this.#request('get_workspace_instance', {instanceId})
+    return this.#request(
+      'get_workspace_instance',
+      {instanceId},
+      schemaResult(WorkspaceInstanceSchema.optional()),
+    )
   }
 
   listRelations(): Promise<readonly RelationCard[]> {
-    return this.#request('list_relations', {})
+    return this.#request('list_relations', {}, schemaResult(z.array(RelationCardSchema)))
   }
 
   getRelation(
@@ -230,7 +320,11 @@ export class WorkspaceGraphStoreClient {
     targetId: string,
     relationType: RelationCard['relation_type'],
   ): Promise<RelationCard | undefined> {
-    return this.#request('get_relation', {sourceId, targetId, relationType})
+    return this.#request(
+      'get_relation',
+      {sourceId, targetId, relationType},
+      schemaResult(RelationCardSchema.optional()),
+    )
   }
 
   listRelationEvidence(
@@ -238,39 +332,56 @@ export class WorkspaceGraphStoreClient {
     targetId: string,
     relationType: RelationCard['relation_type'],
   ): Promise<readonly EvidenceRef[]> {
-    return this.#request('list_relation_evidence', {sourceId, targetId, relationType})
+    return this.#request(
+      'list_relation_evidence',
+      {sourceId, targetId, relationType},
+      schemaResult(z.array(EvidenceRefSchema)),
+    )
   }
 
   diagnostics(): Promise<WorkspaceGraphStoreDiagnostics> {
-    return this.#request('diagnostics', {})
+    return this.#request('diagnostics', {}, schemaResult(diagnosticsSchema))
   }
 
-  #request<Result>(operation: string, payload: Readonly<Record<string, unknown>>): Promise<Result> {
+  #request<Result>(
+    operation: string,
+    payload: Readonly<Record<string, unknown>>,
+    validateResult: RpcResultValidator<Result>,
+  ): Promise<Result> {
     if (this.#closed || this.#failed) {
       return Promise.reject(new WorkspaceGraphStoreClientError('CLIENT_CLOSED'))
     }
-    return this.#send<Result>(operation, payload)
+    return this.#send(operation, payload, validateResult)
   }
 
   #requestWhileClosing<Result>(
     operation: string,
     payload: Readonly<Record<string, unknown>>,
+    validateResult: RpcResultValidator<Result>,
   ): Promise<Result> {
     if (this.#failed) return Promise.reject(new WorkspaceGraphStoreClientError('CLIENT_CLOSED'))
-    return this.#send<Result>(operation, payload)
+    return this.#send(operation, payload, validateResult)
   }
 
-  #send<Result>(operation: string, payload: Readonly<Record<string, unknown>>): Promise<Result> {
+  #send<Result>(
+    operation: string,
+    payload: Readonly<Record<string, unknown>>,
+    validateResult: RpcResultValidator<Result>,
+  ): Promise<Result> {
     const requestId = this.#nextRequestId
     this.#nextRequestId += 1
+    const request = {kind: 'request', request_id: requestId, operation, ...payload} as const
     return new Promise<Result>((resolve, reject) => {
       this.#pending.set(requestId, {
         resolve: value => resolve(value as Result),
         reject,
         expectsPublication: publishingOperations.has(operation),
+        validateResult,
+        request,
+        recoverable: recoverableOperations.has(operation) && typeof payload.operationId === 'string',
       })
       try {
-        this.#worker.postMessage({kind: 'request', request_id: requestId, operation, ...payload})
+        this.#worker.postMessage(request)
       } catch {
         this.#pending.delete(requestId)
         reject(new WorkspaceGraphStoreClientError('WORKER_PROTOCOL_FAILURE'))
@@ -278,7 +389,8 @@ export class WorkspaceGraphStoreClient {
     })
   }
 
-  #handleMessage(message: unknown): void {
+  #handleMessage(worker: WorkspaceGraphWorker, message: unknown): void {
+    if (worker !== this.#worker) return
     const response = parseWorkerResponse(message)
     if (response === undefined) {
       this.#fail('WORKER_PROTOCOL_FAILURE')
@@ -300,9 +412,20 @@ export class WorkspaceGraphStoreClient {
       this.#fail('WORKER_PROTOCOL_FAILURE')
       return
     }
+    let result: unknown
+    try {
+      result = pending.validateResult(response.result)
+    } catch {
+      this.#fail('WORKER_PROTOCOL_FAILURE')
+      return
+    }
     if (response.snapshot !== undefined) {
       const parsed = PublishedGraphSnapshotSchema.safeParse(response.snapshot)
-      if (!parsed.success) {
+      if (
+        !parsed.success
+        || parsed.data.degraded
+        || parsed.data.publication_revision <= this.#publishedSnapshot.publication_revision
+      ) {
         this.#fail('WORKER_PROTOCOL_FAILURE')
         return
       }
@@ -311,7 +434,7 @@ export class WorkspaceGraphStoreClient {
       this.#publishedSnapshot = deepFreeze({...this.#publishedSnapshot, degraded: true})
     }
     this.#pending.delete(response.request_id)
-    pending.resolve(response.result)
+    pending.resolve(result)
   }
 
   #fail(code: Extract<WorkspaceGraphStoreClientErrorCode, `WORKER_${string}`>): void {
@@ -321,6 +444,60 @@ export class WorkspaceGraphStoreClient {
     const error = new WorkspaceGraphStoreClientError(code)
     for (const pending of this.#pending.values()) pending.reject(error)
     this.#pending.clear()
+  }
+
+  #spawnWorker(publicationRevisionFloor?: number): WorkspaceGraphWorker {
+    const workerData = {
+      ...this.#workerData,
+      ...(publicationRevisionFloor === undefined ? {} : {publicationRevisionFloor}),
+    }
+    const worker = this.#workerFactory(this.#workerUrl, {workerData})
+    worker.on('message', message => this.#handleMessage(worker, message))
+    worker.on('error', () => this.#handleWorkerFailure(worker, 'WORKER_ERROR'))
+    worker.on('exit', () => {
+      if (!this.#expectedExit) this.#handleWorkerFailure(worker, 'WORKER_EXITED')
+    })
+    return worker
+  }
+
+  #handleWorkerFailure(
+    worker: WorkspaceGraphWorker,
+    code: 'WORKER_ERROR' | 'WORKER_EXITED',
+  ): void {
+    if (worker !== this.#worker || this.#failed || this.#expectedExit) return
+    if (this.#recovering) {
+      this.#fail(code)
+      return
+    }
+    if (![...this.#pending.values()].some(pending => pending.recoverable)) {
+      this.#fail(code)
+      return
+    }
+    void this.#recover(code)
+  }
+
+  async #recover(code: 'WORKER_ERROR' | 'WORKER_EXITED'): Promise<void> {
+    this.#recovering = true
+    this.#publishedSnapshot = deepFreeze({...this.#publishedSnapshot, degraded: true})
+    const stableError = new WorkspaceGraphStoreClientError(code)
+    const recoverable = [...this.#pending.entries()].filter(([, pending]) => pending.recoverable)
+    for (const [requestId, pending] of this.#pending.entries()) {
+      if (pending.recoverable) continue
+      this.#pending.delete(requestId)
+      pending.reject(stableError)
+    }
+    try {
+      this.#worker = this.#spawnWorker(this.#publishedSnapshot.publication_revision)
+      await this.#send('open', {}, nullResult)
+      this.#recovering = false
+      for (const [requestId, pending] of recoverable) {
+        if (this.#pending.get(requestId) !== pending) continue
+        this.#worker.postMessage(pending.request)
+      }
+    } catch {
+      this.#recovering = false
+      this.#fail(code)
+    }
   }
 }
 
@@ -334,6 +511,14 @@ function parseWorkerResponse(message: unknown): WorkerResponse | undefined {
     return undefined
   }
   if (message.ok === true && 'result' in message) {
+    if (!hasOnlyKeys(message, [
+      'kind',
+      'request_id',
+      'ok',
+      'result',
+      'snapshot',
+      'publication_failed',
+    ])) return undefined
     const hasSnapshot = 'snapshot' in message
     const publicationFailed = message.publication_failed === true
     if (hasSnapshot && publicationFailed) return undefined
@@ -348,6 +533,7 @@ function parseWorkerResponse(message: unknown): WorkerResponse | undefined {
     }
   }
   if (message.ok === false && isStoreErrorCode(message.error_code)) {
+    if (!hasOnlyKeys(message, ['kind', 'request_id', 'ok', 'error_code'])) return undefined
     return {
       kind: 'response',
       request_id: message.request_id as number,
@@ -364,6 +550,11 @@ function isStoreErrorCode(value: unknown): value is WorkspaceGraphStoreErrorCode
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed)
+  return Object.keys(value).every(key => allowedKeys.has(key))
 }
 
 function deepFreeze<Value>(value: Value): Value {

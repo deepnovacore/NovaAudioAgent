@@ -12,6 +12,12 @@ import type { EvidenceRef, Observation, RelationCard } from './models.js'
 interface StoreWorkerData {
   readonly path: string
   readonly deniedRoots: readonly string[]
+  readonly publicationRevisionFloor?: number
+  readonly testHooks?: {
+    readonly exitAfterCommitBeforeResponse?: string
+    readonly failAfterFirstRelationStatement?: boolean
+    readonly holdAfterFirstRelationStatement?: SharedArrayBuffer
+  }
 }
 
 interface StoreRequest {
@@ -27,13 +33,37 @@ if (isMainThread || parentPort === null) {
 
 const port = parentPort
 const data = parseWorkerData(workerData)
+let relationHookUsed = false
 const store = new WorkspaceGraphStore(
   data.path,
   path => new DatabaseSync(path, {
     allowExtension: false,
     enableForeignKeyConstraints: true,
   }),
-  {deniedRoots: data.deniedRoots},
+  {
+    deniedRoots: data.deniedRoots,
+    ...(data.publicationRevisionFloor === undefined
+      ? {}
+      : {publicationRevisionFloor: data.publicationRevisionFloor}),
+    ...(data.testHooks === undefined
+      ? {}
+      : {
+        afterRelationStatement: () => {
+          if (relationHookUsed) return
+          relationHookUsed = true
+          if (data.testHooks?.failAfterFirstRelationStatement === true) {
+            throw new Error('injected relation statement failure')
+          }
+          const buffer = data.testHooks?.holdAfterFirstRelationStatement
+          if (buffer !== undefined) {
+            const barrier = new Int32Array(buffer)
+            Atomics.store(barrier, 0, 1)
+            Atomics.notify(barrier, 0)
+            Atomics.wait(barrier, 0, 1)
+          }
+        },
+      }),
+  },
 )
 
 port.on('message', message => {
@@ -44,6 +74,7 @@ port.on('message', message => {
   }
   try {
     const {result, publish} = execute(request)
+    if (data.testHooks?.exitAfterCommitBeforeResponse === request.operation) process.exit(86)
     let snapshot: unknown
     let publicationFailed = false
     if (publish) {
@@ -81,17 +112,21 @@ function execute(request: StoreRequest): {readonly result: unknown; readonly pub
       return {result: null, publish: false}
     case 'append_observation':
       return {
-        result: store.appendObservation(request.observation as Observation),
+        result: store.appendObservation(
+          request.observation as Observation,
+          stringField(request, 'operationId'),
+        ),
         publish: true,
       }
     case 'replace_card':
-      store.replaceCard(request.card as WorkspaceCard)
+      store.replaceCard(request.card as WorkspaceCard, stringField(request, 'operationId'))
       return {result: null, publish: true}
     case 'upsert_relation':
       return {
         result: store.upsertRelation(
           request.card as RelationCard,
           typeof request.expectedRevision === 'number' ? request.expectedRevision : undefined,
+          stringField(request, 'operationId'),
         ),
         publish: true,
       }
@@ -102,11 +137,14 @@ function execute(request: StoreRequest): {readonly result: unknown; readonly pub
           stringField(request, 'targetId'),
           request.relationType as RelationCard['relation_type'],
           request.evidence as EvidenceRef,
+          stringField(request, 'operationId'),
         ),
         publish: true,
       }
     case 'compact':
-      return {result: store.compact(), publish: true}
+      return {result: store.compact(stringField(request, 'operationId')), publish: true}
+    case 'get_operation_receipt':
+      return {result: store.getOperationReceipt(stringField(request, 'operationId')), publish: false}
     case 'list_observations':
       return {result: store.listObservations(), publish: false}
     case 'get_observation':
@@ -168,7 +206,48 @@ function parseWorkerData(value: unknown): StoreWorkerData {
   if (!value.deniedRoots.every(root => typeof root === 'string')) {
     throw new Error('invalid workspace graph worker configuration')
   }
-  return {path: value.path, deniedRoots: value.deniedRoots}
+  if (
+    value.publicationRevisionFloor !== undefined
+    && (
+      typeof value.publicationRevisionFloor !== 'number'
+      || !Number.isSafeInteger(value.publicationRevisionFloor)
+      || value.publicationRevisionFloor < 0
+    )
+  ) {
+    throw new Error('invalid workspace graph worker configuration')
+  }
+  let testHooks: StoreWorkerData['testHooks']
+  if (value.testHooks !== undefined) {
+    if (!isRecord(value.testHooks)) throw new Error('invalid workspace graph worker configuration')
+    const hook = value.testHooks.exitAfterCommitBeforeResponse
+    if (hook !== undefined && typeof hook !== 'string') {
+      throw new Error('invalid workspace graph worker configuration')
+    }
+    const fail = value.testHooks.failAfterFirstRelationStatement
+    if (fail !== undefined && typeof fail !== 'boolean') {
+      throw new Error('invalid workspace graph worker configuration')
+    }
+    const hold = value.testHooks.holdAfterFirstRelationStatement
+    if (
+      hold !== undefined
+      && (!(hold instanceof SharedArrayBuffer) || hold.byteLength < Int32Array.BYTES_PER_ELEMENT)
+    ) {
+      throw new Error('invalid workspace graph worker configuration')
+    }
+    testHooks = {
+      ...(hook === undefined ? {} : {exitAfterCommitBeforeResponse: hook}),
+      ...(fail === undefined ? {} : {failAfterFirstRelationStatement: fail}),
+      ...(hold === undefined ? {} : {holdAfterFirstRelationStatement: hold}),
+    }
+  }
+  return {
+    path: value.path,
+    deniedRoots: value.deniedRoots,
+    ...(value.publicationRevisionFloor === undefined
+      ? {}
+      : {publicationRevisionFloor: value.publicationRevisionFloor}),
+    ...(testHooks === undefined ? {} : {testHooks}),
+  }
 }
 
 function parseRequest(value: unknown): StoreRequest | undefined {

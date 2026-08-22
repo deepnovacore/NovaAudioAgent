@@ -155,6 +155,14 @@ async function holdWriteLock(path: string): Promise<{readonly release: () => Pro
   }
 }
 
+async function waitForBarrier(barrier: Int32Array, expected: number): Promise<void> {
+  const deadline = Date.now() + 1_000
+  while (Atomics.load(barrier, 0) !== expected) {
+    if (Date.now() >= deadline) throw new Error('workspace graph test barrier timed out')
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
 async function fileContains(path: string, needle: string): Promise<boolean> {
   try {
     const bytes = await readFile(path)
@@ -163,6 +171,27 @@ async function fileContains(path: string, needle: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
     throw error
   }
+}
+
+async function createProtocolFixtureClient(
+  t: TestContext,
+  mode:
+    | 'invalid_result'
+    | 'invalid_snapshot_schema'
+    | 'invalid_snapshot_status'
+    | 'stale_snapshot'
+    | 'extra_response_field',
+): Promise<WorkspaceGraphStoreClient> {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-workspace-graph-protocol-'))
+  const workerFactory = (): WorkspaceGraphWorker => new Worker(fixtureWorkerUrl, {
+    workerData: {mode},
+  })
+  const client = new WorkspaceGraphStoreClient(join(directory, 'graph.sqlite'), {workerFactory})
+  t.after(async () => {
+    await client.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  return client
 }
 
 test('observation append is immutable and suppression preserves evidence history', async t => {
@@ -196,7 +225,7 @@ test('reopen and replay retain one canonical observation and the configured sche
   assert.deepEqual(await reopened.appendObservation(workspaceOpened('replayed')), evidence)
   assert.equal((await reopened.listObservations()).length, 1)
   assert.deepEqual(await reopened.diagnostics(), {
-    schema_version: 1,
+    schema_version: 2,
     journal_mode: 'wal',
     foreign_keys: true,
     observations: 1,
@@ -204,7 +233,31 @@ test('reopen and replay retain one canonical observation and the configured sche
     workspace_instances: 0,
     relation_cards: 0,
     relation_evidence: 0,
+    operation_receipts: 2,
   })
+})
+
+test('two real clients concurrently replay one observation idempotently', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-workspace-graph-concurrent-append-'))
+  const path = join(directory, 'graph.sqlite')
+  const first = new WorkspaceGraphStoreClient(path)
+  const second = new WorkspaceGraphStoreClient(path)
+  t.after(async () => {
+    await Promise.all([first.close(), second.close()])
+    await rm(directory, {recursive: true, force: true})
+  })
+  await Promise.all([first.open(), second.open()])
+  const lock = await holdWriteLock(path)
+  const observation = workspaceOpened('concurrent-replay')
+  const firstAppend = first.appendObservation(observation)
+  const secondAppend = second.appendObservation(observation)
+  await new Promise(resolve => setTimeout(resolve, 25))
+  await lock.release()
+
+  const [firstEvidence, secondEvidence] = await Promise.all([firstAppend, secondAppend])
+
+  assert.deepEqual(secondEvidence, firstEvidence)
+  assert.deepEqual(await first.listObservations(), [observation])
 })
 
 test('malformed and stale relation writes roll back without replacing the last snapshot', async t => {
@@ -234,37 +287,135 @@ test('malformed and stale relation writes roll back without replacing the last s
   assert.equal(client.publishedSnapshot.relations.length, 0)
 })
 
-test('denied paths never reach SQLite and free-text secrets persist only as redactions', async t => {
+test('a real post-relation-statement fault rolls back relation, evidence, and receipt rows', async t => {
+  const workerFactory = (url: URL, options: WorkerOptions): WorkspaceGraphWorker => {
+    const configured = options.workerData as Record<string, unknown>
+    return new Worker(url, {
+      ...options,
+      workerData: {...configured, testHooks: {failAfterFirstRelationStatement: true}},
+    })
+  }
+  const {client, path} = await createStore(t, {workerFactory})
+  const beforeFailure = client.publishedSnapshot
+
+  await assert.rejects(
+    client.upsertRelation(relation()),
+    (error: unknown) => error instanceof WorkspaceGraphStoreClientError
+      && error.code === 'STORE_WRITE_FAILED',
+  )
+
+  assert.equal(client.publishedSnapshot, beforeFailure)
+  assert.deepEqual(await client.listRelations(), [])
+  assert.deepEqual(await client.listRelationEvidence('lw-a', 'lw-b', 'depends_on'), [])
+  const counts = await querySqlite(path, `
+    SELECT
+      (SELECT COUNT(*) FROM relation_cards) AS relation_cards,
+      (SELECT COUNT(*) FROM relation_evidence) AS relation_evidence,
+      (SELECT COUNT(*) FROM operation_receipts) AS operation_receipts
+  `)
+  assert.deepEqual(counts, [{relation_cards: 0, relation_evidence: 0, operation_receipts: 0}])
+})
+
+test('an existing relation cannot be updated without its expected revision', async t => {
+  const {client} = await createStore(t)
+  await client.upsertRelation(relation())
+
+  await assert.rejects(
+    client.upsertRelation(relation(1)),
+    (error: unknown) => error instanceof WorkspaceGraphStoreClientError
+      && error.code === 'STORE_STALE_REVISION',
+  )
+
+  assert.equal((await client.getRelation('lw-a', 'lw-b', 'depends_on'))?.revision, 0)
+})
+
+test('two real clients updating one relation revision have exactly one winner', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-workspace-graph-concurrent-relation-'))
+  const path = join(directory, 'graph.sqlite')
+  const first = new WorkspaceGraphStoreClient(path)
+  const second = new WorkspaceGraphStoreClient(path)
+  t.after(async () => {
+    await Promise.all([first.close(), second.close()])
+    await rm(directory, {recursive: true, force: true})
+  })
+  await Promise.all([first.open(), second.open()])
+  await first.upsertRelation(relation())
+
+  const attempts = await Promise.allSettled([
+    first.upsertRelation(relation(1), 0),
+    second.upsertRelation(relation(1), 0),
+  ])
+
+  assert.equal(attempts.filter(result => result.status === 'fulfilled').length, 1)
+  const rejected = attempts.find(result => result.status === 'rejected')
+  assert.ok(rejected?.status === 'rejected')
+  assert.ok(rejected.reason instanceof WorkspaceGraphStoreClientError)
+  assert.equal(rejected.reason.code, 'STORE_STALE_REVISION')
+  assert.equal((await first.getRelation('lw-a', 'lw-b', 'depends_on'))?.revision, 1)
+})
+
+test('every observation string is gated before canonical persistence', async t => {
   const {client, path} = await createStore(t, {deniedRoots: ['/private']})
   const deniedName = 'hidden-workspace-marker'
-  await assert.rejects(
-    client.appendObservation(workspaceOpened('denied', `/private/${deniedName}`)),
-    (error: unknown) => error instanceof WorkspaceGraphStoreClientError
-      && error.code === 'STORE_SENSITIVE_PATH_DENIED'
-      && !error.message.includes(deniedName),
+  await client.appendObservation(
+    workspaceOpened('redacted-path', `opened /private/${deniedName}/notes.txt successfully`),
   )
   const artifactName = 'artifact-path-marker'
+  await client.appendObservation({
+    ...workspaceOpened('redacted-artifact', `referenced /private/${artifactName}.json during build`),
+    observation_type: 'task_artifact_reference',
+  })
+
+  const identitySecret = 'sk_identitySecret123456789'
   await assert.rejects(
     client.appendObservation({
-      ...workspaceOpened('denied-artifact', `/private/${artifactName}`),
-      observation_type: 'task_artifact_reference',
+      ...workspaceOpened('secret-identity'),
+      logical_workspace_id: identitySecret,
+    }),
+    (error: unknown) => error instanceof WorkspaceGraphStoreClientError
+      && error.code === 'STORE_SENSITIVE_CONTENT_REJECTED'
+      && !error.message.includes(identitySecret),
+  )
+  const referenceSecret = 'sk_referenceSecret123456789'
+  await assert.rejects(
+    client.appendObservation({
+      ...workspaceOpened('secret-reference'),
+      evidence_refs: [{source: 'runtime', ref: referenceSecret, observed_at: 1}],
+    }),
+    (error: unknown) => error instanceof WorkspaceGraphStoreClientError
+      && error.code === 'STORE_SENSITIVE_CONTENT_REJECTED'
+      && !error.message.includes(referenceSecret),
+  )
+  const identityPathMarker = 'identity-path-marker'
+  await assert.rejects(
+    client.appendObservation({
+      ...workspaceOpened('path-identity'),
+      workspace_instance_id: `wi-/private/${identityPathMarker}`,
     }),
     (error: unknown) => error instanceof WorkspaceGraphStoreClientError
       && error.code === 'STORE_SENSITIVE_PATH_DENIED'
-      && !error.message.includes(artifactName),
+      && !error.message.includes(identityPathMarker),
   )
 
   const secret = 'sk_storeRegressionSecret123456789'
   await client.appendObservation(workspaceOpened('redacted', `deployed safely with ${secret}`))
   const stored = await client.listObservations()
-  assert.equal(stored.length, 1)
-  assert.equal(stored[0]?.summary, 'deployed safely with [redacted]')
+  assert.equal(stored.length, 3)
+  const summaryById = new Map(stored.map(observation => [observation.observation_id, observation.summary]))
+  assert.equal(summaryById.get('redacted-path'), 'opened [redacted] successfully')
+  assert.equal(summaryById.get('redacted-artifact'), 'referenced [redacted] during build')
+  assert.equal(summaryById.get('redacted'), 'deployed safely with [redacted]')
 
   await closeStore(client)
   assert.equal(await fileContains(path, deniedName), false)
   assert.equal(await fileContains(path, artifactName), false)
   assert.equal(await fileContains(path, secret), false)
+  assert.equal(await fileContains(path, identitySecret), false)
+  assert.equal(await fileContains(path, referenceSecret), false)
+  assert.equal(await fileContains(path, identityPathMarker), false)
   assert.equal(await fileContains(`${path}-wal`, secret), false)
+  assert.equal(await fileContains(`${path}-wal`, identitySecret), false)
+  assert.equal(await fileContains(`${path}-wal`, referenceSecret), false)
 })
 
 test('compaction bounds derived rows without deleting observations or locking later writes', async t => {
@@ -281,6 +432,28 @@ test('compaction bounds derived rows without deleting observations or locking la
   assert.equal((await client.listObservations()).length, 4)
   await client.replaceCard(workspaceInstance('instance-after-compaction', 141))
   assert.equal((await client.getWorkspaceInstance('instance-after-compaction'))?.revision, 141)
+})
+
+test('compaction preserves suppression tombstones and their complete evidence history', async t => {
+  const {client} = await createStore(t)
+  await client.upsertRelation(relation())
+  await client.suppressRelation('lw-a', 'lw-b', 'depends_on', userEvidence())
+  for (let index = 0; index < 130; index += 1) {
+    await client.upsertRelation({
+      ...relation(0, 'stale', [runtimeEvidence(`filler-${index}`, index + 10)]),
+      target_logical_id: `lw-filler-${index}`,
+      first_seen_at: index + 10,
+      last_seen_at: index + 10,
+    })
+  }
+
+  await client.compact()
+
+  assert.equal((await client.getRelation('lw-a', 'lw-b', 'depends_on'))?.status, 'suppressed')
+  assert.deepEqual(
+    (await client.listRelationEvidence('lw-a', 'lw-b', 'depends_on')).map(item => item.ref),
+    ['observation-a', 'user-suppression'],
+  )
 })
 
 test('published snapshots are deeply immutable and never expose a failed partial write', async t => {
@@ -302,6 +475,49 @@ test('published snapshots are deeply immutable and never expose a failed partial
   await assert.rejects(client.upsertRelation(relation(0, 'active', duplicateEvidence)))
   assert.equal(client.publishedSnapshot, beforeFailure)
   assert.equal(client.publishedSnapshot.relations.length, 0)
+})
+
+test('a held multi-row relation transaction exposes neither partial reads nor snapshots', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-workspace-graph-transaction-barrier-'))
+  const path = join(directory, 'graph.sqlite')
+  const barrierBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)
+  const barrier = new Int32Array(barrierBuffer)
+  const writerFactory = (url: URL, options: WorkerOptions): WorkspaceGraphWorker => {
+    const configured = options.workerData as Record<string, unknown>
+    return new Worker(url, {
+      ...options,
+      workerData: {
+        ...configured,
+        testHooks: {holdAfterFirstRelationStatement: barrierBuffer},
+      },
+    })
+  }
+  const writer = new WorkspaceGraphStoreClient(path, {workerFactory: writerFactory})
+  const reader = new WorkspaceGraphStoreClient(path)
+  t.after(async () => {
+    Atomics.store(barrier, 0, 2)
+    Atomics.notify(barrier, 0)
+    await Promise.all([writer.close(), reader.close()])
+    await rm(directory, {recursive: true, force: true})
+  })
+  await Promise.all([writer.open(), reader.open()])
+  const writerBefore = writer.publishedSnapshot
+  const readerBefore = reader.publishedSnapshot
+
+  const write = writer.upsertRelation(relation())
+  await waitForBarrier(barrier, 1)
+
+  assert.equal(writer.publishedSnapshot, writerBefore)
+  assert.equal(reader.publishedSnapshot, readerBefore)
+  assert.deepEqual(await reader.listRelations(), [])
+  assert.deepEqual(await reader.listRelationEvidence('lw-a', 'lw-b', 'depends_on'), [])
+
+  Atomics.store(barrier, 0, 2)
+  Atomics.notify(barrier, 0)
+  await write
+  assert.equal(writer.publishedSnapshot.relations.length, 1)
+  assert.equal((await reader.listRelations()).length, 1)
+  assert.equal((await reader.listRelationEvidence('lw-a', 'lw-b', 'depends_on')).length, 1)
 })
 
 test('a locked SQLite worker does not block a scheduled main-thread timer', async t => {
@@ -345,6 +561,59 @@ test('worker exit rejects pending calls safely and preserves a degraded last-goo
   assert.deepEqual(client.publishedSnapshot.logical_workspaces, lastGood.logical_workspaces)
   assert.equal(client.publishedSnapshot.degraded, true)
   await lock.release()
+})
+
+test('commit-then-exit reconciles a durable receipt without double-applying on restart', async t => {
+  let workerGenerations = 0
+  const operationId = '11111111-1111-4111-8111-111111111111'
+  const workerFactory = (url: URL, options: WorkerOptions): WorkspaceGraphWorker => {
+    const generation = workerGenerations
+    workerGenerations += 1
+    const configured = options.workerData as Record<string, unknown>
+    return new Worker(url, {
+      ...options,
+      workerData: {
+        ...configured,
+        ...(generation === 0
+          ? {testHooks: {exitAfterCommitBeforeResponse: 'append_observation'}}
+          : {}),
+      },
+    })
+  }
+  const {client, path} = await createStore(t, {workerFactory})
+  const appendWithOperation = client.appendObservation.bind(client) as unknown as (
+    observation: Observation,
+    stableOperationId: string,
+  ) => Promise<EvidenceRef>
+  const observation = workspaceOpened('commit-exit-observation')
+
+  const evidence = await appendWithOperation(observation, operationId)
+
+  assert.equal(workerGenerations, 2)
+  assert.equal(evidence.ref, 'commit-exit-observation')
+  assert.deepEqual(await appendWithOperation(observation, operationId), evidence)
+  assert.deepEqual(await client.listObservations(), [observation])
+  await client.close()
+
+  const restarted = new WorkspaceGraphStoreClient(path)
+  t.after(() => restarted.close())
+  await restarted.open()
+  const getReceipt = restarted as unknown as {
+    getOperationReceipt(id: string): Promise<{
+      readonly operation_id: string
+      readonly operation_type: string
+      readonly result: unknown
+    } | undefined>
+  }
+  const receipt = await getReceipt.getOperationReceipt(operationId)
+  assert.deepEqual(receipt, {
+    operation_id: operationId,
+    operation_type: 'append_observation',
+    result: {
+      kind: 'observation',
+      evidence: {source: 'runtime', ref: 'commit-exit-observation', observed_at: 1},
+    },
+  })
 })
 
 test('publication failure retains committed data and marks the previous snapshot degraded', async t => {
@@ -393,6 +662,64 @@ test('a mutating success response without a publication outcome fails the worker
     (error: unknown) => error instanceof WorkspaceGraphStoreClientError
       && error.code === 'WORKER_PROTOCOL_FAILURE',
   )
+  assert.equal(client.publishedSnapshot.degraded, true)
+})
+
+test('operation-specific RPC result validation rejects an invalid open result without swapping', async t => {
+  const client = await createProtocolFixtureClient(t, 'invalid_result')
+  const initial = client.publishedSnapshot
+
+  await assert.rejects(
+    client.open(),
+    (error: unknown) => error instanceof WorkspaceGraphStoreClientError
+      && error.code === 'WORKER_PROTOCOL_FAILURE',
+  )
+  assert.deepEqual(client.publishedSnapshot.logical_workspaces, initial.logical_workspaces)
+  assert.equal(client.publishedSnapshot.degraded, true)
+})
+
+test('strict RPC response validation rejects unexpected response fields without swapping', async t => {
+  const client = await createProtocolFixtureClient(t, 'extra_response_field')
+  const before = client.publishedSnapshot
+
+  await assert.rejects(
+    client.open(),
+    (error: unknown) => error instanceof WorkspaceGraphStoreClientError
+      && error.code === 'WORKER_PROTOCOL_FAILURE'
+      && !error.message.includes('unexpected_payload'),
+  )
+  assert.equal(client.publishedSnapshot.logical_workspaces, before.logical_workspaces)
+  assert.equal(client.publishedSnapshot.degraded, true)
+})
+
+for (const fixture of ['invalid_snapshot_schema', 'invalid_snapshot_status'] as const) {
+  test(`snapshot semantics reject ${fixture} without swapping`, async t => {
+    const client = await createProtocolFixtureClient(t, fixture)
+    const initial = client.publishedSnapshot
+
+    await assert.rejects(
+      client.open(),
+      (error: unknown) => error instanceof WorkspaceGraphStoreClientError
+        && error.code === 'WORKER_PROTOCOL_FAILURE',
+    )
+    assert.deepEqual(client.publishedSnapshot.logical_workspaces, initial.logical_workspaces)
+    assert.equal(client.publishedSnapshot.publication_revision, initial.publication_revision)
+    assert.equal(client.publishedSnapshot.degraded, true)
+  })
+}
+
+test('publication revisions must increase monotonically before a snapshot swap', async t => {
+  const client = await createProtocolFixtureClient(t, 'stale_snapshot')
+  await client.open()
+  const lastGood = client.publishedSnapshot
+
+  await assert.rejects(
+    client.replaceCard(logicalWorkspace('lw-a')),
+    (error: unknown) => error instanceof WorkspaceGraphStoreClientError
+      && error.code === 'WORKER_PROTOCOL_FAILURE',
+  )
+  assert.deepEqual(client.publishedSnapshot.logical_workspaces, lastGood.logical_workspaces)
+  assert.equal(client.publishedSnapshot.publication_revision, lastGood.publication_revision)
   assert.equal(client.publishedSnapshot.degraded, true)
 })
 

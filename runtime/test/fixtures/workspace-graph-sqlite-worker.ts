@@ -2,7 +2,17 @@ import { isMainThread, parentPort, workerData } from 'node:worker_threads'
 import { DatabaseSync } from 'node:sqlite'
 
 interface FixtureWorkerData {
-  readonly mode: 'exec' | 'query' | 'lock' | 'malformed' | 'invalid_success'
+  readonly mode:
+    | 'exec'
+    | 'query'
+    | 'lock'
+    | 'malformed'
+    | 'invalid_success'
+    | 'invalid_result'
+    | 'invalid_snapshot_schema'
+    | 'invalid_snapshot_status'
+    | 'stale_snapshot'
+    | 'extra_response_field'
   readonly path?: string
   readonly sql?: string
 }
@@ -20,6 +30,47 @@ if (data.mode === 'malformed') {
   port.once('message', message => {
     const requestId = (message as {readonly request_id?: unknown}).request_id
     port.postMessage({kind: 'response', request_id: requestId, ok: true, result: null})
+  })
+} else if (
+  data.mode === 'invalid_result'
+  || data.mode === 'invalid_snapshot_schema'
+  || data.mode === 'invalid_snapshot_status'
+  || data.mode === 'stale_snapshot'
+  || data.mode === 'extra_response_field'
+) {
+  let requests = 0
+  port.on('message', message => {
+    requests += 1
+    const requestId = (message as {readonly request_id?: unknown}).request_id
+    const relation = {
+      source_logical_id: 'lw-a',
+      target_logical_id: 'lw-b',
+      relation_type: 'depends_on',
+      confidence: 0.8,
+      reason: 'shared runtime',
+      evidence_refs: [{source: 'runtime', ref: 'fixture-evidence', observed_at: 1}],
+      first_seen_at: 1,
+      last_seen_at: 1,
+      status: 'stale',
+      revision: 0,
+    }
+    const snapshot = {
+      schema_version: data.mode === 'invalid_snapshot_schema' ? 1 : 2,
+      publication_revision: data.mode === 'stale_snapshot' ? 1 : requests,
+      degraded: false,
+      logical_workspaces: [],
+      workspace_instances: [],
+      relations: data.mode === 'invalid_snapshot_status' ? [relation] : [],
+      aliases: [],
+    }
+    port.postMessage({
+      kind: 'response',
+      request_id: requestId,
+      ok: true,
+      result: data.mode === 'invalid_result' ? 'not-null' : null,
+      snapshot,
+      ...(data.mode === 'extra_response_field' ? {unexpected_payload: 'must-not-pass'} : {}),
+    })
   })
 } else {
   if (typeof data.path !== 'string') throw new Error('missing fixture database path')
