@@ -42,6 +42,41 @@ test('current docs state the Node release truth and do not advertise retired cap
   assert.doesNotMatch(release, /gate_state:\s*passed|Node is (?:now )?the default|signed installer|clean-machine gate passed/iu)
 })
 
+test('audio pipeline docs distinguish the selectable topology, credentials, and deferred settings effects', async () => {
+  const documents = new Map(await Promise.all(currentDocs.map(async file => [
+    file,
+    await readFile(resolve(repositoryRoot, file), 'utf8'),
+  ] as const)))
+  const english = `${documents.get('README.md')}\n${documents.get('docs/getting-started.md')}`
+  const chinese = `${documents.get('README.zh-CN.md')}\n${documents.get('docs/getting-started.zh-CN.md')}`
+
+  assert.match(english, /integrated.*cascaded/isu)
+  assert.match(english, /qwen-audio-3\.0-realtime-plus.*longanqian/isu)
+  assert.match(english, /Volcengine ASR\s*->\s*Qwen `qwen-flash`\s*->\s*Volcengine TTS/u)
+  assert.match(english, /Ark.*explicit.*cascaded LLM/isu)
+  assert.match(english, /one key per platform.*reused/isu)
+  assert.match(english, /ASR.*fallback.*DOUBAO_BIGMODEL_API_KEY/isu)
+  assert.match(english, /conditional.*Settings Panel/isu)
+  assert.match(english, /write-only.*presence/isu)
+  assert.match(english, /next launch/iu)
+  assert.match(english, /opt-in live smoke/iu)
+
+  assert.match(chinese, /集成.*级联/su)
+  assert.match(chinese, /qwen-audio-3\.0-realtime-plus.*longanqian/su)
+  assert.match(chinese, /火山 ASR\s*->\s*Qwen `qwen-flash`\s*->\s*火山 TTS/u)
+  assert.match(chinese, /Ark.*显式.*级联 LLM/su)
+  assert.match(chinese, /每个平台.*一把密钥.*复用/su)
+  assert.match(chinese, /ASR.*回退.*DOUBAO_BIGMODEL_API_KEY/su)
+  assert.match(chinese, /条件.*设置面板/su)
+  assert.match(chinese, /只写.*存在/u)
+  assert.match(chinese, /下次启动/u)
+  assert.match(chinese, /可选.*在线 smoke/u)
+
+  for (const [file, text] of documents) {
+    assert.doesNotMatch(text, /NOVA_AUDIO_AGENT_(?:REALTIME_PROVIDER|VOLCENGINE_ARK_MODEL|VOLCENGINE_ARK_SUPPORT_MODEL)/u, file)
+  }
+})
+
 test('English, Chinese, and env example generated blocks contain every public variable once', async () => {
   const files = ['.env.example', 'docs/getting-started.md', 'docs/getting-started.zh-CN.md'] as const
   const documents = await Promise.all(files.map(file => readFile(resolve(repositoryRoot, file), 'utf8')))

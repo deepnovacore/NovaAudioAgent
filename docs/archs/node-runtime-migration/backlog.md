@@ -4,6 +4,16 @@ Status: repository-owned Task 8B release-candidate implementation is present. Si
 external acceptance, and the published default switch remain open; Task 8C has not started. Updated
 2026-08-22.
 
+## 2026-08-22: Extensible audio-pipeline configuration
+
+Integrated Qwen and the provider-neutral cascaded pipeline are Node-owned configuration surfaces.
+The default cascaded chain is Volcengine ASR -> Qwen `qwen-flash` -> Volcengine TTS; Ark is an
+explicit LLM node. This is an intentional divergence in audit ownership: Python is no longer the
+configuration oracle for this feature. Keep one platform key per provider, preserve the ASR-to-big-
+model-key fallback, and do not add provider failover. The Settings Panel's conditional nodes,
+write-only keys, presence-only replies, and next-launch effect are tested in Electron; live smoke
+is opt-in external evidence rather than a deterministic completion condition.
+
 The decision-complete implementation sequence lives in
 [`plan.md`](plan.md). Test ownership and the
 Python-to-Node retirement gate live in [`parity-matrix.md`](parity-matrix.md), and the

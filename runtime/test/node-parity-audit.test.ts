@@ -22,6 +22,32 @@ test('typed Node parity audit accepts only reviewed hashed occurrences', async (
   assert.equal(result.stderr, '')
 })
 
+test('parity inventory names the final pipeline units and settings controller', async () => {
+  const manifest = JSON.parse(await readFile(
+    resolve(repositoryRoot, 'runtime/node-parity-audit.json'),
+    'utf8',
+  )) as {files: readonly string[]}
+  const finalUnits = [
+    'desktop/ambient-orb/src/renderer/secret-revisions.mjs',
+    'desktop/ambient-orb/src/renderer/settings-controller.mjs',
+    'runtime/src/cascaded-realtime-assembly.ts',
+    'runtime/src/cascaded-realtime-config.ts',
+    'runtime/src/integrated-realtime-assembly.ts',
+    'runtime/src/realtime/cascaded/adapter.ts',
+    'runtime/src/realtime/cascaded/ark-llm.ts',
+    'runtime/src/realtime/cascaded/llm.ts',
+    'runtime/src/realtime/cascaded/ports.ts',
+    'runtime/src/realtime/cascaded/provider.ts',
+    'runtime/src/realtime/cascaded/qwen-llm.ts',
+  ]
+  for (const file of finalUnits) assert.ok(manifest.files.includes(file), file)
+  for (const retired of [
+    'runtime/src/realtime/volcengine/adapter.ts',
+    'runtime/src/realtime/volcengine/provider.ts',
+    'runtime/src/volcengine-realtime-assembly.ts',
+  ]) assert.equal(manifest.files.includes(retired), false, retired)
+})
+
 test('every occurrence names an existing behavior test and a narrow disposition', async () => {
   const manifest = JSON.parse(await readFile(
     resolve(repositoryRoot, 'runtime/node-parity-audit.json'),

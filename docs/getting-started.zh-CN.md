@@ -23,7 +23,7 @@ npm ci
 cp .env.example .env
 ```
 
-默认 Qwen 链路必须在 `.env` 中同时设置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。Search
+默认集成 Qwen 链路必须在 `.env` 中同时设置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。Search
 始终装配，因此 Tavily 是必需配置。启动器只把 `.env` 当数据解析，不做 shell 求值；启动 shell
 里已存在的变量优先于 `.env`。
 
@@ -45,15 +45,43 @@ node runtime/dist/src/cli.js scorecard fixture check
 `diagnose` 只验证配置，不连接 provider、不启动 Codex、不请求摄像头或麦克风、不启动 Chromium，
 也不输出凭据和路径。普通检查只读已提交的产品 fixture。
 
-## 实时提供方与执行器
+## 实时管线、凭据与设置
 
-Qwen 是默认实时提供方，Volcengine 是另一套共用 provider-neutral assembly 的实现；真实使用时
-都需要所选 provider 的凭据。Node 可配置执行器为 `fast_sim`、`slow_sim`、`codex`。Codex 的
+`integrated` 和 `cascaded` 是顶层管线形态。默认是集成 Qwen：使用
+`qwen-audio-3.0-realtime-plus`、`longanqian` 音色和 `DASHSCOPE_API_KEY`，没有 ASR、LLM 或 TTS
+子节点控件。级联模式显示端点检测、ASR、LLM 和 TTS；默认链路是
+火山 ASR -> Qwen `qwen-flash` -> 火山 TTS。Ark 是显式的级联 LLM 选择，不是另一种集成 provider：
+
+```bash
+NOVA_AUDIO_AGENT_PIPELINE_MODE=cascaded
+NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER=ark
+ARK_API_KEY=replace-with-your-ark-key
+```
+
+每个平台只存一把密钥，并为该平台的每个选中节点复用。Qwen 使用 `DASHSCOPE_API_KEY`；显式 Ark
+LLM 使用 `ARK_API_KEY`；火山 TTS 使用 `DOUBAO_BIGMODEL_API_KEY`。`DOUBAO_ASR_API_KEY` 是可选 ASR
+覆盖，未填写时 ASR 回退到 `DOUBAO_BIGMODEL_API_KEY`。只验证和构造被选中的 provider；没有自动
+provider 故障转移。
+
+条件式设置面板把管线模式放在 provider 配置之前。集成模式显示 provider、模型和音色；级联模式显示
+端点检测、ASR、LLM 和 TTS 卡片。API 密钥仍是每个平台一个字段、只写，且只返回存在状态。管线、
+provider、模型、音色和密钥编辑均在下次启动生效；只有配色是实时设置。
+
+Node 可配置执行器为 `fast_sim`、`slow_sim`、`codex`。Codex 的
 ordinary/live/project 模式共用有界 app-server transport。Camera 文件输入只接受主机验证过的
 绝对路径。
 
 真实 provider、麦克风/扬声器、Camera、Codex 登录、WindowServer、Windows 后代进程清理、
 clean-machine installer、签名和发布仍是 pending external evidence。
+
+### 可选在线 smoke
+
+仓库中的 Qwen smoke 会连接真实 provider，且需要凭据；它是可选在线 smoke，本文不声称它已经运行或
+通过。刻意提供 DashScope 密钥后，可运行：
+
+```bash
+DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
+```
 
 ## 公共环境变量参考
 

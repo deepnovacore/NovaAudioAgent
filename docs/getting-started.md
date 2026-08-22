@@ -25,8 +25,8 @@ npm ci
 cp .env.example .env
 ```
 
-For the default Qwen path, set both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in `.env`. Search is
-always assembled, so Tavily is required. The launcher parses `.env` as data without shell
+For the default integrated Qwen path, set both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in `.env`.
+Search is always assembled, so Tavily is required. The launcher parses `.env` as data without shell
 evaluation; variables already set in the invoking shell take precedence.
 
 Start the desktop client:
@@ -48,15 +48,46 @@ node runtime/dist/src/cli.js scorecard fixture check
 camera or microphone, launch Chromium, or disclose credentials and paths. Committed product
 fixtures are read-only during ordinary checks.
 
-## Realtime providers and executors
+## Realtime pipelines, credentials, and settings
 
-Qwen is the default realtime provider. Volcengine is the alternative provider-neutral assembly;
-both require their selected credentials for live use. The configured Node executor names are
+`integrated` and `cascaded` are the top-level pipeline shapes. Integrated Qwen is the default: it
+uses `qwen-audio-3.0-realtime-plus`, the `longanqian` voice, and `DASHSCOPE_API_KEY`, with no ASR,
+LLM, or TTS subnode controls. Cascaded mode exposes endpointing, ASR, LLM, and TTS; its default is
+Volcengine ASR -> Qwen `qwen-flash` -> Volcengine TTS. Ark is an explicit cascaded LLM selection,
+not an alternate integrated provider:
+
+```bash
+NOVA_AUDIO_AGENT_PIPELINE_MODE=cascaded
+NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER=ark
+ARK_API_KEY=replace-with-your-ark-key
+```
+
+One key per platform is reused for every selected node on that platform. Qwen uses
+`DASHSCOPE_API_KEY`; the explicit Ark LLM uses `ARK_API_KEY`; Volcengine TTS uses
+`DOUBAO_BIGMODEL_API_KEY`. `DOUBAO_ASR_API_KEY` is an optional ASR override, and its fallback is
+`DOUBAO_BIGMODEL_API_KEY` when it is absent. Only selected providers are validated or constructed;
+there is no automatic provider failover.
+
+The conditional Settings Panel places pipeline mode before provider configuration. Integrated mode
+shows its provider, model, and voice; cascaded mode shows endpointing, ASR, LLM, and TTS cards. API
+keys remain one field per platform, are write-only, and return presence booleans only. Pipeline,
+provider, model, voice, and key edits apply on the next launch; the palette is the sole live setting.
+
+The configured Node executor names are
 `fast_sim`, `slow_sim`, and `codex`. Codex ordinary/live/project modes share the bounded app-server
 transport. Camera file input accepts only an absolute host-validated path.
 
 Live provider, microphone/speaker, camera, Codex login, WindowServer, Windows descendant cleanup,
 clean-machine installer, signing, and publication checks are pending external evidence.
+
+### Opt-in live smoke
+
+The repository's Qwen smoke contacts a real provider and needs a credential; it is opt-in and is not
+recorded here as having run or passed. With an intentionally supplied DashScope key, run:
+
+```bash
+DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
+```
 
 ## Public environment reference
 

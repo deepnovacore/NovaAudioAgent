@@ -173,7 +173,7 @@ npm ci
 cp .env.example .env
 ```
 
-使用默认 Qwen 桌面端时，须在 `.env`（或启动命令所在的 shell）中同时设置
+使用默认的集成 Qwen 桌面端时，须在 `.env`（或启动命令所在的 shell）中同时设置
 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。Search 始终装配，因此即使没有把它选作 executor，
 Tavily 也仍是必需配置。
 
@@ -190,7 +190,7 @@ provider 或打开设备。
 
 小诺是中文优先的：人设、生产提示词、工具描述、CLI 报错与默认音色均为中文。各真实集成——
 当前 Node 能力包括确定性模拟器、Tavily 搜索、app-server Codex、摄像头 Watch/Guard，以及
-Qwen 或 Volcengine 实时语音；
+集成或级联实时语音；
 逐项安装、注意事项与完整变量参考见[上手指南](docs/getting-started.md)。
 
 ## 5. Ambient Orb
@@ -211,9 +211,21 @@ VoiceProcessingIO helper 以获得系统级回声消除；Windows 与 Linux 使�
 
 默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 视频回放均使用 Chromium 摄像头链路。
 
-Qwen 仍是默认语音 provider；火山备选链路为
-`Silero VAD v5.1.2 -> Seed ASR -> Doubao Seed 2.0 Pro -> Seed TTS 2.0`，在 `.env` 中配置所选
-provider 的凭据即可。
+### 语音管线配置
+
+顶层选择是 `integrated` 或 `cascaded`。默认集成 Qwen 管线使用
+`qwen-audio-3.0-realtime-plus`、`longanqian` 音色和 `DASHSCOPE_API_KEY`，不暴露独立的 ASR、LLM
+或 TTS 节点。级联模式才显示端点检测、ASR、LLM 和 TTS；默认链路为
+火山 ASR -> Qwen `qwen-flash` -> 火山 TTS，Ark 只能显式选作级联 LLM。
+
+每个平台只存一把密钥并在该平台的选中节点间复用：Qwen 用 DashScope，Ark LLM 用 Ark，火山 TTS
+用 `DOUBAO_BIGMODEL_API_KEY`。`DOUBAO_ASR_API_KEY` 是可选的火山 ASR 覆盖；未填写时 ASR 回退到
+`DOUBAO_BIGMODEL_API_KEY`。没有 provider 自动故障转移。
+
+条件式设置面板先显示模式。集成模式显示 provider、模型和音色；级联模式显示端点检测、ASR、LLM
+和 TTS 卡片。密钥是只写的，渲染器只能收到是否存在的状态。管线、provider、模型、音色和密钥编辑
+均在下次启动生效；只有配色会实时应用。公共选择器和可选在线 smoke 命令见
+[上手指南](docs/getting-started.zh-CN.md)。
 
 orb 以 Canvas 2D 粒子场呈现，状态由粒子行为承载——聆听时向心聚拢，说话时随播放振幅脉动，
 Codex delegate 工作时外侧有一圈轨道带环绕——可选暖焰琥珀（Ember）或石墨月光（Graphite）配色。

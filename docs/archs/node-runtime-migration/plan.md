@@ -1,8 +1,10 @@
 # Nova Audio Agent Node Runtime Migration Plan
 
 Status: repository-owned Task 8B release-candidate implementation is present. Packaged candidates
-default to Node while Python remains the source-development default/oracle. Signed platform runs,
-external acceptance, publication, and Task 8C remain pending. Updated 2026-08-22.
+and source development use Node; Python remains a historical fixture oracle only where a preserved
+fixture explicitly says so. It is not the configuration oracle for extensible audio pipelines.
+Signed platform runs, external acceptance, publication, and Task 8C remain pending. Updated
+2026-08-22.
 
 ## Outcome
 
@@ -11,10 +13,12 @@ Electron remains the desktop shell and launches the compiled runtime through
 `utilityProcess.fork()`. The runtime stays outside the Electron main process so model, provider,
 and executor failures cannot block window management, settings, permissions, or shutdown.
 
-The migration is incremental. Python is the executable behavioral oracle while the Node runtime
-is built, but committed language-neutral fixtures become the permanent oracle before Python is
-removed. The final installer, built-in capabilities, development commands, and CI do not install
-or invoke Python. The existing macOS Swift audio helper may remain as a platform-native component.
+The migration is incremental. Python is the executable behavioral oracle only for explicitly
+preserved fixture behavior while the Node runtime is built; committed language-neutral fixtures
+become the permanent oracle before Python is removed. The extensible audio-pipeline configuration
+is intentionally Node-owned and no longer takes Python as its configuration oracle. The final
+installer, built-in capabilities, development commands, and CI do not install or invoke Python.
+The existing macOS Swift audio helper may remain as a platform-native component.
 
 ## Product Boundary
 
@@ -22,8 +26,9 @@ or invoke Python. The existing macOS Swift audio helper may remain as a platform
 
 - Runtime event spine, structured memory, ContextView, Floor, suggestion policy, and delegate
   lifecycle.
-- Qwen and Volcengine realtime voice paths, playback acknowledgement fencing, captions, recovery,
-  telemetry, and memory recall.
+- Integrated Qwen and the provider-neutral cascaded voice pipeline: Volcengine ASR, Qwen or explicit
+  Ark LLM, Volcengine TTS, playback acknowledgement fencing, captions, recovery, telemetry, and
+  memory recall.
 - Codex run, status, progress, live steering, cancellation, prewarm, and process supervision.
 - Search, Camera, Watch, Guard, deterministic simulators, evaluation fixtures, and the Ambient Orb.
 
