@@ -182,14 +182,16 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
   const integratedProvider = pipelineMode === 'integrated'
     ? parseIntegratedProvider(environment.NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER)
     : undefined
-  const cascadedProviders = {
-    endpointing: parseCascadedEndpointingProvider(
-      environment.NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER,
-    ),
-    asr: parseCascadedAsrProvider(environment.NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER),
-    llm: parseCascadedLlmProvider(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER),
-    tts: parseCascadedTtsProvider(environment.NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER),
-  }
+  const cascadedProviders = pipelineMode === 'cascaded'
+    ? {
+      endpointing: parseCascadedEndpointingProvider(
+        environment.NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER,
+      ),
+      asr: parseCascadedAsrProvider(environment.NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER),
+      llm: parseCascadedLlmProvider(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER),
+      tts: parseCascadedTtsProvider(environment.NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER),
+    }
+    : undefined
   const configuredExecutor = optionalString(environment.NOVA_AUDIO_AGENT_EXECUTOR)
   const executor = configuredExecutor === undefined || configuredExecutor === ''
     ? 'fast_sim'
@@ -206,11 +208,6 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     surrogate_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_SURROGATE_MODEL),
     compressor_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_COMPRESSOR_MODEL),
     pipeline_mode: pipelineMode,
-    cascade_endpointing_provider: cascadedProviders.endpointing,
-    cascade_asr_provider: cascadedProviders.asr,
-    cascade_llm_provider: cascadedProviders.llm,
-    cascade_llm_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL),
-    cascade_tts_provider: cascadedProviders.tts,
     ...(pipelineMode === 'integrated' ? {
       integrated_provider: integratedProvider,
       qwen_realtime_url: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL),
@@ -225,10 +222,15 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
         environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS,
       ),
     } : {
-      ...(cascadedProviders.llm === 'qwen'
+      cascade_endpointing_provider: cascadedProviders!.endpointing,
+      cascade_asr_provider: cascadedProviders!.asr,
+      cascade_llm_provider: cascadedProviders!.llm,
+      cascade_llm_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL),
+      cascade_tts_provider: cascadedProviders!.tts,
+      ...(cascadedProviders!.llm === 'qwen'
         ? {dashscope_api_key: optionalSecret(environment.DASHSCOPE_API_KEY)}
         : {ark_api_key: optionalSecret(environment.ARK_API_KEY)}),
-      ...(cascadedProviders.llm === 'ark' ? {
+      ...(cascadedProviders!.llm === 'ark' ? {
         volcengine_ark_base_url: rawEnvironmentValue(
           environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL,
         ),

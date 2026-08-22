@@ -24,8 +24,12 @@ test('pipeline defaults are product-shaped and cascaded defaults use Qwen Flash'
 })
 
 test('Ark receives its provider default only when no model override exists', () => {
-  const implicit = loadSettings({NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark'})
+  const implicit = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+  })
   const explicit = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
     NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
     NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-custom',
   })
@@ -33,6 +37,7 @@ test('Ark receives its provider default only when no model override exists', () 
   assert.equal(resolveCascadedSelection(explicit).llmModel, 'ark-custom')
   assert.throws(
     () => resolveCascadedSelection(loadSettings({
+      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
       NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
       NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: '',
     })),
@@ -64,6 +69,52 @@ test('integrated loading never reads Ark or Doubao credential slots', () => {
     },
   })
   assert.equal(requireIntegratedRealtime(loadSettings(environment)).apiKey, 'dashscope-key')
+})
+
+test('integrated loading never reads inactive cascaded selector or model slots', () => {
+  const forbidden = new Set([
+    'NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL',
+    'NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER',
+  ])
+  const environment = new Proxy<NodeJS.ProcessEnv>({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+  }, {
+    get(target, key, receiver) {
+      if (typeof key === 'string' && forbidden.has(key)) {
+        throw new Error(`${key} must stay inert`)
+      }
+      return Reflect.get(target, key, receiver) as string | undefined
+    },
+  })
+  assert.deepEqual(resolveCascadedSelection(loadSettings(environment)), {
+    endpointingProvider: 'auto',
+    asrProvider: 'volcengine',
+    llmProvider: 'qwen',
+    llmModel: 'qwen-flash',
+    ttsProvider: 'volcengine',
+  })
+})
+
+test('integrated loading ignores invalid inactive cascaded selector and model values', () => {
+  const settings = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+    NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER: 'invalid-endpointing',
+    NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER: 'invalid-asr',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'invalid-llm',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: '',
+    NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER: 'invalid-tts',
+  })
+  assert.equal(settings.pipeline_mode, 'integrated')
+  assert.deepEqual(resolveCascadedSelection(settings), {
+    endpointingProvider: 'auto',
+    asrProvider: 'volcengine',
+    llmProvider: 'qwen',
+    llmModel: 'qwen-flash',
+    ttsProvider: 'volcengine',
+  })
 })
 
 test('cascaded Qwen resolution never reads ARK_API_KEY', () => {
