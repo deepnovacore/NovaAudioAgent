@@ -63,6 +63,7 @@ extraResources:
 mac:
   category: public.app-category.productivity
   hardenedRuntime: true
+  notarize: true
   sign: scripts/sign-mac-with-native-manifest.cjs
   entitlements: resources/entitlements.mac.plist
   entitlementsInherit: resources/entitlements.mac.inherit.plist
@@ -85,6 +86,7 @@ win:
   signExts:
     - .exe
     - .node
+    - .dll
   icon: build/icon.ico
   extraResources:
     - from: build/native/codex-sandbox-probe.exe

@@ -15,7 +15,7 @@ const targetId = process.platform === 'darwin'
     : `linux-${process.arch}-gnu`
 const candidates = []
   if (process.platform === 'darwin') {
-  const applicationRoot = resolve(root, `mac-${process.arch}`)
+  const applicationRoot = resolve(root, process.arch === 'arm64' ? 'mac-arm64' : 'mac')
   const applications = (await readdir(applicationRoot, { withFileTypes: true }))
     .filter(entry => entry.isDirectory() && entry.name.endsWith('.app'))
     if (applications.length !== 1) throw new PackageInspectionError('produced application rejected')

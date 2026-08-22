@@ -114,8 +114,8 @@ test('passes token only through environment and dials back over loopback', () =>
   assert.equal(spec.env.NOVA_AUDIO_AGENT_BACKEND, 'python')
 })
 
-test('backend selection defaults to Node while source checkout keeps explicit Python rollback', () => {
-  assert.equal(selectedBackend({}), 'node')
+test('backend selection keeps the source Python default and explicit Node opt-in', () => {
+  assert.equal(selectedBackend({}), 'python')
   assert.equal(selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'python' }), 'python')
   assert.equal(selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'node' }), 'node')
   assert.throws(

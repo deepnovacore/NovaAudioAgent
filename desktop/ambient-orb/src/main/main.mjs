@@ -31,10 +31,11 @@ import {
   venvPython,
   watchBackendExit,
 } from './backend.mjs'
-import { loadAppWindow } from './app-protocol.mjs'
+import { installAppProtocol, loadAppWindow } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
+import { createReleaseSmokeChannel } from './release-smoke-channel.mjs'
 import {
   createSafeStorageCodec,
   createSettingsWriter,
@@ -63,6 +64,7 @@ import {
   settingsWindowOptions,
   validateBootstrap,
 } from './security.mjs'
+import { validReleaseCameraResult } from '../renderer/release-camera-contract.mjs'
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'nova',
@@ -90,6 +92,7 @@ const WINDOW_SIZE = Object.freeze({ width: 184, height: 184 })
 // frameless window isn't reliably available the instant 'ready' fires, so
 // window creation is delayed a beat on linux only.
 const LINUX_WINDOW_DELAY_MS = 300
+const RELEASE_CAMERA_SMOKE_MODE = 'installed-file-v1'
 const opaque = process.env.NOVA_ORB_OPAQUE === '1'
 
 let backend = null
@@ -101,6 +104,7 @@ let bootstrap = null
 let nativeAudio = null
 let nativeBinary = null
 let quitDrain = null
+let releaseSmokeChannel = null
 // Settings are main-owned: the panel asks main directly, so unlike the memory
 // board there is no relay through the orb renderer and no requestId to match.
 let currentSettings = null
@@ -324,7 +328,7 @@ function decryptSecretsForSpawn(settings, codec) {
   return decrypted
 }
 
-async function launchBackend(cameraSource, backendKind) {
+async function launchBackend(cameraSource, backendKind, smokeChannel) {
   const token = randomBytes(16).toString('hex')
   const workspace = process.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || process.cwd()
   // The listener owns the handshake, so it must be bound before the backend can
@@ -391,6 +395,7 @@ async function launchBackend(cameraSource, backendKind) {
     listener.close()
   }
   const validated = validateBootstrap({ endpoint: ready.endpoint, token })
+  smokeChannel?.ready({endpoint: validated.endpoint, token: validated.token})
   nativeBinary = app.isPackaged
     ? resolve(process.resourcesPath, 'native/macos_voice_io')
     : resolve(packageRoot, 'build/macos_voice_io')
@@ -410,9 +415,9 @@ async function launchBackend(cameraSource, backendKind) {
   })
 }
 
-async function startSelectedCamera(camera, backendKind) {
+async function startSelectedCamera(camera, backendKind, smokeChannel) {
   currentSettings = await loadSettings(settingsFile())
-  await launchBackend(camera.source, backendKind)
+  await launchBackend(camera.source, backendKind, smokeChannel)
   const launchId = randomBytes(8).toString('hex')
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
@@ -604,18 +609,91 @@ async function startSelectedCamera(camera, backendKind) {
 
 async function start() {
   const backendKind = selectedBackend(process.env, { isPackaged: app.isPackaged })
+  releaseSmokeChannel = createReleaseSmokeChannel({
+    environment: process.env,
+    isPackaged: app.isPackaged,
+    onQuit: () => app.quit(),
+  })
   return startWithSelectedCamera({
     environment: process.env,
     requestPermission: source => requestLocalCameraPermission(source, {
       platform: process.platform,
       systemPreferences,
     }),
-    start: camera => startSelectedCamera(camera, backendKind),
+    start: camera => startSelectedCamera(camera, backendKind, releaseSmokeChannel),
   })
 }
 
+async function runInstalledFileCameraSmoke() {
+  return startWithSelectedCamera({
+    environment: process.env,
+    requestPermission: async () => true,
+    start: async camera => {
+      if (camera.source !== 'file') throw new Error('release camera smoke rejected')
+      const window = new BrowserWindow(browserWindowOptions(
+        preload,
+        `release-camera-${randomBytes(4).toString('hex')}`,
+        {opaque: true},
+      ))
+      configureWindowSecurity(window)
+      let handler
+      let timer
+      const result = new Promise((resolveResult, rejectResult) => {
+        timer = setTimeout(() => rejectResult(new Error('release camera smoke rejected')), 10_000)
+        handler = (event, value) => {
+          if (event.sender !== window.webContents || !validReleaseCameraResult(value)) return
+          clearTimeout(timer)
+          resolveResult(value)
+        }
+        ipcMain.on('nova:release-camera:result', handler)
+      })
+      try {
+        installAppProtocol(window.webContents.session.protocol, {
+          rendererRoot,
+          rendererFiles: [
+            '/release-camera.html',
+            '/release-camera.mjs',
+            '/release-camera-contract.mjs',
+            '/camera.mjs',
+          ],
+          fetchFile: file => net.fetch(pathToFileURL(file).href),
+          cameraFile: camera.file,
+          fetchCameraFile: (url, init) => net.fetch(url, init),
+        })
+        await window.loadURL('nova://orb/release-camera.html')
+        return await result
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+        if (handler !== undefined) ipcMain.removeListener('nova:release-camera:result', handler)
+        if (!window.isDestroyed()) window.destroy()
+      }
+    },
+  })
+}
+
+function finishInstalledFileCameraSmoke(result) {
+  if (result === 'passed') {
+    process.stdout.write('{"ok":true}\n', () => app.exit(0))
+  } else if (result === 'chromium_codec_unavailable') {
+    process.stdout.write(
+      'camera-file-integration: chromium_codec_unavailable\n',
+      () => app.exit(75),
+    )
+  } else {
+    process.stderr.write('installed camera smoke rejected\n', () => app.exit(1))
+  }
+}
+
+const installedFileCameraSmoke = app.isPackaged
+  && process.env.NOVA_AUDIO_AGENT_RELEASE_CAMERA_SMOKE === RELEASE_CAMERA_SMOKE_MODE
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
+} else if (installedFileCameraSmoke) {
+  app.whenReady().then(runInstalledFileCameraSmoke).then(
+    finishInstalledFileCameraSmoke,
+    () => finishInstalledFileCameraSmoke('capture_failed'),
+  )
 } else {
   app.on('second-instance', () => mainWindow?.show())
   app.whenReady().then(start).catch(error => {
@@ -628,6 +706,7 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on('before-quit', event => {
   app.isQuitting = true
+  releaseSmokeChannel?.close()
   globalShortcut.unregisterAll()
   void nativeAudio?.deactivate()
   if (!backend) return

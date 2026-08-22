@@ -85,6 +85,8 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_DESKTOP_TOKEN', 'host_private', true, false, 'when_selected', null, 'Desktop transport handshake token.', '桌面传输握手令牌。'],
   ['NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT', 'host_private', false, false, 'when_selected', null, 'Desktop readiness endpoint.', '桌面就绪端点。'],
   ['NOVA_AUDIO_AGENT_DESKTOP_READY_FD', 'host_private', false, false, 'never', null, 'Legacy desktop readiness descriptor.', '旧桌面就绪描述符。'],
+  ['NOVA_AUDIO_AGENT_RELEASE_CAMERA_SMOKE', 'host_private', false, false, 'never', null, 'Packaged release camera capability sentinel.', '安装包发布相机能力哨兵。'],
+  ['NOVA_AUDIO_AGENT_RELEASE_SMOKE', 'host_private', false, false, 'never', null, 'Authenticated packaged lifecycle smoke mode.', '安装包认证生命周期冒烟模式。'],
   ['CODEX_HOME', 'host_private', false, false, 'never', null, 'Host Codex credential home.', '主机 Codex 凭据目录。'],
   ['HOME', 'host_private', false, false, 'never', null, 'Host home directory.', '主机用户目录。'],
   ['NOVA_AUDIO_AGENT_HA_URL', 'retired_ha', false, false, 'never', null, 'Retired Home Assistant endpoint.', '已退役 Home Assistant 地址。'],

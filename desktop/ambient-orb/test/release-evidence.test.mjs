@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   RELEASE_GATE_IDS,
   verifyCandidateLedger,
+  verifyCandidateLedgerForTest,
 } from '../scripts/verify-release-evidence.mjs'
 
 const SHA_A = 'a'.repeat(64)
@@ -97,10 +98,9 @@ test('test trust can prove schema mechanics but production rejects the same unsi
     artifacts: artifactMatrix(),
     evidence: records,
   }
-  const trusted = verifyCandidateLedger(ledger, {
+  const trusted = verifyCandidateLedgerForTest(ledger, {
     now: NOW,
     verifyAttestation: () => true,
-    testOnlyTrust: true,
   })
   assert.equal(trusted.status, 'passed')
   assert.deepEqual(trusted.pending_gate_ids, [])
@@ -119,7 +119,7 @@ test('cross-artifact and free-form evidence fail closed without leaking supplied
     evidence: [evidence('repository_full', { artifact_sha256: SHA_B })],
   }
   assert.throws(
-    () => verifyCandidateLedger(base, { now: NOW, verifyAttestation: () => true, testOnlyTrust: true }),
+    () => verifyCandidateLedgerForTest(base, { now: NOW, verifyAttestation: () => true }),
     error => {
       assert.equal(error.code, 'evidence_artifact_mismatch')
       assert.doesNotMatch(error.message, /aaaa|bbbb|github/u)
@@ -127,10 +127,10 @@ test('cross-artifact and free-form evidence fail closed without leaking supplied
     },
   )
   assert.throws(
-    () => verifyCandidateLedger({
+    () => verifyCandidateLedgerForTest({
       ...base,
       evidence: [{ ...evidence('repository_full'), note: 'private-path-sentinel' }],
-    }, { now: NOW, verifyAttestation: () => true, testOnlyTrust: true }),
+    }, { now: NOW, verifyAttestation: () => true }),
     error => {
       assert.equal(error.code, 'evidence_invalid')
       assert.doesNotMatch(error.message, /private-path-sentinel/u)

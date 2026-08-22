@@ -22,10 +22,13 @@ const EXPECTED_BUILD_SCRIPTS = [
   'src/main/backend.mjs',
   'src/main/security.mjs',
   'src/main/native-audio.mjs',
+  'src/main/release-smoke-channel.mjs',
   'src/main/drag-controller.mjs',
   'src/main/settings-store.mjs',
   'src/renderer/index.mjs',
   'src/renderer/camera.mjs',
+  'src/renderer/release-camera.mjs',
+  'src/renderer/release-camera-contract.mjs',
   'src/renderer/audio.mjs',
   'src/renderer/state.mjs',
   'src/renderer/orb-visual.mjs',
@@ -39,6 +42,16 @@ const EXPECTED_BUILD_SCRIPTS = [
   'scripts/release-codex-tool.mjs',
   'scripts/sign-mac-with-native-manifest.cjs',
   'scripts/after-sign.cjs',
+  'scripts/installed-candidate-smoke.mjs',
+  'scripts/collect-release-artifacts.mjs',
+  'scripts/generate-pending-release-ledger.mjs',
+  'scripts/generate-release-candidate-report.mjs',
+  'scripts/finalize-mac-notarization.mjs',
+  'scripts/verify-github-release-attestations.mjs',
+  'scripts/require-release-signing.mjs',
+  'scripts/verify-signed-candidate.mjs',
+  'scripts/prepare-release-smoke-kit.mjs',
+  'scripts/assemble-release-artifact-root.mjs',
   'scripts/inspect-package.mjs',
   'scripts/camera-file-integration.mjs',
   'scripts/camera-file-integration-contract.mjs',
@@ -312,8 +325,8 @@ test('the Windows Job guardian is staged once only for Windows', () => {
   ), [{from: 'build/native/windows-job-guardian.exe', to: 'native/windows-job-guardian.exe'}])
 })
 
-test('Windows signing covers both child executables and the project Node addon', () => {
-  assert.deepEqual(config.win.signExts, ['.exe', '.node'])
+test('Windows signing covers executables, Node addons, and manifest-owned shared libraries', () => {
+  assert.deepEqual(config.win.signExts, ['.exe', '.node', '.dll'])
 })
 
 test('the immutable endpointing capability assets are staged once at a fixed external path', () => {
@@ -422,6 +435,8 @@ test('desktop build executes syntax checks for production camera and integration
   for (const malformed of [
     'src/main/camera-source.mjs',
     'src/renderer/camera.mjs',
+    'src/renderer/release-camera.mjs',
+    'src/renderer/release-camera-contract.mjs',
     'scripts/camera-file-integration.mjs',
     'scripts/camera-file-integration-contract.mjs',
     'scripts/camera-file-integration-renderer.mjs',

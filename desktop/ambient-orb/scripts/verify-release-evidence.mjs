@@ -99,11 +99,7 @@ function frozenResult(status, resultCode, passed, pending, failed = []) {
   })
 }
 
-export function verifyCandidateLedger(ledger, {
-  now = Date.now(),
-  verifyAttestation,
-  testOnlyTrust = false,
-} = {}) {
+function validatedCandidateLedger(ledger, now) {
   if (!hasExactKeys(ledger, [
     'schema_version', 'release_version', 'commit', 'artifacts', 'evidence',
   ])) throw new ReleaseEvidenceError('ledger_invalid')
@@ -168,6 +164,17 @@ export function verifyCandidateLedger(ledger, {
     records.set(key, record)
   }
 
+  return {artifacts, records}
+}
+
+export function validateCandidateLedgerStructure(ledger, {now = Date.now()} = {}) {
+  const {artifacts, records} = validatedCandidateLedger(ledger, now)
+  return Object.freeze({artifact_count: artifacts.size, evidence_count: records.size})
+}
+
+function evaluateCandidateLedger(ledger, {now, verifyAttestation, trustEvidence}) {
+  const {artifacts, records} = validatedCandidateLedger(ledger, now)
+
   const passed = new Set()
   const pending = new Set()
   const failed = new Set()
@@ -183,7 +190,7 @@ export function verifyCandidateLedger(ledger, {
         failed.add(gateId)
         continue
       }
-      const trusted = testOnlyTrust === true
+      const trusted = trustEvidence === true
         && typeof verifyAttestation === 'function'
         && verifyAttestation(Object.freeze({ ...record })) === true
       if (!trusted) {
@@ -198,6 +205,22 @@ export function verifyCandidateLedger(ledger, {
   if (failed.size > 0) return frozenResult('failed', 'gate_failed', passed, pending, failed)
   if (pending.size > 0) return frozenResult('pending', 'evidence_pending', passed, pending)
   return frozenResult('passed', 'passed', passed, [])
+}
+
+export function verifyCandidateLedger(ledger, {now = Date.now()} = {}) {
+  return evaluateCandidateLedger(ledger, {
+    now,
+    verifyAttestation: undefined,
+    trustEvidence: false,
+  })
+}
+
+/** Schema-mechanics seam; release commands use GitHub/OIDC verification instead. */
+export function verifyCandidateLedgerForTest(ledger, {
+  now = Date.now(),
+  verifyAttestation,
+} = {}) {
+  return evaluateCandidateLedger(ledger, {now, verifyAttestation, trustEvidence: true})
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''

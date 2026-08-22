@@ -65,7 +65,7 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
 test('preload declares each bridge namespace exactly once', async () => {
   const { source } = await loadPreload()
 
-  for (const namespace of ['orbMenu', 'memoryBoard', 'nativeAudio', 'windowDrag', 'settings']) {
+  for (const namespace of ['orbMenu', 'releaseCamera', 'memoryBoard', 'nativeAudio', 'windowDrag', 'settings']) {
     const declarations = source.match(new RegExp(`^  ${namespace}: `, 'gm')) || []
     assert.equal(declarations.length, 1, `${namespace} is declared once`)
   }

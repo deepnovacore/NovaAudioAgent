@@ -2,27 +2,42 @@ name: Release candidate evidence
 
 on:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: Unpublished release candidate version (for example 0.1.0-rc.1)
+        required: true
+        type: string
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 
 jobs:
   platform-candidate:
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-14
-            package_script: package:mac:candidate
+            platform: darwin
+            target_id: darwin-arm64
+            package_script: package:mac:release
             artifact_name: candidate-darwin-arm64
-          - os: macos-13
-            package_script: package:mac:candidate
+          - os: macos-15-intel
+            platform: darwin
+            target_id: darwin-x64
+            package_script: package:mac:release
             artifact_name: candidate-darwin-x64
           - os: windows-latest
+            platform: win32
+            target_id: win32-x64
             package_script: package:win
             artifact_name: candidate-win32-x64
           - os: ubuntu-latest
+            platform: linux
+            target_id: linux-x64-gnu
             package_script: package:linux
             artifact_name: candidate-linux-x64-gnu
     runs-on: ${{ matrix.os }}
@@ -38,16 +53,160 @@ jobs:
       - run: npm run check
       - run: npm run test:runtime
       - run: npm run test:desktop
-      - run: npm run ${{ matrix.package_script }}
-      - run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
+      - name: Require external release signing credentials
+        env:
+          CSC_LINK: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_LINK || matrix.platform == 'win32' && secrets.WINDOWS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_KEY_PASSWORD || matrix.platform == 'win32' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node desktop/ambient-orb/scripts/require-release-signing.mjs --platform ${{ matrix.platform }}
+      - name: Build final signed candidate bytes
+        env:
+          CSC_LINK: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_LINK || matrix.platform == 'win32' && secrets.WINDOWS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_KEY_PASSWORD || matrix.platform == 'win32' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb
+      - name: Notarize and staple the final macOS container
+        if: matrix.platform == 'darwin'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run finalize:mac-notarization --workspace @nova-audio-agent/ambient-orb
+      - name: Verify post-sign trust and stapling
+        run: node desktop/ambient-orb/scripts/verify-signed-candidate.mjs --platform ${{ matrix.platform }} --dist-root desktop/ambient-orb/dist
+      - name: Reinspect exact post-sign application and installer bytes
+        run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
       - name: Provision pinned target-native Codex
         run: npm install --prefix desktop/ambient-orb/build/release-codex --install-strategy=nested --package-lock=false --ignore-scripts --no-save --omit=dev @openai/codex@0.147.0
       - name: Exercise packaged project authority, sandbox probe, and app-server lifecycle
         env:
           NOVA_AUDIO_AGENT_CODEX_API_KEY: offline-platform-contract-only
         run: npm run smoke:packaged-codex:ci --workspace @nova-audio-agent/ambient-orb
+      - name: Normalize closed release artifact names and final digests
+        run: npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}
+      - name: Prepare checkout-free installed smoke kit
+        run: npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb
+      - name: Attest exact final candidate files
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: desktop/ambient-orb/build/release-artifacts/*
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: desktop/ambient-orb/dist/**
+          path: |
+            desktop/ambient-orb/build/release-artifacts/**
+            desktop/ambient-orb/build/release-digests/**
+            desktop/ambient-orb/build/release-smoke-kit/**
+          if-no-files-found: error
+
+  installed-candidate-smoke:
+    needs: platform-candidate
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: darwin-arm64:app
+            artifact_name: candidate-darwin-arm64
+            filename: nova-darwin-arm64-app.zip
+            command: node
+          - os: macos-14
+            target: darwin-arm64:dmg
+            artifact_name: candidate-darwin-arm64
+            filename: nova-darwin-arm64.dmg
+            command: node
+          - os: macos-15-intel
+            target: darwin-x64:app
+            artifact_name: candidate-darwin-x64
+            filename: nova-darwin-x64-app.zip
+            command: node
+          - os: macos-15-intel
+            target: darwin-x64:dmg
+            artifact_name: candidate-darwin-x64
+            filename: nova-darwin-x64.dmg
+            command: node
+          - os: windows-latest
+            target: win32-x64:nsis
+            artifact_name: candidate-win32-x64
+            filename: nova-win32-x64.exe
+            command: node
+          - os: ubuntu-latest
+            target: linux-x64-gnu:appimage
+            artifact_name: candidate-linux-x64-gnu
+            filename: nova-linux-x64.AppImage
+            command: xvfb-run -a node
+          - os: ubuntu-latest
+            target: linux-x64-gnu:deb
+            artifact_name: candidate-linux-x64-gnu
+            filename: nova-linux-x64.deb
+            command: xvfb-run -a node
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: candidate
+      - name: Rehash, attest, install, authenticate, exercise, quit, and remove candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          ${{ matrix.command }} candidate/release-smoke-kit/scripts/installed-candidate-smoke.mjs
+          --target ${{ matrix.target }}
+          --artifact candidate/release-artifacts/${{ matrix.filename }}
+          --sha256-file candidate/release-digests/${{ matrix.filename }}.sha256
+          --commit ${{ github.sha }}
+          --camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4
+
+  pending-candidate-ledger:
+    needs: installed-candidate-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: candidate-*
+          path: downloaded
+      - name: Assemble only the seven attested candidate files
+        run: node desktop/ambient-orb/scripts/assemble-release-artifact-root.mjs --input downloaded --output candidate-artifacts
+      - name: Generate the honest pending external-evidence ledger
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: >-
+          npm run generate:pending-release-ledger --workspace @nova-audio-agent/ambient-orb --
+          --artifact-root candidate-artifacts
+          --release-version "$RELEASE_VERSION"
+          --commit ${{ github.sha }}
+          --output candidate-ledger-v1.json
+      - name: Render the unpublished pending candidate report
+        run: >-
+          npm run generate:release-candidate-report --workspace @nova-audio-agent/ambient-orb --
+          --ledger candidate-ledger-v1.json
+          --output candidate-report.md
+      - name: Attest the pending ledger and report bytes
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            candidate-ledger-v1.json
+            candidate-report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pending-candidate-ledger
+          path: |
+            candidate-ledger-v1.json
+            candidate-report.md
           if-no-files-found: error

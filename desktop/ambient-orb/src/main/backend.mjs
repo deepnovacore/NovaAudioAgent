@@ -78,7 +78,7 @@ export function fallbackPython(platform = process.platform) {
 }
 
 export function selectedBackend(env = process.env, { isPackaged = false } = {}) {
-  const value = env?.NOVA_AUDIO_AGENT_BACKEND ?? 'node'
+  const value = env?.NOVA_AUDIO_AGENT_BACKEND ?? (isPackaged ? 'node' : 'python')
   if (value !== 'python' && value !== 'node') {
     throw new Error('NOVA_AUDIO_AGENT_BACKEND must be python or node')
   }

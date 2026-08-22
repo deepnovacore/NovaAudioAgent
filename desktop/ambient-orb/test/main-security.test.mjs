@@ -30,6 +30,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:native-audio:play',
     'nova:native-audio:terminal',
     'nova:orb-menu:show',
+    'nova:release-camera:result',
     'nova:settings:changed',
     'nova:settings:get',
     'nova:settings:set',
@@ -316,7 +317,10 @@ test('main delegates camera-gated startup through the tested selector lifecycle'
   assert.match(start, /return startWithSelectedCamera\(\{/u)
   assert.match(start, /environment: process\.env/u)
   assert.match(start, /requestPermission: source => requestLocalCameraPermission\(source/u)
-  assert.match(start, /start: camera => startSelectedCamera\(camera, backendKind\)/u)
+  assert.match(
+    start,
+    /start: camera => startSelectedCamera\(camera, backendKind, releaseSmokeChannel\)/u,
+  )
 })
 
 test('backend mode is admitted before camera selection or permission work', async () => {
@@ -327,8 +331,21 @@ test('backend mode is admitted before camera selection or permission work', asyn
   const camera = body.indexOf('startWithSelectedCamera({')
 
   assert.ok(selection >= 0 && camera > selection)
-  assert.match(body, /start: camera => startSelectedCamera\(camera, backendKind\)/u)
+  assert.match(body, /createReleaseSmokeChannel\(\{/u)
+  assert.match(body, /start: camera => startSelectedCamera\(camera, backendKind, releaseSmokeChannel\)/u)
   assert.match(source, /source_rollback_unavailable/u)
+})
+
+test('packaged smoke readiness is private, post-backend, and closed by every quit', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  assert.match(source, /from '.\/release-smoke-channel\.mjs'/u)
+  assert.match(source, /let releaseSmokeChannel = null/u)
+  const launch = source.slice(source.indexOf('async function launchBackend('))
+  const launchBody = launch.slice(0, launch.indexOf('\n}\n'))
+  assert.ok(launchBody.indexOf('await listener.readiness') < launchBody.indexOf('smokeChannel?.ready({'))
+  assert.match(launchBody, /endpoint: validated\.endpoint, token/u)
+  const quit = source.slice(source.indexOf("app.on('before-quit'"))
+  assert.match(quit, /releaseSmokeChannel\?\.close\(\)/u)
 })
 
 test('camera bootstrap and protocol wiring catch canonical path disclosure or renderer URL choice', async () => {
