@@ -6,6 +6,8 @@ export interface MethodSchemaSpec {
   readonly file: string
   readonly fields: Readonly<Record<string, string>>
   readonly required: readonly string[]
+  readonly nullable?: readonly string[]
+  readonly allowedTypes?: Readonly<Record<string, readonly string[]>>
 }
 
 export interface InboundSchemaSpec extends MethodSchemaSpec {
@@ -20,8 +22,16 @@ function method(
   file: string,
   fields: Readonly<Record<string, string>>,
   required: readonly string[],
+  nullable: readonly string[] = [],
+  allowedTypes: Readonly<Record<string, readonly string[]>> = {},
 ): MethodSchemaSpec {
-  return deepFreeze({file, fields: {...fields}, required: [...required]})
+  return deepFreeze({
+    file,
+    fields: {...fields},
+    required: [...required],
+    ...(nullable.length === 0 ? {} : {nullable: [...nullable]}),
+    ...(Object.keys(allowedTypes).length === 0 ? {} : {allowedTypes}),
+  })
 }
 
 export const APP_SERVER_METHOD_SCHEMAS: Readonly<Record<string, MethodSchemaSpec>> = deepFreeze({
@@ -30,24 +40,24 @@ export const APP_SERVER_METHOD_SCHEMAS: Readonly<Record<string, MethodSchemaSpec
     'v2/ConfigReadParams.json',
     {includeLayers: 'boolean', cwd: 'string'},
     [],
+    ['cwd'],
   ),
   'thread/start': method('v2/ThreadStartParams.json', {
     ephemeral: 'boolean',
     approvalPolicy: 'string',
     developerInstructions: 'string',
     cwd: 'string',
-    permissions: 'string',
-    runtimeWorkspaceRoots: 'array',
-  }, []),
+  }, [], ['ephemeral', 'approvalPolicy', 'developerInstructions', 'cwd'], {
+    approvalPolicy: ['string', 'object', 'null'],
+  }),
   'thread/resume': method('v2/ThreadResumeParams.json', {
     threadId: 'string',
-    excludeTurns: 'boolean',
     approvalPolicy: 'string',
     developerInstructions: 'string',
     cwd: 'string',
-    permissions: 'string',
-    runtimeWorkspaceRoots: 'array',
-  }, ['threadId']),
+  }, ['threadId'], ['approvalPolicy', 'developerInstructions', 'cwd'], {
+    approvalPolicy: ['string', 'object', 'null'],
+  }),
   'turn/start': method('v2/TurnStartParams.json', {threadId: 'string', input: 'array'}, [
     'threadId', 'input',
   ]),
@@ -74,14 +84,17 @@ export const APP_SERVER_INBOUND_SCHEMAS: readonly InboundSchemaSpec[] = deepFree
   method('v2/ConfigReadResponse.json', {config: 'object', origins: 'object'}, ['config', 'origins']),
   {...method('v2/ThreadStartResponse.json', {
     approvalPolicy: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
-  }, ['approvalPolicy', 'cwd', 'sandbox', 'thread']), nested: THREAD_NESTED},
+  }, ['approvalPolicy', 'cwd', 'sandbox', 'thread'], [], {
+    approvalPolicy: ['string', 'object'],
+  }), nested: THREAD_NESTED},
   {...method('v2/ThreadResumeResponse.json', {
     approvalPolicy: 'string',
     cwd: 'string',
-    runtimeWorkspaceRoots: 'array',
     sandbox: 'object',
     thread: 'object',
-  }, ['approvalPolicy', 'cwd', 'runtimeWorkspaceRoots', 'sandbox', 'thread']), nested: THREAD_NESTED},
+  }, ['approvalPolicy', 'cwd', 'sandbox', 'thread'], [], {
+    approvalPolicy: ['string', 'object'],
+  }), nested: THREAD_NESTED},
   {...method('v2/TurnStartResponse.json', {turn: 'object'}, ['turn']), nested: TURN_NESTED},
   method('v2/TurnSteerResponse.json', {turnId: 'string'}, ['turnId']),
   {...method('v2/TurnStartedNotification.json', {
@@ -122,12 +135,17 @@ export function validateCodexSchemaBundle(
       const params = requireObject(properties.params)
       const stem = spec.file.slice(spec.file.lastIndexOf('/') + 1, -'.json'.length)
       if (params.$ref !== `#/definitions/${stem}`) throw new TypeError('request reference')
-      validateObjectSchema(bundleSnapshot[spec.file], spec.fields, spec.required)
+      validateObjectSchema(
+        bundleSnapshot[spec.file], spec.fields, spec.required, undefined, spec.nullable,
+        spec.allowedTypes,
+      )
       result[name] = true
     }
     for (const spec of APP_SERVER_INBOUND_SCHEMAS) {
       const root = requireObject(bundleSnapshot[spec.file])
-      validateObjectSchema(root, spec.fields, spec.required)
+      validateObjectSchema(
+        root, spec.fields, spec.required, undefined, spec.nullable, spec.allowedTypes,
+      )
       if (spec.nested !== undefined) {
         const properties = requireObject(root.properties)
         const target = resolveLocalSchema(requireObject(properties[spec.nested.field]), root, new Set())
@@ -145,19 +163,34 @@ function validateObjectSchema(
   fields: Readonly<Record<string, string>>,
   required: readonly string[],
   typeRoot?: Record<string, unknown>,
+  nullable: readonly string[] = [],
+  allowedTypes: Readonly<Record<string, readonly string[]>> = {},
 ): void {
   const schema = requireObject(candidate)
   if (schema.type !== 'object') throw new TypeError('object type')
   requireFields(schema, required)
   const properties = requireObject(schema.properties)
   const root = typeRoot ?? schema
+  const nullableFields = new Set(nullable)
+  if (nullable.some(field => !Object.hasOwn(fields, field))) throw new TypeError('nullable field')
+  if (Object.keys(allowedTypes).some(field => !Object.hasOwn(fields, field))) {
+    throw new TypeError('allowed type field')
+  }
   for (const [field, expected] of Object.entries(fields)) {
     const types = schemaTypes(requireObject(properties[field]), root, new Set())
-    const permitsNullablePath = field === 'path'
+    const explicitlyAllowed = allowedTypes[field]
+    if (explicitlyAllowed !== undefined) {
+      const wanted = new Set(explicitlyAllowed)
+      if (wanted.size !== explicitlyAllowed.length
+        || types.size !== wanted.size
+        || [...wanted].some(type => !types.has(type))) throw new TypeError('field type')
+      continue
+    }
+    const permitsNullable = (field === 'path' || nullableFields.has(field))
       && types.size === 2
-      && types.has('string')
+      && types.has(expected)
       && types.has('null')
-    if (!(types.size === 1 && types.has(expected)) && !permitsNullablePath) {
+    if (!(types.size === 1 && types.has(expected)) && !permitsNullable) {
       throw new TypeError('field type')
     }
   }

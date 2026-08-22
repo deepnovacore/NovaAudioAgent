@@ -1,24 +1,30 @@
 type Bundle = Record<string, unknown>
 
 const METHODS = {
-  initialize: ['v1/InitializeParams.json', {clientInfo: 'object'}, ['clientInfo']],
-  'config/read': ['v2/ConfigReadParams.json', {includeLayers: 'boolean', cwd: 'string'}, []],
+  initialize: ['v1/InitializeParams.json', {clientInfo: 'object'}, ['clientInfo'], [], {}],
+  'config/read': [
+    'v2/ConfigReadParams.json', {includeLayers: 'boolean', cwd: 'string'}, [], ['cwd'], {},
+  ],
   'thread/start': ['v2/ThreadStartParams.json', {
     ephemeral: 'boolean', approvalPolicy: 'string', developerInstructions: 'string',
-    cwd: 'string', permissions: 'string', runtimeWorkspaceRoots: 'array',
-  }, []],
+    cwd: 'string',
+  }, [], ['ephemeral', 'approvalPolicy', 'developerInstructions', 'cwd'], {
+    approvalPolicy: ['string', 'object', 'null'],
+  }],
   'thread/resume': ['v2/ThreadResumeParams.json', {
-    threadId: 'string', excludeTurns: 'boolean', approvalPolicy: 'string',
-    developerInstructions: 'string', cwd: 'string', permissions: 'string',
-    runtimeWorkspaceRoots: 'array',
-  }, ['threadId']],
-  'turn/start': ['v2/TurnStartParams.json', {threadId: 'string', input: 'array'}, ['threadId', 'input']],
+    threadId: 'string', approvalPolicy: 'string', developerInstructions: 'string', cwd: 'string',
+  }, ['threadId'], ['approvalPolicy', 'developerInstructions', 'cwd'], {
+    approvalPolicy: ['string', 'object', 'null'],
+  }],
+  'turn/start': [
+    'v2/TurnStartParams.json', {threadId: 'string', input: 'array'}, ['threadId', 'input'], [], {},
+  ],
   'turn/steer': ['v2/TurnSteerParams.json', {
     threadId: 'string', expectedTurnId: 'string', input: 'array',
-  }, ['threadId', 'expectedTurnId', 'input']],
+  }, ['threadId', 'expectedTurnId', 'input'], [], {}],
   'turn/interrupt': ['v2/TurnInterruptParams.json', {
     threadId: 'string', turnId: 'string',
-  }, ['threadId', 'turnId']],
+  }, ['threadId', 'turnId'], [], {}],
 } as const
 
 const INBOUND = [
@@ -29,9 +35,8 @@ const INBOUND = [
     id: 'string', cwd: 'string', ephemeral: 'boolean', path: 'string',
   }, ['id', 'cwd', 'ephemeral']]],
   ['v2/ThreadResumeResponse.json', {
-    approvalPolicy: 'string', cwd: 'string', runtimeWorkspaceRoots: 'array',
-    sandbox: 'object', thread: 'object',
-  }, ['approvalPolicy', 'cwd', 'runtimeWorkspaceRoots', 'sandbox', 'thread'], ['thread', {
+    approvalPolicy: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
+  }, ['approvalPolicy', 'cwd', 'sandbox', 'thread'], ['thread', {
     id: 'string', cwd: 'string', ephemeral: 'boolean', path: 'string',
   }, ['id', 'cwd', 'ephemeral']]],
   ['v2/TurnStartResponse.json', {turn: 'object'}, ['turn'], ['turn', {
@@ -53,6 +58,11 @@ const INBOUND = [
   }, ['id', 'items', 'status']]],
 ] as const
 
+const INBOUND_ALLOWED_TYPES: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
+  'v2/ThreadStartResponse.json': {approvalPolicy: ['string', 'object']},
+  'v2/ThreadResumeResponse.json': {approvalPolicy: ['string', 'object']},
+}
+
 export function supportedSchemaBundle(): Bundle {
   const bundle: Bundle = {}
   bundle['ClientRequest.json'] = {
@@ -66,11 +76,11 @@ export function supportedSchemaBundle(): Bundle {
       required: ['id', 'method', 'params'],
     })),
   }
-  for (const [file, fields, required] of Object.values(METHODS)) {
-    bundle[file] = schema(fields, required)
+  for (const [file, fields, required, nullable, allowedTypes] of Object.values(METHODS)) {
+    bundle[file] = schema(fields, required, nullable, allowedTypes)
   }
   for (const [file, fields, required, nested] of INBOUND) {
-    const properties = fieldSchemas(fields)
+    const properties = fieldSchemas(fields, [], INBOUND_ALLOWED_TYPES[file] ?? {})
     const definitions: Record<string, unknown> = {}
     if (nested !== null) {
       const [field, nestedFields, nestedRequired] = nested
@@ -83,10 +93,26 @@ export function supportedSchemaBundle(): Bundle {
   return bundle
 }
 
-function schema(fields: Readonly<Record<string, string>>, required: readonly string[]): unknown {
-  return {type: 'object', properties: fieldSchemas(fields), required: [...required], definitions: {}}
+function schema(
+  fields: Readonly<Record<string, string>>,
+  required: readonly string[],
+  nullable: readonly string[] = [],
+  allowedTypes: Readonly<Record<string, readonly string[]>> = {},
+): unknown {
+  return {
+    type: 'object', properties: fieldSchemas(fields, nullable, allowedTypes),
+    required: [...required], definitions: {},
+  }
 }
 
-function fieldSchemas(fields: Readonly<Record<string, string>>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(fields).map(([name, type]) => [name, {type}]))
+function fieldSchemas(
+  fields: Readonly<Record<string, string>>,
+  nullable: readonly string[] = [],
+  allowedTypes: Readonly<Record<string, readonly string[]>> = {},
+): Record<string, unknown> {
+  const nullableFields = new Set(nullable)
+  return Object.fromEntries(Object.entries(fields).map(([name, type]) => [
+    name,
+    {type: allowedTypes[name] ?? (nullableFields.has(name) ? [type, 'null'] : type)},
+  ]))
 }

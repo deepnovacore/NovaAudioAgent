@@ -2201,10 +2201,7 @@ test('persistent resume uses exact host identity and rejection is pre-effect res
       approvalPolicy: 'never',
       developerInstructions: 'bounded instructions',
       cwd: workspace,
-      runtimeWorkspaceRoots: [workspace],
-      permissions: 'nova_audio_agent',
       threadId: 'durable-thread-1',
-      excludeTurns: true,
     })
     if (rejected) {
       assert.equal(result.classification, 'refused')

@@ -3,6 +3,27 @@ import {spawnSync} from 'node:child_process'
 import {realpathSync} from 'node:fs'
 import {isAbsolute, resolve} from 'node:path'
 
+const PREFLIGHT_FAILURES = [
+  'binary_missing', 'credential_missing', 'preflight_failed', 'preflight_timeout',
+  'sandbox_failed', 'spawn_failed', 'stderr_too_large', 'unsupported_protocol',
+  'unsupported_version', 'workspace_invalid', 'workspace_root_mismatch',
+]
+const FAILURE_STAGES = new Set([
+  'load_runtime', 'settings_project', 'host_project', 'host_project_transport',
+  'host_project_native', 'host_project_config', 'resource_project',
+  'start_project', 'close_project', 'settings_live', 'host_live',
+  'resource_live', 'start_live', 'close_live',
+  ...PREFLIGHT_FAILURES.flatMap(code => [`start_project_${code}`, `start_live_${code}`]),
+])
+
+export function parsePackagedCodexFailure(stderr) {
+  if (typeof stderr !== 'string' || Buffer.byteLength(stderr, 'utf8') > 4096) return 'unknown'
+  const matches = stderr.split('\n').map(line => (
+    /^packaged production Codex composition rejected stage=([a-z_]+)$/u.exec(line)
+  )).filter(value => value !== null)
+  return matches.length === 1 && FAILURE_STAGES.has(matches[0][1]) ? matches[0][1] : 'unknown'
+}
+
 function option(name) {
   const index = process.argv.indexOf(name)
   return index >= 0 && index + 1 < process.argv.length ? process.argv[index + 1] : null
@@ -32,7 +53,12 @@ export function runPackagedCodexCompositionSmoke({
     result.error !== undefined
     || result.status !== 0
     || result.stdout !== 'packaged production Codex composition passed\n'
-  ) throw new Error('packaged production Codex composition rejected')
+  ) {
+    const stage = parsePackagedCodexFailure(result.stderr)
+    const error = new Error(`packaged production Codex composition rejected stage=${stage}`)
+    error.code = stage
+    throw error
+  }
 }
 
 export function packagedLayout({distRoot, platform, arch}) {

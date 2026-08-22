@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
-import {chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from 'node:fs/promises'
+import {chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {test} from 'node:test'
@@ -8,6 +8,7 @@ import {test} from 'node:test'
 import {
   NativeCodexHostPreflightRunner,
   NativeCodexLiveSchemaProbe,
+  canonicalSystemTemporaryDirectoryForTest,
   codexSandboxProbePathForTest,
   createProductionCodexHost,
   loadCodexSandboxProbeFromResources,
@@ -90,7 +91,11 @@ test('production preflight uses the fixed native probe and never passes credenti
       return {status: 0, stdout: Buffer.from('codex-cli 0.147.0\n')}
     }
     if (command.argv[0] === 'login') {
-      return {status: 0, stdout: Buffer.from('Logged in using ChatGPT\n')}
+      return {
+        status: 0,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.from('Logged in using ChatGPT\n'),
+      }
     }
     const mainIndex = command.argv.indexOf('--main')
     const materializedProbe = mainIndex > 0 ? command.argv[mainIndex - 1] : undefined
@@ -270,6 +275,7 @@ test('production host catalog admits only absolute host config and a packaged fi
   const binary = join(root, 'codex')
   const home = join(root, 'home')
   const temporary = join(root, 'tmp')
+  const temporaryAlias = join(root, 'tmp-alias')
   const resources = join(root, 'resources')
   const probe = join(resources, 'native', 'codex-sandbox-probe')
   const body = fakeMachExecutable()
@@ -278,6 +284,7 @@ test('production host catalog admits only absolute host config and a packaged fi
     await mkdir(join(workspace, '.git'))
     await mkdir(home)
     await mkdir(temporary)
+    await symlink(temporary, temporaryAlias, 'dir')
     await mkdir(join(resources, 'native'), {recursive: true})
     await writeFile(binary, '#!/bin/sh\nexit 0\n', {mode: 0o755})
     await writeFile(probe, body, {mode: 0o755})
@@ -313,6 +320,15 @@ test('production host catalog admits only absolute host config and a packaged fi
     assert.deepEqual(host.catalog.canonicalWorkspaces, [await realpath(workspace)])
     assert.equal(host.transportFactory.available, true)
     assert.equal(host.projectHost, null)
+    assert.equal(canonicalSystemTemporaryDirectoryForTest(temporaryAlias), await realpath(temporary))
+
+    const configuredAlias = createProductionCodexHost(settings, {
+      resourcesPath: await realpath(resources),
+      platform: 'darwin', arch: 'arm64', homeDirectory: await realpath(home),
+      temporaryDirectory: temporaryAlias,
+      environment: {PATH: '/usr/bin:/bin', HOME: await realpath(home)},
+    })
+    assert.equal(configuredAlias.transportFactory.available, false)
 
     const defaultBinary = createProductionCodexHost(loadSettings({
       NOVA_AUDIO_AGENT_EXECUTOR: 'codex',

@@ -80,6 +80,7 @@ export interface BoundedCodexCommand {
 export interface BoundedCodexCommandResult {
   readonly status: number | null
   readonly stdout: Buffer
+  readonly stderr?: Buffer
 }
 
 export type BoundedCodexCommandRunner = (
@@ -187,7 +188,9 @@ export function createProductionCodexHost(
         electronAbi: options.electronAbi ?? process.versions.modules,
       })
     : null
-  const temporaryDirectory = canonicalDirectory(options.temporaryDirectory ?? tmpdir())
+  const temporaryDirectory = options.temporaryDirectory === undefined
+    ? canonicalSystemTemporaryDirectoryForTest(tmpdir())
+    : canonicalDirectory(options.temporaryDirectory)
   if (temporaryDirectory === null) return Object.freeze({
     catalog,
     transportFactory: unavailableCodexBackendTransportFactory,
@@ -547,7 +550,7 @@ export async function runBoundedCodexCommand(
     throw new CodexTransportError('binary_missing')
   }
   let stdout = Buffer.alloc(0)
-  let stderrBytes = 0
+  let stderr = Buffer.alloc(0)
   let rejectBoundary!: (error: Error) => void
   const boundary = new Promise<never>((_resolve, reject) => { rejectBoundary = reject })
   let boundaryFailed = false
@@ -564,8 +567,11 @@ export async function runBoundedCodexCommand(
     stdout = Buffer.concat([stdout, chunk])
   })
   child.stderr.on('data', (chunk: Buffer) => {
-    stderrBytes += chunk.byteLength
-    if (stderrBytes > command.stderrLimit) fail('preflight_failed')
+    if (stderr.byteLength + chunk.byteLength > command.stderrLimit) {
+      fail('preflight_failed')
+      return
+    }
+    stderr = Buffer.concat([stderr, chunk])
   })
   const exit = new Promise<number | null>((resolveExit, rejectExit) => {
     child.once('error', () => { rejectExit(new CodexTransportError('binary_missing')) })
@@ -586,7 +592,11 @@ export async function runBoundedCodexCommand(
     if (process.platform !== 'win32' && processGroupAlive(child.pid)) {
       throw new CodexTransportError('preflight_failed')
     }
-    return Object.freeze({status, stdout})
+    return Object.freeze({
+      status,
+      stdout,
+      ...(stderr.byteLength === 0 ? {} : {stderr}),
+    })
   } catch (error) {
     await stopAndReapCommandTree(child.pid, exit, stdoutClosed, stderrClosed)
     if (error instanceof CodexTransportError) throw error
@@ -677,7 +687,7 @@ function parseVersion(result: BoundedCodexCommandResult): string {
 }
 
 function parseLogin(result: BoundedCodexCommandResult): 'chatgpt' | 'api_key' {
-  const lines = decodeSuccessful(result, 'credential_missing')
+  const lines = decodeSuccessfulLogin(result)
     .split(/\r?\n/u)
     .map(value => value.trim().replaceAll(/\s+/gu, ' '))
     .filter(Boolean)
@@ -691,6 +701,16 @@ function parseLogin(result: BoundedCodexCommandResult): 'chatgpt' | 'api_key' {
   })
   if (identities.length !== 1) throw new CodexTransportError('credential_missing')
   return identities[0]!
+}
+
+function decodeSuccessfulLogin(result: BoundedCodexCommandResult): string {
+  const streams = [result.stdout, result.stderr]
+    .filter((value): value is Buffer => Buffer.isBuffer(value) && value.byteLength > 0)
+  if (result.status !== 0 || streams.length !== 1) {
+    throw new CodexTransportError('credential_missing')
+  }
+  try { return stripLikePython(new TextDecoder('utf-8', {fatal: true}).decode(streams[0])) }
+  catch { throw new CodexTransportError('credential_missing') }
 }
 
 function parseProbe(result: BoundedCodexCommandResult): Readonly<Record<string, string>> {
@@ -945,6 +965,15 @@ function canonicalDirectory(candidate: string): string | null {
     const canonical = realpathSync(candidate)
     if (link.isSymbolicLink() || !link.isDirectory() || canonical !== resolve(candidate)) return null
     return canonical
+  } catch {
+    return null
+  }
+}
+
+/** Test seam for the host-owned OS temp alias; caller-configured paths stay lexically canonical. */
+export function canonicalSystemTemporaryDirectoryForTest(candidate: string): string | null {
+  try {
+    return canonicalDirectory(realpathSync(candidate))
   } catch {
     return null
   }

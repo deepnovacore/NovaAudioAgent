@@ -999,14 +999,11 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
     const persistent = {
       ...common,
       cwd: workspace,
-      runtimeWorkspaceRoots: [workspace],
-      permissions: 'nova_audio_agent',
     }
     if (this.#config.resumeThreadId !== null) {
       return {method: 'thread/resume', params: {
         ...persistent,
         threadId: this.#config.resumeThreadId,
-        excludeTurns: true,
       }}
     }
     return {method: 'thread/start', params: {...persistent, ephemeral: false}}

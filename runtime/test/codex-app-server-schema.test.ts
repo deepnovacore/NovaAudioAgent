@@ -18,23 +18,26 @@ const METHOD_SPECS = {
     file: 'v2/ConfigReadParams.json',
     fields: {includeLayers: 'boolean', cwd: 'string'},
     required: [],
+    nullable: ['cwd'],
   },
   'thread/start': {
     file: 'v2/ThreadStartParams.json',
     fields: {
       ephemeral: 'boolean', approvalPolicy: 'string', developerInstructions: 'string',
-      cwd: 'string', permissions: 'string', runtimeWorkspaceRoots: 'array',
+      cwd: 'string',
     },
     required: [],
+    nullable: ['ephemeral', 'approvalPolicy', 'developerInstructions', 'cwd'],
+    allowedTypes: {approvalPolicy: ['string', 'object', 'null']},
   },
   'thread/resume': {
     file: 'v2/ThreadResumeParams.json',
     fields: {
-      threadId: 'string', excludeTurns: 'boolean', approvalPolicy: 'string',
-      developerInstructions: 'string', cwd: 'string', permissions: 'string',
-      runtimeWorkspaceRoots: 'array',
+      threadId: 'string', approvalPolicy: 'string', developerInstructions: 'string', cwd: 'string',
     },
     required: ['threadId'],
+    nullable: ['approvalPolicy', 'developerInstructions', 'cwd'],
+    allowedTypes: {approvalPolicy: ['string', 'object', 'null']},
   },
   'turn/start': {
     file: 'v2/TurnStartParams.json',
@@ -72,15 +75,16 @@ const INBOUND_SPECS = [
     file: 'v2/ThreadStartResponse.json',
     fields: {approvalPolicy: 'string', cwd: 'string', sandbox: 'object', thread: 'object'},
     required: ['approvalPolicy', 'cwd', 'sandbox', 'thread'], nested: THREAD_NESTED,
+    allowedTypes: {approvalPolicy: ['string', 'object']},
   },
   {
     file: 'v2/ThreadResumeResponse.json',
     fields: {
-      approvalPolicy: 'string', cwd: 'string', runtimeWorkspaceRoots: 'array',
-      sandbox: 'object', thread: 'object',
+      approvalPolicy: 'string', cwd: 'string', sandbox: 'object', thread: 'object',
     },
-    required: ['approvalPolicy', 'cwd', 'runtimeWorkspaceRoots', 'sandbox', 'thread'],
+    required: ['approvalPolicy', 'cwd', 'sandbox', 'thread'],
     nested: THREAD_NESTED,
+    allowedTypes: {approvalPolicy: ['string', 'object']},
   },
   {
     file: 'v2/TurnStartResponse.json', fields: {turn: 'object'}, required: ['turn'],
@@ -114,8 +118,17 @@ function objectSchema(
   return {type: 'object', properties: fields, required, definitions}
 }
 
-function schemaForFields(fields: Readonly<Record<string, string>>, required: readonly string[]): unknown {
-  return objectSchema(Object.fromEntries(Object.entries(fields).map(([name, type]) => [name, {type}])), required)
+function schemaForFields(
+  fields: Readonly<Record<string, string>>,
+  required: readonly string[],
+  nullable: readonly string[] = [],
+  allowedTypes: Readonly<Record<string, readonly string[]>> = {},
+): unknown {
+  const nullableFields = new Set(nullable)
+  return objectSchema(Object.fromEntries(Object.entries(fields).map(([name, type]) => [
+    name,
+    {type: allowedTypes[name] ?? (nullableFields.has(name) ? [type, 'null'] : type)},
+  ])), required)
 }
 
 function supportedBundle(): Bundle {
@@ -132,11 +145,22 @@ function supportedBundle(): Bundle {
     })),
   }
   for (const spec of Object.values(METHOD_SPECS)) {
-    bundle[spec.file] = schemaForFields(spec.fields, spec.required)
+    bundle[spec.file] = schemaForFields(
+      spec.fields,
+      spec.required,
+      'nullable' in spec ? spec.nullable : [],
+      'allowedTypes' in spec ? spec.allowedTypes : {},
+    )
   }
   for (const spec of INBOUND_SPECS) {
+    const allowedTypes: Readonly<Record<string, readonly string[]>> = 'allowedTypes' in spec
+      ? spec.allowedTypes
+      : {}
     const fields: Record<string, unknown> = Object.fromEntries(
-      Object.entries(spec.fields).map(([name, type]) => [name, {type}]),
+      Object.entries(spec.fields).map(([name, type]) => [
+        name,
+        {type: allowedTypes[name] ?? type},
+      ]),
     )
     const definitions: Record<string, unknown> = {}
     if ('nested' in spec) {

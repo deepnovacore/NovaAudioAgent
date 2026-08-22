@@ -4,7 +4,11 @@ import {tmpdir} from 'node:os'
 import {resolve} from 'node:path'
 import test from 'node:test'
 
-import {packagedLayout} from '../scripts/run-packaged-codex-smoke.mjs'
+import {
+  packagedLayout,
+  parsePackagedCodexFailure,
+} from '../scripts/run-packaged-codex-smoke.mjs'
+import {releaseCandidateWorkspace} from '../scripts/run-release-candidate-codex-smoke.mjs'
 
 test('packaged Codex smoke selects one fixed executable/resource layout per release tuple', async () => {
   const root = await realpath(await mkdtemp(resolve(tmpdir(), 'nova-packaged-codex-layout-')))
@@ -31,6 +35,32 @@ test('packaged Codex smoke selects one fixed executable/resource layout per rele
   } finally {
     await rm(root, {recursive: true, force: true})
   }
+})
+
+test('packaged Codex failures expose only one closed stage code', () => {
+  assert.equal(
+    parsePackagedCodexFailure('packaged production Codex composition rejected stage=start_project\n'),
+    'start_project',
+  )
+  assert.equal(
+    parsePackagedCodexFailure('bounded platform diagnostic\npackaged production Codex composition rejected stage=host_project_native\n'),
+    'host_project_native',
+  )
+  assert.equal(
+    parsePackagedCodexFailure('packaged production Codex composition rejected stage=start_project_sandbox_failed\n'),
+    'start_project_sandbox_failed',
+  )
+  for (const value of [
+    'packaged production Codex composition rejected stage=private/path\n',
+    'raw private detail\n',
+    '',
+  ]) assert.equal(parsePackagedCodexFailure(value), 'unknown')
+})
+
+test('local release Codex smoke uses the fixed repository root without caller paths', () => {
+  const workspace = releaseCandidateWorkspace({})
+  assert.equal(workspace, new URL('../../..', import.meta.url).pathname.replace(/\/$/u, ''))
+  assert.equal(releaseCandidateWorkspace({GITHUB_WORKSPACE: workspace}), workspace)
 })
 
 test('release-candidate workflow makes packaged Codex composition a required target-native step', async () => {
