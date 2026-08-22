@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
+import {createHash} from 'node:crypto'
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, {type TestContext} from 'node:test'
 import { Worker, type WorkerOptions } from 'node:worker_threads'
+
+import {canonicalJson} from '../src/canonical-json.js'
 
 import type {
   EvidenceRef,
@@ -747,28 +750,74 @@ test('relation receipt replay returns its exact committed result after derived s
   })
 })
 
-test('a legacy schema-v2 relation receipt reopens and reconciles without losing commit truth', async t => {
-  const {client, path} = await createStore(t)
+test('a genuine schema-v2 relation receipt remains retained and conflicts stably after advancement', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-workspace-graph-v2-'))
+  const path = join(directory, 'graph.sqlite')
   const operationId = '23456789-2345-4234-8234-234567890123'
   const original = relation()
-  await client.upsertRelation(original, undefined, operationId)
-  await closeStore(client)
-
-  const legacyResult = JSON.stringify({
+  const legacyResult = canonicalJson({
     kind: 'relation',
     source_logical_id: original.source_logical_id,
     target_logical_id: original.target_logical_id,
     relation_type: original.relation_type,
     revision: original.revision,
     status: original.status,
-  }).replaceAll("'", "''")
+  })
+  const originalPayload = canonicalJson(original)
+  const originalEvidence = canonicalJson(original.evidence_refs[0])
+  const inputDigest = createHash('sha256').update(canonicalJson({
+    relation: original,
+    expected_revision: null,
+  })).digest('hex')
   await execSqlite(path, `
-    UPDATE operation_receipts SET result_json = '${legacyResult}'
-    WHERE operation_id = '${operationId}'
+    CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL) STRICT;
+    INSERT INTO schema_migrations(version, applied_at) VALUES (2, 1);
+    CREATE TABLE relation_cards(
+      source_logical_id TEXT NOT NULL, target_logical_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL, confidence REAL NOT NULL, reason TEXT NOT NULL,
+      first_seen_at REAL NOT NULL, last_seen_at REAL NOT NULL, status TEXT NOT NULL,
+      revision INTEGER NOT NULL, payload_json TEXT NOT NULL,
+      PRIMARY KEY(source_logical_id, target_logical_id, relation_type)
+    ) STRICT;
+    CREATE TABLE relation_evidence(
+      source_logical_id TEXT NOT NULL, target_logical_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL, evidence_source TEXT NOT NULL,
+      evidence_ref TEXT NOT NULL, observed_at REAL NOT NULL, evidence_json TEXT NOT NULL,
+      PRIMARY KEY(source_logical_id, target_logical_id, relation_type, evidence_source, evidence_ref),
+      FOREIGN KEY(source_logical_id, target_logical_id, relation_type)
+        REFERENCES relation_cards(source_logical_id, target_logical_id, relation_type)
+        ON DELETE CASCADE
+    ) STRICT;
+    CREATE TABLE operation_receipts(
+      receipt_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation_id TEXT NOT NULL UNIQUE, operation_type TEXT NOT NULL,
+      input_digest TEXT NOT NULL, committed_at INTEGER NOT NULL, result_json TEXT NOT NULL
+    ) STRICT;
+    INSERT INTO relation_cards VALUES (
+      '${original.source_logical_id}', '${original.target_logical_id}',
+      '${original.relation_type}', ${original.confidence}, '${original.reason}',
+      ${original.first_seen_at}, ${original.last_seen_at}, '${original.status}',
+      ${original.revision}, '${originalPayload.replaceAll("'", "''")}'
+    );
+    INSERT INTO relation_evidence VALUES (
+      '${original.source_logical_id}', '${original.target_logical_id}',
+      '${original.relation_type}', '${original.evidence_refs[0]?.source}',
+      '${original.evidence_refs[0]?.ref}', ${original.evidence_refs[0]?.observed_at},
+      '${originalEvidence.replaceAll("'", "''")}'
+    );
+    INSERT INTO operation_receipts(
+      operation_id, operation_type, input_digest, committed_at, result_json
+    ) VALUES (
+      '${operationId}', 'upsert_relation', '${inputDigest}', 1,
+      '${legacyResult.replaceAll("'", "''")}'
+    );
   `)
 
   const reopened = new WorkspaceGraphStoreClient(path)
-  t.after(() => reopened.close())
+  t.after(async () => {
+    await reopened.close()
+    await rm(directory, {recursive: true, force: true})
+  })
   await reopened.open()
   assert.equal((await reopened.diagnostics()).schema_version, 3)
   assert.deepEqual(await reopened.getOperationReceipt(operationId), {
@@ -776,13 +825,25 @@ test('a legacy schema-v2 relation receipt reopens and reconciles without losing 
     operation_type: 'upsert_relation',
     result: {kind: 'relation', relation: original},
   })
-  assert.deepEqual(await reopened.upsertRelation(original, undefined, operationId), original)
-  assert.deepEqual(await reopened.listRelations(), [original])
+  const advanced = relation(1, 'weak', [runtimeEvidence(), runtimeEvidence('later-v3', 2)])
+  await reopened.upsertRelation(
+    advanced,
+    0,
+    '34567890-3456-4345-8345-345678901234',
+  )
+  await assert.rejects(reopened.getOperationReceipt(operationId), {
+    code: 'STORE_OPERATION_CONFLICT',
+  })
+  await assert.rejects(reopened.upsertRelation(original, undefined, operationId), {
+    code: 'STORE_OPERATION_CONFLICT',
+  })
+  assert.deepEqual(await reopened.listRelations(), [advanced])
   assert.deepEqual(
     await querySqlite(path, `
-      SELECT result_json FROM operation_receipts WHERE operation_id = '${operationId}'
+      SELECT operation_type, input_digest, result_json
+      FROM operation_receipts WHERE operation_id = '${operationId}'
     `),
-    [{result_json: legacyResult.replaceAll("''", "'")}],
+    [{operation_type: 'upsert_relation', input_digest: inputDigest, result_json: legacyResult}],
   )
 })
 

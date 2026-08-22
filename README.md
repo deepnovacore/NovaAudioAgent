@@ -194,9 +194,14 @@ the host source is unchanged.
 ### Workspace memory graph and optional MyContext evidence
 
 The Node runtime has an opt-in workspace memory graph. Nova's graph is project-wide and
-lightweight: it automatically maintains workspace identity and relationship/navigation context
-from Nova's own confirmed lifecycle and typed task events. It remembers the project map; it does
-not copy repository-native engineering instructions or automatically inspect another workspace.
+lightweight: it maintains workspace identity from Nova's confirmed lifecycle and can record an
+adjacent committed A-to-B transition as weak `discussed_with` metadata. That relation is a bounded
+map cue, not a conclusion from model or work-order prose: Nova reads neither workspace, keeps it
+below the proactive threshold, and ages unrefreshed relations to stale after 90 days. Typed task
+events may contribute separately authorized evidence. Committed switches revoke the previous graph
+scope immediately and retain admitted A-to-B-to-C order; an uncommittable event breaks adjacency
+instead of bridging the gap. All durable graph times use Unix seconds. Nova does not copy
+repository-native engineering instructions or automatically inspect another workspace.
 
 ```bash
 NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true

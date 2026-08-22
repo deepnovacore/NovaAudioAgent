@@ -49,6 +49,31 @@ the configured receipt-retention/idempotency invariants; sufficiently old overfl
 pruned after their retention window. Compaction cannot lock out a later valid write. No graph
 operation reads work state from a second workspace.
 
+Adjacent authoritative committed workspace transitions contribute only weak `discussed_with`
+metadata. The runtime records a fixed, non-imperative reason and one runtime evidence reference; it
+does not derive a relation from model/work-order prose or read either workspace. Reopening a
+workspace also performs bounded maintenance: relation cards not refreshed for 90 days are marked
+stale with their evidence retained. Committed transitions are admitted in host order: admission
+synchronously revokes the old current scope, while a bounded FIFO preserves A→B→C adjacency as
+A→B and B→C. If an admitted event must be dropped, inference fails closed rather than bridging
+the unknown gap. The same gap fence applies when an admitted event cannot be resolved or committed:
+the next successful workspace becomes a fresh anchor and only its successor may create a new edge.
+All durable graph timestamps use Unix seconds; the causal runtime's monotonic clock is not a
+persistence clock.
+
+Transition provenance is authenticated independently of the caller's projected result. Inside the
+atomic store transaction, Nova re-runs the pure projector against current state and requires an
+exact delta match. This prevents a fixed transition cue from smuggling arbitrary wording,
+confidence, status, or evidence. A weak transition may supplement an existing higher-authority
+relation, but it cannot replace that relation's confirmed wording, confidence, or state.
+
+Schema-v3 relation receipts contain the complete gated historical result and therefore replay
+exactly even after the current relation advances. Historical schema-v2 receipts did not persist that
+payload. Migration retains those receipt rows and may reconstruct a result only while the matching
+relation revision is still current; after the relation advances, the old operation returns the
+stable `STORE_OPERATION_CONFLICT` error. Nova never fabricates a historical card or discards the
+retained receipt to claim success.
+
 ## Optional MyContext gain and limits
 
 Nova's graph is project-wide and derived from authoritative workspace lifecycle. MyContext can add a

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import {mkdtemp, rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import { setImmediate as yieldImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
 import {
@@ -59,6 +62,10 @@ import { RealtimeSession } from '../src/realtime/session.js'
 import type { CaptionFrame } from '../src/realtime/session-state.js'
 import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
 import type { CompiledTools } from '../src/tool-schema.js'
+import {
+  WorkspaceGraphService,
+  type TaskCompletionInput,
+} from '../src/workspace-graph/service.js'
 
 interface Deferred<T> {
   readonly promise: Promise<T>
@@ -843,10 +850,13 @@ test('workspace graph opens before project initialization, injects only the curr
   let holdTerminal = false
   const terminalGate = deferred<void>()
   let workspaceQueueFailures = 0
+  let graphScopeGeneration = 0
   const diagnostics: string[] = []
   const graph: RealtimeWorkspaceGraph = {
     publishedSnapshot: emptyPublishedGraphSnapshot(7),
     open: () => { actions.push('graph:open'); return Promise.resolve() },
+    revokeCurrentWorkspaceScope: () => ++graphScopeGeneration,
+    breakWorkspaceTransitionAdjacency: () => undefined,
     openWorkspace: async input => {
       actions.push('graph:workspace')
       graphCalls.push(input)
@@ -894,8 +904,10 @@ test('workspace graph opens before project initialization, injects only the curr
       return Object.freeze({
         header: '<workspace_context kind="data">current alpha</workspace_context>',
         recall_pack: null,
+        omitted_preferences: 0,
         omitted_hints: 0,
         degraded: false,
+        diagnostic: null,
       })
     },
     close: () => { graphClosed += 1; actions.push('graph:close'); return Promise.resolve() },
@@ -915,8 +927,14 @@ test('workspace graph opens before project initialization, injects only the curr
     projectAdapter,
     workspaceGraph: graph,
     idFactory: () => `graph-host-${++id}`,
+    wallClockNow: () => 1_800_000_000,
     onDiagnostic: line => { diagnostics.push(line) },
   })
+  assert.throws(
+    () => core.runtime.bindGraphContextProvider(() => null),
+    /already bound/u,
+    'RealtimeAssembly must own the sole runtime graph-context binding',
+  )
 
   await realtime.start()
   assert.deepEqual(actions.slice(0, 6), [
@@ -970,6 +988,23 @@ test('workspace graph opens before project initialization, injects only the curr
     item_id: 'provider-user-graph-regression',
     text: 'a relation-shaped transcript must not inject a late Recall Pack',
   })
+  await waitNamed('runtime graph context compilation', () => graphCalls.some(call => (
+    typeof call === 'object'
+    && call !== null
+    && 'utterance' in call
+    && call.utterance === 'a relation-shaped transcript must not inject a late Recall Pack'
+  )))
+  assert.deepEqual(graphCalls.find(call => (
+    typeof call === 'object'
+    && call !== null
+    && 'utterance' in call
+    && call.utterance === 'a relation-shaped transcript must not inject a late Recall Pack'
+  )), {
+    session_epoch: 1,
+    workspace_instance_id: 'instance-alpha',
+    utterance: 'a relation-shaped transcript must not inject a late Recall Pack',
+    preferences: [],
+  })
   assert.equal(provider.workspaceItems.length, 1,
     'server-VAD transcript final must not inject a late workspace host item')
 
@@ -992,7 +1027,7 @@ test('workspace graph opens before project initialization, injects only the curr
     workspace_instance_id: 'instance-alpha',
     summary: 'typed user objective',
     outcome: 'ok',
-    now: 50,
+    now: 1_800_000_000,
     relation_cue: null,
   })
 
@@ -1057,10 +1092,239 @@ test('workspace graph opens before project initialization, injects only the curr
   )).length === 3)
 
   await realtime.stop()
+  const releaseReboundProvider = core.runtime.bindGraphContextProvider(() => null)
+  releaseReboundProvider()
   assert.equal(graphClosed, 1)
   assert.equal(projectClosed, 1)
   assert.equal(workspaceObservers.size, 0)
   assert.equal(terminalObservers.size, 0)
+})
+
+test('real assembly and graph service infer only weak metadata from committed adjacent workspaces', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-realtime-graph-transition-'))
+  const workspaceObservers = new Set<(event: CommittedWorkspaceEvent) => void | Promise<void>>()
+  const terminalObservers = new Set<(event: TerminalWorkOrderEvent) => void | Promise<void>>()
+  const clock = new VirtualClock(3)
+  const confirmation = new ProjectConfirmationController({clock, idFactory: () => 'transition-confirm'})
+  const alpha: WorkspaceRecord = Object.freeze({
+    workspace_id: 'host-alpha', display_name: 'alpha', normalized_name: 'alpha',
+    canonical_path: '/safe/assembly-alpha', origin: 'registered', codex_home_key: 'host-alpha',
+    active_session_id: null, created_at: 1, last_used_at: 1,
+  })
+  const beta: WorkspaceRecord = Object.freeze({
+    workspace_id: 'host-beta', display_name: 'beta', normalized_name: 'beta',
+    canonical_path: '/safe/assembly-beta', origin: 'registered', codex_home_key: 'host-beta',
+    active_session_id: null, created_at: 2, last_used_at: 2,
+  })
+  const gamma: WorkspaceRecord = Object.freeze({
+    workspace_id: 'host-gamma', display_name: 'gamma', normalized_name: 'gamma',
+    canonical_path: '/safe/assembly-gamma', origin: 'registered', codex_home_key: 'host-gamma',
+    active_session_id: null, created_at: 3, last_used_at: 3,
+  })
+  const delta: WorkspaceRecord = Object.freeze({
+    workspace_id: 'host-delta', display_name: 'delta', normalized_name: 'delta',
+    canonical_path: '/safe/assembly-delta', origin: 'registered', codex_home_key: 'host-delta',
+    active_session_id: null, created_at: 4, last_used_at: 4,
+  })
+  const epsilon: WorkspaceRecord = Object.freeze({
+    workspace_id: 'host-epsilon', display_name: 'epsilon', normalized_name: 'epsilon',
+    canonical_path: '/safe/assembly-epsilon', origin: 'registered', codex_home_key: 'host-epsilon',
+    active_session_id: null, created_at: 5, last_used_at: 5,
+  })
+  const adapterShape: ExecutorAdapter & Record<string, unknown> = {
+    manifest: CODEX_PROJECT_MANIFEST,
+    confirmationController: confirmation,
+    dispatch: () => Promise.resolve({
+      outcome: 'ok', trust: 'trusted_system', content: {code: 'completed'}, refs: [],
+    }),
+    commitConfirmed: () => Promise.resolve({accepted: false, code: 'not_used'}),
+    publicProjectView: () => Object.freeze({
+      workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+    }),
+    initialize: () => Promise.resolve(),
+    activeCommittedWorkspace: () => Promise.resolve(alpha),
+    observeProjectView: () => () => undefined,
+    observeCommittedWorkspace: (observer: (event: CommittedWorkspaceEvent) => void) => {
+      workspaceObservers.add(observer)
+      return () => { workspaceObservers.delete(observer) }
+    },
+    observeTerminalWorkOrder: (observer: (event: TerminalWorkOrderEvent) => void) => {
+      terminalObservers.add(observer)
+      return () => { terminalObservers.delete(observer) }
+    },
+    close: () => Promise.resolve(),
+  }
+  const projectAdapter = adapterShape as unknown as ProjectCodexAdapter
+  let observation = 0
+  let providerScopeLookups = 0
+  const graph = new WorkspaceGraphService({
+    path: join(directory, 'graph.sqlite'),
+    id_factory: () => `assembly-transition-${++observation}`,
+    personal_context_provider: {
+      lookupWorkspaceEvidence: () => {
+        providerScopeLookups += 1
+        return Promise.resolve(Object.freeze({
+          evidence: Object.freeze([]), omitted_evidence: 0,
+          degraded: false, diagnostic: null,
+        }))
+      },
+    },
+  })
+  const revokeGraphScope = graph.revokeCurrentWorkspaceScope.bind(graph)
+  let graphScopeRevocations = 0
+  graph.revokeCurrentWorkspaceScope = () => {
+    graphScopeRevocations += 1
+    return revokeGraphScope()
+  }
+  const recordGraphTaskCompletion = graph.recordTaskCompletion.bind(graph)
+  const graphTaskCompletions: TaskCompletionInput[] = []
+  graph.recordTaskCompletion = input => {
+    graphTaskCompletions.push(input)
+    return recordGraphTaskCompletion(input)
+  }
+  const diagnostics: string[] = []
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock,
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    executors: [adapterShape],
+    realtimeFrontbrain: true,
+  })
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider: new WorkspaceContextProvider(),
+    projectAdapter,
+    workspaceGraph: graph,
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+  t.after(async () => {
+    await realtime.stop()
+    await rm(directory, {recursive: true, force: true})
+  })
+
+  await realtime.start()
+  await waitNamed('authoritative alpha graph open', () => (
+    graph.publishedSnapshot.logical_workspaces.length === 1
+  ))
+  assert.equal(graph.publishedSnapshot.relations.length, 0)
+  const alphaInstance = graph.publishedSnapshot.workspace_instances[0]
+  assert.ok(alphaInstance !== undefined)
+  const alphaProviderInput = {
+    workspace_instance_id: alphaInstance.instance_id,
+    query: 'explain current workspace evidence',
+    limit: 1,
+  } as const
+  await settleNamed('authoritative alpha provider scope', (async () => {
+    while ((await graph.enrichAfterExplicitRecall(alphaProviderInput)).degraded) {
+      await yieldImmediate()
+    }
+  })())
+  assert.equal(providerScopeLookups, 1)
+  const committed = [...workspaceObservers][0]
+  const terminal = [...terminalObservers][0]
+  assert.ok(committed !== undefined)
+  assert.ok(terminal !== undefined)
+  const revocationsBeforeSwitch = graphScopeRevocations
+  committed({workspace: beta})
+  terminal({
+    workspace: beta,
+    work_order: 'beta objective committed before gamma became current',
+    handoff: {outcome: 'ok', trust: 'trusted_system', content: {}, refs: []},
+  })
+  committed({workspace: gamma})
+  assert.equal(graphScopeRevocations, revocationsBeforeSwitch + 2)
+  assert.deepEqual(await graph.enrichAfterExplicitRecall(alphaProviderInput), {
+    evidence: [], omitted_evidence: 0, degraded: true, diagnostic: 'protocol',
+  }, 'committed-event admission must revoke old provider scope synchronously')
+  assert.equal(providerScopeLookups, 1)
+  await waitNamed('ordered authoritative alpha-to-beta-to-gamma transitions', () => (
+    graph.publishedSnapshot.relations.length === 2
+  ))
+  await waitNamed('terminal event for the resolved stale-generation beta mapping', () => (
+    graphTaskCompletions.length === 1
+  ))
+  assert.equal(graphTaskCompletions[0]?.workspace_instance_id, (
+    graph.publishedSnapshot.workspace_instances.find(instance => (
+      instance.repository_fingerprint === beta.workspace_id
+    ))?.instance_id
+  ))
+  const idsByHost = new Map(graph.publishedSnapshot.workspace_instances.map(instance => (
+    [instance.repository_fingerprint, instance.logical_workspace_id]
+  )))
+  assert.deepEqual(graph.publishedSnapshot.relations.map(relation => ({
+    source: relation.source_logical_id,
+    target: relation.target_logical_id,
+    type: relation.relation_type,
+    confidence: relation.confidence,
+    status: relation.status,
+  })), [
+    {
+      source: idsByHost.get('host-alpha'), target: idsByHost.get('host-beta'),
+      type: 'discussed_with', confidence: 0.4, status: 'weak',
+    },
+    {
+      source: idsByHost.get('host-beta'), target: idsByHost.get('host-gamma'),
+      type: 'discussed_with', confidence: 0.4, status: 'weak',
+    },
+  ])
+  assert.equal(JSON.stringify(graph.publishedSnapshot.relations).includes('/safe/'), false)
+
+  committed({workspace: Object.freeze({...gamma, canonical_path: 'speculative-relative-path'})})
+  await waitNamed('rejected speculative transition', () => (
+    diagnostics.some(line => line.endsWith('workspace_graph_lifecycle_failed'))
+  ))
+  assert.equal(graph.publishedSnapshot.relations.length, 2)
+  assert.ok(graph.publishedSnapshot.relations.every(relation => (
+    relation.revision === 0 && relation.evidence_refs.length === 1
+  )))
+
+  committed({workspace: delta})
+  await waitNamed('successful workspace after a rejected admitted transition', () => (
+    graph.publishedSnapshot.workspace_instances.some(instance => (
+      instance.repository_fingerprint === delta.workspace_id
+    ))
+  ))
+  assert.equal(
+    graph.publishedSnapshot.relations.length,
+    2,
+    'a processing failure must break adjacency instead of inferring gamma-to-delta',
+  )
+
+  committed({workspace: epsilon})
+  await waitNamed('new adjacency after the post-gap workspace becomes the anchor', () => (
+    graph.publishedSnapshot.relations.length === 3
+  ))
+  const postGapIds = new Map(graph.publishedSnapshot.workspace_instances.map(instance => (
+    [instance.repository_fingerprint, instance.logical_workspace_id]
+  )))
+  const postGapRelation = graph.publishedSnapshot.relations.find(relation => (
+    relation.source_logical_id === postGapIds.get('host-delta')
+    && relation.target_logical_id === postGapIds.get('host-epsilon')
+  ))
+  assert.ok(postGapRelation !== undefined)
+  assert.deepEqual({
+    type: postGapRelation.relation_type,
+    reason: postGapRelation.reason,
+    confidence: postGapRelation.confidence,
+    status: postGapRelation.status,
+    first_seen_at: postGapRelation.first_seen_at,
+    last_seen_at: postGapRelation.last_seen_at,
+    evidence: postGapRelation.evidence_refs.map(evidence => ({
+      source: evidence.source,
+      observed_at: evidence.observed_at,
+    })),
+    revision: postGapRelation.revision,
+  }, {
+    type: 'discussed_with',
+    reason: 'adjacent confirmed workspace transition',
+    confidence: 0.4,
+    status: 'weak',
+    first_seen_at: 5,
+    last_seen_at: 5,
+    evidence: [{source: 'runtime', observed_at: 5}],
+    revision: 0,
+  })
 })
 
 test('never-settling graph open is bounded and cannot block voice startup', async () => {
@@ -1070,6 +1334,8 @@ test('never-settling graph open is bounded and cannot block voice startup', asyn
   const graph = {
     publishedSnapshot: emptyPublishedGraphSnapshot(0),
     open: () => openGate.promise,
+    revokeCurrentWorkspaceScope: () => 1,
+    breakWorkspaceTransitionAdjacency: () => undefined,
     openWorkspace: () => Promise.reject(new Error('not expected')),
     recordTaskCompletion: () => Promise.reject(new Error('not expected')),
     contextForTurn: () => null,
@@ -1143,6 +1409,8 @@ test('never-settling initial Header delivery cannot block voice startup', async 
   const graph: RealtimeWorkspaceGraph = {
     publishedSnapshot: emptyPublishedGraphSnapshot(7),
     open: () => Promise.resolve(),
+    revokeCurrentWorkspaceScope: () => 1,
+    breakWorkspaceTransitionAdjacency: () => undefined,
     openWorkspace: () => Promise.resolve({
       kind: 'resolved',
       resolution_basis: 'repository_fingerprint',
@@ -1161,7 +1429,8 @@ test('never-settling initial Header delivery cannot block voice startup', async 
     recordTaskCompletion: () => Promise.resolve(),
     contextForTurn: () => Object.freeze({
       header: '<workspace_context kind="data">current header</workspace_context>',
-      recall_pack: null, omitted_hints: 0, degraded: false,
+      recall_pack: null, omitted_preferences: 0, omitted_hints: 0, degraded: false,
+      diagnostic: null,
     }),
     close: () => Promise.resolve(),
   }
@@ -1198,6 +1467,8 @@ test('abandoned graph close remains cleanup-incomplete and is retried by the ass
   const graph = {
     publishedSnapshot: emptyPublishedGraphSnapshot(0),
     open: () => Promise.resolve(),
+    revokeCurrentWorkspaceScope: () => 1,
+    breakWorkspaceTransitionAdjacency: () => undefined,
     openWorkspace: () => Promise.reject(new Error('not expected')),
     recordTaskCompletion: () => Promise.reject(new Error('not expected')),
     contextForTurn: () => null,
@@ -1226,6 +1497,8 @@ test('workspace graph open failure is diagnostic-only and never blocks voice sta
   const graph = {
     publishedSnapshot: emptyPublishedGraphSnapshot(0),
     open: () => Promise.reject(new Error('sensitive graph failure detail')),
+    revokeCurrentWorkspaceScope: () => 1,
+    breakWorkspaceTransitionAdjacency: () => undefined,
     openWorkspace: () => Promise.reject(new Error('not expected')),
     recordTaskCompletion: () => Promise.reject(new Error('not expected')),
     contextForTurn: () => null,

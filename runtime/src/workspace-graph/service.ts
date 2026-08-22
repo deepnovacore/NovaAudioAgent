@@ -23,6 +23,7 @@ import {
 } from './models.js'
 import {
   GraphProjector,
+  WORKSPACE_TRANSITION_REASON,
   applyWorkspaceGraphProjectionDeltas,
   type WorkspaceGraphProjectionState,
 } from './projector.js'
@@ -42,7 +43,10 @@ const STALE_RETRY_LIMIT = 2
 export const MAX_WORKSPACE_GRAPH_PENDING_OPERATIONS = 64
 const WORKSPACE_GRAPH_SERVICE_DRAIN_GRACE_MS = 250
 const EXPLANATION_EVIDENCE_LIMIT = 8
-const STALE_AFTER_MS = 90 * 24 * 60 * 60 * 1_000
+// Runtime/project timestamps are seconds. The projector option retains its legacy `_ms` spelling,
+// but this production caller must compare like units.
+const STALE_AFTER_RUNTIME_SECONDS = 90 * 24 * 60 * 60
+const MAX_AGED_RELATIONS_PER_WORKSPACE_OPEN = 16
 const PROVIDER_SCOPE_MAX_CODE_POINTS = 239
 const PROVIDER_SCOPE_MAX_BYTES = 956
 const PROVIDER_QUERY_MAX_CODE_POINTS = 4_096
@@ -199,6 +203,7 @@ export class WorkspaceGraphService {
   #state: ServiceState = 'new'
   #closeOperation: Promise<void> | null = null
   #currentWorkspaceInstanceId: string | null = null
+  #lastConfirmedWorkspaceInstanceId: string | null = null
   #workspaceScopeGeneration = 0
 
   constructor(options: WorkspaceGraphServiceOptions) {
@@ -226,6 +231,18 @@ export class WorkspaceGraphService {
     return this.#client.publishedSnapshot
   }
 
+  /** Revoke provider-visible current scope synchronously while retaining graph adjacency history. */
+  revokeCurrentWorkspaceScope(): number {
+    this.#currentWorkspaceInstanceId = null
+    this.#workspaceScopeGeneration += 1
+    return this.#workspaceScopeGeneration
+  }
+
+  /** Break relation adjacency after an admitted host transition cannot be committed. */
+  breakWorkspaceTransitionAdjacency(): void {
+    this.#lastConfirmedWorkspaceInstanceId = null
+  }
+
   async open(): Promise<void> {
     if (this.#state !== 'new') {
       if (this.#state === 'open') return
@@ -242,54 +259,107 @@ export class WorkspaceGraphService {
     }
   }
 
-  openWorkspace(input: OpenWorkspaceInput): Promise<WorkspaceResolutionDecision> {
+  openWorkspace(
+    input: OpenWorkspaceInput,
+    admittedScopeGeneration?: number,
+  ): Promise<WorkspaceResolutionDecision> {
     const admitted = parseOpenWorkspaceInput(input)
-    // A confirmed host switch revokes the previous provider scope before any queued store work.
-    // Until the new instance is committed and published, explicit provider recall is unavailable.
-    this.#currentWorkspaceInstanceId = null
-    const scopeGeneration = ++this.#workspaceScopeGeneration
-    return this.#enqueue(async () => this.#withStaleRetries(async () => {
-      const decision = new WorkspaceIdentityResolver(this.#identityState, {
-        pathPolicy: this.#pathPolicy,
-        contentPolicy: this.#contentPolicy,
-      }).resolve({
-        path: admitted.path,
-        git_remote: admitted.git_remote ?? null,
-        repository_fingerprint: admitted.repository_fingerprint,
-        ...(admitted.branch === undefined ? {} : {branch: admitted.branch}),
-        now: admitted.now,
-      })
-      if (decision.kind !== 'resolved') {
-        this.#currentWorkspaceInstanceId = null
-        return decision
-      }
-      const observation: Observation = {
-        observation_id: this.#idFactory(),
-        observation_type: 'workspace_opened',
-        occurred_at: admitted.now,
-        source: 'runtime',
-        trust: 'trusted_system',
-        logical_workspace_id: decision.logical_workspace.logical_workspace_id,
-        workspace_instance_id: decision.instance.instance_id,
-        related_logical_workspace_id: null,
-        summary: 'confirmed workspace lifecycle',
-        outcome: 'ok',
-        evidence_refs: [],
-      }
-      await this.#client.applyGraphBatch({
-        observation,
-        identity_deltas: decision.deltas,
-        projection_deltas: [],
-      }, this.#operationIdFactory())
-      await this.#reloadState()
-      if (scopeGeneration === this.#workspaceScopeGeneration) {
-        this.#currentWorkspaceInstanceId = this.#publishedIdentityState.workspace_instances.some(
-          candidate => candidate.instance_id === decision.instance.instance_id
+    const scopeGeneration = admittedScopeGeneration ?? this.revokeCurrentWorkspaceScope()
+    if (
+      !Number.isSafeInteger(scopeGeneration)
+      || scopeGeneration <= 0
+      || scopeGeneration > this.#workspaceScopeGeneration
+    ) throw new WorkspaceGraphServiceError('GRAPH_SERVICE_INVALID_INPUT')
+    return this.#enqueue(async () => {
+      // Lifecycle mutations are ordered. Keep the provider scope revoked, but capture the graph's
+      // last successfully committed instance here so queued A→B→C events remain adjacent B→C.
+      const previousWorkspaceInstanceId = this.#lastConfirmedWorkspaceInstanceId
+      const decision = await this.#withStaleRetries(async () => {
+        const previousInstance = previousWorkspaceInstanceId === null
+          ? undefined
+          : this.#identityState.workspace_instances.find(candidate => (
+            candidate.instance_id === previousWorkspaceInstanceId && candidate.status === 'active'
+          ))
+        const resolution = new WorkspaceIdentityResolver(this.#identityState, {
+          pathPolicy: this.#pathPolicy,
+          contentPolicy: this.#contentPolicy,
+        }).resolve({
+          path: admitted.path,
+          git_remote: admitted.git_remote ?? null,
+          repository_fingerprint: admitted.repository_fingerprint,
+          ...(admitted.branch === undefined ? {} : {branch: admitted.branch}),
+          now: admitted.now,
+        })
+        if (resolution.kind !== 'resolved') {
+          this.#currentWorkspaceInstanceId = null
+          return resolution
+        }
+        const observationId = this.#idFactory()
+        const transition = previousInstance !== undefined
+          && previousInstance.logical_workspace_id
+            !== resolution.logical_workspace.logical_workspace_id
+        const transitionEvidence: EvidenceRef | null = transition
+          ? Object.freeze({source: 'runtime', ref: observationId, observed_at: admitted.now})
+          : null
+        const observation: Observation = {
+          observation_id: observationId,
+          observation_type: 'workspace_opened',
+          occurred_at: admitted.now,
+          source: 'runtime',
+          trust: 'trusted_system',
+          logical_workspace_id: resolution.logical_workspace.logical_workspace_id,
+          workspace_instance_id: resolution.instance.instance_id,
+          related_logical_workspace_id: transition
+            ? previousInstance.logical_workspace_id
+            : null,
+          summary: 'confirmed workspace lifecycle',
+          outcome: 'ok',
+          evidence_refs: transitionEvidence === null ? [] : [transitionEvidence],
+        }
+        const identityAfter = applyWorkspaceIdentityDeltas(this.#identityState, resolution.deltas)
+        const projected = transitionEvidence === null || previousInstance === undefined
+          ? {deltas: [] as const}
+          : new GraphProjector({
+            ...this.#projectionState,
+            logical_workspaces: identityAfter.logical_workspaces,
+            workspace_instances: identityAfter.workspace_instances,
+          }, {
+            stale_after_ms: STALE_AFTER_RUNTIME_SECONDS,
+            proactive_confidence_threshold: 0.65,
+            path_policy: this.#pathPolicy,
+            content_policy: this.#contentPolicy,
+          }).apply({
+            origin: 'trusted_runtime',
+            observation,
+            relation_cue: {
+              kind: 'workspace_transition',
+              stance: 'supplement',
+              source_logical_id: previousInstance.logical_workspace_id,
+              target_logical_id: resolution.logical_workspace.logical_workspace_id,
+              relation_type: 'discussed_with',
+              reason: WORKSPACE_TRANSITION_REASON,
+              evidence_refs: [transitionEvidence],
+            },
+          })
+        await this.#client.applyGraphBatch({
+          observation,
+          identity_deltas: resolution.deltas,
+          projection_deltas: projected.deltas,
+        }, this.#operationIdFactory())
+        await this.#reloadState()
+        const committedInstanceId = this.#publishedIdentityState.workspace_instances.some(
+          candidate => candidate.instance_id === resolution.instance.instance_id
             && candidate.status === 'active',
-        ) ? decision.instance.instance_id : null
-      }
+        ) ? resolution.instance.instance_id : null
+        if (committedInstanceId !== null) this.#lastConfirmedWorkspaceInstanceId = committedInstanceId
+        if (scopeGeneration === this.#workspaceScopeGeneration) {
+          this.#currentWorkspaceInstanceId = committedInstanceId
+        }
+        return resolution
+      })
+      await this.#ageRelations(admitted.now)
       return decision
-    }))
+    })
   }
 
   recordTaskCompletion(input: TaskCompletionInput): Promise<void> {
@@ -345,7 +415,7 @@ export class WorkspaceGraphService {
         evidence_refs: [evidence],
       }
       const projector = new GraphProjector(this.#projectionState, {
-        stale_after_ms: STALE_AFTER_MS,
+        stale_after_ms: STALE_AFTER_RUNTIME_SECONDS,
         proactive_confidence_threshold: 0.65,
         path_policy: this.#pathPolicy,
         content_policy: this.#contentPolicy,
@@ -482,6 +552,7 @@ export class WorkspaceGraphService {
     if (this.#closeOperation !== null) return this.#closeOperation
     if (this.#state === 'closed') return Promise.resolve()
     this.#currentWorkspaceInstanceId = null
+    this.#lastConfirmedWorkspaceInstanceId = null
     this.#workspaceScopeGeneration += 1
     const operation = this.#closeFresh()
     this.#closeOperation = operation
@@ -582,6 +653,31 @@ export class WorkspaceGraphService {
         target_logical_id: relation.target_logical_id,
         relation_type: relation.relation_type,
       }))
+    }
+  }
+
+  async #ageRelations(now: number): Promise<void> {
+    try {
+      const aged = new GraphProjector(this.#projectionState, {
+        stale_after_ms: STALE_AFTER_RUNTIME_SECONDS,
+        proactive_confidence_threshold: 0.65,
+        path_policy: this.#pathPolicy,
+        content_policy: this.#contentPolicy,
+      }).age(now)
+      const bounded = aged.deltas.slice(0, MAX_AGED_RELATIONS_PER_WORKSPACE_OPEN)
+      for (const delta of bounded) {
+        if (delta.kind !== 'upsert_relation' || delta.expected_revision === null) continue
+        await this.#client.upsertRelation(
+          delta.relation,
+          delta.expected_revision,
+          this.#operationIdFactory(),
+        )
+      }
+      if (bounded.length > 0) await this.#reloadState()
+    } catch {
+      // Maintenance is advisory. A confirmed workspace open must remain usable on its last-good
+      // snapshot even when an aging write loses a revision race or the store is unavailable.
+      this.#emitDiagnostic('workspace_graph_write_failed')
     }
   }
 

@@ -169,8 +169,12 @@ home 内的凭据，而宿主源没有变化，这次 destination-only 更新会
 ### Workspace 记忆图谱与可选 MyContext 证据
 
 Node runtime 提供一套 opt-in 的 workspace 记忆图谱。Nova 图谱是面向项目全景且轻量的：它根据
-Nova 自己已经确认的 workspace 生命周期和类型化任务事件，自动维护 workspace 身份、项目关联和
-导航上下文。它记住的是项目地图；不会复制仓库内的工程指令，也不会自动检查另一个 workspace。
+Nova 已确认的生命周期维护 workspace 身份，并可把相邻、已提交的 A→B workspace 转换记录成弱
+`discussed_with` 元数据。该关系只是有界的地图线索，不是从模型或 work-order 自由文本推导的工程
+结论：Nova 不读取任一 workspace，关系低于主动建议阈值，90 天未刷新后转为 stale。类型化任务
+事件可贡献其他经过授权的证据。已提交的切换会立即撤销旧图谱 scope，并保留已接收的 A→B→C
+顺序；无法提交的事件会打断相邻关系，不能跨缺口连边。所有持久图谱时间统一使用 Unix 秒。Nova
+不会复制仓库内的工程指令，也不会自动检查另一个 workspace。
 
 ```bash
 NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true

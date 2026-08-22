@@ -30,6 +30,7 @@ export type RelationCueKind =
   | 'artifact_reference'
   | 'task_completion'
   | 'work_order'
+  | 'workspace_transition'
   | 'user_statement'
   | 'provider_evidence'
   | 'suppression'
@@ -53,12 +54,14 @@ export interface ProjectionSignal {
 }
 
 const projectionReasonSchema = z.string().min(1).max(239).regex(/\S/u)
+export const WORKSPACE_TRANSITION_REASON = 'adjacent confirmed workspace transition'
 
 const relationProjectionCueSchema = z.object({
   kind: z.enum([
     'artifact_reference',
     'task_completion',
     'work_order',
+    'workspace_transition',
     'user_statement',
     'provider_evidence',
     'suppression',
@@ -79,6 +82,7 @@ export const ProjectionSignalSchema: z.ZodType<ProjectionSignal> = z.object({
 
 export type ProjectionAuthority =
   | 'provider'
+  | 'runtime_inferred'
   | 'user_transcript'
   | 'trusted_system'
   | 'user_confirmed'
@@ -93,6 +97,7 @@ export interface ProjectionRecord {
   readonly target_logical_id: string
   readonly relation_type: RelationCard['relation_type']
   readonly cue_kind: RelationCueKind
+  readonly cue_reason?: string | undefined
   readonly stance: ProjectionStance
   readonly authority: ProjectionAuthority
   readonly occurred_at: number
@@ -112,12 +117,16 @@ const projectionRecordSchema: z.ZodType<ProjectionRecord> = z.object({
     'artifact_reference',
     'task_completion',
     'work_order',
+    'workspace_transition',
     'user_statement',
     'provider_evidence',
     'suppression',
   ]),
+  cue_reason: projectionReasonSchema.optional(),
   stance: z.enum(['confirm', 'supplement', 'conflict', 'suppress']),
-  authority: z.enum(['provider', 'user_transcript', 'trusted_system', 'user_confirmed']),
+  authority: z.enum([
+    'provider', 'runtime_inferred', 'user_transcript', 'trusted_system', 'user_confirmed',
+  ]),
   occurred_at: z.number().finite().nonnegative(),
   evidence_refs: z.array(EvidenceRefSchema).min(1),
 }).strict()
@@ -240,6 +249,8 @@ export class GraphProjector {
       return ignoredResult('PROJECTOR_AGENT_ORIGIN')
     }
     const cue = signal.relation_cue
+    const authorizedWorkspaceTransition = cue !== null
+      && isAuthorizedWorkspaceTransition(signal, cue)
     if (
       signal.observation.observation_type === 'workspace_opened'
       || signal.observation.observation_type === 'instance_observed'
@@ -249,7 +260,9 @@ export class GraphProjector {
         : signal.observation.source === 'runtime'
           || signal.observation.source === 'filesystem'
           || signal.observation.source === 'git'
-      return cue === null
+      if (authorizedWorkspaceTransition) {
+        // Continue through the ordinary evidence, digest, revision, and projection-record path.
+      } else return cue === null
         && signal.origin === 'trusted_runtime'
         && signal.observation.trust === 'trusted_system'
         && sourceAllowed
@@ -341,7 +354,9 @@ export class GraphProjector {
         && record.stance !== 'suppress'
       ))
     const candidateOnly = (
-      authority === 'provider' || authority === 'user_transcript'
+      authority === 'provider'
+      || authority === 'runtime_inferred'
+      || authority === 'user_transcript'
     ) && !hasAuthoritativeEvidence
     const incomingOrder = {
       occurred_at: signal.observation.occurred_at,
@@ -419,6 +434,7 @@ export class GraphProjector {
       target_logical_id: cue.target_logical_id,
       relation_type: cue.relation_type,
       cue_kind: cue.kind,
+      ...(cue.kind === 'workspace_transition' ? {cue_reason: cue.reason} : {}),
       stance: cue.stance,
       authority,
       occurred_at: signal.observation.occurred_at,
@@ -675,6 +691,7 @@ function projectionStateIsSafe(
     values.push(['projection_source_logical_id', record.source_logical_id])
     values.push(['projection_target_logical_id', record.target_logical_id])
     values.push(['projection_relation_type', record.relation_type])
+    values.push(['projection_cue_reason', record.cue_reason ?? null])
     values.push(['projection_cue_kind', record.cue_kind])
     values.push(['projection_stance', record.stance])
     values.push(['projection_authority', record.authority])
@@ -700,6 +717,7 @@ function projectionAuthority(signal: ProjectionSignal): ProjectionAuthority | un
     && observation.trust === 'trusted_system'
     && cue.stance !== 'suppress'
   ) {
+    if (isAuthorizedWorkspaceTransition(signal, cue)) return 'runtime_inferred'
     if (
       observation.observation_type === 'task_artifact_reference'
       && cue.kind === 'artifact_reference'
@@ -754,7 +772,13 @@ function cueMatchesObservation(
   cue: RelationProjectionCue,
   observation: Observation,
 ): boolean {
-  if (
+  const transition = cue.kind === 'workspace_transition'
+  if (transition) {
+    if (
+      cue.target_logical_id !== observation.logical_workspace_id
+      || cue.source_logical_id !== observation.related_logical_workspace_id
+    ) return false
+  } else if (
     cue.source_logical_id !== observation.logical_workspace_id
     || cue.target_logical_id !== observation.related_logical_workspace_id
   ) return false
@@ -783,6 +807,7 @@ function allowedEvidenceSourcesFor(
     case 'provider_relation_evidence':
       return providerEvidenceSources
     case 'workspace_opened':
+      return observationType === 'workspace_opened' ? runtimeEvidenceSources : emptyEvidenceSources
     case 'instance_observed':
       return emptyEvidenceSources
   }
@@ -796,11 +821,13 @@ const systemEvidenceSources: ReadonlySet<EvidenceRef['source']> = new Set([
 ])
 const userEvidenceSources: ReadonlySet<EvidenceRef['source']> = new Set(['user'])
 const providerEvidenceSources: ReadonlySet<EvidenceRef['source']> = new Set(['provider'])
+const runtimeEvidenceSources: ReadonlySet<EvidenceRef['source']> = new Set(['runtime'])
 const emptyEvidenceSources: ReadonlySet<EvidenceRef['source']> = new Set()
 
 function authorityConfidence(authority: ProjectionAuthority): number {
   switch (authority) {
     case 'provider': return 0.2
+    case 'runtime_inferred': return 0.4
     case 'user_transcript': return 0.35
     case 'trusted_system': return 0.8
     case 'user_confirmed': return 1
@@ -819,10 +846,32 @@ function confirmingConfidence(
 function authorityConfidenceCap(authority: ProjectionAuthority): number {
   switch (authority) {
     case 'provider': return 0.3
+    case 'runtime_inferred': return 0.49
     case 'user_transcript': return 0.49
     case 'trusted_system': return 0.9
     case 'user_confirmed': return 1
   }
+}
+
+function isAuthorizedWorkspaceTransition(
+  signal: ProjectionSignal,
+  cue: RelationProjectionCue,
+): boolean {
+  const observation = signal.observation
+  const evidence = observation.evidence_refs[0]
+  return signal.origin === 'trusted_runtime'
+    && observation.observation_type === 'workspace_opened'
+    && observation.source === 'runtime'
+    && observation.trust === 'trusted_system'
+    && cue.kind === 'workspace_transition'
+    && cue.stance === 'supplement'
+    && cue.relation_type === 'discussed_with'
+    && cue.reason === WORKSPACE_TRANSITION_REASON
+    && cue.source_logical_id !== cue.target_logical_id
+    && observation.evidence_refs.length === 1
+    && evidence?.source === 'runtime'
+    && evidence.ref === observation.observation_id
+    && evidence.observed_at === observation.occurred_at
 }
 
 function roundConfidence(confidence: number): number {

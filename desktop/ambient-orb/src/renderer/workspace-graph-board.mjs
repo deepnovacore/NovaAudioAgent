@@ -178,7 +178,7 @@ export function renderWorkspaceGraphBoard(payload, {document, root, status}) {
       name.textContent = instance.display_name
       row.append(name, badge(
         document,
-        instance.active ? '当前' : '非当前',
+        instance.active ? '活跃' : '非活跃',
         instance.active ? 'badge-active' : 'badge-inactive',
       ))
       article.append(row)

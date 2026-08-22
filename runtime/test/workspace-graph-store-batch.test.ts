@@ -10,7 +10,7 @@ import {
   emptyWorkspaceIdentityState,
 } from '../src/workspace-graph/identity.js'
 import type {Observation} from '../src/workspace-graph/models.js'
-import {GraphProjector} from '../src/workspace-graph/projector.js'
+import {GraphProjector, relationDeltaDigest} from '../src/workspace-graph/projector.js'
 import {
   WorkspaceGraphStoreClient,
   WorkspaceGraphStoreClientError,
@@ -88,6 +88,45 @@ async function projectionBatch(client: WorkspaceGraphStoreClient) {
   })
   assert.equal(projected.deltas.length, 2)
   return {relationObservation, deltas: projected.deltas}
+}
+
+async function transitionBatch(client: WorkspaceGraphStoreClient) {
+  await projectionBatch(client)
+  const state = await client.loadGraphState()
+  const first = state.identity_state.workspace_instances.find(candidate => (
+    candidate.repository_fingerprint === 'workspace-first'
+  ))
+  const second = state.identity_state.workspace_instances.find(candidate => (
+    candidate.repository_fingerprint === 'workspace-second'
+  ))
+  assert.ok(first !== undefined)
+  assert.ok(second !== undefined)
+  const evidence = Object.freeze({
+    source: 'runtime' as const, ref: 'transition-open-second', observed_at: 4,
+  })
+  const transitionObservation: Observation = Object.freeze({
+    observation_id: 'transition-open-second', observation_type: 'workspace_opened',
+    occurred_at: 4, source: 'runtime', trust: 'trusted_system',
+    logical_workspace_id: second.logical_workspace_id,
+    workspace_instance_id: second.instance_id,
+    related_logical_workspace_id: first.logical_workspace_id,
+    summary: 'confirmed workspace lifecycle', outcome: 'ok', evidence_refs: [evidence],
+  })
+  const projected = new GraphProjector(state.projection_state, {
+    stale_after_ms: 90 * 24 * 60 * 60,
+    proactive_confidence_threshold: 0.65,
+  }).apply({
+    origin: 'trusted_runtime', observation: transitionObservation,
+    relation_cue: {
+      kind: 'workspace_transition', stance: 'supplement',
+      source_logical_id: first.logical_workspace_id,
+      target_logical_id: second.logical_workspace_id,
+      relation_type: 'discussed_with', reason: 'adjacent confirmed workspace transition',
+      evidence_refs: [evidence],
+    },
+  })
+  assert.equal(projected.deltas.length, 2)
+  return {transitionObservation, deltas: projected.deltas}
 }
 
 test('atomic graph batch reconstructs identity private state after restart', async t => {
@@ -389,5 +428,57 @@ test('graph batch rejects an authenticated pair with an extra relation delta', a
     projection_deltas: [...batch.deltas, extra],
   }, '96666666-6666-4666-8666-666666666666'), {code: 'STORE_OPERATION_CONFLICT'})
   assert.equal(await client.getObservation('executor', 'provenance-relation'), undefined)
+  assert.deepEqual(await client.listRelations(), [])
+})
+
+test('graph batch rejects a forged authority on workspace transition provenance', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-batch-transition-authority-'))
+  const client = new WorkspaceGraphStoreClient(join(directory, 'graph.sqlite'))
+  t.after(async () => {
+    await client.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await client.open()
+  const batch = await transitionBatch(client)
+  const forged = batch.deltas.map(delta => delta.kind === 'record_projection'
+    ? {...delta, record: {...delta.record, authority: 'trusted_system' as const}}
+    : delta)
+
+  await assert.rejects(client.applyGraphBatch({
+    observation: batch.transitionObservation,
+    identity_deltas: [],
+    projection_deltas: forged,
+  }, '97777777-7777-4777-8777-777777777777'), {code: 'STORE_OPERATION_CONFLICT'})
+  assert.equal(await client.getObservation('runtime', 'transition-open-second'), undefined)
+  assert.deepEqual(await client.listRelations(), [])
+})
+
+test('graph batch rejects a fixed transition cue paired with a forged result reason', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-batch-transition-result-'))
+  const client = new WorkspaceGraphStoreClient(join(directory, 'graph.sqlite'))
+  t.after(async () => {
+    await client.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await client.open()
+  const batch = await transitionBatch(client)
+  const relationDelta = batch.deltas.find(delta => delta.kind === 'upsert_relation')
+  assert.ok(relationDelta?.kind === 'upsert_relation')
+  const forgedRelationDelta = {
+    ...relationDelta,
+    relation: {...relationDelta.relation, reason: 'forged transition conclusion'},
+  }
+  const forgedDigest = relationDeltaDigest(forgedRelationDelta)
+  const forged = batch.deltas.map(delta => {
+    if (delta.kind === 'upsert_relation') return forgedRelationDelta
+    return {...delta, record: {...delta.record, relation_delta_digest: forgedDigest}}
+  })
+
+  await assert.rejects(client.applyGraphBatch({
+    observation: batch.transitionObservation,
+    identity_deltas: [],
+    projection_deltas: forged,
+  }, '98888888-8888-4888-8888-888888888888'), {code: 'STORE_OPERATION_CONFLICT'})
+  assert.equal(await client.getObservation('runtime', 'transition-open-second'), undefined)
   assert.deepEqual(await client.listRelations(), [])
 })

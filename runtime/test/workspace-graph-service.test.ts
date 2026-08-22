@@ -131,6 +131,182 @@ test('service commits confirmed workspace lifecycle and reconstructs it after re
   })?.header ?? '', /workspace_context/)
 })
 
+test('adjacent confirmed workspace transitions persist only a weak metadata relation', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-transition-'))
+  const path = join(directory, 'graph.sqlite')
+  let sequence = 0
+  const service = new WorkspaceGraphService({
+    path,
+    id_factory: () => `transition-observation-${++sequence}`,
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const first = await service.openWorkspace({
+    path: '/safe/transition-a', repository_fingerprint: 'host-transition-a', now: 1,
+  })
+  const second = await service.openWorkspace({
+    path: '/safe/transition-b', repository_fingerprint: 'host-transition-b', now: 2,
+  })
+  assert.equal(first.kind, 'resolved')
+  assert.equal(second.kind, 'resolved')
+  assert.deepEqual(service.publishedSnapshot.relations, [{
+    source_logical_id: first.logical_workspace.logical_workspace_id,
+    target_logical_id: second.logical_workspace.logical_workspace_id,
+    relation_type: 'discussed_with',
+    confidence: 0.4,
+    reason: 'adjacent confirmed workspace transition',
+    evidence_refs: [{source: 'runtime', ref: 'transition-observation-2', observed_at: 2}],
+    first_seen_at: 2,
+    last_seen_at: 2,
+    status: 'weak',
+    revision: 0,
+  }])
+
+  await service.openWorkspace({
+    path: '/safe/transition-b', repository_fingerprint: 'host-transition-b', now: 3,
+  })
+  await assert.rejects(service.openWorkspace({
+    path: 'speculative-relative-path', repository_fingerprint: 'host-speculative', now: 4,
+  }))
+  assert.equal(service.publishedSnapshot.relations.length, 1)
+  assert.equal(service.publishedSnapshot.relations[0]?.revision, 0)
+  assert.equal(service.publishedSnapshot.relations[0]?.evidence_refs.length, 1)
+  const third = await service.openWorkspace({
+    path: '/safe/transition-c', repository_fingerprint: 'host-transition-c', now: 5,
+  })
+  assert.equal(third.kind, 'resolved')
+  assert.equal(service.publishedSnapshot.relations.length, 2,
+    'a failed candidate must not erase the last confirmed adjacency anchor')
+  assert.ok(service.publishedSnapshot.relations.some(relation => (
+    relation.source_logical_id === second.logical_workspace.logical_workspace_id
+    && relation.target_logical_id === third.logical_workspace.logical_workspace_id
+    && relation.revision === 0
+  )))
+})
+
+test('queued committed transitions preserve host order as graph adjacency', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-transition-order-'))
+  const service = new WorkspaceGraphService({
+    path: join(directory, 'graph.sqlite'),
+    id_factory: (() => { let value = 0; return () => `ordered-observation-${++value}` })(),
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const first = await service.openWorkspace({
+    path: '/safe/ordered-a', repository_fingerprint: 'host-ordered-a', now: 1,
+  })
+  const secondPending = service.openWorkspace({
+    path: '/safe/ordered-b', repository_fingerprint: 'host-ordered-b', now: 2,
+  })
+  const thirdPending = service.openWorkspace({
+    path: '/safe/ordered-c', repository_fingerprint: 'host-ordered-c', now: 3,
+  })
+  const [second, third] = await Promise.all([secondPending, thirdPending])
+  assert.equal(first.kind, 'resolved')
+  assert.equal(second.kind, 'resolved')
+  assert.equal(third.kind, 'resolved')
+  assert.deepEqual(service.publishedSnapshot.relations.map(relation => [
+    relation.source_logical_id,
+    relation.target_logical_id,
+  ]), [
+    [first.logical_workspace.logical_workspace_id, second.logical_workspace.logical_workspace_id],
+    [second.logical_workspace.logical_workspace_id, third.logical_workspace.logical_workspace_id],
+  ])
+})
+
+test('runtime transition preserves an existing higher-authority discussed-with relation', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-transition-merge-'))
+  const service = new WorkspaceGraphService({
+    path: join(directory, 'graph.sqlite'),
+    id_factory: (() => { let value = 0; return () => `merge-observation-${++value}` })(),
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const first = await service.openWorkspace({
+    path: '/safe/merge-a', repository_fingerprint: 'host-merge-a', now: 1,
+  })
+  await service.openWorkspace({
+    path: '/safe/merge-b', repository_fingerprint: 'host-merge-b', now: 2,
+  })
+  const third = await service.openWorkspace({
+    path: '/safe/merge-c', repository_fingerprint: 'host-merge-c', now: 3,
+  })
+  assert.equal(first.kind, 'resolved')
+  assert.equal(third.kind, 'resolved')
+  await service.recordTaskCompletion({
+    workspace_instance_id: first.instance.instance_id,
+    summary: 'typed coordination fact',
+    outcome: 'ok',
+    now: 4,
+    relation_cue: {
+      target_logical_id: third.logical_workspace.logical_workspace_id,
+      relation_type: 'discussed_with',
+      reason: 'typed coordination relationship',
+    },
+  })
+  await service.openWorkspace({
+    path: '/safe/merge-a', repository_fingerprint: 'host-merge-a', now: 5,
+  })
+  await service.openWorkspace({
+    path: '/safe/merge-c', repository_fingerprint: 'host-merge-c', now: 6,
+  })
+
+  const merged = service.publishedSnapshot.relations.find(relation => (
+    relation.source_logical_id === first.logical_workspace.logical_workspace_id
+    && relation.target_logical_id === third.logical_workspace.logical_workspace_id
+    && relation.relation_type === 'discussed_with'
+  ))
+  assert.equal(merged?.reason, 'typed coordination relationship')
+  assert.equal(merged?.confidence, 0.8)
+  assert.equal(merged?.status, 'active')
+  assert.deepEqual(merged?.evidence_refs.map(evidence => evidence.source), ['executor', 'runtime'])
+  assert.equal(merged?.revision, 1)
+})
+
+test('queued workspace maintenance ages transition relations using second-based runtime timestamps', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-aging-'))
+  const path = join(directory, 'graph.sqlite')
+  let sequence = 0
+  const service = new WorkspaceGraphService({
+    path,
+    id_factory: () => `aging-observation-${++sequence}`,
+  })
+  await service.open()
+  await service.openWorkspace({
+    path: '/safe/aging-a', repository_fingerprint: 'host-aging-a', now: 1,
+  })
+  await service.openWorkspace({
+    path: '/safe/aging-b', repository_fingerprint: 'host-aging-b', now: 2,
+  })
+  const ninetyDaysSeconds = 90 * 24 * 60 * 60
+  await service.openWorkspace({
+    path: '/safe/aging-b', repository_fingerprint: 'host-aging-b',
+    now: 2 + ninetyDaysSeconds,
+  })
+  await service.close()
+
+  const reopened = new WorkspaceGraphStoreClient(path)
+  await reopened.open()
+  t.after(async () => {
+    await reopened.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  const relations = await reopened.listRelations()
+  assert.equal(relations.length, 1)
+  assert.equal(relations[0]?.status, 'stale')
+  assert.equal(relations[0]?.revision, 1)
+  assert.ok((await reopened.diagnostics()).operation_receipts >= 4)
+})
+
 test('typed task relation yields bounded suggestion data without any workspace read', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-recall-'))
   const service = new WorkspaceGraphService({

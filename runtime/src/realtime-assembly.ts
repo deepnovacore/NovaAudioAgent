@@ -34,28 +34,39 @@ import type {
 } from './workspace-graph/service.js'
 import type {WorkspaceResolutionDecision} from './workspace-graph/identity.js'
 import type {PublishedGraphSnapshot} from './workspace-graph/store.js'
+import type {GraphContext} from './workspace-graph/context.js'
 
 export interface RealtimeWorkspaceGraph {
   readonly publishedSnapshot: PublishedGraphSnapshot
   readonly degraded?: boolean
   open(): Promise<void>
-  openWorkspace(input: OpenWorkspaceInput): Promise<WorkspaceResolutionDecision>
+  revokeCurrentWorkspaceScope(): number
+  breakWorkspaceTransitionAdjacency(): void
+  openWorkspace(
+    input: OpenWorkspaceInput,
+    admittedScopeGeneration?: number,
+  ): Promise<WorkspaceResolutionDecision>
   recordTaskCompletion(input: TaskCompletionInput): Promise<void>
-  contextForTurn(input: TurnContextInput): {
-    readonly header: string | null
-  } | null
+  contextForTurn(input: TurnContextInput): GraphContext | null
   close(): Promise<void>
 }
 
 export const REALTIME_ASSEMBLY_SHUTDOWN_GRACE_MS = 1_000
 const MAX_GRAPH_LIFECYCLE_OPERATIONS = 64
 const MAX_GRAPH_TERMINAL_OPERATIONS = MAX_GRAPH_LIFECYCLE_OPERATIONS - 1
+const MAX_COMMITTED_WORKSPACE_EVENTS = 64
 const WORKSPACE_SWITCH_RETRY_MS = 10
+
+interface AdmittedCommittedWorkspace {
+  readonly event: CommittedWorkspaceEvent
+  readonly scopeGeneration: number
+}
 
 export interface RealtimeAssemblyOptions {
   readonly core: Assembly
   readonly provider: RealtimeProvider
   readonly idFactory?: () => string
+  readonly wallClockNow?: () => number
   readonly providerToolView?: (tools: CompiledTools) => CompiledTools
   readonly onAudioFrame?: (frame: PlaybackFrame) => void
   readonly onAudioClear?: (utteranceId: string, generationEpoch: number) => void
@@ -116,13 +127,17 @@ export class RealtimeAssembly {
   readonly #unsubscribeCommittedWorkspace: (() => void) | undefined
   readonly #unsubscribeTerminalWorkOrder: (() => void) | undefined
   readonly #idFactory: () => string
+  readonly #wallClockNow: () => number
+  readonly #unbindGraphContext: (() => void) | undefined
   #workspaceGraphOpen = false
   #currentWorkspaceInstanceId: string | null = null
   readonly #workspaceInstancesByHostId = new Map<string, string>()
   #graphLifecycleTail: Promise<void> = Promise.resolve()
   #graphLifecyclePending = 0
-  #latestCommittedWorkspace: CommittedWorkspaceEvent | null = null
+  readonly #committedWorkspaceQueue: AdmittedCommittedWorkspace[] = []
   #committedWorkspaceScheduled = false
+  #committedWorkspaceAdmissionFailed = false
+  #latestWorkspaceScopeGeneration = 0
   #graphHooksClosed = false
   #graphOpenOperation: Promise<void> | null = null
   #state: LifecycleState = 'new'
@@ -143,6 +158,7 @@ export class RealtimeAssembly {
     readonly codexResource?: CodexAssemblyResource
     readonly workspaceGraph?: RealtimeWorkspaceGraph
     readonly idFactory: () => string
+    readonly wallClockNow: () => number
   }) {
     this.core = input.core
     this.provider = input.provider
@@ -158,6 +174,20 @@ export class RealtimeAssembly {
     this.#projectAdapter = input.projectAdapter
     this.#codexResource = input.codexResource
     this.#idFactory = input.idFactory
+    this.#wallClockNow = input.wallClockNow
+    this.#unbindGraphContext = input.workspaceGraph === undefined
+      ? undefined
+      : input.core.runtime.bindGraphContextProvider(({latest_user_text: utterance}) => {
+        if (!this.#workspaceGraphOpen || this.#currentWorkspaceInstanceId === null) return null
+        const identity = this.providerSession.identity
+        if (identity === null) return null
+        return input.workspaceGraph!.contextForTurn({
+          session_epoch: identity.epoch,
+          workspace_instance_id: this.#currentWorkspaceInstanceId,
+          utterance,
+          preferences: [],
+        })
+      })
     this.#unsubscribeProjectView = input.projectAdapter === undefined || input.onProjectView === undefined
       ? undefined
       : input.projectAdapter.observeProjectView(input.onProjectView)
@@ -285,6 +315,8 @@ export class RealtimeAssembly {
       await this.#settleWithinGrace(starting, 'assembly_start_abandoned')
     }
 
+    this.#unbindGraphContext?.()
+
     let firstFailure: {readonly error: unknown} | null = null
     let cleanupComplete = true
     const service = await this.#cleanupWithinGrace(
@@ -347,8 +379,9 @@ export class RealtimeAssembly {
     if (firstFailure !== null) throw firstFailure.error
   }
 
-  async #onCommittedWorkspace(event: CommittedWorkspaceEvent): Promise<void> {
+  async #onCommittedWorkspace(admitted: AdmittedCommittedWorkspace): Promise<void> {
     if (!this.#workspaceGraphOpen || this.workspaceGraph === undefined) return
+    const {event, scopeGeneration} = admitted
     try {
       let decision: WorkspaceResolutionDecision
       let queueFullDiagnosed = false
@@ -358,7 +391,7 @@ export class RealtimeAssembly {
             path: event.workspace.canonical_path,
             repository_fingerprint: event.workspace.workspace_id,
             now: event.workspace.last_used_at,
-          })
+          }, scopeGeneration)
           break
         } catch (error) {
           if (!isWorkspaceGraphQueueFull(error) || this.#graphHooksClosed) throw error
@@ -369,14 +402,27 @@ export class RealtimeAssembly {
           await new Promise<void>(resolve => { setTimeout(resolve, WORKSPACE_SWITCH_RETRY_MS) })
         }
       }
-      if (decision.kind !== 'resolved') return
-      this.#currentWorkspaceInstanceId = decision.instance.instance_id
+      if (decision.kind !== 'resolved') {
+        this.workspaceGraph.breakWorkspaceTransitionAdjacency()
+        return
+      }
+      // Every resolved host identity remains authoritative for terminal events, even if a newer
+      // committed workspace was admitted while this durable open was queued. Only model/provider
+      // current scope and Header delivery are latest-generation concerns.
       this.#workspaceInstancesByHostId.set(
         event.workspace.workspace_id,
         decision.instance.instance_id,
       )
+      if (
+        this.#committedWorkspaceAdmissionFailed
+        || scopeGeneration !== this.#latestWorkspaceScopeGeneration
+      ) return
+      this.#currentWorkspaceInstanceId = decision.instance.instance_id
       await this.#injectCurrentWorkspaceHeader()
     } catch {
+      // This authoritative event was admitted but could not become graph state. The next successful
+      // event may become the new anchor, but it must not bridge relation inference across this gap.
+      this.workspaceGraph.breakWorkspaceTransitionAdjacency()
       this.#diagnose('workspace_graph_lifecycle_failed')
     }
   }
@@ -393,7 +439,7 @@ export class RealtimeAssembly {
         workspace_instance_id: workspaceInstanceId,
         summary: event.work_order,
         outcome: event.handoff.outcome === 'ok' ? 'ok' : 'failed',
-        now: this.core.runtime.clock.now(),
+        now: this.#wallClockNow(),
         relation_cue: null,
       })
     } catch {
@@ -402,30 +448,54 @@ export class RealtimeAssembly {
   }
 
   #enqueueCommittedWorkspace(event: CommittedWorkspaceEvent): void {
-    if (this.#graphHooksClosed || !this.#workspaceGraphOpen) return
-    this.#latestCommittedWorkspace = event
+    if (
+      this.#graphHooksClosed
+      || !this.#workspaceGraphOpen
+      || this.workspaceGraph === undefined
+      || this.#committedWorkspaceAdmissionFailed
+    ) return
+    // Admission is synchronous: neither model-call context nor explicit provider enrichment may
+    // keep using A once the authoritative host has committed a switch away from A.
+    this.#currentWorkspaceInstanceId = null
+    let scopeGeneration: number
+    try {
+      scopeGeneration = this.workspaceGraph.revokeCurrentWorkspaceScope()
+    } catch {
+      this.#committedWorkspaceAdmissionFailed = true
+      this.#diagnose('workspace_graph_lifecycle_failed')
+      return
+    }
+    this.#latestWorkspaceScopeGeneration = scopeGeneration
+    if (this.#committedWorkspaceQueue.length >= MAX_COMMITTED_WORKSPACE_EVENTS) {
+      // A dropped transition would make the next edge ambiguous. Fail closed for the rest of this
+      // assembly instead of ever inferring across that gap; already-admitted events may still drain.
+      this.#committedWorkspaceAdmissionFailed = true
+      this.#diagnose('workspace_graph_lifecycle_queue_full')
+      return
+    }
+    this.#committedWorkspaceQueue.push({event, scopeGeneration})
     if (this.#committedWorkspaceScheduled) return
     this.#committedWorkspaceScheduled = true
     const admitted = this.#enqueueGraphLifecycle(
-      () => this.#drainLatestCommittedWorkspace(),
+      () => this.#drainCommittedWorkspaces(),
       true,
     )
-    if (!admitted) this.#committedWorkspaceScheduled = false
+    if (!admitted) {
+      this.#committedWorkspaceScheduled = false
+      this.#committedWorkspaceAdmissionFailed = true
+      this.#committedWorkspaceQueue.length = 0
+    }
   }
 
-  async #drainLatestCommittedWorkspace(): Promise<void> {
+  async #drainCommittedWorkspaces(): Promise<void> {
     try {
-      for (;;) {
-        const event = this.#latestCommittedWorkspace
-        if (event === null || this.#graphHooksClosed) return
-        this.#latestCommittedWorkspace = null
-        await this.#onCommittedWorkspace(event)
+      while (!this.#graphHooksClosed) {
+        const admitted = this.#committedWorkspaceQueue.shift()
+        if (admitted === undefined) return
+        await this.#onCommittedWorkspace(admitted)
       }
     } finally {
       this.#committedWorkspaceScheduled = false
-      if (this.#latestCommittedWorkspace !== null) {
-        this.#enqueueCommittedWorkspace(this.#latestCommittedWorkspace)
-      }
     }
   }
 
@@ -575,6 +645,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   const providerTools = options.providerToolView?.(core.tools) ?? core.tools
   const providerSchemas = validateProviderToolView(core.tools, providerTools)
   const idFactory = options.idFactory ?? (() => `nova_${randomUUID().replaceAll('-', '')}`)
+  const wallClockNow = options.wallClockNow ?? (() => Date.now() / 1_000)
   const onDiagnostic = options.onDiagnostic ?? (line => { console.log(line) })
   const playback = new PlaybackRegistry({
     idFactory,
@@ -642,6 +713,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     service,
     onDiagnostic,
     idFactory,
+    wallClockNow,
     ...(projectAdapter === undefined ? {} : {projectAdapter}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),

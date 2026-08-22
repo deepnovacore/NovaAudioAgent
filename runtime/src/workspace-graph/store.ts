@@ -25,6 +25,8 @@ import {
   type WorkspaceIdentityState,
 } from './identity.js'
 import {
+  GraphProjector,
+  WORKSPACE_TRANSITION_REASON,
   applyWorkspaceGraphProjectionDeltas,
   relationDeltaDigest,
   type ProjectionRecord,
@@ -162,10 +164,13 @@ const projectionRecordSchema: z.ZodType<ProjectionRecord> = z.object({
   relation_type: relationTypeSchema,
   cue_kind: z.enum([
     'artifact_reference', 'task_completion', 'work_order',
-    'user_statement', 'provider_evidence', 'suppression',
+    'workspace_transition', 'user_statement', 'provider_evidence', 'suppression',
   ]),
+  cue_reason: z.string().min(1).max(239).regex(/\S/u).optional(),
   stance: z.enum(['confirm', 'supplement', 'conflict', 'suppress']),
-  authority: z.enum(['provider', 'user_transcript', 'trusted_system', 'user_confirmed']),
+  authority: z.enum([
+    'provider', 'runtime_inferred', 'user_transcript', 'trusted_system', 'user_confirmed',
+  ]),
   occurred_at: z.number().finite().nonnegative(),
   evidence_refs: z.array(EvidenceRefSchema).min(1),
 }).strict()
@@ -484,6 +489,11 @@ export class WorkspaceGraphStore {
         let projectionState: WorkspaceGraphProjectionState
         try {
           identityState = applyWorkspaceIdentityDeltas(current.identity_state, identityDeltas)
+          this.#assertTransitionProjectionSemantics(observation, projectionDeltas, {
+            ...current.projection_state,
+            logical_workspaces: identityState.logical_workspaces,
+            workspace_instances: identityState.workspace_instances,
+          })
           projectionState = applyWorkspaceGraphProjectionDeltas({
             ...current.projection_state,
             logical_workspaces: identityState.logical_workspaces,
@@ -1162,14 +1172,34 @@ export class WorkspaceGraphStore {
         && candidate.relation.target_logical_id === record.target_logical_id
         && candidate.relation.relation_type === record.relation_type
       ))
+      const recordMatchesObservation = record.cue_kind === 'workspace_transition'
+        ? record.source_logical_id === observation.related_logical_workspace_id
+          && record.target_logical_id === observation.logical_workspace_id
+        : record.source_logical_id === observation.logical_workspace_id
+          && record.target_logical_id === observation.related_logical_workspace_id
+      const transitionEvidence = observation.evidence_refs[0]
+      const transitionProvenanceIsValid = record.cue_kind !== 'workspace_transition' || (
+        observation.observation_type === 'workspace_opened'
+        && observation.source === 'runtime'
+        && observation.trust === 'trusted_system'
+        && record.authority === 'runtime_inferred'
+        && record.stance === 'supplement'
+        && record.relation_type === 'discussed_with'
+        && record.cue_reason === WORKSPACE_TRANSITION_REASON
+        && observation.evidence_refs.length === 1
+        && transitionEvidence?.source === 'runtime'
+        && transitionEvidence.ref === observation.observation_id
+        && transitionEvidence.observed_at === observation.occurred_at
+      )
       if (
         relation === undefined
         || relationDeltaDigest(relation) !== record.relation_delta_digest
         || record.observation_source !== observation.source
         || record.observation_id !== observation.observation_id
         || record.occurred_at !== observation.occurred_at
-        || record.source_logical_id !== observation.logical_workspace_id
-        || record.target_logical_id !== observation.related_logical_workspace_id
+        || !recordMatchesObservation
+        || !transitionProvenanceIsValid
+        || (record.cue_kind !== 'workspace_transition' && record.cue_reason !== undefined)
         || canonicalJson(record.evidence_refs) !== canonicalJson(observation.evidence_refs)
         || record.evidence_refs.some(evidence => !relation.relation.evidence_refs.some(candidate => (
           candidate.source === evidence.source
@@ -1177,6 +1207,44 @@ export class WorkspaceGraphStore {
           && candidate.observed_at === evidence.observed_at
         )))
       ) throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    }
+  }
+
+  #assertTransitionProjectionSemantics(
+    observation: Observation,
+    deltas: readonly WorkspaceGraphProjectionDelta[],
+    state: WorkspaceGraphProjectionState,
+  ): void {
+    const transitionRecord = deltas.find(delta => (
+      delta.kind === 'record_projection' && delta.record.cue_kind === 'workspace_transition'
+    ))
+    if (transitionRecord?.kind !== 'record_projection') return
+    const record = transitionRecord.record
+    try {
+      const expected = new GraphProjector(state, {
+        stale_after_ms: 90 * 24 * 60 * 60,
+        proactive_confidence_threshold: 0.65,
+        path_policy: this.#pathPolicy,
+        content_policy: this.#contentPolicy,
+      }).apply({
+        origin: 'trusted_runtime',
+        observation,
+        relation_cue: {
+          kind: 'workspace_transition',
+          stance: 'supplement',
+          source_logical_id: record.source_logical_id,
+          target_logical_id: record.target_logical_id,
+          relation_type: 'discussed_with',
+          reason: record.cue_reason ?? '',
+          evidence_refs: record.evidence_refs,
+        },
+      })
+      if (canonicalJson(expected.deltas) !== canonicalJson(deltas)) {
+        throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+      }
+    } catch (error) {
+      if (error instanceof WorkspaceGraphStoreError) throw error
+      throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
     }
   }
 

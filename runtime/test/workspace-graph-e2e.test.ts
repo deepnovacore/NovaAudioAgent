@@ -204,15 +204,28 @@ test('durable relation restarts into bounded text-only suggestion context and re
   const board = JSON.parse(boardBytes) as {
     logical_workspaces: {logical_workspace_id: string}[]
     workspace_instances: {logical_workspace_id: string}[]
-    relations: {source_logical_id: string; target_logical_id: string; evidence_count: number}[]
+    relations: {
+      source_logical_id: string
+      target_logical_id: string
+      relation_type: string
+      confidence: number
+      status: string
+      evidence_count: number
+    }[]
   }
   const ids = new Set(board.logical_workspaces.map(item => item.logical_workspace_id))
-  assert.ok(board.relations.length === 1)
+  assert.equal(board.relations.length, 3)
   assert.ok(board.relations.every(relation => (
     ids.has(relation.source_logical_id)
     && ids.has(relation.target_logical_id)
     && relation.evidence_count === 1
   )))
+  assert.equal(board.relations.filter(relation => relation.relation_type === 'shares_runtime').length, 1)
+  assert.equal(board.relations.filter(relation => (
+    relation.relation_type === 'discussed_with'
+    && relation.confidence === 0.4
+    && relation.status === 'weak'
+  )).length, 2)
   assert.ok(board.workspace_instances.every(instance => ids.has(instance.logical_workspace_id)))
   assert.doesNotMatch(boardBytes, /\/safe\/|host-alpha|host-beta|shared protocol bridge|evidence_refs|reason/u)
 })
@@ -551,7 +564,11 @@ test('suppression survives compaction, removes recall, and does not lock a later
   const sourceId = established.current.logical_workspace.logical_workspace_id
   const targetId = established.second.logical_workspace.logical_workspace_id
   const currentInstanceId = established.current.instance.instance_id
-  const relationEvidenceRef = established.service.publishedSnapshot.relations[0]?.evidence_refs[0]?.ref
+  const relationEvidenceRef = established.service.publishedSnapshot.relations.find(relation => (
+    relation.source_logical_id === sourceId
+    && relation.target_logical_id === targetId
+    && relation.relation_type === 'shares_runtime'
+  ))?.evidence_refs[0]?.ref
   assert.ok(relationEvidenceRef !== undefined)
   await established.service.close()
 

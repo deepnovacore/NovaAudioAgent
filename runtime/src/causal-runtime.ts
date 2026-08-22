@@ -9,7 +9,12 @@ import type {
   ExecutorManifest,
   UpdateSpec,
 } from './ports.js'
-import { CoreRuntime, type ModelCall, type RuntimeDispatchResult } from './runtime.js'
+import {
+  CoreRuntime,
+  type GraphContextProvider,
+  type ModelCall,
+  type RuntimeDispatchResult,
+} from './runtime.js'
 import { SLOTS, type Slot, type WakeReason } from './slots.js'
 
 export interface ModelPort {
@@ -225,6 +230,11 @@ export class CausalRuntime {
   observe(observer: RuntimeObserver): () => void {
     this.#observers.add(observer)
     return () => this.#observers.delete(observer)
+  }
+
+  /** Bind one host-owned, synchronous graph projection at the real model-call boundary. */
+  bindGraphContextProvider(provider: GraphContextProvider): () => void {
+    return this.core.bindGraphContextProvider(provider)
   }
 
   async serve(signal: AbortSignal): Promise<void> {

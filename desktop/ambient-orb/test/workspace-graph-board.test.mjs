@@ -21,7 +21,7 @@ function payload(overrides = {}) {
     ],
     workspace_instances: [{
       instance_id: 'instance-a', logical_workspace_id: 'logical-a',
-      display_name: 'Nova 当前实例', active: true, last_seen_at: 100,
+      display_name: 'Nova 主实例', active: true, last_seen_at: 100,
     }, {
       instance_id: 'instance-b', logical_workspace_id: 'logical-b',
       display_name: 'Runtime 归档实例', active: false, last_seen_at: 80,
@@ -117,8 +117,9 @@ test('graph renderer uses owned text nodes for active weak degraded stale and om
   const text = `${status.text()}${root.text()}`
   assert.match(text, /已降级/u)
   assert.match(text, /数据可能已过期/u)
-  assert.match(text, /当前/u)
-  assert.match(text, /非当前/u)
+  assert.match(text, /活跃/u)
+  assert.match(text, /非活跃/u)
+  assert.doesNotMatch(text, /当前|非当前/u)
   assert.match(text, /弱关联/u)
   assert.match(text, /3 条证据/u)
   assert.match(text, /省略/u)

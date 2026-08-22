@@ -44,6 +44,10 @@ import {
   isSuggestionAvailable,
 } from './suggestions.js'
 import {
+  cloneGraphContext,
+  type GraphContext,
+} from './workspace-graph/context.js'
+import {
   SLOTS,
   SlotSet,
   slotSchema,
@@ -85,6 +89,14 @@ interface ModelJob {
 interface PreparedSpeech {
   readonly decision: 'allow' | 'preempt' | 'defer'
 }
+
+export interface ModelGraphContextInput {
+  readonly latest_user_text: string
+  readonly slot: Exclude<Slot, 'compress'>
+  readonly started_at: number
+}
+
+export type GraphContextProvider = (input: ModelGraphContextInput) => GraphContext | null
 
 export interface ModelCall {
   readonly job_id: string
@@ -151,6 +163,7 @@ export class CoreRuntime {
   readonly #wiredSlots: ReadonlySet<Slot>
   readonly #onModelCall: ((call: ModelCall) => void) | undefined
   readonly #onExecutorDispatch: ((dispatchIndex: number, delegate: Delegate) => void) | undefined
+  #graphContextProvider: GraphContextProvider | null = null
   readonly #jobs = new Map<string, ModelJob>()
   readonly #results = new Map<string, unknown>()
   readonly #preparedSpeech = new Map<string, PreparedSpeech>()
@@ -204,6 +217,20 @@ export class CoreRuntime {
 
   endAgentSpeech(utteranceId: string): void {
     this.floor = this.floor.onSpeakEnd(utteranceId)
+  }
+
+  /** Bind the sole synchronous call-level graph projection owner. */
+  bindGraphContextProvider(provider: GraphContextProvider): () => void {
+    if (this.#graphContextProvider !== null) {
+      throw new Error('graph context provider is already bound')
+    }
+    this.#graphContextProvider = provider
+    let bound = true
+    return () => {
+      if (!bound) return
+      bound = false
+      if (this.#graphContextProvider === provider) this.#graphContextProvider = null
+    }
   }
 
   /**
@@ -985,6 +1012,9 @@ export class CoreRuntime {
       compression,
     }
     this.#jobs.set(jobId, job)
+    const graphContext = slot === 'compress'
+      ? null
+      : this.#graphContextForModelCall(slot, startedAt)
     const contextView = slot === 'compress'
       ? undefined
       : compileContextView(this.memory, this.floor.state, startedAt, {
@@ -994,6 +1024,7 @@ export class CoreRuntime {
         selectedSuggestion,
         triggerKind: reason.kind,
         freshWindow: this.#freshWindow,
+        ...(graphContext === null ? {} : {graphContext}),
       })
     this.#onModelCall({
       job_id: jobId,
@@ -1006,6 +1037,35 @@ export class CoreRuntime {
       ...(contextView === undefined ? {} : {context_view: contextView}),
     })
     return jobId
+  }
+
+  #graphContextForModelCall(
+    slot: Exclude<Slot, 'compress'>,
+    startedAt: number,
+  ): GraphContext | null {
+    const provider = this.#graphContextProvider
+    if (provider === null) return null
+    try {
+      const supplied = provider({
+        latest_user_text: this.#latestUserText(),
+        slot,
+        started_at: startedAt,
+      })
+      return supplied === null ? null : cloneGraphContext(supplied)
+    } catch {
+      return null
+    }
+  }
+
+  #latestUserText(): string {
+    const items = this.memory.channels.get(CONVERSATION_CHANNEL)?.items ?? []
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index]
+      if (item?.trust === 'trusted_user' && typeof item.content.text === 'string') {
+        return item.content.text
+      }
+    }
+    return ''
   }
 
   #applyModelDone(event: Extract<EventRecord, {kind: 'model_done'}>): void {

@@ -252,6 +252,84 @@ test('an accepted projection record cannot mask a changed relation delta payload
   )
 })
 
+test('an adjacent authoritative workspace transition creates only weak discussed-with metadata', () => {
+  const evidence = Object.freeze({
+    source: 'runtime' as const,
+    ref: 'transition-open-b',
+    observed_at: 30,
+  })
+  const result = new GraphProjector(projectionState(), projectorOptions).apply({
+    origin: 'trusted_runtime',
+    observation: {
+      observation_id: 'transition-open-b',
+      observation_type: 'workspace_opened',
+      occurred_at: 30,
+      source: 'runtime',
+      trust: 'trusted_system',
+      logical_workspace_id: 'lw-b',
+      workspace_instance_id: 'wi-b',
+      related_logical_workspace_id: 'lw-a',
+      summary: 'confirmed workspace lifecycle',
+      outcome: 'ok',
+      evidence_refs: [evidence],
+    },
+    relation_cue: {
+      kind: 'workspace_transition',
+      stance: 'supplement',
+      source_logical_id: 'lw-a',
+      target_logical_id: 'lw-b',
+      relation_type: 'discussed_with',
+      reason: 'adjacent confirmed workspace transition',
+      evidence_refs: [evidence],
+    },
+  })
+
+  const delta = relationDelta(result)
+  assert.deepEqual(delta.relation, {
+    source_logical_id: 'lw-a',
+    target_logical_id: 'lw-b',
+    relation_type: 'discussed_with',
+    confidence: 0.4,
+    reason: 'adjacent confirmed workspace transition',
+    evidence_refs: [evidence],
+    first_seen_at: 30,
+    last_seen_at: 30,
+    status: 'weak',
+    revision: 0,
+  })
+  const record = result.deltas.find(candidate => candidate.kind === 'record_projection')
+  assert.equal(record?.kind, 'record_projection')
+  if (record?.kind === 'record_projection') {
+    assert.equal(record.record.cue_kind, 'workspace_transition')
+    assert.equal(record.record.authority, 'runtime_inferred')
+  }
+})
+
+test('workspace transition inference rejects evidence not bound to its lifecycle observation', () => {
+  const evidence = Object.freeze({
+    source: 'runtime' as const,
+    ref: 'unrelated-runtime-record',
+    observed_at: 30,
+  })
+  const result = new GraphProjector(projectionState(), projectorOptions).apply({
+    origin: 'trusted_runtime',
+    observation: {
+      observation_id: 'transition-open-b', observation_type: 'workspace_opened', occurred_at: 30,
+      source: 'runtime', trust: 'trusted_system', logical_workspace_id: 'lw-b',
+      workspace_instance_id: 'wi-b', related_logical_workspace_id: 'lw-a',
+      summary: 'confirmed workspace lifecycle', outcome: 'ok', evidence_refs: [evidence],
+    },
+    relation_cue: {
+      kind: 'workspace_transition', stance: 'supplement', source_logical_id: 'lw-a',
+      target_logical_id: 'lw-b', relation_type: 'discussed_with',
+      reason: 'adjacent confirmed workspace transition', evidence_refs: [evidence],
+    },
+  })
+
+  assert.equal(result.ignored_reason, 'PROJECTOR_UNAUTHORIZED_SIGNAL')
+  assert.deepEqual(result.deltas, [])
+})
+
 test('aging marks an old relation stale without deleting its evidence or card', () => {
   const evidence = Object.freeze({
     source: 'runtime',
