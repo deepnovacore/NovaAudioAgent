@@ -1,0 +1,79 @@
+{
+  "cases": [
+    {
+      "id": "active-depends-on-minimum-confidence",
+      "value": {
+        "source_logical_id": "lw-nova",
+        "target_logical_id": "lw-tools",
+        "relation_type": "depends_on",
+        "confidence": 0,
+        "reason": "Dependency is retained for explicit review",
+        "evidence_refs": [{"source": "runtime", "ref": "event-010", "observed_at": 10}],
+        "first_seen_at": 10,
+        "last_seen_at": 10,
+        "status": "active",
+        "revision": 1
+      }
+    },
+    {
+      "id": "weak-sibling",
+      "value": {
+        "source_logical_id": "lw-nova",
+        "target_logical_id": "lw-desktop",
+        "relation_type": "sibling_of",
+        "confidence": 0.25,
+        "reason": "Both workspaces are maintained together",
+        "evidence_refs": [{"source": "executor", "ref": "task-011", "observed_at": 11}],
+        "first_seen_at": 11,
+        "last_seen_at": 12,
+        "status": "weak",
+        "revision": 1
+      }
+    },
+    {
+      "id": "stale-replaces",
+      "value": {
+        "source_logical_id": "lw-nova",
+        "target_logical_id": "lw-legacy",
+        "relation_type": "replaces",
+        "confidence": 0.5,
+        "reason": "Legacy implementation was replaced",
+        "evidence_refs": [{"source": "git", "ref": "commit-013", "observed_at": 13}],
+        "first_seen_at": 13,
+        "last_seen_at": 14,
+        "status": "stale",
+        "revision": 4
+      }
+    },
+    {
+      "id": "suppressed-shared-runtime",
+      "value": {
+        "source_logical_id": "lw-nova",
+        "target_logical_id": "lw-archive",
+        "relation_type": "shares_runtime",
+        "confidence": 0.75,
+        "reason": "User suppressed archive suggestions",
+        "evidence_refs": [{"source": "user", "ref": "confirmation-015", "observed_at": 15}],
+        "first_seen_at": 15,
+        "last_seen_at": 15,
+        "status": "suppressed",
+        "revision": 2
+      }
+    },
+    {
+      "id": "active-discussed-with-maximum-confidence",
+      "value": {
+        "source_logical_id": "lw-nova",
+        "target_logical_id": "lw-docs",
+        "relation_type": "discussed_with",
+        "confidence": 1,
+        "reason": "Confirmed discussion relationship",
+        "evidence_refs": [{"source": "user", "ref": "confirmation-016", "observed_at": 16}],
+        "first_seen_at": 16,
+        "last_seen_at": 16,
+        "status": "active",
+        "revision": 1
+      }
+    }
+  ]
+}

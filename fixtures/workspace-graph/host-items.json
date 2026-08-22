@@ -1,0 +1,45 @@
+{
+  "host_item_cases": [
+    {
+      "id": "workspace-header-revision-one",
+      "value": {
+        "kind": "workspace_context",
+        "host_item_id": "workspace-header-1",
+        "event_id": "workspace-event-1",
+        "content": "<workspace_context kind=\"data\">current workspace</workspace_context>",
+        "call_id": null,
+        "session_epoch": 2,
+        "workspace_instance_id": "wi-nova-main",
+        "revision": 1
+      }
+    }
+  ],
+  "delivery_cases": [
+    {
+      "id": "replace-provider-item",
+      "value": {
+        "capability": "replace_provider_item",
+        "delivered": true,
+        "prior_provider_item_id": "provider-workspace-1",
+        "provider_item_id": "provider-workspace-2",
+        "superseded_provider_item_id": "provider-workspace-1"
+      }
+    },
+    {
+      "id": "refresh-session",
+      "value": {
+        "capability": "refresh_session",
+        "delivered": true,
+        "prior_provider_item_id": "provider-workspace-2",
+        "refresh_id": "refresh-3"
+      }
+    },
+    {
+      "id": "unavailable",
+      "value": {
+        "capability": "unavailable",
+        "delivered": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,941 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "observations": {
+      "type": "object",
+      "properties": {
+        "cases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "observation_id": {
+                    "type": "string"
+                  },
+                  "observation_type": {
+                    "type": "string",
+                    "enum": [
+                      "workspace_opened",
+                      "instance_observed",
+                      "task_artifact_reference",
+                      "task_completed",
+                      "work_order_summary",
+                      "user_relation_statement",
+                      "provider_relation_evidence",
+                      "relation_suppressed"
+                    ]
+                  },
+                  "occurred_at": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "runtime",
+                      "filesystem",
+                      "git",
+                      "executor",
+                      "user",
+                      "provider"
+                    ]
+                  },
+                  "trust": {
+                    "type": "string",
+                    "enum": [
+                      "trusted_user",
+                      "trusted_system",
+                      "untrusted_external",
+                      "user_confirmed"
+                    ]
+                  },
+                  "logical_workspace_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "workspace_instance_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "related_logical_workspace_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "summary": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "outcome": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "ok",
+                          "unknown",
+                          "failed"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "runtime",
+                            "filesystem",
+                            "git",
+                            "executor",
+                            "user",
+                            "provider"
+                          ]
+                        },
+                        "ref": {
+                          "type": "string"
+                        },
+                        "observed_at": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "ref",
+                        "observed_at"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "observation_id",
+                  "observation_type",
+                  "occurred_at",
+                  "source",
+                  "trust",
+                  "logical_workspace_id",
+                  "workspace_instance_id",
+                  "related_logical_workspace_id",
+                  "summary",
+                  "outcome",
+                  "evidence_refs"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "cases"
+      ],
+      "additionalProperties": false
+    },
+    "cards": {
+      "type": "object",
+      "properties": {
+        "logical_workspace_cases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "logical_workspace_id": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "aliases": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "canonical_remote": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "created_at": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "updated_at": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "logical_workspace_id",
+                  "display_name",
+                  "aliases",
+                  "canonical_remote",
+                  "created_at",
+                  "updated_at",
+                  "revision"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "workspace_instance_cases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "instance_id": {
+                    "type": "string"
+                  },
+                  "logical_workspace_id": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "path_label": {
+                    "type": "string"
+                  },
+                  "branch": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "repository_fingerprint": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "inactive"
+                    ]
+                  },
+                  "first_seen_at": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "last_seen_at": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "instance_id",
+                  "logical_workspace_id",
+                  "display_name",
+                  "path_label",
+                  "branch",
+                  "repository_fingerprint",
+                  "status",
+                  "first_seen_at",
+                  "last_seen_at",
+                  "revision"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "logical_workspace_cases",
+        "workspace_instance_cases"
+      ],
+      "additionalProperties": false
+    },
+    "relations": {
+      "type": "object",
+      "properties": {
+        "cases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "source_logical_id": {
+                    "type": "string"
+                  },
+                  "target_logical_id": {
+                    "type": "string"
+                  },
+                  "relation_type": {
+                    "type": "string",
+                    "enum": [
+                      "depends_on",
+                      "sibling_of",
+                      "replaces",
+                      "shares_runtime",
+                      "discussed_with"
+                    ]
+                  },
+                  "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "runtime",
+                            "filesystem",
+                            "git",
+                            "executor",
+                            "user",
+                            "provider"
+                          ]
+                        },
+                        "ref": {
+                          "type": "string"
+                        },
+                        "observed_at": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "ref",
+                        "observed_at"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "first_seen_at": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "last_seen_at": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "weak",
+                      "stale",
+                      "suppressed"
+                    ]
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "source_logical_id",
+                  "target_logical_id",
+                  "relation_type",
+                  "confidence",
+                  "reason",
+                  "evidence_refs",
+                  "first_seen_at",
+                  "last_seen_at",
+                  "status",
+                  "revision"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "cases"
+      ],
+      "additionalProperties": false
+    },
+    "recall_packs": {
+      "type": "object",
+      "properties": {
+        "context_header_cases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "session_epoch": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "workspace_instance_id": {
+                    "type": "string"
+                  },
+                  "logical_workspace_id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "token_estimate": {
+                    "type": "integer",
+                    "minimum": 150,
+                    "maximum": 300
+                  }
+                },
+                "required": [
+                  "session_epoch",
+                  "workspace_instance_id",
+                  "logical_workspace_id",
+                  "revision",
+                  "content",
+                  "token_estimate"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "graph_hint_cases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "hint_id": {
+                    "type": "string"
+                  },
+                  "logical_workspace_id": {
+                    "type": "string"
+                  },
+                  "relation_type": {
+                    "type": "string",
+                    "enum": [
+                      "depends_on",
+                      "sibling_of",
+                      "replaces",
+                      "shares_runtime",
+                      "discussed_with"
+                    ]
+                  },
+                  "relation_status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "weak",
+                      "stale"
+                    ]
+                  },
+                  "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "evidence_refs": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "runtime",
+                            "filesystem",
+                            "git",
+                            "executor",
+                            "user",
+                            "provider"
+                          ]
+                        },
+                        "ref": {
+                          "type": "string"
+                        },
+                        "observed_at": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "ref",
+                        "observed_at"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "hint_id",
+                  "logical_workspace_id",
+                  "relation_type",
+                  "relation_status",
+                  "confidence",
+                  "reason",
+                  "evidence_refs",
+                  "revision"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "recall_pack_cases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "session_epoch": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "workspace_instance_id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "token_estimate": {
+                    "type": "integer",
+                    "minimum": 300,
+                    "maximum": 800
+                  },
+                  "hints": {
+                    "maxItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "hint_id": {
+                          "type": "string"
+                        },
+                        "logical_workspace_id": {
+                          "type": "string"
+                        },
+                        "relation_type": {
+                          "type": "string",
+                          "enum": [
+                            "depends_on",
+                            "sibling_of",
+                            "replaces",
+                            "shares_runtime",
+                            "discussed_with"
+                          ]
+                        },
+                        "relation_status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "weak",
+                            "stale"
+                          ]
+                        },
+                        "confidence": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "evidence_refs": {
+                          "minItems": 1,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "runtime",
+                                  "filesystem",
+                                  "git",
+                                  "executor",
+                                  "user",
+                                  "provider"
+                                ]
+                              },
+                              "ref": {
+                                "type": "string"
+                              },
+                              "observed_at": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "ref",
+                              "observed_at"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "hint_id",
+                        "logical_workspace_id",
+                        "relation_type",
+                        "relation_status",
+                        "confidence",
+                        "reason",
+                        "evidence_refs",
+                        "revision"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "omitted_hints": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "degraded": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "session_epoch",
+                  "workspace_instance_id",
+                  "revision",
+                  "content",
+                  "token_estimate",
+                  "hints",
+                  "omitted_hints",
+                  "degraded"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "context_header_cases",
+        "graph_hint_cases",
+        "recall_pack_cases"
+      ],
+      "additionalProperties": false
+    },
+    "host_items": {
+      "type": "object",
+      "properties": {
+        "host_item_cases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "progress",
+                      "final",
+                      "recovery",
+                      "dialogue_context",
+                      "tool_output",
+                      "workspace_context"
+                    ]
+                  },
+                  "host_item_id": {
+                    "type": "string"
+                  },
+                  "event_id": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "call_id": {
+                    "default": null,
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "session_epoch": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "workspace_instance_id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "kind",
+                  "host_item_id",
+                  "event_id",
+                  "content",
+                  "call_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "delivery_cases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "capability": {
+                    "type": "string",
+                    "enum": [
+                      "replace_provider_item",
+                      "refresh_session",
+                      "unavailable"
+                    ]
+                  },
+                  "delivered": {
+                    "type": "boolean"
+                  },
+                  "prior_provider_item_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider_item_id": {
+                    "type": "string"
+                  },
+                  "superseded_provider_item_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "refresh_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "capability",
+                  "delivered"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "host_item_cases",
+        "delivery_cases"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "observations",
+    "cards",
+    "relations",
+    "recall_packs",
+    "host_items"
+  ],
+  "additionalProperties": false
+}

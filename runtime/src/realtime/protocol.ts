@@ -26,6 +26,7 @@ export const hostItemKindSchema = z.enum([
   'recovery',
   'dialogue_context',
   'tool_output',
+  'workspace_context',
 ])
 
 export const hostContextItemSchema = z.object({
@@ -34,6 +35,9 @@ export const hostContextItemSchema = z.object({
   event_id: realtimeIdentifierSchema,
   content: boundedText(),
   call_id: realtimeIdentifierSchema.nullable().default(null),
+  session_epoch: epochSchema.optional(),
+  workspace_instance_id: realtimeIdentifierSchema.optional(),
+  revision: z.number().int().nonnegative().optional(),
 }).strict().superRefine((item, context) => {
   if (
     item.kind === 'dialogue_context'
@@ -54,9 +58,153 @@ export const hostContextItemSchema = z.object({
       message: 'call_id is only valid for tool output',
     })
   }
+  const workspaceContextFields = [
+    item.session_epoch,
+    item.workspace_instance_id,
+    item.revision,
+  ]
+  if (item.kind === 'workspace_context') {
+    for (const [index, field] of workspaceContextFields.entries()) {
+      if (field === undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: [['session_epoch', 'workspace_instance_id', 'revision'][index]!],
+          message: 'workspace context requires session_epoch, workspace_instance_id, and revision',
+        })
+      }
+    }
+  } else if (workspaceContextFields.some(field => field !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'workspace context fields are only valid for workspace_context',
+    })
+  }
 })
 
 export type HostContextItem = z.infer<typeof hostContextItemSchema>
+
+/**
+ * A provider adapter reports one of these capabilities before it is allowed to make a
+ * workspace-context item provider-visible. This is a contract declaration, not proof that a
+ * specific provider implements the operation; provider-specific proof belongs at the adapter.
+ */
+export const workspaceContextDeliveryCapabilitySchema = z.enum([
+  'replace_provider_item',
+  'refresh_session',
+  'unavailable',
+])
+
+/**
+ * The provider-visible transition for a workspace-context revision. A previous provider item is
+ * never left visible while a newer revision is accepted: it is either superseded explicitly or a
+ * session refresh is recorded. `unavailable` is intentionally a non-delivery state.
+ */
+export const workspaceContextDeliverySchema = z.object({
+  capability: workspaceContextDeliveryCapabilitySchema,
+  delivered: z.boolean(),
+  prior_provider_item_id: realtimeIdentifierSchema.nullable().optional(),
+  provider_item_id: realtimeIdentifierSchema.optional(),
+  superseded_provider_item_id: realtimeIdentifierSchema.nullable().optional(),
+  refresh_id: realtimeIdentifierSchema.optional(),
+}).strict().superRefine((delivery, context) => {
+  if (delivery.capability === 'unavailable') {
+    if (delivery.delivered) {
+      context.addIssue({
+        code: 'custom',
+        path: ['delivered'],
+        message: 'workspace context is unavailable and cannot be injected',
+      })
+    }
+    if (
+      delivery.provider_item_id !== undefined
+      || delivery.superseded_provider_item_id !== undefined
+      || delivery.refresh_id !== undefined
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'unavailable workspace context has no provider-visible delivery',
+      })
+    }
+    return
+  }
+  if (!delivery.delivered) {
+    context.addIssue({
+      code: 'custom',
+      path: ['delivered'],
+      message: 'available workspace context capability must deliver the item',
+    })
+  }
+  if (delivery.capability === 'replace_provider_item') {
+    if (delivery.provider_item_id === undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['provider_item_id'],
+        message: 'replacement delivery requires a provider item id',
+      })
+    }
+    if (delivery.prior_provider_item_id !== undefined && delivery.prior_provider_item_id !== null) {
+      if (delivery.superseded_provider_item_id !== delivery.prior_provider_item_id) {
+        context.addIssue({
+          code: 'custom',
+          path: ['superseded_provider_item_id'],
+          message: 'previous provider item must be superseded before a newer revision is visible',
+        })
+      }
+      if (delivery.provider_item_id === delivery.prior_provider_item_id) {
+        context.addIssue({
+          code: 'custom',
+          path: ['provider_item_id'],
+          message: 'newer revision requires a distinct provider item id',
+        })
+      }
+    }
+    if (delivery.refresh_id !== undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['refresh_id'],
+        message: 'replacement delivery cannot also refresh the session',
+      })
+    }
+    return
+  }
+  if (delivery.refresh_id === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['refresh_id'],
+      message: 'session refresh delivery requires a refresh id before visibility',
+    })
+  }
+  if (delivery.provider_item_id !== undefined || delivery.superseded_provider_item_id !== undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'session refresh delivery cannot append or replace a provider item',
+    })
+  }
+})
+
+export const workspaceContextInjectionSchema = z.object({
+  item: hostContextItemSchema,
+  asUserActivation: z.boolean(),
+  delivery: workspaceContextDeliverySchema,
+}).strict().superRefine((injection, context) => {
+  if (injection.item.kind !== 'workspace_context') {
+    context.addIssue({
+      code: 'custom',
+      path: ['item'],
+      message: 'workspace context injection requires workspace_context item kind',
+    })
+  }
+  if (injection.asUserActivation) {
+    context.addIssue({
+      code: 'custom',
+      path: ['asUserActivation'],
+      message: 'workspace context cannot set asUserActivation',
+    })
+  }
+})
+
+export type WorkspaceContextDeliveryCapability = z.infer<typeof workspaceContextDeliveryCapabilitySchema>
+export type WorkspaceContextDelivery = z.infer<typeof workspaceContextDeliverySchema>
 
 export const hostResponseKindSchema = z.enum([
   'host_fact',
@@ -70,6 +218,13 @@ export const hostResponseIntentSchema = z.object({
   task_summary: boundedText().nullable().default(null),
   origin_spoken: z.boolean().default(false),
 }).strict().superRefine((intent, context) => {
+  if (intent.item.kind === 'workspace_context') {
+    context.addIssue({
+      code: 'custom',
+      path: ['item'],
+      message: 'workspace context cannot create a response',
+    })
+  }
   if (intent.kind === 'host_fact' && intent.item.kind === 'tool_output') {
     context.addIssue({code: 'custom', path: ['item'], message: 'host fact cannot be tool output'})
   }

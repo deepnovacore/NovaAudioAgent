@@ -1,0 +1,132 @@
+{
+  "cases": [
+    {
+      "id": "workspace-opened",
+      "value": {
+        "observation_id": "obs-001",
+        "observation_type": "workspace_opened",
+        "occurred_at": 1,
+        "source": "runtime",
+        "trust": "trusted_system",
+        "logical_workspace_id": "lw-nova",
+        "workspace_instance_id": "wi-nova-main",
+        "related_logical_workspace_id": null,
+        "summary": "Opened Nova runtime workspace",
+        "outcome": null,
+        "evidence_refs": [{"source": "runtime", "ref": "event-001", "observed_at": 1}]
+      }
+    },
+    {
+      "id": "instance-observed",
+      "value": {
+        "observation_id": "obs-002",
+        "observation_type": "instance_observed",
+        "occurred_at": 2,
+        "source": "git",
+        "trust": "trusted_system",
+        "logical_workspace_id": "lw-nova",
+        "workspace_instance_id": "wi-nova-feature",
+        "related_logical_workspace_id": null,
+        "summary": "Observed feature worktree",
+        "outcome": null,
+        "evidence_refs": [{"source": "git", "ref": "worktree-002", "observed_at": 2}]
+      }
+    },
+    {
+      "id": "task-artifact-reference",
+      "value": {
+        "observation_id": "obs-003",
+        "observation_type": "task_artifact_reference",
+        "occurred_at": 3,
+        "source": "executor",
+        "trust": "trusted_system",
+        "logical_workspace_id": "lw-nova",
+        "workspace_instance_id": "wi-nova-main",
+        "related_logical_workspace_id": "lw-desktop",
+        "summary": "Runtime artifact referenced by desktop workspace",
+        "outcome": "ok",
+        "evidence_refs": [{"source": "executor", "ref": "task-003", "observed_at": 3}]
+      }
+    },
+    {
+      "id": "task-completed",
+      "value": {
+        "observation_id": "obs-004",
+        "observation_type": "task_completed",
+        "occurred_at": 4,
+        "source": "executor",
+        "trust": "trusted_system",
+        "logical_workspace_id": "lw-nova",
+        "workspace_instance_id": "wi-nova-main",
+        "related_logical_workspace_id": null,
+        "summary": "Completed runtime contract task",
+        "outcome": "ok",
+        "evidence_refs": [{"source": "executor", "ref": "task-004", "observed_at": 4}]
+      }
+    },
+    {
+      "id": "work-order-summary",
+      "value": {
+        "observation_id": "obs-005",
+        "observation_type": "work_order_summary",
+        "occurred_at": 5,
+        "source": "executor",
+        "trust": "trusted_system",
+        "logical_workspace_id": "lw-nova",
+        "workspace_instance_id": "wi-nova-main",
+        "related_logical_workspace_id": "lw-desktop",
+        "summary": "Desktop integration remains a separate work order",
+        "outcome": "unknown",
+        "evidence_refs": [{"source": "executor", "ref": "work-order-005", "observed_at": 5}]
+      }
+    },
+    {
+      "id": "user-relation-statement",
+      "value": {
+        "observation_id": "obs-006",
+        "observation_type": "user_relation_statement",
+        "occurred_at": 6,
+        "source": "user",
+        "trust": "user_confirmed",
+        "logical_workspace_id": "lw-nova",
+        "workspace_instance_id": "wi-nova-main",
+        "related_logical_workspace_id": "lw-desktop",
+        "summary": "Desktop uses the Nova runtime",
+        "outcome": null,
+        "evidence_refs": [{"source": "user", "ref": "confirmation-006", "observed_at": 6}]
+      }
+    },
+    {
+      "id": "provider-relation-evidence",
+      "value": {
+        "observation_id": "obs-007",
+        "observation_type": "provider_relation_evidence",
+        "occurred_at": 7,
+        "source": "provider",
+        "trust": "untrusted_external",
+        "logical_workspace_id": "lw-nova",
+        "workspace_instance_id": "wi-nova-main",
+        "related_logical_workspace_id": "lw-desktop",
+        "summary": "Provider reported a shared runtime dependency",
+        "outcome": null,
+        "evidence_refs": [{"source": "provider", "ref": "provider-007", "observed_at": 7}]
+      }
+    },
+    {
+      "id": "relation-suppressed",
+      "value": {
+        "observation_id": "obs-008",
+        "observation_type": "relation_suppressed",
+        "occurred_at": 8,
+        "source": "user",
+        "trust": "user_confirmed",
+        "logical_workspace_id": "lw-nova",
+        "workspace_instance_id": "wi-nova-main",
+        "related_logical_workspace_id": "lw-archive",
+        "summary": "Do not suggest the archive workspace",
+        "outcome": null,
+        "evidence_refs": [{"source": "user", "ref": "confirmation-008", "observed_at": 8}]
+      }
+    }
+  ]
+}

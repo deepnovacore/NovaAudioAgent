@@ -1,0 +1,56 @@
+{
+  "context_header_cases": [
+    {
+      "id": "current-workspace-header",
+      "value": {
+        "session_epoch": 2,
+        "workspace_instance_id": "wi-nova-main",
+        "logical_workspace_id": "lw-nova",
+        "revision": 1,
+        "content": "Current workspace: Nova Audio Agent main checkout",
+        "token_estimate": 150
+      }
+    }
+  ],
+  "graph_hint_cases": [
+    {
+      "id": "desktop-runtime-hint",
+      "value": {
+        "hint_id": "hint-001",
+        "logical_workspace_id": "lw-desktop",
+        "relation_type": "shares_runtime",
+        "relation_status": "active",
+        "confidence": 0.8,
+        "reason": "Desktop uses the Nova runtime",
+        "evidence_refs": [{"source": "user", "ref": "confirmation-006", "observed_at": 6}],
+        "revision": 1
+      }
+    }
+  ],
+  "recall_pack_cases": [
+    {
+      "id": "relevant-desktop-pack",
+      "value": {
+        "session_epoch": 2,
+        "workspace_instance_id": "wi-nova-main",
+        "revision": 2,
+        "content": "Related workspace data: desktop shares this runtime.",
+        "token_estimate": 300,
+        "hints": [
+          {
+            "hint_id": "hint-001",
+            "logical_workspace_id": "lw-desktop",
+            "relation_type": "shares_runtime",
+            "relation_status": "active",
+            "confidence": 0.8,
+            "reason": "Desktop uses the Nova runtime",
+            "evidence_refs": [{"source": "user", "ref": "confirmation-006", "observed_at": 6}],
+            "revision": 1
+          }
+        ],
+        "omitted_hints": 0,
+        "degraded": false
+      }
+    }
+  ]
+}

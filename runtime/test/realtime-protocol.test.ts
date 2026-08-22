@@ -10,6 +10,8 @@ import {
   hostResponseIntentSchema,
   realtimeProviderEventSchema,
   toolResult,
+  workspaceContextDeliverySchema,
+  workspaceContextInjectionSchema,
 } from '../src/realtime/protocol.js'
 
 const toolOutput = hostContextItemSchema.parse({
@@ -90,6 +92,51 @@ test('host response intents retain only valid item and continuation combinations
     item: progress,
     origin_spoken: true,
   }), /origin_spoken/u)
+})
+
+test('workspace context is inject-only and cannot impersonate user activation', () => {
+  const item = hostContextItemSchema.parse({
+    kind: 'workspace_context',
+    host_item_id: 'workspace-header-2',
+    event_id: 'workspace-event-2',
+    content: '<workspace_context kind="data">current workspace</workspace_context>',
+    session_epoch: 2,
+    workspace_instance_id: 'wi-a',
+    revision: 2,
+  })
+
+  assert.throws(() => hostResponseIntentSchema.parse({kind: 'host_fact', item}), /workspace context/u)
+  assert.throws(() => workspaceContextInjectionSchema.parse({
+    item,
+    asUserActivation: true,
+    delivery: {
+      capability: 'replace_provider_item',
+      delivered: true,
+      prior_provider_item_id: 'provider-workspace-1',
+      provider_item_id: 'provider-workspace-2',
+      superseded_provider_item_id: 'provider-workspace-1',
+    },
+  }), /asUserActivation/u)
+})
+
+test('workspace context delivery cannot append stale context when replacement is unavailable', () => {
+  assert.throws(() => workspaceContextDeliverySchema.parse({
+    capability: 'replace_provider_item',
+    delivered: true,
+    prior_provider_item_id: 'provider-workspace-1',
+    provider_item_id: 'provider-workspace-2',
+    superseded_provider_item_id: null,
+  }), /superseded/u)
+  assert.throws(() => workspaceContextDeliverySchema.parse({
+    capability: 'unavailable',
+    delivered: true,
+  }), /unavailable/u)
+  assert.doesNotThrow(() => workspaceContextDeliverySchema.parse({
+    capability: 'refresh_session',
+    delivered: true,
+    prior_provider_item_id: 'provider-workspace-1',
+    refresh_id: 'refresh-2',
+  }))
 })
 
 test('normalized provider events reject malformed identities, text, JSON and PCM', () => {
