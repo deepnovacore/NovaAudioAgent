@@ -28,7 +28,7 @@ type Row = readonly [
 ]
 
 const rows: readonly Row[] = [
-  ['NOVA_AUDIO_AGENT_BACKEND', 'source_rollback', false, true, 'never', 'python', 'Source-development backend switch during the rollback release.', '回滚发布期的源码开发后端开关。'],
+  ['NOVA_AUDIO_AGENT_BACKEND', 'source_rollback', false, false, 'never', null, 'Internal legacy backend selector.', '内部遗留后端选择器。'],
   ['NOVA_AUDIO_AGENT_MODEL_BASE_URL', 'core', false, true, 'never', 'DashScope compatible endpoint', 'FastBrain compatible API endpoint.', 'FastBrain 兼容 API 地址。'],
   ['NOVA_AUDIO_AGENT_MODEL_API_KEY', 'core', true, true, 'when_selected', null, 'FastBrain API credential; also a Qwen fallback.', 'FastBrain API 凭据，也可作为 Qwen 回退凭据。'],
   ['NOVA_AUDIO_AGENT_FAST_MODEL', 'core', false, true, 'never', 'qwen3-vl-plus', 'FastBrain model.', 'FastBrain 模型。'],

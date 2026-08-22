@@ -2,30 +2,35 @@
 
 ## 当前发布边界
 
-本回滚发布期仍以 Python 为默认后端和可执行源码 oracle。Node runtime 只用于显式 opt-in
-开发；源码开发后端开关不是安装版应用的回退承诺。HA/AutoGLM 已在 Node 中退役，只暂留在
-Python 源码回滚路径。遗留 HA 或 AutoGLM 配置只要非空，就会在 provider、进程、设备和桌面
-构造前返回稳定且不泄露凭据的迁移错误。
-
-Node Codex 只使用 app-server；JSONL 仅为 fixture-parser-only 兼容层，不再拥有 Node 进程执行
-路径。Search、Camera、Watch 和 Guard 始终装配，不属于执行器选择项。
+Node.js 与 TypeScript 是当前主运行时。Codex 只使用 app-server；JSONL 仅为
+fixture-parser-only，不再拥有生产进程执行路径。Search、Camera、Watch 和 Guard 始终装配，
+不属于执行器选择项。遗留 HA 或 AutoGLM 配置会在 provider、进程、设备和桌面构造前返回稳定且
+不泄露凭据的迁移错误。
 
 ## 源码开发安装
 
+先安装 Node.js 22+、npm、Git 和已登录的 `codex` 可执行文件。原生构建还需要对应平台工具链：
+
+- macOS：Xcode Command Line Tools（`xcode-select --install`）；
+- Linux：`/usr/bin/cc` 位置可用的 C 编译器；
+- Windows：Visual Studio Build Tools，并勾选 **Desktop development with C++** 工作负载。
+
 ```bash
-git clone --recurse-submodules \
+git clone \
   https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
 cd nova-audio-agent
-uv sync --dev
 npm ci
 cp .env.example .env
 ```
 
-Python 仍是默认路径：
+默认 Qwen 链路必须在 `.env` 中同时设置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。Search
+始终装配，因此 Tavily 是必需配置。启动器只把 `.env` 当数据解析，不做 shell 求值；启动 shell
+里已存在的变量优先于 `.env`。
+
+启动桌面客户端：
 
 ```bash
-uv run nova-audio-agent --help
-uv run nova-audio-agent demo all
+npm run start:client
 ```
 
 仓库内 Node 检查均可离线、确定性运行：
@@ -35,12 +40,10 @@ npm run build --workspace @nova-audio-agent/runtime
 node runtime/dist/src/cli.js diagnose --json
 node runtime/dist/src/cli.js demo all
 node runtime/dist/src/cli.js scorecard fixture check
-uv run python scripts/config_fixture_oracle.py check
-uv run python scripts/product_fixture_oracle.py check
 ```
 
 `diagnose` 只验证配置，不连接 provider、不启动 Codex、不请求摄像头或麦克风、不启动 Chromium，
-也不输出凭据和路径。产品 fixture 只能用 Python exporter 的显式 `export` 命令更新；普通测试只读。
+也不输出凭据和路径。普通检查只读已提交的产品 fixture。
 
 ## 实时提供方与执行器
 
@@ -51,8 +54,6 @@ ordinary/live/project 模式共用有界 app-server transport。Camera 文件输
 
 真实 provider、麦克风/扬声器、Camera、Codex 登录、WindowServer、Windows 后代进程清理、
 clean-machine installer、签名和发布仍是 pending external evidence。
-尚未发布的安装候选会自动选择 Node，不能选择仅供源码使用的 Python 回滚；在 Node-default
-版本真正发布前，源码开发仍默认 Python。
 
 ## 公共环境变量参考
 
@@ -62,7 +63,6 @@ clean-machine installer、签名和发布仍是 pending external evidence。
 <!-- BEGIN GENERATED ENV CONTRACT -->
 | 变量 | 所属 | 必需条件 | 默认 | 说明 |
 |---|---|---|---|---|
-| `NOVA_AUDIO_AGENT_BACKEND` | `source_rollback` | 否 | python | 回滚发布期的源码开发后端开关。 |
 | `NOVA_AUDIO_AGENT_MODEL_BASE_URL` | `core` | 否 | DashScope compatible endpoint | FastBrain 兼容 API 地址。 |
 | `NOVA_AUDIO_AGENT_MODEL_API_KEY` | `core` | 选择该能力时 | 无 | FastBrain API 凭据，也可作为 Qwen 回退凭据。 |
 | `NOVA_AUDIO_AGENT_FAST_MODEL` | `core` | 否 | qwen3-vl-plus | FastBrain 模型。 |

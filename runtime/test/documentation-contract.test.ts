@@ -21,7 +21,7 @@ const currentDocs = [
   'docs/releases/node-runtime-migration-unreleased.md',
 ] as const
 
-test('current docs state the rollback truth and do not advertise retired Node capabilities', async () => {
+test('current docs state the Node release truth and do not advertise retired capabilities', async () => {
   const documents = await Promise.all(currentDocs.map(async file => ({
     file,
     text: await readFile(resolve(repositoryRoot, file), 'utf8'),
@@ -34,8 +34,7 @@ test('current docs state the rollback truth and do not advertise retired Node ca
     assert.doesNotMatch(text, /v1-mini[^\n]*(?:real|actual) executor[^\n]*(?:proven|pass)|v1-mini path runs locally/iu, file)
   }
   const status = documents.find(item => item.file === 'docs/status.md')!.text
-  assert.match(status, /Python[^\n]*default[^\n]*source oracle/iu)
-  assert.match(status, /Node[^\n]*opt-in[^\n]*development/iu)
+  assert.match(status, /Node\.js and TypeScript[^\n]*primary/iu)
   assert.match(status, /pending external evidence/iu)
 
   const release = documents.find(item => item.file.endsWith('unreleased.md'))!.text
@@ -75,8 +74,7 @@ test('current Node Codex and release claims remain exact', async () => {
     readFile(resolve(repositoryRoot, file), 'utf8')))).join('\n')
   assert.match(joined, /app-server-only/iu)
   assert.match(joined, /JSONL[^\n]*fixture-parser-only/iu)
-  assert.match(joined, /HA\/AutoGLM[^\n]*retired in Node/iu)
-  assert.match(joined, /next release[^\n]*Python/iu)
+  assert.match(joined, /HA(?:\/| and )AutoGLM[^\n]*retired/iu)
 })
 
 test('every production environment name is classified and private names stay private', async () => {

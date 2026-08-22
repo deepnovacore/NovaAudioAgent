@@ -9,7 +9,7 @@
 
 [![CI](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](pyproject.toml)
+[![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
 [![Architecture](https://img.shields.io/badge/Arch-Control%20Plane-7B2CBF.svg)](#3-architecture)
 [![Blog](https://img.shields.io/badge/Blog-Tradeoff%20Ruler-0B7285.svg)](docs/blog/2026-08-proactive-voice-agent-design-space.md)
 
@@ -142,15 +142,15 @@ speakers. The longer rationale is in [Design essence](docs/essence.md) and the
 
 ## 4. Quickstart
 
-Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), Git with submodule support,
-Node.js 22+ for the optional desktop application, and macOS for native Ambient Orb audio capture.
+Requirements: Node.js 22+, npm, Git, a logged-in `codex` executable, and a supported desktop
+session. Building native helpers also requires Xcode Command Line Tools on macOS, a C compiler at
+`/usr/bin/cc` on Linux, or Visual Studio Build Tools with the **Desktop development with C++**
+workload on Windows. Native Ambient Orb audio capture is available on macOS; Windows and Linux use
+Chromium's audio stack.
 
-> **Migration status:** unpublished packaged release candidates default to Node and reject an
-> installed-app Python selection with `source_rollback_unavailable`. Source development still
-> defaults to Python and keeps explicit `NOVA_AUDIO_AGENT_BACKEND=python` rollback. Node Codex is app-server-only and JSONL is
-> fixture-parser-only. HA/AutoGLM are retired in Node and remain temporarily only in the Python
-> source rollback. Signed three-platform candidate, clean-machine, hardware, and publication
-> evidence remains pending; this is not a released Node-default claim.
+> **Release status:** Node.js and TypeScript are the primary runtime. Codex uses app-server only;
+> JSONL exists only for historical parser fixtures. Signed three-platform candidates,
+> clean-machine runs, hardware validation, and publication evidence remain pending.
 
 ### Named Codex workspaces and Sessions
 
@@ -163,8 +163,6 @@ NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
 NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/NovaWorkspaces
 NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
 
-uv run nova-audio-agent workspace register alpha /absolute/path/to/repository
-uv run nova-audio-agent workspace list
 ```
 
 Voice requests may list, create, or select a workspace and list or resume a Session. Create,
@@ -175,8 +173,8 @@ directories, but Codex execution intentionally remains one global task at a time
 only public workspace and Session labels—never paths, thread IDs, or registry keys.
 Project mode intentionally permits only one live Orb owner for a registry. A second Orb fails
 startup with `state_busy`; after the owner exits, the next Orb recovers any interrupted `starting`
-Session before accepting work. The `workspace` CLI remains available through the short metadata
-lock and never claims live execution ownership.
+Session before accepting work. Registry updates use a short metadata lock and never claim live
+execution ownership.
 
 At startup, the configured `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` is imported if its canonical path is
 new; changing that setting registers another workspace with a deterministic suffix without
@@ -191,30 +189,31 @@ Codex prewarm. A persistent workspace home refreshes its saved login when the ho
 changes, using owner-only atomic files; a destination-only credential refresh is preserved while
 the host source is unchanged.
 
-Clone the repository and the temporary Python-rollback submodule:
+Clone and install the locked Node dependencies:
 
 ```bash
-git clone --recurse-submodules \
+git clone \
   https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
 cd nova-audio-agent
-uv sync --dev
+npm ci
 cp .env.example .env
 ```
 
-For the text CLI, set `NOVA_AUDIO_AGENT_MODEL_API_KEY` and `TAVILY_API_KEY` in `.env`, then run:
+For the default Qwen desktop, set both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in `.env` (or in
+the invoking shell). Search is always assembled, so Tavily is required even when it is not selected
+as an executor.
+
+The deterministic CLI is available after a build:
 
 ```bash
-uv run nova-audio-agent --help
-uv run nova-audio-agent demo dual-axis
-uv run nova-audio-agent demo proactive
-uv run nova-audio-agent chat --executor fast_sim
+npm run build --workspace @nova-audio-agent/runtime
+node runtime/dist/src/cli.js diagnose --json
+node runtime/dist/src/cli.js demo all
 ```
 
-The dual-axis demo shows one FastBrain call both speaking and dispatching; the proactive demo
-shows Surrogate judging an ambient observation. `demo async | dual-axis | timeout | proactive |
-all` covers the four acceptance scenarios, `scorecard` runs a non-gating real-model evaluation,
-and `./scripts/bootstrap_backend.sh` is the Conda alternative. Exit chat with `/quit`, `/exit`,
-end-of-file, or `Ctrl-C`.
+The demo suite covers asynchronous delegation, dual-axis speak-and-dispatch, timeouts, and
+proactive observations. `diagnose` validates configuration without contacting providers or opening
+devices.
 
 Nova is Chinese-first: the persona, production prompts, tool descriptions, CLI error messages, and
 default voice are Chinese. Current Node capabilities — deterministic sims, Tavily search, Codex
@@ -225,34 +224,27 @@ per-integration setup, cautions, and the full variable reference are in
 
 ## 5. Ambient Orb
 
-The Ambient Orb is the local voice interface. macOS and Linux use the shared shell launcher,
-Windows uses the PowerShell one:
+The Ambient Orb is the local voice interface. After filling `.env`, one command installs missing
+locked dependencies, builds the runtime and desktop, and launches the Node client:
 
 ```bash
-uv sync --extra vision --dev
-./scripts/start_ambient_orb.sh          # macOS, Linux
+npm run start:client
 ```
 
-```powershell
-.\scripts\start_ambient_orb.ps1         # Windows
-```
+The launcher always starts the Node runtime and Electron renderer with context isolation,
+sandboxing, and a narrow preload bridge. It requires Node.js, the `codex` executable, microphone
+permission, and both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in `.env` or the invoking shell;
+shell variables take precedence over `.env`. On macOS it also builds the native VoiceProcessingIO
+helper for system-level echo cancellation; Windows and Linux use Chromium's echo cancellation
+instead. Linux sessions run on X11 (Wayland sessions go through XWayland). See
+[Getting started](docs/getting-started.md) for the per-platform notes.
 
-The source launcher starts the backend selected for development and launches the Electron renderer
-(context isolation, sandboxing, and a narrow preload bridge); Python remains the default during the
-rollback release. It requires Node.js, the `codex` executable, microphone
-permission, and `DASHSCOPE_API_KEY` in `.env` or the settings panel. On macOS it also builds the
-native VoiceProcessingIO helper for system-level echo cancellation; Windows and Linux use
-Chromium's echo cancellation instead. Linux sessions run on X11 (Wayland sessions go through
-XWayland). See [Getting started](docs/getting-started.md) for the per-platform notes.
+Both the local-camera default and `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback use Chromium's
+camera pipeline.
 
-Both the local-camera default and `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback require the
-`vision` extra installed above.
-
-Qwen remains the default voice provider. The alternative native Volcengine path is
-`Silero VAD v5.1.2 -> Seed ASR -> Doubao Seed 2.0 Pro -> Seed TTS 2.0`; install it with
-`uv sync --extra vision --extra volcengine --dev` and configure the selected provider's
-credentials. Upstream `silero-vad==5.1.2` currently pulls in PyTorch and torchaudio even though
-this backend selects ONNX inference, so the extra is sizeable.
+Qwen remains the default voice provider. The alternative Volcengine path is
+`Silero VAD v5.1.2 -> Seed ASR -> Doubao Seed 2.0 Pro -> Seed TTS 2.0`; configure the selected
+provider's credentials in `.env`.
 
 The orb renders as a Canvas 2D particle field whose behavior carries state — particles converge
 while listening, pulse with playback amplitude while speaking, and an outer band orbits while a
@@ -266,14 +258,10 @@ acknowledgements fence audio clearing and completion.
 ## 6. Repository layout
 
 ```text
-src/nova_audio_agent/           Runtime spine, ports, floor, context, model gateway, and CLI
-src/nova_audio_agent/memory/    Canonical channel memory and structured user state
-src/nova_audio_agent/executors/ Simulator and real capability adapters
-src/nova_audio_agent/realtime/  Qwen transport, session bridge, recovery, playback, and telemetry
+runtime/src/                    Runtime spine, memory, executors, providers, CLI, and desktop entry
+runtime/test/                   Deterministic runtime, protocol, adapter, and integration tests
 desktop/ambient-orb/            Electron UI and native macOS audio helper
-tests/                          Deterministic unit, scenario, protocol, and repository tests
 docs/                           Public architecture, rationale, guides, status, and design series
-thirdparty/Open-AutoGLM/        Temporary Python source-rollback submodule; retired in Node
 resources/                      Local raw and edited media; intentionally ignored by Git
 ```
 
@@ -293,14 +281,10 @@ resources/                      Local raw and edited media; intentionally ignore
 ## 8. Development and verification
 
 ```bash
-# Python
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run pytest -q
-uv build
-
-# Electron
-(cd desktop/ambient-orb && npm ci && npm test && npm run build)
+npm ci
+npm run check
+npm run build
+npm test
 ```
 
 Live integrations are intentionally credential- and hardware-dependent; they are not substitutes

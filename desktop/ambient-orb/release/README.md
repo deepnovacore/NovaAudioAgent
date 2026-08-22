@@ -13,5 +13,4 @@ helper and LiveKit package-owned addons alone are insufficient. Current local pa
 unsigned preview and is not clean-machine, signing, provider, Codex, Camera, audio, hardware, or
 publication evidence.
 
-Node is therefore not the released default. The Python source implementation, tests, launchers, and
-explicit backend switch remain the rollback oracle until a later evidence-complete release window.
+Node is the only packaged runtime. Publication still requires the external evidence listed above.

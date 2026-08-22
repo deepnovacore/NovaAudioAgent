@@ -8,33 +8,25 @@ changes.
 ## Development setup
 
 ```bash
-git clone --recurse-submodules \
+git clone \
   https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
 cd nova-audio-agent
-uv sync --dev
+npm ci
 cp .env.example .env
 ```
 
-Node.js 22+ is required only for the desktop application under `desktop/ambient-orb`.
+Node.js 22+ is required. The desktop build also needs Xcode Command Line Tools on macOS, a C
+compiler at `/usr/bin/cc` on Linux, or Visual Studio Build Tools with the **Desktop development
+with C++** workload on Windows.
 
 ## Verification
 
 Every change must keep the deterministic checks green:
 
 ```bash
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run pytest -q
-uv build
-```
-
-Electron checks, when `desktop/ambient-orb` is touched:
-
-```bash
-cd desktop/ambient-orb
-npm ci
-npm test
+npm run check
 npm run build
+npm test
 ```
 
 Live provider integrations are credential- and hardware-dependent. They are not substitutes for
