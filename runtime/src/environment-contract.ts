@@ -130,10 +130,15 @@ export function publicEnvironmentContract(): readonly EnvironmentVariableContrac
 export function findRetiredConfiguration(environment: NodeJS.ProcessEnv):
   | {readonly capability: 'realtime' | 'ha' | 'autoglm'; readonly fields: readonly string[]}
   | null {
-  if (stripLikePython(environment.NOVA_AUDIO_AGENT_REALTIME_PROVIDER ?? '') !== '') {
+  const retiredRealtimeFields = environmentContract
+    .filter(entry => entry.owner === 'retired_realtime')
+    .filter(entry => stripLikePython(environment[entry.name] ?? '') !== '')
+    .map(entry => entry.name)
+    .sort(compareStrings)
+  if (retiredRealtimeFields.length > 0) {
     return Object.freeze({
       capability: 'realtime' as const,
-      fields: Object.freeze(['NOVA_AUDIO_AGENT_REALTIME_PROVIDER']),
+      fields: Object.freeze(retiredRealtimeFields),
     })
   }
   const configured = environment.NOVA_AUDIO_AGENT_EXECUTORS

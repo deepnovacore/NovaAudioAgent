@@ -56,6 +56,22 @@ test('retired realtime provider configuration fails by field name only', () => {
   )
 })
 
+test('retired Ark selector configuration fails by field name only', () => {
+  const sentinel = 'secret-old-ark-value'
+  for (const field of [
+    'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL',
+    'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL',
+  ] as const) {
+    assert.throws(
+      () => loadSettings({[field]: sentinel}),
+      error => error instanceof ConfigurationError
+        && error.code === 'retired_configuration'
+        && error.fields?.join(',') === field
+        && !error.message.includes(sentinel),
+    )
+  }
+})
+
 test('integrated loading never reads Ark or Doubao credential slots', () => {
   const forbidden = new Set(['ARK_API_KEY', 'DOUBAO_ASR_API_KEY', 'DOUBAO_BIGMODEL_API_KEY'])
   const environment = new Proxy<NodeJS.ProcessEnv>({
