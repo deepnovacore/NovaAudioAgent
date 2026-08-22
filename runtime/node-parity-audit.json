@@ -126,9 +126,11 @@
     "runtime/src/unicode-casefold.ts",
     "runtime/src/unicode-normalize.ts",
     "runtime/src/volcengine-realtime-assembly.ts",
+    "runtime/src/workspace-graph/context.ts",
     "runtime/src/workspace-graph/identity.ts",
     "runtime/src/workspace-graph/models.ts",
     "runtime/src/workspace-graph/projector.ts",
+    "runtime/src/workspace-graph/recall.ts",
     "runtime/src/workspace-graph/sensitivity.ts",
     "runtime/src/workspace-graph/store-client.ts",
     "runtime/src/workspace-graph/store-worker.ts",
@@ -1432,6 +1434,60 @@
       "behavior": "the committed vectors were exported against the pinned Unicode version"
     },
     {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "oversized schema-valid stable IDs omit the whole header before normalization work"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "unrenderable schema-valid recall strings omit whole hints before normalization work"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/context-view.test.ts",
+      "behavior": "graph-context cloning rejects wrapper injection and measured-token bypasses"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "b4918f14c37f3bcabbfd7d3e5c63d72773ff670f94848745c89214159c0282e4",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/context-view.test.ts",
+      "behavior": "graph-context cloning rejects wrapper injection and measured-token bypasses"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
+      "snippet_sha256": "69e84623d7bcca05b2c79d9052fecfd5ef112f81b948a4a2dfad9ae5596cf6be",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/context-view.test.ts",
+      "behavior": "graph-context cloning rejects wrapper injection and measured-token bypasses"
+    },
+    {
       "file": "runtime/src/workspace-graph/identity.ts",
       "kind": "string_length",
       "occurrence_index": 0,
@@ -1439,6 +1495,33 @@
       "disposition": "intentional_utf16",
       "test": "runtime/test/workspace-graph-identity.test.ts",
       "behavior": "UTF-16-overlong aliases are rejected before producing invalid Task 0 cards"
+    },
+    {
+      "file": "runtime/src/workspace-graph/recall.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "116a13413b87356802bdbb148830086ab64923dc88a6dbd903838b24d6bc6389",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-recall.test.ts",
+      "behavior": "schema-valid unprojectable snapshot fields become bounded degraded recall data"
+    },
+    {
+      "file": "runtime/src/workspace-graph/recall.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "116a13413b87356802bdbb148830086ab64923dc88a6dbd903838b24d6bc6389",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-recall.test.ts",
+      "behavior": "schema-valid unprojectable snapshot fields become bounded degraded recall data"
+    },
+    {
+      "file": "runtime/src/workspace-graph/recall.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "b4b565588c2a527dc83111754e0ba67cfa8792af99afd4d297640f861b9d06ea",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-recall.test.ts",
+      "behavior": "tokenization uses pinned NFKC/lower and CJK bigrams after bounding the utterance"
     },
     {
       "file": "runtime/src/workspace-graph/sensitivity.ts",
