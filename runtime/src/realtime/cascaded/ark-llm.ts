@@ -149,8 +149,14 @@ class Session implements CascadedLlmSession {
   }
 }
 
+export function createArkCascadedLlmSession(
+  gateway: ArkResponsesGateway,
+): CascadedLlmSession {
+  return new Session(gateway)
+}
+
 export function createArkCascadedLlmFactory(
   options: ArkCascadedLlmFactoryOptions,
 ): CascadedLlmFactory {
-  return {open: () => new Session(createFetchArkResponsesGateway(options))}
+  return {open: () => createArkCascadedLlmSession(createFetchArkResponsesGateway(options))}
 }

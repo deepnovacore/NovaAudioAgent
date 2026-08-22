@@ -3,7 +3,11 @@
 import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
 import type {CodexAssemblyResource} from './codex-factory.js'
 import {RealClock} from './clock.js'
-import {requireVolcengineRealtime, type Settings} from './config.js'
+import {
+  requireVolcengineRealtime,
+  type Settings,
+  type VolcengineRealtimeConfig,
+} from './config.js'
 import {MonotonicIdFactory} from './ids.js'
 import {OpenAIModelGateway} from './model-gateway.js'
 import {
@@ -12,19 +16,39 @@ import {
   type RealtimeAssemblyOptions,
 } from './realtime-assembly.js'
 import {FRONTEND_INSTRUCTIONS} from './realtime/qwen.js'
+import {createArkCascadedLlmSession} from './realtime/cascaded/ark-llm.js'
+import {CascadedRealtimeError} from './realtime/cascaded/adapter.js'
+import {CascadedRealtimeProvider} from './realtime/cascaded/provider.js'
+import type {AsrClient, EndpointingFactory, TtsClient} from './realtime/cascaded/ports.js'
 import {DoubaoAsrClient} from './realtime/volcengine/asr.js'
-import {createFetchArkResponsesGateway} from './realtime/volcengine/ark.js'
+import {
+  createFetchArkResponsesGateway,
+  type ArkResponsesGateway,
+} from './realtime/volcengine/ark.js'
 import {
   createEndpointingCapabilityFactory,
-  VolcengineRealtimeProvider,
-  type ArkResponsesGatewayFactory,
-  type DoubaoAsrClientFactory,
-  type DoubaoTtsClientFactory,
   type EndpointingCapabilityFactory,
-} from './realtime/volcengine/provider.js'
+  type PreparedEndpointingCapability,
+} from './realtime/volcengine/endpointing-capability.js'
+import {LiveKitVolcEndpointing} from './realtime/volcengine/livekit-endpointing.js'
+import {SilenceVolcEndpointing} from './realtime/volcengine/silence-endpointing.js'
 import {DoubaoTtsClient} from './realtime/volcengine/tts.js'
 import type {LiveKitExecutor} from './realtime/volcengine/endpointing-capability.js'
 import {stripLikePython} from './python-text.js'
+
+export type DoubaoAsrClientFactory = (input: {
+  readonly config: VolcengineRealtimeConfig
+  readonly idFactory: () => string
+}) => AsrClient
+
+export type DoubaoTtsClientFactory = (input: {
+  readonly config: VolcengineRealtimeConfig
+  readonly idFactory: () => string
+}) => TtsClient
+
+export type ArkResponsesGatewayFactory = (input: {
+  readonly config: VolcengineRealtimeConfig
+}) => ArkResponsesGateway
 
 export interface BuildVolcengineRealtimeAssemblyOptions
   extends Omit<
@@ -50,7 +74,7 @@ export interface BuildVolcengineRealtimeAssemblyOptions
 export function buildVolcengineRealtimeAssembly(
   options: BuildVolcengineRealtimeAssemblyOptions,
 ): RealtimeAssembly {
-  const volc = requireVolcengineRealtime(options.settings)
+  const volc = Object.freeze({...requireVolcengineRealtime(options.settings)})
   validateCodexResource(options)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
@@ -83,16 +107,23 @@ export function buildVolcengineRealtimeAssembly(
     ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
   })
-  const provider = new VolcengineRealtimeProvider({
-    config: volc,
-    endpointingCapability: options.endpointingCapability
-      ?? createEndpointingCapabilityFactory({
+  const endpointingCapability = options.endpointingCapability
+    ?? createEndpointingCapabilityFactory({
         clock,
         ...(options.liveKitExecutor === undefined ? {} : {executor: options.liveKitExecutor}),
-      }),
-    asrClient: options.asrClient ?? defaultAsrClient,
-    ttsClient: options.ttsClient ?? defaultTtsClient,
-    arkFactory: options.arkFactory ?? defaultArkFactory,
+      })
+  const asrClient = options.asrClient ?? defaultAsrClient
+  const ttsClient = options.ttsClient ?? defaultTtsClient
+  const arkFactory = options.arkFactory ?? defaultArkFactory
+  const provider = new CascadedRealtimeProvider({
+    endpointingFactory: volcengineEndpointingFactory(volc, endpointingCapability),
+    asrFactory: {openClient: () => asrClient({
+      config: volc, idFactory: () => ids.next('volcengine'),
+    })},
+    llmFactory: {open: () => createArkCascadedLlmSession(arkFactory({config: volc}))},
+    ttsFactory: {openClient: () => ttsClient({
+      config: volc, idFactory: () => ids.next('volcengine'),
+    })},
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     idFactory: () => ids.next('volcengine'),
   })
@@ -150,6 +181,28 @@ function supportModelSettings(settings: Settings, model: string): Settings {
     watch_model: model,
     surrogate_model: model,
     compressor_model: model,
+  })
+}
+
+function volcengineEndpointingFactory(
+  config: VolcengineRealtimeConfig,
+  capability: EndpointingCapabilityFactory,
+): EndpointingFactory {
+  return async input => buildEndpointing(await capability(input), config)
+}
+
+function buildEndpointing(
+  prepared: PreparedEndpointingCapability,
+  config: VolcengineRealtimeConfig,
+): LiveKitVolcEndpointing | SilenceVolcEndpointing {
+  if (prepared.result.mode !== 'livekit_v1_mini') return new SilenceVolcEndpointing(config)
+  if (prepared.surface === undefined || prepared.executor === undefined) {
+    throw new CascadedRealtimeError('configuration')
+  }
+  return new LiveKitVolcEndpointing({
+    surface: prepared.surface,
+    executor: prepared.executor,
+    config,
   })
 }
 

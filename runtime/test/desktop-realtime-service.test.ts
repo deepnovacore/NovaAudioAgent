@@ -45,11 +45,11 @@ import {
   type QwenSocket,
 } from '../src/realtime/qwen.js'
 import type {
-  VolcAsrClient,
-  VolcAsrSession,
-  VolcTtsClient,
-  VolcTtsSession,
-} from '../src/realtime/volcengine/adapter.js'
+  AsrClient,
+  AsrSession,
+  TtsClient,
+  TtsSession,
+} from '../src/realtime/cascaded/ports.js'
 import type {
   ArkEvent,
   ArkResponsesGateway,
@@ -844,7 +844,7 @@ class DesktopQwenSocket implements QwenSocket {
   }
 }
 
-class DesktopAsrSession implements VolcAsrSession {
+class DesktopAsrSession implements AsrSession {
   readonly appended: Uint8Array[] = []
   readonly #finished = deferred<void>()
   closeCalls = 0
@@ -868,21 +868,21 @@ class DesktopAsrSession implements VolcAsrSession {
   }
 }
 
-class DesktopAsrClient implements VolcAsrClient {
+class DesktopAsrClient implements AsrClient {
   readonly session: DesktopAsrSession
   readonly opened = deferred<void>()
   opens = 0
 
   constructor(session: DesktopAsrSession) { this.session = session }
 
-  open(): Promise<VolcAsrSession> {
+  open(): Promise<AsrSession> {
     this.opens += 1
     this.opened.resolve()
     return Promise.resolve(this.session)
   }
 }
 
-class DesktopTtsSession implements VolcTtsSession {
+class DesktopTtsSession implements TtsSession {
   readonly texts: string[] = []
   readonly #finished = deferred<void>()
   closeCalls = 0
@@ -908,13 +908,13 @@ class DesktopTtsSession implements VolcTtsSession {
   }
 }
 
-class DesktopTtsClient implements VolcTtsClient {
+class DesktopTtsClient implements TtsClient {
   readonly session: DesktopTtsSession
   opens = 0
 
   constructor(session: DesktopTtsSession) { this.session = session }
 
-  open(): Promise<VolcTtsSession> {
+  open(): Promise<TtsSession> {
     this.opens += 1
     return Promise.resolve(this.session)
   }

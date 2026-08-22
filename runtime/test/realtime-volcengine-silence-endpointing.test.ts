@@ -1,24 +1,20 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {ConfigurationError} from '../src/config.js'
-import {
-  VolcengineCascadedAdapter,
-  type VolcAsrClient,
-  type VolcAsrSession,
-  type VolcEndpointingEvent,
-  type VolcTtsClient,
-  type VolcTtsSession,
-} from '../src/realtime/volcengine/adapter.js'
+import {CascadedRealtimeAdapter} from '../src/realtime/cascaded/adapter.js'
 import type {
-  ArkEvent,
-  ArkResponsesGateway,
-  ArkStreamInput,
-} from '../src/realtime/volcengine/ark.js'
+  AsrClient, AsrSession, EndpointingEvent, TtsAudio, TtsClient, TtsSession,
+} from '../src/realtime/cascaded/ports.js'
+import type {
+  CascadedLlmEvent,
+  CascadedLlmSession,
+} from '../src/realtime/cascaded/llm.js'
 import {
   SilenceVolcEndpointing,
   type SilenceVolcEndpointingConfig,
 } from '../src/realtime/volcengine/silence-endpointing.js'
-import type {TtsAudio} from '../src/realtime/volcengine/tts.js'
+
+type LlmStreamInput = Parameters<CascadedLlmSession['stream']>[0]
 
 const WINDOW_BYTES = 1_024
 const silent = pcmWindow(0)
@@ -66,13 +62,13 @@ async function feedAll(
   endpointing: SilenceVolcEndpointing,
   chunks: readonly Uint8Array[],
   signal = new AbortController().signal,
-): Promise<VolcEndpointingEvent[]> {
-  const events: VolcEndpointingEvent[] = []
+): Promise<EndpointingEvent[]> {
+  const events: EndpointingEvent[] = []
   for (const chunk of chunks) events.push(...await endpointing.feed(chunk, signal))
   return events
 }
 
-function pcmEvents(events: readonly VolcEndpointingEvent[]): Uint8Array {
+function pcmEvents(events: readonly EndpointingEvent[]): Uint8Array {
   return concat(...events.flatMap(event => event.kind === 'speech_end' ? [] : [event.pcm]))
 }
 
@@ -191,7 +187,7 @@ test('invalid input rejects before mutation and the per-feed limit remains 64 Ki
 
 test('the default 15 s cap ends on window 469 and later bytes form a second utterance', async () => {
   const endpointing = new SilenceVolcEndpointing(config({vadPreRollMs: 0}))
-  const events: VolcEndpointingEvent[] = []
+  const events: EndpointingEvent[] = []
   for (let remaining = 469; remaining > 0;) {
     const count = Math.min(64, remaining)
     events.push(...await endpointing.feed(repeat(active, count), new AbortController().signal))
@@ -310,7 +306,7 @@ test('event bytes are independently owned, idle retention stays at pre-roll, and
   await assert.rejects(async () => endpointing.feed(active, new AbortController().signal))
 })
 
-class RecordingAsrSession implements VolcAsrSession {
+class RecordingAsrSession implements AsrSession {
   append(): Promise<void> { return Promise.resolve() }
   finish(): Promise<void> { return Promise.resolve() }
   close(): Promise<void> { return Promise.resolve() }
@@ -321,15 +317,15 @@ class RecordingAsrSession implements VolcAsrSession {
   }
 }
 
-class RecordingAsrClient implements VolcAsrClient {
+class RecordingAsrClient implements AsrClient {
   opens = 0
-  open(): Promise<VolcAsrSession> {
+  open(): Promise<AsrSession> {
     this.opens += 1
     return Promise.resolve(new RecordingAsrSession())
   }
 }
 
-class UnusedTtsSession implements VolcTtsSession {
+class UnusedTtsSession implements TtsSession {
   cancel(): Promise<void> { return Promise.resolve() }
   close(): Promise<void> { return Promise.resolve() }
   finish(): Promise<void> { return Promise.resolve() }
@@ -337,10 +333,10 @@ class UnusedTtsSession implements VolcTtsSession {
   async *events(): AsyncIterable<TtsAudio> { await Promise.resolve(); return }
 }
 
-const unusedTts: VolcTtsClient = {open: () => Promise.resolve(new UnusedTtsSession())}
+const unusedTts: TtsClient = {open: () => Promise.resolve(new UnusedTtsSession())}
 
-class EmptyArk implements ArkResponsesGateway {
-  async *stream(input: ArkStreamInput): AsyncIterable<ArkEvent> {
+class EmptyLlm implements CascadedLlmSession {
+  async *stream(input: LlmStreamInput): AsyncIterable<CascadedLlmEvent> {
     void input
     await Promise.resolve()
     return
@@ -351,11 +347,11 @@ class EmptyArk implements ArkResponsesGateway {
 test('the real cascaded adapter opens ASR zero times for silence and once for committed speech', async () => {
   const asr = new RecordingAsrClient()
   const endpointing = new SilenceVolcEndpointing(config({vadPreRollMs: 0}))
-  const adapter = new VolcengineCascadedAdapter({
+  const adapter = new CascadedRealtimeAdapter({
     endpointing,
     asr,
     tts: unusedTts,
-    arkFactory: () => new EmptyArk(),
+    llm: new EmptyLlm(),
     idFactory: (() => {
       let id = 0
       return () => `silence-endpointing-id-${++id}`

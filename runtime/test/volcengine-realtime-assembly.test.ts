@@ -7,6 +7,7 @@ import {
   loadSettings,
   requireVolcengineRealtime,
   type Settings,
+  type VolcengineRealtimeConfig,
 } from '../src/config.js'
 import type {Frame, FrameSource} from '../src/executors/watcher.js'
 import {WatchAdapter} from '../src/executors/watcher.js'
@@ -14,7 +15,10 @@ import type {IdFactory} from '../src/ids.js'
 import {MediaStore} from '../src/media-store.js'
 import {handoffPolicySchema} from '../src/memory.js'
 import {delegateSchema, executorManifestSchema} from '../src/ports.js'
-import {VolcengineRealtimeError} from '../src/realtime/volcengine/adapter.js'
+import {createArkCascadedLlmSession} from '../src/realtime/cascaded/ark-llm.js'
+import {CascadedRealtimeError} from '../src/realtime/cascaded/adapter.js'
+import {CascadedRealtimeProvider} from '../src/realtime/cascaded/provider.js'
+import type {AsrClient, TtsClient} from '../src/realtime/cascaded/ports.js'
 import type {ArkEvent, ArkResponsesGateway, ArkStreamInput} from '../src/realtime/volcengine/ark.js'
 import type {
   EndpointingCapabilityReason,
@@ -22,8 +26,10 @@ import type {
   LiveKitAgentsPublicSurface,
   LiveKitExecutor,
   LiveKitVadEvent,
+  PreparedEndpointingCapability,
 } from '../src/realtime/volcengine/endpointing-capability.js'
-import {VolcengineRealtimeProvider} from '../src/realtime/volcengine/provider.js'
+import {LiveKitVolcEndpointing} from '../src/realtime/volcengine/livekit-endpointing.js'
+import {SilenceVolcEndpointing} from '../src/realtime/volcengine/silence-endpointing.js'
 import {
   buildVolcengineRealtimeAssembly,
   type BuildVolcengineRealtimeAssemblyOptions,
@@ -58,6 +64,34 @@ class EmptyArk implements ArkResponsesGateway {
     await Promise.resolve()
   }
   close(): Promise<void> { this.operations.push('ark.close'); return Promise.resolve() }
+}
+
+function testProvider(options: {
+  readonly config: VolcengineRealtimeConfig
+  readonly endpointingCapability: () => Promise<PreparedEndpointingCapability>
+  readonly asrClient: () => AsrClient
+  readonly ttsClient: () => TtsClient
+  readonly arkFactory: () => ArkResponsesGateway
+  readonly idFactory: () => string
+}): CascadedRealtimeProvider {
+  return new CascadedRealtimeProvider({
+    endpointingFactory: async () => {
+      const prepared = await options.endpointingCapability()
+      if (prepared.result.mode !== 'livekit_v1_mini') {
+        return new SilenceVolcEndpointing(options.config)
+      }
+      if (prepared.surface === undefined || prepared.executor === undefined) {
+        throw new CascadedRealtimeError('configuration')
+      }
+      return new LiveKitVolcEndpointing({
+        surface: prepared.surface, executor: prepared.executor, config: options.config,
+      })
+    },
+    asrFactory: {openClient: options.asrClient},
+    llmFactory: {open: () => createArkCascadedLlmSession(options.arkFactory())},
+    ttsFactory: {openClient: options.ttsClient},
+    idFactory: options.idFactory,
+  })
 }
 
 function deferred<T>(): {
@@ -280,7 +314,7 @@ async function exerciseCoreModels(
 test('Volc owner resolves endpointing before epoch resources and reconnects monotonically', async () => {
   const operations: string[] = []
   let ids = 0
-  const provider = new VolcengineRealtimeProvider({
+  const provider = testProvider({
     config: requireVolcengineRealtime(settings()),
     endpointingCapability: () => {
       operations.push('capability')
@@ -304,7 +338,7 @@ test('Volc owner resolves endpointing before epoch resources and reconnects mono
   assert.deepEqual(operations, [])
   const first = await provider.connect({tools: [], signal: new AbortController().signal})
   assert.deepEqual(operations.slice(0, 4), [
-    'capability', 'asr.client', 'tts.client', 'ark.client',
+    'capability', 'asr.client', 'ark.client', 'tts.client',
   ])
   assert.equal(first.epoch, 1)
   await provider.close()
@@ -322,7 +356,7 @@ test('close owns an in-flight capability resolution and prevents late resource c
   async () => {
     const gate = deferred<{readonly result: EndpointingCapabilityResult}>()
     let resources = 0
-    const provider = new VolcengineRealtimeProvider({
+    const provider = testProvider({
       config: requireVolcengineRealtime(settings()),
       endpointingCapability: () => gate.promise,
       asrClient: () => { resources += 1; return {open: () => Promise.reject(new Error('unused'))} },
@@ -338,7 +372,7 @@ test('close owns an in-flight capability resolution and prevents late resource c
     assert.equal(closeSettled, false)
     await assert.rejects(
       provider.connect({tools: [], signal: new AbortController().signal}),
-      error => error instanceof VolcengineRealtimeError && error.code === 'state',
+      error => error instanceof CascadedRealtimeError && error.code === 'state',
     )
 
     gate.resolve({result: fallback('executor_unavailable')})
@@ -349,7 +383,7 @@ test('close owns an in-flight capability resolution and prevents late resource c
 
 test('ready selects LiveKit while every unavailable result stays on bounded silence', async () => {
   let liveVad = 0
-  const liveProvider = new VolcengineRealtimeProvider({
+  const liveProvider = testProvider({
     config: requireVolcengineRealtime(settings()),
     endpointingCapability: () => Promise.resolve({
       result: {
@@ -375,7 +409,7 @@ test('ready selects LiveKit while every unavailable result stays on bounded sile
   ]
   for (const reason of reasons) {
     let asrOpens = 0
-    const provider = new VolcengineRealtimeProvider({
+    const provider = testProvider({
       config: requireVolcengineRealtime(settings()),
       endpointingCapability: () => Promise.resolve({result: fallback(reason)}),
       asrClient: () => ({open: () => { asrOpens += 1; return Promise.reject(new Error('unused')) }}),
@@ -395,7 +429,7 @@ test('failed epoch construction rolls back and a later connect builds fresh reso
   let asrClients = 0
   let ttsClients = 0
   let arkAttempts = 0
-  const provider = new VolcengineRealtimeProvider({
+  const provider = testProvider({
     config: requireVolcengineRealtime(settings()),
     endpointingCapability: () => {
       capabilities += 1
@@ -413,12 +447,12 @@ test('failed epoch construction rolls back and a later connect builds fresh reso
 
   await assert.rejects(
     provider.connect({tools: [], signal: new AbortController().signal}),
-    error => error instanceof VolcengineRealtimeError && error.code === 'configuration',
+    error => error instanceof CascadedRealtimeError && error.code === 'configuration',
   )
   const identity = await provider.connect({tools: [], signal: new AbortController().signal})
   assert.equal(identity.epoch, 1)
   assert.deepEqual({capabilities, asrClients, ttsClients, arkAttempts}, {
-    capabilities: 2, asrClients: 2, ttsClients: 2, arkAttempts: 2,
+    capabilities: 2, asrClients: 2, ttsClients: 1, arkAttempts: 2,
   })
   await provider.close()
 })
@@ -471,7 +505,7 @@ test('Volc assembly preserves one graph, shared resources, and frozen Guard poli
   }))
 
   assert.deepEqual(operations, [])
-  assert.ok(realtime.provider instanceof VolcengineRealtimeProvider)
+  assert.ok(realtime.provider instanceof CascadedRealtimeProvider)
   assert.equal(realtime.core.runtime.clock, clock)
   assert.equal(realtime.core.frameSource, frameSource)
   assert.equal(realtime.core.mediaStore, mediaStore)

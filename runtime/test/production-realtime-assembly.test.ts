@@ -9,8 +9,8 @@ import {
 } from '../src/production-realtime-assembly.js'
 import {QwenAudioRealtimeAdapter} from '../src/realtime/qwen.js'
 import type {RealtimeAssembly} from '../src/realtime-assembly.js'
+import {CascadedRealtimeProvider} from '../src/realtime/cascaded/provider.js'
 import type {ArkEvent, ArkResponsesGateway, ArkStreamInput} from '../src/realtime/volcengine/ark.js'
-import {VolcengineRealtimeProvider} from '../src/realtime/volcengine/provider.js'
 
 function settings(provider: 'qwen' | 'volcengine'): Settings {
   return loadSettings({
@@ -131,7 +131,7 @@ test('real selector construction validates only the selected provider credential
     arkFactory: () => { volcCalls.push('volc.ark'); return new EmptyArk() },
     searchTransport: {search: () => Promise.reject(new Error('unused'))},
   })
-  assert.ok(volc.provider instanceof VolcengineRealtimeProvider)
+  assert.ok(volc.provider instanceof CascadedRealtimeProvider)
   assert.deepEqual(volcCalls, [])
 })
 
