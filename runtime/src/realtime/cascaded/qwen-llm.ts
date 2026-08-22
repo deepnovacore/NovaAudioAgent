@@ -27,7 +27,7 @@ export interface QwenCascadedLlmFactoryOptions {
 interface Call { readonly id: string; readonly type: 'function'; readonly function: {readonly name: string; readonly arguments: string} }
 interface Message { readonly role: 'system' | 'user' | 'assistant' | 'tool'; readonly content: string | null; readonly tool_calls?: readonly Call[]; readonly tool_call_id?: string }
 interface Fragment { id: string | null; name: string; arguments: string }
-interface Active { readonly controller: AbortController; reader: ReadableStreamDefaultReader<Uint8Array> | null }
+interface Active { readonly controller: AbortController; reader: ReadableStreamDefaultReader<Uint8Array> | null; failureCode: QwenCascadedLlmFailureCode | null }
 
 function fail(code: QwenCascadedLlmFailureCode, statusCode: number | null = null): QwenCascadedLlmFailure { return new QwenCascadedLlmFailure(code, statusCode) }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && !Array.isArray(value) && typeof value === 'object' }
@@ -52,50 +52,68 @@ class Session implements CascadedLlmSession {
   async *stream(input: {readonly inputs: readonly CascadedLlmInput[]; readonly tools: readonly CascadedLlmTool[]; readonly signal: AbortSignal}): AsyncIterable<CascadedLlmEvent> {
     if (this.#closed) throw fail('closed'); if (input.signal.aborted) throw fail('aborted')
     const current = input.inputs.map(message), unresolved = this.#unresolved
+    if (unresolved === null && input.inputs.some(item => item.kind === 'tool_result')) throw fail('protocol')
     if (unresolved !== null) this.#checkResults(input.inputs, unresolved)
-    this.#trim()
+    this.#trim(unresolved ?? [])
     const messages = [{role: 'system' as const, content: this.#instructions}, ...this.#history.flat(), ...(unresolved ?? []), ...current]
     const body: Record<string, JsonValue> = {model: this.#model, messages: messages as unknown as JsonValue, stream: true, stream_options: {include_usage: true}}
     if (input.tools.length > 0) { body.tools = input.tools.map(schema); body.parallel_tool_calls = false }
-    const active: Active = {controller: new AbortController(), reader: null}, stop = (): void => active.controller.abort()
+    const active: Active = {controller: new AbortController(), reader: null, failureCode: null}
+    const stop = (): void => { active.failureCode ??= 'aborted'; active.controller.abort(); void this.#cancel(active.reader) }
     input.signal.addEventListener('abort', stop, {once: true}); this.#active.add(active)
+    let responseId: string | null = null, terminal = false
     try {
       let response: Response
       try { response = await this.#timed(this.#fetch(this.#endpoint, {method: 'POST', headers: {authorization: `Bearer ${this.#apiKey}`, 'content-type': 'application/json', accept: 'text/event-stream'}, body: JSON.stringify(body), signal: active.controller.signal}), active) }
       catch (error) { if (error instanceof QwenCascadedLlmFailure) throw error; throw fail(input.signal.aborted ? 'aborted' : this.#closed ? 'closed' : 'network') }
-      if (!response.ok) { await response.body?.cancel().catch(() => undefined); throw fail('http', response.status) }
-      if (response.body === null || !response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')) { await response.body?.cancel().catch(() => undefined); throw fail('protocol') }
+      if (!response.ok) { await this.#cancel(response.body?.getReader() ?? null); throw fail('http', response.status) }
+      if (response.body === null || !response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')) { await this.#cancel(response.body?.getReader() ?? null); throw fail('protocol') }
       active.reader = response.body.getReader()
-      let responseId: string | null = null, started = false, terminal = false, text = '', sawText = false
+      let started = false, text = '', sawText = false
       const fragments = new Map<number, Fragment>()
       for await (const event of this.#events(active)) {
-        if (id(event.id)) responseId = event.id
+        if (event.id !== undefined) {
+          if (!id(event.id) || (responseId !== null && responseId !== event.id)) throw fail('protocol')
+          responseId ??= event.id
+        }
         if (!Array.isArray(event.choices)) continue
         for (const choice of event.choices) {
           if (!object(choice) || !object(choice.delta)) throw fail('protocol')
           const content = choice.delta.content, calls = choice.delta.tool_calls
           if (content !== undefined && typeof content !== 'string') throw fail('protocol'); if (calls !== undefined && !Array.isArray(calls)) throw fail('protocol')
           if (!started && (content !== undefined || calls !== undefined || choice.finish_reason !== undefined)) { if (responseId === null) throw fail('protocol'); started = true; yield {kind: 'response_started', response_id: responseId} }
-          if (typeof content === 'string' && content !== '') { sawText = true; text += content; yield {kind: 'text_delta', text: content} }
+          if (content !== undefined) sawText = true
+          if (typeof content === 'string' && content !== '') { text += content; yield {kind: 'text_delta', text: content} }
           for (const call of calls ?? []) this.#fragment(fragments, call)
           if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
             if (typeof choice.finish_reason !== 'string' || responseId === null) throw fail('protocol')
             if (choice.finish_reason === 'stop') {
-              if (fragments.size > 0) throw fail('protocol'); terminal = true; yield {kind: 'response_completed', response_id: responseId}
-              this.#history.push([...(unresolved ?? []), ...current, {role: 'assistant', content: text}]); this.#unresolved = null
+              if (fragments.size > 0) throw fail('protocol')
+              this.#history.push([...(unresolved ?? []), ...current, {role: 'assistant', content: text}])
+              this.#unresolved = null; terminal = true
+              yield {kind: 'response_completed', response_id: responseId}; return
             } else if (choice.finish_reason === 'tool_calls') {
               if (sawText || fragments.size === 0) throw fail('protocol'); const callsOut = this.#calls(fragments)
               for (const call of callsOut) yield {kind: 'tool_call', item_id: call.id, call_id: call.id, name: call.function.name, arguments: JSON.parse(call.function.arguments) as JsonObject}
-              terminal = true; yield {kind: 'response_completed', response_id: responseId}; this.#unresolved = [...(unresolved ?? []), ...current, {role: 'assistant', content: null, tool_calls: callsOut}]
+              this.#unresolved = [...(unresolved ?? []), ...current, {role: 'assistant', content: null, tool_calls: callsOut}]
+              terminal = true; yield {kind: 'response_completed', response_id: responseId}; return
             } else throw fail('protocol')
           }
         }
       }
-      if (!terminal) throw fail(this.#closed ? 'closed' : input.signal.aborted ? 'aborted' : 'protocol')
-    } finally { input.signal.removeEventListener('abort', stop); await active.reader?.cancel().catch(() => undefined); this.#active.delete(active) }
+      if (!terminal) throw fail(active.failureCode ?? (this.#closed ? 'closed' : input.signal.aborted ? 'aborted' : 'protocol'))
+    } catch (error) {
+      const stable = error instanceof QwenCascadedLlmFailure
+        ? error : fail(active.failureCode ?? (this.#closed ? 'closed' : input.signal.aborted ? 'aborted' : 'network'))
+      if (responseId !== null && !terminal) {
+        yield {kind: 'response_failed', response_id: responseId, code: stable.code}
+        return
+      }
+      throw stable
+    } finally { input.signal.removeEventListener('abort', stop); await this.#cancel(active.reader); this.#active.delete(active) }
   }
   #fragment(fragments: Map<number, Fragment>, value: unknown): void {
-    if (!object(value) || typeof value.index !== 'number' || !Number.isSafeInteger(value.index) || value.index < 0 || (value.function !== undefined && !object(value.function))) throw fail('protocol')
+    if (!object(value) || typeof value.index !== 'number' || !Number.isSafeInteger(value.index) || value.index !== 0 || (value.function !== undefined && !object(value.function))) throw fail('protocol')
     const index = value.index
     const found = fragments.get(index) ?? {id: null, name: '', arguments: ''}
     if (value.id !== undefined) { if (!id(value.id) || (found.id !== null && found.id !== value.id)) throw fail('protocol'); found.id = value.id }
@@ -103,12 +121,12 @@ class Session implements CascadedLlmSession {
     if (fn !== undefined) { if (fn.name !== undefined) { if (typeof fn.name !== 'string') throw fail('protocol'); found.name += fn.name }; if (fn.arguments !== undefined) { if (typeof fn.arguments !== 'string') throw fail('protocol'); found.arguments += fn.arguments } }
     fragments.set(index, found)
   }
-  #calls(fragments: ReadonlyMap<number, Fragment>): Call[] { return [...fragments.entries()].sort(([a], [b]) => a - b).map(([, part]) => { if (!id(part.id) || !id(part.name)) throw fail('protocol'); let args: unknown; try { args = JSON.parse(part.arguments) } catch { throw fail('protocol') }; if (!jsonObject(args)) throw fail('protocol'); return {id: part.id, type: 'function', function: {name: part.name, arguments: JSON.stringify(copy(args))}} }) }
+  #calls(fragments: ReadonlyMap<number, Fragment>): Call[] { if (fragments.size !== 1 || !fragments.has(0)) throw fail('protocol'); return [...fragments.entries()].map(([, part]) => { if (!id(part.id) || !id(part.name)) throw fail('protocol'); let args: unknown; try { args = JSON.parse(part.arguments) } catch { throw fail('protocol') }; if (!jsonObject(args)) throw fail('protocol'); return {id: part.id, type: 'function', function: {name: part.name, arguments: JSON.stringify(copy(args))}} }) }
   #checkResults(inputs: readonly CascadedLlmInput[], unresolved: readonly Message[]): void {
     const calls = unresolved.flatMap(item => item.tool_calls ?? []).map(item => item.id).sort(), results = inputs.filter((item): item is Extract<CascadedLlmInput, {kind: 'tool_result'}> => item.kind === 'tool_result').map(item => item.call_id).sort()
     if (calls.length === 0 || calls.length !== results.length || calls.some((call, index) => call !== results[index]) || results.length !== inputs.length) throw fail('protocol')
   }
-  #trim(): void { while (this.#history.length > 0) { const measured = size(this.#history); if (measured.items <= MAX_CASCADED_LLM_HISTORY_ITEMS && measured.codepoints <= MAX_CASCADED_LLM_HISTORY_CODEPOINTS) return; this.#history.shift() } }
+  #trim(unresolved: readonly Message[]): void { while (true) { const measured = size([...this.#history, unresolved]); if (measured.items <= MAX_CASCADED_LLM_HISTORY_ITEMS && measured.codepoints <= MAX_CASCADED_LLM_HISTORY_CODEPOINTS) return; if (this.#history.length === 0) throw fail('overflow'); this.#history.shift() } }
   async *#events(active: Active): AsyncIterable<Record<string, unknown>> {
     const reader = active.reader!, decoder = new TextDecoder('utf-8', {fatal: true}); let buffered = new Uint8Array(), total = 0, parts: string[] = [], partBytes = 0, count = 0
     const line = (raw: Uint8Array): Record<string, unknown> | 'done' | null => { let bytes = raw; if (bytes.at(-1) === 13) bytes = bytes.subarray(0, bytes.length - 1); if (bytes.length > MAX_LINE_BYTES) throw fail('overflow'); let text: string; try { text = decoder.decode(bytes) } catch { throw fail('protocol') }; if (text !== '') { if (text.startsWith(':') || !text.startsWith('data:')) return null; const part = text.slice(5).replace(/^ /u, ''); partBytes += new TextEncoder().encode(part).length + (parts.length === 0 ? 0 : 1); if (partBytes > MAX_EVENT_BYTES) throw fail('overflow'); parts.push(part); return null }; if (parts.length === 0) return null; count += 1; if (count > MAX_EVENTS) throw fail('overflow'); const joined = parts.join('\n'); parts = []; partBytes = 0; if (joined === '[DONE]') return 'done'; let parsed: unknown; try { parsed = JSON.parse(joined) } catch { throw fail('protocol') }; if (!object(parsed)) throw fail('protocol'); return parsed }
@@ -119,13 +137,26 @@ class Session implements CascadedLlmSession {
       let newline = buffered.indexOf(10); while (newline >= 0) { const event = line(buffered.subarray(0, newline)); buffered = buffered.slice(newline + 1); if (event === 'done') return; if (event !== null) yield event; newline = buffered.indexOf(10) }; if (buffered.length > MAX_LINE_BYTES) throw fail('overflow')
     }
   }
-  async #timed<T>(promise: Promise<T>, active: Active): Promise<T> { let timer: ReturnType<typeof setTimeout> | undefined; try { return await Promise.race([promise, new Promise<T>((_resolve, reject) => { timer = setTimeout(() => { active.controller.abort(); void active.reader?.cancel().catch(() => undefined); reject(fail('timeout')) }, this.#idleTimeoutMs) })]) } finally { if (timer !== undefined) clearTimeout(timer) } }
+  async #cancel(reader: ReadableStreamDefaultReader<Uint8Array> | null): Promise<void> {
+    if (reader === null) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        reader.cancel().catch(() => undefined),
+        new Promise<void>(resolve => { timer = setTimeout(resolve, this.#closeTimeoutMs) }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+  async #timed<T>(promise: Promise<T>, active: Active): Promise<T> { let timer: ReturnType<typeof setTimeout> | undefined; try { return await Promise.race([promise, new Promise<T>((_resolve, reject) => { timer = setTimeout(() => { active.failureCode ??= 'timeout'; active.controller.abort(); void this.#cancel(active.reader); reject(fail('timeout')) }, this.#idleTimeoutMs) })]) } finally { if (timer !== undefined) clearTimeout(timer) } }
   close(): Promise<void> {
     if (this.#closePromise !== null) return this.#closePromise
     this.#closed = true
     const cancellations = [...this.#active].map(active => {
+      active.failureCode ??= 'closed'
       active.controller.abort()
-      return active.reader?.cancel().catch(() => undefined) ?? Promise.resolve()
+      return this.#cancel(active.reader)
     })
     this.#closePromise = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined

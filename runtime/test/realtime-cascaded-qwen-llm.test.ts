@@ -22,6 +22,20 @@ async function collect(stream: AsyncIterable<CascadedLlmEvent>): Promise<Cascade
   return events
 }
 
+async function settlesWithin<T>(label: string, value: Promise<T>, milliseconds = 150): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      value,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} did not settle`)), milliseconds)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 function session(capture: Capture): CascadedLlmSession {
   const fetchImpl: typeof fetch = (url, init) => {
     capture.url = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url
@@ -134,14 +148,16 @@ test('Qwen rejects mixed text/tool output, malformed arguments, and mismatched t
   }).open()
   const request = {inputs: [{kind: 'user_text', text: 'hello'}] as const, tools: [],
     signal: new AbortController().signal}
-  await assert.rejects(collect(invalidResponse({id: 'resp', choices: [{
+  const mixed = await collect(invalidResponse({id: 'resp', choices: [{
     delta: {content: 'text', tool_calls: [{index: 0, id: 'call', function: {name: 't', arguments: '{}'}}]},
     finish_reason: 'tool_calls',
-  }]}).stream(request)))
-  await assert.rejects(collect(invalidResponse({id: 'resp', choices: [{
+  }]}).stream(request))
+  assert.deepEqual(mixed.at(-1), {kind: 'response_failed', response_id: 'resp', code: 'protocol'})
+  const malformed = await collect(invalidResponse({id: 'resp', choices: [{
     delta: {tool_calls: [{index: 0, id: 'call', function: {name: 't', arguments: '{'}}]},
     finish_reason: 'tool_calls',
-  }]}).stream(request)))
+  }]}).stream(request))
+  assert.deepEqual(malformed.at(-1), {kind: 'response_failed', response_id: 'resp', code: 'protocol'})
 
   const session = createQwenCascadedLlmFactory({
     baseUrl: 'https://dashscope.example/v1', apiKey: 'dash-secret', model: 'qwen-flash',
@@ -219,4 +235,149 @@ test('Qwen skips pre-aborted work and close cancels a live SSE reader', async ()
   await active.close()
   await rejection
   assert.equal(cancelled, true)
+})
+
+test('Qwen rejects nonzero or multiple tool indexes and pins its first response id', async () => {
+  const invalid = (calls: readonly Record<string, unknown>[], ids: readonly string[]): CascadedLlmSession => {
+    return createQwenCascadedLlmFactory({
+      baseUrl: 'https://dashscope.example/v1', apiKey: 'dash-secret', model: 'qwen-flash',
+      instructions: 'instructions', fetchImpl: () => Promise.resolve(sse(calls.map((call, index) => ({
+        id: ids[index], choices: [call],
+      })))),
+    }).open()
+  }
+  const tool = (index: number): Record<string, unknown> => ({
+    delta: {tool_calls: [{index, id: `call-${index}`, function: {name: 't', arguments: '{}'}}]},
+    finish_reason: 'tool_calls',
+  })
+  for (const [calls, ids] of [
+    [[tool(1)], ['resp']] as const,
+    [[{delta: {tool_calls: [
+      {index: 0, id: 'call-0', function: {name: 'a', arguments: '{}'}},
+      {index: 1, id: 'call-1', function: {name: 'b', arguments: '{}'}},
+    ]}, finish_reason: 'tool_calls'}], ['resp']] as const,
+    [[{delta: {content: 'x'}}, {delta: {}, finish_reason: 'stop'}], ['resp-1', 'resp-2']] as const,
+  ]) {
+    const events = await collect(invalid(calls, ids).stream({
+      inputs: [{kind: 'user_text', text: 'private prompt'}], tools: [], signal: new AbortController().signal,
+    }))
+    assert.equal(events[0]?.kind, 'response_started')
+    assert.deepEqual(events.at(-1), {kind: 'response_failed', response_id: ids[0], code: 'protocol'})
+  }
+})
+
+test('Qwen commits tool state before terminal delivery, rejects orphan results, and never splits a pending tool chain', async () => {
+  const requests: Record<string, unknown>[] = []
+  const responses = [
+    sse([{id: 'resp-tool', choices: [{delta: {tool_calls: [{index: 0, id: 'call-1',
+      function: {name: 'search', arguments: '{}'}}]}, finish_reason: 'tool_calls'}]}]),
+    sse([{id: 'resp-answer', choices: [{delta: {content: 'ok'}, finish_reason: 'stop'}]}]),
+  ]
+  const session = createQwenCascadedLlmFactory({
+    baseUrl: 'https://dashscope.example/v1', apiKey: 'dash-secret', model: 'qwen-flash',
+    instructions: 'instructions', fetchImpl: (_url, init) => {
+      requests.push(JSON.parse(init?.body as string) as Record<string, unknown>)
+      return Promise.resolve(responses.shift()!)
+    },
+  }).open()
+  for await (const event of session.stream({inputs: [{kind: 'user_text', text: 'weather'}], tools: [],
+    signal: new AbortController().signal})) {
+    if (event.kind === 'response_completed') break
+  }
+  await collect(session.stream({inputs: [{kind: 'tool_result', call_id: 'call-1', output: {ok: true}}],
+    tools: [], signal: new AbortController().signal}))
+  const continued = requests[1]?.messages as Record<string, unknown>[]
+  assert.ok(continued.some(item => item.role === 'assistant' && Array.isArray(item.tool_calls)))
+  assert.ok(continued.some(item => item.role === 'tool' && item.tool_call_id === 'call-1'))
+
+  let calls = 0
+  const orphan = createQwenCascadedLlmFactory({
+    baseUrl: 'https://dashscope.example/v1', apiKey: 'dash-secret', model: 'qwen-flash',
+    instructions: 'instructions', fetchImpl: () => { calls += 1; return Promise.resolve(sse([])) },
+  }).open()
+  await assert.rejects(collect(orphan.stream({inputs: [{kind: 'tool_result', call_id: 'orphan', output: {}}],
+    tools: [], signal: new AbortController().signal})), QwenCascadedLlmFailure)
+  assert.equal(calls, 0)
+})
+
+test('Qwen emits safe response_failed events and bounds a noncooperative cancel', async () => {
+  const failure = createQwenCascadedLlmFactory({
+    baseUrl: 'https://dashscope.example/private?query=secret', apiKey: 'api-secret', model: 'qwen-flash',
+    instructions: 'transcript-secret', fetchImpl: () => Promise.resolve(sse([
+      {id: 'resp-safe', choices: []},
+      {error: {message: 'provider-body-secret', arguments: 'tool-argument-secret'}},
+    ])),
+  }).open()
+  const failed = await collect(failure.stream({inputs: [{kind: 'user_text', text: 'prompt-secret'}],
+    tools: [], signal: new AbortController().signal}))
+  assert.deepEqual(failed, [{kind: 'response_failed', response_id: 'resp-safe', code: 'protocol'}])
+  assert.doesNotMatch(JSON.stringify(failed), /api-secret|prompt-secret|transcript-secret|provider-body-secret|tool-argument-secret|private/u)
+
+  const hanging = createQwenCascadedLlmFactory({
+    baseUrl: 'https://dashscope.example/v1', apiKey: 'api-secret', model: 'qwen-flash',
+    instructions: 'instructions', closeTimeoutMs: 5,
+    fetchImpl: () => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+      pull() { return new Promise<void>(() => undefined) },
+      cancel() { return new Promise<void>(() => undefined) },
+    }), {headers: {'content-type': 'text/event-stream'}})),
+  }).open()
+  const pending = collect(hanging.stream({inputs: [], tools: [], signal: new AbortController().signal}))
+  const rejected = assert.rejects(pending,
+    (error: unknown) => error instanceof QwenCascadedLlmFailure && error.code === 'closed')
+  await new Promise<void>(resolve => setImmediate(resolve))
+  await settlesWithin('close', hanging.close())
+  await settlesWithin('cancelled stream', rejected)
+})
+
+test('Qwen refuses an over-limit unresolved tool chain rather than evicting part of it', async () => {
+  let calls = 0
+  const oversizedArguments = JSON.stringify({q: 'x'.repeat(MAX_CASCADED_LLM_HISTORY_CODEPOINTS)})
+  const session = createQwenCascadedLlmFactory({
+    baseUrl: 'https://dashscope.example/v1', apiKey: 'dash-secret', model: 'qwen-flash',
+    instructions: 'instructions', fetchImpl: () => {
+      calls += 1
+      return Promise.resolve(sse([{id: 'resp-tool', choices: [{delta: {tool_calls: [{index: 0,
+        id: 'call-large', function: {name: 'search', arguments: oversizedArguments}}]},
+      finish_reason: 'tool_calls'}]}]))
+    },
+  }).open()
+  const first = await collect(session.stream({inputs: [{kind: 'user_text', text: 'weather'}],
+    tools: [], signal: new AbortController().signal}))
+  assert.equal(first.at(-1)?.kind, 'response_completed')
+  await assert.rejects(collect(session.stream({
+    inputs: [{kind: 'tool_result', call_id: 'call-large', output: {ok: true}}], tools: [],
+    signal: new AbortController().signal,
+  })), (error: unknown) => error instanceof QwenCascadedLlmFailure && error.code === 'overflow')
+  assert.equal(calls, 1)
+})
+
+test('Qwen maps midstream abort and idle timeout to safe response_failed events', async () => {
+  const hanging = (first: string): Response => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode(first)) },
+    pull() { return new Promise<void>(() => undefined) },
+  }), {headers: {'content-type': 'text/event-stream'}})
+  const controller = new AbortController()
+  const aborting = createQwenCascadedLlmFactory({
+    baseUrl: 'https://dashscope.example/v1', apiKey: 'dash-secret', model: 'qwen-flash',
+    instructions: 'instructions', fetchImpl: () => Promise.resolve(hanging(
+      'data: {"id":"resp-abort","choices":[{"delta":{"content":"x"}}]}\n\n',
+    )),
+  }).open()
+  const iterator = aborting.stream({inputs: [], tools: [], signal: controller.signal})[Symbol.asyncIterator]()
+  const first = await iterator.next()
+  if (first.done) assert.fail('expected response_started before abort')
+  assert.equal(first.value.kind, 'response_started')
+  controller.abort()
+  const afterAbort: CascadedLlmEvent[] = []
+  for await (const event of { [Symbol.asyncIterator]: () => iterator }) afterAbort.push(event)
+  assert.deepEqual(afterAbort.at(-1), {kind: 'response_failed', response_id: 'resp-abort', code: 'aborted'})
+
+  const timed = createQwenCascadedLlmFactory({
+    baseUrl: 'https://dashscope.example/v1', apiKey: 'dash-secret', model: 'qwen-flash', idleTimeoutMs: 5,
+    instructions: 'instructions', fetchImpl: () => Promise.resolve(hanging(
+      'data: {"id":"resp-timeout","choices":[]}\n\n',
+    )),
+  }).open()
+  const afterTimeout = await collect(timed.stream({inputs: [], tools: [], signal: new AbortController().signal}))
+  assert.deepEqual(afterTimeout, [{kind: 'response_failed', response_id: 'resp-timeout', code: 'timeout'}])
 })
