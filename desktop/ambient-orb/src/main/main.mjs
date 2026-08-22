@@ -324,10 +324,9 @@ function decryptSecretsForSpawn(settings, codec) {
   return decrypted
 }
 
-async function launchBackend(cameraSource) {
+async function launchBackend(cameraSource, backendKind) {
   const token = randomBytes(16).toString('hex')
   const workspace = process.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || process.cwd()
-  const backendKind = selectedBackend(process.env)
   // The listener owns the handshake, so it must be bound before the backend can
   // dial it; the readiness timeout still kills a backend that never arrives.
   const listener = createReadinessListener({
@@ -341,7 +340,7 @@ async function launchBackend(cameraSource) {
     const decryptedSecrets = decryptSecretsForSpawn(currentSettings, secretCodec)
     const spec = backendLaunchSpec({
       backend: backendKind,
-      python: pythonExecutable(),
+      python: backendKind === 'python' ? pythonExecutable() : undefined,
       nodeEntry: nodeRuntimeEntry({
         isPackaged: app.isPackaged,
         appPath: app.getAppPath(),
@@ -411,9 +410,9 @@ async function launchBackend(cameraSource) {
   })
 }
 
-async function startSelectedCamera(camera) {
+async function startSelectedCamera(camera, backendKind) {
   currentSettings = await loadSettings(settingsFile())
-  await launchBackend(camera.source)
+  await launchBackend(camera.source, backendKind)
   const launchId = randomBytes(8).toString('hex')
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
@@ -604,13 +603,14 @@ async function startSelectedCamera(camera) {
 }
 
 async function start() {
+  const backendKind = selectedBackend(process.env, { isPackaged: app.isPackaged })
   return startWithSelectedCamera({
     environment: process.env,
     requestPermission: source => requestLocalCameraPermission(source, {
       platform: process.platform,
       systemPreferences,
     }),
-    start: startSelectedCamera,
+    start: camera => startSelectedCamera(camera, backendKind),
   })
 }
 
@@ -618,7 +618,12 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => mainWindow?.show())
-  app.whenReady().then(start).catch(() => app.quit())
+  app.whenReady().then(start).catch(error => {
+    if (error?.code === 'source_rollback_unavailable') {
+      console.error('[desktop-diagnostic] source_rollback_unavailable')
+    }
+    app.quit()
+  })
 }
 
 app.on('before-quit', event => {

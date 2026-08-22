@@ -114,13 +114,33 @@ test('passes token only through environment and dials back over loopback', () =>
   assert.equal(spec.env.NOVA_AUDIO_AGENT_BACKEND, 'python')
 })
 
-test('backend selection defaults to Python and accepts only the explicit Node switch', () => {
-  assert.equal(selectedBackend({}), 'python')
+test('backend selection defaults to Node while source checkout keeps explicit Python rollback', () => {
+  assert.equal(selectedBackend({}), 'node')
   assert.equal(selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'python' }), 'python')
   assert.equal(selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'node' }), 'node')
   assert.throws(
     () => selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'private-invalid-value' }),
     error => !error.message.includes('private-invalid-value'),
+  )
+})
+
+test('packaged backend selection refuses explicit Python before resolving an interpreter', () => {
+  assert.equal(selectedBackend({}, { isPackaged: true }), 'node')
+  assert.equal(
+    selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'node' }, { isPackaged: true }),
+    'node',
+  )
+  assert.throws(
+    () => selectedBackend(
+      {
+        NOVA_AUDIO_AGENT_BACKEND: 'python',
+        NOVA_AUDIO_AGENT_PYTHON: '/private/poison/python',
+        PATH: '/private/poison',
+      },
+      { isPackaged: true },
+    ),
+    error => error?.code === 'source_rollback_unavailable'
+      && error.message === 'source_rollback_unavailable',
   )
 })
 

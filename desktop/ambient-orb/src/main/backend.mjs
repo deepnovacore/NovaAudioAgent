@@ -77,10 +77,15 @@ export function fallbackPython(platform = process.platform) {
   return platform === 'win32' ? 'python' : 'python3'
 }
 
-export function selectedBackend(env = process.env) {
-  const value = env?.NOVA_AUDIO_AGENT_BACKEND ?? 'python'
+export function selectedBackend(env = process.env, { isPackaged = false } = {}) {
+  const value = env?.NOVA_AUDIO_AGENT_BACKEND ?? 'node'
   if (value !== 'python' && value !== 'node') {
     throw new Error('NOVA_AUDIO_AGENT_BACKEND must be python or node')
+  }
+  if (value === 'python' && isPackaged) {
+    const error = new Error('source_rollback_unavailable')
+    error.code = 'source_rollback_unavailable'
+    throw error
   }
   return value
 }

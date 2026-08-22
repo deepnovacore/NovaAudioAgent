@@ -316,7 +316,19 @@ test('main delegates camera-gated startup through the tested selector lifecycle'
   assert.match(start, /return startWithSelectedCamera\(\{/u)
   assert.match(start, /environment: process\.env/u)
   assert.match(start, /requestPermission: source => requestLocalCameraPermission\(source/u)
-  assert.match(start, /start: startSelectedCamera/u)
+  assert.match(start, /start: camera => startSelectedCamera\(camera, backendKind\)/u)
+})
+
+test('backend mode is admitted before camera selection or permission work', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const start = source.slice(source.indexOf('async function start()'))
+  const body = start.slice(0, start.indexOf('\n}\n'))
+  const selection = body.indexOf('selectedBackend(process.env, { isPackaged: app.isPackaged })')
+  const camera = body.indexOf('startWithSelectedCamera({')
+
+  assert.ok(selection >= 0 && camera > selection)
+  assert.match(body, /start: camera => startSelectedCamera\(camera, backendKind\)/u)
+  assert.match(source, /source_rollback_unavailable/u)
 })
 
 test('camera bootstrap and protocol wiring catch canonical path disclosure or renderer URL choice', async () => {
