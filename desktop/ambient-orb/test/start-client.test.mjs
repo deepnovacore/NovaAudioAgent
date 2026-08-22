@@ -6,6 +6,7 @@ import {
   electronExecutablePath,
   parseClientEnvironment,
   planClientLaunch,
+  resolveClientCodexBinary,
 } from '../../../scripts/start-client.mjs'
 
 test('native toolchain preflight reports stable platform-specific setup guidance', () => {
@@ -95,6 +96,26 @@ test('dependency readiness is based on the real Electron executable, not its pac
   )
 })
 
+test('client resolves the canonical Codex executable without invoking a shell', () => {
+  const attempted = []
+  assert.equal(resolveClientCodexBinary({
+    configured: 'codex',
+    platform: 'darwin',
+    pathValue: '/first:/second',
+    canonicalize: candidate => {
+      attempted.push(candidate)
+      return candidate === '/second/codex' ? '/canonical/codex' : null
+    },
+  }), '/canonical/codex')
+  assert.deepEqual(attempted, ['/first/codex', '/second/codex'])
+  assert.throws(() => resolveClientCodexBinary({
+    configured: 'relative-custom-codex',
+    platform: 'linux',
+    pathValue: '/bin',
+    canonicalize: () => null,
+  }), /Codex executable unavailable/u)
+})
+
 test('client launch plan installs when needed, builds once, and forces the Node desktop backend', () => {
   const plan = planClientLaunch({
     argv: [],
@@ -109,6 +130,7 @@ test('client launch plan installs when needed, builds once, and forces the Node 
     rootDir: '/repo',
     nodeExecutable: '/opt/node',
     npmCli: '/opt/npm/bin/npm-cli.js',
+    codexBinary: '/opt/codex/bin/codex',
     envFileExists: true,
     dependenciesInstalled: false,
   })
@@ -134,6 +156,7 @@ test('client launch plan installs when needed, builds once, and forces the Node 
   assert.equal(plan[3].env.KEEP_ME, 'yes')
   assert.equal(plan[3].env.TAVILY_API_KEY, 'from-file')
   assert.equal(plan[3].env.NOVA_AUDIO_AGENT_BACKEND, 'node')
+  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_CODEX_BIN, '/opt/codex/bin/codex')
   assert.equal(plan[3].env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/configured/workspace')
   assert.equal(plan[3].env.NOVA_AUDIO_AGENT_ENV_FILE, '/repo/.env')
 })
@@ -146,6 +169,7 @@ test('client launch plan is Windows-safe and skips an unnecessary install', () =
     rootDir: 'C:\\repo',
     nodeExecutable: 'C:\\Node\\node.exe',
     npmCli: 'C:\\Node\\node_modules\\npm\\bin\\npm-cli.js',
+    codexBinary: 'C:\\Tools\\codex.exe',
     envFileExists: true,
     dependenciesInstalled: true,
   })
@@ -201,4 +225,16 @@ test('client launch plan fails before side effects when setup is incomplete', ()
     envFileExists: true,
     dependenciesInstalled: true,
   }), /npm CLI unavailable/u)
+
+  assert.throws(() => planClientLaunch({
+    argv: [],
+    env: {},
+    platform: 'linux',
+    rootDir: '/repo',
+    nodeExecutable: '/opt/node',
+    npmCli: '/opt/npm/bin/npm-cli.js',
+    codexBinary: 'codex',
+    envFileExists: true,
+    dependenciesInstalled: true,
+  }), /Codex executable unavailable/u)
 })

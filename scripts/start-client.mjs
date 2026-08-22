@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, posix, resolve, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseEnv } from 'node:util'
@@ -58,6 +58,45 @@ export function electronExecutablePath(rootDir, platform) {
   return pathApi.join(distribution, platform === 'win32' ? 'electron.exe' : 'electron')
 }
 
+function canonicalClientExecutable(candidate, platform) {
+  try {
+    const canonical = realpathSync(candidate)
+    if (!statSync(canonical).isFile()) return null
+    if (platform !== 'win32') accessSync(canonical, constants.X_OK)
+    const lower = canonical.toLowerCase()
+    if (lower.endsWith('.cmd') || lower.endsWith('.bat') || lower.endsWith('.ps1')) return null
+    return canonical
+  } catch {
+    return null
+  }
+}
+
+export function resolveClientCodexBinary({
+  configured,
+  platform,
+  pathValue,
+  canonicalize = candidate => canonicalClientExecutable(candidate, platform),
+}) {
+  const pathApi = platform === 'win32' ? win32 : posix
+  const requested = typeof configured === 'string' && configured.trim() !== ''
+    ? configured.trim()
+    : 'codex'
+  const candidates = pathApi.isAbsolute(requested)
+    ? [requested]
+    : requested === 'codex'
+      ? String(pathValue ?? '').split(platform === 'win32' ? ';' : ':')
+        .filter(entry => entry !== '')
+        .flatMap(entry => platform === 'win32'
+          ? [pathApi.join(entry, 'codex.exe'), pathApi.join(entry, 'codex')]
+          : [pathApi.join(entry, 'codex')])
+      : []
+  for (const candidate of candidates) {
+    const canonical = canonicalize(candidate)
+    if (typeof canonical === 'string' && pathApi.isAbsolute(canonical)) return canonical
+  }
+  throw new Error('Codex executable unavailable; install and log in to Codex CLI')
+}
+
 export function planClientLaunch({
   argv,
   env,
@@ -66,6 +105,7 @@ export function planClientLaunch({
   rootDir,
   nodeExecutable,
   npmCli,
+  codexBinary,
   envFileExists,
   dependenciesInstalled,
 }) {
@@ -80,12 +120,16 @@ export function planClientLaunch({
   if (typeof npmCli !== 'string' || !pathApi.isAbsolute(npmCli)) {
     throw new Error('npm CLI unavailable; start this command with npm run start:client')
   }
+  if (typeof codexBinary !== 'string' || !pathApi.isAbsolute(codexBinary)) {
+    throw new Error('Codex executable unavailable; install and log in to Codex CLI')
+  }
 
   const npm = args => ({command: nodeExecutable, args: [npmCli, ...args]})
   const configuredEnv = parseClientEnvironment({contents: envFileContents, shellEnv: env})
   const clientEnv = {
     ...configuredEnv,
     NOVA_AUDIO_AGENT_BACKEND: 'node',
+    NOVA_AUDIO_AGENT_CODEX_BIN: codexBinary,
     NOVA_AUDIO_AGENT_CODEX_WORKSPACE:
       configuredEnv.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || rootDir,
     NOVA_AUDIO_AGENT_ENV_FILE: pathApi.join(rootDir, '.env'),
@@ -148,6 +192,8 @@ export async function main({
   const envFile = pathApi.join(rootDir, '.env')
   const envFileExists = existsSync(envFile)
   if (!envFileExists) throw new Error('missing .env; run: cp .env.example .env')
+  const envFileContents = readFileSync(envFile, 'utf8')
+  const configuredEnv = parseClientEnvironment({contents: envFileContents, shellEnv: env})
   assertNativeToolchain({
     platform,
     env,
@@ -166,11 +212,16 @@ export async function main({
   const plan = planClientLaunch({
     argv,
     env,
-    envFileContents: readFileSync(envFile, 'utf8'),
+    envFileContents,
     platform,
     rootDir,
     nodeExecutable: process.execPath,
     npmCli: env.npm_execpath,
+    codexBinary: resolveClientCodexBinary({
+      configured: configuredEnv.NOVA_AUDIO_AGENT_CODEX_BIN,
+      platform,
+      pathValue: configuredEnv.PATH,
+    }),
     envFileExists,
     dependenciesInstalled: existsSync(electronExecutablePath(rootDir, platform)),
   })

@@ -109,6 +109,7 @@ export function backendLaunchSpec({
   backend = 'python',
   python,
   nodeEntry,
+  nodeResourcesPath,
   workspace,
   token,
   readyEndpoint,
@@ -123,6 +124,10 @@ export function backendLaunchSpec({
   if (backend === 'node' && (typeof nodeEntry !== 'string' || !isAbsolute(nodeEntry))) {
     throw new Error('absolute Node runtime entry is required')
   }
+  if (
+    backend === 'node'
+    && (typeof nodeResourcesPath !== 'string' || !isAbsolute(nodeResourcesPath))
+  ) throw new Error('absolute Node resource root is required')
   if (typeof workspace !== 'string' || !workspace) throw new Error('workspace is required')
   if (!TOKEN_PATTERN.test(token)) throw new Error('128-bit token is required')
   const endpointMatch = typeof readyEndpoint === 'string'
@@ -149,6 +154,9 @@ export function backendLaunchSpec({
     NOVA_AUDIO_AGENT_PROACTIVITY_PRESET: proactivity,
     NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),
     NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE: voice,
+    ...(backend === 'node'
+      ? {NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH: nodeResourcesPath}
+      : {}),
   }
   // The inherited fd-3 readiness pipe is gone: stdio stops at stderr and the
   // backend dials back instead, so a stale parent value must never imply one.

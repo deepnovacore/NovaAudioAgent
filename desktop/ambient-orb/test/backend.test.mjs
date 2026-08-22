@@ -146,9 +146,11 @@ test('packaged backend selection refuses explicit Python before resolving an int
 
 test('Node launch uses the compiled utility-process entry and no writable stdin', () => {
   const nodeEntry = '/repo/runtime/dist/src/desktop-entry.js'
+  const nodeResourcesPath = '/repo/desktop/ambient-orb/build'
   const spec = backendLaunchSpec({
     backend: 'node',
     nodeEntry,
+    nodeResourcesPath,
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -160,16 +162,27 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
   assert.deepEqual(spec.argv, [])
   assert.deepEqual(spec.stdio, ['ignore', 'pipe', 'pipe'])
   assert.equal(spec.env.NOVA_AUDIO_AGENT_BACKEND, 'node')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH, nodeResourcesPath)
   assert.equal(JSON.stringify(spec).includes(TOKEN), true)
   assert.equal(JSON.stringify(spec.argv).includes(TOKEN), false)
   assert.throws(() => backendLaunchSpec({
     backend: 'node',
     nodeEntry: 'relative-entry.js',
+    nodeResourcesPath,
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: {},
   }), /absolute Node runtime entry/)
+  assert.throws(() => backendLaunchSpec({
+    backend: 'node',
+    nodeEntry,
+    nodeResourcesPath: 'relative-resources',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+  }), /absolute Node resource root/)
 })
 
 test('runtime entry resolves inside the workspace for dev and the asar for packages', () => {

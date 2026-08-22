@@ -350,6 +350,9 @@ async function launchBackend(cameraSource, backendKind, smokeChannel) {
         appPath: app.getAppPath(),
         packageRoot,
       }),
+      nodeResourcesPath: app.isPackaged
+        ? process.resourcesPath
+        : resolve(packageRoot, 'build'),
       workspace,
       token,
       readyEndpoint: await listener.endpoint,

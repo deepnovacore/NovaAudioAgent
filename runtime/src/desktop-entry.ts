@@ -44,7 +44,10 @@ process.exitCode = await runDesktopEntryWithStopSources({
     const telemetry = new NullTelemetry()
     ownership.own(() => telemetry.close())
     const clock = new RealClock()
-    const codexHost = createProductionCodexHost(settings)
+    const sourceResourcesPath = process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH
+    const codexHost = createProductionCodexHost(settings, sourceResourcesPath === undefined
+      ? {}
+      : {resourcesPath: sourceResourcesPath})
     const codexConfig = resolveCodexHostConfig(settings, codexHost.catalog)
     const codexResource = codexConfig === null
       ? null
