@@ -125,6 +125,7 @@ interface EpochOwner {
   readonly abandonedCalls: Map<string, null>
   consumptionGeneration: number
   pendingToolCallId: string | null
+  responseStartBarrier: Promise<void> | null
   asr: ActiveAsr | null
   response: ActiveResponse | null
   revoked: boolean
@@ -313,6 +314,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         abandonedCalls: new Map(),
         consumptionGeneration: 0,
         pendingToolCallId: null,
+        responseStartBarrier: null,
         asr: null,
         response: null,
         revoked: false,
@@ -432,25 +434,30 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     } catch {
       throw new CascadedRealtimeError('configuration')
     }
-    if (owner.response !== null) throw new CascadedRealtimeError('response_active')
-    if (intent.item.kind === 'tool_output' && intent.item.call_id !== null
-      && owner.abandonedCalls.has(intent.item.call_id)) {
-      owner.abandonedCalls.delete(intent.item.call_id)
-      owner.pending.delete(intent.item.host_item_id)
-      this.#startSilentResponse(owner)
+    await this.#serializeResponseStart(owner, async () => {
+      throwIfAborted(combineSignals(owner.controller.signal, signal))
+      if (owner.response !== null) throw new CascadedRealtimeError('response_active')
+      if (intent.item.kind === 'tool_output' && intent.item.call_id !== null
+        && owner.abandonedCalls.has(intent.item.call_id)) {
+        owner.abandonedCalls.delete(intent.item.call_id)
+        owner.pending.delete(intent.item.host_item_id)
+        this.#startSilentResponse(owner)
+        await Promise.resolve()
+        return
+      }
+      if (owner.consumed.delete(intent.item.host_item_id)) {
+        this.#startSilentResponse(owner)
+        await Promise.resolve()
+        return
+      }
+      const inputs = this.#takeResponseInputs(owner, intent)
+      if (inputs.length === 0) throw new CascadedRealtimeError('missing_host_input')
+      await this.#resolvePendingToolCall(owner, inputs)
+      if (!this.#isCurrent(owner)) throw new CascadedRealtimeError('state')
+      throwIfAborted(combineSignals(owner.controller.signal, signal))
+      this.#startResponse(owner, inputs)
       await Promise.resolve()
-      return
-    }
-    if (owner.consumed.delete(intent.item.host_item_id)) {
-      this.#startSilentResponse(owner)
-      await Promise.resolve()
-      return
-    }
-    const inputs = this.#takeResponseInputs(owner, intent)
-    if (inputs.length === 0) throw new CascadedRealtimeError('missing_host_input')
-    await this.#resolvePendingToolCall(owner, inputs)
-    this.#startResponse(owner, inputs)
-    await Promise.resolve()
+    })
   }
 
   async cancelResponse(responseId: string, signal: AbortSignal): Promise<void> {
@@ -717,14 +724,17 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
   }
 
   async #startUserResponse(owner: EpochOwner, text: string): Promise<void> {
-    if (owner.response !== null) {
-      owner.response.controller.abort()
-      await settleWithin(owner.response.task, this.#settleTimeoutMs)
-    }
-    const {inputs, consumedIds} = this.#takeUserResponseInputs(owner)
-    this.#markConsumed(owner, consumedIds)
-    await this.#resolvePendingToolCall(owner, inputs)
-    this.#startResponse(owner, [...inputs, {kind: 'user_text', text}])
+    await this.#serializeResponseStart(owner, async () => {
+      if (owner.response !== null) {
+        owner.response.controller.abort()
+        await settleWithin(owner.response.task, this.#settleTimeoutMs)
+      }
+      const {inputs, consumedIds} = this.#takeUserResponseInputs(owner)
+      this.#markConsumed(owner, consumedIds)
+      await this.#resolvePendingToolCall(owner, inputs)
+      if (!this.#isCurrent(owner)) throw new CascadedRealtimeError('state')
+      this.#startResponse(owner, [...inputs, {kind: 'user_text', text}])
+    })
   }
 
   #startResponse(owner: EpochOwner, inputs: readonly CascadedLlmInput[]): void {
@@ -1140,6 +1150,24 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       if (this.#owner === owner) this.#owner = null
       this.#state = 'disconnected'
       throw new CascadedRealtimeError('closed')
+    }
+  }
+
+  async #serializeResponseStart<T>(
+    owner: EpochOwner,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = owner.responseStartBarrier
+    let release: (() => void) | undefined
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    owner.responseStartBarrier = barrier
+    if (previous !== null) await previous
+    try {
+      if (!this.#isCurrent(owner)) throw new CascadedRealtimeError('state')
+      return await operation()
+    } finally {
+      release?.()
+      if (owner.responseStartBarrier === barrier) owner.responseStartBarrier = null
     }
   }
 

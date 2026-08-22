@@ -220,3 +220,82 @@ No files were deleted in this fix round.
 - Confirmed all common-session fakes implement the new lifecycle operation and the Python oracle fake mirrors its semantics.
 - Confirmed generic cascaded source has no Qwen import.
 - No new concerns. The previously recorded Task 5 legacy selector-test state is unchanged and outside this fix matrix.
+
+---
+
+## Fix round 2: serialize abandonment and response start
+
+### RED evidence
+
+Added deterministic deferred-reset regressions before changing production. With `abandonPendingResponse()` held, the pre-fix owner cleared `pendingToolCallId` and allowed both competing paths to enter the LLM:
+
+```text
+$ npm run build --workspace @nova-audio-agent/runtime
+$ node --test --test-name-pattern='held abandonment|reset failure' \
+    runtime/dist/test/realtime-cascaded-adapter.test.js
+✖ concurrent explicit responses share one held abandonment transition
+  Missing expected rejection.
+✖ ASR and explicit responses share the held abandonment transition
+  Missing expected rejection.
+✖ an abandoned-continuation reset failure is bounded and closes the owner
+exit 1
+```
+
+The first two failures prove the race: the competing response resolved instead of remaining behind the held reset and being rejected after the winning response reserved the active slot. The third failure exposed a mechanical missing provider-item ID in the newly extended cleanup fixture; that fixture error was corrected before implementation. The accepted behavioral RED evidence is the two deterministic race failures above, while the queued-work exclusion extends the already-RED/then-GREEN non-cooperative reset case from fix round 1.
+
+### Implementation
+
+Added one epoch-owned `responseStartBarrier` and a shared `#serializeResponseStart()` transition. Both explicit `createResponse()` and ASR final-transcript response creation now serialize the complete sequence:
+
+1. revalidate epoch/signal and active-response state;
+2. select pending semantic inputs;
+3. match a tool result or run the single bounded abandonment reset;
+4. revalidate epoch/signal after the await;
+5. reserve/start the response.
+
+The barrier is identity-cleared and always released in `finally`. Competitors wait on the same transition, so clearing `pendingToolCallId` inside the winner cannot expose stale continuation. Only the winner invokes reset; explicit competitors then observe `response_active`, while an ASR winner retains its existing barge-in policy. Reset failure revokes/cleans the epoch before queued operations revalidate, so they fail without streaming.
+
+### GREEN evidence
+
+New focused regressions:
+
+```text
+✔ concurrent explicit responses share one held abandonment transition
+✔ ASR and explicit responses share the held abandonment transition
+✔ an abandoned-continuation reset failure is bounded and closes the owner
+3 tests, 3 pass, 0 fail
+```
+
+Final required matrix:
+
+```text
+$ npm run build --workspace @nova-audio-agent/runtime
+exit 0
+$ npm run lint --workspace @nova-audio-agent/runtime
+exit 0
+$ npm run typecheck --workspace @nova-audio-agent/runtime
+exit 0
+$ node --test <Task 2 Qwen + Task 3 Ark semantic/wire + Task 4 matrix/oracle>
+148 tests, 148 pass, 0 fail
+$ git diff --check
+exit 0
+```
+
+### Preservation checklist
+
+- [x] No second explicit LLM stream starts while abandonment is held.
+- [x] No manual LLM stream starts while ASR-triggered abandonment is held.
+- [x] Exactly one lifecycle reset runs per abandoned chain.
+- [x] Matching `tool_result` continuation runs with zero abandonment resets.
+- [x] Reset non-cooperation remains settle-time bounded, closes the LLM owner, and prevents queued streaming.
+- [x] Late abandoned outputs remain suppressed.
+- [x] Response-active behavior is rechecked after serialized waits without prematurely consuming the losing host item.
+- [x] Epoch revocation and signal state are rechecked after abandonment settles.
+- [x] ASR barge-in, cancellation, close bounds, queue/audio limits, telemetry, and all 17 oracle scenarios remain GREEN.
+
+### Files changed and self-review
+
+- `runtime/src/realtime/cascaded/adapter.ts`: shared epoch response-start barrier and serialized explicit/ASR transitions.
+- `runtime/test/realtime-cascaded-adapter.test.ts`: explicit concurrency, ASR concurrency, queued cleanup, single-reset, and matched-continuation assertions.
+
+No files were deleted. Self-review confirmed no provider-specific state was introduced, no duplicate reset path exists, and no response starts after an epoch becomes stale. No new concerns; the previously recorded Task 5 selector-test state remains unchanged.

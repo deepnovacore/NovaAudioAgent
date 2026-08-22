@@ -24,6 +24,15 @@ import type {
 
 type LlmStreamInput = Parameters<CascadedLlmSession['stream']>[0]
 
+function deferred<T>(): {
+  readonly promise: Promise<T>
+  readonly resolve: (value: T) => void
+} {
+  let resolve: ((value: T) => void) | undefined
+  const promise = new Promise<T>(settle => { resolve = settle })
+  return {promise, resolve: value => resolve?.(value)}
+}
+
 async function settleWithin<T>(label: string, promise: Promise<T>, milliseconds = 500): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   const expired = new Promise<never>((_resolve, reject) => {
@@ -533,6 +542,7 @@ test('adapter supplies semantic user text and matching structured tool results t
     assert.deepEqual(llm.calls[1]?.inputs.at(-1), {
       kind: 'tool_result', call_id: 'call-1', output: {temperature: 20},
     })
+    assert.equal(llm.abandons, 0)
     await watching.stop()
   })
 
@@ -754,9 +764,137 @@ test('an unresolved tool resets chaining and a late abandoned output never calls
   await watching.stop()
 })
 
+test('concurrent explicit responses share one held abandonment transition', async () => {
+  class DeferredAbandonLlm extends FakeLlm {
+    readonly started = deferred<void>()
+    readonly gate = deferred<void>()
+
+    override async abandonPendingResponse(): Promise<void> {
+      this.abandons += 1
+      this.started.resolve()
+      await this.gate.promise
+    }
+  }
+  const llm = new DeferredAbandonLlm(
+    [
+      {kind: 'response_started', response_id: 'response-tool'},
+      {kind: 'tool_call', item_id: 'item-tool', call_id: 'call-tool', name: 'weather', arguments: {}},
+      {kind: 'response_completed', response_id: 'response-tool'},
+    ],
+    [
+      {kind: 'response_started', response_id: 'response-next'},
+      {kind: 'response_completed', response_id: 'response-next'},
+    ],
+  )
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(), llm,
+    tts: new FakeTtsClient(new FakeTtsSession()),
+    idFactory: ids('session-explicit-race', 'provider-first', 'provider-next-1', 'provider-next-2'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const watching = observe(adapter)
+  const first = hostItem('first')
+  await adapter.injectHostItem(first, directOptions())
+  await adapter.createResponse({kind: 'host_fact', item: first, task_summary: null,
+    origin_spoken: false}, new AbortController().signal)
+  await waitFor('explicit race tool terminal', () => watching.events.some(event =>
+    event.kind === 'response_terminal'))
+
+  const next1 = hostItem('next-1')
+  const next2 = hostItem('next-2')
+  await adapter.injectHostItem(next1, directOptions())
+  await adapter.injectHostItem(next2, directOptions())
+  const firstStart = adapter.createResponse({kind: 'host_fact', item: next1, task_summary: null,
+    origin_spoken: false}, new AbortController().signal)
+  await llm.started.promise
+  const secondStart = assert.rejects(adapter.createResponse({
+    kind: 'host_fact', item: next2, task_summary: null, origin_spoken: false,
+  }, new AbortController().signal),
+  (error: unknown) => error instanceof CascadedRealtimeError && error.code === 'response_active')
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(llm.calls.length, 1)
+  assert.equal(llm.abandons, 1)
+
+  llm.gate.resolve()
+  await firstStart
+  await secondStart
+  await waitFor('explicit race response start', () => llm.calls.length === 2)
+  assert.equal(llm.abandons, 1)
+  await watching.stop()
+  await adapter.close()
+})
+
+test('ASR and explicit responses share the held abandonment transition', async () => {
+  class DeferredAbandonLlm extends FakeLlm {
+    readonly started = deferred<void>()
+    readonly gate = deferred<void>()
+
+    override async abandonPendingResponse(): Promise<void> {
+      this.abandons += 1
+      this.started.resolve()
+      await this.gate.promise
+    }
+  }
+  const llm = new DeferredAbandonLlm(
+    [
+      {kind: 'response_started', response_id: 'response-tool'},
+      {kind: 'tool_call', item_id: 'item-tool', call_id: 'call-tool', name: 'weather', arguments: {}},
+      {kind: 'response_completed', response_id: 'response-tool'},
+    ],
+    [
+      {kind: 'response_started', response_id: 'response-asr'},
+      {kind: 'response_completed', response_id: 'response-asr'},
+    ],
+  )
+  const endpointing = new ScriptedEndpointing(
+    [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}],
+    [{kind: 'speech_end', commit: true}],
+  )
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing, asr: new FakeAsrClient(new FakeAsrSession({text: 'new speech', final: true})), llm,
+    tts: new FakeTtsClient(new FakeTtsSession()),
+    idFactory: ids(
+      'session-asr-race', 'provider-first', 'speech-asr-race', 'item-asr-race', 'provider-manual',
+    ),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const watching = observe(adapter)
+  const first = hostItem('first')
+  await adapter.injectHostItem(first, directOptions())
+  await adapter.createResponse({kind: 'host_fact', item: first, task_summary: null,
+    origin_spoken: false}, new AbortController().signal)
+  await waitFor('ASR race tool terminal', () => watching.events.some(event =>
+    event.kind === 'response_terminal'))
+
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await llm.started.promise
+  const manual = hostItem('manual')
+  await adapter.injectHostItem(manual, directOptions())
+  const manualStart = assert.rejects(adapter.createResponse({
+    kind: 'host_fact', item: manual, task_summary: null, origin_spoken: false,
+  }, new AbortController().signal),
+  (error: unknown) => error instanceof CascadedRealtimeError && error.code === 'response_active')
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(llm.calls.length, 1)
+  assert.equal(llm.abandons, 1)
+
+  llm.gate.resolve()
+  await manualStart
+  await waitFor('ASR race response start', () => llm.calls.length === 2)
+  assert.deepEqual(llm.calls[1]?.inputs.at(-1), {kind: 'user_text', text: 'new speech'})
+  assert.equal(llm.abandons, 1)
+  await watching.stop()
+  await adapter.close()
+})
+
 test('an abandoned-continuation reset failure is bounded and closes the owner', async () => {
   class BlockingAbandonLlm extends FakeLlm {
+    readonly started = deferred<void>()
+
     override abandonPendingResponse(): Promise<void> {
+      this.abandons += 1
+      this.started.resolve()
       return new Promise<void>(() => undefined)
     }
   }
@@ -768,7 +906,7 @@ test('an abandoned-continuation reset failure is bounded and closes the owner', 
   const adapter = new CascadedRealtimeAdapter({
     endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(), llm,
     tts: new FakeTtsClient(new FakeTtsSession()),
-    idFactory: ids('session-abandon-failure', 'provider-first', 'provider-next'),
+    idFactory: ids('session-abandon-failure', 'provider-first', 'provider-next', 'provider-queued'),
     settleTimeoutMs: 10,
   })
   await adapter.connect({tools: [], signal: new AbortController().signal})
@@ -780,12 +918,24 @@ test('an abandoned-continuation reset failure is bounded and closes the owner', 
   await terminal
 
   const next = hostItem('next')
+  const queued = hostItem('queued')
   await adapter.injectHostItem(next, directOptions())
-  await assert.rejects(settleWithin('abandon reset failure', adapter.createResponse({
+  await adapter.injectHostItem(queued, directOptions())
+  const firstFailure = assert.rejects(settleWithin('abandon reset failure', adapter.createResponse({
     kind: 'host_fact', item: next, task_summary: null, origin_spoken: false,
   }, new AbortController().signal), 150),
   (error: unknown) => error instanceof CascadedRealtimeError && error.code === 'closed')
+  await llm.started.promise
+  const queuedFailure = assert.rejects(adapter.createResponse({
+    kind: 'host_fact', item: queued, task_summary: null, origin_spoken: false,
+  }, new AbortController().signal),
+  (error: unknown) => error instanceof CascadedRealtimeError
+    && (error.code === 'closed' || error.code === 'state'))
+  await firstFailure
+  await queuedFailure
   assert.equal(llm.closed, true)
+  assert.equal(llm.calls.length, 1)
+  assert.equal(llm.abandons, 1)
 })
 
 test('TTS retries once before audio with every prior chunk, and never retries after audio', async () => {
