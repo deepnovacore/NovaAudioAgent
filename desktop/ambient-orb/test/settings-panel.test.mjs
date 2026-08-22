@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { createSettingsController } from '../src/renderer/settings-controller.mjs'
+import { createSecretRevisions } from '../src/renderer/secret-revisions.mjs'
 
 const html = await readFile(new URL('../src/renderer/settings.html', import.meta.url), 'utf8')
 const script = await readFile(new URL('../src/renderer/settings.mjs', import.meta.url), 'utf8')
@@ -54,18 +55,22 @@ test('queued secret saves wait for their own bridge response and retain its reje
     status: () => {},
   })
   controller.setView(publicView())
-  controller.setDraft('dashscopeApiKey', 'first-key')
-  const firstSave = controller.saveSecrets({ dashscopeApiKey: 'first-key' })
-  controller.setDraft('arkApiKey', 'bad-key')
-  const queuedSave = controller.saveSecrets({ arkApiKey: 'bad-key' })
+  const revisions = createSecretRevisions(['dashscopeApiKey', 'arkApiKey'])
+  revisions.noteInput('dashscopeApiKey')
+  const firstSubmission = revisions.capture('dashscopeApiKey', 'first-key')
+  const firstSave = controller.saveSecrets({ dashscopeApiKey: firstSubmission.value })
+  revisions.noteInput('arkApiKey')
+  const queuedSubmission = revisions.capture('arkApiKey', 'bad-key')
+  const queuedSave = controller.saveSecrets({ arkApiKey: queuedSubmission.value })
   first.resolve(publicView())
   const firstResult = await firstSave
-  assert.deepEqual(firstResult.cleared, ['dashscopeApiKey'])
+  assert.deepEqual(firstResult.accepted, ['dashscopeApiKey'])
+  assert.ok(revisions.matches('dashscopeApiKey', 'first-key', firstSubmission))
   assert.equal(calls.length, 2, 'the queued caller begins only after the first response')
   second.resolve(publicView({ rejectedSecrets: ['arkApiKey'] }))
   const queuedResult = await queuedSave
   assert.deepEqual(queuedResult.rejected, ['arkApiKey'])
-  assert.deepEqual(queuedResult.cleared, [])
+  assert.ok(revisions.matches('arkApiKey', 'bad-key', queuedSubmission), 'rejection leaves the value in place')
 })
 
 test('an earlier accepted secret response cannot clear a newer value in that field', async () => {
@@ -76,14 +81,50 @@ test('an earlier accepted secret response cannot clear a newer value in that fie
     status: () => {},
   })
   controller.setView(publicView())
-  controller.setDraft('dashscopeApiKey', 'old-key')
-  const firstSave = controller.saveSecrets({ dashscopeApiKey: 'old-key' })
-  controller.setDraft('dashscopeApiKey', 'new-key')
+  const revisions = createSecretRevisions(['dashscopeApiKey'])
+  revisions.noteInput('dashscopeApiKey')
+  const oldSubmission = revisions.capture('dashscopeApiKey', 'old-key')
+  const firstSave = controller.saveSecrets({ dashscopeApiKey: oldSubmission.value })
+  revisions.noteInput('dashscopeApiKey')
   pending.resolve(publicView())
   const result = await firstSave
   assert.deepEqual(result.accepted, ['dashscopeApiKey'])
-  assert.deepEqual(result.cleared, [], 'the newer plaintext draft must remain for its own save')
-  assert.equal(controller.getDraft('dashscopeApiKey'), 'new-key')
+  assert.ok(!revisions.matches('dashscopeApiKey', 'new-key', oldSubmission), 'the newer plaintext must remain')
+})
+
+test('secret values and key names never enter controller render drafts', async () => {
+  const accepted = deferred()
+  const rejected = deferred()
+  const failed = deferred()
+  const snapshots = []
+  const calls = []
+  const controller = createSettingsController({
+    api: { set: patch => {
+      calls.push(patch)
+      return [accepted.promise, rejected.promise, failed.promise][calls.length - 1]
+    } },
+    render: (view, drafts) => snapshots.push({ view, drafts }),
+    status: () => {},
+  })
+  const sentinel = 'secret-sentinel-must-not-render'
+  controller.setView(publicView())
+  controller.setDraft('dashscopeApiKey', sentinel)
+  const acceptedSave = controller.saveSecrets({ dashscopeApiKey: sentinel })
+  accepted.resolve(publicView())
+  await acceptedSave
+  const rejectedSave = controller.saveSecrets({ arkApiKey: sentinel })
+  rejected.resolve(publicView({ rejectedSecrets: ['arkApiKey'] }))
+  await rejectedSave
+  const failedSave = controller.saveSecrets({ codexApiKey: sentinel })
+  failed.reject(new Error('bridge unavailable'))
+  await failedSave
+  for (const snapshot of snapshots) {
+    const rendered = JSON.stringify(snapshot)
+    assert.doesNotMatch(rendered, /secret-sentinel-must-not-render/)
+    for (const key of ['dashscopeApiKey', 'arkApiKey', 'codexApiKey']) {
+      assert.ok(!(key in snapshot.drafts), `draft snapshot excludes ${key}`)
+    }
+  }
 })
 
 test('a dirty text draft survives a stale response and can be saved afterwards', async () => {
@@ -152,6 +193,39 @@ test('nested queued model patches retain both provider leaves', async () => {
     cascadedLlmModels: { qwen: 'qwen-new', ark: 'ark-new' },
   }))
   await Promise.all([qwen, ark])
+})
+
+test('a failed optimistic pipeline and provider write rolls back and the next batch retries', async () => {
+  const failure = deferred()
+  const retry = deferred()
+  const calls = []
+  const renders = []
+  const controller = createSettingsController({
+    api: { set: patch => {
+      calls.push(patch)
+      return calls.length === 1 ? failure.promise : retry.promise
+    } },
+    render: (view, drafts) => renders.push({ view, drafts }),
+    status: () => {},
+  })
+  controller.setView(publicView())
+  controller.setDraft('integratedModel', 'keep-this-draft')
+  const patch = { pipelineMode: 'cascaded', cascadedLlmProvider: 'ark' }
+  controller.applyLocal(patch)
+  const failedWrite = controller.push(patch, '语音管线已保存')
+  failure.reject(new Error('bridge unavailable'))
+  const failedResult = await failedWrite
+  assert.equal(failedResult.saved, false)
+  assert.equal(renders.at(-1).view.pipelineMode, 'integrated')
+  assert.equal(renders.at(-1).view.cascadedLlmProvider, 'qwen')
+  assert.equal(renders.at(-1).drafts.integratedModel, 'keep-this-draft')
+  const successfulRetry = controller.push(patch, '语音管线已保存')
+  assert.equal(calls.length, 2, 'a failed flush releases the queue for a retry')
+  retry.resolve(publicView(patch))
+  const retryResult = await successfulRetry
+  assert.equal(retryResult.saved, true)
+  assert.equal(renders.at(-1).view.pipelineMode, 'cascaded')
+  assert.equal(renders.at(-1).view.cascadedLlmProvider, 'ark')
 })
 
 test('the settings page ships the same locked-down CSP as the memory board', () => {
@@ -281,7 +355,7 @@ test('the panel writes secrets forward only and never reads a value back', () =>
   assert.match(script, /secretsPresent/)
   assert.match(script, /已设置/)
   assert.match(script, /未设置/)
-  assert.match(script, /if \(input\.value === secrets\[key\]\) input\.value = ''/)
+  assert.match(script, /secretRevisions\.matches\(key, input\.value, submissions\[key\]\)/)
   assert.doesNotMatch(script, /\.secrets\b|\.data\b|decrypt/)
   assert.doesNotMatch(controllerScript, /\.secrets\b|ciphertext|decrypt/)
 })
@@ -312,7 +386,7 @@ test('a change made mid-save is coalesced and flushed, never dropped', () => {
   // The flush happens after the save settles, and the merge goes one level
   // deeper wherever a field carries an object, so two key edits queued behind
   // the same save cannot erase each other.
-  assert.match(controllerScript, /resolveBatch\(batch, \{ saved, view: remoteView \}\)/)
+  assert.match(controllerScript, /resolveBatch\(batch, \{ saved, view: saved \? remoteView : confirmedView \}\)/)
   assert.match(controllerScript, /void flush\(\)/)
   assert.match(controllerScript, /function mergePatch\(base, next\)/)
 })
@@ -324,9 +398,9 @@ test('saveSecrets clears only the fields the save actually accepted', () => {
   // the 未设置 badge. Now a field is cleared only if it is not in the rejected
   // set the response names.
   assert.match(script, /const result = await controller\.saveSecrets\(secrets\)/)
-  assert.match(script, /for \(const key of result\.cleared\) \{/)
-  assert.match(script, /if \(input\.value === secrets\[key\]\) input\.value = ''/)
-  assert.match(controllerScript, /const cleared = accepted\.filter\(key => clearDraftIfEqual\(key, secrets\[key\]\)\)/)
+  assert.match(script, /for \(const key of result\.accepted\) \{/)
+  assert.match(script, /if \(secretRevisions\.matches\(key, input\.value, submissions\[key\]\)\) input\.value = ''/)
+  assert.match(controllerScript, /return \{ \.\.\.result, rejected, accepted \}/)
 })
 
 test('saveSecrets names any rejected key by its panel label and only reports success when nothing was rejected', () => {

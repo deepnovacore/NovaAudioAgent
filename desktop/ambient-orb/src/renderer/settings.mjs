@@ -2,6 +2,7 @@
 // owns queued requests and drafts, which keeps an older bridge response from
 // erasing text the user typed while it was in flight.
 import { createSettingsController } from './settings-controller.mjs'
+import { createSecretRevisions } from './secret-revisions.mjs'
 
 const api = window.novaAudioAgentDesktop.settings
 
@@ -23,6 +24,7 @@ const SECRET_LABELS = {
   doubaoBigmodelApiKey: '豆包大模型',
   doubaoAsrApiKey: '豆包 ASR',
 }
+const secretRevisions = createSecretRevisions(SECRET_KEYS)
 
 const statusLabel = document.querySelector('#status')
 const warning = document.querySelector('#keyring-warning')
@@ -152,13 +154,16 @@ async function saveCascadedLlmModel() {
 
 async function saveSecrets() {
   const secrets = {}
+  const submissions = {}
   for (const key of SECRET_KEYS) {
     const input = secretInput(key)
     const value = input.value
     if (!value) continue
-    // Capture before awaiting: a later paste in this field is a newer draft.
-    secrets[key] = value
-    controller.setDraft(key, value)
+    // Capture a revision with the one forward write. Nothing secret is ever
+    // put in controller drafts or render snapshots.
+    const submission = secretRevisions.capture(key, value)
+    secrets[key] = submission.value
+    submissions[key] = submission
   }
   if (!Object.keys(secrets).length) {
     statusLabel.textContent = '没有要保存的密钥'
@@ -166,9 +171,9 @@ async function saveSecrets() {
   }
   const result = await controller.saveSecrets(secrets)
   if (!result.saved) return
-  for (const key of result.cleared) {
+  for (const key of result.accepted) {
     const input = secretInput(key)
-    if (input.value === secrets[key]) input.value = ''
+    if (secretRevisions.matches(key, input.value, submissions[key])) input.value = ''
   }
   if (result.rejected.length) {
     const labels = result.rejected.map(key => SECRET_LABELS[key])
@@ -233,7 +238,7 @@ cascadedTtsProvider.addEventListener('change', () => {
 cascadedTtsVoice.addEventListener('input', () => { recordDraft(cascadedTtsVoice) })
 cascadedTtsVoice.addEventListener('change', () => { void saveText('cascadedTtsVoice', cascadedTtsVoice) })
 for (const key of SECRET_KEYS) {
-  secretInput(key).addEventListener('input', () => { recordDraft(secretInput(key), key) })
+  secretInput(key).addEventListener('input', () => { secretRevisions.noteInput(key) })
 }
 document.querySelector('#save-secrets').addEventListener('click', () => { void saveSecrets() })
 for (const button of document.querySelectorAll('button.clear')) {
@@ -241,7 +246,7 @@ for (const button of document.querySelectorAll('button.clear')) {
     const key = button.dataset.key
     const input = secretInput(key)
     input.value = ''
-    controller.setDraft(key, '')
+    secretRevisions.noteInput(key)
     void push({ secrets: { [key]: '' } }, '密钥已清除')
   })
 }

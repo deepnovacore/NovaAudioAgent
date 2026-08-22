@@ -12,6 +12,16 @@ export function mergePatch(base, next) {
   return merged
 }
 
+const WRITE_ONLY_SECRET_KEYS = new Set([
+  'dashscopeApiKey',
+  'tavilyApiKey',
+  'modelApiKey',
+  'codexApiKey',
+  'arkApiKey',
+  'doubaoBigmodelApiKey',
+  'doubaoAsrApiKey',
+])
+
 function publicPatch(patch) {
   const { secrets: _writeOnlySecrets, ...publicFields } = patch ?? {}
   return publicFields
@@ -21,7 +31,8 @@ export function createSettingsController({ api, render, status }) {
   let view = null
   let inFlight = null
   let pending = null
-  let hasSaveResponse = false
+  let hasConfirmedSaveResponse = false
+  let confirmedView = null
   const drafts = new Map()
 
   function draftSnapshot() {
@@ -45,6 +56,10 @@ export function createSettingsController({ api, render, status }) {
     for (const waiter of batch.waiters) waiter.resolve(result)
   }
 
+  function composeView(base) {
+    return mergePatch(base, publicPatch(pending?.patch))
+  }
+
   async function flush() {
     if (inFlight || !pending) return
     const batch = pending
@@ -54,19 +69,28 @@ export function createSettingsController({ api, render, status }) {
     try {
       const remoteView = await api.set(batch.patch)
       const saved = remoteView?.saved !== false
-      hasSaveResponse = true
-      syncTopLevelDrafts(batch.patch, remoteView)
-      // The bridge response is authoritative for the completed batch. Public
-      // edits still waiting behind it are reapplied before render, so an older
-      // response cannot roll a local mode/provider selection backwards.
-      view = mergePatch(remoteView, publicPatch(pending?.patch))
+      if (saved) {
+        hasConfirmedSaveResponse = true
+        confirmedView = remoteView
+        syncTopLevelDrafts(batch.patch, remoteView)
+        // The bridge response is authoritative for the completed batch. Public
+        // edits still waiting behind it are reapplied before render, so an
+        // older response cannot roll a local mode/provider selection back.
+        view = composeView(confirmedView)
+      } else {
+        view = composeView(confirmedView ?? view)
+      }
       renderCurrent()
       status(saved ? batch.note : '保存失败')
-      resolveBatch(batch, { saved, view: remoteView })
+      resolveBatch(batch, { saved, view: saved ? remoteView : confirmedView })
     } catch {
+      view = composeView(confirmedView ?? view)
+      renderCurrent()
       status('保存失败')
       resolveBatch(batch, { saved: false, view: null })
     } finally {
+      // A secret payload must not live past the single bridge invocation.
+      batch.patch = null
       inFlight = null
       void flush()
     }
@@ -89,9 +113,10 @@ export function createSettingsController({ api, render, status }) {
     // An initial get that races behind a completed set is older state and must
     // not roll the panel back. Before any set response, retain selections
     // already queued behind that initial get.
-    if (hasSaveResponse) return
-    view = mergePatch(nextView, publicPatch(inFlight?.patch))
-    view = mergePatch(view, publicPatch(pending?.patch))
+    if (hasConfirmedSaveResponse) return
+    confirmedView = nextView
+    view = mergePatch(confirmedView, publicPatch(inFlight?.patch))
+    view = composeView(view)
     renderCurrent()
   }
 
@@ -101,6 +126,9 @@ export function createSettingsController({ api, render, status }) {
   }
 
   function setDraft(field, value) {
+    // Password values stay only in their DOM inputs and the short-lived write
+    // payload. They are never a controller draft or a render callback value.
+    if (WRITE_ONLY_SECRET_KEYS.has(field)) return
     drafts.set(field, value)
   }
 
@@ -109,6 +137,7 @@ export function createSettingsController({ api, render, status }) {
   }
 
   function clearDraftIfEqual(field, submitted) {
+    if (WRITE_ONLY_SECRET_KEYS.has(field)) return false
     if (drafts.get(field) !== submitted) return false
     drafts.delete(field)
     return true
@@ -122,8 +151,7 @@ export function createSettingsController({ api, render, status }) {
     const accepted = result.saved
       ? Object.keys(secrets).filter(key => !rejected.includes(key))
       : []
-    const cleared = accepted.filter(key => clearDraftIfEqual(key, secrets[key]))
-    return { ...result, rejected, accepted, cleared }
+    return { ...result, rejected, accepted }
   }
 
   return {
