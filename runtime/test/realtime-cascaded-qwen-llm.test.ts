@@ -141,6 +141,59 @@ test('Qwen joins fragmented tool calls and retains a matched tool result with it
   assert.ok(messages.some(message => message.role === 'tool' && message.tool_call_id === 'call-1'))
 })
 
+test('Qwen completes two sequential tool hops as one bounded semantic interaction', async () => {
+  const requests: Record<string, unknown>[] = []
+  const responses = [
+    sse([{id: 'response-a', choices: [{delta: {tool_calls: [{index: 0, id: 'call-a',
+      function: {name: 'lookup_a', arguments: '{}'}}]}, finish_reason: 'tool_calls'}]}]),
+    sse([{id: 'response-b', choices: [{delta: {tool_calls: [{index: 0, id: 'call-b',
+      function: {name: 'lookup_b', arguments: '{"from":"a"}'}}]}, finish_reason: 'tool_calls'}]}]),
+    sse([{id: 'response-final', choices: [{delta: {content: '完成'}, finish_reason: 'stop'}]}]),
+  ]
+  const session = createQwenCascadedLlmFactory({
+    baseUrl: 'https://dashscope.example/v1', apiKey: 'dash-secret', model: 'qwen-flash',
+    instructions: 'instructions', fetchImpl: (_url, init) => {
+      requests.push(JSON.parse(init?.body as string) as Record<string, unknown>)
+      return Promise.resolve(responses.shift()!)
+    },
+  }).open()
+  const tools = [
+    {name: 'lookup_a', parameters: {type: 'object'}},
+    {name: 'lookup_b', parameters: {type: 'object'}},
+  ] as const
+
+  const first = await collect(session.stream({
+    inputs: [{kind: 'user_text', text: 'multi-hop'}], tools,
+    signal: new AbortController().signal,
+  }))
+  assert.deepEqual(first.at(-2), {
+    kind: 'tool_call', item_id: 'call-a', call_id: 'call-a', name: 'lookup_a', arguments: {},
+  })
+  const second = await collect(session.stream({
+    inputs: [{kind: 'tool_result', call_id: 'call-a', output: {value: 'a'}}], tools,
+    signal: new AbortController().signal,
+  }))
+  assert.deepEqual(second.at(-2), {
+    kind: 'tool_call', item_id: 'call-b', call_id: 'call-b', name: 'lookup_b',
+    arguments: {from: 'a'},
+  })
+  const final = await collect(session.stream({
+    inputs: [{kind: 'tool_result', call_id: 'call-b', output: {value: 'b'}}], tools,
+    signal: new AbortController().signal,
+  }))
+
+  assert.deepEqual(final, [
+    {kind: 'response_started', response_id: 'response-final'},
+    {kind: 'text_delta', text: '完成'},
+    {kind: 'response_completed', response_id: 'response-final'},
+  ])
+  const finalMessages = requests[2]?.messages as Record<string, unknown>[]
+  assert.deepEqual(finalMessages.filter(message => message.role === 'tool').map(message =>
+    message.tool_call_id), ['call-a', 'call-b'])
+  assert.deepEqual(finalMessages.filter(message => Array.isArray(message.tool_calls)).map(message =>
+    ((message.tool_calls as readonly {id: string}[])[0]?.id)), ['call-a', 'call-b'])
+})
+
 test('Qwen abandons unresolved tool state without discarding completed bounded history', async () => {
   const requests: Record<string, unknown>[] = []
   const responses = [

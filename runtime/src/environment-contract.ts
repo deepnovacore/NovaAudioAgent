@@ -31,7 +31,7 @@ type Row = readonly [
 const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_BACKEND', 'source_rollback', false, false, 'never', null, 'Internal legacy backend selector.', '内部遗留后端选择器。'],
   ['NOVA_AUDIO_AGENT_MODEL_BASE_URL', 'core', false, true, 'never', 'DashScope compatible endpoint', 'FastBrain compatible API endpoint.', 'FastBrain 兼容 API 地址。'],
-  ['NOVA_AUDIO_AGENT_MODEL_API_KEY', 'core', true, true, 'when_selected', null, 'FastBrain API credential; also a Qwen fallback.', 'FastBrain API 凭据，也可作为 Qwen 回退凭据。'],
+  ['NOVA_AUDIO_AGENT_MODEL_API_KEY', 'core', true, true, 'never', null, 'Optional generic support-model API credential override.', '可选的通用辅助模型 API 凭据覆盖。'],
   ['NOVA_AUDIO_AGENT_FAST_MODEL', 'core', false, true, 'never', 'qwen3-vl-plus', 'FastBrain model.', 'FastBrain 模型。'],
   ['NOVA_AUDIO_AGENT_WATCH_MODEL', 'core', false, true, 'never', 'fast model', 'Watch model override.', 'Watch 模型覆盖。'],
   ['NOVA_AUDIO_AGENT_SURROGATE_MODEL', 'core', false, true, 'never', 'qwen-flash', 'Surrogate model.', 'Surrogate 模型。'],

@@ -137,6 +137,49 @@ class BlockingEpochLlm implements CascadedLlmSession {
   }
 }
 
+class ProviderTerminalWindowLlm implements CascadedLlmSession {
+  readonly calls: LlmStreamInput[] = []
+  readonly committed = deferred<void>()
+  readonly aborted = deferred<void>()
+  readonly #terminalGate = deferred<void>()
+  continuationPending = false
+  abandons = 0
+  closed = false
+
+  async *stream(input: LlmStreamInput): AsyncIterable<CascadedLlmEvent> {
+    this.calls.push(structuredClone(input))
+    if (this.calls.length === 1) {
+      yield {kind: 'response_started', response_id: 'provider-window'}
+      yield {kind: 'tool_call', item_id: 'provider-item', call_id: 'provider-call',
+        name: 'weather', arguments: {}}
+      this.continuationPending = true
+      this.committed.resolve(undefined)
+      const noteAbort = (): void => { this.aborted.resolve(undefined) }
+      if (input.signal.aborted) noteAbort()
+      else input.signal.addEventListener('abort', noteAbort, {once: true})
+      await this.#terminalGate.promise
+      yield {kind: 'response_completed', response_id: 'provider-window'}
+      return
+    }
+    if (this.continuationPending) throw new Error('provider leaked a hidden continuation')
+    yield {kind: 'response_started', response_id: 'provider-next'}
+    yield {kind: 'response_completed', response_id: 'provider-next'}
+  }
+
+  releaseTerminal(): void { this.#terminalGate.resolve(undefined) }
+  abandonPendingResponse(): Promise<void> {
+    this.abandons += 1
+    this.continuationPending = false
+    return Promise.resolve()
+  }
+  close(): Promise<void> {
+    this.closed = true
+    this.continuationPending = false
+    this.releaseTerminal()
+    return Promise.resolve()
+  }
+}
+
 function idFactory(...values: readonly string[]): () => string {
   let index = 0
   return () => {
@@ -282,6 +325,51 @@ test('formal provider session reconnect closes the epoch LLM, swaps streams, and
     ])
     await session.close()
     assert.equal(secondLlm.closed, true)
+  })
+
+test('formal provider cancellation resets a terminal-window continuation before later work',
+  async () => {
+    const llm = new ProviderTerminalWindowLlm()
+    const session = new RealtimeProviderSession(providerFor({
+      llms: [llm],
+      idFactory: idFactory('provider-window-session', 'provider-host-1', 'provider-host-2'),
+    }))
+    await session.connect([])
+    const events: RealtimeProviderEvent[] = []
+    const collecting = (async () => {
+      for await (const event of session.events()) {
+        events.push(event)
+        if (events.filter(candidate => candidate.kind === 'response_terminal').length === 2) return
+      }
+    })()
+    const first: HostContextItem = {
+      kind: 'progress', host_item_id: 'provider-first-host', event_id: 'provider-first-event',
+      content: 'first', call_id: null,
+    }
+    await session.injectHostItem(first)
+    await session.createResponse({kind: 'host_fact', item: first, task_summary: null,
+      origin_spoken: false})
+    await llm.committed.promise
+
+    const cancelling = session.cancelResponse('provider-window')
+    await llm.aborted.promise
+    llm.releaseTerminal()
+    await cancelling
+    assert.equal(llm.abandons, 1)
+
+    const next: HostContextItem = {
+      kind: 'progress', host_item_id: 'provider-next-host', event_id: 'provider-next-event',
+      content: 'next', call_id: null,
+    }
+    await session.injectHostItem(next)
+    await session.createResponse({kind: 'host_fact', item: next, task_summary: null,
+      origin_spoken: false})
+    await settleWithin('provider terminal-window responses', collecting)
+    assert.equal(llm.abandons, 1)
+    assert.equal(llm.continuationPending, false)
+    assert.deepEqual(events.filter(event => event.kind === 'response_terminal').map(event =>
+      event.status), ['cancelled', 'completed'])
+    await session.close()
   })
 
 test('formal RealtimeSession Guard recovery keeps Volc history disabled but accepts packed input',

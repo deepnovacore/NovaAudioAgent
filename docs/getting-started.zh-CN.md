@@ -92,7 +92,7 @@ DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
 | 变量 | 所属 | 必需条件 | 默认 | 说明 |
 |---|---|---|---|---|
 | `NOVA_AUDIO_AGENT_MODEL_BASE_URL` | `core` | 否 | DashScope compatible endpoint | FastBrain 兼容 API 地址。 |
-| `NOVA_AUDIO_AGENT_MODEL_API_KEY` | `core` | 选择该能力时 | 无 | FastBrain API 凭据，也可作为 Qwen 回退凭据。 |
+| `NOVA_AUDIO_AGENT_MODEL_API_KEY` | `core` | 否 | 无 | 可选的通用辅助模型 API 凭据覆盖。 |
 | `NOVA_AUDIO_AGENT_FAST_MODEL` | `core` | 否 | qwen3-vl-plus | FastBrain 模型。 |
 | `NOVA_AUDIO_AGENT_WATCH_MODEL` | `core` | 否 | fast model | Watch 模型覆盖。 |
 | `NOVA_AUDIO_AGENT_SURROGATE_MODEL` | `core` | 否 | qwen-flash | Surrogate 模型。 |

@@ -99,7 +99,8 @@ class Session implements CascadedLlmSession {
     if (input.signal.aborted) throw fail('aborted')
     let responseId: string | null = null
     let terminal = false
-    let toolSeen = false
+    let textSeen = false
+    let pendingTool: Extract<CascadedLlmEvent, {kind: 'tool_call'}> | null = null
     try {
       for await (const event of this.#gateway.stream({
         inputItems: input.inputs.map(inputItem),
@@ -111,15 +112,20 @@ class Session implements CascadedLlmSession {
           if (responseId !== null) throw fail('protocol')
           responseId = event.response_id
           yield event
-        } else if (event.kind === 'text_delta' || event.kind === 'tool_call') {
+        } else if (event.kind === 'text_delta') {
           if (responseId === null) throw fail('protocol')
-          if (event.kind === 'tool_call') toolSeen = true
+          if (pendingTool !== null) throw fail('protocol')
+          textSeen = true
           yield event
+        } else if (event.kind === 'tool_call') {
+          if (responseId === null || textSeen || pendingTool !== null) throw fail('protocol')
+          pendingTool = structuredClone(event)
         } else if (event.kind === 'response_completed') {
           if (responseId === null || event.response_id !== responseId) throw fail('protocol')
           this.#previousResponseId = event.response_id
-          this.#pendingToolContinuation = toolSeen
+          this.#pendingToolContinuation = pendingTool !== null
           terminal = true
+          if (pendingTool !== null) yield pendingTool
           yield event
           return
         } else {

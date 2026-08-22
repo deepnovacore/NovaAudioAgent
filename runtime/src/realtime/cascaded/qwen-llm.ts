@@ -130,7 +130,7 @@ class Session implements CascadedLlmSession {
   }
   #calls(fragments: ReadonlyMap<number, Fragment>): Call[] { if (fragments.size !== 1 || !fragments.has(0)) throw fail('protocol'); return [...fragments.entries()].map(([, part]) => { if (!id(part.id) || !id(part.name)) throw fail('protocol'); let args: unknown; try { args = JSON.parse(part.arguments) } catch { throw fail('protocol') }; if (!jsonObject(args)) throw fail('protocol'); return {id: part.id, type: 'function', function: {name: part.name, arguments: JSON.stringify(copy(args))}} }) }
   #checkResults(inputs: readonly CascadedLlmInput[], unresolved: readonly Message[]): void {
-    const calls = unresolved.flatMap(item => item.tool_calls ?? []).map(item => item.id).sort(), results = inputs.filter((item): item is Extract<CascadedLlmInput, {kind: 'tool_result'}> => item.kind === 'tool_result').map(item => item.call_id).sort()
+    const calls = (unresolved.at(-1)?.tool_calls ?? []).map(item => item.id).sort(), results = inputs.filter((item): item is Extract<CascadedLlmInput, {kind: 'tool_result'}> => item.kind === 'tool_result').map(item => item.call_id).sort()
     if (calls.length === 0 || calls.length !== results.length || calls.some((call, index) => call !== results[index]) || results.length !== inputs.length) throw fail('protocol')
   }
   abandonPendingResponse(): Promise<void> {

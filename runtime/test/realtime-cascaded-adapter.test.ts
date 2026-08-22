@@ -144,6 +144,51 @@ class FakeLlm implements CascadedLlmSession {
   }
 }
 
+class TerminalWindowLlm implements CascadedLlmSession {
+  readonly calls: LlmStreamInput[] = []
+  readonly committed = deferred<void>()
+  readonly aborted = deferred<void>()
+  readonly #terminalGate = deferred<void>()
+  continuationPending = false
+  abandons = 0
+  closed = false
+
+  async *stream(input: LlmStreamInput): AsyncIterable<CascadedLlmEvent> {
+    this.calls.push(structuredClone(input))
+    if (this.calls.length === 1) {
+      yield {kind: 'response_started', response_id: 'response-window'}
+      yield {kind: 'tool_call', item_id: 'item-window', call_id: 'call-window',
+        name: 'weather', arguments: {}}
+      this.continuationPending = true
+      this.committed.resolve(undefined)
+      const noteAbort = (): void => { this.aborted.resolve(undefined) }
+      if (input.signal.aborted) noteAbort()
+      else input.signal.addEventListener('abort', noteAbort, {once: true})
+      await this.#terminalGate.promise
+      yield {kind: 'response_completed', response_id: 'response-window'}
+      return
+    }
+    if (this.continuationPending) throw new Error('hidden continuation reached unrelated response')
+    yield {kind: 'response_started', response_id: 'response-unrelated'}
+    yield {kind: 'response_completed', response_id: 'response-unrelated'}
+  }
+
+  releaseTerminal(): void { this.#terminalGate.resolve(undefined) }
+
+  abandonPendingResponse(): Promise<void> {
+    this.abandons += 1
+    this.continuationPending = false
+    return Promise.resolve()
+  }
+
+  close(): Promise<void> {
+    this.closed = true
+    this.continuationPending = false
+    this.releaseTerminal()
+    return Promise.resolve()
+  }
+}
+
 class FakeTtsSession implements TtsSession {
   readonly texts: string[] = []
   readonly #audio: readonly Uint8Array[]
@@ -704,11 +749,35 @@ test('tool-only output cancels prewarm, while both mixed-output orders fail with
     } else {
       assert.equal(events.some(event => event.kind === 'tool_call_ready'), false)
       assert.equal(events.some(event => event.kind === 'provider_error'
-        && event.code === 'volcengine_mixed_text_tool' && !event.recoverable), true)
+        && event.code === 'cascaded_mixed_text_tool' && !event.recoverable), true)
       assert.equal(terminalStatus(events), 'failed')
     }
     assert.equal(ttsSession.cancelled, true)
   }
+})
+
+test('a common LLM failure uses a provider-neutral stable owner code', async () => {
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    llm: new FakeLlm([
+      {kind: 'response_started', response_id: 'response-common-failure'},
+      {kind: 'response_failed', response_id: 'response-common-failure', code: 'protocol'},
+    ]),
+    tts: new FakeTtsClient(new FakeTtsSession()),
+    idFactory: ids('session-common-failure', 'provider-common-failure'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('common-failure')
+  await adapter.injectHostItem(item, directOptions())
+  const collecting = collectThroughTerminal(adapter)
+  await adapter.createResponse({kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal)
+  const events = await collecting
+
+  assert.equal(events.some(event => event.kind === 'provider_error'
+    && event.code === 'cascaded_response_failed' && event.recoverable), true)
+  assert.equal(terminalStatus(events), 'failed')
+  await adapter.close()
 })
 
 test('an unresolved tool resets chaining and a late abandoned output never calls LLM', async () => {
@@ -1078,6 +1147,76 @@ test('exact cancellation is single-terminal; mismatch is safely rejected; teleme
     /provider-secret|api-secret|transcript-secret/u)
   await watching.stop()
 })
+
+test('cancellation abandons a committed tool continuation before an unrelated response exactly once',
+  async () => {
+    const llm = new TerminalWindowLlm()
+    const adapter = new CascadedRealtimeAdapter({
+      endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(), llm,
+      tts: new FakeTtsClient(new FakeTtsSession(), new FakeTtsSession()),
+      idFactory: ids('session-window-cancel', 'provider-first', 'provider-next'),
+    })
+    await adapter.connect({tools: [], signal: new AbortController().signal})
+    const watching = observe(adapter)
+    const first = hostItem('window-first')
+    await adapter.injectHostItem(first, directOptions())
+    await adapter.createResponse({kind: 'host_fact', item: first, task_summary: null,
+      origin_spoken: false}, new AbortController().signal)
+    await llm.committed.promise
+
+    const cancelling = adapter.cancelResponse('response-window', new AbortController().signal)
+    await llm.aborted.promise
+    llm.releaseTerminal()
+    await cancelling
+    assert.equal(llm.abandons, 1)
+    assert.equal(llm.continuationPending, false)
+
+    const next = hostItem('window-next')
+    await adapter.injectHostItem(next, directOptions())
+    await adapter.createResponse({kind: 'host_fact', item: next, task_summary: null,
+      origin_spoken: false}, new AbortController().signal)
+    await waitFor('unrelated response after cancellation', () => llm.calls.length === 2
+      && watching.events.filter(event => event.kind === 'response_terminal').length === 2)
+    assert.equal(llm.abandons, 1)
+    assert.equal(watching.events.filter(event => event.kind === 'tool_call_ready').length, 0)
+    await watching.stop()
+    await adapter.close()
+  })
+
+test('speech barge-in abandons a committed tool continuation before starting its response',
+  async () => {
+    const llm = new TerminalWindowLlm()
+    const adapter = new CascadedRealtimeAdapter({
+      endpointing: new ScriptedEndpointing(
+        [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}],
+        [{kind: 'speech_end', commit: true}],
+      ),
+      asr: new FakeAsrClient(new FakeAsrSession({text: 'new speech', final: true})),
+      llm,
+      tts: new FakeTtsClient(new FakeTtsSession(), new FakeTtsSession()),
+      idFactory: ids('session-window-barge', 'provider-first', 'speech-barge', 'item-barge'),
+    })
+    await adapter.connect({tools: [], signal: new AbortController().signal})
+    const watching = observe(adapter)
+    const first = hostItem('barge-first')
+    await adapter.injectHostItem(first, directOptions())
+    await adapter.createResponse({kind: 'host_fact', item: first, task_summary: null,
+      origin_spoken: false}, new AbortController().signal)
+    await llm.committed.promise
+
+    await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+    await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+    await llm.aborted.promise
+    llm.releaseTerminal()
+    await waitFor('barge-in response after continuation reset', () => llm.calls.length === 2
+      && watching.events.filter(event => event.kind === 'response_terminal').length === 2)
+
+    assert.equal(llm.abandons, 1)
+    assert.equal(llm.continuationPending, false)
+    assert.deepEqual(llm.calls[1]?.inputs.at(-1), {kind: 'user_text', text: 'new speech'})
+    await watching.stop()
+    await adapter.close()
+  })
 
 test('closing an active response emits one cancelled terminal into its owning epoch', async () => {
   const llm = new BlockingLlm()

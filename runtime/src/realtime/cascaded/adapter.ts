@@ -780,6 +780,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     let transcriptLength = 0
     const chunker = new TextChunker()
     const signal = combineSignals(owner.controller.signal, active.controller.signal)
+    let continuationResetFailed = false
     try {
       for await (const event of owner.llm.stream({
         inputs: inputs.map(item => structuredClone(item)),
@@ -819,6 +820,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
           if (active.id === null) throw new Error('LLM tool before identity')
           toolSeen = true
           pendingTool = event
+          owner.pendingToolCallId = event.call_id
           await this.#cancelTts(owner, active)
           this.#record('cascaded.llm.tool_call', {epoch: owner.epoch})
         } else if (event.kind === 'response_failed') {
@@ -841,7 +843,6 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
           } else {
             await this.#cancelTts(owner, active)
             if (pendingTool !== null) {
-              owner.pendingToolCallId = pendingTool.call_id
               await this.#emit(owner, {
                 kind: 'tool_call_ready', session_epoch: owner.epoch,
                 call_id: pendingTool.call_id, item_id: pendingTool.item_id,
@@ -856,6 +857,9 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       }
       throw new Error('LLM stream ended without terminal')
     } catch (error) {
+      if (owner.pendingToolCallId !== null) {
+        continuationResetFailed = !(await this.#abandonPendingToolCall(owner))
+      }
       if (active.controller.signal.aborted || owner.controller.signal.aborted) {
         await this.#cancelTts(owner, active)
         if (active.id !== null && !active.terminal) {
@@ -865,7 +869,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         await this.#cancelTts(owner, active)
         await this.#emit(owner, {
           kind: 'provider_error', session_epoch: owner.epoch,
-          code: 'volcengine_mixed_text_tool', recoverable: false,
+          code: 'cascaded_mixed_text_tool', recoverable: false,
         })
         if (active.id !== null) await this.#emitTerminal(owner, active, 'failed', 'mixed_output')
       } else {
@@ -873,7 +877,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         const ttsFailure = error instanceof TtsResponseFailure
         await this.#emit(owner, {
           kind: 'provider_error', session_epoch: owner.epoch,
-          code: ttsFailure ? 'volcengine_tts_receive' : 'volcengine_response_failed',
+          code: ttsFailure ? 'volcengine_tts_receive' : 'cascaded_response_failed',
           recoverable: true,
         })
         active.id ??= this.#freshId()
@@ -883,6 +887,9 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       }
     } finally {
       if (owner.response === active) owner.response = null
+      if (continuationResetFailed && this.#isCurrent(owner)) {
+        await this.#disconnectOwner(owner)
+      }
     }
   }
 
@@ -1132,6 +1139,16 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       owner.pendingToolCallId = null
       return
     }
+    if (!(await this.#abandonPendingToolCall(owner))) {
+      await this.#disconnectOwner(owner)
+      throw new CascadedRealtimeError('closed')
+    }
+  }
+
+  async #abandonPendingToolCall(owner: EpochOwner): Promise<boolean> {
+    const callId = owner.pendingToolCallId
+    if (callId === null) return true
+    owner.pendingToolCallId = null
     owner.abandonedCalls.delete(callId)
     owner.abandonedCalls.set(callId, null)
     while (owner.abandonedCalls.size > MAX_CASCADED_ABANDONED_TOOL_CALLS) {
@@ -1139,18 +1156,18 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       if (oldest === undefined) break
       owner.abandonedCalls.delete(oldest)
     }
-    owner.pendingToolCallId = null
-    if (!(await safeCallWithin(
+    return await safeCallWithin(
       () => owner.llm.abandonPendingResponse(), this.#settleTimeoutMs,
-    ))) {
-      owner.revoked = true
-      owner.controller.abort()
-      await this.#cleanupOwner(owner)
-      owner.queue.close()
-      if (this.#owner === owner) this.#owner = null
-      this.#state = 'disconnected'
-      throw new CascadedRealtimeError('closed')
-    }
+    )
+  }
+
+  async #disconnectOwner(owner: EpochOwner): Promise<void> {
+    owner.revoked = true
+    owner.controller.abort()
+    await this.#cleanupOwner(owner)
+    owner.queue.close()
+    if (this.#owner === owner) this.#owner = null
+    this.#state = 'disconnected'
   }
 
   async #serializeResponseStart<T>(
@@ -1211,6 +1228,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       successful = await settleWithin(asr.task, this.#settleTimeoutMs) && successful
       if (owner.asr === asr) owner.asr = null
     }
+    successful = await this.#abandonPendingToolCall(owner) && successful
     successful = await safeCallWithin(() => this.#closeLlm(), this.#settleTimeoutMs) && successful
     successful = await safeCallWithin(
       async () => { await this.#endpointing.reset() }, this.#settleTimeoutMs,

@@ -2,6 +2,7 @@
 
 import {
   ConfigurationError,
+  DASHSCOPE_COMPATIBLE_BASE_URL,
   requireCascadedCredentials,
   resolveCascadedSelection,
   type CascadedSelection,
@@ -9,8 +10,7 @@ import {
 } from './config.js'
 import {stripLikePython} from './python-text.js'
 
-export const DASHSCOPE_COMPATIBLE_BASE_URL =
-  'https://dashscope.aliyuncs.com/compatible-mode/v1'
+export {DASHSCOPE_COMPATIBLE_BASE_URL} from './config.js'
 
 export interface AutoEndpointingConfig {
   readonly vadThreshold: number

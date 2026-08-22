@@ -354,6 +354,58 @@ test('a failed optimistic pipeline and provider write rolls back and the next ba
   assert.equal(renders.at(-1).view.cascadedLlmProvider, 'ark')
 })
 
+test('normalized public-field rejections are not reported as saved and retain retryable drafts',
+  async () => {
+    const tooLong = 'x'.repeat(65)
+    const responses = [
+      publicView({ integratedModel: 'qwen-realtime' }),
+      publicView({ integratedModel: 'qwen-retry' }),
+      publicView({ cascadedLlmModels: {qwen: 'qwen-flash', ark: 'ark-pro'} }),
+      publicView({ cascadedLlmModels: {qwen: 'qwen-retry', ark: 'ark-pro'} }),
+    ]
+    const statuses = []
+    const controller = createSettingsController({
+      api: { set: async () => responses.shift() },
+      render: () => {},
+      status: note => statuses.push(note),
+    })
+    controller.setView(publicView())
+
+    controller.setDraft('integratedModel', tooLong)
+    controller.applyLocal({integratedModel: tooLong})
+    const rejectedTopLevel = await controller.push({integratedModel: tooLong}, '已保存')
+    assert.equal(rejectedTopLevel.saved, false)
+    assert.deepEqual(rejectedTopLevel.rejectedPublicFields, ['integratedModel'])
+    assert.equal(controller.getDraft('integratedModel'), tooLong)
+    assert.equal(statuses.at(-1), '部分设置未保存')
+
+    controller.setDraft('integratedModel', 'qwen-retry')
+    controller.applyLocal({integratedModel: 'qwen-retry'})
+    const acceptedTopLevel = await controller.push({integratedModel: 'qwen-retry'}, '已保存')
+    assert.equal(acceptedTopLevel.saved, true)
+    assert.deepEqual(acceptedTopLevel.rejectedPublicFields, [])
+    assert.equal(controller.getDraft('integratedModel'), undefined)
+
+    const nestedDraft = 'cascadedLlmModel:qwen'
+    controller.setDraft(nestedDraft, tooLong)
+    controller.applyLocal({cascadedLlmModels: {qwen: tooLong}})
+    const rejectedNested = await controller.push({cascadedLlmModels: {qwen: tooLong}}, '已保存')
+    assert.equal(rejectedNested.saved, false)
+    assert.deepEqual(rejectedNested.rejectedPublicFields, ['cascadedLlmModels.qwen'])
+    assert.equal(controller.getDraft(nestedDraft), tooLong)
+    assert.equal(statuses.at(-1), '部分设置未保存')
+
+    controller.setDraft(nestedDraft, 'qwen-retry')
+    controller.applyLocal({cascadedLlmModels: {qwen: 'qwen-retry'}})
+    const acceptedNested = await controller.push({
+      cascadedLlmModels: {qwen: 'qwen-retry'},
+    }, '已保存')
+    assert.equal(acceptedNested.saved, true)
+    assert.deepEqual(acceptedNested.rejectedPublicFields, [])
+    assert.equal(controller.clearDraftIfEqual(nestedDraft, 'qwen-retry'), true)
+    assert.equal(controller.getDraft(nestedDraft), undefined)
+  })
+
 test('the settings page ships the same locked-down CSP as the memory board', () => {
   const board = /* the panel must not loosen anything the board already forbids */ [
     "default-src 'self'",
@@ -397,13 +449,15 @@ test('the proactivity control offers three tiers explained in push-and-pull term
   assert.equal(proactivityNotes.length, 3, 'each tier is explained with push-and-pull wording')
 })
 
-test('the heartbeat slider and integrated Qwen fields carry their labelled bounds', () => {
+test('the heartbeat slider and all model or voice fields carry Main-compatible bounds', () => {
   assert.match(html, /Codex 播报间隔/)
   assert.match(html, /<input type="range" id="heartbeat" min="15" max="120" step="1"/)
   assert.match(html, /Qwen 实时模型/)
-  assert.match(html, /<input type="text" id="integratedModel" maxlength="128"/)
+  assert.match(html, /<input type="text" id="integratedModel" maxlength="64"/)
   assert.match(html, /Qwen 语音音色/)
-  assert.match(html, /<input type="text" id="integratedVoice" maxlength="128"/)
+  assert.match(html, /<input type="text" id="integratedVoice" maxlength="64"/)
+  assert.match(html, /<input type="text" id="cascadedLlmModel" maxlength="64"/)
+  assert.match(html, /<input type="text" id="cascadedTtsVoice" maxlength="64"/)
 })
 
 test('every API key is a password field with a badge, hint, and clear button', () => {
@@ -512,7 +566,7 @@ test('a change made mid-save is coalesced and flushed, never dropped', () => {
   // The flush happens after the save settles, and the merge goes one level
   // deeper wherever a field carries an object, so two key edits queued behind
   // the same save cannot erase each other.
-  assert.match(controllerScript, /resolveBatch\(batch, \{ saved, view: saved \? remoteView : confirmedView \}\)/)
+  assert.match(controllerScript, /resolveBatch\(batch, bridgeSaved, remoteView\)/)
   assert.match(controllerScript, /void flush\(\)/)
   assert.match(controllerScript, /function mergePatch\(base, next\)/)
 })

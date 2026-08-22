@@ -3,7 +3,12 @@
 import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
 import type {CodexAssemblyResource} from './codex-factory.js'
 import { RealClock } from './clock.js'
-import { requireQwenRealtime, type QwenRealtimeConfig } from './config.js'
+import {
+  DASHSCOPE_COMPATIBLE_BASE_URL,
+  requireQwenRealtime,
+  resolveSupportModelConnection,
+  type QwenRealtimeConfig,
+} from './config.js'
 import { MonotonicIdFactory } from './ids.js'
 import { OpenAIModelGateway } from './model-gateway.js'
 import {
@@ -14,7 +19,6 @@ import {
 import type {RealtimeProvider} from './realtime/protocol.js'
 import { QwenAudioRealtimeAdapter, type QwenConnector } from './realtime/qwen.js'
 import { webSocketQwenConnector } from './realtime/qwen-transport.js'
-import { stripLikePython } from './python-text.js'
 
 export interface BuildQwenRealtimeAssemblyOptions
   extends Omit<
@@ -87,10 +91,13 @@ export function buildQwenRealtimeAssembly(
   const qwen = options.qwenConfig ?? requireQwenRealtime(options.settings)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
-  const configuredModelKey = stripLikePython(options.settings.model_api_key ?? '')
+  const support = resolveSupportModelConnection(options.settings, {
+    baseUrl: DASHSCOPE_COMPATIBLE_BASE_URL,
+    apiKey: qwen.apiKey,
+  })
   const gateway = new OpenAIModelGateway({
-    baseUrl: options.settings.model_base_url,
-    apiKey: configuredModelKey || qwen.apiKey,
+    baseUrl: support.baseUrl,
+    apiKey: support.apiKey,
     clock,
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
   })

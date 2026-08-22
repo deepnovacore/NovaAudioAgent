@@ -12,7 +12,7 @@ import {
 import {RealClock, type Clock} from './clock.js'
 import type {CodexAssemblyResource} from './codex-factory.js'
 import {
-  ConfigurationError,
+  resolveSupportModelConnection,
   type CascadedAsrProviderName,
   type CascadedEndpointingProviderName,
   type CascadedLlmProviderName,
@@ -316,17 +316,16 @@ function supportComposition(
   if (options.supportGateway !== undefined) {
     return {settings: options.settings, gateway: options.supportGateway}
   }
-  const genericKey = stripLikePython(options.settings.model_api_key ?? '')
-  if (genericKey !== '') {
+  const connection = resolveSupportModelConnection(options.settings, {
+    baseUrl: selectedBaseUrl,
+    apiKey: llmApiKey,
+  })
+  if (connection.source === 'generic') {
     return {
       settings: options.settings,
       gateway: new OpenAIModelGateway({
-        baseUrl: secureEndpoint(
-          options.settings.model_base_url,
-          'https',
-          'NOVA_AUDIO_AGENT_MODEL_BASE_URL',
-        ),
-        apiKey: genericKey,
+        baseUrl: connection.baseUrl,
+        apiKey: connection.apiKey,
         clock,
         ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
       }),
@@ -344,8 +343,8 @@ function supportComposition(
   return {
     settings,
     gateway: new OpenAIModelGateway({
-      baseUrl: selectedBaseUrl,
-      apiKey: llmApiKey,
+      baseUrl: connection.baseUrl,
+      apiKey: connection.apiKey,
       clock,
       ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
     }),
@@ -409,19 +408,3 @@ const defaultArkLlmFactory: ArkCascadedFactory = input => createArkCascadedLlmFa
   ...input.config,
   instructions: FRONTEND_INSTRUCTIONS,
 })
-
-function secureEndpoint(value: string, scheme: 'https' | 'wss', name: string): string {
-  let normalized = stripLikePython(value)
-  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1)
-  const separator = normalized.indexOf('://')
-  const tail = separator < 0 ? '' : normalized.slice(separator + 3)
-  const end = tail.search(/[/?#]/u)
-  const authority = end < 0 ? tail : tail.slice(0, end)
-  let parsed: URL | null = null
-  try { parsed = new URL(normalized) } catch { /* stable field-only error below */ }
-  const valid = parsed?.protocol === `${scheme}:` && parsed.hostname !== ''
-    && !authority.includes('@') && parsed.username === '' && parsed.password === ''
-    && parsed.hash === ''
-  if (!valid) throw new ConfigurationError(`${name} 必须是安全的 ${scheme}:// 地址`)
-  return normalized
-}

@@ -15,9 +15,12 @@ const qwenGuardHistoryPairsSchema = z.union([z.literal(1), z.literal(2), z.liter
 const executorNameSchema = z.enum(['fast_sim', 'slow_sim', 'codex'])
 const volcFloatSchema = z.custom<number>(value => typeof value === 'number')
 
+export const DASHSCOPE_COMPATIBLE_BASE_URL =
+  'https://dashscope.aliyuncs.com/compatible-mode/v1'
+
 export const settingsSchema = z.object({
   backend: backendSchema.default('python'),
-  model_base_url: z.url().default('https://dashscope.aliyuncs.com/compatible-mode/v1'),
+  model_base_url: z.url().default(DASHSCOPE_COMPATIBLE_BASE_URL),
   model_api_key: z.string().nullable().default(null),
   tavily_api_key: z.string().nullable().default(null),
   fast_model: z.string().default('qwen3-vl-plus'),
@@ -125,6 +128,12 @@ export interface CascadedCredentials {
   readonly llmApiKey: string
   readonly asrApiKey: string
   readonly ttsApiKey: string
+}
+
+export interface SupportModelConnection {
+  readonly source: 'generic' | 'selected_provider'
+  readonly baseUrl: string
+  readonly apiKey: string
 }
 
 export interface ProactivityParams {
@@ -354,6 +363,29 @@ export function requireIntegratedRealtime(settings: Settings): QwenRealtimeConfi
   }
   const apiKey = requiredCredential(settings.dashscope_api_key, 'DASHSCOPE_API_KEY')
   return Object.freeze({url, model, voice, apiKey})
+}
+
+/** Keeps a selected provider credential on its fixed compatible endpoint. */
+export function resolveSupportModelConnection(
+  settings: Settings,
+  selectedProvider: {readonly baseUrl: string; readonly apiKey: string},
+): SupportModelConnection {
+  const genericKey = stripLikePython(settings.model_api_key ?? '')
+  return genericKey === ''
+    ? Object.freeze({
+      source: 'selected_provider' as const,
+      baseUrl: selectedProvider.baseUrl,
+      apiKey: selectedProvider.apiKey,
+    })
+    : Object.freeze({
+      source: 'generic' as const,
+      baseUrl: secureEndpoint(
+        settings.model_base_url,
+        'https',
+        'NOVA_AUDIO_AGENT_MODEL_BASE_URL',
+      ),
+      apiKey: genericKey,
+    })
 }
 
 export function resolveCascadedSelection(settings: Settings): CascadedSelection {

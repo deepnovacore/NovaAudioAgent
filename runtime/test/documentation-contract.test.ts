@@ -121,6 +121,16 @@ test('the public contract exposes product-shaped pipeline selectors and retires 
   assert.equal(publicNames.has('NOVA_AUDIO_AGENT_REALTIME_PROVIDER'), false)
 })
 
+test('the generic model credential is an optional support-model override only', () => {
+  const entry = environmentContract.find(candidate =>
+    candidate.name === 'NOVA_AUDIO_AGENT_MODEL_API_KEY')
+  assert.ok(entry !== undefined)
+  assert.equal(entry.required, 'never')
+  assert.match(entry.descriptionEn, /optional generic support-model.*override/iu)
+  assert.match(entry.descriptionZh, /可选.*通用.*辅助模型.*覆盖/u)
+  assert.doesNotMatch(`${entry.descriptionEn}\n${entry.descriptionZh}`, /Qwen.*fallback|Qwen 回退/iu)
+})
+
 function generatedBlock(document: string): string {
   const start = document.indexOf('BEGIN GENERATED ENV CONTRACT')
   const end = document.indexOf('END GENERATED ENV CONTRACT')

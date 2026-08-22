@@ -597,6 +597,19 @@ function normalizeSpeechEnd(events: readonly Row[]): Row[] {
   })
 }
 
+function projectProviderNeutralOwnerCodes(events: readonly Row[]): Row[] {
+  return events.map(event => {
+    const projected = structuredClone(event)
+    if (projected.code === 'volcengine_mixed_text_tool') {
+      return {...projected, code: 'cascaded_mixed_text_tool'}
+    }
+    if (projected.code === 'volcengine_response_failed') {
+      return {...projected, code: 'cascaded_response_failed'}
+    }
+    return projected
+  })
+}
+
 function normalizeEndpointDeviation(name: string, actual: readonly Row[]): Row[] {
   const normalized = normalizeSpeechEnd(actual)
   if (name !== 'asr-start-recovery') return normalized
@@ -637,7 +650,7 @@ function expectedProjection(expected: ExpectedScenario): Row {
       op: step.op,
       result: normalizedStepResult(step.result),
     })),
-    events: normalizeSpeechEnd(expected.events),
+    events: projectProviderNeutralOwnerCodes(normalizeSpeechEnd(expected.events)),
     ark_calls: expected.ark_calls,
     asr_operations: expected.asr_operations,
     tts_operations: expected.tts_operations,

@@ -119,8 +119,28 @@ export function createSettingsController({ api, render, status }) {
     }
   }
 
-  function resolveBatch(batch, result) {
-    for (const waiter of batch.waiters) waiter.resolve(result)
+  function publicRejections(patch, remote, prefix = '') {
+    const rejected = []
+    for (const [field, submitted] of Object.entries(publicPatch(patch))) {
+      const path = prefix === '' ? field : `${prefix}.${field}`
+      const received = isRecord(remote) ? remote[field] : undefined
+      if (isRecord(submitted)) rejected.push(...publicRejections(submitted, received, path))
+      else if (!Object.is(received, submitted)) rejected.push(path)
+    }
+    return rejected
+  }
+
+  function resolveBatch(batch, bridgeSaved, remoteView) {
+    for (const waiter of batch.waiters) {
+      const rejectedPublicFields = bridgeSaved
+        ? publicRejections(waiter.publicPatch, remoteView)
+        : []
+      waiter.resolve({
+        saved: bridgeSaved && rejectedPublicFields.length === 0,
+        view: bridgeSaved ? remoteView : confirmedView,
+        rejectedPublicFields,
+      })
+    }
   }
 
   function composeView(base) {
@@ -135,8 +155,11 @@ export function createSettingsController({ api, render, status }) {
     status('保存中…')
     try {
       const remoteView = publicPatch(await api.set(batch.patch))
-      const saved = remoteView?.saved !== false
-      if (saved) {
+      const bridgeSaved = remoteView?.saved !== false
+      const rejectedPublicFields = bridgeSaved
+        ? publicRejections(batch.patch, remoteView)
+        : []
+      if (bridgeSaved) {
         hasConfirmedSaveResponse = true
         confirmedView = remoteView
         syncTopLevelDrafts(batch.patch, remoteView)
@@ -148,13 +171,14 @@ export function createSettingsController({ api, render, status }) {
         view = composeView(confirmedView ?? view)
       }
       renderCurrent()
-      status(saved ? batch.note : '保存失败')
-      resolveBatch(batch, { saved, view: saved ? remoteView : confirmedView })
+      status(!bridgeSaved ? '保存失败'
+        : rejectedPublicFields.length > 0 ? '部分设置未保存' : batch.note)
+      resolveBatch(batch, bridgeSaved, remoteView)
     } catch {
       view = composeView(confirmedView ?? view)
       renderCurrent()
       status('保存失败')
-      resolveBatch(batch, { saved: false, view: null })
+      resolveBatch(batch, false, null)
     } finally {
       // A secret payload must not live past the single bridge invocation.
       batch.patch = null
@@ -168,9 +192,12 @@ export function createSettingsController({ api, render, status }) {
       if (pending) {
         pending.patch = mergePatch(pending.patch, writePatch(patch))
         pending.note = note
-        pending.waiters.push({ resolve })
+        pending.waiters.push({ resolve, publicPatch: publicPatch(patch) })
       } else {
-        pending = { patch: writePatch(patch), note, waiters: [{ resolve }] }
+        pending = {
+          patch: writePatch(patch), note,
+          waiters: [{ resolve, publicPatch: publicPatch(patch) }],
+        }
       }
       void flush()
     })

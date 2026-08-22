@@ -99,7 +99,7 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | Variable | Owner | Required | Default | Description |
 |---|---|---|---|---|
 | `NOVA_AUDIO_AGENT_MODEL_BASE_URL` | `core` | No | DashScope compatible endpoint | FastBrain compatible API endpoint. |
-| `NOVA_AUDIO_AGENT_MODEL_API_KEY` | `core` | When selected | None | FastBrain API credential; also a Qwen fallback. |
+| `NOVA_AUDIO_AGENT_MODEL_API_KEY` | `core` | No | None | Optional generic support-model API credential override. |
 | `NOVA_AUDIO_AGENT_FAST_MODEL` | `core` | No | qwen3-vl-plus | FastBrain model. |
 | `NOVA_AUDIO_AGENT_WATCH_MODEL` | `core` | No | fast model | Watch model override. |
 | `NOVA_AUDIO_AGENT_SURROGATE_MODEL` | `core` | No | qwen-flash | Surrogate model. |
