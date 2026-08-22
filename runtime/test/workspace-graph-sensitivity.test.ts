@@ -36,6 +36,20 @@ test('denies configured roots before returning a display label', () => {
   assert.ok(policy.redactLabel(path) === null, 'configured denied root label was returned')
 })
 
+test('configured-root text matching normalizes separators and preserves component boundaries', () => {
+  const policy = new SensitivePathPolicy({deniedRoots: ['/private/My Folder']})
+  const denied = '/private//My Folder/Nested/file-marker.txt'
+  const allowed = '/private/My Folderish/notes.txt'
+
+  const scrubbed = policy.scrubText('summary', `opened ${denied} successfully`)
+  assert.notEqual(scrubbed.kind, 'clean')
+  if (scrubbed.kind === 'redacted') {
+    assert.equal(scrubbed.value.includes('/private//My Folder'), false)
+    assert.equal(scrubbed.value.includes('file-marker.txt'), false)
+  }
+  assert.deepEqual(policy.scrubText('summary', `opened ${allowed} successfully`), {kind: 'clean'})
+})
+
 test('denies descendants whose names begin with parent traversal characters', () => {
   const policy = new SensitivePathPolicy({deniedRoots: ['/repo/private']})
   const path = '/repo/private/..vault/notes.md'

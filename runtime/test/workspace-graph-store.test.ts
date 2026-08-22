@@ -418,25 +418,35 @@ test('every observation string is gated before canonical persistence', async t =
   assert.equal(await fileContains(`${path}-wal`, referenceSecret), false)
 })
 
-test('a configured denied-root span with spaces is fully removed before persistence', async t => {
+test('normalized denied-root text is absent from live WAL and DB without overmatching a prefix', async t => {
   const deniedRoot = '/private/My Folder'
+  const repeatedRoot = '/private//My Folder'
   const marker = 'space-root-raw-marker.txt'
+  const allowedPath = '/private/My Folderish/notes.txt'
   const {client, path} = await createStore(t, {deniedRoots: [deniedRoot]})
 
   await client.appendObservation(workspaceOpened(
     'space-bearing-denied-root',
-    `opened ${deniedRoot}/Nested Space/${marker} successfully`,
+    `opened ${repeatedRoot}/Nested Space/${marker} successfully`,
   ))
 
-  const [stored] = await client.listObservations()
-  assert.ok(stored !== undefined)
-  assert.equal(stored.summary?.includes(deniedRoot) ?? false, false)
-  assert.equal(stored.summary?.includes(marker) ?? false, false)
-  await closeStore(client)
-  assert.equal(await fileContains(path, deniedRoot), false)
-  assert.equal(await fileContains(path, marker), false)
+  const stored = await client.listObservations()
+  const summaryById = new Map(stored.map(observation => [observation.observation_id, observation.summary]))
+  assert.equal(summaryById.get('space-bearing-denied-root')?.includes(repeatedRoot) ?? false, false)
+  assert.equal(summaryById.get('space-bearing-denied-root')?.includes(marker) ?? false, false)
+  assert.equal(await fileContains(`${path}-wal`, repeatedRoot), false)
   assert.equal(await fileContains(`${path}-wal`, deniedRoot), false)
   assert.equal(await fileContains(`${path}-wal`, marker), false)
+  await closeStore(client)
+  assert.equal(await fileContains(path, deniedRoot), false)
+  assert.equal(await fileContains(path, repeatedRoot), false)
+  assert.equal(await fileContains(path, marker), false)
+
+  const allowedStore = await createStore(t, {deniedRoots: [deniedRoot]})
+  await allowedStore.client.appendObservation(
+    workspaceOpened('allowed-prefix-boundary', `opened ${allowedPath}`),
+  )
+  assert.equal((await allowedStore.client.listObservations())[0]?.summary, `opened ${allowedPath}`)
 })
 
 test('compaction bounds derived rows without deleting observations or locking later writes', async t => {
@@ -667,6 +677,45 @@ test('relation receipt replay returns its exact committed result after derived s
     operation_type: 'upsert_relation',
     result: {kind: 'relation', relation: original},
   })
+})
+
+test('a legacy schema-v2 relation receipt reopens and reconciles without losing commit truth', async t => {
+  const {client, path} = await createStore(t)
+  const operationId = '23456789-2345-4234-8234-234567890123'
+  const original = relation()
+  await client.upsertRelation(original, undefined, operationId)
+  await closeStore(client)
+
+  const legacyResult = JSON.stringify({
+    kind: 'relation',
+    source_logical_id: original.source_logical_id,
+    target_logical_id: original.target_logical_id,
+    relation_type: original.relation_type,
+    revision: original.revision,
+    status: original.status,
+  }).replaceAll("'", "''")
+  await execSqlite(path, `
+    UPDATE operation_receipts SET result_json = '${legacyResult}'
+    WHERE operation_id = '${operationId}'
+  `)
+
+  const reopened = new WorkspaceGraphStoreClient(path)
+  t.after(() => reopened.close())
+  await reopened.open()
+  assert.equal((await reopened.diagnostics()).schema_version, 2)
+  assert.deepEqual(await reopened.getOperationReceipt(operationId), {
+    operation_id: operationId,
+    operation_type: 'upsert_relation',
+    result: {kind: 'relation', relation: original},
+  })
+  assert.deepEqual(await reopened.upsertRelation(original, undefined, operationId), original)
+  assert.deepEqual(await reopened.listRelations(), [original])
+  assert.deepEqual(
+    await querySqlite(path, `
+      SELECT result_json FROM operation_receipts WHERE operation_id = '${operationId}'
+    `),
+    [{result_json: legacyResult.replaceAll("''", "'")}],
+  )
 })
 
 test('receipt compaction prunes only count-overflow receipts older than the safe age window', async t => {

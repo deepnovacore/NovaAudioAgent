@@ -34,10 +34,14 @@ const absolutePathSpan = /(?:[A-Za-z]:[\\/]|\/)[^\s<>"'`()\[\]{},;!?]+/gu
 export class SensitivePathPolicy {
   private readonly deniedRoots: readonly string[]
   private readonly deniedTextRoots: readonly string[]
+  private readonly deniedLineRoots: readonly string[]
 
   constructor(options: SensitivePathPolicyOptions = {}) {
     const roots = (options.deniedRoots ?? []).filter(path => isSupportedAbsolute(path))
     this.deniedRoots = roots.map(path => normalizePath(path))
+    this.deniedLineRoots = roots
+      .filter(root => /\s/u.test(root))
+      .map(root => normalizePath(root))
     this.deniedTextRoots = [...new Set(roots.flatMap(root => [
       root,
       root.replaceAll('\\', '/'),
@@ -61,11 +65,17 @@ export class SensitivePathPolicy {
   /** Redacts denied absolute path spans embedded in otherwise safe free text. */
   scrubText(_field: string, value: string): ScrubResult {
     let matches = 0
-    let scrubbed = value
+    let scrubbed = value.replace(/^.*$/gmu, line => {
+      if (!lineContainsDeniedRoot(line, this.deniedLineRoots)) return line
+      matches += 1
+      return '[redacted]'
+    })
     for (const root of this.deniedTextRoots) {
-      const configuredRoot = /\s/u.test(root)
-        ? new RegExp(`^.*${escapeRegExp(root)}.*$`, 'gmu')
-        : new RegExp(`${escapeRegExp(root)}(?:[\\/][^\\s<>"'\`()\\[\\]{},;!?]+)*`, 'gu')
+      if (/\s/u.test(root)) continue
+      const configuredRoot = new RegExp(
+        `${escapeRegExp(root)}(?:[\\/][^\\s<>"'\`()\\[\\]{},;!?]+)*`,
+        'gu',
+      )
       scrubbed = scrubbed.replace(configuredRoot, () => {
         matches += 1
         return '[redacted]'
@@ -84,6 +94,19 @@ export class SensitivePathPolicy {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+}
+
+function lineContainsDeniedRoot(line: string, deniedRoots: readonly string[]): boolean {
+  if (deniedRoots.length === 0) return false
+  const absoluteStart = /[A-Za-z]:[\\/]|[\\/]/gu
+  for (const match of line.matchAll(absoluteStart)) {
+    const start = match.index
+    if (start > 0 && !/[\s<>"'`()\[\]{},;!?=:]/u.test(line[start - 1] ?? '')) continue
+    const candidate = line.slice(start)
+    const normalized = normalizePath(candidate)
+    if (deniedRoots.some(root => pathIsWithin(normalized, root))) return true
+  }
+  return false
 }
 
 /** Removes credential-bearing spans while retaining the non-sensitive field context. */

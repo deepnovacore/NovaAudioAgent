@@ -108,6 +108,21 @@ const receiptRelationResultSchema = z.object({
   relation: RelationCardSchema,
 }).strict()
 
+const legacyReceiptRelationResultSchema = z.object({
+  kind: z.literal('relation'),
+  source_logical_id: z.string().min(1),
+  target_logical_id: z.string().min(1),
+  relation_type: relationTypeSchema,
+  revision: z.number().int().nonnegative(),
+  status: z.enum(['active', 'weak', 'stale', 'suppressed']),
+}).strict()
+
+const legacyRelationOperationReceiptSchema = z.object({
+  operation_id: z.string().uuid(),
+  operation_type: z.enum(['upsert_relation', 'suppress_relation']),
+  result: legacyReceiptRelationResultSchema,
+}).strict()
+
 export const OperationReceiptResultSchema = z.discriminatedUnion('kind', [
   z.object({kind: z.literal('none')}).strict(),
   z.object({kind: z.literal('observation'), evidence: EvidenceRefSchema}).strict(),
@@ -1003,12 +1018,40 @@ export class WorkspaceGraphStore {
     `).get(operationId)
     if (row === undefined) return undefined
     const result: unknown = JSON.parse(stringColumn(row, 'result_json')) as unknown
-    const receipt = OperationReceiptSchema.parse({
+    const receiptInput = {
       operation_id: operationId,
       operation_type: stringColumn(row, 'operation_type'),
       result,
-    })
+    }
+    const currentReceipt = OperationReceiptSchema.safeParse(receiptInput)
+    const receipt = currentReceipt.success
+      ? currentReceipt.data
+      : this.#hydrateLegacyRelationReceipt(
+        database,
+        legacyRelationOperationReceiptSchema.parse(receiptInput),
+      )
     return {receipt, inputDigest: stringColumn(row, 'input_digest')}
+  }
+
+  #hydrateLegacyRelationReceipt(
+    database: GraphDatabase,
+    legacy: z.infer<typeof legacyRelationOperationReceiptSchema>,
+  ): OperationReceipt {
+    const result = legacy.result
+    const row = database.prepare(`
+      SELECT payload_json FROM relation_cards
+      WHERE source_logical_id = ? AND target_logical_id = ? AND relation_type = ?
+    `).get(result.source_logical_id, result.target_logical_id, result.relation_type)
+    if (row === undefined) throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    const relation = this.#parseRelationPayload(stringColumn(row, 'payload_json'))
+    if (relation.revision !== result.revision || relation.status !== result.status) {
+      throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    }
+    return OperationReceiptSchema.parse({
+      operation_id: legacy.operation_id,
+      operation_type: legacy.operation_type,
+      result: {kind: 'relation', relation},
+    })
   }
 
   #relationFromReceipt(receipt: OperationReceiptResult): RelationCard {
