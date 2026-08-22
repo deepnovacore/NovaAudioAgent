@@ -56,8 +56,6 @@ const settingEnvironment: Readonly<Record<string, string>> = {
   doubao_asr_api_key: 'DOUBAO_ASR_API_KEY',
   doubao_bigmodel_api_key: 'DOUBAO_BIGMODEL_API_KEY',
   volcengine_ark_base_url: 'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL',
-  volcengine_ark_model: 'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL',
-  volcengine_ark_support_model: 'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL',
   doubao_asr_endpoint: 'NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT',
   doubao_asr_resource_id: 'NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID',
   doubao_asr_chunk_ms: 'NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS',
@@ -84,7 +82,8 @@ function environmentFor(raw: Record<string, unknown>): NodeJS.ProcessEnv {
     NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
   }
   for (const [field, rawValue] of Object.entries(raw)) {
-    const variable = settingEnvironment[field]!
+    const variable = settingEnvironment[field]
+    if (variable === undefined) continue
     let value = String(rawValue)
     if (secretFields.has(field)) {
       for (const [label, secret] of Object.entries(keyValues)) value = value.replace(label, secret)

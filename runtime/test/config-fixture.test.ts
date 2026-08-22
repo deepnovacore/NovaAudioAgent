@@ -78,6 +78,8 @@ function loadPythonOwnedFixtureSettings(environment: NodeJS.ProcessEnv): Setting
   // compatibility aliases and reads only the selected pipeline's configuration.
   const adapted = {...environment}
   delete adapted.NOVA_AUDIO_AGENT_REALTIME_PROVIDER
+  delete adapted.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL
+  delete adapted.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL
   adapted.NOVA_AUDIO_AGENT_PIPELINE_MODE = 'cascaded'
   adapted.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER = 'ark'
   const settings = loadSettings(adapted)
