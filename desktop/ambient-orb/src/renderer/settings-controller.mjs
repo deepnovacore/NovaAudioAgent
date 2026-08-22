@@ -12,7 +12,10 @@ export function mergePatch(base, next) {
   return merged
 }
 
-const WRITE_ONLY_SECRET_KEYS = new Set([
+// This is the single boundary denylist for Settings secrets. Public renderer
+// state may not carry these keys at any depth; only a direct `secrets` write
+// payload is allowed to cross the bridge.
+const SECRET_KEYS = new Set([
   'dashscopeApiKey',
   'tavilyApiKey',
   'modelApiKey',
@@ -22,9 +25,31 @@ const WRITE_ONLY_SECRET_KEYS = new Set([
   'doubaoAsrApiKey',
 ])
 
-function publicPatch(patch) {
-  const { secrets: _writeOnlySecrets, ...publicFields } = patch ?? {}
-  return publicFields
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function publicPatch(value) {
+  if (Array.isArray(value)) return value.map(publicPatch)
+  if (!isRecord(value)) return value
+  const safe = {}
+  for (const [key, nested] of Object.entries(value)) {
+    if (key === 'secrets' || SECRET_KEYS.has(key)) continue
+    safe[key] = publicPatch(nested)
+  }
+  return safe
+}
+
+function writePatch(value) {
+  if (!isRecord(value)) return {}
+  const safe = {}
+  for (const [key, nested] of Object.entries(value)) {
+    if (SECRET_KEYS.has(key)) continue
+    // The direct write-only map must reach Main unchanged; it is never merged
+    // into public state or a render snapshot.
+    safe[key] = key === 'secrets' ? nested : publicPatch(nested)
+  }
+  return safe
 }
 
 export function createSettingsController({ api, render, status }) {
@@ -36,7 +61,12 @@ export function createSettingsController({ api, render, status }) {
   const drafts = new Map()
 
   function draftSnapshot() {
-    return Object.fromEntries(drafts)
+    const snapshot = {}
+    for (const [field, value] of drafts) {
+      if (field === 'secrets' || SECRET_KEYS.has(field)) continue
+      snapshot[field] = publicPatch(value)
+    }
+    return snapshot
   }
 
   function renderCurrent() {
@@ -67,7 +97,7 @@ export function createSettingsController({ api, render, status }) {
     inFlight = batch
     status('保存中…')
     try {
-      const remoteView = await api.set(batch.patch)
+      const remoteView = publicPatch(await api.set(batch.patch))
       const saved = remoteView?.saved !== false
       if (saved) {
         hasConfirmedSaveResponse = true
@@ -99,11 +129,11 @@ export function createSettingsController({ api, render, status }) {
   function push(patch, note) {
     return new Promise(resolve => {
       if (pending) {
-        pending.patch = mergePatch(pending.patch, patch)
+        pending.patch = mergePatch(pending.patch, writePatch(patch))
         pending.note = note
         pending.waiters.push({ resolve })
       } else {
-        pending = { patch, note, waiters: [{ resolve }] }
+        pending = { patch: writePatch(patch), note, waiters: [{ resolve }] }
       }
       void flush()
     })
@@ -114,7 +144,7 @@ export function createSettingsController({ api, render, status }) {
     // not roll the panel back. Before any set response, retain selections
     // already queued behind that initial get.
     if (hasConfirmedSaveResponse) return
-    confirmedView = nextView
+    confirmedView = publicPatch(nextView)
     view = mergePatch(confirmedView, publicPatch(inFlight?.patch))
     view = composeView(view)
     renderCurrent()
@@ -128,7 +158,7 @@ export function createSettingsController({ api, render, status }) {
   function setDraft(field, value) {
     // Password values stay only in their DOM inputs and the short-lived write
     // payload. They are never a controller draft or a render callback value.
-    if (WRITE_ONLY_SECRET_KEYS.has(field)) return
+    if (field === 'secrets' || SECRET_KEYS.has(field)) return
     drafts.set(field, value)
   }
 
@@ -137,7 +167,7 @@ export function createSettingsController({ api, render, status }) {
   }
 
   function clearDraftIfEqual(field, submitted) {
-    if (WRITE_ONLY_SECRET_KEYS.has(field)) return false
+    if (field === 'secrets' || SECRET_KEYS.has(field)) return false
     if (drafts.get(field) !== submitted) return false
     drafts.delete(field)
     return true

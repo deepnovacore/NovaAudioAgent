@@ -127,6 +127,60 @@ test('secret values and key names never enter controller render drafts', async (
   }
 })
 
+test('every public controller boundary strips all secret keys without touching legitimate nested state', async () => {
+  const secretKeys = [
+    'dashscopeApiKey',
+    'tavilyApiKey',
+    'modelApiKey',
+    'codexApiKey',
+    'arkApiKey',
+    'doubaoBigmodelApiKey',
+    'doubaoAsrApiKey',
+  ]
+  const sentinel = 'hostile-secret-sentinel'
+  for (const key of secretKeys) {
+    const snapshots = []
+    const calls = []
+    const controller = createSettingsController({
+      api: { set: async patch => {
+        calls.push(patch)
+        return publicView({ [key]: sentinel })
+      } },
+      render: (view, drafts) => snapshots.push({ view, drafts }),
+      status: () => {},
+    })
+    controller.setView(publicView({ [key]: sentinel }))
+    controller.setDraft(key, sentinel)
+    controller.applyLocal({ [key]: sentinel })
+    await controller.push({ [key]: sentinel }, '已保存')
+    assert.ok(!(key in calls[0]), `push removes top-level ${key} before the bridge`)
+    for (const snapshot of snapshots) {
+      const rendered = JSON.stringify(snapshot)
+      assert.doesNotMatch(rendered, /hostile-secret-sentinel/)
+      assert.ok(!(key in snapshot.view), `view excludes ${key}`)
+      assert.ok(!(key in snapshot.drafts), `drafts exclude ${key}`)
+    }
+  }
+
+  const calls = []
+  const snapshots = []
+  const controller = createSettingsController({
+    api: { set: async patch => {
+      calls.push(patch)
+      return publicView({ cascadedLlmModels: { qwen: 'qwen-new', ark: 'ark-new' } })
+    } },
+    render: (view, drafts) => snapshots.push({ view, drafts }),
+    status: () => {},
+  })
+  controller.setView(publicView())
+  controller.applyLocal({ cascadedLlmModels: { ark: 'ark-new' } })
+  assert.equal(snapshots.at(-1).view.cascadedLlmModels.ark, 'ark-new')
+  await controller.push({ secrets: { dashscopeApiKey: sentinel } }, '密钥已保存')
+  assert.deepEqual(calls[0], { secrets: { dashscopeApiKey: sentinel } })
+  await controller.push({ cascadedLlmModels: { qwen: 'qwen-new' } }, '已保存')
+  assert.deepEqual(calls[1], { cascadedLlmModels: { qwen: 'qwen-new' } })
+})
+
 test('a dirty text draft survives a stale response and can be saved afterwards', async () => {
   const first = deferred()
   const second = deferred()
@@ -382,7 +436,7 @@ test('a change made mid-save is coalesced and flushed, never dropped', () => {
   assert.match(script, /createSettingsController/)
   assert.match(controllerScript, /let inFlight = null/)
   assert.match(controllerScript, /let pending = null/)
-  assert.match(controllerScript, /pending\.patch = mergePatch\(pending\.patch, patch\)/)
+  assert.match(controllerScript, /pending\.patch = mergePatch\(pending\.patch, writePatch\(patch\)\)/)
   // The flush happens after the save settles, and the merge goes one level
   // deeper wherever a field carries an object, so two key edits queued behind
   // the same save cannot erase each other.
