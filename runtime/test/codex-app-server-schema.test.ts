@@ -380,6 +380,43 @@ function effectiveConfig(): Record<string, unknown> {
   }
 }
 
+function effectiveConfig147(): Record<string, unknown> {
+  const value = effectiveConfig()
+  const config = nested(value, 'config')
+  const profile = nested(config, 'permissions', 'nova_audio_agent')
+  Object.assign(profile, {description: null, extends: null, workspace_roots: null})
+  Object.assign(nested(profile, 'filesystem'), {glob_scan_max_depth: null})
+  Object.assign(nested(profile, 'network'), {
+    proxy_url: null,
+    enable_socks5: null,
+    socks_url: null,
+    enable_socks5_udp: null,
+    allow_upstream_proxy: null,
+    dangerously_allow_non_loopback_proxy: null,
+    dangerously_allow_all_unix_sockets: null,
+    mode: null,
+    domains: null,
+    unix_sockets: null,
+    allow_local_binding: null,
+    mitm: null,
+  })
+  Object.assign(nested(config, 'shell_environment_policy'), {
+    ignore_default_excludes: null,
+    exclude: null,
+    set: null,
+    filters: null,
+    experimental_use_profile: null,
+  })
+  Object.assign(nested(config, 'features'), {
+    auth_elicitation: true,
+    mcp_2026_07_28: false,
+    memories: false,
+    mentions_v2: true,
+    network_proxy: null,
+  })
+  return value
+}
+
 test('effective config returns only the fixed credential-free isolation report', () => {
   const report = validateEffectiveCodexConfig(effectiveConfig(), '/workspace', {
     allowReplacementInstructions: false,
@@ -396,6 +433,51 @@ test('effective config returns only the fixed credential-free isolation report',
   })
   assert.equal(JSON.stringify(report).includes('PRIVATE'), false)
   assert.equal(JSON.stringify(report).includes('DO-NOT-LEAK'), false)
+})
+
+test('Codex 0.147 inert config expansion preserves the isolation report', () => {
+  const expected = {
+    default_permissions: 'nova_audio_agent',
+    filesystem: 'workspace_only',
+    network: 'blocked',
+    web_search: 'disabled',
+    shell_environment: 'core_include_only',
+    extensions: 'disabled',
+    mcp: 'empty',
+    instructions: 'builtin',
+  }
+  assert.deepEqual(validateEffectiveCodexConfig(effectiveConfig147(), '/workspace', {
+    allowReplacementInstructions: false,
+  }), expected)
+
+  const saferFeatureDefaults = effectiveConfig147()
+  nested(saferFeatureDefaults, 'config', 'features').auth_elicitation = false
+  nested(saferFeatureDefaults, 'config', 'features').mentions_v2 = false
+  assert.deepEqual(validateEffectiveCodexConfig(saferFeatureDefaults, '/workspace', {
+    allowReplacementInstructions: false,
+  }), expected)
+})
+
+test('expanded config fields still fail closed when they activate host capabilities', () => {
+  const mutations: ((value: Record<string, unknown>) => void)[] = [
+    value => { nested(value, 'config', 'permissions', 'nova_audio_agent').workspace_roots = {} },
+    value => {
+      nested(value, 'config', 'permissions', 'nova_audio_agent', 'filesystem')
+        .glob_scan_max_depth = 8
+    },
+    value => {
+      nested(value, 'config', 'permissions', 'nova_audio_agent', 'network').proxy_url = 'private'
+    },
+    value => { nested(value, 'config', 'shell_environment_policy').set = {TOKEN: 'private'} },
+    value => { nested(value, 'config', 'features').future_capability = true },
+  ]
+  for (const mutate of mutations) {
+    const value = effectiveConfig147()
+    mutate(value)
+    assert.throws(() => validateEffectiveCodexConfig(value, '/workspace', {
+      allowReplacementInstructions: false,
+    }), expectCode('config_not_isolated'))
+  }
 })
 
 test('every capability widening, warning, requirement, and replacement fails privately', () => {
@@ -421,7 +503,7 @@ test('every capability widening, warning, requirement, and replacement fails pri
     },
     value => { nested(value, 'config', 'features').plugins = true },
     value => { nested(value, 'config', 'features').remote_control = true },
-    value => { nested(value, 'config', 'features').future_capability = false },
+    value => { nested(value, 'config', 'features').future_capability = true },
     value => { nested(value, 'config', 'permissions').danger = {} },
     value => { nested(value, 'config', 'permissions', 'nova_audio_agent').device = 'write' },
     value => { nested(value, 'config', 'shell_environment_policy').extra = false },

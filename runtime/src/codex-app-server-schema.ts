@@ -289,6 +289,10 @@ const DISABLED_FEATURES = deepFreeze([
   'tool_suggest',
   'remote_control',
 ])
+const SAFE_OPTIONAL_FEATURES: ReadonlySet<string> = new Set([
+  'auth_elicitation',
+  'mentions_v2',
+])
 
 export function validateEffectiveCodexConfig(
   response: unknown,
@@ -307,24 +311,35 @@ export function validateEffectiveCodexConfig(
     const permissions = requireObject(config.permissions)
     if (!exactKeys(permissions, ['nova_audio_agent'])) throw new TypeError('permission profiles')
     const profile = requireObject(permissions.nova_audio_agent)
-    if (!exactKeys(profile, ['filesystem', 'network'])) throw new TypeError('profile')
+    if (!requiredKeysWithNullExtras(profile, ['filesystem', 'network'])) throw new TypeError('profile')
     const filesystem = requireObject(profile.filesystem)
-    if (!exactKeys(filesystem, [':root', ':workspace_roots'])) throw new TypeError('filesystem')
+    if (!requiredKeysWithNullExtras(filesystem, [':root', ':workspace_roots'])) {
+      throw new TypeError('filesystem')
+    }
     if (filesystem[':root'] !== 'read') throw new TypeError('root')
     const roots = requireObject(filesystem[':workspace_roots'])
     if (!exactStringRecord(roots, ROOTS)) throw new TypeError('roots')
     const network = requireObject(profile.network)
-    if (!exactKeys(network, ['enabled']) || network.enabled !== false) throw new TypeError('network')
+    if (!requiredKeysWithNullExtras(network, ['enabled']) || network.enabled !== false) {
+      throw new TypeError('network')
+    }
     const shell = requireObject(config.shell_environment_policy)
-    if (!exactKeys(shell, ['inherit', 'include_only'])
+    if (!requiredKeysWithNullExtras(shell, ['inherit', 'include_only'])
       || shell.inherit !== 'core' || !exactStringArray(
       shell.include_only,
       ['PATH', 'LANG', 'LC_ALL', 'TERM'],
     )) throw new TypeError('shell')
     const features = requireObject(config.features)
-    if (!exactKeys(features, DISABLED_FEATURES)) throw new TypeError('features')
     for (const name of DISABLED_FEATURES) {
-      if (features[name] !== false) throw new TypeError('feature')
+      if (!Object.hasOwn(features, name) || features[name] !== false) throw new TypeError('feature')
+    }
+    for (const [name, enabled] of Object.entries(features)) {
+      if (DISABLED_FEATURES.includes(name)) continue
+      if (SAFE_OPTIONAL_FEATURES.has(name)) {
+        if (enabled !== true && enabled !== false && enabled !== null) throw new TypeError('feature')
+      } else if (enabled !== false && enabled !== null) {
+        throw new TypeError('feature')
+      }
     }
     if (!isPlainObject(config.mcp_servers) || Object.keys(config.mcp_servers).length !== 0) {
       throw new TypeError('mcp')
@@ -378,6 +393,15 @@ function exactStringRecord(
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(value)
   return keys.length === expected.length && expected.every(key => Object.hasOwn(value, key))
+}
+
+function requiredKeysWithNullExtras(
+  value: Record<string, unknown>,
+  required: readonly string[],
+): boolean {
+  const requiredSet = new Set(required)
+  return required.every(key => Object.hasOwn(value, key))
+    && Object.entries(value).every(([key, field]) => requiredSet.has(key) || field === null)
 }
 
 function requireObject(value: unknown): Record<string, unknown> {

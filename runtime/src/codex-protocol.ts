@@ -247,10 +247,17 @@ export class JsonRpcConnection {
       const keys = Object.keys(message)
       const method = message.method
       const params = Object.hasOwn(message, 'params') ? message.params : {}
+      const emittedAtMs = Object.hasOwn(message, 'emittedAtMs') ? message.emittedAtMs : undefined
+      const allowedKeys = new Set(['method', 'params', 'emittedAtMs'])
       if (
         typeof method !== 'string'
         || !isPlainObject(params)
-        || !(keys.length === 1 || (keys.length === 2 && Object.hasOwn(message, 'params')))
+        || keys.some(key => !allowedKeys.has(key))
+        || (Object.hasOwn(message, 'emittedAtMs') && (
+          typeof emittedAtMs !== 'number'
+          || !Number.isSafeInteger(emittedAtMs)
+          || emittedAtMs < 0
+        ))
       ) {
         throw this.#poison(new CodexProtocolError('malformed_jsonl'))
       }
