@@ -76,7 +76,7 @@ export class SensitiveContentPolicy {
       matches += 1
       return '[redacted]'
     })
-    scrubbed = replaceAll(scrubbed, /(?:密码|["']密码["'])[ \t]*(?:=|:|：)[ \t]*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gu, () => {
+    scrubbed = replaceAll(scrubbed, /(?:密码|["']密码["'])\s*(?:=|:|：)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gu, () => {
       matches += 1
       return '[redacted]'
     })

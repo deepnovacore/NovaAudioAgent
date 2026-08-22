@@ -118,3 +118,31 @@ Output: both isolated regressions passed. Final verification built successfully;
 
 - The Chinese assignment detector now accepts either bare `密码` or a consistently quoted `"密码"` key and redacts its value without returning the span.
 - Authorization, Proxy-Authorization, Cookie, and Set-Cookie now use horizontal whitespace (`[ \t]*`) around their colons. They still redact all same-line header material, while a newline ends the header and leaves the following safe line clean.
+
+## Security review fix round 3
+
+### RED
+
+Command:
+
+```sh
+npm run build --workspace @nova-audio-agent/runtime && node --test --test-name-pattern='multiline quoted Chinese' runtime/dist/test/workspace-graph-sensitivity.test.js
+```
+
+Output: the new multiline quoted-Chinese JSON test failed with the fixed message `multiline quoted Chinese credential key was not redacted`; no credential span was printed.
+
+### GREEN
+
+Commands:
+
+```sh
+npm run build --workspace @nova-audio-agent/runtime && node --test --test-name-pattern='multiline quoted Chinese' runtime/dist/test/workspace-graph-sensitivity.test.js
+npm run build --workspace @nova-audio-agent/runtime && node --test runtime/dist/test/workspace-graph-sensitivity.test.js && npm run lint --workspace @nova-audio-agent/runtime && git diff --check
+```
+
+Output: the isolated regression passed. Final verification built successfully; all 25 sensitivity tests passed (`pass 25`, `fail 0`); ESLint and `git diff --check` completed without findings.
+
+### Fix review
+
+- Only the Chinese assignment detector now permits `\s*` around an assignment delimiter, matching the English assignment behavior and accepting legal JSON whitespace/newlines.
+- Header separators retain the round-2 horizontal-only whitespace rules, so this change cannot reintroduce cross-line Cookie, Set-Cookie, Authorization, or Proxy-Authorization redaction.

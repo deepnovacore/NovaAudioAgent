@@ -191,6 +191,16 @@ test('redacts quoted Chinese credential keys in JSON-like content', () => {
   assert.ok(!result.value.includes(credential), 'quoted Chinese credential value was returned')
 })
 
+test('redacts multiline quoted Chinese credential keys in JSON-like content', () => {
+  const policy = new SensitiveContentPolicy()
+  const credential = 'credential-value-12345'
+  const result = policy.scrub('detail', `deployed {"密码"\n: "${credential}"}`)
+
+  assert.ok(result.kind === 'redacted', 'multiline quoted Chinese credential key was not redacted')
+  if (result.kind !== 'redacted') return
+  assert.ok(!result.value.includes(credential), 'multiline quoted Chinese credential value was returned')
+})
+
 test('returns clean fields byte-identically', () => {
   const policy = new SensitiveContentPolicy()
   const value = 'commit 0123456789abcdef0123456789abcdef01234567 completed successfully with a detailed explanation'
