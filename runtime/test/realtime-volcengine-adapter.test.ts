@@ -475,6 +475,30 @@ test('host inputs and copied Responses tools preserve Python wording and caller 
   }])
 })
 
+test('Volcengine rejects workspace context until replacement capability is proven', async () => {
+  const adapter = new VolcengineCascadedAdapter({
+    endpointing: new ScriptedEndpointing(),
+    asr: new FakeAsrClient(),
+    arkFactory: () => new FakeArk([]),
+    tts: new FakeTtsClient(),
+    idFactory: ids('session-workspace', 'provider-workspace'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+
+  await assert.rejects(adapter.injectHostItem({
+    kind: 'workspace_context',
+    host_item_id: 'workspace-header-1',
+    event_id: 'workspace-event-1',
+    content: '<workspace_context kind="data">current workspace</workspace_context>',
+    call_id: null,
+    session_epoch: 1,
+    workspace_instance_id: 'wi-a',
+    revision: 1,
+  }, directOptions()), error => (
+    error instanceof VolcengineRealtimeError && error.code === 'configuration'
+  ))
+})
+
 test('Python-strip blank ASR final fails the item and never starts Ark', async () => {
   const endpointing = new ScriptedEndpointing(
     [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}],

@@ -112,6 +112,9 @@ test('workspace context is inject-only and cannot impersonate user activation', 
     delivery: {
       capability: 'replace_provider_item',
       delivered: true,
+      session_epoch: 2,
+      workspace_instance_id: 'wi-a',
+      revision: 2,
       prior_provider_item_id: 'provider-workspace-1',
       provider_item_id: 'provider-workspace-2',
       superseded_provider_item_id: 'provider-workspace-1',
@@ -123,6 +126,9 @@ test('workspace context delivery cannot append stale context when replacement is
   assert.throws(() => workspaceContextDeliverySchema.parse({
     capability: 'replace_provider_item',
     delivered: true,
+    session_epoch: 1,
+    workspace_instance_id: 'wi-a',
+    revision: 2,
     prior_provider_item_id: 'provider-workspace-1',
     provider_item_id: 'provider-workspace-2',
     superseded_provider_item_id: null,
@@ -130,13 +136,69 @@ test('workspace context delivery cannot append stale context when replacement is
   assert.throws(() => workspaceContextDeliverySchema.parse({
     capability: 'unavailable',
     delivered: true,
-  }), /unavailable/u)
+    session_epoch: 1,
+    workspace_instance_id: 'wi-a',
+    revision: 2,
+    prior_provider_item_id: null,
+  }), /expected false/u)
   assert.doesNotThrow(() => workspaceContextDeliverySchema.parse({
     capability: 'refresh_session',
     delivered: true,
+    session_epoch: 1,
+    workspace_instance_id: 'wi-a',
+    revision: 2,
     prior_provider_item_id: 'provider-workspace-1',
     refresh_id: 'refresh-2',
   }))
+})
+
+test('workspace context injection binds its delivery proof and rejects unavailable delivery', () => {
+  const item = hostContextItemSchema.parse({
+    kind: 'workspace_context',
+    host_item_id: 'workspace-header-3',
+    event_id: 'workspace-event-3',
+    content: '<workspace_context kind="data">current workspace</workspace_context>',
+    session_epoch: 3,
+    workspace_instance_id: 'wi-a',
+    revision: 3,
+  })
+  const unavailableDelivery = {
+    capability: 'unavailable' as const,
+    delivered: false,
+    session_epoch: 3,
+    workspace_instance_id: 'wi-a',
+    revision: 3,
+    prior_provider_item_id: null,
+  }
+
+  assert.throws(() => workspaceContextInjectionSchema.parse({
+    item,
+    asUserActivation: false,
+    delivery: unavailableDelivery,
+  }), /unavailable/u)
+  assert.throws(() => workspaceContextDeliverySchema.parse({
+    capability: 'replace_provider_item',
+    delivered: true,
+    session_epoch: 3,
+    workspace_instance_id: 'wi-a',
+    revision: 3,
+    provider_item_id: 'provider-workspace-3',
+    superseded_provider_item_id: null,
+  }), /prior_provider_item_id/u)
+  assert.throws(() => workspaceContextInjectionSchema.parse({
+    item,
+    asUserActivation: false,
+    delivery: {
+      capability: 'replace_provider_item',
+      delivered: true,
+      session_epoch: 3,
+      workspace_instance_id: 'wi-other',
+      revision: 3,
+      prior_provider_item_id: null,
+      provider_item_id: 'provider-workspace-3',
+      superseded_provider_item_id: null,
+    },
+  }), /workspace_instance_id/u)
 })
 
 test('normalized provider events reject malformed identities, text, JSON and PCM', () => {

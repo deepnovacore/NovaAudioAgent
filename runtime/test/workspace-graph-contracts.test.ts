@@ -10,11 +10,12 @@ import {
   RecallPackSchema,
   RelationCardSchema,
   WorkspaceInstanceSchema,
+  workspaceGraphFixtureJsonSchema,
   workspaceGraphFixtureFamilySchema,
 } from '../src/workspace-graph/models.js'
 import {
-  hostContextItemSchema,
-  workspaceContextDeliverySchema,
+  workspaceContextDeliveryRecordSchema,
+  workspaceContextInjectionSchema,
 } from '../src/realtime/protocol.js'
 
 const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/workspace-graph')
@@ -65,13 +66,13 @@ test('workspace graph fixtures parse and re-serialize canonically', () => {
     const parsed = RecallPackSchema.parse(entry.value)
     assert.deepEqual(JSON.parse(JSON.stringify(parsed)), entry.value)
   }
-  for (const entry of fixtureFamily.host_items.host_item_cases) {
-    const parsed = hostContextItemSchema.parse(entry.value)
+  for (const entry of fixtureFamily.host_items.workspace_context_delivery_cases) {
+    const parsed = workspaceContextDeliveryRecordSchema.parse(entry.value)
     assert.deepEqual(JSON.parse(JSON.stringify(parsed)), entry.value)
-  }
-  for (const entry of fixtureFamily.host_items.delivery_cases) {
-    const parsed = workspaceContextDeliverySchema.parse(entry.value)
-    assert.deepEqual(JSON.parse(JSON.stringify(parsed)), entry.value)
+    assert.equal(
+      workspaceContextInjectionSchema.safeParse(entry.value).success,
+      entry.value.delivery.capability !== 'unavailable',
+    )
   }
 })
 
@@ -127,7 +128,64 @@ test('fixtures cover every observation type, relation status, confidence boundar
   assert.ok(fixtureFamily.relations.cases.some(entry => entry.value.confidence === 0))
   assert.ok(fixtureFamily.relations.cases.some(entry => entry.value.confidence === 1))
   assert.deepEqual(
-    new Set(fixtureFamily.host_items.delivery_cases.map(entry => entry.value.capability)),
+    new Set(fixtureFamily.host_items.workspace_context_delivery_cases.map(
+      entry => entry.value.delivery.capability,
+    )),
     new Set(['replace_provider_item', 'refresh_session', 'unavailable']),
   )
 })
+
+test('generated fixture schema retains runtime-neutral relation and workspace-context invariants', () => {
+  const schema = workspaceGraphFixtureJsonSchema() as {
+    readonly properties: Record<string, unknown>
+  }
+  const properties = schema.properties
+  const relation = nestedSchema(properties, 'relations', 'properties', 'cases', 'items', 'properties', 'value')
+  const reason = nestedSchema(relation, 'properties', 'reason')
+  const evidenceRefs = nestedSchema(relation, 'properties', 'evidence_refs')
+  assert.equal(reason.minLength, 1)
+  assert.equal(reason.maxLength, 239)
+  assert.equal(evidenceRefs.minItems, undefined)
+  assert.deepEqual(relation.allOf, [{
+    if: {
+      properties: {status: {enum: ['active', 'weak', 'stale']}},
+      required: ['status'],
+    },
+    then: {
+      properties: {evidence_refs: {minItems: 1}},
+      required: ['evidence_refs'],
+    },
+  }])
+  assert.deepEqual(relation['x-nova-cross-field'], {
+    last_seen_at: {gte: 'first_seen_at'},
+    evidence_refs: {unique_by: ['source', 'ref']},
+  })
+
+  const injection = nestedSchema(
+    properties,
+    'host_items',
+    'properties',
+    'workspace_context_delivery_cases',
+    'items',
+    'properties',
+    'value',
+  )
+  const item = nestedSchema(injection, 'properties', 'item')
+  assert.ok(Array.isArray(item.allOf))
+  assert.deepEqual(injection['x-nova-cross-field'], {
+    equals: [
+      ['item.session_epoch', 'delivery.session_epoch'],
+      ['item.workspace_instance_id', 'delivery.workspace_instance_id'],
+      ['item.revision', 'delivery.revision'],
+    ],
+  })
+})
+
+function nestedSchema(
+  value: unknown,
+  ...path: readonly string[]
+): Record<string, unknown> {
+  let current: unknown = value
+  for (const key of path) current = (current as Record<string, unknown>)[key]
+  return current as Record<string, unknown>
+}

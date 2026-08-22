@@ -103,6 +103,16 @@ const hostItem = hostContextItemSchema.parse({
   content: 'done',
 })
 
+const workspaceContextItem = hostContextItemSchema.parse({
+  kind: 'workspace_context',
+  host_item_id: 'workspace-header-1',
+  event_id: 'workspace-event-1',
+  content: '<workspace_context kind="data">current workspace</workspace_context>',
+  session_epoch: 1,
+  workspace_instance_id: 'wi-a',
+  revision: 1,
+})
+
 test('provider session requires increasing epochs and resets through one reconnect path', async () => {
   const provider = new FakeProvider()
   provider.identities.push({epoch: 2, provider_session_id: 'session-2'})
@@ -235,6 +245,24 @@ test('audio and host delivery are validated and correlated before crossing the p
     provider_item_id: 'wrong-epoch',
   }
   await assert.rejects(session.injectHostItem(hostItem), /identity mismatch/u)
+  await session.close()
+})
+
+test('provider session rejects workspace context until a provider capability is proven', async () => {
+  const provider = new FakeProvider()
+  provider.itemIdentity = {
+    session_epoch: 1,
+    host_item_id: 'workspace-header-1',
+    provider_item_id: 'provider-workspace-1',
+  }
+  const session = new RealtimeProviderSession(provider)
+  await session.connect()
+
+  await assert.rejects(
+    session.injectHostItem(workspaceContextItem),
+    /workspace context.*unavailable/u,
+  )
+  assert.equal(provider.injected.length, 0)
   await session.close()
 })
 

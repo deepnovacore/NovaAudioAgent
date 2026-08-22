@@ -324,6 +324,9 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     },
   ): Promise<ItemIdentity> {
     if (this.#epoch < 1) throw new QwenRealtimeError('qwen realtime is not connected')
+    if (item.kind === 'workspace_context') {
+      throw new QwenRealtimeError('workspace context delivery is unavailable until provider capability is proven')
+    }
     if (options.asUserActivation && item.kind !== 'progress' && item.kind !== 'final') {
       throw new TypeError('user activation requires a Guard progress or final item')
     }

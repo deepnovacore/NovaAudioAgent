@@ -1,44 +1,78 @@
 {
-  "host_item_cases": [
-    {
-      "id": "workspace-header-revision-one",
-      "value": {
-        "kind": "workspace_context",
-        "host_item_id": "workspace-header-1",
-        "event_id": "workspace-event-1",
-        "content": "<workspace_context kind=\"data\">current workspace</workspace_context>",
-        "call_id": null,
-        "session_epoch": 2,
-        "workspace_instance_id": "wi-nova-main",
-        "revision": 1
-      }
-    }
-  ],
-  "delivery_cases": [
+  "workspace_context_delivery_cases": [
     {
       "id": "replace-provider-item",
       "value": {
-        "capability": "replace_provider_item",
-        "delivered": true,
-        "prior_provider_item_id": "provider-workspace-1",
-        "provider_item_id": "provider-workspace-2",
-        "superseded_provider_item_id": "provider-workspace-1"
+        "item": {
+          "kind": "workspace_context",
+          "host_item_id": "workspace-header-2",
+          "event_id": "workspace-event-2",
+          "content": "<workspace_context kind=\"data\">current workspace</workspace_context>",
+          "call_id": null,
+          "session_epoch": 2,
+          "workspace_instance_id": "wi-nova-main",
+          "revision": 2
+        },
+        "asUserActivation": false,
+        "delivery": {
+          "capability": "replace_provider_item",
+          "delivered": true,
+          "session_epoch": 2,
+          "workspace_instance_id": "wi-nova-main",
+          "revision": 2,
+          "prior_provider_item_id": "provider-workspace-1",
+          "provider_item_id": "provider-workspace-2",
+          "superseded_provider_item_id": "provider-workspace-1"
+        }
       }
     },
     {
       "id": "refresh-session",
       "value": {
-        "capability": "refresh_session",
-        "delivered": true,
-        "prior_provider_item_id": "provider-workspace-2",
-        "refresh_id": "refresh-3"
+        "item": {
+          "kind": "workspace_context",
+          "host_item_id": "workspace-header-3",
+          "event_id": "workspace-event-3",
+          "content": "<workspace_context kind=\"data\">current workspace</workspace_context>",
+          "call_id": null,
+          "session_epoch": 3,
+          "workspace_instance_id": "wi-nova-main",
+          "revision": 3
+        },
+        "asUserActivation": false,
+        "delivery": {
+          "capability": "refresh_session",
+          "delivered": true,
+          "session_epoch": 3,
+          "workspace_instance_id": "wi-nova-main",
+          "revision": 3,
+          "prior_provider_item_id": "provider-workspace-2",
+          "refresh_id": "refresh-3"
+        }
       }
     },
     {
       "id": "unavailable",
       "value": {
-        "capability": "unavailable",
-        "delivered": false
+        "item": {
+          "kind": "workspace_context",
+          "host_item_id": "workspace-header-4",
+          "event_id": "workspace-event-4",
+          "content": "<workspace_context kind=\"data\">current workspace</workspace_context>",
+          "call_id": null,
+          "session_epoch": 4,
+          "workspace_instance_id": "wi-nova-main",
+          "revision": 4
+        },
+        "asUserActivation": false,
+        "delivery": {
+          "capability": "unavailable",
+          "delivered": false,
+          "session_epoch": 4,
+          "workspace_instance_id": "wi-nova-main",
+          "revision": 4,
+          "prior_provider_item_id": null
+        }
       }
     }
   ]

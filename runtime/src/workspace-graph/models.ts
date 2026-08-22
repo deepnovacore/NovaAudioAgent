@@ -1,22 +1,14 @@
 import { z } from 'zod'
 import {
-  hostContextItemSchema,
-  workspaceContextDeliverySchema,
+  workspaceContextDeliveryRecordSchema,
 } from '../realtime/protocol.js'
 
-const nonemptyStableIdSchema = z.string().refine(
-  value => value.trim().length > 0,
-  'stable id must be non-empty',
-)
+const nonemptyStableIdSchema = z.string().min(1).regex(/\S/u, 'stable id must be non-empty')
 const timestampSchema = z.number().finite().nonnegative()
 const revisionSchema = z.number().int().nonnegative()
 const confidenceSchema = z.number().finite().min(0).max(1)
-const reasonSchema = z.string()
-  .refine(value => value.trim().length > 0, 'reason must be non-empty')
-  .refine(value => [...value].length < 240, 'reason must be under 240 characters')
-const labelSchema = z.string()
-  .refine(value => value.trim().length > 0, 'label must be non-empty')
-  .refine(value => [...value].length < 240, 'label must be under 240 characters')
+const reasonSchema = z.string().min(1).max(239).regex(/\S/u, 'reason must be non-empty')
+const labelSchema = z.string().min(1).max(239).regex(/\S/u, 'label must be non-empty')
 
 export const EvidenceRefSchema = z.object({
   source: z.enum(['runtime', 'filesystem', 'git', 'executor', 'user', 'provider']),
@@ -194,8 +186,9 @@ export const recallPackFixtureSchema = z.object({
 }).strict()
 
 export const hostItemFixtureSchema = z.object({
-  host_item_cases: z.array(fixtureCaseSchema(hostContextItemSchema)).min(1),
-  delivery_cases: z.array(fixtureCaseSchema(workspaceContextDeliverySchema)).min(1),
+  workspace_context_delivery_cases: z.array(
+    fixtureCaseSchema(workspaceContextDeliveryRecordSchema),
+  ).min(1),
 }).strict()
 
 export const workspaceGraphFixtureFamilySchema = z.object({
@@ -216,5 +209,75 @@ export type ContextHeader = Readonly<z.infer<typeof ContextHeaderSchema>>
 export type RecallPack = Readonly<z.infer<typeof RecallPackSchema>>
 
 export function workspaceGraphFixtureJsonSchema(): z.core.JSONSchema.JSONSchema {
-  return z.toJSONSchema(workspaceGraphFixtureFamilySchema)
+  const schema = z.toJSONSchema(workspaceGraphFixtureFamilySchema) as JsonSchemaObject
+  const relation = schemaAt(schema, 'properties', 'relations', 'properties', 'cases', 'items', 'properties', 'value')
+  relation.allOf = [{
+    if: {
+      properties: {status: {enum: ['active', 'weak', 'stale']}},
+      required: ['status'],
+    },
+    then: {
+      properties: {evidence_refs: {minItems: 1}},
+      required: ['evidence_refs'],
+    },
+  }]
+  relation['x-nova-cross-field'] = {
+    last_seen_at: {gte: 'first_seen_at'},
+    evidence_refs: {unique_by: ['source', 'ref']},
+  }
+
+  const injection = schemaAt(
+    schema,
+    'properties', 'host_items', 'properties', 'workspace_context_delivery_cases',
+    'items', 'properties', 'value',
+  )
+  const item = schemaAt(injection, 'properties', 'item')
+  item.allOf = [{
+    if: {
+      properties: {kind: {const: 'workspace_context'}},
+      required: ['kind'],
+    },
+    then: {required: ['session_epoch', 'workspace_instance_id', 'revision']},
+    else: {
+      not: {
+        anyOf: [
+          {required: ['session_epoch']},
+          {required: ['workspace_instance_id']},
+          {required: ['revision']},
+        ],
+      },
+    },
+  }]
+  injection.allOf = [{
+    properties: {
+      item: {
+        properties: {kind: {const: 'workspace_context'}},
+        required: ['kind'],
+      },
+    },
+    required: ['item'],
+  }]
+  injection['x-nova-cross-field'] = {
+    equals: [
+      ['item.session_epoch', 'delivery.session_epoch'],
+      ['item.workspace_instance_id', 'delivery.workspace_instance_id'],
+      ['item.revision', 'delivery.revision'],
+    ],
+  }
+  const delivery = schemaAt(injection, 'properties', 'delivery')
+  delivery['x-nova-cross-field'] = {
+    superseded_provider_item_id: {
+      equals: 'prior_provider_item_id',
+      when: {capability: 'replace_provider_item'},
+    },
+  }
+  return schema
+}
+
+type JsonSchemaObject = Record<string, unknown>
+
+function schemaAt(schema: JsonSchemaObject, ...path: readonly string[]): JsonSchemaObject {
+  let current: unknown = schema
+  for (const key of path) current = (current as JsonSchemaObject)[key]
+  return current as JsonSchemaObject
 }

@@ -99,92 +99,62 @@ export const workspaceContextDeliveryCapabilitySchema = z.enum([
  * never left visible while a newer revision is accepted: it is either superseded explicitly or a
  * session refresh is recorded. `unavailable` is intentionally a non-delivery state.
  */
-export const workspaceContextDeliverySchema = z.object({
-  capability: workspaceContextDeliveryCapabilitySchema,
-  delivered: z.boolean(),
-  prior_provider_item_id: realtimeIdentifierSchema.nullable().optional(),
-  provider_item_id: realtimeIdentifierSchema.optional(),
-  superseded_provider_item_id: realtimeIdentifierSchema.nullable().optional(),
-  refresh_id: realtimeIdentifierSchema.optional(),
+const workspaceContextDeliveryIdentity = {
+  session_epoch: epochSchema,
+  workspace_instance_id: realtimeIdentifierSchema,
+  revision: z.number().int().nonnegative(),
+  // The adapter must attest to the prior provider-visible state, even when it was empty.
+  prior_provider_item_id: realtimeIdentifierSchema.nullable(),
+}
+
+const replaceWorkspaceContextDeliverySchema = z.object({
+  capability: z.literal('replace_provider_item'),
+  delivered: z.literal(true),
+  ...workspaceContextDeliveryIdentity,
+  provider_item_id: realtimeIdentifierSchema,
+  superseded_provider_item_id: realtimeIdentifierSchema.nullable(),
 }).strict().superRefine((delivery, context) => {
-  if (delivery.capability === 'unavailable') {
-    if (delivery.delivered) {
-      context.addIssue({
-        code: 'custom',
-        path: ['delivered'],
-        message: 'workspace context is unavailable and cannot be injected',
-      })
-    }
-    if (
-      delivery.provider_item_id !== undefined
-      || delivery.superseded_provider_item_id !== undefined
-      || delivery.refresh_id !== undefined
-    ) {
-      context.addIssue({
-        code: 'custom',
-        message: 'unavailable workspace context has no provider-visible delivery',
-      })
-    }
-    return
-  }
-  if (!delivery.delivered) {
+  if (delivery.superseded_provider_item_id !== delivery.prior_provider_item_id) {
     context.addIssue({
       code: 'custom',
-      path: ['delivered'],
-      message: 'available workspace context capability must deliver the item',
+      path: ['superseded_provider_item_id'],
+      message: 'prior provider state must be explicitly superseded before a newer revision is visible',
     })
   }
-  if (delivery.capability === 'replace_provider_item') {
-    if (delivery.provider_item_id === undefined) {
-      context.addIssue({
-        code: 'custom',
-        path: ['provider_item_id'],
-        message: 'replacement delivery requires a provider item id',
-      })
-    }
-    if (delivery.prior_provider_item_id !== undefined && delivery.prior_provider_item_id !== null) {
-      if (delivery.superseded_provider_item_id !== delivery.prior_provider_item_id) {
-        context.addIssue({
-          code: 'custom',
-          path: ['superseded_provider_item_id'],
-          message: 'previous provider item must be superseded before a newer revision is visible',
-        })
-      }
-      if (delivery.provider_item_id === delivery.prior_provider_item_id) {
-        context.addIssue({
-          code: 'custom',
-          path: ['provider_item_id'],
-          message: 'newer revision requires a distinct provider item id',
-        })
-      }
-    }
-    if (delivery.refresh_id !== undefined) {
-      context.addIssue({
-        code: 'custom',
-        path: ['refresh_id'],
-        message: 'replacement delivery cannot also refresh the session',
-      })
-    }
-    return
-  }
-  if (delivery.refresh_id === undefined) {
+  if (
+    delivery.prior_provider_item_id !== null
+    && delivery.provider_item_id === delivery.prior_provider_item_id
+  ) {
     context.addIssue({
       code: 'custom',
-      path: ['refresh_id'],
-      message: 'session refresh delivery requires a refresh id before visibility',
-    })
-  }
-  if (delivery.provider_item_id !== undefined || delivery.superseded_provider_item_id !== undefined) {
-    context.addIssue({
-      code: 'custom',
-      message: 'session refresh delivery cannot append or replace a provider item',
+      path: ['provider_item_id'],
+      message: 'newer revision requires a distinct provider item id',
     })
   }
 })
 
-export const workspaceContextInjectionSchema = z.object({
+const refreshWorkspaceContextDeliverySchema = z.object({
+  capability: z.literal('refresh_session'),
+  delivered: z.literal(true),
+  ...workspaceContextDeliveryIdentity,
+  refresh_id: realtimeIdentifierSchema,
+}).strict()
+
+const unavailableWorkspaceContextDeliverySchema = z.object({
+  capability: z.literal('unavailable'),
+  delivered: z.literal(false),
+  ...workspaceContextDeliveryIdentity,
+}).strict()
+
+export const workspaceContextDeliverySchema = z.discriminatedUnion('capability', [
+  replaceWorkspaceContextDeliverySchema,
+  refreshWorkspaceContextDeliverySchema,
+  unavailableWorkspaceContextDeliverySchema,
+])
+
+export const workspaceContextDeliveryRecordSchema = z.object({
   item: hostContextItemSchema,
-  asUserActivation: z.boolean(),
+  asUserActivation: z.literal(false),
   delivery: workspaceContextDeliverySchema,
 }).strict().superRefine((injection, context) => {
   if (injection.item.kind !== 'workspace_context') {
@@ -194,17 +164,32 @@ export const workspaceContextInjectionSchema = z.object({
       message: 'workspace context injection requires workspace_context item kind',
     })
   }
-  if (injection.asUserActivation) {
-    context.addIssue({
-      code: 'custom',
-      path: ['asUserActivation'],
-      message: 'workspace context cannot set asUserActivation',
-    })
-  }
+  if (
+    injection.item.session_epoch !== injection.delivery.session_epoch
+    || injection.item.workspace_instance_id !== injection.delivery.workspace_instance_id
+    || injection.item.revision !== injection.delivery.revision
+  ) context.addIssue({
+    code: 'custom',
+    path: ['delivery'],
+    message: 'workspace context delivery proof must bind the exact session_epoch, workspace_instance_id, and revision',
+  })
 })
+
+export const workspaceContextInjectionSchema = workspaceContextDeliveryRecordSchema.superRefine(
+  (injection, context) => {
+    if (injection.delivery.capability === 'unavailable') {
+      context.addIssue({
+        code: 'custom',
+        path: ['delivery', 'capability'],
+        message: 'workspace context is unavailable and cannot be injected',
+      })
+    }
+  },
+)
 
 export type WorkspaceContextDeliveryCapability = z.infer<typeof workspaceContextDeliveryCapabilitySchema>
 export type WorkspaceContextDelivery = z.infer<typeof workspaceContextDeliverySchema>
+export type WorkspaceContextDeliveryRecord = z.infer<typeof workspaceContextDeliveryRecordSchema>
 
 export const hostResponseKindSchema = z.enum([
   'host_fact',

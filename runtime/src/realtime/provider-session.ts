@@ -160,6 +160,11 @@ export class RealtimeProviderSession {
     options: InjectHostItemOptions = {},
   ): Promise<ItemIdentity> {
     const item = hostContextItemSchema.parse(input)
+    if (item.kind === 'workspace_context') {
+      throw new RealtimeProtocolError(
+        'workspace context delivery is unavailable until provider capability is proven',
+      )
+    }
     const confirmationTimeout = options.confirmationTimeout ?? null
     if (
       confirmationTimeout !== null

@@ -182,6 +182,28 @@ test('a host fact carries the Python wording and a Guard activation is labelled'
   }
 })
 
+test('Qwen rejects workspace context until replacement capability is proven', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+
+  await assert.rejects(adapter.injectHostItem({
+    kind: 'workspace_context',
+    host_item_id: 'workspace-header-1',
+    event_id: 'workspace-event-1',
+    content: '<workspace_context kind="data">current workspace</workspace_context>',
+    call_id: null,
+    session_epoch: 1,
+    workspace_instance_id: 'wi-a',
+    revision: 1,
+  }, {
+    confirmationTimeout: 0.001,
+    asUserActivation: false,
+    signal: new AbortController().signal,
+  }), /workspace context.*unavailable/u)
+  assert.equal(scripted.sent.some(frame => frame.type === 'conversation.item.create'), false)
+})
+
 test('a tool output injects a function_call_output item', async () => {
   const scripted = scriptedSocket([...handshake])
   const adapter = adapterFor(scripted)

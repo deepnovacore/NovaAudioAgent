@@ -391,6 +391,7 @@ export class VolcengineCascadedAdapter implements RealtimeProvider {
     } catch {
       throw new VolcengineRealtimeError('configuration')
     }
+    if (item.kind === 'workspace_context') throw new VolcengineRealtimeError('configuration')
     if (options.asUserActivation && item.kind !== 'progress' && item.kind !== 'final') {
       throw new VolcengineRealtimeError('configuration')
     }

@@ -12,13 +12,17 @@
             "type": "object",
             "properties": {
               "id": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "value": {
                 "type": "object",
                 "properties": {
                   "observation_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "observation_type": {
                     "type": "string",
@@ -60,7 +64,9 @@
                   "logical_workspace_id": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "\\S"
                       },
                       {
                         "type": "null"
@@ -70,7 +76,9 @@
                   "workspace_instance_id": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "\\S"
                       },
                       {
                         "type": "null"
@@ -80,7 +88,9 @@
                   "related_logical_workspace_id": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "\\S"
                       },
                       {
                         "type": "null"
@@ -90,7 +100,10 @@
                   "summary": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 239,
+                        "pattern": "\\S"
                       },
                       {
                         "type": "null"
@@ -129,7 +142,9 @@
                           ]
                         },
                         "ref": {
-                          "type": "string"
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "\\S"
                         },
                         "observed_at": {
                           "type": "number",
@@ -184,27 +199,40 @@
             "type": "object",
             "properties": {
               "id": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "value": {
                 "type": "object",
                 "properties": {
                   "logical_workspace_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "display_name": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 239,
+                    "pattern": "\\S"
                   },
                   "aliases": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 239,
+                      "pattern": "\\S"
                     }
                   },
                   "canonical_remote": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 239,
+                        "pattern": "\\S"
                       },
                       {
                         "type": "null"
@@ -251,27 +279,42 @@
             "type": "object",
             "properties": {
               "id": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "value": {
                 "type": "object",
                 "properties": {
                   "instance_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "logical_workspace_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "display_name": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 239,
+                    "pattern": "\\S"
                   },
                   "path_label": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 239,
+                    "pattern": "\\S"
                   },
                   "branch": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 239,
+                        "pattern": "\\S"
                       },
                       {
                         "type": "null"
@@ -281,7 +324,9 @@
                   "repository_fingerprint": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "\\S"
                       },
                       {
                         "type": "null"
@@ -348,16 +393,22 @@
             "type": "object",
             "properties": {
               "id": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "value": {
                 "type": "object",
                 "properties": {
                   "source_logical_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "target_logical_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "relation_type": {
                     "type": "string",
@@ -375,7 +426,10 @@
                     "maximum": 1
                   },
                   "reason": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 239,
+                    "pattern": "\\S"
                   },
                   "evidence_refs": {
                     "type": "array",
@@ -394,7 +448,9 @@
                           ]
                         },
                         "ref": {
-                          "type": "string"
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "\\S"
                         },
                         "observed_at": {
                           "type": "number",
@@ -444,7 +500,46 @@
                   "status",
                   "revision"
                 ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "status": {
+                          "enum": [
+                            "active",
+                            "weak",
+                            "stale"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    },
+                    "then": {
+                      "properties": {
+                        "evidence_refs": {
+                          "minItems": 1
+                        }
+                      },
+                      "required": [
+                        "evidence_refs"
+                      ]
+                    }
+                  }
+                ],
+                "x-nova-cross-field": {
+                  "last_seen_at": {
+                    "gte": "first_seen_at"
+                  },
+                  "evidence_refs": {
+                    "unique_by": [
+                      "source",
+                      "ref"
+                    ]
+                  }
+                }
               }
             },
             "required": [
@@ -470,7 +565,9 @@
             "type": "object",
             "properties": {
               "id": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "value": {
                 "type": "object",
@@ -481,10 +578,14 @@
                     "maximum": 9007199254740991
                   },
                   "workspace_instance_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "logical_workspace_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "revision": {
                     "type": "integer",
@@ -492,7 +593,10 @@
                     "maximum": 9007199254740991
                   },
                   "content": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 239,
+                    "pattern": "\\S"
                   },
                   "token_estimate": {
                     "type": "integer",
@@ -525,16 +629,22 @@
             "type": "object",
             "properties": {
               "id": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "value": {
                 "type": "object",
                 "properties": {
                   "hint_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "logical_workspace_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "relation_type": {
                     "type": "string",
@@ -560,7 +670,10 @@
                     "maximum": 1
                   },
                   "reason": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 239,
+                    "pattern": "\\S"
                   },
                   "evidence_refs": {
                     "minItems": 1,
@@ -580,7 +693,9 @@
                           ]
                         },
                         "ref": {
-                          "type": "string"
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "\\S"
                         },
                         "observed_at": {
                           "type": "number",
@@ -628,7 +743,9 @@
             "type": "object",
             "properties": {
               "id": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "value": {
                 "type": "object",
@@ -639,7 +756,9 @@
                     "maximum": 9007199254740991
                   },
                   "workspace_instance_id": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   },
                   "revision": {
                     "type": "integer",
@@ -647,7 +766,10 @@
                     "maximum": 9007199254740991
                   },
                   "content": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 239,
+                    "pattern": "\\S"
                   },
                   "token_estimate": {
                     "type": "integer",
@@ -661,10 +783,14 @@
                       "type": "object",
                       "properties": {
                         "hint_id": {
-                          "type": "string"
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "\\S"
                         },
                         "logical_workspace_id": {
-                          "type": "string"
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "\\S"
                         },
                         "relation_type": {
                           "type": "string",
@@ -690,7 +816,10 @@
                           "maximum": 1
                         },
                         "reason": {
-                          "type": "string"
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 239,
+                          "pattern": "\\S"
                         },
                         "evidence_refs": {
                           "minItems": 1,
@@ -710,7 +839,9 @@
                                 ]
                               },
                               "ref": {
-                                "type": "string"
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "\\S"
                               },
                               "observed_at": {
                                 "type": "number",
@@ -784,135 +915,331 @@
     "host_items": {
       "type": "object",
       "properties": {
-        "host_item_cases": {
+        "workspace_context_delivery_cases": {
           "minItems": 1,
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
               "id": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
               },
               "value": {
                 "type": "object",
                 "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "progress",
-                      "final",
-                      "recovery",
-                      "dialogue_context",
-                      "tool_output",
-                      "workspace_context"
-                    ]
-                  },
-                  "host_item_id": {
-                    "type": "string"
-                  },
-                  "event_id": {
-                    "type": "string"
-                  },
-                  "content": {
-                    "type": "string"
-                  },
-                  "call_id": {
-                    "default": null,
-                    "anyOf": [
-                      {
+                  "item": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "progress",
+                          "final",
+                          "recovery",
+                          "dialogue_context",
+                          "tool_output",
+                          "workspace_context"
+                        ]
+                      },
+                      "host_item_id": {
                         "type": "string"
                       },
+                      "event_id": {
+                        "type": "string"
+                      },
+                      "content": {
+                        "type": "string"
+                      },
+                      "call_id": {
+                        "default": null,
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "session_epoch": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "workspace_instance_id": {
+                        "type": "string"
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "host_item_id",
+                      "event_id",
+                      "content",
+                      "call_id"
+                    ],
+                    "additionalProperties": false,
+                    "allOf": [
                       {
-                        "type": "null"
+                        "if": {
+                          "properties": {
+                            "kind": {
+                              "const": "workspace_context"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        "then": {
+                          "required": [
+                            "session_epoch",
+                            "workspace_instance_id",
+                            "revision"
+                          ]
+                        },
+                        "else": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "session_epoch"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "workspace_instance_id"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "revision"
+                                ]
+                              }
+                            ]
+                          }
+                        }
                       }
                     ]
                   },
-                  "session_epoch": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
+                  "asUserActivation": {
+                    "type": "boolean",
+                    "const": false
                   },
-                  "workspace_instance_id": {
-                    "type": "string"
-                  },
-                  "revision": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
+                  "delivery": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "capability": {
+                            "type": "string",
+                            "const": "replace_provider_item"
+                          },
+                          "delivered": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "workspace_instance_id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "prior_provider_item_id": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "provider_item_id": {
+                            "type": "string"
+                          },
+                          "superseded_provider_item_id": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "capability",
+                          "delivered",
+                          "session_epoch",
+                          "workspace_instance_id",
+                          "revision",
+                          "prior_provider_item_id",
+                          "provider_item_id",
+                          "superseded_provider_item_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "capability": {
+                            "type": "string",
+                            "const": "refresh_session"
+                          },
+                          "delivered": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "workspace_instance_id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "prior_provider_item_id": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "refresh_id": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "capability",
+                          "delivered",
+                          "session_epoch",
+                          "workspace_instance_id",
+                          "revision",
+                          "prior_provider_item_id",
+                          "refresh_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "capability": {
+                            "type": "string",
+                            "const": "unavailable"
+                          },
+                          "delivered": {
+                            "type": "boolean",
+                            "const": false
+                          },
+                          "session_epoch": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "workspace_instance_id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "prior_provider_item_id": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "capability",
+                          "delivered",
+                          "session_epoch",
+                          "workspace_instance_id",
+                          "revision",
+                          "prior_provider_item_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ],
+                    "x-nova-cross-field": {
+                      "superseded_provider_item_id": {
+                        "equals": "prior_provider_item_id",
+                        "when": {
+                          "capability": "replace_provider_item"
+                        }
+                      }
+                    }
                   }
                 },
                 "required": [
-                  "kind",
-                  "host_item_id",
-                  "event_id",
-                  "content",
-                  "call_id"
+                  "item",
+                  "asUserActivation",
+                  "delivery"
                 ],
-                "additionalProperties": false
-              }
-            },
-            "required": [
-              "id",
-              "value"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "delivery_cases": {
-          "minItems": 1,
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "value": {
-                "type": "object",
-                "properties": {
-                  "capability": {
-                    "type": "string",
-                    "enum": [
-                      "replace_provider_item",
-                      "refresh_session",
-                      "unavailable"
-                    ]
-                  },
-                  "delivered": {
-                    "type": "boolean"
-                  },
-                  "prior_provider_item_id": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "properties": {
+                      "item": {
+                        "properties": {
+                          "kind": {
+                            "const": "workspace_context"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ]
                       }
+                    },
+                    "required": [
+                      "item"
                     ]
-                  },
-                  "provider_item_id": {
-                    "type": "string"
-                  },
-                  "superseded_provider_item_id": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "refresh_id": {
-                    "type": "string"
                   }
-                },
-                "required": [
-                  "capability",
-                  "delivered"
                 ],
-                "additionalProperties": false
+                "x-nova-cross-field": {
+                  "equals": [
+                    [
+                      "item.session_epoch",
+                      "delivery.session_epoch"
+                    ],
+                    [
+                      "item.workspace_instance_id",
+                      "delivery.workspace_instance_id"
+                    ],
+                    [
+                      "item.revision",
+                      "delivery.revision"
+                    ]
+                  ]
+                }
               }
             },
             "required": [
@@ -924,8 +1251,7 @@
         }
       },
       "required": [
-        "host_item_cases",
-        "delivery_cases"
+        "workspace_context_delivery_cases"
       ],
       "additionalProperties": false
     }
