@@ -53,6 +53,8 @@ transport. Camera file input accepts only an absolute host-validated path.
 
 Live provider, microphone/speaker, camera, Codex login, WindowServer, Windows descendant cleanup,
 clean-machine installer, signing, and publication checks are pending external evidence.
+Unpublished packaged candidates select Node automatically and cannot select the source-only Python
+rollback. Source development still defaults to Python until the Node-default release is published.
 
 ## Public environment reference
 

@@ -51,6 +51,8 @@ ordinary/live/project 模式共用有界 app-server transport。Camera 文件输
 
 真实 provider、麦克风/扬声器、Camera、Codex 登录、WindowServer、Windows 后代进程清理、
 clean-machine installer、签名和发布仍是 pending external evidence。
+尚未发布的安装候选会自动选择 Node，不能选择仅供源码使用的 Python 回滚；在 Node-default
+版本真正发布前，源码开发仍默认 Python。
 
 ## 公共环境变量参考
 

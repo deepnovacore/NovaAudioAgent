@@ -1,8 +1,8 @@
 # Nova Audio Agent Node Runtime Migration Plan
 
-Status: repository implementation has reached Task 8A product-contract closure. Python remains the
-default/source oracle and Node remains opt-in development; Task 8B/8C distribution and external
-acceptance are still pending. Updated 2026-08-21.
+Status: repository-owned Task 8B release-candidate implementation is present. Packaged candidates
+default to Node while Python remains the source-development default/oracle. Signed platform runs,
+external acceptance, publication, and Task 8C remain pending. Updated 2026-08-22.
 
 ## Outcome
 

@@ -126,10 +126,11 @@ executor 的完成并不待在一个回合制的 `reason → act → observe` �
 
 ## 4. 快速开始
 
-> **迁移状态：** 本回滚发布期仍以 Python 为默认后端和源码 oracle，Node 只供显式 opt-in
-> 源码开发。Node Codex 仅使用 app-server，JSONL 仅为 fixture-parser-only。HA/AutoGLM 已在
-> Node 中退役，只暂留在 Python 源码回滚中。安装包、clean-machine、硬件、签名、Node 默认
-> 切换和发布均为 pending external evidence。
+> **迁移状态：** 尚未发布的安装候选默认使用 Node；安装包中显式选择 Python 会稳定返回
+> `source_rollback_unavailable`。源码开发仍默认 Python，并保留显式
+> `NOVA_AUDIO_AGENT_BACKEND=python` 回滚。Node Codex 仅使用 app-server，JSONL 仅为
+> fixture-parser-only。三平台签名候选、clean-machine、硬件和发布证据仍为 pending；这不是
+> 已发布的 Node-default 声明。
 
 环境要求：Python 3.11+、[uv](https://docs.astral.sh/uv/)、支持子模块的 Git、Node.js 22+
 （可选的桌面应用需要），以及 macOS（Ambient Orb 原生音频采集需要）。

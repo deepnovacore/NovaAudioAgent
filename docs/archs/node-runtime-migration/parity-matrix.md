@@ -1,8 +1,8 @@
 # Nova Audio Agent Python to Node Parity Matrix
 
-Status: repository parity implementation through Task 8A is active as of 2026-08-21. Python remains
-the default/source oracle; Node remains opt-in development. Distribution and external acceptance
-are pending external evidence.
+Status: repository parity and Task 8B release-candidate implementation are active as of 2026-08-22.
+Packaged candidates default to Node; Python remains the source-development default/oracle.
+Signed three-platform runs and external acceptance remain pending evidence.
 
 ## How to Use This Matrix
 

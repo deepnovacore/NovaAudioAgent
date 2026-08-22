@@ -1,8 +1,8 @@
 # Nova Audio Agent Node Runtime Migration Backlog
 
-Status: repository implementation has reached Task 8A product-contract closure. Task 8B built
-artifacts/platform installers and Task 8C external acceptance/default switch remain open. Updated
-2026-08-21.
+Status: repository-owned Task 8B release-candidate implementation is present. Signed platform runs,
+external acceptance, and the published default switch remain open; Task 8C has not started. Updated
+2026-08-22.
 
 The decision-complete implementation sequence lives in
 [`plan.md`](plan.md). Test ownership and the

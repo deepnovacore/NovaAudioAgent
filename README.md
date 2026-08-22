@@ -145,11 +145,12 @@ speakers. The longer rationale is in [Design essence](docs/essence.md) and the
 Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), Git with submodule support,
 Node.js 22+ for the optional desktop application, and macOS for native Ambient Orb audio capture.
 
-> **Migration status:** Python is still the default and source oracle for this rollback release;
-> Node is opt-in for source development. Node Codex is app-server-only and JSONL is
+> **Migration status:** unpublished packaged release candidates default to Node and reject an
+> installed-app Python selection with `source_rollback_unavailable`. Source development still
+> defaults to Python and keeps explicit `NOVA_AUDIO_AGENT_BACKEND=python` rollback. Node Codex is app-server-only and JSONL is
 > fixture-parser-only. HA/AutoGLM are retired in Node and remain temporarily only in the Python
-> source rollback. Installer, clean-machine, hardware, signing, Node-default, and publication gates
-> are pending external evidence.
+> source rollback. Signed three-platform candidate, clean-machine, hardware, and publication
+> evidence remains pending; this is not a released Node-default claim.
 
 ### Named Codex workspaces and Sessions
 
