@@ -139,6 +139,58 @@ test('Ark abandons only an unfinished tool continuation before an unrelated resp
   await session.close()
 })
 
+test('Ark does not commit a tool continuation before its consumer resumes past the tool event',
+  async () => {
+    const requests: Record<string, unknown>[] = []
+    const responses = [
+      sse(
+        {type: 'response.created', response: {id: 'ark-completed-history'}},
+        {type: 'response.completed', response: {id: 'ark-completed-history'}},
+      ),
+      sse(
+        {type: 'response.created', response: {id: 'ark-unaccepted-tool'}},
+        {type: 'response.output_item.done', item: {
+          type: 'function_call', id: 'item-unaccepted', call_id: 'call-unaccepted',
+          name: 'weather', arguments: '{}',
+        }},
+        {type: 'response.completed', response: {id: 'ark-unaccepted-tool'}},
+      ),
+      sse(
+        {type: 'response.created', response: {id: 'ark-after-cancel'}},
+        {type: 'response.completed', response: {id: 'ark-after-cancel'}},
+      ),
+    ]
+    const session = createArkCascadedLlmFactory({
+      baseUrl: 'https://ark.example/api/v3', apiKey: 'ark-secret', model: 'ark-model',
+      instructions: 'instructions',
+      fetchImpl: (_url, init) => {
+        requests.push(JSON.parse(init?.body as string) as Record<string, unknown>)
+        return Promise.resolve(responses.shift()!)
+      },
+    }).open()
+    const request = (text: string) => session.stream({
+      inputs: [{kind: 'user_text', text}], tools: [], signal: new AbortController().signal,
+    })
+
+    await collect(request('completed history'))
+    const interrupted = request('tool response')[Symbol.asyncIterator]()
+    assert.deepEqual(await interrupted.next(), {
+      done: false, value: {kind: 'response_started', response_id: 'ark-unaccepted-tool'},
+    })
+    assert.deepEqual(await interrupted.next(), {
+      done: false, value: {
+        kind: 'tool_call', item_id: 'item-unaccepted', call_id: 'call-unaccepted',
+        name: 'weather', arguments: {},
+      },
+    })
+    await interrupted.return?.()
+    await collect(request('after cancellation'))
+
+    assert.equal(requests[1]?.previous_response_id, 'ark-completed-history')
+    assert.equal(requests[2]?.previous_response_id, 'ark-completed-history')
+    await session.close()
+  })
+
 test('Ark clears private chaining after a protocol failure and exposes only a safe common failure', async () => {
   const requests: Record<string, unknown>[] = []
   const responses = [

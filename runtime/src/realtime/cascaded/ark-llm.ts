@@ -122,10 +122,10 @@ class Session implements CascadedLlmSession {
           pendingTool = structuredClone(event)
         } else if (event.kind === 'response_completed') {
           if (responseId === null || event.response_id !== responseId) throw fail('protocol')
-          this.#previousResponseId = event.response_id
-          this.#pendingToolContinuation = pendingTool !== null
           terminal = true
           if (pendingTool !== null) yield pendingTool
+          this.#previousResponseId = event.response_id
+          this.#pendingToolContinuation = pendingTool !== null
           yield event
           return
         } else {
