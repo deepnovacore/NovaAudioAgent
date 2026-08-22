@@ -160,6 +160,12 @@ test('generated fixture schema retains runtime-neutral relation and workspace-co
     last_seen_at: {gte: 'first_seen_at'},
     evidence_refs: {unique_by: ['source', 'ref']},
   })
+  const aliases = nestedSchema(
+    properties,
+    'cards', 'properties', 'logical_workspace_cases', 'items', 'properties', 'value',
+    'properties', 'aliases',
+  )
+  assert.equal(aliases.uniqueItems, true)
 
   const injection = nestedSchema(
     properties,
@@ -178,6 +184,20 @@ test('generated fixture schema retains runtime-neutral relation and workspace-co
       ['item.workspace_instance_id', 'delivery.workspace_instance_id'],
       ['item.revision', 'delivery.revision'],
     ],
+  })
+  const delivery = nestedSchema(injection, 'properties', 'delivery')
+  assert.deepEqual(delivery['x-nova-cross-field'], {
+    superseded_provider_item_id: {
+      equals: 'prior_provider_item_id',
+      when: {capability: 'replace_provider_item'},
+    },
+    provider_item_id: {
+      not_equals: 'prior_provider_item_id',
+      when: {
+        capability: 'replace_provider_item',
+        prior_provider_item_id: {not: null},
+      },
+    },
   })
 })
 

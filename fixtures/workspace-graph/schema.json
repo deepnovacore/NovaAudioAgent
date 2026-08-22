@@ -224,7 +224,8 @@
                       "minLength": 1,
                       "maxLength": 239,
                       "pattern": "\\S"
-                    }
+                    },
+                    "uniqueItems": true
                   },
                   "canonical_remote": {
                     "anyOf": [
@@ -1194,6 +1195,15 @@
                         "equals": "prior_provider_item_id",
                         "when": {
                           "capability": "replace_provider_item"
+                        }
+                      },
+                      "provider_item_id": {
+                        "not_equals": "prior_provider_item_id",
+                        "when": {
+                          "capability": "replace_provider_item",
+                          "prior_provider_item_id": {
+                            "not": null
+                          }
                         }
                       }
                     }

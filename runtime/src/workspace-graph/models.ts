@@ -225,6 +225,12 @@ export function workspaceGraphFixtureJsonSchema(): z.core.JSONSchema.JSONSchema 
     last_seen_at: {gte: 'first_seen_at'},
     evidence_refs: {unique_by: ['source', 'ref']},
   }
+  const aliases = schemaAt(
+    schema,
+    'properties', 'cards', 'properties', 'logical_workspace_cases',
+    'items', 'properties', 'value', 'properties', 'aliases',
+  )
+  aliases.uniqueItems = true
 
   const injection = schemaAt(
     schema,
@@ -269,6 +275,13 @@ export function workspaceGraphFixtureJsonSchema(): z.core.JSONSchema.JSONSchema 
     superseded_provider_item_id: {
       equals: 'prior_provider_item_id',
       when: {capability: 'replace_provider_item'},
+    },
+    provider_item_id: {
+      not_equals: 'prior_provider_item_id',
+      when: {
+        capability: 'replace_provider_item',
+        prior_provider_item_id: {not: null},
+      },
     },
   }
   return schema
