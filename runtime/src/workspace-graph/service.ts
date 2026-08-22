@@ -658,6 +658,23 @@ function containsOtherCategory(value: string): boolean {
   return false
 }
 
+function containsDeniedFreeTextCategory(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0)
+    if (codePoint === 0x09 || codePoint === 0x0a || codePoint === 0x0d) continue
+    if (codePoint !== undefined && isOtherCategory(codePoint)) return true
+  }
+  return false
+}
+
+function looksLikeInstruction(value: string): boolean {
+  return /\b(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|user)\s+(?:instructions?|prompts?|messages?)\b/iu.test(value)
+    || /\b(?:system|assistant|developer|user)\s*:/iu.test(value)
+    || /<\/?(?:system|assistant|developer|user)>|\[(?:system|assistant|developer|user)\]/iu.test(value)
+    || /\b(?:please\s+)?(?:run|execute|invoke|call|use|open|delete|send|write|switch)\s+(?:the\s+)?(?:tool|command|shell|terminal|workspace|file|message|request)\b/iu.test(value)
+    || /(?:(?:请|必须|务必).{0,12})?(?:执行|运行|调用|切换|删除|发送|写入)(?:工具|命令|终端|工作区|文件|消息)(?:\s|$|[。！!])/u.test(value)
+}
+
 function utf8Length(value: string): number {
   return new TextEncoder().encode(value).byteLength
 }
@@ -681,6 +698,14 @@ function scrubFreeText(
   pathPolicy: SensitivePathPolicy,
   contentPolicy: SensitiveContentPolicy,
 ): string | null {
+  if (!isWellFormed(value)) return null
+  const normalized = normalizeNfkcPinned(value)
+  if (
+    !isWellFormed(normalized)
+    || containsDeniedFreeTextCategory(value)
+    || containsDeniedFreeTextCategory(normalized)
+    || looksLikeInstruction(normalized)
+  ) return null
   const content = contentPolicy.scrub(field, value)
   if (content.kind === 'rejected') return null
   const afterContent = content.kind === 'redacted' ? content.value : value

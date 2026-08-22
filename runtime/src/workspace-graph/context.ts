@@ -42,7 +42,8 @@ const MAX_RECALL_PROJECTABLE_CODE_UNITS = GRAPH_CONTEXT_RECALL_MAX_CODE_POINTS *
 
 const WORKSPACE_CONTEXT_OPEN = '<workspace_context kind="data">'
 const WORKSPACE_CONTEXT_CLOSE = '</workspace_context>'
-const WORKSPACE_HINTS_OPEN = '<workspace_hints authority="suggestion_only">'
+const WORKSPACE_HINTS_OPEN = '<workspace_hints authority="suggestion_only" '
+  + 'scope="current_workspace_next_step" cross_workspace="forbidden" action="forbidden">'
 const WORKSPACE_HINTS_CLOSE = '</workspace_hints>'
 
 const pathPolicy = new SensitivePathPolicy()

@@ -23,6 +23,8 @@ import {
 } from '../src/workspace-graph/models.js'
 
 const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/workspace-graph')
+const workspaceHintsOpen = '<workspace_hints authority="suggestion_only" '
+  + 'scope="current_workspace_next_step" cross_workspace="forbidden" action="forbidden">'
 
 interface ContextFixture {
   readonly schema_version: 1
@@ -129,7 +131,7 @@ test('budgeting drops trailing whole hints and carries every omission into the v
     maxHeaderTokens: 300,
     maxRecallTokens: 800,
     maxHeaderChars: 900,
-    maxRecallChars: 760,
+    maxRecallChars: 850,
     maxHeaderBytes: 3600,
     maxRecallBytes: 9600,
   }).compose(currentWorkspace(), recall(hints), [])
@@ -188,15 +190,15 @@ test('measured-token and UTF-8 byte caps drop whole CJK and astral recall hints'
       name: 'CJK measured tokens',
       idPrefix: 'cjk',
       reason: '界'.repeat(200),
-      options: {maxRecallTokens: 400},
-      withinBudget: (block: string) => estimateGraphContextTokens(block) <= 400,
+      options: {maxRecallTokens: 440},
+      withinBudget: (block: string) => estimateGraphContextTokens(block) <= 440,
     },
     {
       name: 'astral UTF-8 bytes',
       idPrefix: 'astral',
       reason: '😀'.repeat(100),
-      options: {maxRecallBytes: 1_000},
-      withinBudget: (block: string) => Buffer.byteLength(block, 'utf8') <= 1_000,
+      options: {maxRecallBytes: 1_100},
+      withinBudget: (block: string) => Buffer.byteLength(block, 'utf8') <= 1_100,
     },
   ] as const
 
@@ -313,7 +315,7 @@ test('all model-visible data is quoted, structurally neutralized, and confined t
   const rendered = [result.header, result.recall_pack].filter(Boolean).join('\n')
 
   assert.equal((rendered.match(/<workspace_context kind="data">/gu) ?? []).length, 1)
-  assert.equal((rendered.match(/<workspace_hints authority="suggestion_only">/gu) ?? []).length, 1)
+  assert.equal(rendered.split(workspaceHintsOpen).length - 1, 1)
   assert.equal((rendered.match(/<\/workspace_context>/gu) ?? []).length, 1)
   assert.equal((rendered.match(/<\/workspace_hints>/gu) ?? []).length, 1)
   assert.equal(rendered.includes('\n# SYSTEM'), false)
@@ -544,7 +546,7 @@ test('unrenderable schema-valid recall strings omit whole hints before normaliza
 function blockPayload(block: string, kind: 'workspace_context' | 'workspace_hints'): unknown {
   const opening = kind === 'workspace_context'
     ? '<workspace_context kind="data">'
-    : '<workspace_hints authority="suggestion_only">'
+    : workspaceHintsOpen
   const closing = `</${kind}>`
   assert.ok(block.startsWith(opening))
   assert.ok(block.endsWith(closing))
