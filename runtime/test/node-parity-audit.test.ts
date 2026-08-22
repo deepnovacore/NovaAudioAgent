@@ -80,6 +80,21 @@ test('parity inventory is read-only and contains no automatic review decisions',
   assert.equal(await readFile(manifest, 'utf8'), before)
 })
 
+test('parity inventory detects mixed numeric rendering and Unicode-sensitive regex classes', async () => {
+  const result = await run(process.execPath, ['runtime/scripts/node-parity-audit.mjs', '--inventory'], {
+    cwd: repositoryRoot,
+  })
+  const inventory = JSON.parse(result.stdout) as {
+    occurrences: readonly {file: string; kind: string}[]
+  }
+  assert.equal(inventory.occurrences.some(occurrence =>
+    occurrence.file === 'runtime/src/config.ts'
+      && occurrence.kind === 'numeric_string'), true)
+  assert.equal(inventory.occurrences.some(occurrence =>
+    occurrence.file === 'runtime/src/realtime/qwen.ts'
+      && occurrence.kind === 'regex_unicode_semantics'), true)
+})
+
 test('parity helpers pin Python whitespace disagreements and astral code-point length', () => {
   assert.equal(stripLikePython('\u001c\u001d\u001e\u001f\u0085value\u0085'), 'value')
   assert.equal(stripLikePython('\ufeffvalue\ufeff'), '\ufeffvalue\ufeff')

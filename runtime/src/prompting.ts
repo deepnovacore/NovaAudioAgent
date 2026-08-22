@@ -253,18 +253,14 @@ export function renderContextSnapshot(view: ContextView, includeTrigger = false)
  * `json.dumps`.
  */
 function pythonTruthy(
-  value: JsonValue | readonly string[] | undefined,
+  value: string | readonly string[] | undefined,
   fallback: string,
 ): string {
-  if (value === undefined || value === null || value === '' || value === 0 || value === false) {
+  if (value === undefined || value === '') {
     return fallback
   }
-  if (Array.isArray(value)) {
-    return value.length === 0 ? fallback : pythonRepr([...value] as JsonValue)
-  }
-  return typeof value === 'object'
-    ? pythonRepr(value as JsonValue)
-    : String(value)
+  if (typeof value === 'string') return value
+  return value.length === 0 ? fallback : pythonRepr([...value] as JsonValue)
 }
 
 /**

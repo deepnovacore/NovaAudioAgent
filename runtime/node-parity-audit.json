@@ -129,6 +129,51 @@
   ],
   "occurrences": [
     {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "snippet_sha256": "e4bbd87e4e69f04bbd796e31c93c95a1baa31f113ff9facf4e161751f3198d33",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 1,
+      "snippet_sha256": "dcb61be837b6f667f217abcc36ceb29da1b110c02559ed97e4d7e7ae995a17cf",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "snippet_sha256": "734a616732cc8f960a61a4289c3c9ba141a5c292c4e0662f2605ffdef22a874f",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "snippet_sha256": "67f892fad8d89283ccb62973245a226ead4b83262f76d5e42a530a5c3cbb5565",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "snippet_sha256": "0236fcedcb97aa639ddb276c7f9afdd3850fae5e7058d0b50057d6a67a7203d3",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
       "file": "desktop/ambient-orb/src/main/backend.mjs",
       "kind": "string_trim",
       "occurrence_index": 0,
@@ -427,8 +472,17 @@
     },
     {
       "file": "runtime/src/codex-production-host.ts",
-      "kind": "string_trim",
+      "kind": "regex_unicode_semantics",
       "occurrence_index": 2,
+      "snippet_sha256": "ce19c7b71fbc75ebbd02b694fd07f41cedb18cd098ac5618f90d0474661a6c22",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-production-host.test.ts",
+      "behavior": "production preflight uses the fixed native probe and never passes credentials to commands"
+    },
+    {
+      "file": "runtime/src/codex-production-host.ts",
+      "kind": "string_trim",
+      "occurrence_index": 3,
       "snippet_sha256": "e987687cd6b5aa1ec0fc80b94a6e490e5e1d44d1500797a3ebffb40d38be1e58",
       "disposition": "host_only_unicode",
       "test": "runtime/test/codex-production-host.test.ts",
@@ -517,8 +571,17 @@
     },
     {
       "file": "runtime/src/config.ts",
-      "kind": "locale_unicode",
+      "kind": "numeric_string",
       "occurrence_index": 0,
+      "snippet_sha256": "dafa6e3dade5752468f1ee277dd6bca3aebaaa121b99928572f2b6b8f66a7ae7",
+      "disposition": "wire_json",
+      "test": "runtime/test/config.test.ts",
+      "behavior": "configuration failures never echo secret values"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 1,
       "snippet_sha256": "2363322a01e8cbed64d90a151d3ded281b44f3080329426ebc7dad3791c32103",
       "disposition": "host_only_unicode",
       "test": "runtime/test/config.test.ts",
@@ -527,7 +590,7 @@
     {
       "file": "runtime/src/config.ts",
       "kind": "locale_unicode",
-      "occurrence_index": 1,
+      "occurrence_index": 2,
       "snippet_sha256": "d2b2b67bf54e29ae1a0eb274df76d51711b783ad02c28cbfe2b212be100f56f5",
       "disposition": "host_only_unicode",
       "test": "runtime/test/config.test.ts",
@@ -536,7 +599,7 @@
     {
       "file": "runtime/src/config.ts",
       "kind": "locale_unicode",
-      "occurrence_index": 2,
+      "occurrence_index": 3,
       "snippet_sha256": "9bda2509223eb60f1da77b84d8512fd9a0449d39cf6aa6cc5e2ceb108ab5871c",
       "disposition": "host_only_unicode",
       "test": "runtime/test/config.test.ts",
@@ -580,8 +643,71 @@
     },
     {
       "file": "runtime/src/desktop-bridge.ts",
-      "kind": "numeric_template",
+      "kind": "numeric_string",
       "occurrence_index": 2,
+      "snippet_sha256": "a1ad30e4114dec558375eaa5aa4ac9e47e950c71951498ab2d55cab8b6bbe6d0",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 3,
+      "snippet_sha256": "c778104bd510b23f0c81716a74c8de46c56a41f51853fdf4d87ffc8eec624352",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 4,
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 5,
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 6,
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 7,
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 8,
+      "snippet_sha256": "4e2e5cdfa76b3a83c80d52795f591223ba2411eb91f03db839d50116b3285407",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 9,
       "snippet_sha256": "1bc04b5291c26a46d918139138b992d2de976d6851d0893b0476b85bfbdfc6e6",
       "disposition": "wire_json",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -590,7 +716,7 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 3,
+      "occurrence_index": 10,
       "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
       "disposition": "byte_length",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -599,7 +725,7 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 4,
+      "occurrence_index": 11,
       "snippet_sha256": "f38f50dbfa76a64db16ee2343e7225138da1f399ae716bf71434657dc2bcb2e7",
       "disposition": "byte_length",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -608,7 +734,7 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 5,
+      "occurrence_index": 12,
       "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
       "disposition": "byte_length",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -798,6 +924,24 @@
       "file": "runtime/src/model-gateway.ts",
       "kind": "numeric_template",
       "occurrence_index": 2,
+      "snippet_sha256": "4154cb22e21883f732ea07e2b9af7a1019f010e11db05b53eff7096c39bb2375",
+      "disposition": "wire_json",
+      "test": "runtime/test/model-gateway.test.ts",
+      "behavior": "complete parses one choice and reports usage"
+    },
+    {
+      "file": "runtime/src/model-gateway.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "114700f60a91db711a690b11a9268d687453a6ab61f62278438c235e0b11d218",
+      "disposition": "wire_json",
+      "test": "runtime/test/model-gateway.test.ts",
+      "behavior": "complete parses one choice and reports usage"
+    },
+    {
+      "file": "runtime/src/model-gateway.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
       "snippet_sha256": "dde7b529529ea02cec1778d08f97837065ec3d2d081f472a7ca77dff5fa820eb",
       "disposition": "wire_json",
       "test": "runtime/test/model-gateway.test.ts",
@@ -806,7 +950,7 @@
     {
       "file": "runtime/src/model-gateway.ts",
       "kind": "string_length",
-      "occurrence_index": 3,
+      "occurrence_index": 5,
       "snippet_sha256": "f77e45c070b0619090d183b78346c29511b10ab12a10b5ea0b8cb3dbfcff35e1",
       "disposition": "intentional_utf16",
       "test": "runtime/test/model-gateway.test.ts",
@@ -921,6 +1065,15 @@
       "behavior": "one provider session supports the realtime session connect and reconnect contract"
     },
     {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 0,
+      "snippet_sha256": "1b00aefebdba602a48cb3b5b7e68dffc9a2de3673054adbb9f244245d1612659",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-evidence.test.ts",
+      "behavior": "structured numeric evidence uses deterministic Python float spelling"
+    },
+    {
       "file": "runtime/src/realtime/project-confirmation.ts",
       "kind": "numeric_template",
       "occurrence_index": 0,
@@ -985,8 +1138,17 @@
     },
     {
       "file": "runtime/src/realtime/qwen.ts",
-      "kind": "string_length",
+      "kind": "regex_unicode_semantics",
       "occurrence_index": 1,
+      "snippet_sha256": "5f7b84590a3642096576dacde4cbf79cfd36165badca7682d0016aa93460d885",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-qwen.test.ts",
+      "behavior": "a cancel with no active response becomes response_cancel_rejected"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
       "snippet_sha256": "76fefe5208771adc79057ba49a3a4b44b0d11b3bfc4a5e7df57c64c53ff654bf",
       "disposition": "byte_length",
       "test": "runtime/test/realtime-qwen.test.ts",
@@ -1279,6 +1441,15 @@
       "disposition": "wire_json",
       "test": "runtime/test/realtime-session.test.ts",
       "behavior": "an unknown Guard history mode is refused before the session is touched"
+    },
+    {
+      "file": "runtime/src/realtime/speech-prep.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "17f6a1276c17e3ca8142420cedace9d07ad1e52acd9d7c94db84f3d27753d873",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-speech-prep.test.ts",
+      "behavior": "speech preparation uses Python regex boundaries around Unicode prose"
     },
     {
       "file": "runtime/src/runtime.ts",

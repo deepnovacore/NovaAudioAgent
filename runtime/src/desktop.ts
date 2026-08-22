@@ -350,7 +350,11 @@ export class NodeDesktopServer {
     this.#active = undefined
     this.#authenticated = false
     this.#rejectSocketSends(socket, outboundUnavailableError())
-    this.#options.onClientDisconnect?.()
+    try {
+      this.#options.onClientDisconnect?.()
+    } catch {
+      // Disconnect observation cannot own the socket writer or process lifetime.
+    }
   }
 
   #canSend(): boolean {
