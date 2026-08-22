@@ -125,7 +125,12 @@
     "runtime/src/trace.ts",
     "runtime/src/unicode-casefold.ts",
     "runtime/src/unicode-normalize.ts",
-    "runtime/src/volcengine-realtime-assembly.ts"
+    "runtime/src/volcengine-realtime-assembly.ts",
+    "runtime/src/workspace-graph/models.ts",
+    "runtime/src/workspace-graph/sensitivity.ts",
+    "runtime/src/workspace-graph/store-client.ts",
+    "runtime/src/workspace-graph/store-worker.ts",
+    "runtime/src/workspace-graph/store.ts"
   ],
   "occurrences": [
     {
@@ -1423,6 +1428,33 @@
       "disposition": "host_only_unicode",
       "test": "runtime/test/unicode-nfkc.test.ts",
       "behavior": "the committed vectors were exported against the pinned Unicode version"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 0,
+      "snippet_sha256": "91fbaa553a602a885443eb4a5b3e6dd76a368e8d576c0fe42ec2d07cf81b7d30",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "denies sensitive paths without returning their labels"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 1,
+      "snippet_sha256": "8c758401279bbfcd5f28e3294e9d6a0f0eae40d4c3039938f9eecd55efc6d828",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts private URLs carrying query credentials"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "unicode_property_regex",
+      "occurrence_index": 2,
+      "snippet_sha256": "ae9ee458c51c90bdbec424d1e85d371fb2b0106889e59c3b8617de5a187d4813",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "rejects a field when a redaction leaves no meaningful content"
     }
   ]
 }
