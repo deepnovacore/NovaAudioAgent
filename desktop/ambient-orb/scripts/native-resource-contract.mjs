@@ -196,11 +196,19 @@ function exactKeys(value, keys, code) {
   ) throw new NativeResourceError(code)
 }
 
+function nativeKind(path) {
+  const lower = path.toLowerCase()
+  if (lower.endsWith('.node')) return 'node_addon'
+  if (
+    lower.endsWith('.dylib')
+    || /\.so(?:\.\d+)*$/u.test(lower)
+    || lower.endsWith('.dll')
+  ) return 'shared_library'
+  return null
+}
+
 function nativeFile(path) {
-  return path.endsWith('.node')
-    || path.endsWith('.dylib')
-    || /\.so(?:\.\d+)*$/u.test(path)
-    || path.endsWith('.dll')
+  return nativeKind(path) !== null
 }
 
 function dependencyNativeResources(dependencyReport) {
@@ -221,7 +229,7 @@ function dependencyNativeResources(dependencyReport) {
       results.push(resource(
         `dependency_native_${digest}`,
         relativePath,
-        file.path.endsWith('.node') ? 'node_addon' : 'shared_library',
+        nativeKind(file.path),
       ))
     }
   }

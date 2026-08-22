@@ -101,6 +101,50 @@ test('native manifest maps every external native resource exactly once', async (
       targetId: 'darwin-arm64',
     }))
 
+    const uppercaseAddon = resolve(
+      root,
+      'app.asar.unpacked/node_modules/alpha/NATIVE.NODE',
+    )
+    await mkdir(resolve(uppercaseAddon, '..'), {recursive: true})
+    const uppercaseBody = Buffer.from(header)
+    uppercaseBody.writeUInt32LE(8, 12)
+    await writeFile(uppercaseAddon, uppercaseBody)
+    const dependencyReport = {
+      schema_version: 1,
+      target: 'darwin-arm64',
+      packages: [{
+        install_key: 'node_modules/alpha',
+        files: [{path: 'NATIVE.NODE', integrity_owner: 'native_manifest'}],
+      }],
+    }
+    const uppercaseManifest = await generateNativeResourceManifest({
+      resourcesRoot: root,
+      targetId: 'darwin-arm64',
+      dependencyReport,
+    })
+    assert.equal(
+      uppercaseManifest.resources.find(
+        record => record.relative_path.endsWith('/NATIVE.NODE'),
+      )?.kind,
+      'node_addon',
+    )
+    await writeFile(
+      resolve(root, 'native-resources-v1.json'),
+      JSON.stringify(uppercaseManifest),
+      'utf8',
+    )
+    await assert.doesNotReject(verifyNativeResourceManifest({
+      resourcesRoot: root,
+      targetId: 'darwin-arm64',
+      dependencyReport,
+    }))
+    await rm(uppercaseAddon)
+    await writeFile(
+      resolve(root, 'native-resources-v1.json'),
+      JSON.stringify(manifest),
+      'utf8',
+    )
+
     const invalidAbi = structuredClone(manifest)
     invalidAbi.resources[0].electron_abi = 999
     await writeFile(

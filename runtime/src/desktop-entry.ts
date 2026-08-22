@@ -1,11 +1,11 @@
 /** The compiled realtime desktop entry Electron launches with `utilityProcess.fork()`. */
 
 import {randomUUID} from 'node:crypto'
-import {homedir} from 'node:os'
 
 import {loadSettings} from './config.js'
-import {createCodexAssemblyResource, unavailableCodexBackendTransportFactory} from './codex-factory.js'
+import {createCodexAssemblyResource} from './codex-factory.js'
 import {resolveCodexHostConfig} from './codex-host-config.js'
+import {createProductionCodexHost} from './codex-production-host.js'
 import {
   buildDesktopRealtimeComposition,
   runDesktopEntryWithStopSources,
@@ -44,24 +44,22 @@ process.exitCode = await runDesktopEntryWithStopSources({
     const telemetry = new NullTelemetry()
     ownership.own(() => telemetry.close())
     const clock = new RealClock()
-    // Task 8 replaces this empty packaged catalog and unavailable transport host with audited,
-    // signed resources. Until then an explicitly selected Codex fails before provider/socket work.
-    const codexConfig = resolveCodexHostConfig(settings, {
-      canonicalBinaries: [],
-      canonicalWorkspaces: [],
-      defaultBinary: null,
-      homeDirectory: homedir(),
-    })
+    const codexHost = createProductionCodexHost(settings)
+    const codexConfig = resolveCodexHostConfig(settings, codexHost.catalog)
     const codexResource = codexConfig === null
       ? null
       : await createCodexAssemblyResource({
           config: codexConfig,
           composition: 'realtime',
-          transportFactory: unavailableCodexBackendTransportFactory,
+          transportFactory: codexHost.transportFactory,
           clock,
           idFactory: () => randomUUID().replaceAll('-', ''),
+          ...(codexHost.projectHost === null ? {} : {projectHost: codexHost.projectHost}),
         })
-    if (codexResource !== null) ownership.own(() => codexResource.close())
+    if (codexResource !== null) {
+      ownership.own(() => codexResource.close())
+      await codexResource.start()
+    }
     const camera = selectDesktopCameraSource(process.env)
     const composition = buildDesktopRealtimeComposition({
       token,

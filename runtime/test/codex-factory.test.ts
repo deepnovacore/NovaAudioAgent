@@ -26,9 +26,12 @@ import type {
 } from '../src/codex-app-server-transport.js'
 import {
   createCodexAssemblyResource,
+  OwnedCodexBackendTransportFactory,
   type CodexBackendTransportFactory,
   type CodexTransportBinding,
 } from '../src/codex-factory.js'
+import {CredentialSnapshotter} from '../src/codex-credential-snapshot.js'
+import {hostCodexHomeForTest} from '../src/codex-process-owner.js'
 import {resolveCodexHostConfig, type CodexHostCatalog} from '../src/codex-host-config.js'
 import {CodexHostConfigurationError} from '../src/codex-host-config.js'
 import {VirtualClock} from '../src/clock.js'
@@ -53,10 +56,12 @@ const PREFLIGHT: SafePreflightReport = Object.freeze({
 })
 
 class RecordingTransport implements CodexAppServerTransport {
+  preflights = 0
   prewarms = 0
   closes = 0
 
   preflight(): Promise<SafePreflightReport> {
+    this.preflights += 1
     return Promise.resolve(PREFLIGHT)
   }
 
@@ -311,6 +316,7 @@ test('one app-server factory selects exact ordinary and realtime live adapters',
   assert.equal(ordinaryFactory.calls.length, 1)
   assert.equal(ordinaryFactory.calls[0]?.mode, 'ordinary')
   await ordinary.start()
+  assert.equal(ordinaryFactory.transports[0]?.preflights, 1)
   assert.equal(ordinaryFactory.transports[0]?.prewarms, 0)
   await ordinary.close()
   await ordinary.close()
@@ -333,10 +339,41 @@ test('one app-server factory selects exact ordinary and realtime live adapters',
   const firstStart = live.start()
   assert.equal(live.start(), firstStart)
   await firstStart
+  assert.equal(liveFactory.transports[0]?.preflights, 1)
   assert.equal(liveFactory.transports[0]?.prewarms, 1)
   await live.close()
   await live.close()
   assert.equal(liveFactory.transports[0]?.closes, 1)
+})
+
+test('owned factory removes a preflight-only ephemeral home after transport close', async t => {
+  const config = hostConfig(t)
+  assert.ok(config !== null)
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nova-codex-factory-home-')))
+  const home = join(root, 'ephemeral')
+  mkdirSync(home, {mode: 0o700})
+  t.after(() => { rmSync(root, {recursive: true, force: true}) })
+  const credentials = new CredentialSnapshotter({
+    environment: {PATH: '/usr/bin:/bin', HOME: root},
+  })
+  const factory = new OwnedCodexBackendTransportFactory({
+    processFactory: {spawn: () => Promise.reject(new Error('must not spawn'))},
+    credentialSnapshotter: credentials,
+    preflightRunner: {run: () => Promise.resolve(PREFLIGHT)},
+    schemaProbe: {generate: () => Promise.resolve({})},
+    ephemeralHomeFactory: () => hostCodexHomeForTest(home, {ephemeral: true}),
+  })
+  const resource = await createCodexAssemblyResource({
+    config,
+    composition: 'ordinary',
+    transportFactory: factory,
+    clock: new VirtualClock(),
+    idFactory: () => 'ephemeral-cleanup-id',
+  })
+  await assert.rejects(resource.start())
+  await resource.close()
+  assert.equal(lstatSync(root).isDirectory(), true)
+  assert.throws(() => lstatSync(home), error => isErrno(error, 'ENOENT'))
 })
 
 test('live resource retries retained raw transport cleanup before releasing shutdown ownership', async t => {
@@ -426,11 +463,14 @@ test('project mode opens one live store, imports the host workspace, and exposes
     readonly workspaces: Readonly<Record<string, {readonly created_at: number}>>
   }
   assert.equal(Object.values(state.workspaces)[0]?.created_at, 123)
-  assert.equal(transportFactory.calls.length, 0, 'transport is bound only when a stored session runs')
+  assert.equal(transportFactory.calls.length, 1, 'startup owns one fixed preflight transport')
+  assert.equal(transportFactory.calls[0]?.mode, 'live')
   const projectStart = resource.start()
   assert.equal(resource.start(), projectStart)
   await projectStart
-  assert.equal(transportFactory.calls.length, 0, 'project start never prewarms stale session authority')
+  assert.equal(transportFactory.calls.length, 1, 'project start never prewarms stale session authority')
+  assert.equal(transportFactory.transports[0]?.preflights, 1)
+  assert.equal(transportFactory.transports[0]?.closes, 1)
   const adapter = resource.adapter as ProjectCodexAdapter
   const closeAdapter = adapter.close.bind(adapter)
   let closeCalls = 0

@@ -977,7 +977,7 @@ test('release candidate report binds artifact SHA and rejects an external resour
   }
 })
 
-test('dependency report binds every lock install key to exact canonical file bytes', async () => {
+test('dependency report binds exact files while final native bytes belong only to the native manifest', async () => {
   assert.equal(typeof packageInspection.buildDependencyReport, 'function')
   assert.equal(typeof packageInspection.assertArtifactDependencyReport, 'function')
   const root = await mkdtemp(resolve(tmpdir(), 'nova-package-dependencies-'))
@@ -1001,6 +1001,7 @@ test('dependency report binds every lock install key to exact canonical file byt
     ['node_modules/alpha/package.json', '{"name":"alpha","version":"1.0.0"}\n'],
     ['node_modules/alpha/index.js', 'export const alpha = true\n'],
     ['node_modules/alpha/src/runtime.js', 'export const requiredAtRuntime = true\n'],
+    ['node_modules/alpha/native.node', 'unsigned native bytes'],
     ['node_modules/alpha/node_modules/beta/package.json', '{"name":"beta","version":"2.0.0"}\n'],
     ['node_modules/alpha/node_modules/beta/index.js', 'export const beta = true\n'],
   ])
@@ -1018,7 +1019,10 @@ test('dependency report binds every lock install key to exact canonical file byt
       'node_modules/alpha/node_modules/beta',
     ])
     assert.ok(report.packages.every(value => value.files.every(file => (
-      /^[0-9a-f]{64}$/u.test(file.sha256) && file.byte_size > 0
+      file.path.endsWith('.node')
+        ? Object.keys(file).sort().join(',') === 'integrity_owner,path'
+          && file.integrity_owner === 'native_manifest'
+        : /^[0-9a-f]{64}$/u.test(file.sha256) && file.byte_size > 0
     ))))
     assert.ok(
       report.packages[0].files.some(file => file.path === 'src/runtime.js'),
@@ -1043,6 +1047,26 @@ test('dependency report binds every lock install key to exact canonical file byt
     await writeFile(resolve(artifact, 'node_modules/alpha/index.js'), sourceFiles.get(
       'node_modules/alpha/index.js',
     ), 'utf8')
+    await writeFile(
+      resolve(artifact, 'node_modules/alpha/native.node'),
+      'signed native bytes are intentionally different',
+      'utf8',
+    )
+    await assert.doesNotReject(
+      packageInspection.assertArtifactDependencyReport(artifact, closure),
+      'dependency inventory delegates signing-mutated native bytes to native-resources-v1.json',
+    )
+    await rm(resolve(artifact, 'node_modules/alpha/native.node'))
+    await assert.rejects(
+      packageInspection.assertArtifactDependencyReport(artifact, closure),
+      PackageInspectionError,
+      'delegating native bytes does not permit a missing native inventory entry',
+    )
+    await writeFile(
+      resolve(artifact, 'node_modules/alpha/native.node'),
+      sourceFiles.get('node_modules/alpha/native.node'),
+      'utf8',
+    )
     await writeFile(resolve(artifact, 'node_modules/alpha/extra.js'), 'extra\n', 'utf8')
     await assert.rejects(
       packageInspection.assertArtifactDependencyReport(artifact, closure),

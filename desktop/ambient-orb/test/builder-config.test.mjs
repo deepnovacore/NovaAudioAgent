@@ -35,6 +35,10 @@ const EXPECTED_BUILD_SCRIPTS = [
   'scripts/run-packaged-import-smoke.mjs',
   'scripts/packaged-production-codex-smoke.cjs',
   'scripts/run-packaged-codex-smoke.mjs',
+  'scripts/run-release-candidate-codex-smoke.mjs',
+  'scripts/release-codex-tool.mjs',
+  'scripts/sign-mac-with-native-manifest.cjs',
+  'scripts/after-sign.cjs',
   'scripts/inspect-package.mjs',
   'scripts/camera-file-integration.mjs',
   'scripts/camera-file-integration-contract.mjs',
@@ -179,6 +183,7 @@ test('mac, win, and linux platform blocks all exist', () => {
 test('the package lifecycle owns exact staging, native manifest, and packaged import smoke', () => {
   assert.equal(config.beforeBuild, 'scripts/before-build.cjs')
   assert.equal(config.afterPack, 'scripts/after-pack.cjs')
+  assert.equal(config.afterSign, 'scripts/after-sign.cjs')
   assert.equal(config.directories.app, 'build/release-app')
 })
 
@@ -219,6 +224,32 @@ test('the Swift AEC helper resource is scoped to mac only, not top-level', () =>
     (entry) => entry.from === 'build/macos_voice_io' && entry.to === 'native/macos_voice_io',
   )
   assert.ok(macHasHelper, 'expected the Swift helper extraResources entry under mac:')
+})
+
+test('mac signing seals nested native resources before hashing the final manifest', async () => {
+  assert.equal(config.mac.sign, 'scripts/sign-mac-with-native-manifest.cjs')
+  const signer = await readFile(resolve(import.meta.dirname, '..', config.mac.sign), 'utf8')
+  const nestedSign = signer.indexOf('signNative(path, options)')
+  const manifestWrite = signer.indexOf('await rename(temporary, manifestPath)')
+  const outerSign = signer.indexOf('await signAsync')
+  assert.ok(nestedSign >= 0 && nestedSign < manifestWrite && manifestWrite < outerSign)
+  assert.match(signer, /sealedPaths\.has\(resolve\(path\)\)/u)
+  assert.match(signer, /assert\.deepEqual\(finalManifest, manifest/u)
+  assert.match(signer, /'shared_library'/u)
+})
+
+test('Windows refreshes native hashes after electron-builder signs unpacked addons', async () => {
+  const hook = await import('../scripts/after-sign.cjs')
+  const calls = []
+  const writeManifest = async context => calls.push(context)
+  await hook.refreshWindowsNativeManifestAfterSign(
+    {electronPlatformName: 'darwin'},
+    {writeManifest},
+  )
+  assert.deepEqual(calls, [])
+  const windows = {electronPlatformName: 'win32', appOutDir: 'candidate'}
+  await hook.refreshWindowsNativeManifestAfterSign(windows, {writeManifest})
+  assert.deepEqual(calls, [windows])
 })
 
 test('the tray icon resource stays top-level for every platform', () => {
@@ -279,6 +310,10 @@ test('the Windows Job guardian is staged once only for Windows', () => {
   assert.deepEqual(config.win.extraResources.filter(
     entry => String(entry.to).includes('windows-job-guardian'),
   ), [{from: 'build/native/windows-job-guardian.exe', to: 'native/windows-job-guardian.exe'}])
+})
+
+test('Windows signing covers both child executables and the project Node addon', () => {
+  assert.deepEqual(config.win.signExts, ['.exe', '.node'])
 })
 
 test('the immutable endpointing capability assets are staged once at a fixed external path', () => {

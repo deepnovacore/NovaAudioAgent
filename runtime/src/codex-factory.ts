@@ -3,6 +3,13 @@ import {
   type CodexAppServerTransport,
   type CodexHostPreflightRunner,
   type CodexLiveSchemaProbe,
+  type RunInput,
+  type SafePreflightReport,
+  type SteerInput,
+  type SteerTransportResult,
+  type TransportDeadline,
+  type TransportObserver,
+  type TransportOutcome,
 } from './codex-app-server-transport.js'
 import type {
   CodexCredentialProfile,
@@ -68,7 +75,7 @@ export class OwnedCodexBackendTransportFactory implements CodexBackendTransportF
     const project = binding.mode === 'project'
     const codexHome = project ? binding.codexHome : this.#options.ephemeralHomeFactory()
     if (codexHome === null) throw new CodexHostConfigurationError('codex_host_unavailable')
-    return new OwnedCodexAppServerTransport({
+    const transport = new OwnedCodexAppServerTransport({
       config: {
         binary: binding.binary,
         workspace: binding.workspace,
@@ -84,6 +91,57 @@ export class OwnedCodexBackendTransportFactory implements CodexBackendTransportF
       preflightRunner: this.#options.preflightRunner,
       schemaProbe: this.#options.schemaProbe,
     })
+    return new CredentialHomeOwningTransport(
+      transport,
+      this.#options.credentialSnapshotter,
+      codexHome,
+    )
+  }
+}
+
+class CredentialHomeOwningTransport implements CodexAppServerTransport {
+  #closeOperation: Promise<void> | null = null
+
+  constructor(
+    readonly inner: CodexAppServerTransport,
+    readonly credentials: CredentialSnapshotter,
+    readonly codexHome: HostCodexHome,
+  ) {}
+
+  preflight(deadline: TransportDeadline): Promise<SafePreflightReport> {
+    return this.inner.preflight(deadline)
+  }
+
+  prewarm(deadline: TransportDeadline): Promise<SafePreflightReport | null> {
+    return this.inner.prewarm(deadline)
+  }
+
+  run(
+    input: RunInput,
+    observer: TransportObserver,
+    deadline: TransportDeadline,
+  ): Promise<TransportOutcome> {
+    return this.inner.run(input, observer, deadline)
+  }
+
+  steer(input: SteerInput, deadline: TransportDeadline): Promise<SteerTransportResult> {
+    return this.inner.steer(input, deadline)
+  }
+
+  close(reason?: 'shutdown' | 'cancel' | 'failure'): Promise<void> {
+    if (this.#closeOperation !== null) return this.#closeOperation
+    const work = this.#close(reason)
+    const exposed = work.catch(error => {
+      if (this.#closeOperation === exposed) this.#closeOperation = null
+      throw error
+    })
+    this.#closeOperation = exposed
+    return exposed
+  }
+
+  async #close(reason?: 'shutdown' | 'cancel' | 'failure'): Promise<void> {
+    await this.inner.close(reason)
+    await this.credentials.removeEphemeralHome(this.codexHome)
   }
 }
 
@@ -187,7 +245,20 @@ async function createProjectResource(
     throw new CodexHostConfigurationError('codex_project_host_unsupported')
   }
   let store: CodexProjectStore | null = null
+  let startupTransport: CodexAppServerTransport | null = null
   try {
+    startupTransport = options.transportFactory.create(Object.freeze({
+      mode: 'live',
+      binary: options.config.binary,
+      workspace: options.config.workspace,
+      codexHome: null,
+      credential: options.config.credential,
+      resumeThreadId: null,
+      workingInterval: options.config.workingInterval,
+    }))
+    if (!isCodexTransport(startupTransport)) {
+      throw new CodexHostConfigurationError('codex_host_unavailable')
+    }
     store = await CodexProjectStore.open({
       stateRoot,
       managedRoot,
@@ -225,8 +296,9 @@ async function createProjectResource(
       ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     })
     await adapter.initialize()
-    return new ProjectCodexAssemblyResource(adapter)
+    return new ProjectCodexAssemblyResource(adapter, startupTransport)
   } catch (error) {
+    await startupTransport?.close('failure').catch(() => undefined)
     await store?.close().catch(() => undefined)
     if (error instanceof CodexHostConfigurationError) throw error
     if (error instanceof ProjectStateError) {
@@ -265,8 +337,13 @@ class BasicCodexAssemblyResource implements CodexAssemblyResource {
 
   start(): Promise<void> {
     if (this.#startOperation !== null) return this.#startOperation
-    this.#startOperation = this.#prewarm?.() ?? Promise.resolve()
+    this.#startOperation = this.#startFresh()
     return this.#startOperation
+  }
+
+  async #startFresh(): Promise<void> {
+    await this.#rawTransport.preflight({expiresAtMs: Date.now() + 20_000})
+    await this.#prewarm?.()
   }
 
   close(): Promise<void> {
@@ -295,25 +372,56 @@ class BasicCodexAssemblyResource implements CodexAssemblyResource {
 
 class ProjectCodexAssemblyResource implements CodexAssemblyResource {
   readonly mode = 'project'
-  readonly #startOperation = Promise.resolve()
+  readonly #startupTransport: CodexAppServerTransport
+  #startOperation: Promise<void> | null = null
   #closeOperation: Promise<void> | null = null
 
-  constructor(readonly adapter: ProjectCodexAdapter) {}
+  constructor(
+    readonly adapter: ProjectCodexAdapter,
+    startupTransport: CodexAppServerTransport,
+  ) {
+    this.#startupTransport = startupTransport
+  }
 
   get projectView(): PublicProjectView {
     return this.adapter.publicProjectView(this.adapter.confirmationController.pending)
   }
 
-  start(): Promise<void> { return this.#startOperation }
+  start(): Promise<void> {
+    if (this.#startOperation !== null) return this.#startOperation
+    this.#startOperation = this.#startFresh()
+    return this.#startOperation
+  }
+
+  async #startFresh(): Promise<void> {
+    let failure: unknown = null
+    try {
+      await this.#startupTransport.preflight({expiresAtMs: Date.now() + 20_000})
+    } catch (error) {
+      failure = error
+    }
+    try {
+      await this.#startupTransport.close(failure === null ? 'shutdown' : 'failure')
+    } catch (error) {
+      failure ??= error
+    }
+    if (failure instanceof Error) throw failure
+    if (failure !== null) throw new Error('codex startup failed')
+  }
 
   close(): Promise<void> {
     if (this.#closeOperation !== null) return this.#closeOperation
-    const work = this.adapter.close()
+    const work = this.#close()
     const projectClose = work.catch(error => {
       if (this.#closeOperation === projectClose) this.#closeOperation = null
       throw error
     })
     this.#closeOperation = projectClose
     return projectClose
+  }
+
+  async #close(): Promise<void> {
+    await this.#startupTransport.close('shutdown')
+    await this.adapter.close()
   }
 }

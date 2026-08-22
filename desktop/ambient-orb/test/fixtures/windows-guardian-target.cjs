@@ -4,7 +4,9 @@ const {appendFileSync} = require('node:fs')
 const {spawn} = require('node:child_process')
 
 const mode = process.argv[2]
-if (mode === 'grandchild') {
+if (mode === undefined) {
+  // `node --test` discovers fixture `.cjs` files recursively; direct discovery is inert.
+} else if (mode === 'grandchild') {
   const marker = process.argv[3]
   setInterval(() => {
     try { appendFileSync(marker, 'alive\n') } catch { /* the Windows owner test may be cleaning up */ }

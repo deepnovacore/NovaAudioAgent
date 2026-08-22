@@ -40,6 +40,12 @@ jobs:
       - run: npm run test:desktop
       - run: npm run ${{ matrix.package_script }}
       - run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
+      - name: Provision pinned target-native Codex
+        run: npm install --prefix desktop/ambient-orb/build/release-codex --install-strategy=nested --package-lock=false --ignore-scripts --no-save --omit=dev @openai/codex@0.147.0
+      - name: Exercise packaged project authority, sandbox probe, and app-server lifecycle
+        env:
+          NOVA_AUDIO_AGENT_CODEX_API_KEY: offline-platform-contract-only
+        run: npm run smoke:packaged-codex:ci --workspace @nova-audio-agent/ambient-orb
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}

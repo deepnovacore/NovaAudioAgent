@@ -1,8 +1,19 @@
 import {createHash} from 'node:crypto'
 import {constants as fsConstants} from 'node:fs'
-import {closeSync, fstatSync, openSync, readSync, realpathSync} from 'node:fs'
+import {
+  chmodSync,
+  closeSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import {createRequire} from 'node:module'
-import {isAbsolute, resolve} from 'node:path'
+import {tmpdir} from 'node:os'
+import {isAbsolute, join, resolve} from 'node:path'
 
 import type {NativeFileLockAuthority} from './native-file-lock.js'
 import type {ProjectFileIdentity, ProjectRootFileAuthority} from './project-root-file.js'
@@ -68,9 +79,17 @@ export function loadProjectNativeHostFromResources(
     const before = snapshotRegularFile(addonPath, MAX_ADDON_BYTES)
     if (before.size !== record.byte_size || before.sha256 !== record.sha256) return null
     if (!validBinary(before.bytes, options.platform, options.arch)) return null
-    const loaded = (options.moduleLoader ?? defaultModuleLoader)(addonPath)
-    const addon = requireAddon(loaded)
-    if (addon === null) return null
+    const materialized = materializeAddonSnapshot(before)
+    let addon: ProjectAddon | null
+    try {
+      addon = requireAddon((options.moduleLoader ?? defaultModuleLoader)(materialized.path))
+      if (addon === null || !sameSnapshot(materialized.snapshot, snapshotRegularFile(
+        materialized.path,
+        MAX_ADDON_BYTES,
+      ))) return null
+    } finally {
+      materialized.cleanup()
+    }
     const after = snapshotRegularFile(addonPath, MAX_ADDON_BYTES)
     if (!sameSnapshot(before, after)) return null
     const nativeLocks: NativeFileLockAuthority = Object.freeze({
@@ -102,6 +121,33 @@ export function loadProjectNativeHostFromResources(
 }
 
 const defaultModuleLoader = (path: string): unknown => createRequire(import.meta.url)(path) as unknown
+
+function materializeAddonSnapshot(snapshot: FileSnapshot): Readonly<{
+  path: string
+  snapshot: FileSnapshot
+  cleanup(): void
+}> {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'nova-project-native-')))
+  chmodSync(directory, 0o700)
+  const path = join(directory, 'nova_project_native.node')
+  try {
+    writeFileSync(path, snapshot.bytes, {flag: 'wx', mode: 0o500})
+    chmodSync(path, 0o500)
+    const canonical = realpathSync(path)
+    const copied = snapshotRegularFile(canonical, MAX_ADDON_BYTES)
+    if (copied.size !== snapshot.size || copied.sha256 !== snapshot.sha256) throw new Error()
+    return Object.freeze({
+      path: canonical,
+      snapshot: copied,
+      cleanup: () => {
+        try { rmSync(directory, {recursive: true, force: true}) } catch { /* loaded DLL cleanup is retried by OS temp cleanup */ }
+      },
+    })
+  } catch (error) {
+    try { rmSync(directory, {recursive: true, force: true}) } catch { /* best effort */ }
+    throw error
+  }
+}
 
 function supportedTarget(platform: string, arch: string): string | null {
   if (platform === 'darwin' && (arch === 'arm64' || arch === 'x64')) return `darwin-${arch}`

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
+import {readFileSync, writeFileSync} from 'node:fs'
 import {mkdir, mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -60,7 +61,9 @@ test('project native host loads only one fixed manifest-bound addon for the exac
       electronAbi: '148',
       moduleLoader: path => {
         loads += 1
-        assert.equal(path, addonPath)
+        assert.notEqual(path, addonPath)
+        assert.equal(path.endsWith('/nova_project_native.node'), true)
+        assert.deepEqual(readFileSync(path), body)
         return module
       },
     })
@@ -68,6 +71,21 @@ test('project native host loads only one fixed manifest-bound addon for the exac
     assert.equal(loads, 1)
     assert.deepEqual(loaded?.nativeLocks.acquire(7), {status: 'busy'})
     assert.deepEqual(loaded?.rootFiles.probe(8), {status: 'ok'})
+
+    const swappedDuringLoad = loadProjectNativeHostFromResources({
+      resourcesPath: root,
+      platform: 'darwin',
+      arch: 'arm64',
+      electronAbi: '148',
+      moduleLoader: path => {
+        loads += 1
+        assert.notEqual(path, addonPath)
+        assert.deepEqual(readFileSync(path), body)
+        writeFileSync(addonPath, Buffer.concat([body, Buffer.from('swapped')]))
+        return module
+      },
+    })
+    assert.equal(swappedDuringLoad, null, 'source replacement during safe-copy load fails closed')
 
     await writeFile(addonPath, Buffer.concat([body, Buffer.from('changed')]))
     const rejected = loadProjectNativeHostFromResources({
@@ -81,7 +99,7 @@ test('project native host loads only one fixed manifest-bound addon for the exac
       },
     })
     assert.equal(rejected, null)
-    assert.equal(loads, 1, 'changed native bytes must fail before module loading')
+    assert.equal(loads, 2, 'changed native bytes must fail before module loading')
   } finally {
     await rm(root, {recursive: true, force: true})
   }

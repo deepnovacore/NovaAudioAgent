@@ -33,6 +33,7 @@
     "runtime/src/codex-host-config.ts",
     "runtime/src/codex-jsonl.ts",
     "runtime/src/codex-process-owner.ts",
+    "runtime/src/codex-production-host.ts",
     "runtime/src/codex-project-store.ts",
     "runtime/src/codex-protocol.ts",
     "runtime/src/codex-safe-json.ts",
@@ -402,6 +403,33 @@
       "disposition": "host_only_unicode",
       "test": "runtime/test/codex-process-owner.test.ts",
       "behavior": "the host launch boundary ignores caller argv and parent secrets"
+    },
+    {
+      "file": "runtime/src/codex-production-host.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 0,
+      "snippet_sha256": "6026ae7d35666c0d8764d26164f617adfee3cc7b3a4006ec977c29be0cbce87d",
+      "disposition": "wire_json",
+      "test": "runtime/test/codex-production-host.test.ts",
+      "behavior": "production preflight uses the fixed native probe and never passes credentials to commands"
+    },
+    {
+      "file": "runtime/src/codex-production-host.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-production-host.test.ts",
+      "behavior": "production preflight uses the fixed native probe and never passes credentials to commands"
+    },
+    {
+      "file": "runtime/src/codex-production-host.ts",
+      "kind": "string_trim",
+      "occurrence_index": 2,
+      "snippet_sha256": "e987687cd6b5aa1ec0fc80b94a6e490e5e1d44d1500797a3ebffb40d38be1e58",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-production-host.test.ts",
+      "behavior": "production preflight uses the fixed native probe and never passes credentials to commands"
     },
     {
       "file": "runtime/src/codex-project-store.ts",

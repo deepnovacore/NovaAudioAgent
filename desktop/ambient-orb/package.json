@@ -9,6 +9,8 @@
     "test:camera-file": "npm run build --workspace @nova-audio-agent/runtime && electron scripts/camera-file-integration.mjs",
     "test:camera-file:mutations": "node scripts/camera-file-integration-mutations.mjs",
     "smoke:node-backend": "npm run build && electron scripts/utility-runtime-smoke.mjs",
+    "smoke:packaged-codex": "node scripts/run-packaged-codex-smoke.mjs --dist-root dist",
+    "smoke:packaged-codex:ci": "node scripts/run-release-candidate-codex-smoke.mjs --install-root build/release-codex --dist-root dist",
     "icons": "node scripts/make-icons.mjs",
     "build": "node scripts/make-icons.mjs --if-missing && node scripts/build.mjs",
     "build:native:project": "node scripts/build-project-native.mjs",

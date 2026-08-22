@@ -5,6 +5,7 @@ asar: true
 npmRebuild: true
 beforeBuild: scripts/before-build.cjs
 afterPack: scripts/after-pack.cjs
+afterSign: scripts/after-sign.cjs
 
 directories:
   app: build/release-app
@@ -62,6 +63,7 @@ extraResources:
 mac:
   category: public.app-category.productivity
   hardenedRuntime: true
+  sign: scripts/sign-mac-with-native-manifest.cjs
   entitlements: resources/entitlements.mac.plist
   entitlementsInherit: resources/entitlements.mac.inherit.plist
   extendInfo:
@@ -80,6 +82,9 @@ mac:
 win:
   target:
     - nsis
+  signExts:
+    - .exe
+    - .node
   icon: build/icon.ico
   extraResources:
     - from: build/native/codex-sandbox-probe.exe

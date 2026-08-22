@@ -628,6 +628,14 @@ async function hashDependencyFile(path) {
   }
 }
 
+function signingMutableNativeDependency(file) {
+  const lower = file.toLowerCase()
+  return lower.endsWith('.node')
+    || lower.endsWith('.dylib')
+    || /\.so(?:\.\d+)*$/u.test(lower)
+    || lower.endsWith('.dll')
+}
+
 async function dependencyInventory(packageRoot, identity) {
   let files = (await listFiles(packageRoot, { skipTopLevel: ['node_modules'] }))
     .filter(productionDependencyFile)
@@ -646,7 +654,9 @@ async function dependencyInventory(packageRoot, identity) {
   const records = []
   for (const file of files.sort()) {
     const hashed = await hashDependencyFile(resolve(packageRoot, file))
-    records.push(Object.freeze({ path: file, ...hashed }))
+    records.push(Object.freeze(signingMutableNativeDependency(file)
+      ? {path: file, integrity_owner: 'native_manifest'}
+      : {path: file, ...hashed}))
   }
   return Object.freeze({
     files: Object.freeze(records),
