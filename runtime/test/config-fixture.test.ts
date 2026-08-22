@@ -50,7 +50,7 @@ function evaluateConfigFixture(fixture: ConfigCase): unknown {
     return {ok: value === '' || isAbsolute(value), source: value === '' ? 'local' : 'file'}
   }
   try {
-    const settings = loadSettings(fixture.environment)
+    const settings = loadPythonOwnedFixtureSettings(fixture.environment)
     const result: Record<string, unknown> = {ok: true, settings: projectSettings(settings)}
     if (fixture.action === 'provider') result.provider = projectProvider(settings)
     return result
@@ -66,6 +66,79 @@ function evaluateConfigFixture(fixture: ConfigCase): unknown {
     }
     return {ok: false, fields: []}
   }
+}
+
+function loadPythonOwnedFixtureSettings(environment: NodeJS.ProcessEnv): Settings {
+  const legacyProvider = stripLikePython(environment.NOVA_AUDIO_AGENT_REALTIME_PROVIDER ?? '')
+  if (legacyProvider !== 'volcengine') return loadSettings(environment)
+
+  // The shared fixture still describes the Python reference runtime's retired
+  // selector. Adapt that input at the Node test boundary while preserving the
+  // legacy projection below; the product loader itself deliberately has no
+  // compatibility aliases and reads only the selected pipeline's configuration.
+  const adapted = {...environment}
+  delete adapted.NOVA_AUDIO_AGENT_REALTIME_PROVIDER
+  adapted.NOVA_AUDIO_AGENT_PIPELINE_MODE = 'cascaded'
+  adapted.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER = 'ark'
+  const settings = loadSettings(adapted)
+
+  return Object.freeze({
+    ...settings,
+    dashscope_api_key: fixtureOptional(environment.DASHSCOPE_API_KEY, settings.dashscope_api_key),
+    qwen_realtime_url: fixtureString(
+      environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL,
+      settings.qwen_realtime_url,
+    ),
+    qwen_realtime_model: fixtureString(
+      environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL,
+      settings.qwen_realtime_model,
+    ),
+    qwen_realtime_voice: fixtureString(
+      environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE,
+      settings.qwen_realtime_voice,
+    ),
+    qwen_controlled_guard_reconnect: fixtureBoolean(
+      environment.NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT,
+      settings.qwen_controlled_guard_reconnect,
+    ),
+    qwen_guard_history_recovery: fixtureString(
+      environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY,
+      settings.qwen_guard_history_recovery,
+    ) as Settings['qwen_guard_history_recovery'],
+    qwen_guard_history_pairs: fixtureNumber(
+      environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS,
+      settings.qwen_guard_history_pairs,
+    ) as Settings['qwen_guard_history_pairs'],
+    volcengine_ark_model: fixtureString(
+      environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL,
+      settings.volcengine_ark_model,
+    ),
+    volcengine_ark_support_model: fixtureString(
+      environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL,
+      settings.volcengine_ark_support_model,
+    ),
+  })
+}
+
+function fixtureString(value: string | undefined, fallback: string): string {
+  const normalized = stripLikePython(value ?? '')
+  return normalized === '' ? fallback : normalized
+}
+
+function fixtureOptional(value: string | undefined, fallback: string | null): string | null {
+  const normalized = stripLikePython(value ?? '')
+  return normalized === '' ? fallback : normalized
+}
+
+function fixtureBoolean(value: string | undefined, fallback: boolean): boolean {
+  const normalized = stripLikePython(value ?? '').toLowerCase()
+  if (normalized === '') return fallback
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
+}
+
+function fixtureNumber(value: string | undefined, fallback: number): number {
+  const normalized = stripLikePython(value ?? '')
+  return normalized === '' ? fallback : Number(normalized)
 }
 
 function projectSettings(settings: Settings): Readonly<Record<string, unknown>> {
@@ -104,7 +177,7 @@ function projectSettings(settings: Settings): Readonly<Record<string, unknown>> 
     qwen_realtime_model: settings.qwen_realtime_model,
     qwen_realtime_url: settings.qwen_realtime_url,
     qwen_realtime_voice: settings.qwen_realtime_voice,
-    realtime_provider: settings.realtime_provider,
+    realtime_provider: settings.pipeline_mode === 'integrated' ? 'qwen' : 'volcengine',
     suggestion_cooldown: settings.suggestion_cooldown,
     surrogate_model: settings.surrogate_model,
     tavily_api_key_present: secretPresent(settings.tavily_api_key),
@@ -122,7 +195,7 @@ function projectSettings(settings: Settings): Readonly<Record<string, unknown>> 
 }
 
 function projectProvider(settings: Settings): Readonly<Record<string, unknown>> {
-  if (settings.realtime_provider === 'qwen') {
+  if (settings.pipeline_mode === 'integrated') {
     const resolved = requireQwenRealtime(settings)
     return {
       provider: 'qwen',

@@ -14,6 +14,7 @@ import {
 test('pipeline defaults are product-shaped and cascaded defaults use Qwen Flash', () => {
   const settings = loadSettings({})
   assert.equal(settings.pipeline_mode, 'integrated')
+  assert.equal('realtime_provider' in settings, false)
   assert.deepEqual(resolveCascadedSelection(settings), {
     endpointingProvider: 'auto',
     asrProvider: 'volcengine',

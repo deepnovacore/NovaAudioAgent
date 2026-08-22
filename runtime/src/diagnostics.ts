@@ -3,8 +3,9 @@ import {z} from 'zod'
 
 import {
   loadSettings,
-  requireQwenRealtime,
-  requireVolcengineRealtime,
+  requireCascadedCredentials,
+  requireIntegratedRealtime,
+  resolveCascadedSelection,
   type Settings,
 } from './config.js'
 import {findRetiredConfiguration} from './environment-contract.js'
@@ -122,16 +123,17 @@ function nodeVersionCheck(version: string): DiagnosticCheck {
 }
 
 function providerCheck(settings: Settings): DiagnosticCheck {
-  if (settings.realtime_provider === 'qwen') {
+  if (settings.pipeline_mode === 'integrated') {
     try {
-      requireQwenRealtime(settings)
+      requireIntegratedRealtime(settings)
       return check('provider.qwen', 'pass', 'qwen_configuration_valid')
     } catch {
       return check('provider.qwen', 'fail', 'qwen_configuration_invalid')
     }
   }
   try {
-    requireVolcengineRealtime(settings)
+    const selection = resolveCascadedSelection(settings)
+    requireCascadedCredentials(settings, selection)
     return check('provider.volcengine', 'pass', 'volcengine_configuration_valid')
   } catch {
     return check('provider.volcengine', 'fail', 'volcengine_configuration_invalid')

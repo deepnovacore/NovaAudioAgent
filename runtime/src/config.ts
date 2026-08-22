@@ -4,7 +4,6 @@ import {findRetiredConfiguration} from './environment-contract.js'
 
 const backendSchema = z.enum(['python', 'node'])
 export const proactivityPresetSchema = z.enum(['conservative', 'balanced', 'eager'])
-const realtimeProviderSchema = z.enum(['qwen', 'volcengine'])
 const pipelineModeSchema = z.enum(['integrated', 'cascaded'])
 const integratedProviderNameSchema = z.enum(['qwen'])
 const cascadedEndpointingProviderNameSchema = z.enum(['auto'])
@@ -25,9 +24,6 @@ export const settingsSchema = z.object({
   watch_model: z.string().nullable().default(null),
   surrogate_model: z.string().default('qwen-flash'),
   compressor_model: z.string().default('qwen-flash'),
-  // Retained only until the production assembly migrates in a later slice. It is no longer
-  // configurable from the environment; the product-level pipeline settings below are canonical.
-  realtime_provider: realtimeProviderSchema.default('qwen'),
   pipeline_mode: pipelineModeSchema.default('integrated'),
   integrated_provider: integratedProviderNameSchema.default('qwen'),
   cascade_endpointing_provider: cascadedEndpointingProviderNameSchema.default('auto'),

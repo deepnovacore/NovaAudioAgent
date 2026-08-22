@@ -3,7 +3,7 @@
 import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
 import type {CodexAssemblyResource} from './codex-factory.js'
 import { RealClock } from './clock.js'
-import { requireQwenRealtime } from './config.js'
+import { requireQwenRealtime, type QwenRealtimeConfig } from './config.js'
 import { MonotonicIdFactory } from './ids.js'
 import { OpenAIModelGateway } from './model-gateway.js'
 import {
@@ -30,6 +30,8 @@ export interface BuildQwenRealtimeAssemblyOptions
   > {
   /** Deterministic test seam; production uses the bounded WebSocket connector. */
   readonly connector?: QwenConnector
+  /** Host-resolved selected-provider config; integrated production never re-resolves settings. */
+  readonly qwenConfig?: QwenRealtimeConfig
   /** Host-resolved Codex resource; never derived from provider or renderer input. */
   readonly codexResource?: CodexAssemblyResource
 }
@@ -54,7 +56,7 @@ export function buildQwenRealtimeAssembly(
     options.codexResource !== undefined
     && options.settings.codex_projects_enabled !== (options.codexResource.mode === 'project')
   ) throw new AssemblyError('realtime Codex project mode mismatch')
-  const qwen = requireQwenRealtime(options.settings)
+  const qwen = options.qwenConfig ?? requireQwenRealtime(options.settings)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
   const configuredModelKey = stripLikePython(options.settings.model_api_key ?? '')

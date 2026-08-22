@@ -8,6 +8,7 @@ import {
   ConfigurationError,
   loadSettings,
   requireVolcengineRealtime,
+  type Settings,
   type VolcengineRealtimeConfig,
 } from '../src/config.js'
 import { volcengineInputPcm } from '../src/realtime/volcengine/audio.js'
@@ -78,7 +79,10 @@ const keyLabels = new Map(Object.entries(keyValues).map(([label, value]) => [val
 const secretFields = new Set(['ark_api_key', 'doubao_asr_api_key', 'doubao_bigmodel_api_key'])
 
 function environmentFor(raw: Record<string, unknown>): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = {}
+  const environment: NodeJS.ProcessEnv = {
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+  }
   for (const [field, rawValue] of Object.entries(raw)) {
     const variable = settingEnvironment[field]!
     let value = String(rawValue)
@@ -116,7 +120,17 @@ function normalizeConfig(config: VolcengineRealtimeConfig): Record<string, unkno
 
 function safeConfig(case_: FixtureCase): unknown {
   try {
-    const settings = loadSettings(environmentFor(case_.settings as Record<string, unknown>))
+    const fixtureSettings = case_.settings as Record<string, unknown>
+    const loaded = loadSettings(environmentFor(fixtureSettings))
+    const arkModel = fixtureSettings.volcengine_ark_model
+    const arkSupportModel = fixtureSettings.volcengine_ark_support_model
+    const settings: Settings = {
+      ...loaded,
+      ...(typeof arkModel === 'string' ? {volcengine_ark_model: arkModel} : {}),
+      ...(typeof arkSupportModel === 'string'
+        ? {volcengine_ark_support_model: arkSupportModel}
+        : {}),
+    }
     if (case_.action === 'load') return {ok: true}
     return {ok: true, config: normalizeConfig(requireVolcengineRealtime(settings))}
   } catch (error) {

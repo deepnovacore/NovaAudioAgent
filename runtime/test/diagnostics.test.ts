@@ -8,6 +8,7 @@ import {main} from '../src/cli.js'
 test('diagnostics require the credential for the unconditionally assembled Search adapter', async () => {
   const environment = {
     NOVA_AUDIO_AGENT_BACKEND: 'node',
+    DASHSCOPE_API_KEY: 'dashscope-secret',
     NOVA_AUDIO_AGENT_MODEL_API_KEY: 'sentinel-model-secret',
   }
   const report = await buildDiagnosticReport({environment, nodeVersion: 'v22.12.0'})
@@ -32,6 +33,7 @@ test('diagnostics require the credential for the unconditionally assembled Searc
 test('diagnostics pass the required Search check without probing Tavily', async () => {
   const report = await buildDiagnosticReport({
     environment: {
+      DASHSCOPE_API_KEY: 'dashscope-secret',
       NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-secret',
       TAVILY_API_KEY: 'search-secret',
     },
@@ -102,7 +104,7 @@ test('diagnostics classify retirement and unexpected access without retaining pr
 
 test('diagnostics reject unsupported Node and classify camera paths without touching them', async () => {
   const unsupported = await buildDiagnosticReport({
-    environment: {NOVA_AUDIO_AGENT_MODEL_API_KEY: 'key'},
+    environment: {DASHSCOPE_API_KEY: 'dashscope-key', NOVA_AUDIO_AGENT_MODEL_API_KEY: 'key'},
     nodeVersion: 'v21.99.0',
   })
   assert.equal(unsupported.checks[0]?.status, 'fail')
@@ -110,6 +112,7 @@ test('diagnostics reject unsupported Node and classify camera paths without touc
 
   const file = await buildDiagnosticReport({
     environment: {
+      DASHSCOPE_API_KEY: 'dashscope-key',
       NOVA_AUDIO_AGENT_MODEL_API_KEY: 'key',
       NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE: '/sentinel/private/video.mp4',
     },
@@ -122,6 +125,7 @@ test('diagnostics reject unsupported Node and classify camera paths without touc
 
   const invalid = await buildDiagnosticReport({
     environment: {
+      DASHSCOPE_API_KEY: 'dashscope-key',
       NOVA_AUDIO_AGENT_MODEL_API_KEY: 'key',
       NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE: 'sentinel-relative.mp4',
     },
@@ -137,6 +141,7 @@ test('diagnose CLI emits one canonical line with exact exit behavior', async () 
   let output = ''
   const environment = {
     NOVA_AUDIO_AGENT_BACKEND: 'node',
+    DASHSCOPE_API_KEY: 'dashscope-secret',
     NOVA_AUDIO_AGENT_MODEL_API_KEY: 'sentinel-secret',
     TAVILY_API_KEY: 'sentinel-search-secret',
   }
