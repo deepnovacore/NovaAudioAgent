@@ -126,6 +126,7 @@
     "runtime/src/unicode-casefold.ts",
     "runtime/src/unicode-normalize.ts",
     "runtime/src/volcengine-realtime-assembly.ts",
+    "runtime/src/workspace-graph/identity.ts",
     "runtime/src/workspace-graph/models.ts",
     "runtime/src/workspace-graph/sensitivity.ts",
     "runtime/src/workspace-graph/store-client.ts",
@@ -1428,6 +1429,15 @@
       "disposition": "host_only_unicode",
       "test": "runtime/test/unicode-nfkc.test.ts",
       "behavior": "the committed vectors were exported against the pinned Unicode version"
+    },
+    {
+      "file": "runtime/src/workspace-graph/identity.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "cb4f911c7a29455ec50afe69005d65e02b717430c77c9ec16d4749d3550dd065",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-identity.test.ts",
+      "behavior": "UTF-16-overlong aliases are rejected before producing invalid Task 0 cards"
     },
     {
       "file": "runtime/src/workspace-graph/sensitivity.ts",
