@@ -38,6 +38,10 @@ import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
+import {
+  hasUnpairedSurrogate,
+  workspaceGraphBoardMessage,
+} from './realtime/workspace-graph-board.js'
 
 export const DEFAULT_MAX_OUTBOUND_FRAMES = 128
 
@@ -51,6 +55,7 @@ export interface DesktopCommand {
     | 'playback_done'
     | 'playback_cleared'
     | 'memory_board_request'
+    | 'workspace_graph_board_request'
     | 'clock_pong'
   readonly payload: Readonly<Record<string, string | number>>
 }
@@ -77,6 +82,7 @@ export interface DesktopBridgeOptions {
   readonly stop: {abort(): void}
   readonly maxOutboundFrames?: number
   readonly memoryBoard?: (requestId: string) => string
+  readonly workspaceGraphBoard?: (requestId: string) => string
   readonly clock?: Clock
   readonly telemetry?: RealtimeTelemetry
   readonly projectView?: PublicProjectView
@@ -100,6 +106,7 @@ export class DesktopSocketBridge {
   readonly #stop: {abort(): void}
   readonly #maxOutboundFrames: number
   readonly #memoryBoard: ((requestId: string) => string) | undefined
+  readonly #workspaceGraphBoard: ((requestId: string) => string) | undefined
   readonly #clock: Clock | undefined
   readonly #telemetry: RealtimeTelemetry | undefined
   readonly #onOutboundAvailable: (() => void) | undefined
@@ -111,6 +118,7 @@ export class DesktopSocketBridge {
   /** Single-slot: only the latest state matters, and a backlog of stale ones is worse than none. */
   #codexOutbound: CodexState | null = null
   #projectOutbound: PublicProjectView | null = null
+  #workspaceGraphOutbound: string | null = null
 
   /**
    * The highest generation the renderer has been told to clear.
@@ -146,6 +154,7 @@ export class DesktopSocketBridge {
     this.#stop = options.stop
     this.#maxOutboundFrames = options.maxOutboundFrames ?? DEFAULT_MAX_OUTBOUND_FRAMES
     this.#memoryBoard = options.memoryBoard
+    this.#workspaceGraphBoard = options.workspaceGraphBoard
     this.#clock = options.clock
     // Telemetry needs a clock to be worth anything: every sample it takes is a duration.
     this.#telemetry = options.clock === undefined ? undefined : options.telemetry
@@ -278,6 +287,7 @@ export class DesktopSocketBridge {
     this.#lastProjectViewSent = null
     this.#codexOutbound = null
     this.#projectOutbound = null
+    this.#workspaceGraphOutbound = null
   }
 
   /** Mark the connection authenticated, which is what unblocks the single-slot queues. */
@@ -324,7 +334,11 @@ export class DesktopSocketBridge {
   }
 
   async #receiveCommand(command: DesktopCommand): Promise<void> {
-    if (this.#telemetry !== undefined && command.kind !== 'memory_board_request') {
+    if (
+      this.#telemetry !== undefined
+      && command.kind !== 'memory_board_request'
+      && command.kind !== 'workspace_graph_board_request'
+    ) {
       this.#telemetry.record('renderer.ack', {kind: command.kind, ...command.payload})
     }
     switch (command.kind) {
@@ -371,6 +385,17 @@ export class DesktopSocketBridge {
           this.#enqueue(this.#memoryBoard(String(command.payload.request_id)), {droppable: true})
         }
         return
+      case 'workspace_graph_board_request': {
+        const requestId = String(command.payload.request_id)
+        try {
+          this.#workspaceGraphOutbound = this.#workspaceGraphBoard?.(requestId)
+            ?? workspaceGraphBoardMessage(requestId, null, 'disabled')
+        } catch {
+          this.#workspaceGraphOutbound = workspaceGraphBoardMessage(requestId, null, 'degraded')
+        }
+        this.#onOutboundAvailable?.()
+        return
+      }
       default:
         return
     }
@@ -417,6 +442,11 @@ export class DesktopSocketBridge {
         this.#syncProjectDelivery()
         return {frame: codexProjectMessage(view), policy: 'latest'}
       }
+    }
+    if (this.#workspaceGraphOutbound !== null) {
+      const frame = this.#workspaceGraphOutbound
+      this.#workspaceGraphOutbound = null
+      return {frame, policy: 'latest'}
     }
     return null
   }
@@ -571,12 +601,14 @@ export class DesktopSocketBridge {
     readonly preempt: number
     readonly codex: boolean
     readonly project: boolean
+    readonly workspaceGraph: boolean
   } {
     return {
       outbound: this.#outbound.length,
       preempt: this.#preemptOutbound.length,
       codex: this.#codexOutbound !== null,
       project: this.#projectOutbound !== null,
+      workspaceGraph: this.#workspaceGraphOutbound !== null,
     }
   }
 
@@ -673,6 +705,19 @@ export function parseClientMessage(
   if (kind === 'memory.board.request') {
     return {kind: 'memory_board_request', payload: {request_id: readIdentifier(value, 'request_id')}}
   }
+  if (kind === 'workspace_graph.board.request') {
+    if (Object.keys(value).sort().join(',') !== 'request_id,type') {
+      throw new DesktopProtocolError('desktop control frame type is unsupported')
+    }
+    const requestId = readIdentifier(value, 'request_id')
+    if (hasUnpairedSurrogate(requestId)) {
+      throw new DesktopProtocolError('desktop request_id is invalid')
+    }
+    return {
+      kind: 'workspace_graph_board_request',
+      payload: {request_id: requestId},
+    }
+  }
   if (kind === 'clock.pong') {
     const timestamp = value.t_render_ms
     if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp < 0) {
@@ -713,6 +758,8 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
     }
     case 'memory.board.request':
       return {kind: 'memory_board_request', payload: {request_id: control.request_id}}
+    case 'workspace_graph.board.request':
+      return {kind: 'workspace_graph_board_request', payload: {request_id: control.request_id}}
     case 'clock.pong':
       return {
         kind: 'clock_pong',
@@ -756,6 +803,7 @@ function readIdentifier(value: Record<string, unknown>, field: string): string {
   }
   return candidate
 }
+
 
 function optionalPlayedMs(payload: Readonly<Record<string, string | number>>): number | null {
   const value = payload.played_ms

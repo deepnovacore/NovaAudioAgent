@@ -17,6 +17,7 @@ import {
   serializeCameraCapture,
 } from './desktop-camera.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
+import {hasUnpairedSurrogate} from './realtime/workspace-graph-board.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024
@@ -31,6 +32,7 @@ const readyEndpointPattern = /^127\.0\.0\.1:([0-9]{1,5})$/u
 const identifierSchema = z.string()
   .refine(value => codePointLengthLikePython(value) <= 256)
   .refine(value => stripLikePython(value) !== '')
+const graphRequestIdentifierSchema = identifierSchema.refine(value => !hasUnpairedSurrogate(value))
 const renderTimestampSchema = z.number().finite().nonnegative().optional()
 
 const helloSchema = z.object({
@@ -67,6 +69,10 @@ export const desktopControlSchema = z.discriminatedUnion('type', [
     request_id: identifierSchema,
   }),
   z.object({
+    type: z.literal('workspace_graph.board.request'),
+    request_id: graphRequestIdentifierSchema,
+  }).strict(),
+  z.object({
     type: z.literal('clock.pong'),
     ping_id: identifierSchema,
     t_render_ms: z.number().finite().nonnegative(),
@@ -81,6 +87,8 @@ export class DesktopProtocolError extends Error {
     this.name = 'DesktopProtocolError'
   }
 }
+
+class DesktopGraphRequestError extends DesktopProtocolError {}
 
 export type DesktopCameraErrorCode = 'invalid_request' | 'capture_unavailable'
 
@@ -330,7 +338,8 @@ export class NodeDesktopServer {
           return
         }
         await this.#options.onControl?.(parseDesktopControl(raw))
-      }).catch(() => {
+      }).catch(error => {
+        if (error instanceof DesktopGraphRequestError) return
         rejected = true
         socket.close(4003, 'desktop protocol rejected')
       }).finally(() => {
@@ -628,8 +637,17 @@ export function authenticateDesktopFrame(raw: string, expectedToken: string): vo
 }
 
 export function parseDesktopControl(raw: string): DesktopControl {
-  const result = desktopControlSchema.safeParse(parseBoundedJson(raw))
-  if (!result.success) throw new DesktopProtocolError('desktop control frame is unsupported')
+  const value = parseBoundedJson(raw)
+  const result = desktopControlSchema.safeParse(value)
+  if (!result.success) {
+    if (
+      typeof value === 'object'
+      && value !== null
+      && !Array.isArray(value)
+      && (value as Record<string, unknown>).type === 'workspace_graph.board.request'
+    ) throw new DesktopGraphRequestError('desktop workspace graph request is invalid')
+    throw new DesktopProtocolError('desktop control frame is unsupported')
+  }
   return result.data
 }
 
@@ -725,6 +743,7 @@ function safeTokenEqual(candidate: string, expected: string): boolean {
   return candidateBytes.length === expectedBytes.length
     && timingSafeEqual(candidateBytes, expectedBytes)
 }
+
 
 function rawText(data: RawData): string {
   return Buffer.isBuffer(data)

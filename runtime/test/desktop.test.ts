@@ -281,6 +281,57 @@ test('desktop identifiers use Python blank and code-point limits', () => {
   if (parsed.type === 'speech.onset') assert.equal(parsed.speech_id, speechId)
 })
 
+test('desktop parses only the bounded read-only workspace graph request shape', () => {
+  assert.deepEqual(parseDesktopControl(JSON.stringify({
+    type: 'workspace_graph.board.request',
+    request_id: 'graph-请求',
+  })), {
+    type: 'workspace_graph.board.request',
+    request_id: 'graph-请求',
+  })
+  assert.throws(() => parseDesktopControl(JSON.stringify({
+    type: 'workspace_graph.board.request',
+    request_id: ' ',
+  })), /workspace graph request is invalid/u)
+  assert.throws(() => parseDesktopControl(JSON.stringify({
+    type: 'workspace_graph.board.delete',
+    request_id: 'graph-1',
+  })), /unsupported/u)
+  assert.throws(() => parseDesktopControl(JSON.stringify({
+    type: 'workspace_graph.board.request',
+    request_id: '\ud800',
+  })), /workspace graph request is invalid/u)
+})
+
+test('a malformed graph request is ignored without tearing down authenticated voice transport', async () => {
+  let receivedSpeech = false
+  let acknowledge: (() => void) | undefined
+  const acknowledged = new Promise<void>(resolve => { acknowledge = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onControl: control => {
+      if (control.type === 'speech.onset' && control.speech_id === 'still-live') {
+        receivedSpeech = true
+        acknowledge?.()
+      }
+    },
+  })
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    socket.send(JSON.stringify({
+      type: 'workspace_graph.board.request', request_id: 'bad', extra: 'not allowed',
+    }))
+    socket.send(JSON.stringify({type: 'speech.onset', speech_id: 'still-live'}))
+    await settleWithin('post-malformed graph control', acknowledged)
+    assert.equal(receivedSpeech, true)
+    assert.equal(socket.readyState, WebSocket.OPEN)
+  } finally {
+    await closeDesktopClientAndServer(socket, server)
+  }
+})
+
 test('desktop controls preserve the Python accepted shape and strip unknown evidence', () => {
   assert.deepEqual(parseDesktopControl(JSON.stringify({
     type: 'playback.started',

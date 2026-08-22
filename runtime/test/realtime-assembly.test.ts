@@ -66,6 +66,18 @@ interface Deferred<T> {
   reject(error: unknown): void
 }
 
+function emptyPublishedGraphSnapshot(publicationRevision: number) {
+  return Object.freeze({
+    schema_version: 3 as const,
+    publication_revision: publicationRevision,
+    degraded: false,
+    logical_workspaces: Object.freeze([]),
+    workspace_instances: Object.freeze([]),
+    relations: Object.freeze([]),
+    aliases: Object.freeze([]),
+  })
+}
+
 function deferred<T>(): Deferred<T> {
   let resolvePromise: ((value: T) => void) | undefined
   let rejectPromise: ((error: unknown) => void) | undefined
@@ -833,7 +845,7 @@ test('workspace graph opens before project initialization, injects only the curr
   let workspaceQueueFailures = 0
   const diagnostics: string[] = []
   const graph: RealtimeWorkspaceGraph = {
-    publishedSnapshot: Object.freeze({publication_revision: 7}),
+    publishedSnapshot: emptyPublishedGraphSnapshot(7),
     open: () => { actions.push('graph:open'); return Promise.resolve() },
     openWorkspace: async input => {
       actions.push('graph:workspace')
@@ -1056,7 +1068,7 @@ test('never-settling graph open is bounded and cannot block voice startup', asyn
   const diagnostics: string[] = []
   let closes = 0
   const graph = {
-    publishedSnapshot: Object.freeze({publication_revision: 0}),
+    publishedSnapshot: emptyPublishedGraphSnapshot(0),
     open: () => openGate.promise,
     openWorkspace: () => Promise.reject(new Error('not expected')),
     recordTaskCompletion: () => Promise.reject(new Error('not expected')),
@@ -1129,7 +1141,7 @@ test('never-settling initial Header delivery cannot block voice startup', async 
   }
   const projectAdapter = adapterShape as unknown as ProjectCodexAdapter
   const graph: RealtimeWorkspaceGraph = {
-    publishedSnapshot: Object.freeze({publication_revision: 7}),
+    publishedSnapshot: emptyPublishedGraphSnapshot(7),
     open: () => Promise.resolve(),
     openWorkspace: () => Promise.resolve({
       kind: 'resolved',
@@ -1184,7 +1196,7 @@ test('abandoned graph close remains cleanup-incomplete and is retried by the ass
   const diagnostics: string[] = []
   let closes = 0
   const graph = {
-    publishedSnapshot: Object.freeze({publication_revision: 0}),
+    publishedSnapshot: emptyPublishedGraphSnapshot(0),
     open: () => Promise.resolve(),
     openWorkspace: () => Promise.reject(new Error('not expected')),
     recordTaskCompletion: () => Promise.reject(new Error('not expected')),
@@ -1212,7 +1224,7 @@ test('workspace graph open failure is diagnostic-only and never blocks voice sta
   const diagnostics: string[] = []
   let closes = 0
   const graph = {
-    publishedSnapshot: Object.freeze({publication_revision: 0}),
+    publishedSnapshot: emptyPublishedGraphSnapshot(0),
     open: () => Promise.reject(new Error('sensitive graph failure detail')),
     openWorkspace: () => Promise.reject(new Error('not expected')),
     recordTaskCompletion: () => Promise.reject(new Error('not expected')),

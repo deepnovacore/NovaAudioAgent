@@ -37,6 +37,9 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:window-drag:end',
     'nova:window-drag:move',
     'nova:window-drag:start',
+    'nova:workspace-graph-board:data',
+    'nova:workspace-graph-board:fetch',
+    'nova:workspace-graph-board:request',
   ])
   assert.doesNotMatch(source, /sendSync/)
 })
@@ -55,6 +58,21 @@ test('main owns the fixed orb menu and validates every menu and board sender', a
   assert.match(renderer, /contextmenu/)
   assert.match(renderer, /event\.preventDefault\(\)/)
   assert.match(renderer, /orbMenu\.show\(\)/)
+})
+
+test('workspace graph board relay is sender-bound, bounded, and has no export or action channel', async () => {
+  const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const preload = await readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8')
+  const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  assert.match(main, /ipcMain\.handle\('nova:workspace-graph-board:request', event => \{\n\s*if \(!boardWindow \|\| event\.sender !== boardWindow\.webContents\)/)
+  assert.match(main, /ipcMain\.on\('nova:workspace-graph-board:data', \(event, payload\) => \{\n\s*if \(!mainWindow \|\| event\.sender !== mainWindow\.webContents \|\| !payload\) return/)
+  assert.match(renderer, /message\.type === 'workspace_graph\.board'/)
+  assert.match(renderer, /graphBoard\.publish\(message\)/)
+  assert.match(renderer, /graphBoard\.onFetch\(requestId => \{\n\s*send\(\{ type: 'workspace_graph\.board\.request', request_id: requestId \}\)/)
+  for (const source of [main, preload, renderer]) {
+    assert.doesNotMatch(source, /workspace-graph-board:(?:export|delete|edit|suppress|merge|switch|inspect)/u)
+  }
 })
 
 test('registers the orb context-menu channel exactly once', async () => {

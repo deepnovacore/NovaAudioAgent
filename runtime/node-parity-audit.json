@@ -22,6 +22,7 @@
     "desktop/ambient-orb/src/renderer/release-camera.mjs",
     "desktop/ambient-orb/src/renderer/settings.mjs",
     "desktop/ambient-orb/src/renderer/state.mjs",
+    "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
     "runtime/src/assembly.ts",
     "runtime/src/calls.ts",
     "runtime/src/canonical-json.ts",
@@ -115,6 +116,7 @@
     "runtime/src/realtime/volcengine/silence-endpointing.ts",
     "runtime/src/realtime/volcengine/tts.ts",
     "runtime/src/realtime/volcengine/websocket.ts",
+    "runtime/src/realtime/workspace-graph-board.ts",
     "runtime/src/runtime.ts",
     "runtime/src/scorecard.ts",
     "runtime/src/sim.ts",
@@ -309,6 +311,33 @@
       "disposition": "wire_json",
       "test": "desktop/ambient-orb/test/orb-visual.test.mjs",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "f6f9c83eccb7769affa383652ad5b819f8e1c29b41b4296b33df5f344cd3fb58",
+      "disposition": "wire_json",
+      "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs",
+      "behavior": "graph renderer uses owned text nodes for active weak degraded stale and omission states"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs",
+      "behavior": "graph payload validator clones the exact bounded view and rejects hidden or malformed data"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+      "kind": "string_trim",
+      "occurrence_index": 2,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs",
+      "behavior": "graph payload validator clones the exact bounded view and rejects hidden or malformed data"
     },
     {
       "file": "runtime/src/causal-runtime.ts",
@@ -1290,6 +1319,42 @@
       "disposition": "wire_json",
       "test": "runtime/test/realtime-session.test.ts",
       "behavior": "an unknown Guard history mode is refused before the session is touched"
+    },
+    {
+      "file": "runtime/src/realtime/workspace-graph-board.ts",
+      "kind": "string_trim",
+      "occurrence_index": 0,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-workspace-graph-board.test.ts",
+      "behavior": "board validates the exact bounded request id"
+    },
+    {
+      "file": "runtime/src/realtime/workspace-graph-board.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-workspace-graph-board.test.ts",
+      "behavior": "ready graph board exposes only the approved projection and evidence count"
+    },
+    {
+      "file": "runtime/src/realtime/workspace-graph-board.ts",
+      "kind": "string_trim",
+      "occurrence_index": 2,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-workspace-graph-board.test.ts",
+      "behavior": "ready graph board exposes only the approved projection and evidence count"
+    },
+    {
+      "file": "runtime/src/realtime/workspace-graph-board.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-workspace-graph-board.test.ts",
+      "behavior": "board validates the exact bounded request id"
     },
     {
       "file": "runtime/src/runtime.ts",

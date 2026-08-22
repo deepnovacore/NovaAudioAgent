@@ -39,6 +39,7 @@ import type {
   RealtimeProvider,
 } from '../src/realtime/protocol.js'
 import {memoryBoardMessage} from '../src/realtime/memory-board.js'
+import {workspaceGraphBoardMessage} from '../src/realtime/workspace-graph-board.js'
 import {buildProductionRealtimeAssembly} from '../src/production-realtime-assembly.js'
 import {
   QwenSocketClosedError,
@@ -1125,6 +1126,15 @@ test('authenticated fake-provider loopback uses one service for duplex audio and
       type: 'memory.board.request', request_id: 'board-1',
     }), 'desktop memory board request')
     assert.equal(text((await board)[0]!), memoryBoardMessage('board-1', core.runtime.memory))
+
+    const graphBoard = receiveFrames(first, 1, 'disabled workspace graph board')
+    await sendDesktop(first, JSON.stringify({
+      type: 'workspace_graph.board.request', request_id: 'graph-board-1',
+    }), 'desktop workspace graph board request')
+    assert.equal(
+      text((await graphBoard)[0]!),
+      workspaceGraphBoardMessage('graph-board-1', null, 'disabled'),
+    )
 
     await sendDesktop(first, new Uint8Array([1, 2, 3, 4]), 'desktop PCM')
     await sendDesktop(first, JSON.stringify({

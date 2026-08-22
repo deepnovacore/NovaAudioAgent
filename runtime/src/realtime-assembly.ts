@@ -33,9 +33,11 @@ import type {
   TurnContextInput,
 } from './workspace-graph/service.js'
 import type {WorkspaceResolutionDecision} from './workspace-graph/identity.js'
+import type {PublishedGraphSnapshot} from './workspace-graph/store.js'
 
 export interface RealtimeWorkspaceGraph {
-  readonly publishedSnapshot: {readonly publication_revision: number}
+  readonly publishedSnapshot: PublishedGraphSnapshot
+  readonly degraded?: boolean
   open(): Promise<void>
   openWorkspace(input: OpenWorkspaceInput): Promise<WorkspaceResolutionDecision>
   recordTaskCompletion(input: TaskCompletionInput): Promise<void>

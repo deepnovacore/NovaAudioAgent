@@ -497,6 +497,8 @@ async function handleControl(message) {
     captionLabel.hidden = !message.text
   } else if (message.type === 'memory.board') {
     window.novaAudioAgentDesktop.memoryBoard.publish(message)
+  } else if (message.type === 'workspace_graph.board') {
+    window.novaAudioAgentDesktop.graphBoard.publish(message)
   } else if (message.type === 'codex.state') {
     axes.codex = message.state === 'running' ? 'working' : 'idle'
   } else if (message.type === 'codex.project') {
@@ -574,6 +576,9 @@ async function boot() {
     window.novaAudioAgentDesktop.settings?.onChanged?.(next => visual.setPalette(next.palette))
     window.novaAudioAgentDesktop.memoryBoard.onFetch(requestId => {
       send({ type: 'memory.board.request', request_id: requestId })
+    })
+    window.novaAudioAgentDesktop.graphBoard.onFetch(requestId => {
+      send({ type: 'workspace_graph.board.request', request_id: requestId })
     })
     window.novaAudioAgentDesktop.nativeAudio.onEvent(event => {
       if (event.type === 'audio') {
