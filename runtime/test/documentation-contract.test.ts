@@ -57,9 +57,24 @@ test('English, Chinese, and env example generated blocks contain every public va
     }
   }
   for (const document of documents) {
+    assert.doesNotMatch(document, /NOVA_AUDIO_AGENT_REALTIME_PROVIDER\s*=/u)
     assert.doesNotMatch(document, /NOVA_AUDIO_AGENT_(?:HA|AUTOGLM)_[A-Z_]+\s*=/u)
     assert.doesNotMatch(document, /NOVA_AUDIO_AGENT_DESKTOP_(?:TOKEN|READY_ENDPOINT|READY_FD)\s*=/u)
   }
+})
+
+test('the public contract exposes product-shaped pipeline selectors and retires the vendor selector', () => {
+  const publicNames = new Set(publicEnvironmentContract().map(entry => entry.name))
+  assert.deepEqual([
+    'NOVA_AUDIO_AGENT_PIPELINE_MODE',
+    'NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL',
+    'NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER',
+  ].every(name => publicNames.has(name)), true)
+  assert.equal(publicNames.has('NOVA_AUDIO_AGENT_REALTIME_PROVIDER'), false)
 })
 
 function generatedBlock(document: string): string {

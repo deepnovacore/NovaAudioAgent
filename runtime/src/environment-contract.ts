@@ -2,8 +2,9 @@ import {stripLikePython} from './python-text.js'
 import {casefoldLikePython} from './unicode-casefold.js'
 
 export type EnvironmentOwner =
-  | 'core' | 'qwen' | 'volcengine' | 'codex' | 'search' | 'camera'
-  | 'telemetry' | 'source_rollback' | 'host_private' | 'retired_ha' | 'retired_autoglm'
+  | 'core' | 'qwen' | 'ark' | 'volcengine' | 'codex' | 'search' | 'camera'
+  | 'telemetry' | 'source_rollback' | 'host_private'
+  | 'retired_realtime' | 'retired_ha' | 'retired_autoglm'
 
 export interface EnvironmentVariableContract {
   readonly name: string
@@ -35,7 +36,14 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_WATCH_MODEL', 'core', false, true, 'never', 'fast model', 'Watch model override.', 'Watch 模型覆盖。'],
   ['NOVA_AUDIO_AGENT_SURROGATE_MODEL', 'core', false, true, 'never', 'qwen-flash', 'Surrogate model.', 'Surrogate 模型。'],
   ['NOVA_AUDIO_AGENT_COMPRESSOR_MODEL', 'core', false, true, 'never', 'qwen-flash', 'Memory compressor model.', '记忆压缩模型。'],
-  ['NOVA_AUDIO_AGENT_REALTIME_PROVIDER', 'core', false, true, 'never', 'qwen', 'Realtime provider: qwen or volcengine.', '实时提供方：qwen 或 volcengine。'],
+  ['NOVA_AUDIO_AGENT_PIPELINE_MODE', 'core', false, true, 'never', 'integrated', 'Product pipeline shape: integrated or cascaded.', '产品管线形态：集成或级联。'],
+  ['NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER', 'core', false, true, 'never', 'qwen', 'Integrated realtime provider.', '集成实时提供方。'],
+  ['NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER', 'core', false, true, 'never', 'auto', 'Cascaded endpointing provider.', '级联端点检测提供方。'],
+  ['NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER', 'core', false, true, 'never', 'volcengine', 'Cascaded ASR provider.', '级联 ASR 提供方。'],
+  ['NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER', 'core', false, true, 'never', 'qwen', 'Cascaded LLM provider.', '级联 LLM 提供方。'],
+  ['NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL', 'core', false, true, 'never', 'provider default', 'Cascaded LLM model override.', '级联 LLM 模型覆盖。'],
+  ['NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER', 'core', false, true, 'never', 'volcengine', 'Cascaded TTS provider.', '级联 TTS 提供方。'],
+  ['NOVA_AUDIO_AGENT_REALTIME_PROVIDER', 'retired_realtime', false, false, 'never', null, 'Retired vendor-shaped realtime selector.', '已退役的厂商形态实时选择器。'],
   ['NOVA_AUDIO_AGENT_EXECUTOR', 'core', false, true, 'never', 'fast_sim', 'Single executor selector for compatibility.', '兼容用单执行器选择器。'],
   ['NOVA_AUDIO_AGENT_EXECUTORS', 'core', false, true, 'never', 'selected executor', 'Ordered executor list.', '有序执行器列表。'],
   ['NOVA_AUDIO_AGENT_PROACTIVITY_PRESET', 'core', false, true, 'never', 'balanced', 'Proactivity preset.', '主动性预设。'],
@@ -48,12 +56,12 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT', 'qwen', false, true, 'never', 'false', 'Allow controlled Guard reconnect.', '允许受控 Guard 重连。'],
   ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY', 'qwen', false, true, 'never', 'none', 'Guard history recovery mode.', 'Guard 历史恢复模式。'],
   ['NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS', 'qwen', false, true, 'never', '4', 'Guard history pair count.', 'Guard 历史对话对数。'],
-  ['ARK_API_KEY', 'volcengine', true, true, 'when_selected', null, 'Volcengine Ark credential.', '火山方舟凭据。'],
+  ['ARK_API_KEY', 'ark', true, true, 'when_selected', null, 'Ark cascaded LLM credential.', '方舟级联 LLM 凭据。'],
   ['DOUBAO_ASR_API_KEY', 'volcengine', true, true, 'never', 'Doubao big-model key', 'Volcengine ASR credential override.', '火山 ASR 凭据覆盖。'],
   ['DOUBAO_BIGMODEL_API_KEY', 'volcengine', true, true, 'when_selected', null, 'Volcengine TTS and ASR fallback credential.', '火山 TTS 及 ASR 回退凭据。'],
-  ['NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL', 'volcengine', false, true, 'never', 'Volcengine Ark endpoint', 'Volcengine Ark secure endpoint.', '火山方舟安全地址。'],
-  ['NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL', 'volcengine', false, true, 'never', 'doubao-seed-2-0-pro-260215', 'Volcengine primary model.', '火山主模型。'],
-  ['NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL', 'volcengine', false, true, 'never', 'primary model', 'Volcengine support model.', '火山辅助模型。'],
+  ['NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL', 'ark', false, true, 'never', 'Volcengine Ark endpoint', 'Ark secure endpoint.', '方舟安全地址。'],
+  ['NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL', 'retired_realtime', false, false, 'never', null, 'Retired Ark model selector.', '已退役的方舟模型选择器。'],
+  ['NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL', 'retired_realtime', false, false, 'never', null, 'Retired Ark support-model selector.', '已退役的方舟辅助模型选择器。'],
   ['NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT', 'volcengine', false, true, 'never', 'Doubao ASR endpoint', 'Doubao ASR secure endpoint.', '豆包 ASR 安全地址。'],
   ['NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID', 'volcengine', false, true, 'never', 'volc.seedasr.sauc.duration', 'Doubao ASR resource ID.', '豆包 ASR 资源 ID。'],
   ['NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS', 'volcengine', false, true, 'never', '200', 'ASR input chunk duration.', 'ASR 输入分块时长。'],
@@ -120,8 +128,14 @@ export function publicEnvironmentContract(): readonly EnvironmentVariableContrac
 }
 
 export function findRetiredConfiguration(environment: NodeJS.ProcessEnv):
-  | {readonly capability: 'ha' | 'autoglm'; readonly fields: readonly string[]}
+  | {readonly capability: 'realtime' | 'ha' | 'autoglm'; readonly fields: readonly string[]}
   | null {
+  if (stripLikePython(environment.NOVA_AUDIO_AGENT_REALTIME_PROVIDER ?? '') !== '') {
+    return Object.freeze({
+      capability: 'realtime' as const,
+      fields: Object.freeze(['NOVA_AUDIO_AGENT_REALTIME_PROVIDER']),
+    })
+  }
   const configured = environment.NOVA_AUDIO_AGENT_EXECUTORS
   const selectorValues = configured === undefined || configured === ''
     ? [environment.NOVA_AUDIO_AGENT_EXECUTOR ?? '']

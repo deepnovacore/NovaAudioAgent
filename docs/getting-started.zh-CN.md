@@ -69,7 +69,13 @@ clean-machine installer、签名和发布仍是 pending external evidence。
 | `NOVA_AUDIO_AGENT_WATCH_MODEL` | `core` | 否 | fast model | Watch 模型覆盖。 |
 | `NOVA_AUDIO_AGENT_SURROGATE_MODEL` | `core` | 否 | qwen-flash | Surrogate 模型。 |
 | `NOVA_AUDIO_AGENT_COMPRESSOR_MODEL` | `core` | 否 | qwen-flash | 记忆压缩模型。 |
-| `NOVA_AUDIO_AGENT_REALTIME_PROVIDER` | `core` | 否 | qwen | 实时提供方：qwen 或 volcengine。 |
+| `NOVA_AUDIO_AGENT_PIPELINE_MODE` | `core` | 否 | integrated | 产品管线形态：集成或级联。 |
+| `NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER` | `core` | 否 | qwen | 集成实时提供方。 |
+| `NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER` | `core` | 否 | auto | 级联端点检测提供方。 |
+| `NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER` | `core` | 否 | volcengine | 级联 ASR 提供方。 |
+| `NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER` | `core` | 否 | qwen | 级联 LLM 提供方。 |
+| `NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL` | `core` | 否 | provider default | 级联 LLM 模型覆盖。 |
+| `NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER` | `core` | 否 | volcengine | 级联 TTS 提供方。 |
 | `NOVA_AUDIO_AGENT_EXECUTOR` | `core` | 否 | fast_sim | 兼容用单执行器选择器。 |
 | `NOVA_AUDIO_AGENT_EXECUTORS` | `core` | 否 | selected executor | 有序执行器列表。 |
 | `NOVA_AUDIO_AGENT_PROACTIVITY_PRESET` | `core` | 否 | balanced | 主动性预设。 |
@@ -82,12 +88,10 @@ clean-machine installer、签名和发布仍是 pending external evidence。
 | `NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT` | `qwen` | 否 | false | 允许受控 Guard 重连。 |
 | `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY` | `qwen` | 否 | none | Guard 历史恢复模式。 |
 | `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS` | `qwen` | 否 | 4 | Guard 历史对话对数。 |
-| `ARK_API_KEY` | `volcengine` | 选择该能力时 | 无 | 火山方舟凭据。 |
+| `ARK_API_KEY` | `ark` | 选择该能力时 | 无 | 方舟级联 LLM 凭据。 |
 | `DOUBAO_ASR_API_KEY` | `volcengine` | 否 | Doubao big-model key | 火山 ASR 凭据覆盖。 |
 | `DOUBAO_BIGMODEL_API_KEY` | `volcengine` | 选择该能力时 | 无 | 火山 TTS 及 ASR 回退凭据。 |
-| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL` | `volcengine` | 否 | Volcengine Ark endpoint | 火山方舟安全地址。 |
-| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL` | `volcengine` | 否 | doubao-seed-2-0-pro-260215 | 火山主模型。 |
-| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL` | `volcengine` | 否 | primary model | 火山辅助模型。 |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL` | `ark` | 否 | Volcengine Ark endpoint | 方舟安全地址。 |
 | `NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT` | `volcengine` | 否 | Doubao ASR endpoint | 豆包 ASR 安全地址。 |
 | `NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID` | `volcengine` | 否 | volc.seedasr.sauc.duration | 豆包 ASR 资源 ID。 |
 | `NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS` | `volcengine` | 否 | 200 | ASR 输入分块时长。 |

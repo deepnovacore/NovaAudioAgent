@@ -51,13 +51,25 @@ test('diagnostics fail only selected required provider configuration', async () 
     id: 'provider.qwen', status: 'fail', code: 'qwen_configuration_invalid',
   })
 
-  const volcengine = await buildDiagnosticReport({
-    environment: {NOVA_AUDIO_AGENT_REALTIME_PROVIDER: 'volcengine'},
+  const retired = await buildDiagnosticReport({
+    environment: {NOVA_AUDIO_AGENT_REALTIME_PROVIDER: 'secret-old-value'},
     nodeVersion: 'v22.12.0',
   })
-  assert.equal(volcengine.ok, false)
-  assert.deepEqual(volcengine.checks[3], {
-    id: 'provider.volcengine', status: 'fail', code: 'volcengine_configuration_invalid',
+  assert.equal(retired.ok, false)
+  assert.deepEqual(retired.checks.slice(1), [
+    {id: 'configuration.retirement', status: 'fail', code: 'retired_configuration'},
+    {id: 'configuration.parse', status: 'fail', code: 'configuration_invalid'},
+  ])
+  assert.equal(canonicalJson(retired).includes('secret-old-value'), false)
+})
+
+test('diagnostics retain the integrated Qwen check for the default product shape', async () => {
+  const integrated = await buildDiagnosticReport({
+    environment: {DASHSCOPE_API_KEY: 'dashscope-secret'},
+    nodeVersion: 'v22.12.0',
+  })
+  assert.deepEqual(integrated.checks[3], {
+    id: 'provider.qwen', status: 'pass', code: 'qwen_configuration_valid',
   })
 })
 

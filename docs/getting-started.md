@@ -73,7 +73,13 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_WATCH_MODEL` | `core` | No | fast model | Watch model override. |
 | `NOVA_AUDIO_AGENT_SURROGATE_MODEL` | `core` | No | qwen-flash | Surrogate model. |
 | `NOVA_AUDIO_AGENT_COMPRESSOR_MODEL` | `core` | No | qwen-flash | Memory compressor model. |
-| `NOVA_AUDIO_AGENT_REALTIME_PROVIDER` | `core` | No | qwen | Realtime provider: qwen or volcengine. |
+| `NOVA_AUDIO_AGENT_PIPELINE_MODE` | `core` | No | integrated | Product pipeline shape: integrated or cascaded. |
+| `NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER` | `core` | No | qwen | Integrated realtime provider. |
+| `NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER` | `core` | No | auto | Cascaded endpointing provider. |
+| `NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER` | `core` | No | volcengine | Cascaded ASR provider. |
+| `NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER` | `core` | No | qwen | Cascaded LLM provider. |
+| `NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL` | `core` | No | provider default | Cascaded LLM model override. |
+| `NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER` | `core` | No | volcengine | Cascaded TTS provider. |
 | `NOVA_AUDIO_AGENT_EXECUTOR` | `core` | No | fast_sim | Single executor selector for compatibility. |
 | `NOVA_AUDIO_AGENT_EXECUTORS` | `core` | No | selected executor | Ordered executor list. |
 | `NOVA_AUDIO_AGENT_PROACTIVITY_PRESET` | `core` | No | balanced | Proactivity preset. |
@@ -86,12 +92,10 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT` | `qwen` | No | false | Allow controlled Guard reconnect. |
 | `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY` | `qwen` | No | none | Guard history recovery mode. |
 | `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS` | `qwen` | No | 4 | Guard history pair count. |
-| `ARK_API_KEY` | `volcengine` | When selected | None | Volcengine Ark credential. |
+| `ARK_API_KEY` | `ark` | When selected | None | Ark cascaded LLM credential. |
 | `DOUBAO_ASR_API_KEY` | `volcengine` | No | Doubao big-model key | Volcengine ASR credential override. |
 | `DOUBAO_BIGMODEL_API_KEY` | `volcengine` | When selected | None | Volcengine TTS and ASR fallback credential. |
-| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL` | `volcengine` | No | Volcengine Ark endpoint | Volcengine Ark secure endpoint. |
-| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL` | `volcengine` | No | doubao-seed-2-0-pro-260215 | Volcengine primary model. |
-| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL` | `volcengine` | No | primary model | Volcengine support model. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL` | `ark` | No | Volcengine Ark endpoint | Ark secure endpoint. |
 | `NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT` | `volcengine` | No | Doubao ASR endpoint | Doubao ASR secure endpoint. |
 | `NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID` | `volcengine` | No | volc.seedasr.sauc.duration | Doubao ASR resource ID. |
 | `NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS` | `volcengine` | No | 200 | ASR input chunk duration. |
