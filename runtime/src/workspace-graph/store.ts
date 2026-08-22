@@ -21,6 +21,7 @@ import { SensitiveContentPolicy, SensitivePathPolicy } from './sensitivity.js'
 export const WORKSPACE_GRAPH_SCHEMA_VERSION = 2
 const DERIVED_TABLE_ROW_CAP = 128
 const OPERATION_RECEIPT_CAP = 4096
+const OPERATION_RECEIPT_MIN_AGE_MS = 24 * 60 * 60 * 1_000
 
 type GraphSqlInput = null | number | bigint | string | NodeJS.ArrayBufferView
 type GraphSqlOutput = null | number | bigint | string | NodeJS.NonSharedUint8Array
@@ -104,11 +105,7 @@ const operationTypeSchema = z.enum([
 
 const receiptRelationResultSchema = z.object({
   kind: z.literal('relation'),
-  source_logical_id: z.string().min(1),
-  target_logical_id: z.string().min(1),
-  relation_type: relationTypeSchema,
-  revision: z.number().int().nonnegative(),
-  status: z.enum(['active', 'weak', 'stale', 'suppressed']),
+  relation: RelationCardSchema,
 }).strict()
 
 export const OperationReceiptResultSchema = z.discriminatedUnion('kind', [
@@ -322,7 +319,7 @@ export class WorkspaceGraphStore {
       operationId,
       'upsert_relation',
       {relation, expected_revision: expectedRevision ?? null},
-      receipt => this.#relationFromReceipt(database, receipt),
+      receipt => this.#relationFromReceipt(receipt),
       () => {
       const existing = this.#relationRow(database, relation)
       if (existing !== undefined && expectedRevision === undefined) {
@@ -367,7 +364,7 @@ export class WorkspaceGraphStore {
       operationId,
       'suppress_relation',
       {sourceId, targetId, relationType: parsedType.data, evidence: parsedEvidence.data},
-      receipt => this.#relationFromReceipt(database, receipt),
+      receipt => this.#relationFromReceipt(receipt),
       () => {
       const row = database.prepare(`
         SELECT payload_json FROM relation_cards
@@ -916,9 +913,10 @@ export class WorkspaceGraphStore {
     database.prepare(`
       DELETE FROM operation_receipts WHERE receipt_sequence IN (
         SELECT receipt_sequence FROM operation_receipts
+        WHERE committed_at <= ?
         ORDER BY receipt_sequence ASC LIMIT ?
       )
-    `).run(remove)
+    `).run(Date.now() - OPERATION_RECEIPT_MIN_AGE_MS, remove)
   }
 
   #derivedRowCount(database: GraphDatabase): number {
@@ -1013,18 +1011,9 @@ export class WorkspaceGraphStore {
     return {receipt, inputDigest: stringColumn(row, 'input_digest')}
   }
 
-  #relationFromReceipt(database: GraphDatabase, receipt: OperationReceiptResult): RelationCard {
+  #relationFromReceipt(receipt: OperationReceiptResult): RelationCard {
     if (receipt.kind !== 'relation') throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
-    const row = database.prepare(`
-      SELECT payload_json FROM relation_cards
-      WHERE source_logical_id = ? AND target_logical_id = ? AND relation_type = ?
-    `).get(receipt.source_logical_id, receipt.target_logical_id, receipt.relation_type)
-    if (row === undefined) throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
-    const relation = this.#parseRelationPayload(stringColumn(row, 'payload_json'))
-    if (relation.revision !== receipt.revision || relation.status !== receipt.status) {
-      throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
-    }
-    return relation
+    return receipt.relation
   }
 
   #latestReceiptSequence(database: GraphDatabase): number {
@@ -1087,12 +1076,5 @@ function compareAliases(left: PublishedGraphAlias, right: PublishedGraphAlias): 
 }
 
 function relationReceipt(relation: RelationCard): OperationReceiptResult {
-  return {
-    kind: 'relation',
-    source_logical_id: relation.source_logical_id,
-    target_logical_id: relation.target_logical_id,
-    relation_type: relation.relation_type,
-    revision: relation.revision,
-    status: relation.status,
-  }
+  return {kind: 'relation', relation}
 }

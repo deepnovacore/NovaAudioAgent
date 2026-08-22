@@ -132,6 +132,7 @@ const publishingOperations = new Set([
   'upsert_relation',
   'suppress_relation',
   'compact',
+  'publish_snapshot',
 ])
 
 const recoverableOperations = new Set([
@@ -271,6 +272,10 @@ export class WorkspaceGraphStoreClient {
       {operationId},
       schemaResult(OperationReceiptSchema.optional()),
     )
+  }
+
+  async refreshSnapshot(): Promise<void> {
+    await this.#request('publish_snapshot', {}, nullResult)
   }
 
   listObservations(): Promise<readonly Observation[]> {

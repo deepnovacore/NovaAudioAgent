@@ -33,11 +33,16 @@ const absolutePathSpan = /(?:[A-Za-z]:[\\/]|\/)[^\s<>"'`()\[\]{},;!?]+/gu
 /** Denies locations that must never be discovered or represented in graph state. */
 export class SensitivePathPolicy {
   private readonly deniedRoots: readonly string[]
+  private readonly deniedTextRoots: readonly string[]
 
   constructor(options: SensitivePathPolicyOptions = {}) {
-    this.deniedRoots = (options.deniedRoots ?? [])
-      .filter(path => isSupportedAbsolute(path))
-      .map(path => normalizePath(path))
+    const roots = (options.deniedRoots ?? []).filter(path => isSupportedAbsolute(path))
+    this.deniedRoots = roots.map(path => normalizePath(path))
+    this.deniedTextRoots = [...new Set(roots.flatMap(root => [
+      root,
+      root.replaceAll('\\', '/'),
+      root.replaceAll('/', '\\'),
+    ]))]
   }
 
   allows(path: string): boolean {
@@ -56,7 +61,17 @@ export class SensitivePathPolicy {
   /** Redacts denied absolute path spans embedded in otherwise safe free text. */
   scrubText(_field: string, value: string): ScrubResult {
     let matches = 0
-    const scrubbed = value.replace(absolutePathSpan, path => {
+    let scrubbed = value
+    for (const root of this.deniedTextRoots) {
+      const configuredRoot = /\s/u.test(root)
+        ? new RegExp(`^.*${escapeRegExp(root)}.*$`, 'gmu')
+        : new RegExp(`${escapeRegExp(root)}(?:[\\/][^\\s<>"'\`()\\[\\]{},;!?]+)*`, 'gu')
+      scrubbed = scrubbed.replace(configuredRoot, () => {
+        matches += 1
+        return '[redacted]'
+      })
+    }
+    scrubbed = scrubbed.replace(absolutePathSpan, path => {
       if (this.allows(path)) return path
       matches += 1
       return '[redacted]'
@@ -65,6 +80,10 @@ export class SensitivePathPolicy {
     if (!hasMeaningfulContent(scrubbed)) return {kind: 'rejected'}
     return {kind: 'redacted', value: scrubbed, matches}
   }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 }
 
 /** Removes credential-bearing spans while retaining the non-sensitive field context. */

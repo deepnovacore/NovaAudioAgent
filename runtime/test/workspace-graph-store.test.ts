@@ -418,6 +418,27 @@ test('every observation string is gated before canonical persistence', async t =
   assert.equal(await fileContains(`${path}-wal`, referenceSecret), false)
 })
 
+test('a configured denied-root span with spaces is fully removed before persistence', async t => {
+  const deniedRoot = '/private/My Folder'
+  const marker = 'space-root-raw-marker.txt'
+  const {client, path} = await createStore(t, {deniedRoots: [deniedRoot]})
+
+  await client.appendObservation(workspaceOpened(
+    'space-bearing-denied-root',
+    `opened ${deniedRoot}/Nested Space/${marker} successfully`,
+  ))
+
+  const [stored] = await client.listObservations()
+  assert.ok(stored !== undefined)
+  assert.equal(stored.summary?.includes(deniedRoot) ?? false, false)
+  assert.equal(stored.summary?.includes(marker) ?? false, false)
+  await closeStore(client)
+  assert.equal(await fileContains(path, deniedRoot), false)
+  assert.equal(await fileContains(path, marker), false)
+  assert.equal(await fileContains(`${path}-wal`, deniedRoot), false)
+  assert.equal(await fileContains(`${path}-wal`, marker), false)
+})
+
 test('compaction bounds derived rows without deleting observations or locking later writes', async t => {
   const {client} = await createStore(t)
   for (let index = 0; index < 4; index += 1) {
@@ -501,23 +522,31 @@ test('a held multi-row relation transaction exposes neither partial reads nor sn
     await rm(directory, {recursive: true, force: true})
   })
   await Promise.all([writer.open(), reader.open()])
+  await reader.upsertRelation(relation())
+  await writer.refreshSnapshot()
   const writerBefore = writer.publishedSnapshot
   const readerBefore = reader.publishedSnapshot
 
-  const write = writer.upsertRelation(relation())
+  const updated = relation(1, 'active', [runtimeEvidence(), runtimeEvidence('revision-one', 2)])
+  const write = writer.upsertRelation(updated, 0)
   await waitForBarrier(barrier, 1)
 
+  await reader.refreshSnapshot()
   assert.equal(writer.publishedSnapshot, writerBefore)
-  assert.equal(reader.publishedSnapshot, readerBefore)
-  assert.deepEqual(await reader.listRelations(), [])
-  assert.deepEqual(await reader.listRelationEvidence('lw-a', 'lw-b', 'depends_on'), [])
+  assert.notEqual(reader.publishedSnapshot, readerBefore)
+  assert.equal(reader.publishedSnapshot.relations[0]?.revision, 0)
+  assert.equal(reader.publishedSnapshot.relations[0]?.evidence_refs.length, 1)
+  assert.equal((await reader.listRelations())[0]?.revision, 0)
+  assert.equal((await reader.listRelationEvidence('lw-a', 'lw-b', 'depends_on')).length, 1)
 
   Atomics.store(barrier, 0, 2)
   Atomics.notify(barrier, 0)
   await write
-  assert.equal(writer.publishedSnapshot.relations.length, 1)
-  assert.equal((await reader.listRelations()).length, 1)
-  assert.equal((await reader.listRelationEvidence('lw-a', 'lw-b', 'depends_on')).length, 1)
+  await reader.refreshSnapshot()
+  assert.equal(writer.publishedSnapshot.relations[0]?.revision, 1)
+  assert.equal(reader.publishedSnapshot.relations[0]?.revision, 1)
+  assert.equal(reader.publishedSnapshot.relations[0]?.evidence_refs.length, 2)
+  assert.equal((await reader.listRelationEvidence('lw-a', 'lw-b', 'depends_on')).length, 2)
 })
 
 test('a locked SQLite worker does not block a scheduled main-thread timer', async t => {
@@ -614,6 +643,80 @@ test('commit-then-exit reconciles a durable receipt without double-applying on r
       evidence: {source: 'runtime', ref: 'commit-exit-observation', observed_at: 1},
     },
   })
+})
+
+test('relation receipt replay returns its exact committed result after derived state advances', async t => {
+  const {client} = await createStore(t)
+  const originalOperationId = '22222222-2222-4222-8222-222222222222'
+  const advancingOperationId = '33333333-3333-4333-8333-333333333333'
+  const original = relation()
+
+  assert.deepEqual(
+    await client.upsertRelation(original, undefined, originalOperationId),
+    original,
+  )
+  await client.upsertRelation(relation(1), 0, advancingOperationId)
+
+  assert.deepEqual(
+    await client.upsertRelation(original, undefined, originalOperationId),
+    original,
+  )
+  assert.equal((await client.getRelation('lw-a', 'lw-b', 'depends_on'))?.revision, 1)
+  assert.deepEqual(await client.getOperationReceipt(originalOperationId), {
+    operation_id: originalOperationId,
+    operation_type: 'upsert_relation',
+    result: {kind: 'relation', relation: original},
+  })
+})
+
+test('receipt compaction prunes only count-overflow receipts older than the safe age window', async t => {
+  const {client, path} = await createStore(t)
+  const dayInMilliseconds = 24 * 60 * 60 * 1_000
+  const recent = Date.now() - dayInMilliseconds + 60_000
+  await execSqlite(path, `
+    WITH RECURSIVE receipt(value) AS (
+      SELECT 1
+      UNION ALL
+      SELECT value + 1 FROM receipt WHERE value < 4097
+    )
+    INSERT INTO operation_receipts(
+      operation_id, operation_type, input_digest, committed_at, result_json
+    )
+    SELECT
+      printf('%08x-0000-4000-8000-%012x', value, value),
+      'replace_card',
+      '${'0'.repeat(64)}',
+      ${recent},
+      '{"kind":"none"}'
+    FROM receipt
+  `)
+
+  await client.compact('44444444-4444-4444-8444-444444444444')
+
+  assert.deepEqual(
+    await querySqlite(path, 'SELECT COUNT(*) AS count FROM operation_receipts'),
+    [{count: 4098}],
+  )
+  assert.equal((await querySqlite(
+    path,
+    "SELECT COUNT(*) AS count FROM operation_receipts WHERE operation_id = '00000001-0000-4000-8000-000000000001'",
+  ))[0]?.count, 1)
+
+  const old = Date.now() - dayInMilliseconds - 60_000
+  await execSqlite(path, `
+    UPDATE operation_receipts SET committed_at = ${old}
+    WHERE receipt_sequence IN (1, 2, 3)
+  `)
+  await client.compact('55555555-5555-4555-8555-555555555555')
+
+  assert.deepEqual(
+    await querySqlite(path, 'SELECT COUNT(*) AS count FROM operation_receipts'),
+    [{count: 4096}],
+  )
+  assert.deepEqual(
+    await querySqlite(path, 'SELECT receipt_sequence FROM operation_receipts WHERE receipt_sequence <= 4'),
+    [{receipt_sequence: 4}],
+  )
 })
 
 test('publication failure retains committed data and marks the previous snapshot degraded', async t => {

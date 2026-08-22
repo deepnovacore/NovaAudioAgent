@@ -145,6 +145,8 @@ function execute(request: StoreRequest): {readonly result: unknown; readonly pub
       return {result: store.compact(stringField(request, 'operationId')), publish: true}
     case 'get_operation_receipt':
       return {result: store.getOperationReceipt(stringField(request, 'operationId')), publish: false}
+    case 'publish_snapshot':
+      return {result: null, publish: true}
     case 'list_observations':
       return {result: store.listObservations(), publish: false}
     case 'get_observation':
