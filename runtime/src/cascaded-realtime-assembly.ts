@@ -1,12 +1,18 @@
 /** Provider-neutral cascaded production assembly over closed, host-owned node registries. */
 
 import {AssemblyError, buildAssembly, type AssemblyOptions} from './assembly.js'
+import {
+  requireSelectedCascadedRealtimeConfig,
+  type ArkCascadedLlmConfig,
+  type AutoEndpointingConfig,
+  type QwenCascadedLlmConfig,
+  type VolcengineAsrConfig,
+  type VolcengineTtsConfig,
+} from './cascaded-realtime-config.js'
 import {RealClock, type Clock} from './clock.js'
 import type {CodexAssemblyResource} from './codex-factory.js'
 import {
   ConfigurationError,
-  requireCascadedCredentials,
-  resolveCascadedSelection,
   type CascadedAsrProviderName,
   type CascadedEndpointingProviderName,
   type CascadedLlmProviderName,
@@ -39,45 +45,13 @@ import {LiveKitVolcEndpointing} from './realtime/volcengine/livekit-endpointing.
 import {SilenceVolcEndpointing} from './realtime/volcengine/silence-endpointing.js'
 import {DoubaoTtsClient} from './realtime/volcengine/tts.js'
 
-const DASHSCOPE_COMPATIBLE_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-
-export interface AutoEndpointingConfig {
-  readonly vadThreshold: number
-  readonly vadPreRollMs: number
-  readonly vadMinSpeechMs: number
-  readonly vadSilenceEndMs: number
-  readonly vadSpeechPadMs: number
-  readonly vadMaxUtteranceMs: number
-}
-
-export interface VolcengineAsrConfig {
-  readonly endpoint: string
-  readonly resourceId: string
-  readonly apiKey: string
-  readonly chunkMs: number
-}
-
-export interface QwenCascadedLlmConfig {
-  readonly baseUrl: string
-  readonly apiKey: string
-  readonly model: string
-  readonly instructions: string
-}
-
-export interface ArkCascadedLlmConfig {
-  readonly baseUrl: string
-  readonly apiKey: string
-  readonly model: string
-  readonly instructions: string
-}
-
-export interface VolcengineTtsConfig {
-  readonly endpoint: string
-  readonly resourceId: string
-  readonly voice: string
-  readonly apiKey: string
-  readonly outputSampleRate: 24_000
-}
+export type {
+  ArkCascadedLlmConfig,
+  AutoEndpointingConfig,
+  QwenCascadedLlmConfig,
+  VolcengineAsrConfig,
+  VolcengineTtsConfig,
+} from './cascaded-realtime-config.js'
 
 export type CascadedAsrClientFactory = (input: {
   readonly config: VolcengineAsrConfig
@@ -226,21 +200,14 @@ export function buildCascadedRealtimeAssembly(
   options: BuildCascadedRealtimeAssemblyOptions,
   registry: CascadedProviderRegistries = options.registries ?? cascadedProviderRegistries,
 ): RealtimeAssembly {
-  const selection = resolveCascadedSelection(options.settings)
-  const credentials = requireCascadedCredentials(options.settings, selection)
+  const selected = requireSelectedCascadedRealtimeConfig(options.settings)
+  const selection = selected.selection
   validateCodexResource(options)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
 
-  const endpointingConfig = resolveEndpointingConfig(options.settings)
-  const asrConfig = resolveAsrConfig(options.settings, credentials.asrApiKey)
-  const llmConfig = selection.llmProvider === 'qwen'
-    ? resolveQwenLlmConfig(selection.llmModel, credentials.llmApiKey)
-    : resolveArkLlmConfig(options.settings, selection.llmModel, credentials.llmApiKey)
-  const ttsConfig = resolveTtsConfig(options.settings, credentials.ttsApiKey)
-
   const endpointingFactory = registry.endpointing[selection.endpointingProvider]({
-    config: endpointingConfig,
+    config: selected.endpointing,
     clock,
     ...(options.endpointingCapability === undefined
       ? {}
@@ -248,25 +215,25 @@ export function buildCascadedRealtimeAssembly(
     ...(options.liveKitExecutor === undefined ? {} : {liveKitExecutor: options.liveKitExecutor}),
   })
   const asrFactory = registry.asr[selection.asrProvider]({
-    config: asrConfig,
+    config: selected.asr,
     ids,
     ...(options.asrClient === undefined ? {} : {clientFactory: options.asrClient}),
   })
-  const llmFactory = selection.llmProvider === 'qwen'
+  const llmFactory = selected.llm.provider === 'qwen'
     ? registry.llm.qwen({
-      config: llmConfig,
+      config: selected.llm.config,
       clock,
       ids,
       ...(options.qwenLlmFactory === undefined ? {} : {factory: options.qwenLlmFactory}),
     })
     : registry.llm.ark({
-      config: llmConfig,
+      config: selected.llm.config,
       clock,
       ids,
       ...(options.arkLlmFactory === undefined ? {} : {factory: options.arkLlmFactory}),
-    })
+  })
   const ttsFactory = registry.tts[selection.ttsProvider]({
-    config: ttsConfig,
+    config: selected.tts,
     ids,
     ...(options.ttsClient === undefined ? {} : {clientFactory: options.ttsClient}),
   })
@@ -275,7 +242,8 @@ export function buildCascadedRealtimeAssembly(
     options,
     selection.llmProvider,
     selection.llmModel,
-    credentials.llmApiKey,
+    selected.llm.config.apiKey,
+    selected.llm.config.baseUrl,
     clock,
   )
   const core = buildAssembly({
@@ -337,99 +305,12 @@ export function buildCascadedRealtimeAssembly(
   })
 }
 
-function resolveEndpointingConfig(settings: Settings): AutoEndpointingConfig {
-  if (!(settings.volcengine_vad_threshold > 0 && settings.volcengine_vad_threshold <= 1)) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD 必须在 (0, 1] 内')
-  }
-  if (settings.volcengine_vad_pre_roll_ms < 0 || settings.volcengine_vad_speech_pad_ms < 0) {
-    throw new ConfigurationError('火山 VAD pre-roll 与 speech pad 不能为负数')
-  }
-  if (settings.volcengine_vad_min_speech_ms <= 0 || settings.volcengine_vad_silence_end_ms <= 0) {
-    throw new ConfigurationError('火山 VAD min speech 与 silence end 必须为正整数')
-  }
-  if (settings.volcengine_vad_max_utterance_ms < settings.volcengine_vad_min_speech_ms) {
-    throw new ConfigurationError('火山 VAD max utterance 不能短于 min speech')
-  }
-  return Object.freeze({
-    vadThreshold: settings.volcengine_vad_threshold,
-    vadPreRollMs: settings.volcengine_vad_pre_roll_ms,
-    vadMinSpeechMs: settings.volcengine_vad_min_speech_ms,
-    vadSilenceEndMs: settings.volcengine_vad_silence_end_ms,
-    vadSpeechPadMs: settings.volcengine_vad_speech_pad_ms,
-    vadMaxUtteranceMs: settings.volcengine_vad_max_utterance_ms,
-  })
-}
-
-function resolveAsrConfig(settings: Settings, apiKey: string): VolcengineAsrConfig {
-  if (settings.doubao_asr_chunk_ms <= 0) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS 必须为正整数')
-  }
-  return Object.freeze({
-    endpoint: secureEndpoint(
-      settings.doubao_asr_endpoint,
-      'wss',
-      'NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT',
-    ),
-    resourceId: requiredSetting(
-      settings.doubao_asr_resource_id,
-      'NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID',
-    ),
-    apiKey,
-    chunkMs: settings.doubao_asr_chunk_ms,
-  })
-}
-
-function resolveQwenLlmConfig(model: string, apiKey: string): QwenCascadedLlmConfig {
-  return Object.freeze({
-    baseUrl: DASHSCOPE_COMPATIBLE_BASE_URL,
-    apiKey,
-    model,
-    instructions: FRONTEND_INSTRUCTIONS,
-  })
-}
-
-function resolveArkLlmConfig(
-  settings: Settings,
-  model: string,
-  apiKey: string,
-): ArkCascadedLlmConfig {
-  return Object.freeze({
-    baseUrl: secureEndpoint(
-      settings.volcengine_ark_base_url,
-      'https',
-      'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL',
-    ),
-    apiKey,
-    model,
-    instructions: FRONTEND_INSTRUCTIONS,
-  })
-}
-
-function resolveTtsConfig(settings: Settings, apiKey: string): VolcengineTtsConfig {
-  if (settings.doubao_tts_output_sample_rate !== 24_000) {
-    throw new ConfigurationError('NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE 必须为 24000')
-  }
-  return Object.freeze({
-    endpoint: secureEndpoint(
-      settings.doubao_tts_endpoint,
-      'wss',
-      'NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT',
-    ),
-    resourceId: requiredSetting(
-      settings.doubao_tts_resource_id,
-      'NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID',
-    ),
-    voice: requiredSetting(settings.doubao_tts_voice, 'NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE'),
-    apiKey,
-    outputSampleRate: 24_000,
-  })
-}
-
 function supportComposition(
   options: BuildCascadedRealtimeAssemblyOptions,
   provider: CascadedLlmProviderName,
   model: string,
   llmApiKey: string,
+  selectedBaseUrl: string,
   clock: Clock,
 ): {readonly settings: Settings; readonly gateway: ModelGateway} {
   if (options.supportGateway !== undefined) {
@@ -451,13 +332,6 @@ function supportComposition(
       }),
     }
   }
-  const baseUrl = provider === 'qwen'
-    ? DASHSCOPE_COMPATIBLE_BASE_URL
-    : secureEndpoint(
-      options.settings.volcengine_ark_base_url,
-      'https',
-      'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL',
-    )
   const watchModel = stripLikePython(options.settings.watch_model ?? '')
     || (provider === 'qwen' ? 'qwen3-vl-plus' : model)
   const settings = Object.create(options.settings) as Settings
@@ -470,7 +344,7 @@ function supportComposition(
   return {
     settings,
     gateway: new OpenAIModelGateway({
-      baseUrl,
+      baseUrl: selectedBaseUrl,
       apiKey: llmApiKey,
       clock,
       ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
@@ -526,17 +400,15 @@ const defaultTtsClient: CascadedTtsClientFactory = input => new DoubaoTtsClient(
 
 const defaultQwenLlmFactory: QwenCascadedFactory = input => createQwenCascadedLlmFactory({
   ...input.config,
+  instructions: FRONTEND_INSTRUCTIONS,
   clock: input.clock,
   idFactory: input.idFactory,
 })
 
-const defaultArkLlmFactory: ArkCascadedFactory = input => createArkCascadedLlmFactory(input.config)
-
-function requiredSetting(value: string, name: string): string {
-  const normalized = stripLikePython(value)
-  if (normalized === '') throw new ConfigurationError(`${name} 不能为空`)
-  return normalized
-}
+const defaultArkLlmFactory: ArkCascadedFactory = input => createArkCascadedLlmFactory({
+  ...input.config,
+  instructions: FRONTEND_INSTRUCTIONS,
+})
 
 function secureEndpoint(value: string, scheme: 'https' | 'wss', name: string): string {
   let normalized = stripLikePython(value)

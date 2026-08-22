@@ -4,34 +4,31 @@ import {
   ConfigurationError,
   requireIntegratedRealtime,
   type IntegratedProviderName,
-  type QwenRealtimeConfig,
 } from './config.js'
+import {RealClock} from './clock.js'
+import {MonotonicIdFactory} from './ids.js'
 import {
   buildQwenRealtimeAssembly,
   type BuildQwenRealtimeAssemblyOptions,
+  type BuildQwenRealtimeProviderOptions,
 } from './qwen-realtime-assembly.js'
+import type {RealtimeProvider} from './realtime/protocol.js'
 import type {RealtimeAssembly} from './realtime-assembly.js'
 
 export type BuildIntegratedRealtimeAssemblyOptions = Omit<
   BuildQwenRealtimeAssemblyOptions,
-  'qwenConfig'
+  'qwenConfig' | 'qwenProvider'
 >
 
-export interface IntegratedQwenFactoryInput {
-  readonly options: BuildIntegratedRealtimeAssemblyOptions
-  readonly config: QwenRealtimeConfig
-}
+export type IntegratedQwenFactoryInput = BuildQwenRealtimeProviderOptions
 
 export type IntegratedProviderRegistry = Readonly<Record<
   IntegratedProviderName,
-  (input: IntegratedQwenFactoryInput) => RealtimeAssembly
+  (input: IntegratedQwenFactoryInput) => RealtimeProvider
 >>
 
 export const integratedProviderRegistry: IntegratedProviderRegistry = Object.freeze({
-  qwen: input => buildQwenRealtimeAssembly({
-    ...input.options,
-    qwenConfig: input.config,
-  }),
+  qwen: input => buildQwenRealtimeAssembly(input),
 })
 
 export function buildIntegratedRealtimeAssembly(
@@ -43,5 +40,19 @@ export function buildIntegratedRealtimeAssembly(
     throw new ConfigurationError('NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER 无效')
   }
   const config = Object.freeze({...requireIntegratedRealtime(options.settings)})
-  return registry.qwen({options, config})
+  const clock = options.clock ?? new RealClock()
+  const ids = options.ids ?? new MonotonicIdFactory()
+  const qwenProvider = registry.qwen({
+    config,
+    ...(options.connector === undefined ? {} : {connector: options.connector}),
+    idFactory: () => ids.next('qwen'),
+    now: () => clock.now(),
+  })
+  return buildQwenRealtimeAssembly({
+    ...options,
+    clock,
+    ids,
+    qwenConfig: config,
+    qwenProvider,
+  })
 }

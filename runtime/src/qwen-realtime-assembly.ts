@@ -11,6 +11,7 @@ import {
   type RealtimeAssembly,
   type RealtimeAssemblyOptions,
 } from './realtime-assembly.js'
+import type {RealtimeProvider} from './realtime/protocol.js'
 import { QwenAudioRealtimeAdapter, type QwenConnector } from './realtime/qwen.js'
 import { webSocketQwenConnector } from './realtime/qwen-transport.js'
 import { stripLikePython } from './python-text.js'
@@ -32,19 +33,46 @@ export interface BuildQwenRealtimeAssemblyOptions
   readonly connector?: QwenConnector
   /** Host-resolved selected-provider config; integrated production never re-resolves settings. */
   readonly qwenConfig?: QwenRealtimeConfig
+  /** Host-selected provider; integrated registries never receive host composition options. */
+  readonly qwenProvider?: RealtimeProvider
   /** Host-resolved Codex resource; never derived from provider or renderer input. */
   readonly codexResource?: CodexAssemblyResource
 }
 
+/** Narrow provider-only form used by the integrated provider registry. */
+export interface BuildQwenRealtimeProviderOptions {
+  readonly config: QwenRealtimeConfig
+  readonly connector?: QwenConnector
+  readonly idFactory: () => string
+  readonly now: () => number
+}
+
 /**
- * Build one Qwen realtime ownership graph without opening a socket.
+ * Build the narrow Qwen provider selected by a registry, or one complete ownership graph.
  *
- * Host settings are resolved before any resource construction. Connection and rollback remain
- * exclusively owned by `RealtimeAssembly.start()`.
+ * The narrow overload cannot see host settings or core resources. Full composition resolves host
+ * settings before construction. Connection and rollback remain owned by `RealtimeAssembly.start()`.
  */
 export function buildQwenRealtimeAssembly(
+  options: BuildQwenRealtimeProviderOptions,
+): QwenAudioRealtimeAdapter
+export function buildQwenRealtimeAssembly(
   options: BuildQwenRealtimeAssemblyOptions,
-): RealtimeAssembly {
+): RealtimeAssembly
+export function buildQwenRealtimeAssembly(
+  options: BuildQwenRealtimeAssemblyOptions | BuildQwenRealtimeProviderOptions,
+): RealtimeAssembly | QwenAudioRealtimeAdapter {
+  if ('config' in options) {
+    return new QwenAudioRealtimeAdapter({
+      url: options.config.url,
+      apiKey: options.config.apiKey,
+      model: options.config.model,
+      voice: options.config.voice,
+      connector: options.connector ?? webSocketQwenConnector,
+      idFactory: options.idFactory,
+      now: options.now,
+    })
+  }
   const codexSelected = options.settings.executors.includes('codex')
   if (codexSelected !== (options.codexResource !== undefined)) {
     throw new AssemblyError('realtime Codex resource selection mismatch')
@@ -85,12 +113,9 @@ export function buildQwenRealtimeAssembly(
     ...(options.frameSource === undefined ? {} : {frameSource: options.frameSource}),
     ...(options.mediaStore === undefined ? {} : {mediaStore: options.mediaStore}),
   })
-  const provider = new QwenAudioRealtimeAdapter({
-    url: qwen.url,
-    apiKey: qwen.apiKey,
-    model: qwen.model,
-    voice: qwen.voice,
-    connector: options.connector ?? webSocketQwenConnector,
+  const provider = options.qwenProvider ?? buildQwenRealtimeAssembly({
+    config: qwen,
+    ...(options.connector === undefined ? {} : {connector: options.connector}),
     idFactory: () => ids.next('qwen'),
     now: () => clock.now(),
   })

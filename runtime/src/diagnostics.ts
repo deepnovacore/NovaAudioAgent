@@ -3,11 +3,10 @@ import {z} from 'zod'
 
 import {
   loadSettings,
-  requireCascadedCredentials,
   requireIntegratedRealtime,
-  resolveCascadedSelection,
   type Settings,
 } from './config.js'
+import {requireSelectedCascadedRealtimeConfig} from './cascaded-realtime-config.js'
 import {findRetiredConfiguration} from './environment-contract.js'
 import {stripLikePython} from './python-text.js'
 
@@ -132,8 +131,7 @@ function providerCheck(settings: Settings): DiagnosticCheck {
     }
   }
   try {
-    const selection = resolveCascadedSelection(settings)
-    requireCascadedCredentials(settings, selection)
+    requireSelectedCascadedRealtimeConfig(settings)
     return check('provider.volcengine', 'pass', 'volcengine_configuration_valid')
   } catch {
     return check('provider.volcengine', 'fail', 'volcengine_configuration_invalid')
