@@ -16,9 +16,9 @@ import {
   type SessionIdentity,
 } from '../protocol.js'
 import { NullTelemetry, type RealtimeTelemetry } from '../telemetry.js'
+import { responsesToolSchema } from '../cascaded/ark-llm.js'
 import { volcengineInputPcm } from './audio.js'
 import {
-  responsesToolSchema,
   type ArkEvent,
   type ArkResponsesGateway,
 } from './ark.js'

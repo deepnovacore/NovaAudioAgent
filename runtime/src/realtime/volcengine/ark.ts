@@ -80,32 +80,6 @@ export interface ArkResponsesGateway {
   close(): Promise<void>
 }
 
-export function responsesToolSchema(schema: JsonObject): JsonObject {
-  const functionObject = schema.function
-  if (schema.type !== 'function' || functionObject === null || Array.isArray(functionObject)
-    || typeof functionObject !== 'object') {
-    throw new ArkResponsesFailure('protocol')
-  }
-  const candidate = functionObject as Readonly<Record<string, JsonValue>>
-  const name = candidate.name
-  const parameters = candidate.parameters
-  if (!validIdentifier(name) || !isJsonObject(parameters)) {
-    throw new ArkResponsesFailure('protocol')
-  }
-  const description = candidate.description
-  if (description !== undefined && typeof description !== 'string') {
-    throw new ArkResponsesFailure('protocol')
-  }
-  return {
-    type: 'function',
-    name,
-    ...(description !== undefined && stripLikePython(description) !== ''
-      ? {description}
-      : {}),
-    parameters: copyJsonObject(parameters),
-  }
-}
-
 export interface FetchArkResponsesGatewayOptions {
   readonly baseUrl: string
   readonly apiKey: string
