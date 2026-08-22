@@ -896,7 +896,7 @@ function projectionDigest(signal: ProjectionSignal): string {
   return createHash('sha256').update(canonicalJson(signal), 'utf8').digest('hex')
 }
 
-function relationDeltaDigest(
+export function relationDeltaDigest(
   delta: Extract<WorkspaceGraphProjectionDelta, {kind: 'upsert_relation'}>,
 ): string {
   return createHash('sha256').update(canonicalJson(delta), 'utf8').digest('hex')

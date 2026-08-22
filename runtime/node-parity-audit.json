@@ -127,11 +127,13 @@
     "runtime/src/unicode-normalize.ts",
     "runtime/src/volcengine-realtime-assembly.ts",
     "runtime/src/workspace-graph/context.ts",
+    "runtime/src/workspace-graph/factory.ts",
     "runtime/src/workspace-graph/identity.ts",
     "runtime/src/workspace-graph/models.ts",
     "runtime/src/workspace-graph/projector.ts",
     "runtime/src/workspace-graph/recall.ts",
     "runtime/src/workspace-graph/sensitivity.ts",
+    "runtime/src/workspace-graph/service.ts",
     "runtime/src/workspace-graph/store-client.ts",
     "runtime/src/workspace-graph/store-worker.ts",
     "runtime/src/workspace-graph/store.ts"
@@ -1549,6 +1551,15 @@
       "disposition": "host_only_unicode",
       "test": "runtime/test/workspace-graph-sensitivity.test.ts",
       "behavior": "rejects a field when a redaction leaves no meaningful content"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "0c9cd1841b9b2d5bdb1c02a35f03795cd257d6fef6794f63ce195be0407f1a3a",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service rejects an empty database path before constructing the worker client"
     }
   ]
 }

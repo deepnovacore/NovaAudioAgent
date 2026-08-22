@@ -8,6 +8,7 @@ import {
   type HostResponseIntent,
   type JsonObject,
   type RealtimeProvider,
+  type WorkspaceContextDeliveryRecord,
 } from '../src/realtime/protocol.js'
 import { RealtimeProviderSession } from '../src/realtime/provider-session.js'
 
@@ -38,6 +39,7 @@ class FakeProvider implements RealtimeProvider {
     host_item_id: 'host-1',
     provider_item_id: 'provider-1',
   }
+  workspaceDelivery: WorkspaceContextDeliveryRecord | null = null
 
   connect(options: {
     readonly tools: readonly JsonObject[]
@@ -66,6 +68,12 @@ class FakeProvider implements RealtimeProvider {
     assert.equal(options.signal.aborted, false)
     this.injected.push(item)
     return this.itemIdentityPromise ?? Promise.resolve(this.itemIdentity)
+  }
+
+  injectWorkspaceContext(): Promise<unknown> {
+    return this.workspaceDelivery === null
+      ? Promise.reject(new Error('unavailable'))
+      : Promise.resolve(this.workspaceDelivery)
   }
 
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void> {
@@ -263,6 +271,58 @@ test('provider session rejects workspace context until a provider capability is 
     /workspace context.*unavailable/u,
   )
   assert.equal(provider.injected.length, 0)
+  await session.close()
+})
+
+test('provider session validates exact workspace replacement proof through the dedicated seam', async () => {
+  const provider = new FakeProvider()
+  provider.workspaceDelivery = {
+    item: workspaceContextItem,
+    asUserActivation: false,
+    delivery: {
+      capability: 'replace_provider_item',
+      delivered: true,
+      session_epoch: 1,
+      workspace_instance_id: 'wi-a',
+      revision: 1,
+      prior_provider_item_id: null,
+      superseded_provider_item_id: null,
+      provider_item_id: 'provider-workspace-1',
+    },
+  }
+  const session = new RealtimeProviderSession(provider)
+  await session.connect()
+  const proof = await session.injectWorkspaceContext(workspaceContextItem)
+  assert.deepEqual(proof, provider.workspaceDelivery)
+  assert.equal(Object.isFrozen(proof), true)
+  assert.equal(Object.isFrozen(proof.item), true)
+  assert.equal(Object.isFrozen(proof.delivery), true)
+  assert.equal(provider.injected.length, 0)
+  await session.close()
+})
+
+test('provider session rejects a workspace proof for any different requested item', async () => {
+  const provider = new FakeProvider()
+  provider.workspaceDelivery = {
+    item: {...workspaceContextItem, event_id: 'different-event'},
+    asUserActivation: false,
+    delivery: {
+      capability: 'replace_provider_item',
+      delivered: true,
+      session_epoch: 1,
+      workspace_instance_id: 'wi-a',
+      revision: 1,
+      prior_provider_item_id: null,
+      superseded_provider_item_id: null,
+      provider_item_id: 'provider-workspace-1',
+    },
+  }
+  const session = new RealtimeProviderSession(provider)
+  await session.connect()
+  await assert.rejects(
+    session.injectWorkspaceContext(workspaceContextItem),
+    /workspace context delivery item mismatch/u,
+  )
   await session.close()
 })
 

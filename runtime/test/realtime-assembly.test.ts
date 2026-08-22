@@ -13,9 +13,17 @@ import {
 import { VirtualClock } from '../src/clock.js'
 import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
 import type {CodexAssemblyResource} from '../src/codex-factory.js'
+import type {WorkspaceRecord} from '../src/codex-project-store.js'
 import { settingsSchema } from '../src/config.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../src/causal-runtime.js'
-import type {ProjectCodexAdapter} from '../src/executors/codex-project-live.js'
+import type {
+  CommittedWorkspaceEvent,
+  ProjectCodexAdapter,
+  TerminalWorkOrderEvent,
+} from '../src/executors/codex-project-live.js'
+import type {
+  RealtimeWorkspaceGraph,
+} from '../src/realtime-assembly.js'
 import type { Frame, FrameSource } from '../src/executors/watcher.js'
 import type { JsonValue } from '../src/events.js'
 import {consumeHostExecutorCapability} from '../src/host-executor-capability.js'
@@ -245,6 +253,35 @@ class AbortAwareProvider implements RealtimeProvider {
     this.closeCalls += 1
     this.actions.push('provider:close')
     await (this.closeSteps.shift()?.() ?? Promise.resolve())
+  }
+}
+
+class WorkspaceContextProvider extends AbortAwareProvider {
+  readonly workspaceItems: HostContextItem[] = []
+  workspaceContextStep: (() => Promise<void>) | null = null
+
+  async injectWorkspaceContext(
+    item: HostContextItem,
+    options: {readonly confirmationTimeout: number | null; readonly signal: AbortSignal},
+  ): Promise<unknown> {
+    void options.confirmationTimeout
+    assert.equal(options.signal.aborted, false)
+    this.workspaceItems.push(structuredClone(item))
+    await (this.workspaceContextStep?.() ?? Promise.resolve())
+    return {
+      item,
+      asUserActivation: false,
+      delivery: {
+        capability: 'replace_provider_item',
+        delivered: true,
+        session_epoch: this.currentEpoch,
+        workspace_instance_id: item.workspace_instance_id,
+        revision: item.revision,
+        prior_provider_item_id: null,
+        provider_item_id: `provider-${item.host_item_id}`,
+        superseded_provider_item_id: null,
+      },
+    }
   }
 }
 
@@ -609,6 +646,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
     commitConfirmed: ProjectCodexAdapter['commitConfirmed']
     publicProjectView: ProjectCodexAdapter['publicProjectView']
     initialize: ProjectCodexAdapter['initialize']
+    activeCommittedWorkspace: ProjectCodexAdapter['activeCommittedWorkspace']
     observeProjectView: ProjectCodexAdapter['observeProjectView']
     close: ProjectCodexAdapter['close']
   } = {
@@ -658,6 +696,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
       for (const observer of viewObservers) observer(adapterShape.publicProjectView(false))
       return Promise.resolve()
     },
+    activeCommittedWorkspace: () => Promise.resolve(null),
     observeProjectView: observer => {
       viewObservers.add(observer)
       return () => { viewObservers.delete(observer) }
@@ -736,6 +775,464 @@ test('project adapter wiring carries one confirmed identity through the real rea
     await realtime.stop()
   }
   assert.equal(closeCalls, 1)
+})
+
+test('workspace graph opens before project initialization, injects only the current Header, and owns hooks', async () => {
+  const clock = new VirtualClock(50)
+  const actions: string[] = []
+  const provider = new WorkspaceContextProvider(actions)
+  const workspaceObservers = new Set<(event: CommittedWorkspaceEvent) => void | Promise<void>>()
+  const terminalObservers = new Set<(event: TerminalWorkOrderEvent) => void | Promise<void>>()
+  const confirmation = new ProjectConfirmationController({clock, idFactory: () => 'graph-confirmation'})
+  const workspace: WorkspaceRecord = Object.freeze({
+    workspace_id: 'workspace-authoritative',
+    display_name: 'alpha',
+    normalized_name: 'alpha',
+    canonical_path: '/safe/alpha',
+    origin: 'registered' as const,
+    codex_home_key: 'workspace-authoritative',
+    active_session_id: null,
+    created_at: 10,
+    last_used_at: 20,
+  })
+  let projectClosed = 0
+  const adapterShape: ExecutorAdapter & Record<string, unknown> = {
+    manifest: CODEX_PROJECT_MANIFEST,
+    confirmationController: confirmation,
+    dispatch: () => Promise.resolve({
+      outcome: 'ok', trust: 'trusted_system', content: {code: 'completed'}, refs: [],
+    }),
+    commitConfirmed: () => Promise.resolve({accepted: false, code: 'not_used'}),
+    publicProjectView: () => Object.freeze({
+      workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+    }),
+    initialize: () => {
+      actions.push('project:initialize')
+      return Promise.resolve()
+    },
+    activeCommittedWorkspace: () => Promise.resolve(workspace),
+    observeProjectView: () => () => undefined,
+    observeCommittedWorkspace: (observer: (event: CommittedWorkspaceEvent) => void) => {
+      workspaceObservers.add(observer)
+      return () => { workspaceObservers.delete(observer) }
+    },
+    observeTerminalWorkOrder: (observer: (event: TerminalWorkOrderEvent) => void) => {
+      terminalObservers.add(observer)
+      return () => { terminalObservers.delete(observer) }
+    },
+    close: () => { projectClosed += 1; return Promise.resolve() },
+  }
+  const projectAdapter = adapterShape as unknown as ProjectCodexAdapter
+  const graphCalls: unknown[] = []
+  let graphClosed = 0
+  let contextFailure = true
+  let holdLifecycle = false
+  const lifecycleGate = deferred<void>()
+  let holdTerminal = false
+  const terminalGate = deferred<void>()
+  let workspaceQueueFailures = 0
+  const diagnostics: string[] = []
+  const graph: RealtimeWorkspaceGraph = {
+    publishedSnapshot: Object.freeze({publication_revision: 7}),
+    open: () => { actions.push('graph:open'); return Promise.resolve() },
+    openWorkspace: async input => {
+      actions.push('graph:workspace')
+      graphCalls.push(input)
+      if (workspaceQueueFailures > 0) {
+        workspaceQueueFailures -= 1
+        throw Object.assign(new Error('bounded service admission overflow'), {
+          code: 'GRAPH_SERVICE_QUEUE_FULL',
+        })
+      }
+      if (holdLifecycle) await lifecycleGate.promise
+      return Promise.resolve({
+        kind: 'resolved',
+        resolution_basis: 'repository_fingerprint',
+        logical_workspace: Object.freeze({
+          logical_workspace_id: 'logical-alpha',
+          display_name: 'alpha',
+          aliases: [] as string[],
+          canonical_remote: null,
+          created_at: 20,
+          updated_at: 20,
+          revision: 1,
+        }),
+        instance: Object.freeze({
+          instance_id: 'instance-alpha',
+          logical_workspace_id: 'logical-alpha',
+          display_name: 'alpha',
+          path_label: 'alpha',
+          repository_fingerprint: 'workspace-authoritative',
+          branch: null,
+          status: 'active',
+          first_seen_at: 20,
+          last_seen_at: 20,
+          revision: 1,
+        }),
+        deltas: Object.freeze([]),
+      })
+    },
+    recordTaskCompletion: async input => {
+      graphCalls.push(input)
+      if (holdTerminal) await terminalGate.promise
+    },
+    contextForTurn: input => {
+      if (contextFailure) throw new Error('sensitive graph context failure')
+      graphCalls.push(input)
+      return Object.freeze({
+        header: '<workspace_context kind="data">current alpha</workspace_context>',
+        recall_pack: null,
+        omitted_hints: 0,
+        degraded: false,
+      })
+    },
+    close: () => { graphClosed += 1; actions.push('graph:close'); return Promise.resolve() },
+  }
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock,
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    frameSource: new RecordingFrameSource(actions),
+    executors: [adapterShape],
+  })
+  let id = 0
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider,
+    projectAdapter,
+    workspaceGraph: graph,
+    idFactory: () => `graph-host-${++id}`,
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+
+  await realtime.start()
+  assert.deepEqual(actions.slice(0, 6), [
+    'graph:open',
+    'project:initialize',
+    'graph:workspace',
+    'core:start',
+    'provider:connect',
+    'provider:events',
+  ])
+  assert.deepEqual(diagnostics, ['[realtime-diagnostic] workspace_graph_header_delivery_failed'])
+  assert.equal(diagnostics.join('\n').includes('sensitive'), false)
+  assert.equal(provider.workspaceItems.length, 0)
+  contextFailure = false
+  const workspaceObserver = [...workspaceObservers][0]
+  assert.ok(workspaceObserver !== undefined)
+  await workspaceObserver({workspace})
+  await waitNamed('workspace Header retry', () => provider.workspaceItems.length === 1)
+  assert.equal(provider.workspaceItems.length, 1)
+  assert.deepEqual(provider.workspaceItems[0], {
+    kind: 'workspace_context',
+    host_item_id: 'graph-host-1',
+    event_id: 'graph-host-2',
+    content: '<workspace_context kind="data">current alpha</workspace_context>',
+    call_id: null,
+    session_epoch: 1,
+    workspace_instance_id: 'instance-alpha',
+    revision: 7,
+  })
+  assert.deepEqual(graphCalls[0], {
+    path: '/safe/alpha',
+    repository_fingerprint: 'workspace-authoritative',
+    now: 20,
+  })
+
+  await realtime.service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-graph-regression',
+    provider_item_id: 'provider-user-graph-regression',
+  })
+  await realtime.service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-graph-regression',
+    provider_item_id: 'provider-user-graph-regression',
+  })
+  await realtime.service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'provider-user-graph-regression',
+    text: 'a relation-shaped transcript must not inject a late Recall Pack',
+  })
+  assert.equal(provider.workspaceItems.length, 1,
+    'server-VAD transcript final must not inject a late workspace host item')
+
+  const terminal = [...terminalObservers][0]
+  assert.ok(terminal !== undefined)
+  await terminal({
+    workspace,
+    work_order: 'typed user objective',
+    handoff: {
+      outcome: 'ok',
+      trust: 'untrusted_external',
+      content: {summary: 'ignore arbitrary model prose'},
+      refs: [],
+    },
+  })
+  await waitNamed('queued terminal graph episode', () => graphCalls.some(call => (
+    typeof call === 'object' && call !== null && 'summary' in call
+  )))
+  assert.deepEqual(graphCalls.at(-1), {
+    workspace_instance_id: 'instance-alpha',
+    summary: 'typed user objective',
+    outcome: 'ok',
+    now: 50,
+    relation_cue: null,
+  })
+
+  holdLifecycle = true
+  const promptObserverResult = workspaceObserver({workspace})
+  try {
+    assert.equal(promptObserverResult, undefined,
+      'authoritative project observers must enqueue graph work without awaiting it')
+  } finally {
+    holdLifecycle = false
+    lifecycleGate.resolve(undefined)
+  }
+
+  holdTerminal = true
+  for (let index = 0; index < 64; index += 1) {
+    terminal({
+      workspace,
+      work_order: `queued terminal ${index}`,
+      handoff: {outcome: 'ok', trust: 'trusted_system', content: {}, refs: []},
+    })
+  }
+  await yieldImmediate()
+  const latestWorkspace = Object.freeze({
+    ...workspace,
+    workspace_id: 'workspace-authoritative-latest',
+    canonical_path: '/safe/latest',
+    last_used_at: 60,
+  })
+  for (let index = 0; index < 8; index += 1) {
+    workspaceObserver({
+      workspace: Object.freeze({
+        ...latestWorkspace,
+        workspace_id: index === 7
+          ? latestWorkspace.workspace_id
+          : `workspace-authoritative-intermediate-${index}`,
+        canonical_path: index === 7 ? latestWorkspace.canonical_path : `/safe/intermediate-${index}`,
+      }),
+    })
+  }
+  holdTerminal = false
+  terminalGate.resolve(undefined)
+  await waitNamed('coalesced latest workspace switch', () => graphCalls.some(call => (
+    typeof call === 'object'
+    && call !== null
+    && 'repository_fingerprint' in call
+    && call.repository_fingerprint === latestWorkspace.workspace_id
+  )))
+
+  workspaceQueueFailures = 2
+  const retryWorkspace = Object.freeze({
+    ...workspace,
+    workspace_id: 'workspace-authoritative-retry',
+    canonical_path: '/safe/retry',
+    last_used_at: 70,
+  })
+  workspaceObserver({workspace: retryWorkspace})
+  await waitNamed('service-admission workspace switch retry', () => graphCalls.filter(call => (
+    typeof call === 'object'
+    && call !== null
+    && 'repository_fingerprint' in call
+    && call.repository_fingerprint === retryWorkspace.workspace_id
+  )).length === 3)
+
+  await realtime.stop()
+  assert.equal(graphClosed, 1)
+  assert.equal(projectClosed, 1)
+  assert.equal(workspaceObservers.size, 0)
+  assert.equal(terminalObservers.size, 0)
+})
+
+test('never-settling graph open is bounded and cannot block voice startup', async () => {
+  const openGate = deferred<void>()
+  const diagnostics: string[] = []
+  let closes = 0
+  const graph = {
+    publishedSnapshot: Object.freeze({publication_revision: 0}),
+    open: () => openGate.promise,
+    openWorkspace: () => Promise.reject(new Error('not expected')),
+    recordTaskCompletion: () => Promise.reject(new Error('not expected')),
+    contextForTurn: () => null,
+    close: () => { closes += 1; return Promise.resolve() },
+  } as RealtimeWorkspaceGraph
+  const provider = new AbortAwareProvider()
+  const realtime = buildRealtimeAssembly({
+    core: realCore(), provider, workspaceGraph: graph,
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+  const start = realtime.start()
+  try {
+    await settleNamed('bounded graph open', start, 1_750)
+    assert.equal(provider.connectCalls, 1)
+    assert.ok(diagnostics.includes('[realtime-diagnostic] workspace_graph_open_abandoned'))
+    await settleNamed('bounded stop with graph open pending', realtime.stop(), 2_750)
+    assert.equal(closes, 1)
+    assert.ok(diagnostics.filter(line => (
+      line === '[realtime-diagnostic] workspace_graph_open_abandoned'
+    )).length >= 2)
+    openGate.resolve(undefined)
+    await yieldImmediate()
+    await realtime.stop()
+    assert.equal(closes, 2)
+  } finally {
+    openGate.resolve(undefined)
+    await Promise.allSettled([start])
+    await realtime.stop()
+  }
+})
+
+test('never-settling initial Header delivery cannot block voice startup', async () => {
+  const headerGate = deferred<void>()
+  const diagnostics: string[] = []
+  const provider = new WorkspaceContextProvider()
+  provider.workspaceContextStep = () => headerGate.promise
+  const clock = new VirtualClock(50)
+  const confirmation = new ProjectConfirmationController({
+    clock,
+    idFactory: () => 'header-confirmation',
+  })
+  const workspace: WorkspaceRecord = Object.freeze({
+    workspace_id: 'workspace-header',
+    display_name: 'header',
+    normalized_name: 'header',
+    canonical_path: '/safe/header',
+    origin: 'registered',
+    codex_home_key: 'workspace-header',
+    active_session_id: null,
+    created_at: 10,
+    last_used_at: 20,
+  })
+  const adapterShape: ExecutorAdapter & Record<string, unknown> = {
+    manifest: CODEX_PROJECT_MANIFEST,
+    confirmationController: confirmation,
+    dispatch: () => Promise.resolve({
+      outcome: 'ok', trust: 'trusted_system', content: {code: 'completed'}, refs: [],
+    }),
+    commitConfirmed: () => Promise.resolve({accepted: false, code: 'not_used'}),
+    publicProjectView: () => Object.freeze({
+      workspace_display_name: 'header', session_title: null, pending_confirmation: false,
+    }),
+    initialize: () => Promise.resolve(),
+    activeCommittedWorkspace: () => Promise.resolve(workspace),
+    observeProjectView: () => () => undefined,
+    observeCommittedWorkspace: () => () => undefined,
+    observeTerminalWorkOrder: () => () => undefined,
+    close: () => Promise.resolve(),
+  }
+  const projectAdapter = adapterShape as unknown as ProjectCodexAdapter
+  const graph: RealtimeWorkspaceGraph = {
+    publishedSnapshot: Object.freeze({publication_revision: 7}),
+    open: () => Promise.resolve(),
+    openWorkspace: () => Promise.resolve({
+      kind: 'resolved',
+      resolution_basis: 'repository_fingerprint',
+      logical_workspace: Object.freeze({
+        logical_workspace_id: 'logical-header', display_name: 'header', aliases: [],
+        canonical_remote: null, created_at: 20, updated_at: 20, revision: 1,
+      }),
+      instance: Object.freeze({
+        instance_id: 'instance-header', logical_workspace_id: 'logical-header',
+        display_name: 'header', path_label: 'header',
+        repository_fingerprint: 'workspace-header', branch: null, status: 'active',
+        first_seen_at: 20, last_seen_at: 20, revision: 1,
+      }),
+      deltas: Object.freeze([]),
+    }),
+    recordTaskCompletion: () => Promise.resolve(),
+    contextForTurn: () => Object.freeze({
+      header: '<workspace_context kind="data">current header</workspace_context>',
+      recall_pack: null, omitted_hints: 0, degraded: false,
+    }),
+    close: () => Promise.resolve(),
+  }
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock,
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    executors: [adapterShape],
+  })
+  const realtime = buildRealtimeAssembly({
+    core, provider, projectAdapter, workspaceGraph: graph,
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+  const start = realtime.start()
+  try {
+    await settleNamed('bounded initial Header delivery', start, 1_750)
+    assert.equal(provider.connectCalls, 1)
+    assert.ok(provider.workspaceItems.length >= 1)
+    assert.ok(diagnostics.includes(
+      '[realtime-diagnostic] workspace_graph_header_delivery_abandoned',
+    ))
+  } finally {
+    headerGate.resolve(undefined)
+    await Promise.allSettled([start])
+    await realtime.stop()
+  }
+})
+
+test('abandoned graph close remains cleanup-incomplete and is retried by the assembly owner', async () => {
+  const closeGate = deferred<void>()
+  const diagnostics: string[] = []
+  let closes = 0
+  const graph = {
+    publishedSnapshot: Object.freeze({publication_revision: 0}),
+    open: () => Promise.resolve(),
+    openWorkspace: () => Promise.reject(new Error('not expected')),
+    recordTaskCompletion: () => Promise.reject(new Error('not expected')),
+    contextForTurn: () => null,
+    close: () => {
+      closes += 1
+      return closes === 1 ? closeGate.promise : Promise.resolve()
+    },
+  } as RealtimeWorkspaceGraph
+  const realtime = buildRealtimeAssembly({
+    core: realCore(), provider: new AbortAwareProvider(), workspaceGraph: graph,
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+  await realtime.start()
+  await settleNamed('first bounded graph close', realtime.stop(), 1_750)
+  assert.equal(closes, 1)
+  assert.ok(diagnostics.includes('[realtime-diagnostic] workspace_graph_close_abandoned'))
+  closeGate.resolve(undefined)
+  await yieldImmediate()
+  await realtime.stop()
+  assert.equal(closes, 2)
+})
+
+test('workspace graph open failure is diagnostic-only and never blocks voice startup', async () => {
+  const diagnostics: string[] = []
+  let closes = 0
+  const graph = {
+    publishedSnapshot: Object.freeze({publication_revision: 0}),
+    open: () => Promise.reject(new Error('sensitive graph failure detail')),
+    openWorkspace: () => Promise.reject(new Error('not expected')),
+    recordTaskCompletion: () => Promise.reject(new Error('not expected')),
+    contextForTurn: () => null,
+    close: () => { closes += 1; return Promise.resolve() },
+  } as RealtimeWorkspaceGraph
+  const provider = new AbortAwareProvider()
+  const realtime = buildRealtimeAssembly({
+    core: realCore(),
+    provider,
+    workspaceGraph: graph,
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+
+  await realtime.start()
+  assert.equal(provider.connectCalls, 1)
+  assert.deepEqual(diagnostics, ['[realtime-diagnostic] workspace_graph_open_failed'])
+  assert.equal(diagnostics.join('\n').includes('sensitive'), false)
+  await realtime.stop()
+  assert.equal(closes, 1)
 })
 
 test('concurrent starts acquire core, provider, and runtime serving exactly once', async () => {

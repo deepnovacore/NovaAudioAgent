@@ -13,6 +13,8 @@ interface FixtureWorkerData {
     | 'invalid_snapshot_status'
     | 'stale_snapshot'
     | 'extra_response_field'
+    | 'silent'
+    | 'open_then_silent'
   readonly path?: string
   readonly sql?: string
 }
@@ -24,7 +26,44 @@ if (isMainThread || parentPort === null) {
 const port = parentPort
 const data = workerData as FixtureWorkerData
 
-if (data.mode === 'malformed') {
+if (data.mode === 'silent') {
+  port.on('message', () => undefined)
+} else if (data.mode === 'open_then_silent') {
+  port.on('message', message => {
+    const request = message as {readonly request_id?: unknown; readonly operation?: unknown}
+    if (request.operation === 'open') {
+      port.postMessage({
+        kind: 'response',
+        request_id: request.request_id,
+        ok: true,
+        result: null,
+        snapshot: {
+          schema_version: 3,
+          publication_revision: 1,
+          degraded: false,
+          logical_workspaces: [],
+          workspace_instances: [],
+          relations: [],
+          aliases: [],
+        },
+      })
+    } else if (request.operation === 'load_graph_state') {
+      port.postMessage({
+        kind: 'response',
+        request_id: request.request_id,
+        ok: true,
+        result: {
+          identity_state: {
+            logical_workspaces: [], workspace_instances: [], bindings: [], alias_observations: [],
+          },
+          projection_state: {
+            logical_workspaces: [], workspace_instances: [], relations: [], projection_records: [],
+          },
+        },
+      })
+    }
+  })
+} else if (data.mode === 'malformed') {
   port.postMessage({kind: 'not-a-store-response'})
 } else if (data.mode === 'invalid_success') {
   port.once('message', message => {
@@ -55,7 +94,7 @@ if (data.mode === 'malformed') {
       revision: 0,
     }
     const snapshot = {
-      schema_version: data.mode === 'invalid_snapshot_schema' ? 1 : 2,
+      schema_version: data.mode === 'invalid_snapshot_schema' ? 1 : 3,
       publication_revision: data.mode === 'stale_snapshot' ? 1 : requests,
       degraded: false,
       logical_workspaces: [],

@@ -80,7 +80,7 @@ function snapshot(options: {
   readonly aliases?: PublishedGraphSnapshot['aliases']
 } = {}): PublishedGraphSnapshot {
   return deepFreeze(PublishedGraphSnapshotSchema.parse({
-    schema_version: 2,
+    schema_version: 3,
     publication_revision: 7,
     degraded: options.degraded ?? false,
     logical_workspaces: options.logicalWorkspaces ?? [

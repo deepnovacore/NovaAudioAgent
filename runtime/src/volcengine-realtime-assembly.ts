@@ -25,6 +25,7 @@ import {
 import {DoubaoTtsClient} from './realtime/volcengine/tts.js'
 import type {LiveKitExecutor} from './realtime/volcengine/endpointing-capability.js'
 import {stripLikePython} from './python-text.js'
+import {workspaceGraphServiceFromSettings} from './workspace-graph/factory.js'
 
 export interface BuildVolcengineRealtimeAssemblyOptions
   extends Omit<
@@ -96,6 +97,13 @@ export function buildVolcengineRealtimeAssembly(
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     idFactory: () => ids.next('volcengine'),
   })
+  const workspaceGraph = workspaceGraphServiceFromSettings(
+    options.settings,
+    code => {
+      if (code === 'workspace_graph_open_failed') return
+      try { options.onDiagnostic?.(`[realtime-diagnostic] ${code}`) } catch { /* advisory */ }
+    },
+  )
   return buildRealtimeAssembly({
     core,
     provider,
@@ -103,6 +111,7 @@ export function buildVolcengineRealtimeAssembly(
     controlledGuardReconnect: false,
     guardHistoryRecovery: 'none',
     guardHistoryPairs: 4,
+    ...(workspaceGraph === undefined ? {} : {workspaceGraph}),
     ...(options.providerToolView === undefined
       ? {}
       : {providerToolView: options.providerToolView}),

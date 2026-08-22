@@ -1,4 +1,5 @@
 import { jsonValueSchema } from '../events.js'
+import { canonicalJson } from '../canonical-json.js'
 import {
   MAX_REALTIME_PCM_BYTES,
   hostContextItemSchema,
@@ -8,6 +9,7 @@ import {
   realtimeProviderEventSchema,
   RealtimeProtocolError,
   sessionIdentitySchema,
+  workspaceContextInjectionSchema,
   type HostContextItem,
   type HostResponseIntent,
   type ItemIdentity,
@@ -15,6 +17,7 @@ import {
   type RealtimeProvider,
   type RealtimeProviderEvent,
   type SessionIdentity,
+  type WorkspaceContextDeliveryRecord,
 } from './protocol.js'
 
 export type RealtimeProviderSessionState =
@@ -192,6 +195,46 @@ export class RealtimeProviderSession {
     return structuredClone(result)
   }
 
+  async injectWorkspaceContext(
+    input: HostContextItem,
+    options: Omit<InjectHostItemOptions, 'asUserActivation'> = {},
+  ): Promise<WorkspaceContextDeliveryRecord> {
+    const item = hostContextItemSchema.parse(input)
+    if (item.kind !== 'workspace_context') {
+      throw new RealtimeProtocolError('workspace context requires the dedicated item kind')
+    }
+    if (this.#provider.injectWorkspaceContext === undefined) {
+      throw new RealtimeProtocolError(
+        'workspace context delivery is unavailable until provider capability is proven',
+      )
+    }
+    const confirmationTimeout = options.confirmationTimeout ?? null
+    if (
+      confirmationTimeout !== null
+      && (!Number.isFinite(confirmationTimeout) || confirmationTimeout < 0)
+    ) throw new RangeError('confirmation timeout must be a non-negative finite number')
+    const owner = this.#requiredConnectionOwner()
+    try {
+      const record = workspaceContextInjectionSchema.parse(await this.#provider.injectWorkspaceContext(
+        structuredClone(item),
+        {
+          confirmationTimeout,
+          signal: combinedSignal(owner.controller.signal, options.signal),
+        },
+      ))
+      this.#assertCurrentConnection(owner)
+      if (record.delivery.session_epoch !== owner.identity.epoch) {
+        throw new InternalProtocolError('workspace context delivery identity mismatch')
+      }
+      if (canonicalJson(record.item) !== canonicalJson(item)) {
+        throw new InternalProtocolError('workspace context delivery item mismatch')
+      }
+      return freezeWorkspaceContextDelivery(record)
+    } catch (error) {
+      throw protocolFailure('workspace context injection failed', error)
+    }
+  }
+
   async createResponse(intent: HostResponseIntent, signal?: AbortSignal): Promise<void> {
     const parsed = hostResponseIntentSchema.parse(intent)
     const owner = this.#requiredConnectionOwner()
@@ -288,6 +331,15 @@ export class RealtimeProviderSession {
   #isClosed(): boolean {
     return this.#state === 'closed'
   }
+}
+
+function freezeWorkspaceContextDelivery(
+  record: WorkspaceContextDeliveryRecord,
+): WorkspaceContextDeliveryRecord {
+  const owned = structuredClone(record)
+  Object.freeze(owned.item)
+  Object.freeze(owned.delivery)
+  return Object.freeze(owned)
 }
 
 function cloneProviderEvent(event: RealtimeProviderEvent): RealtimeProviderEvent {

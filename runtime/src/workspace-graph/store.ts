@@ -17,8 +17,22 @@ import {
   type WorkspaceInstance,
 } from './models.js'
 import { SensitiveContentPolicy, SensitivePathPolicy } from './sensitivity.js'
+import {
+  applyWorkspaceIdentityDeltas,
+  type WorkspaceAliasObservation,
+  type WorkspaceIdentityBinding,
+  type WorkspaceIdentityDelta,
+  type WorkspaceIdentityState,
+} from './identity.js'
+import {
+  applyWorkspaceGraphProjectionDeltas,
+  relationDeltaDigest,
+  type ProjectionRecord,
+  type WorkspaceGraphProjectionDelta,
+  type WorkspaceGraphProjectionState,
+} from './projector.js'
 
-export const WORKSPACE_GRAPH_SCHEMA_VERSION = 2
+export const WORKSPACE_GRAPH_SCHEMA_VERSION = 3
 const DERIVED_TABLE_ROW_CAP = 128
 const OPERATION_RECEIPT_CAP = 4096
 const OPERATION_RECEIPT_MIN_AGE_MS = 24 * 60 * 60 * 1_000
@@ -95,12 +109,130 @@ export interface WorkspaceGraphCompactionResult {
   readonly derived_rows_after: number
 }
 
+export interface WorkspaceGraphBatchInput {
+  readonly observation: Observation
+  readonly identity_deltas: readonly WorkspaceIdentityDelta[]
+  readonly projection_deltas: readonly WorkspaceGraphProjectionDelta[]
+}
+
+export interface WorkspaceGraphBatchResult {
+  readonly evidence: EvidenceRef
+  readonly identity_delta_digest: string
+  readonly projection_delta_digest: string
+}
+
+export interface WorkspaceGraphPrivateState {
+  readonly identity_state: WorkspaceIdentityState
+  readonly projection_state: WorkspaceGraphProjectionState
+}
+
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u)
+
+const workspaceIdentityBindingSchema: z.ZodType<WorkspaceIdentityBinding> = z.object({
+  binding_id: z.string().min(1),
+  logical_workspace_id: z.string().min(1),
+  instance_id: z.string().min(1),
+  path_key: z.string().min(1),
+  remote_key: z.string().min(1).nullable(),
+  repository_fingerprint: z.string().min(1).nullable(),
+  status: z.enum(['active', 'inactive']),
+  first_seen_at: z.number().finite().nonnegative(),
+  last_seen_at: z.number().finite().nonnegative(),
+}).strict()
+
+const workspaceAliasObservationSchema: z.ZodType<WorkspaceAliasObservation> = z.object({
+  observation_id: z.string().min(1),
+  logical_workspace_id: z.string().min(1),
+  spoken_alias: z.string().min(1),
+  normalized_alias: z.string().min(1),
+  status: z.enum(['candidate', 'confirmed', 'suppressed']),
+  confidence: z.number().finite().min(0).max(1),
+  evidence_ref: z.string().min(1),
+  observed_at: z.number().finite().nonnegative(),
+}).strict()
+
+const projectionRecordSchema: z.ZodType<ProjectionRecord> = z.object({
+  record_id: z.string().min(1),
+  relation_delta_digest: sha256Schema,
+  observation_source: z.enum(['runtime', 'filesystem', 'git', 'executor', 'user', 'provider']),
+  observation_id: z.string().min(1),
+  signal_digest: sha256Schema,
+  source_logical_id: z.string().min(1),
+  target_logical_id: z.string().min(1),
+  relation_type: relationTypeSchema,
+  cue_kind: z.enum([
+    'artifact_reference', 'task_completion', 'work_order',
+    'user_statement', 'provider_evidence', 'suppression',
+  ]),
+  stance: z.enum(['confirm', 'supplement', 'conflict', 'suppress']),
+  authority: z.enum(['provider', 'user_transcript', 'trusted_system', 'user_confirmed']),
+  occurred_at: z.number().finite().nonnegative(),
+  evidence_refs: z.array(EvidenceRefSchema).min(1),
+}).strict()
+
+export const WorkspaceGraphPrivateStateSchema: z.ZodType<WorkspaceGraphPrivateState> = z.object({
+  identity_state: z.object({
+    logical_workspaces: z.array(LogicalWorkspaceSchema),
+    workspace_instances: z.array(WorkspaceInstanceSchema),
+    bindings: z.array(workspaceIdentityBindingSchema),
+    alias_observations: z.array(workspaceAliasObservationSchema),
+  }).strict(),
+  projection_state: z.object({
+    logical_workspaces: z.array(LogicalWorkspaceSchema),
+    workspace_instances: z.array(WorkspaceInstanceSchema),
+    relations: z.array(RelationCardSchema),
+    projection_records: z.array(projectionRecordSchema),
+  }).strict(),
+}).strict()
+
+const workspaceIdentityDeltaSchema: z.ZodType<WorkspaceIdentityDelta> = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('upsert_logical_workspace'),
+    workspace: LogicalWorkspaceSchema,
+    expected_revision: z.number().int().nonnegative().nullable(),
+  }).strict(),
+  z.object({
+    kind: z.literal('upsert_workspace_instance'),
+    instance: WorkspaceInstanceSchema,
+    expected_revision: z.number().int().nonnegative().nullable(),
+  }).strict(),
+  z.object({kind: z.literal('observe_identity_binding'), binding: workspaceIdentityBindingSchema}).strict(),
+  z.object({kind: z.literal('record_alias_observation'), observation: workspaceAliasObservationSchema}).strict(),
+  z.object({
+    kind: z.literal('deactivate_instance_bindings'),
+    instance_id: z.string().min(1),
+    observed_at: z.number().finite().nonnegative(),
+  }).strict(),
+])
+
+const workspaceGraphProjectionDeltaSchema: z.ZodType<WorkspaceGraphProjectionDelta> = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('upsert_relation'),
+    relation: RelationCardSchema,
+    expected_revision: z.number().int().nonnegative().nullable(),
+  }).strict(),
+  z.object({kind: z.literal('record_projection'), record: projectionRecordSchema}).strict(),
+])
+
+const workspaceGraphBatchInputSchema: z.ZodType<WorkspaceGraphBatchInput> = z.object({
+  observation: ObservationSchema,
+  identity_deltas: z.array(workspaceIdentityDeltaSchema),
+  projection_deltas: z.array(workspaceGraphProjectionDeltaSchema),
+}).strict()
+
+export const WorkspaceGraphBatchResultSchema: z.ZodType<WorkspaceGraphBatchResult> = z.object({
+  evidence: EvidenceRefSchema,
+  identity_delta_digest: sha256Schema,
+  projection_delta_digest: sha256Schema,
+}).strict()
+
 const operationTypeSchema = z.enum([
   'append_observation',
   'replace_card',
   'upsert_relation',
   'suppress_relation',
   'compact',
+  'graph_batch',
 ])
 
 const receiptRelationResultSchema = z.object({
@@ -131,6 +263,12 @@ export const OperationReceiptResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('compaction'),
     derived_rows_before: z.number().int().nonnegative(),
     derived_rows_after: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    kind: z.literal('graph_batch'),
+    evidence: EvidenceRefSchema,
+    identity_delta_digest: sha256Schema,
+    projection_delta_digest: sha256Schema,
   }).strict(),
 ])
 
@@ -297,6 +435,76 @@ export class WorkspaceGraphStore {
       }
       return {result: evidence, receipt: {kind: 'observation', evidence}}
     })
+  }
+
+  applyGraphBatch(input: WorkspaceGraphBatchInput, operationId: string): WorkspaceGraphBatchResult {
+    const parsed = workspaceGraphBatchInputSchema.safeParse(input)
+    if (!parsed.success) throw new WorkspaceGraphStoreError('STORE_INVALID_OPERATION')
+    const observation = this.#sanitizeObservation(parsed.data.observation)
+    const identityDeltas = parsed.data.identity_deltas
+    const projectionDeltas = parsed.data.projection_deltas.map(delta => delta.kind === 'upsert_relation'
+      ? {...delta, relation: this.#sanitizeRelation(delta.relation)}
+      : delta)
+    if (
+      canonicalJson(observation) !== canonicalJson(parsed.data.observation)
+      || canonicalJson(projectionDeltas) !== canonicalJson(parsed.data.projection_deltas)
+    ) throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    this.#assertProjectionProvenance(observation, projectionDeltas)
+    this.#assertBatchStringsSafe(identityDeltas, projectionDeltas)
+    const evidence = EvidenceRefSchema.parse({
+      source: observation.source,
+      ref: observation.observation_id,
+      observed_at: observation.occurred_at,
+    })
+    const result = WorkspaceGraphBatchResultSchema.parse({
+      evidence,
+      identity_delta_digest: digest(identityDeltas),
+      projection_delta_digest: digest(projectionDeltas),
+    })
+    const database = this.#requireDatabase()
+    return this.#writeWithReceipt(
+      database,
+      operationId,
+      'graph_batch',
+      {observation, identity_deltas: identityDeltas, projection_deltas: projectionDeltas},
+      receipt => {
+        if (receipt.kind !== 'graph_batch') {
+          throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+        }
+        return WorkspaceGraphBatchResultSchema.parse({
+          evidence: receipt.evidence,
+          identity_delta_digest: receipt.identity_delta_digest,
+          projection_delta_digest: receipt.projection_delta_digest,
+        })
+      },
+      () => {
+        this.#insertObservation(database, observation, evidence)
+        const current = this.#loadGraphState(database)
+        let identityState: WorkspaceIdentityState
+        let projectionState: WorkspaceGraphProjectionState
+        try {
+          identityState = applyWorkspaceIdentityDeltas(current.identity_state, identityDeltas)
+          projectionState = applyWorkspaceGraphProjectionDeltas({
+            ...current.projection_state,
+            logical_workspaces: identityState.logical_workspaces,
+            workspace_instances: identityState.workspace_instances,
+          }, projectionDeltas)
+        } catch (error) {
+          if (isRevisionConflict(error)) {
+            throw new WorkspaceGraphStoreError('STORE_STALE_REVISION')
+          }
+          throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+        }
+        this.#persistIdentityState(database, identityState)
+        this.#persistProjectionState(database, projectionState)
+        return {result, receipt: {kind: 'graph_batch', ...result}}
+      },
+    )
+  }
+
+  loadGraphState(): WorkspaceGraphPrivateState {
+    const database = this.#requireDatabase()
+    return this.#read(() => this.#loadGraphState(database))
   }
 
   replaceCard(input: WorkspaceCard, operationId: string): void {
@@ -677,6 +885,29 @@ export class WorkspaceGraphStore {
             REFERENCES relation_cards(source_logical_id, target_logical_id, relation_type)
             ON DELETE CASCADE
         ) STRICT;
+        CREATE TABLE IF NOT EXISTS identity_bindings(
+          binding_id TEXT PRIMARY KEY,
+          instance_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS identity_bindings_instance
+          ON identity_bindings(instance_id);
+        CREATE TABLE IF NOT EXISTS alias_observations(
+          observation_id TEXT PRIMARY KEY,
+          logical_workspace_id TEXT NOT NULL,
+          evidence_ref TEXT NOT NULL UNIQUE,
+          payload_json TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS alias_observations_logical
+          ON alias_observations(logical_workspace_id);
+        CREATE TABLE IF NOT EXISTS projection_records(
+          record_id TEXT PRIMARY KEY,
+          observation_source TEXT NOT NULL,
+          observation_id TEXT NOT NULL,
+          relation_delta_digest TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          UNIQUE(observation_source, observation_id)
+        ) STRICT;
         CREATE TABLE IF NOT EXISTS operation_receipts(
           receipt_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
           operation_id TEXT NOT NULL UNIQUE,
@@ -740,6 +971,213 @@ export class WorkspaceGraphStore {
           ? path.value
           : contentSafe,
     })
+  }
+
+  #insertObservation(database: GraphDatabase, observation: Observation, evidence: EvidenceRef): void {
+    const payload = canonicalJson(observation)
+    const inserted = database.prepare(`
+      INSERT INTO observations(
+        observation_id, observation_type, occurred_at, source, ref, trust,
+        logical_workspace_id, workspace_instance_id, related_logical_workspace_id,
+        summary, outcome, payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source, ref) DO NOTHING
+    `).run(
+      observation.observation_id,
+      observation.observation_type,
+      observation.occurred_at,
+      observation.source,
+      evidence.ref,
+      observation.trust,
+      observation.logical_workspace_id,
+      observation.workspace_instance_id,
+      observation.related_logical_workspace_id,
+      observation.summary,
+      observation.outcome,
+      payload,
+    )
+    if (inserted.changes === 0 || inserted.changes === 0n) {
+      const existing = database.prepare(`
+        SELECT payload_json FROM observations WHERE source = ? AND ref = ?
+      `).get(evidence.source, evidence.ref)
+      if (existing === undefined || stringColumn(existing, 'payload_json') !== payload) {
+        throw new WorkspaceGraphStoreError('STORE_IDEMPOTENCY_CONFLICT')
+      }
+    }
+  }
+
+  #assertBatchStringsSafe(
+    identityDeltas: readonly WorkspaceIdentityDelta[],
+    projectionDeltas: readonly WorkspaceGraphProjectionDelta[],
+  ): void {
+    for (const delta of identityDeltas) {
+      if (delta.kind === 'upsert_logical_workspace') {
+        this.#assertSafeCard(delta.workspace)
+      } else if (delta.kind === 'upsert_workspace_instance') {
+        this.#assertSafeCard(delta.instance)
+      } else if (delta.kind === 'observe_identity_binding') {
+        for (const [field, value] of Object.entries(delta.binding)) {
+          if (typeof value === 'string') this.#assertSafeIdentity(field, value)
+        }
+      } else if (delta.kind === 'record_alias_observation') {
+        for (const [field, value] of Object.entries(delta.observation)) {
+          if (typeof value === 'string') this.#assertSafeIdentity(field, value)
+        }
+      } else {
+        this.#assertSafeIdentity('instance_id', delta.instance_id)
+      }
+    }
+    for (const delta of projectionDeltas) {
+      if (delta.kind === 'upsert_relation') continue
+      for (const [field, value] of Object.entries(delta.record)) {
+        if (typeof value === 'string') this.#assertSafeIdentity(field, value)
+      }
+      for (const evidence of delta.record.evidence_refs) {
+        this.#assertSafeIdentity('evidence_source', evidence.source)
+        this.#assertSafeIdentity('evidence_ref', evidence.ref)
+      }
+    }
+  }
+
+  #assertSafeCard(card: WorkspaceCard): void {
+    for (const [field, value] of Object.entries(card)) {
+      if (typeof value === 'string') this.#assertSafeIdentity(field, value)
+      if (Array.isArray(value)) {
+        for (const item of value) if (typeof item === 'string') this.#assertSafeIdentity(field, item)
+      }
+    }
+  }
+
+  #loadGraphState(database: GraphDatabase): WorkspaceGraphPrivateState {
+    const logicalWorkspaces = this.#parseRows(
+      database.prepare('SELECT payload_json FROM logical_workspaces ORDER BY logical_workspace_id').all(),
+      LogicalWorkspaceSchema,
+    )
+    const workspaceInstances = this.#parseRows(
+      database.prepare('SELECT payload_json FROM workspace_instances ORDER BY instance_id').all(),
+      WorkspaceInstanceSchema,
+    )
+    const bindings = this.#parseRows(
+      database.prepare('SELECT payload_json FROM identity_bindings ORDER BY binding_id').all(),
+      workspaceIdentityBindingSchema,
+    )
+    const aliasObservations = this.#parseRows(
+      database.prepare('SELECT payload_json FROM alias_observations ORDER BY observation_id').all(),
+      workspaceAliasObservationSchema,
+    )
+    const relations = this.#parseRows(
+      database.prepare(`SELECT payload_json FROM relation_cards
+        ORDER BY source_logical_id, target_logical_id, relation_type`).all(),
+      RelationCardSchema,
+    )
+    const projectionRecords = this.#parseRows(
+      database.prepare('SELECT payload_json FROM projection_records ORDER BY record_id').all(),
+      projectionRecordSchema,
+    )
+    return WorkspaceGraphPrivateStateSchema.parse({
+      identity_state: {
+        logical_workspaces: logicalWorkspaces,
+        workspace_instances: workspaceInstances,
+        bindings,
+        alias_observations: aliasObservations,
+      },
+      projection_state: {
+        logical_workspaces: logicalWorkspaces,
+        workspace_instances: workspaceInstances,
+        relations,
+        projection_records: projectionRecords,
+      },
+    })
+  }
+
+  #persistIdentityState(database: GraphDatabase, state: WorkspaceIdentityState): void {
+    for (const workspace of state.logical_workspaces) this.#replaceLogicalWorkspace(database, workspace)
+    for (const instance of state.workspace_instances) this.#replaceWorkspaceInstance(database, instance)
+    for (const binding of state.bindings) {
+      database.prepare(`INSERT INTO identity_bindings(binding_id, instance_id, payload_json)
+        VALUES (?, ?, ?) ON CONFLICT(binding_id) DO UPDATE SET
+        instance_id = excluded.instance_id, payload_json = excluded.payload_json`).run(
+        binding.binding_id, binding.instance_id, canonicalJson(binding),
+      )
+    }
+    for (const observation of state.alias_observations) {
+      database.prepare(`INSERT INTO alias_observations(
+        observation_id, logical_workspace_id, evidence_ref, payload_json
+      ) VALUES (?, ?, ?, ?) ON CONFLICT(observation_id) DO UPDATE SET
+        logical_workspace_id = excluded.logical_workspace_id,
+        evidence_ref = excluded.evidence_ref, payload_json = excluded.payload_json`).run(
+        observation.observation_id,
+        observation.logical_workspace_id,
+        observation.evidence_ref,
+        canonicalJson(observation),
+      )
+    }
+  }
+
+  #persistProjectionState(database: GraphDatabase, state: WorkspaceGraphProjectionState): void {
+    for (const relation of state.relations) {
+      this.#writeRelation(database, relation)
+      for (const evidence of relation.evidence_refs) {
+        this.#writeRelationEvidence(database, relation, evidence)
+      }
+    }
+    for (const record of state.projection_records) {
+      database.prepare(`INSERT INTO projection_records(
+        record_id, observation_source, observation_id, relation_delta_digest, payload_json
+      ) VALUES (?, ?, ?, ?, ?) ON CONFLICT(record_id) DO UPDATE SET
+        relation_delta_digest = excluded.relation_delta_digest,
+        payload_json = excluded.payload_json`).run(
+        record.record_id,
+        record.observation_source,
+        record.observation_id,
+        record.relation_delta_digest,
+        canonicalJson(record),
+      )
+    }
+  }
+
+  #assertProjectionProvenance(
+    observation: Observation,
+    deltas: readonly WorkspaceGraphProjectionDelta[],
+  ): void {
+    const relations = deltas.filter((delta): delta is Extract<
+      WorkspaceGraphProjectionDelta,
+      {kind: 'upsert_relation'}
+    > => delta.kind === 'upsert_relation')
+    const records = deltas.filter((delta): delta is Extract<
+      WorkspaceGraphProjectionDelta,
+      {kind: 'record_projection'}
+    > => delta.kind === 'record_projection')
+    const relationKeys = new Set(relations.map(delta => projectionRelationKey(delta.relation)))
+    const recordKeys = new Set(records.map(delta => projectionRelationKey(delta.record)))
+    if (
+      relations.length !== records.length
+      || relationKeys.size !== relations.length
+      || recordKeys.size !== records.length
+    ) throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    for (const delta of records) {
+      const record = delta.record
+      const relation = relations.find(candidate => (
+        candidate.relation.source_logical_id === record.source_logical_id
+        && candidate.relation.target_logical_id === record.target_logical_id
+        && candidate.relation.relation_type === record.relation_type
+      ))
+      if (
+        relation === undefined
+        || relationDeltaDigest(relation) !== record.relation_delta_digest
+        || record.observation_source !== observation.source
+        || record.observation_id !== observation.observation_id
+        || record.occurred_at !== observation.occurred_at
+        || record.source_logical_id !== observation.logical_workspace_id
+        || record.target_logical_id !== observation.related_logical_workspace_id
+        || canonicalJson(record.evidence_refs) !== canonicalJson(observation.evidence_refs)
+        || record.evidence_refs.some(evidence => !relation.relation.evidence_refs.some(candidate => (
+          candidate.source === evidence.source
+          && candidate.ref === evidence.ref
+          && candidate.observed_at === evidence.observed_at
+        )))
+      ) throw new WorkspaceGraphStoreError('STORE_OPERATION_CONFLICT')
+    }
   }
 
   #assertSafeIdentity(field: string, value: string): void {
@@ -1088,6 +1526,13 @@ function rollback(database: GraphDatabase): void {
   }
 }
 
+function projectionRelationKey(value: Pick<
+  RelationCard,
+  'source_logical_id' | 'target_logical_id' | 'relation_type'
+>): string {
+  return `${value.source_logical_id}\u0000${value.target_logical_id}\u0000${value.relation_type}`
+}
+
 function isLogicalWorkspaceInput(input: WorkspaceCard): input is LogicalWorkspace {
   return 'logical_workspace_id' in input && 'aliases' in input
 }
@@ -1120,4 +1565,13 @@ function compareAliases(left: PublishedGraphAlias, right: PublishedGraphAlias): 
 
 function relationReceipt(relation: RelationCard): OperationReceiptResult {
   return {kind: 'relation', relation}
+}
+
+function digest(value: unknown): string {
+  return createHash('sha256').update(canonicalJson(value)).digest('hex')
+}
+
+function isRevisionConflict(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false
+  return error.code === 'IDENTITY_REVISION_CONFLICT' || error.code === 'PROJECTOR_REVISION_CONFLICT'
 }

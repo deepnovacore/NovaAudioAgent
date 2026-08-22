@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   WorkspaceGraphStore,
   WorkspaceGraphStoreError,
+  type WorkspaceGraphBatchInput,
   type WorkspaceCard,
   type WorkspaceGraphStoreErrorCode,
 } from './store.js'
@@ -143,6 +144,16 @@ function execute(request: StoreRequest): {readonly result: unknown; readonly pub
       }
     case 'compact':
       return {result: store.compact(stringField(request, 'operationId')), publish: true}
+    case 'graph_batch':
+      return {
+        result: store.applyGraphBatch(
+          request.batch as WorkspaceGraphBatchInput,
+          stringField(request, 'operationId'),
+        ),
+        publish: true,
+      }
+    case 'load_graph_state':
+      return {result: store.loadGraphState(), publish: false}
     case 'get_operation_receipt':
       return {result: store.getOperationReceipt(stringField(request, 'operationId')), publish: false}
     case 'publish_snapshot':

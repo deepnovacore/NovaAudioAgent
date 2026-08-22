@@ -18,11 +18,16 @@ import {
 import {
   PublishedGraphSnapshotSchema,
   OperationReceiptSchema,
+  WorkspaceGraphBatchResultSchema,
+  WorkspaceGraphPrivateStateSchema,
   WORKSPACE_GRAPH_SCHEMA_VERSION,
   type OperationReceipt,
   type PublishedGraphSnapshot,
   type WorkspaceCard,
   type WorkspaceGraphCompactionResult,
+  type WorkspaceGraphBatchInput,
+  type WorkspaceGraphBatchResult,
+  type WorkspaceGraphPrivateState,
   type WorkspaceGraphStoreDiagnostics,
   type WorkspaceGraphStoreErrorCode,
 } from './store.js'
@@ -124,6 +129,7 @@ const initialSnapshot = (): PublishedGraphSnapshot => deepFreeze({
   relations: [],
   aliases: [],
 })
+const WORKER_CLOSE_GRACE_MS = 250
 
 const publishingOperations = new Set([
   'open',
@@ -133,6 +139,7 @@ const publishingOperations = new Set([
   'suppress_relation',
   'compact',
   'publish_snapshot',
+  'graph_batch',
 ])
 
 const recoverableOperations = new Set([
@@ -141,6 +148,7 @@ const recoverableOperations = new Set([
   'upsert_relation',
   'suppress_relation',
   'compact',
+  'graph_batch',
 ])
 
 const nullResult: RpcResultValidator<void> = value => {
@@ -183,6 +191,7 @@ export class WorkspaceGraphStoreClient {
   #closed = false
   #expectedExit = false
   #recovering = false
+  #closing: Promise<void> | null = null
 
   constructor(path: string, options: WorkspaceGraphStoreClientOptions = {}) {
     this.#workerData = {
@@ -202,22 +211,34 @@ export class WorkspaceGraphStoreClient {
     await this.#request('open', {}, nullResult)
   }
 
-  async close(): Promise<void> {
-    if (this.#closed) return
+  close(): Promise<void> {
+    if (this.#closing !== null) return this.#closing
+    if (this.#closed) return Promise.resolve()
+    const operation = this.#closeFresh()
+    this.#closing = operation
+    return operation
+  }
+
+  async #closeFresh(): Promise<void> {
     this.#closed = true
+    let timer: ReturnType<typeof setTimeout> | undefined
     if (!this.#failed) {
-      try {
-        await this.#requestWhileClosing('close', {}, nullResult)
-      } catch {
-        // Closing is idempotent and does not replace the already reported worker failure.
-      }
+      const graceful = this.#requestWhileClosing('close', {}, nullResult).catch(() => undefined)
+      await Promise.race([
+        graceful,
+        new Promise<void>(resolve => { timer = setTimeout(resolve, WORKER_CLOSE_GRACE_MS) }),
+      ])
     }
+    if (timer !== undefined) clearTimeout(timer)
     this.#expectedExit = true
     try {
       await this.#worker.terminate()
     } catch {
       // A worker that already exited is closed for client lifecycle purposes.
     }
+    const error = new WorkspaceGraphStoreClientError('CLIENT_CLOSED')
+    for (const pending of this.#pending.values()) pending.reject(error)
+    this.#pending.clear()
   }
 
   appendObservation(observation: Observation, operationId = randomUUID()): Promise<EvidenceRef> {
@@ -264,6 +285,25 @@ export class WorkspaceGraphStoreClient {
 
   compact(operationId = randomUUID()): Promise<WorkspaceGraphCompactionResult> {
     return this.#request('compact', {operationId}, schemaResult(compactionResultSchema))
+  }
+
+  async applyGraphBatch(
+    batch: WorkspaceGraphBatchInput,
+    operationId = randomUUID(),
+  ): Promise<WorkspaceGraphBatchResult> {
+    return deepFreeze(await this.#request(
+      'graph_batch',
+      {batch, operationId},
+      schemaResult(WorkspaceGraphBatchResultSchema),
+    ))
+  }
+
+  async loadGraphState(): Promise<WorkspaceGraphPrivateState> {
+    return deepFreeze(await this.#request(
+      'load_graph_state',
+      {},
+      schemaResult(WorkspaceGraphPrivateStateSchema),
+    ))
   }
 
   getOperationReceipt(operationId: string): Promise<OperationReceipt | undefined> {

@@ -388,6 +388,13 @@ export interface RealtimeProvider {
       readonly signal: AbortSignal
     },
   ): Promise<unknown>
+  injectWorkspaceContext?(
+    item: HostContextItem,
+    options: {
+      readonly confirmationTimeout: number | null
+      readonly signal: AbortSignal
+    },
+  ): Promise<unknown>
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void>
   cancelResponse(responseId: string, signal: AbortSignal): Promise<void>
   events(signal: AbortSignal): AsyncIterable<unknown>

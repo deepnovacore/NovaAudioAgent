@@ -547,6 +547,34 @@ test('plain runs create distinct ready sessions with one fresh closed transport 
   }
 })
 
+test('committed workspace and typed terminal observers run after authoritative boundaries', async () => {
+  const value = await fixture()
+  try {
+    const workspaces: string[] = []
+    const completions: string[] = []
+    const unsubscribeWorkspace = value.adapter.observeCommittedWorkspace(event => {
+      workspaces.push(`${event.workspace.workspace_id}:${event.workspace.canonical_path}`)
+    })
+    const unsubscribeCompletion = value.adapter.observeTerminalWorkOrder(event => {
+      completions.push(`${event.workspace.workspace_id}:${event.work_order}:${event.handoff.outcome}`)
+    })
+    const result = await value.adapter.dispatch(
+      'run',
+      {work_order: 'typed completion', session: 'Observed'},
+      context('run', {work_order: 'typed completion'}, value.clock),
+    )
+    assert.equal(result.outcome, 'ok')
+    assert.equal(workspaces.length, 1)
+    assert.match(workspaces[0] ?? '', /^workspace-/u)
+    assert.deepEqual(completions.map(item => item.split(':').slice(1)), [['typed completion', 'ok']])
+    unsubscribeWorkspace()
+    unsubscribeCompletion()
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
 test('confirmed resume binds one exact capability, delegate, origin, work order, and stored thread', async () => {
   const value = await fixture()
   try {
@@ -771,6 +799,10 @@ test('wrong delegate, origin, altered work order, copied capability, rejection, 
 test('new-run missing thread rolls back provisional session and failed confirmed create rolls back empty workspace', async () => {
   const value = await fixture()
   try {
+    const committedWorkspaces: string[] = []
+    value.adapter.observeCommittedWorkspace(event => {
+      committedWorkspaces.push(event.workspace.display_name)
+    })
     value.factory.reportThread = false
     const failed = await value.adapter.dispatch(
       'run',
@@ -804,6 +836,8 @@ test('new-run missing thread rolls back provisional session and failed confirmed
       }),
     )
     assert.equal(result.outcome, 'failed')
+    assert.deepEqual(committedWorkspaces, ['alpha'],
+      'a confirmed create that rolls back must never become graph evidence')
     assert.deepEqual((await value.store.listWorkspaces()).map(item => item.display_name), ['alpha'])
     const publicView = value.adapter.publicProjectView(false)
     assert.deepEqual(publicView, {

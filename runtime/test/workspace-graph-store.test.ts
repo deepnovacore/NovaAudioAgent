@@ -225,7 +225,7 @@ test('reopen and replay retain one canonical observation and the configured sche
   assert.deepEqual(await reopened.appendObservation(workspaceOpened('replayed')), evidence)
   assert.equal((await reopened.listObservations()).length, 1)
   assert.deepEqual(await reopened.diagnostics(), {
-    schema_version: 2,
+    schema_version: 3,
     journal_mode: 'wal',
     foreign_keys: true,
     observations: 1,
@@ -770,7 +770,7 @@ test('a legacy schema-v2 relation receipt reopens and reconciles without losing 
   const reopened = new WorkspaceGraphStoreClient(path)
   t.after(() => reopened.close())
   await reopened.open()
-  assert.equal((await reopened.diagnostics()).schema_version, 2)
+  assert.equal((await reopened.diagnostics()).schema_version, 3)
   assert.deepEqual(await reopened.getOperationReceipt(operationId), {
     operation_id: operationId,
     operation_type: 'upsert_relation',

@@ -14,6 +14,7 @@ import {
 import { QwenAudioRealtimeAdapter, type QwenConnector } from './realtime/qwen.js'
 import { webSocketQwenConnector } from './realtime/qwen-transport.js'
 import { stripLikePython } from './python-text.js'
+import {workspaceGraphServiceFromSettings} from './workspace-graph/factory.js'
 
 export interface BuildQwenRealtimeAssemblyOptions
   extends Omit<
@@ -91,7 +92,15 @@ export function buildQwenRealtimeAssembly(
     connector: options.connector ?? webSocketQwenConnector,
     idFactory: () => ids.next('qwen'),
     now: () => clock.now(),
+    workspaceGraphPolicy: options.settings.workspace_graph_enabled,
   })
+  const workspaceGraph = workspaceGraphServiceFromSettings(
+    options.settings,
+    code => {
+      if (code === 'workspace_graph_open_failed') return
+      try { options.onDiagnostic?.(`[realtime-diagnostic] ${code}`) } catch { /* advisory */ }
+    },
+  )
   return buildRealtimeAssembly({
     core,
     provider,
@@ -99,6 +108,7 @@ export function buildQwenRealtimeAssembly(
     controlledGuardReconnect: options.settings.qwen_controlled_guard_reconnect,
     guardHistoryRecovery: options.settings.qwen_guard_history_recovery,
     guardHistoryPairs: options.settings.qwen_guard_history_pairs,
+    ...(workspaceGraph === undefined ? {} : {workspaceGraph}),
     ...(options.providerToolView === undefined
       ? {}
       : {providerToolView: options.providerToolView}),

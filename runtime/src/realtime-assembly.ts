@@ -3,7 +3,11 @@ import { AssemblyError, type Assembly } from './assembly.js'
 import type {CodexAssemblyResource} from './codex-factory.js'
 import { canonicalJson } from './canonical-json.js'
 import type { JsonValue } from './events.js'
-import type {ProjectCodexAdapter} from './executors/codex-project-live.js'
+import type {
+  CommittedWorkspaceEvent,
+  ProjectCodexAdapter,
+  TerminalWorkOrderEvent,
+} from './executors/codex-project-live.js'
 import {
   PlaybackRegistry,
   type PlaybackCompletion,
@@ -23,8 +27,28 @@ import type { CodexState, GuardHistoryRecovery } from './realtime/service-state.
 import { RealtimeSession } from './realtime/session.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
+import type {
+  OpenWorkspaceInput,
+  TaskCompletionInput,
+  TurnContextInput,
+} from './workspace-graph/service.js'
+import type {WorkspaceResolutionDecision} from './workspace-graph/identity.js'
+
+export interface RealtimeWorkspaceGraph {
+  readonly publishedSnapshot: {readonly publication_revision: number}
+  open(): Promise<void>
+  openWorkspace(input: OpenWorkspaceInput): Promise<WorkspaceResolutionDecision>
+  recordTaskCompletion(input: TaskCompletionInput): Promise<void>
+  contextForTurn(input: TurnContextInput): {
+    readonly header: string | null
+  } | null
+  close(): Promise<void>
+}
 
 export const REALTIME_ASSEMBLY_SHUTDOWN_GRACE_MS = 1_000
+const MAX_GRAPH_LIFECYCLE_OPERATIONS = 64
+const MAX_GRAPH_TERMINAL_OPERATIONS = MAX_GRAPH_LIFECYCLE_OPERATIONS - 1
+const WORKSPACE_SWITCH_RETRY_MS = 10
 
 export interface RealtimeAssemblyOptions {
   readonly core: Assembly
@@ -53,6 +77,7 @@ export interface RealtimeAssemblyOptions {
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly projectExpiryStepTimeoutMs?: number
   readonly codexResource?: CodexAssemblyResource
+  readonly workspaceGraph?: RealtimeWorkspaceGraph
 }
 
 type LifecycleState = 'new' | 'starting' | 'started' | 'stopping' | 'stopped'
@@ -80,11 +105,24 @@ export class RealtimeAssembly {
   readonly service: RealtimeService
   readonly runtime: Assembly['runtime']
   readonly tools: CompiledTools
+  readonly workspaceGraph: RealtimeWorkspaceGraph | undefined
 
   readonly #onDiagnostic: (line: string) => void
   readonly #projectAdapter: ProjectCodexAdapter | undefined
   readonly #codexResource: CodexAssemblyResource | undefined
   readonly #unsubscribeProjectView: (() => void) | undefined
+  readonly #unsubscribeCommittedWorkspace: (() => void) | undefined
+  readonly #unsubscribeTerminalWorkOrder: (() => void) | undefined
+  readonly #idFactory: () => string
+  #workspaceGraphOpen = false
+  #currentWorkspaceInstanceId: string | null = null
+  readonly #workspaceInstancesByHostId = new Map<string, string>()
+  #graphLifecycleTail: Promise<void> = Promise.resolve()
+  #graphLifecyclePending = 0
+  #latestCommittedWorkspace: CommittedWorkspaceEvent | null = null
+  #committedWorkspaceScheduled = false
+  #graphHooksClosed = false
+  #graphOpenOperation: Promise<void> | null = null
   #state: LifecycleState = 'new'
   #startOperation: Promise<void> | null = null
   #stopOperation: Promise<void> | null = null
@@ -101,6 +139,8 @@ export class RealtimeAssembly {
     readonly projectAdapter?: ProjectCodexAdapter
     readonly onProjectView?: (view: ProjectConfirmationView) => void
     readonly codexResource?: CodexAssemblyResource
+    readonly workspaceGraph?: RealtimeWorkspaceGraph
+    readonly idFactory: () => string
   }) {
     this.core = input.core
     this.provider = input.provider
@@ -111,12 +151,26 @@ export class RealtimeAssembly {
     this.service = input.service
     this.runtime = input.core.runtime
     this.tools = input.core.tools
+    this.workspaceGraph = input.workspaceGraph
     this.#onDiagnostic = input.onDiagnostic
     this.#projectAdapter = input.projectAdapter
     this.#codexResource = input.codexResource
+    this.#idFactory = input.idFactory
     this.#unsubscribeProjectView = input.projectAdapter === undefined || input.onProjectView === undefined
       ? undefined
       : input.projectAdapter.observeProjectView(input.onProjectView)
+    this.#unsubscribeCommittedWorkspace = input.projectAdapter === undefined
+      || input.workspaceGraph === undefined
+      ? undefined
+      : input.projectAdapter.observeCommittedWorkspace(event => {
+        this.#enqueueCommittedWorkspace(event)
+      })
+    this.#unsubscribeTerminalWorkOrder = input.projectAdapter === undefined
+      || input.workspaceGraph === undefined
+      ? undefined
+      : input.projectAdapter.observeTerminalWorkOrder(event => {
+        this.#enqueueGraphLifecycle(() => this.#onTerminalWorkOrder(event))
+      })
   }
 
   start(): Promise<void> {
@@ -160,9 +214,33 @@ export class RealtimeAssembly {
   }
 
   async #startFresh(): Promise<void> {
+    if (this.workspaceGraph !== undefined) {
+      const openOperation = Promise.resolve().then(async () => { await this.workspaceGraph!.open() })
+      this.#graphOpenOperation = openOperation
+      void openOperation.then(
+        () => { if (this.#graphOpenOperation === openOperation) this.#graphOpenOperation = null },
+        () => { if (this.#graphOpenOperation === openOperation) this.#graphOpenOperation = null },
+      )
+      const graphOpen = await this.#cleanupWithinGrace(
+        () => openOperation,
+        'workspace_graph_open_abandoned',
+      )
+      if (graphOpen.kind === 'resolved') {
+        this.#workspaceGraphOpen = true
+      } else {
+        this.#workspaceGraphOpen = false
+        if (graphOpen.kind === 'rejected') this.#diagnose('workspace_graph_open_failed')
+      }
+    }
     try {
       if (this.#projectAdapter !== undefined) {
         await this.#projectAdapter.initialize()
+        if (this.#workspaceGraphOpen) {
+          const activeWorkspace = await this.#projectAdapter.activeCommittedWorkspace()
+          if (activeWorkspace !== null) {
+            this.#enqueueCommittedWorkspace({workspace: activeWorkspace})
+          }
+        }
       }
       await this.core.start()
     } catch (error) {
@@ -184,6 +262,10 @@ export class RealtimeAssembly {
       }
       throw error
     }
+    await this.#cleanupWithinGrace(
+      () => this.#injectCurrentWorkspaceHeader(),
+      'workspace_graph_header_delivery_abandoned',
+    )
     if (this.#state === 'starting') {
       this.#state = 'started'
       if (this.#codexResource !== undefined) {
@@ -233,9 +315,174 @@ export class RealtimeAssembly {
       if (firstFailure === null && project.kind === 'rejected') firstFailure = {error: project.error}
     }
     this.#unsubscribeProjectView?.()
+    this.#unsubscribeCommittedWorkspace?.()
+    this.#unsubscribeTerminalWorkOrder?.()
+    this.#graphHooksClosed = true
+
+    if (this.workspaceGraph !== undefined) {
+      const graphOpenOperation = this.#graphOpenOperation
+      if (graphOpenOperation !== null) {
+        const graphOpen = await this.#cleanupWithinGrace(
+          () => graphOpenOperation,
+          'workspace_graph_open_abandoned',
+        )
+        if (graphOpen.kind !== 'resolved') cleanupComplete = false
+      }
+      const lifecycle = await this.#cleanupWithinGrace(
+        () => this.#graphLifecycleTail,
+        'workspace_graph_lifecycle_abandoned',
+      )
+      if (lifecycle.kind !== 'resolved') cleanupComplete = false
+      const graph = await this.#cleanupWithinGrace(
+        () => this.workspaceGraph!.close(),
+        'workspace_graph_close_abandoned',
+      )
+      if (graph.kind !== 'resolved') cleanupComplete = false
+      if (graph.kind === 'rejected') this.#diagnose('workspace_graph_close_failed')
+    }
 
     if (cleanupComplete) this.#state = 'stopped'
     if (firstFailure !== null) throw firstFailure.error
+  }
+
+  async #onCommittedWorkspace(event: CommittedWorkspaceEvent): Promise<void> {
+    if (!this.#workspaceGraphOpen || this.workspaceGraph === undefined) return
+    try {
+      let decision: WorkspaceResolutionDecision
+      let queueFullDiagnosed = false
+      for (;;) {
+        try {
+          decision = await this.workspaceGraph.openWorkspace({
+            path: event.workspace.canonical_path,
+            repository_fingerprint: event.workspace.workspace_id,
+            now: event.workspace.last_used_at,
+          })
+          break
+        } catch (error) {
+          if (!isWorkspaceGraphQueueFull(error) || this.#graphHooksClosed) throw error
+          if (!queueFullDiagnosed) {
+            queueFullDiagnosed = true
+            this.#diagnose('workspace_graph_lifecycle_queue_full')
+          }
+          await new Promise<void>(resolve => { setTimeout(resolve, WORKSPACE_SWITCH_RETRY_MS) })
+        }
+      }
+      if (decision.kind !== 'resolved') return
+      this.#currentWorkspaceInstanceId = decision.instance.instance_id
+      this.#workspaceInstancesByHostId.set(
+        event.workspace.workspace_id,
+        decision.instance.instance_id,
+      )
+      await this.#injectCurrentWorkspaceHeader()
+    } catch {
+      this.#diagnose('workspace_graph_lifecycle_failed')
+    }
+  }
+
+  async #onTerminalWorkOrder(event: TerminalWorkOrderEvent): Promise<void> {
+    if (
+      !this.#workspaceGraphOpen
+      || this.workspaceGraph === undefined
+    ) return
+    const workspaceInstanceId = this.#workspaceInstancesByHostId.get(event.workspace.workspace_id)
+    if (workspaceInstanceId === undefined) return
+    try {
+      await this.workspaceGraph.recordTaskCompletion({
+        workspace_instance_id: workspaceInstanceId,
+        summary: event.work_order,
+        outcome: event.handoff.outcome === 'ok' ? 'ok' : 'failed',
+        now: this.core.runtime.clock.now(),
+        relation_cue: null,
+      })
+    } catch {
+      this.#diagnose('workspace_graph_lifecycle_failed')
+    }
+  }
+
+  #enqueueCommittedWorkspace(event: CommittedWorkspaceEvent): void {
+    if (this.#graphHooksClosed || !this.#workspaceGraphOpen) return
+    this.#latestCommittedWorkspace = event
+    if (this.#committedWorkspaceScheduled) return
+    this.#committedWorkspaceScheduled = true
+    const admitted = this.#enqueueGraphLifecycle(
+      () => this.#drainLatestCommittedWorkspace(),
+      true,
+    )
+    if (!admitted) this.#committedWorkspaceScheduled = false
+  }
+
+  async #drainLatestCommittedWorkspace(): Promise<void> {
+    try {
+      for (;;) {
+        const event = this.#latestCommittedWorkspace
+        if (event === null || this.#graphHooksClosed) return
+        this.#latestCommittedWorkspace = null
+        await this.#onCommittedWorkspace(event)
+      }
+    } finally {
+      this.#committedWorkspaceScheduled = false
+      if (this.#latestCommittedWorkspace !== null) {
+        this.#enqueueCommittedWorkspace(this.#latestCommittedWorkspace)
+      }
+    }
+  }
+
+  #enqueueGraphLifecycle(operation: () => Promise<void>, workspacePriority = false): boolean {
+    if (this.#graphHooksClosed || !this.#workspaceGraphOpen) return false
+    const capacity = workspacePriority
+      ? MAX_GRAPH_LIFECYCLE_OPERATIONS
+      : MAX_GRAPH_TERMINAL_OPERATIONS
+    if (this.#graphLifecyclePending >= capacity) {
+      this.#diagnose('workspace_graph_lifecycle_queue_full')
+      return false
+    }
+    this.#graphLifecyclePending += 1
+    const pending = this.#graphLifecycleTail.then(operation)
+    this.#graphLifecycleTail = pending.then(
+      () => { this.#graphLifecyclePending -= 1 },
+      () => { this.#graphLifecyclePending -= 1 },
+    )
+    return true
+  }
+
+  async #injectCurrentWorkspaceHeader(): Promise<void> {
+    if (
+      !this.#workspaceGraphOpen
+      || this.workspaceGraph === undefined
+      || this.#currentWorkspaceInstanceId === null
+      || this.provider.injectWorkspaceContext === undefined
+    ) return
+    const identity = this.providerSession.identity
+    if (identity === null) return
+    try {
+      const context = this.workspaceGraph.contextForTurn({
+        session_epoch: identity.epoch,
+        workspace_instance_id: this.#currentWorkspaceInstanceId,
+        utterance: '',
+        preferences: [],
+      })
+      if (context?.header === null || context === null) return
+      await this.providerSession.injectWorkspaceContext({
+        kind: 'workspace_context',
+        host_item_id: this.#idFactory(),
+        event_id: this.#idFactory(),
+        content: context.header,
+        call_id: null,
+        session_epoch: identity.epoch,
+        workspace_instance_id: this.#currentWorkspaceInstanceId,
+        revision: this.workspaceGraph.publishedSnapshot.publication_revision,
+      })
+    } catch {
+      this.#diagnose('workspace_graph_header_delivery_failed')
+    }
+  }
+
+  #diagnose(code: string): void {
+    try {
+      this.#onDiagnostic(`[realtime-diagnostic] ${code}`)
+    } catch {
+      // Graph diagnostics are best-effort and never change voice/project outcomes.
+    }
   }
 
   async #cleanupWithinGrace(
@@ -277,6 +524,14 @@ export class RealtimeAssembly {
     }
     return result
   }
+}
+
+function isWorkspaceGraphQueueFull(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const descriptor = Object.getOwnPropertyDescriptor(error, 'code')
+  return descriptor !== undefined
+    && 'value' in descriptor
+    && descriptor.value === 'GRAPH_SERVICE_QUEUE_FULL'
 }
 
 /** Build the provider-neutral realtime resources in their ownership order. */
@@ -384,9 +639,11 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     bridge,
     service,
     onDiagnostic,
+    idFactory,
     ...(projectAdapter === undefined ? {} : {projectAdapter}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
+    ...(options.workspaceGraph === undefined ? {} : {workspaceGraph: options.workspaceGraph}),
   })
 }
 
@@ -397,6 +654,9 @@ function asProjectAdapter(adapter: unknown): ProjectCodexAdapter {
     || !('confirmationController' in adapter)
     || !('commitConfirmed' in adapter)
     || !('publicProjectView' in adapter)
+    || !('activeCommittedWorkspace' in adapter)
+    || !('observeCommittedWorkspace' in adapter)
+    || !('observeTerminalWorkOrder' in adapter)
   ) throw new AssemblyError('project Codex resource has an invalid adapter')
   return adapter as ProjectCodexAdapter
 }

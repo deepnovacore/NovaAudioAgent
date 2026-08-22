@@ -77,6 +77,19 @@ export interface ProjectCodexAdapterOptions {
   readonly onProjectView?: (view: PublicProjectView) => void
 }
 
+export interface CommittedWorkspaceEvent {
+  readonly workspace: WorkspaceRecord
+}
+
+export interface TerminalWorkOrderEvent {
+  readonly workspace: WorkspaceRecord
+  readonly work_order: string
+  readonly handoff: ExecutorHandoff
+}
+
+type CommittedWorkspaceObserver = (event: CommittedWorkspaceEvent) => void | Promise<void>
+type TerminalWorkOrderObserver = (event: TerminalWorkOrderEvent) => void | Promise<void>
+
 interface ConfirmedDelegateBinding {
   readonly operation: ConfirmedProjectOperation
   readonly delegateId: string
@@ -90,6 +103,8 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   readonly #confirmation: ProjectConfirmationController
   readonly #transportFactory: ProjectTransportFactory
   readonly #projectViewObservers = new Set<(view: PublicProjectView) => void>()
+  readonly #committedWorkspaceObservers = new Set<CommittedWorkspaceObserver>()
+  readonly #terminalWorkOrderObservers = new Set<TerminalWorkOrderObserver>()
   readonly #liveState: CodexAdapterSharedState = createCodexAdapterSharedState()
   readonly #confirmedBindings = new WeakMap<object, ConfirmedDelegateBinding>()
   readonly #retainedTransportCleanups = new Set<CodexAppServerTransport>()
@@ -126,9 +141,27 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     return work
   }
 
+  async activeCommittedWorkspace(): Promise<WorkspaceRecord | null> {
+    const snapshot = await this.#store.snapshot()
+    if (snapshot.active_workspace_id === null) return null
+    return snapshot.workspaces.find(
+      workspace => workspace.workspace_id === snapshot.active_workspace_id,
+    ) ?? null
+  }
+
   observeProjectView(observer: (view: PublicProjectView) => void): () => void {
     this.#projectViewObservers.add(observer)
     return () => { this.#projectViewObservers.delete(observer) }
+  }
+
+  observeCommittedWorkspace(observer: CommittedWorkspaceObserver): () => void {
+    this.#committedWorkspaceObservers.add(observer)
+    return () => { this.#committedWorkspaceObservers.delete(observer) }
+  }
+
+  observeTerminalWorkOrder(observer: TerminalWorkOrderObserver): () => void {
+    this.#terminalWorkOrderObservers.add(observer)
+    return () => { this.#terminalWorkOrderObservers.delete(observer) }
   }
 
   async dispatch(
@@ -204,12 +237,13 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     if (!this.#confirmation.claimConfirmed(operation)) return commitResult(false, 'confirmation_invalid')
     const workOrder = operation.work_order
     if (workOrder === null) {
+      let committedWorkspace: WorkspaceRecord
       try {
         if (operation.action === 'create') {
           await this.#store.validateManagedCreate(operation.workspace_display_name)
-          await this.#store.createManaged(operation.workspace_display_name)
+          committedWorkspace = await this.#store.createManaged(operation.workspace_display_name)
         } else if (operation.action === 'select' && operation.workspace_id !== null) {
-          await this.#store.selectWorkspaceExact(
+          committedWorkspace = await this.#store.selectWorkspaceExact(
             operation.workspace_display_name,
             operation.workspace_id,
           )
@@ -219,6 +253,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       } catch (error) {
         return commitResult(false, projectErrorCode(error))
       }
+      await this.#notifyCommittedWorkspace(committedWorkspace)
       await this.#refreshProjectViewTolerant()
       return commitResult(true, 'committed')
     }
@@ -310,7 +345,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     context: ExecutorDispatchContext,
   ): Promise<ExecutorHandoff> {
     const workspace = await this.#store.resolveWorkspace(null)
-    return await this.#runBound(workspace, null, sessionTitle, workOrder, context)
+    return await this.#runBound(workspace, null, sessionTitle, workOrder, context, false)
   }
 
   async #dispatchProject(
@@ -429,7 +464,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       const workspace = await this.#store.createManaged(operation.workspace_display_name)
       let result: ExecutorHandoff
       try {
-        result = await this.#runBound(workspace, null, operation.session_title, workOrder, context)
+        result = await this.#runBound(workspace, null, operation.session_title, workOrder, context, true)
       } catch (error) {
         await this.#store.rollbackManagedCreate(workspace.workspace_id, {wait: true}).catch(() => false)
         await this.#refreshProjectViewTolerant()
@@ -452,7 +487,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     if (session.session_id !== operation.session_id || session.state !== 'ready') {
       return failureHandoff('session_unavailable', 'run')
     }
-    return await this.#runBound(workspace, session, null, workOrder, context)
+    return await this.#runBound(workspace, session, null, workOrder, context, false)
   }
 
   async #runBound(
@@ -461,6 +496,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     sessionTitle: string | null,
     workOrder: string,
     context: ExecutorDispatchContext,
+    deferWorkspaceObservation: boolean,
   ): Promise<ExecutorHandoff> {
     try {
       await this.#drainRetainedTransportCleanups()
@@ -474,6 +510,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     let result: ExecutorHandoff | null = null
     const disposition: {value: ValidatedCodexDisposition | null} = {value: null}
     await this.#store.revalidateWorkspace(workspace.workspace_id)
+    if (!deferWorkspaceObservation) await this.#notifyCommittedWorkspace(workspace)
     const codexHome = await this.#store.persistentHome(workspace.workspace_id)
     let inner: CodexAppServerTransport
     try {
@@ -560,9 +597,42 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       }
       await this.#refreshProjectViewTolerant()
     }
-    if (bindingMismatch) return failureHandoff('session_thread_mismatch', 'run')
-    if (resumed === null && reportedThreadId === null) return failureHandoff('thread_id_invalid', 'run')
-    return result ?? failureHandoff('transport_failure', 'run')
+    const terminal = bindingMismatch
+      ? failureHandoff('session_thread_mismatch', 'run')
+      : resumed === null && reportedThreadId === null
+        ? failureHandoff('thread_id_invalid', 'run')
+        : result ?? failureHandoff('transport_failure', 'run')
+    if (deferWorkspaceObservation && terminal.outcome === 'ok') {
+      await this.#notifyCommittedWorkspace(workspace)
+    }
+    await this.#notifyTerminalWorkOrder(workspace, workOrder, terminal)
+    return terminal
+  }
+
+  async #notifyCommittedWorkspace(workspace: WorkspaceRecord): Promise<void> {
+    const event = Object.freeze({workspace})
+    for (const observer of [...this.#committedWorkspaceObservers]) {
+      try {
+        await observer(event)
+      } catch {
+        // Graph/telemetry observers cannot change an authoritative project outcome.
+      }
+    }
+  }
+
+  async #notifyTerminalWorkOrder(
+    workspace: WorkspaceRecord,
+    workOrder: string,
+    handoff: ExecutorHandoff,
+  ): Promise<void> {
+    const event = Object.freeze({workspace, work_order: workOrder, handoff})
+    for (const observer of [...this.#terminalWorkOrderObservers]) {
+      try {
+        await observer(event)
+      } catch {
+        // Episode projection is best-effort and cannot change executor delivery.
+      }
+    }
   }
 
   async #refreshProjectView(): Promise<void> {
