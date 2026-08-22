@@ -49,15 +49,25 @@ test('the proactivity control offers three tiers explained in push-and-pull term
   assert.equal(proactivityNotes.length, 3, 'each tier is explained with push-and-pull wording')
 })
 
-test('the heartbeat slider and voice field carry their labelled bounds', () => {
+test('the heartbeat slider and integrated Qwen fields carry their labelled bounds', () => {
   assert.match(html, /Codex 播报间隔/)
   assert.match(html, /<input type="range" id="heartbeat" min="15" max="120" step="1"/)
-  assert.match(html, /语音音色/)
-  assert.match(html, /<input type="text" id="voice" maxlength="64"/)
+  assert.match(html, /Qwen 实时模型/)
+  assert.match(html, /<input type="text" id="integratedModel" maxlength="128"/)
+  assert.match(html, /Qwen 语音音色/)
+  assert.match(html, /<input type="text" id="integratedVoice" maxlength="128"/)
 })
 
 test('every API key is a password field with a badge, hint, and clear button', () => {
-  for (const key of ['dashscopeApiKey', 'tavilyApiKey', 'modelApiKey', 'codexApiKey']) {
+  for (const key of [
+    'dashscopeApiKey',
+    'tavilyApiKey',
+    'modelApiKey',
+    'codexApiKey',
+    'arkApiKey',
+    'doubaoBigmodelApiKey',
+    'doubaoAsrApiKey',
+  ]) {
     assert.match(html, new RegExp(`<input type="password" id="${key}"[^>]*placeholder="留空保持不变"`))
     assert.match(html, new RegExp(`<span class="badge" id="badge-${key}">未设置</span>`))
     assert.match(html, new RegExp(`<button type="button" class="clear" data-key="${key}">清除</button>`))
@@ -66,7 +76,42 @@ test('every API key is a password field with a badge, hint, and clear button', (
   assert.match(html, /Tavily/)
   assert.match(html, /模型网关/)
   assert.match(html, /Codex/)
-  assert.equal((html.match(/type="password"/g) || []).length, 4)
+  assert.match(html, /Ark/)
+  assert.match(html, /豆包大模型/)
+  assert.match(html, /豆包 ASR/)
+  assert.equal((html.match(/type="password"/g) || []).length, 7)
+})
+
+test('pipeline selection shows the integrated path or the cascaded nodes', () => {
+  assert.match(html, /<input type="radio" name="pipelineMode" value="integrated">/)
+  assert.match(html, /<input type="radio" name="pipelineMode" value="cascaded">/)
+  assert.match(html, /<section id="integrated-pipeline">/)
+  assert.match(html, /<section id="cascaded-pipeline" hidden>/)
+  for (const id of [
+    'cascadedEndpointingProvider',
+    'cascadedAsrProvider',
+    'cascadedLlmProvider',
+    'cascadedLlmModel',
+    'cascadedTtsProvider',
+    'cascadedTtsVoice',
+  ]) assert.match(html, new RegExp(`id="${id}"`))
+  assert.match(script, /integratedSection\.hidden = view\.pipelineMode !== 'integrated'/)
+  assert.match(script, /cascadedSection\.hidden = view\.pipelineMode !== 'cascaded'/)
+})
+
+test('the active cascaded model follows its provider and preserves the other model', () => {
+  assert.match(script, /cascadedLlmModel\.value = view\.cascadedLlmModels\?\.\[view\.cascadedLlmProvider\] \?\? ''/)
+  assert.match(script, /cascadedLlmModels: \{ \[cascadedLlmProvider\.value\]: cascadedLlmModel\.value \}/)
+  assert.match(script, /mergePatch\(pendingPatch, patch\)/)
+})
+
+test('key usage labels are derived from public pipeline selection only', () => {
+  assert.match(script, /function keyUsage\(view\)/)
+  assert.match(script, /dashscopeApiKey: view\.pipelineMode === 'integrated'/)
+  assert.match(script, /arkApiKey: view\.pipelineMode === 'cascaded'/)
+  assert.match(script, /doubaoBigmodelApiKey: view\.pipelineMode === 'cascaded'/)
+  assert.match(script, /doubaoAsrApiKey: view\.pipelineMode === 'cascaded'/)
+  assert.doesNotMatch(script, /\.secrets\b|ciphertext|decrypt/)
 })
 
 test('the panel states what applies now and what waits for the next launch', () => {
@@ -146,6 +191,9 @@ test('saveSecrets names any rejected key by its panel label and only reports suc
   assert.match(script, /tavilyApiKey: 'Tavily',/)
   assert.match(script, /modelApiKey: '模型网关',/)
   assert.match(script, /codexApiKey: 'Codex',/)
+  assert.match(script, /arkApiKey: 'Ark',/)
+  assert.match(script, /doubaoBigmodelApiKey: '豆包大模型',/)
+  assert.match(script, /doubaoAsrApiKey: '豆包 ASR',/)
   // The error line is gated on `rejected.size`, so an all-accepted save keeps
   // the plain 密钥已保存 note `push` already set and never reaches this branch.
   assert.match(script, /if \(rejected\.size\) \{/)

@@ -69,10 +69,92 @@
           <input type="range" id="heartbeat" min="15" max="120" step="1" value="30">
           <output id="heartbeat-value" for="heartbeat">30 秒</output>
         </div>
-        <div class="field">
-          <label for="voice">语音音色</label>
-          <input type="text" id="voice" maxlength="64" autocomplete="off" spellcheck="false">
-        </div>
+      </section>
+      <section id="pipeline">
+        <h2>语音管线</h2>
+        <fieldset id="pipeline-mode" class="pipeline-tabs">
+          <legend>处理方式</legend>
+          <label class="choice">
+            <input type="radio" name="pipelineMode" value="integrated">
+            <span class="option">
+              <span class="option-name">集成式</span>
+              <span class="option-note">一套 Qwen 实时模型完成语音理解与回复</span>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="pipelineMode" value="cascaded">
+            <span class="option">
+              <span class="option-name">级联式</span>
+              <span class="option-note">按端点检测、识别、思考、合成分阶段配置</span>
+            </span>
+          </label>
+        </fieldset>
+        <section id="integrated-pipeline">
+          <div class="pipeline-card">
+            <h3>Qwen 集成实时</h3>
+            <div class="field">
+              <label for="integratedProvider">服务商</label>
+              <select id="integratedProvider">
+                <option value="qwen">Qwen（通义）</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="integratedModel">Qwen 实时模型</label>
+              <input type="text" id="integratedModel" maxlength="128" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="integratedVoice">Qwen 语音音色</label>
+              <input type="text" id="integratedVoice" maxlength="128" autocomplete="off" spellcheck="false">
+            </div>
+          </div>
+        </section>
+        <section id="cascaded-pipeline" hidden>
+          <div class="pipeline-card">
+            <h3>1. 自动端点检测</h3>
+            <div class="field">
+              <label for="cascadedEndpointingProvider">服务</label>
+              <select id="cascadedEndpointingProvider">
+                <option value="auto">自动</option>
+              </select>
+            </div>
+          </div>
+          <div class="pipeline-card">
+            <h3>2. 语音识别</h3>
+            <div class="field">
+              <label for="cascadedAsrProvider">服务</label>
+              <select id="cascadedAsrProvider">
+                <option value="volcengine">火山引擎 ASR</option>
+              </select>
+            </div>
+          </div>
+          <div class="pipeline-card">
+            <h3>3. 对话模型</h3>
+            <div class="field">
+              <label for="cascadedLlmProvider">服务商</label>
+              <select id="cascadedLlmProvider">
+                <option value="qwen">Qwen（通义）</option>
+                <option value="ark">Ark（火山方舟）</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="cascadedLlmModel">当前模型</label>
+              <input type="text" id="cascadedLlmModel" maxlength="128" autocomplete="off" spellcheck="false">
+            </div>
+          </div>
+          <div class="pipeline-card">
+            <h3>4. 语音合成</h3>
+            <div class="field">
+              <label for="cascadedTtsProvider">服务</label>
+              <select id="cascadedTtsProvider">
+                <option value="volcengine">火山引擎 TTS</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="cascadedTtsVoice">音色</label>
+              <input type="text" id="cascadedTtsVoice" maxlength="128" autocomplete="off" spellcheck="false">
+            </div>
+          </div>
+        </section>
       </section>
       <section id="secrets">
         <h2>API 密钥</h2>
@@ -80,33 +162,58 @@
         <div class="secret">
           <label for="dashscopeApiKey">DashScope</label>
           <span class="badge" id="badge-dashscopeApiKey">未设置</span>
+          <span class="key-usage" id="usage-dashscopeApiKey">当前未使用</span>
           <input type="password" id="dashscopeApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
           <button type="button" class="clear" data-key="dashscopeApiKey">清除</button>
         </div>
         <div class="secret">
           <label for="tavilyApiKey">Tavily</label>
           <span class="badge" id="badge-tavilyApiKey">未设置</span>
+          <span class="key-usage" id="usage-tavilyApiKey">可选</span>
           <input type="password" id="tavilyApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
           <button type="button" class="clear" data-key="tavilyApiKey">清除</button>
         </div>
         <div class="secret">
           <label for="modelApiKey">模型网关</label>
           <span class="badge" id="badge-modelApiKey">未设置</span>
+          <span class="key-usage" id="usage-modelApiKey">可选</span>
           <input type="password" id="modelApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
           <button type="button" class="clear" data-key="modelApiKey">清除</button>
         </div>
         <div class="secret">
           <label for="codexApiKey">Codex</label>
           <span class="badge" id="badge-codexApiKey">未设置</span>
+          <span class="key-usage" id="usage-codexApiKey">可选</span>
           <input type="password" id="codexApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
           <button type="button" class="clear" data-key="codexApiKey">清除</button>
+        </div>
+        <div class="secret">
+          <label for="arkApiKey">Ark</label>
+          <span class="badge" id="badge-arkApiKey">未设置</span>
+          <span class="key-usage" id="usage-arkApiKey">当前未使用</span>
+          <input type="password" id="arkApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
+          <button type="button" class="clear" data-key="arkApiKey">清除</button>
+        </div>
+        <div class="secret">
+          <label for="doubaoBigmodelApiKey">豆包大模型</label>
+          <span class="badge" id="badge-doubaoBigmodelApiKey">未设置</span>
+          <span class="key-usage" id="usage-doubaoBigmodelApiKey">当前未使用</span>
+          <input type="password" id="doubaoBigmodelApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
+          <button type="button" class="clear" data-key="doubaoBigmodelApiKey">清除</button>
+        </div>
+        <div class="secret">
+          <label for="doubaoAsrApiKey">豆包 ASR</label>
+          <span class="badge" id="badge-doubaoAsrApiKey">未设置</span>
+          <span class="key-usage" id="usage-doubaoAsrApiKey">当前未使用</span>
+          <input type="password" id="doubaoAsrApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
+          <button type="button" class="clear" data-key="doubaoAsrApiKey">清除</button>
         </div>
         <button type="button" id="save-secrets">保存密钥</button>
       </section>
     </main>
     <footer>
       <p class="note">配色更改立即生效，其余选项修改后自动保存。</p>
-      <p class="note">语音、主动性与 API 密钥设置将在下次启动生效</p>
+      <p class="note">语音、主动性与 API 密钥设置将在下次启动生效（语音管线配置同样如此）</p>
     </footer>
     <script type="module" src="./settings.mjs"></script>
   </body>
