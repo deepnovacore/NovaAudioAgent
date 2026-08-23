@@ -8,6 +8,7 @@ import {
   NativeResourceError,
   expectedNativeResources,
   generateNativeResourceManifest,
+  generateSourceHostResourceManifest,
   verifyNativeResourceManifest,
 } from '../scripts/native-resource-contract.mjs'
 
@@ -56,6 +57,45 @@ test('resource manifest generation fails closed while audited native owners are 
     )
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('source host manifest binds only the fixed Codex host resources', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-source-native-resource-'))
+  const header = Buffer.alloc(64)
+  header.writeUInt32LE(0xfeedfacf, 0)
+  header.writeUInt32LE(0x0100000c, 4)
+  header.writeUInt32LE(1, 16)
+  header.writeUInt32LE(24, 20)
+  header.writeUInt32LE(0x32, 32)
+  header.writeUInt32LE(24, 36)
+  header.writeUInt32LE(1, 40)
+  header.writeUInt32LE(0x000c0000, 44)
+  try {
+    for (const [relativePath, kind] of [
+      ['native/project-native/nova_project_native.node', 'node_addon'],
+      ['native/codex-sandbox-probe', 'executable'],
+    ]) {
+      const path = resolve(root, relativePath)
+      await mkdir(resolve(path, '..'), {recursive: true})
+      const body = Buffer.from(header)
+      body.writeUInt32LE(kind === 'executable' ? 2 : 8, 12)
+      await writeFile(path, body)
+      if (kind === 'executable') await chmod(path, 0o755)
+    }
+
+    const manifest = await generateSourceHostResourceManifest({
+      resourcesRoot: root,
+      targetId: 'darwin-arm64',
+    })
+
+    assert.deepEqual(manifest.resources.map(record => record.logical_id), [
+      'codex_sandbox_probe',
+      'project_native_addon',
+    ])
+    assert.equal(manifest.target, 'darwin-arm64')
+  } finally {
+    await rm(root, {recursive: true, force: true})
   }
 })
 

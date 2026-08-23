@@ -1233,10 +1233,13 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/gu,
       '[PRIVATE_KEY]',
     )
-    normalized = normalized.replace(/(?:bearer\s+|(?:sk|rk|pk)-)[A-Za-z0-9_./+=-]{8,}/giu, '[REDACTED]')
     normalized = [...normalized].map(character => (
       isOtherCategory(character.codePointAt(0)!) ? ' ' : character
     )).join('')
+    normalized = normalized.replace(
+      /(?:bearer[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+[A-Za-z0-9._~+\/-]+=*|(?:sk|rk|pk)-[A-Za-z0-9_./+=-]{8,})/giu,
+      '[REDACTED]',
+    )
     const characters = [...normalized]
     return Object.freeze({text: characters.slice(0, limit).join(''), originalChars: characters.length})
   }

@@ -14,6 +14,11 @@ const TARGETS = Object.freeze({
   'win32-x64': Object.freeze({ platform: 'win32', architecture: 'x64', suffix: 'win32-x64-msvc' }),
   'linux-x64-gnu': Object.freeze({ platform: 'linux', architecture: 'x64', suffix: 'linux-x64-gnu' }),
 })
+const SOURCE_HOST_RESOURCE_IDS = new Set([
+  'windows_job_guardian',
+  'project_native_addon',
+  'codex_sandbox_probe',
+])
 
 export class NativeResourceError extends Error {
   constructor(code) {
@@ -273,6 +278,44 @@ export async function generateNativeResourceManifest({ resourcesRoot, targetId, 
       platform: target.platform,
       architecture: target.architecture,
       electron_abi: expected.kind === 'node_addon' ? 148 : null,
+      build_contract_version: 1,
+    }))
+  }
+  return Object.freeze({
+    schema_version: 1,
+    target: targetId,
+    resources: Object.freeze(entries),
+  })
+}
+
+/** Bind only the fixed native resources the unpackaged desktop host executes. */
+export async function generateSourceHostResourceManifest({ resourcesRoot, targetId }) {
+  if (typeof resourcesRoot !== 'string' || resourcesRoot === '') {
+    throw new NativeResourceError('resources_root_invalid')
+  }
+  const target = TARGETS[targetId]
+  if (!target) throw new NativeResourceError('unsupported_target')
+  const expected = expectedNativeResources(targetId)
+    .filter(candidate => SOURCE_HOST_RESOURCE_IDS.has(candidate.id))
+    .sort((left, right) => (
+      left.relative_path < right.relative_path ? -1 : left.relative_path > right.relative_path ? 1 : 0
+    ))
+  const entries = []
+  for (const candidate of expected) {
+    const identity = await hashNativeFile(
+      resolve(resourcesRoot, candidate.relative_path),
+      target,
+      candidate.kind,
+    )
+    entries.push(Object.freeze({
+      logical_id: candidate.id,
+      relative_path: candidate.relative_path,
+      byte_size: identity.size,
+      sha256: identity.sha256,
+      kind: candidate.kind,
+      platform: target.platform,
+      architecture: target.architecture,
+      electron_abi: candidate.kind === 'node_addon' ? 148 : null,
       build_contract_version: 1,
     }))
   }

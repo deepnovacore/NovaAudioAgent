@@ -1,5 +1,6 @@
 import { validProgressSummary, type JsonValue } from '../events.js'
 import { CONVERSATION_CHANNEL, type MemoryItem } from '../memory.js'
+import {pythonFloat} from '../python-number.js'
 import {stripLikePython} from '../python-text.js'
 import { prepareForSpeech, SPEECH_FINAL_LIMIT } from './speech-prep.js'
 
@@ -122,8 +123,9 @@ export function safeMemoryEvidence(item: MemoryItem): string | null {
     const value = content[key]
     let rendered: string | undefined
     if (typeof value === 'boolean') rendered = value ? 'true' : 'false'
-    else if (typeof value === 'string' || typeof value === 'number') {
-      rendered = stripLikePython(String(value))
+    else if (typeof value === 'string') rendered = stripLikePython(value)
+    else if (typeof value === 'number') {
+      rendered = key === 'elapsed' ? pythonFloat(value) : String(value)
     }
     if (rendered !== undefined && rendered !== '') fields.push(`${key}=${rendered}`)
   }

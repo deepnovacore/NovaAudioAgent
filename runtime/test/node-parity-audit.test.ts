@@ -22,6 +22,32 @@ test('typed Node parity audit accepts only reviewed hashed occurrences', async (
   assert.equal(result.stderr, '')
 })
 
+test('parity inventory names the final pipeline units and settings controller', async () => {
+  const manifest = JSON.parse(await readFile(
+    resolve(repositoryRoot, 'runtime/node-parity-audit.json'),
+    'utf8',
+  )) as {files: readonly string[]}
+  const finalUnits = [
+    'desktop/ambient-orb/src/renderer/secret-revisions.mjs',
+    'desktop/ambient-orb/src/renderer/settings-controller.mjs',
+    'runtime/src/cascaded-realtime-assembly.ts',
+    'runtime/src/cascaded-realtime-config.ts',
+    'runtime/src/integrated-realtime-assembly.ts',
+    'runtime/src/realtime/cascaded/adapter.ts',
+    'runtime/src/realtime/cascaded/ark-llm.ts',
+    'runtime/src/realtime/cascaded/llm.ts',
+    'runtime/src/realtime/cascaded/ports.ts',
+    'runtime/src/realtime/cascaded/provider.ts',
+    'runtime/src/realtime/cascaded/qwen-llm.ts',
+  ]
+  for (const file of finalUnits) assert.ok(manifest.files.includes(file), file)
+  for (const retired of [
+    'runtime/src/realtime/volcengine/adapter.ts',
+    'runtime/src/realtime/volcengine/provider.ts',
+    'runtime/src/volcengine-realtime-assembly.ts',
+  ]) assert.equal(manifest.files.includes(retired), false, retired)
+})
+
 test('every occurrence names an existing behavior test and a narrow disposition', async () => {
   const manifest = JSON.parse(await readFile(
     resolve(repositoryRoot, 'runtime/node-parity-audit.json'),
@@ -78,6 +104,21 @@ test('parity inventory is read-only and contains no automatic review decisions',
   assert.ok(inventory.occurrences.length > 0)
   assert.equal(inventory.occurrences.some(item => 'disposition' in item || 'test' in item), false)
   assert.equal(await readFile(manifest, 'utf8'), before)
+})
+
+test('parity inventory detects mixed numeric rendering and Unicode-sensitive regex classes', async () => {
+  const result = await run(process.execPath, ['runtime/scripts/node-parity-audit.mjs', '--inventory'], {
+    cwd: repositoryRoot,
+  })
+  const inventory = JSON.parse(result.stdout) as {
+    occurrences: readonly {file: string; kind: string}[]
+  }
+  assert.equal(inventory.occurrences.some(occurrence =>
+    occurrence.file === 'runtime/src/config.ts'
+      && occurrence.kind === 'numeric_string'), true)
+  assert.equal(inventory.occurrences.some(occurrence =>
+    occurrence.file === 'runtime/src/realtime/qwen.ts'
+      && occurrence.kind === 'regex_unicode_semantics'), true)
 })
 
 test('parity helpers pin Python whitespace disagreements and astral code-point length', () => {

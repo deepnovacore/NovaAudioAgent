@@ -2,18 +2,21 @@
 
 gate_state: pending_external_evidence
 packaged_candidate_backend: node
-source_development_backend: python
+source_development_backend: node
 
-This unreleased work adds repository-owned Node runtime parity and release-candidate surfaces
-without claiming a shipped distribution. Packaged candidates default to Node and reject explicit
-Python with `source_rollback_unavailable`; Python remains the default and executable source oracle
-for source development during the rollback release.
-Node Codex is app-server-only; JSONL is fixture-parser-only. HA/AutoGLM are retired in Node and
-remain only in the temporary Python source rollback.
+This unreleased work adds repository-owned Node runtime and release-candidate surfaces without
+claiming a shipped distribution. Node Codex is app-server-only; JSONL is fixture-parser-only.
+HA and AutoGLM are retired.
 
-Repository additions include offline redacted diagnostics, Python-owned configuration and product
+Repository additions include offline redacted diagnostics, committed configuration and product
 fixtures, four deterministic reducer-backed demos, a pure scorecard evaluator, and generated
 bilingual environment references.
+
+Audio configuration now selects `integrated` or `cascaded` at the product level. Integrated Qwen
+uses `qwen-audio-3.0-realtime-plus`, `longanqian`, and one DashScope key. Cascaded defaults to
+Volcengine ASR -> Qwen `qwen-flash` -> Volcengine TTS; Ark is an explicit cascaded LLM selection.
+Platform keys are stored once and reused, with the Volcengine ASR override falling back to the
+Volcengine big-model key. Settings changes apply on the next launch and remain credential-safe.
 
 Repository-owned release work now includes signed-candidate workflows, exact seven-artifact
 digests, GitHub/OIDC attestation verification, checkout-free installed-candidate smoke, bounded
@@ -23,7 +26,4 @@ Pending external evidence: actual signed three-platform workflow runs, clean-mac
 Qwen/Volcengine/Codex, microphone/speaker, Camera/Watch/Guard hardware, WindowServer, Windows
 hardware, signing/notarization authority, and publication.
 
-The published Node-default switch and its one-release Python source rollback belong to the later
-release gate. The next release after that window may remove Python and the temporary rollback-only
-HA/AutoGLM source, tests, environment surface, submodule, realtime probe, launchers, and backend
-switch.
+Publication remains gated on the signed external evidence above.

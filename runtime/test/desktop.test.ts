@@ -1255,6 +1255,41 @@ test('a failed desktop outbound send releases only that socket and notifies once
   }
 })
 
+test('a throwing disconnect observer cannot terminate desktop socket ownership', async () => {
+  let disconnects = 0
+  let observeDisconnect: (() => void) | undefined
+  const nextDisconnect = (): Promise<void> => new Promise(resolve => {
+    observeDisconnect = resolve
+  })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onClientDisconnect: () => {
+      disconnects += 1
+      observeDisconnect?.()
+      observeDisconnect = undefined
+      throw new Error('private observer failure')
+    },
+  })
+  const readiness = await startDesktopServer(server)
+
+  try {
+    const first = await connectDesktopClient(server, readiness.port)
+    await authenticate(first)
+    const firstDisconnected = nextDisconnect()
+    await closeClient(first)
+    await settleWithin('first throwing disconnect observer', firstDisconnected)
+
+    const second = await connectDesktopClient(server, readiness.port)
+    await authenticate(second)
+    const secondDisconnected = nextDisconnect()
+    await closeClient(second)
+    await settleWithin('second throwing disconnect observer', secondDisconnected)
+    assert.equal(disconnects, 2)
+  } finally {
+    await closeDesktopServer(server)
+  }
+})
+
 test('desktop outbound uses a fresh authenticated socket after reconnect', async () => {
   let disconnects = 0
   let observeFirstDisconnect: (() => void) | undefined

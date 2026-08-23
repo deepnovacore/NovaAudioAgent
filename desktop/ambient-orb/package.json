@@ -24,6 +24,7 @@
     "build:native:sandbox-probe": "node scripts/build-codex-sandbox-probe.mjs",
     "build:native:windows-guardian": "node scripts/build-windows-job-guardian.mjs",
     "start": "npm run build && electron .",
+    "start:built": "electron .",
     "inspect:package": "node scripts/inspect-built-preview.mjs",
     "inspect:release-package": "node scripts/inspect-built-preview.mjs --require-target-matrix",
     "package:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac dir --publish never",

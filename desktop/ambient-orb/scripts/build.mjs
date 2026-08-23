@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
@@ -11,6 +11,7 @@ import { buildCodexSandboxProbe } from './build-codex-sandbox-probe.mjs'
 import { buildWindowsJobGuardian } from './build-windows-job-guardian.mjs'
 import { stageReleaseApplication } from './stage-release-app.mjs'
 import { stageEndpointingProbeAssets } from './stage-endpointing-probe-assets.mjs'
+import { generateSourceHostResourceManifest } from './native-resource-contract.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 
@@ -78,6 +79,19 @@ await stageEndpointingProbeAssets({
   repositoryRoot: resolve(root, '../..'),
   outputRoot: resolve(root, 'build'),
 })
+const sourceManifest = await generateSourceHostResourceManifest({
+  resourcesRoot: resolve(root, 'build'),
+  targetId,
+})
+const sourceManifestPath = resolve(root, 'build/native-resources-v1.json')
+const sourceManifestTemporary = resolve(root, 'build/.native-resources-v1.json.tmp')
+await writeFile(
+  sourceManifestTemporary,
+  `${JSON.stringify(sourceManifest)}\n`,
+  {encoding: 'utf8', mode: 0o600},
+)
+await chmod(sourceManifestTemporary, 0o600)
+await rename(sourceManifestTemporary, sourceManifestPath)
 
 checkJavaScriptFiles(root)
 

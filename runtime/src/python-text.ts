@@ -21,6 +21,9 @@ const PYTHON_ONLY_SPACE: ReadonlySet<string> = new Set([
   '\u0085',
 ])
 
+/** Source for a regular-expression character class matching CPython `str.isspace()`. */
+export const PYTHON_WHITESPACE_REGEX_CLASS = String.raw`\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000`
+
 /** Whether Python's `str.isspace()` would be true for this character. */
 export function isPythonSpace(character: string): boolean {
   // U+FEFF is whitespace to `trim` and a format character to Python.

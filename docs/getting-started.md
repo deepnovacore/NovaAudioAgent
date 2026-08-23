@@ -2,31 +2,37 @@
 
 ## Current release boundary
 
-Python is still the default and executable source oracle during this rollback release. The Node
-runtime is an opt-in development backend; the source-development backend switch is not an
-installed-app fallback. HA/AutoGLM are retired in Node and remain only in the temporary Python
-source rollback. A nonempty legacy HA or AutoGLM setting produces a stable, credential-safe
-migration error before provider, process, device, or desktop construction.
-
-Node Codex is app-server-only. JSONL is fixture-parser-only and has no Node process execution path.
-Search, Camera, Watch, and Guard are always assembled and are not executor selector values.
+Node.js and TypeScript are the primary runtime. Codex is app-server-only; JSONL is
+fixture-parser-only and has no production process execution path. Search, Camera, Watch, and Guard
+are always assembled and are not executor selector values. Legacy HA and AutoGLM settings produce
+a stable, credential-safe migration error before provider, process, device, or desktop
+construction.
 
 ## Install for source development
 
+Install Node.js 22+, npm, Git, and a logged-in `codex` executable. Native builds additionally
+require one platform toolchain:
+
+- macOS: Xcode Command Line Tools (`xcode-select --install`);
+- Linux: a C compiler available at `/usr/bin/cc`;
+- Windows: Visual Studio Build Tools with the **Desktop development with C++** workload.
+
 ```bash
-git clone --recurse-submodules \
+git clone \
   https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
 cd nova-audio-agent
-uv sync --dev
 npm ci
 cp .env.example .env
 ```
 
-Python remains the default path:
+For the default integrated Qwen path, set both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in `.env`.
+Search is always assembled, so Tavily is required. The launcher parses `.env` as data without shell
+evaluation; variables already set in the invoking shell take precedence.
+
+Start the desktop client:
 
 ```bash
-uv run nova-audio-agent --help
-uv run nova-audio-agent demo all
+npm run start:client
 ```
 
 The repository-owned Node checks are offline and deterministic:
@@ -36,25 +42,52 @@ npm run build --workspace @nova-audio-agent/runtime
 node runtime/dist/src/cli.js diagnose --json
 node runtime/dist/src/cli.js demo all
 node runtime/dist/src/cli.js scorecard fixture check
-uv run python scripts/config_fixture_oracle.py check
-uv run python scripts/product_fixture_oracle.py check
 ```
 
 `diagnose` validates configuration only. It does not connect to a provider, spawn Codex, open a
-camera or microphone, launch Chromium, or disclose credentials and paths. Product fixture updates
-must be produced with the Python exporters' explicit `export` command; ordinary tests are read-only.
+camera or microphone, launch Chromium, or disclose credentials and paths. Committed product
+fixtures are read-only during ordinary checks.
 
-## Realtime providers and executors
+## Realtime pipelines, credentials, and settings
 
-Qwen is the default realtime provider. Volcengine is the alternative provider-neutral assembly;
-both require their selected credentials for live use. The configured Node executor names are
+`integrated` and `cascaded` are the top-level pipeline shapes. Integrated Qwen is the default: it
+uses `qwen-audio-3.0-realtime-plus`, the `longanqian` voice, and `DASHSCOPE_API_KEY`, with no ASR,
+LLM, or TTS subnode controls. Cascaded mode exposes endpointing, ASR, LLM, and TTS; its default is
+Volcengine ASR -> Qwen `qwen-flash` -> Volcengine TTS. Ark is an explicit cascaded LLM selection,
+not an alternate integrated provider:
+
+```bash
+NOVA_AUDIO_AGENT_PIPELINE_MODE=cascaded
+NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER=ark
+ARK_API_KEY=replace-with-your-ark-key
+```
+
+One key per platform is reused for every selected node on that platform. Qwen uses
+`DASHSCOPE_API_KEY`; the explicit Ark LLM uses `ARK_API_KEY`; Volcengine TTS uses
+`DOUBAO_BIGMODEL_API_KEY`. `DOUBAO_ASR_API_KEY` is an optional ASR override, and its fallback is
+`DOUBAO_BIGMODEL_API_KEY` when it is absent. Only selected providers are validated or constructed;
+there is no automatic provider failover.
+
+The conditional Settings Panel places pipeline mode before provider configuration. Integrated mode
+shows its provider, model, and voice; cascaded mode shows endpointing, ASR, LLM, and TTS cards. API
+keys remain one field per platform, are write-only, and return presence booleans only. Pipeline,
+provider, model, voice, and key edits apply on the next launch; the palette is the sole live setting.
+
+The configured Node executor names are
 `fast_sim`, `slow_sim`, and `codex`. Codex ordinary/live/project modes share the bounded app-server
 transport. Camera file input accepts only an absolute host-validated path.
 
 Live provider, microphone/speaker, camera, Codex login, WindowServer, Windows descendant cleanup,
 clean-machine installer, signing, and publication checks are pending external evidence.
-Unpublished packaged candidates select Node automatically and cannot select the source-only Python
-rollback. Source development still defaults to Python until the Node-default release is published.
+
+### Opt-in live smoke
+
+The repository's Qwen smoke contacts a real provider and needs a credential; it is opt-in and is not
+recorded here as having run or passed. With an intentionally supplied DashScope key, run:
+
+```bash
+DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
+```
 
 ## Public environment reference
 
@@ -65,14 +98,19 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 <!-- BEGIN GENERATED ENV CONTRACT -->
 | Variable | Owner | Required | Default | Description |
 |---|---|---|---|---|
-| `NOVA_AUDIO_AGENT_BACKEND` | `source_rollback` | No | python | Source-development backend switch during the rollback release. |
 | `NOVA_AUDIO_AGENT_MODEL_BASE_URL` | `core` | No | DashScope compatible endpoint | FastBrain compatible API endpoint. |
-| `NOVA_AUDIO_AGENT_MODEL_API_KEY` | `core` | When selected | None | FastBrain API credential; also a Qwen fallback. |
+| `NOVA_AUDIO_AGENT_MODEL_API_KEY` | `core` | No | None | Optional generic support-model API credential override. |
 | `NOVA_AUDIO_AGENT_FAST_MODEL` | `core` | No | qwen3-vl-plus | FastBrain model. |
 | `NOVA_AUDIO_AGENT_WATCH_MODEL` | `core` | No | fast model | Watch model override. |
 | `NOVA_AUDIO_AGENT_SURROGATE_MODEL` | `core` | No | qwen-flash | Surrogate model. |
 | `NOVA_AUDIO_AGENT_COMPRESSOR_MODEL` | `core` | No | qwen-flash | Memory compressor model. |
-| `NOVA_AUDIO_AGENT_REALTIME_PROVIDER` | `core` | No | qwen | Realtime provider: qwen or volcengine. |
+| `NOVA_AUDIO_AGENT_PIPELINE_MODE` | `core` | No | integrated | Product pipeline shape: integrated or cascaded. |
+| `NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER` | `core` | No | qwen | Integrated realtime provider. |
+| `NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER` | `core` | No | auto | Cascaded endpointing provider. |
+| `NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER` | `core` | No | volcengine | Cascaded ASR provider. |
+| `NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER` | `core` | No | qwen | Cascaded LLM provider. |
+| `NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL` | `core` | No | provider default | Cascaded LLM model override. |
+| `NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER` | `core` | No | volcengine | Cascaded TTS provider. |
 | `NOVA_AUDIO_AGENT_EXECUTOR` | `core` | No | fast_sim | Single executor selector for compatibility. |
 | `NOVA_AUDIO_AGENT_EXECUTORS` | `core` | No | selected executor | Ordered executor list. |
 | `NOVA_AUDIO_AGENT_PROACTIVITY_PRESET` | `core` | No | balanced | Proactivity preset. |
@@ -85,12 +123,10 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT` | `qwen` | No | false | Allow controlled Guard reconnect. |
 | `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY` | `qwen` | No | none | Guard history recovery mode. |
 | `NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS` | `qwen` | No | 4 | Guard history pair count. |
-| `ARK_API_KEY` | `volcengine` | When selected | None | Volcengine Ark credential. |
+| `ARK_API_KEY` | `ark` | When selected | None | Ark cascaded LLM credential. |
 | `DOUBAO_ASR_API_KEY` | `volcengine` | No | Doubao big-model key | Volcengine ASR credential override. |
 | `DOUBAO_BIGMODEL_API_KEY` | `volcengine` | When selected | None | Volcengine TTS and ASR fallback credential. |
-| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL` | `volcengine` | No | Volcengine Ark endpoint | Volcengine Ark secure endpoint. |
-| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL` | `volcengine` | No | doubao-seed-2-0-pro-260215 | Volcengine primary model. |
-| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL` | `volcengine` | No | primary model | Volcengine support model. |
+| `NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL` | `ark` | No | Volcengine Ark endpoint | Ark secure endpoint. |
 | `NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT` | `volcengine` | No | Doubao ASR endpoint | Doubao ASR secure endpoint. |
 | `NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID` | `volcengine` | No | volc.seedasr.sauc.duration | Doubao ASR resource ID. |
 | `NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS` | `volcengine` | No | 200 | ASR input chunk duration. |

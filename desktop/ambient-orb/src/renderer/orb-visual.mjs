@@ -59,8 +59,10 @@ const TICK_SLACK_MS = 1
 const DEGRADE_FRAME_MS = 4
 const DEGRADE_WINDOW = 30
 
-// Sprite atlas: three disc sizes across, one row per colour tier.
-const SPRITE_SIZES = Object.freeze([5, 9, 15])
+// Sprite atlas: four disc sizes across, one row per colour tier. The 3px cell is
+// what the far field is drawn with — the old smallest sprite was 5px, which at
+// the rim reads as a nearby blob rather than a distant pinpoint.
+const SPRITE_SIZES = Object.freeze([3, 5, 9, 15])
 const SPRITE_MAX = 15
 const ROW_HOT = 0
 const ROW_WARM = 1
@@ -71,13 +73,36 @@ const ROW_ALERT = 5
 const ROW_DIM = 6
 const ROW_COUNT = 7
 
+// Plate composition. The plate used to be one flat translucent fill, which read
+// as a coin: a disc of uniform brightness carries no depth cue at all, so the
+// particles sat *on* it instead of *in* it. Each palette now names its layers
+// instead — an abyss at the rim, a mantle across the mid-field, a bloom at the
+// core, a short list of haze clouds, a vignette, and a faint rim light — and
+// renderPlate composites them once into the atlas. None of it costs a frame.
+//
+// `bloomOffset` lifts the core glow above centre by that fraction of the plate
+// radius: a perfectly centred glow reads as a flat ring, an offset one reads as
+// depth, because the eye takes the brighter half as nearer. Haze coordinates and
+// radii are fractions of the plate radius, so they survive any pixel ratio.
 const EMBER = Object.freeze({
   core: '#FFB454',
   highlight: '#FFE3B3',
   deep: '#C96F2B',
   dust: '#8C5A2B',
   dustAlpha: 0.25,
-  plate: 'rgba(20, 14, 8, .55)',
+  // Near-black with a violet cast rather than the old warm brown: warmth belongs
+  // to the stars and the bloom, and a warm *rim* was half of why this read flat.
+  abyss: 'rgba(6, 5, 10, .95)',
+  mantle: 'rgba(26, 17, 18, .9)',
+  bloom: 'rgba(92, 51, 27, .78)',
+  bloomOffset: 0.1,
+  haze: Object.freeze([
+    Object.freeze({ x: -0.3, y: -0.26, radius: 0.62, color: '#8C4A1E', alpha: 0.2 }),
+    Object.freeze({ x: 0.32, y: 0.2, radius: 0.55, color: '#6E3D5A', alpha: 0.16 }),
+    Object.freeze({ x: 0.08, y: 0.38, radius: 0.44, color: '#2E4668', alpha: 0.13 }),
+  ]),
+  vignette: '#020205',
+  rim: 'rgba(255, 214, 156, .12)',
   ring: 'rgba(255, 214, 156, .22)',
   codexBand: '#FFD9A0',
   error: '#FF5A5A',
@@ -88,7 +113,17 @@ const GRAPHITE = Object.freeze({
   core: '#E8ECF2',
   mid: '#9AA3AF',
   shadow: '#3A404A',
-  plate: 'rgba(10, 12, 16, .6)',
+  abyss: 'rgba(4, 6, 10, .95)',
+  mantle: 'rgba(16, 20, 27, .9)',
+  bloom: 'rgba(62, 74, 92, .72)',
+  bloomOffset: 0.1,
+  haze: Object.freeze([
+    Object.freeze({ x: -0.28, y: -0.28, radius: 0.6, color: '#4A5A72', alpha: 0.18 }),
+    Object.freeze({ x: 0.3, y: 0.22, radius: 0.52, color: '#38506B', alpha: 0.14 }),
+    Object.freeze({ x: 0.06, y: 0.36, radius: 0.42, color: '#2A3346', alpha: 0.12 }),
+  ]),
+  vignette: '#010204',
+  rim: 'rgba(232, 236, 242, .1)',
   ring: 'rgba(232, 236, 242, .18)',
   accent: '#FFC978',
   error: '#FF6B6B',
@@ -316,19 +351,83 @@ function defaultCreateCanvas(width, height) {
   return canvas
 }
 
-// One texture for every particle: three disc sizes by seven colour tiers,
-// rendered at device resolution so the blits stay crisp without re-gradients.
+// The plate, composited once at atlas build time. Every layer fills the same disc
+// path — the gradients do the shaping, and painting the disc rather than each
+// layer's own circle is what keeps a haze cloud from leaking past the rim without
+// needing a clip. Depth is entirely in this falloff: a flat fill gives the eye
+// nothing to read the disc's shape from, which is why the old plate read as a coin.
+function renderPlate(context, colors, originY, plateSize, pixelRatio) {
+  const centerX = plateSize / 2
+  const centerY = originY + plateSize / 2
+  const radius = PLATE_RADIUS * pixelRatio
+
+  function fillDisc(style) {
+    context.fillStyle = style
+    context.beginPath()
+    context.arc(centerX, centerY, radius, 0, TAU)
+    context.fill()
+  }
+
+  // The bloom sits above centre, so the disc has a near side. Points past the
+  // gradient's outer circle take its last stop, which sinks the lower rim into
+  // the abyss colour for free.
+  const bloomY = centerY - radius * colors.bloomOffset
+  const base = context.createRadialGradient(centerX, bloomY, 0, centerX, bloomY, radius)
+  base.addColorStop(0, colors.bloom)
+  base.addColorStop(0.45, colors.mantle)
+  base.addColorStop(1, colors.abyss)
+  context.globalCompositeOperation = 'source-over'
+  fillDisc(base)
+
+  // Gas reads as light rather than paint, so the clouds are added, not laid over.
+  context.globalCompositeOperation = 'lighter'
+  for (const cloud of colors.haze) {
+    const cloudX = centerX + cloud.x * radius
+    const cloudY = centerY + cloud.y * radius
+    const cloudRadius = cloud.radius * radius
+    const gradient = context.createRadialGradient(cloudX, cloudY, 0, cloudX, cloudY, cloudRadius)
+    gradient.addColorStop(0, rgba(cloud.color, cloud.alpha))
+    gradient.addColorStop(0.5, rgba(cloud.color, cloud.alpha * 0.45))
+    gradient.addColorStop(1, rgba(cloud.color, 0))
+    fillDisc(gradient)
+  }
+
+  // Closing the rim down is what turns the disc from a coin into a well.
+  context.globalCompositeOperation = 'source-over'
+  const vignette = context.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius)
+  vignette.addColorStop(0, rgba(colors.vignette, 0))
+  vignette.addColorStop(0.55, rgba(colors.vignette, 0))
+  vignette.addColorStop(0.85, rgba(colors.vignette, 0.45))
+  vignette.addColorStop(1, rgba(colors.vignette, 0.92))
+  fillDisc(vignette)
+
+  // A hairline just inside the rim the vignette has now buried: without it the
+  // disc loses its silhouette against a dark desktop.
+  context.lineWidth = Math.max(1, pixelRatio * 0.75)
+  context.strokeStyle = colors.rim
+  context.beginPath()
+  context.arc(centerX, centerY, radius - context.lineWidth / 2, 0, TAU)
+  context.stroke()
+}
+
+// One texture for every particle plus the plate: four disc sizes by seven colour
+// tiers, rendered at device resolution so the blits stay crisp without
+// re-gradients. The plate shares this canvas rather than taking a second one —
+// the atlas is already rebuilt on a palette or pixel-ratio change, and two
+// textures would mean two rebuild paths to keep in step.
 function renderAtlas(createCanvas, paletteName, pixelRatio) {
   const rows = spriteRows(paletteName)
   const columnWidths = SPRITE_SIZES.map(size => Math.ceil(size * pixelRatio))
   const columnOffsets = []
-  let width = 0
+  let spriteWidth = 0
   for (const columnWidth of columnWidths) {
-    columnOffsets.push(width)
-    width += columnWidth
+    columnOffsets.push(spriteWidth)
+    spriteWidth += columnWidth
   }
   const rowHeight = Math.ceil(SPRITE_MAX * pixelRatio)
-  const canvas = createCanvas(width, rowHeight * ROW_COUNT)
+  const plateSize = Math.round(ORB_SIZE * pixelRatio)
+  const plateTop = rowHeight * ROW_COUNT
+  const canvas = createCanvas(Math.max(spriteWidth, plateSize), plateTop + plateSize)
   const context = canvas.getContext('2d')
   for (let row = 0; row < rows.length; row += 1) {
     const [hex, alpha] = rows[row]
@@ -338,8 +437,12 @@ function renderAtlas(createCanvas, paletteName, pixelRatio) {
       const centerY = row * rowHeight + box / 2
       const radius = box / 2
       const gradient = context.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius)
+      // A hard core, a fast drop, then a long faint halo. The old ramp still held
+      // 55% alpha at 40% of the radius, which made every particle a soft ball —
+      // a field of blobs cannot read as stars however it is composited.
       gradient.addColorStop(0, rgba(hex, alpha))
-      gradient.addColorStop(0.4, rgba(hex, alpha * 0.55))
+      gradient.addColorStop(0.18, rgba(hex, alpha * 0.85))
+      gradient.addColorStop(0.42, rgba(hex, alpha * 0.28))
       gradient.addColorStop(1, rgba(hex, 0))
       context.fillStyle = gradient
       context.beginPath()
@@ -347,7 +450,8 @@ function renderAtlas(createCanvas, paletteName, pixelRatio) {
       context.fill()
     }
   }
-  return { canvas, columnOffsets, columnWidths, rowHeight }
+  renderPlate(context, paletteColors(paletteName), plateTop, plateSize, pixelRatio)
+  return { canvas, columnOffsets, columnWidths, rowHeight, plateTop, plateSize }
 }
 
 export function createOrbVisual(canvas, options = {}) {
@@ -449,17 +553,35 @@ export function createOrbVisual(canvas, options = {}) {
       wobblePhase[index] = random() * TAU
       twinkleFrequency[index] = 0.5 + random() * 1.5
       twinklePhase[index] = random() * TAU
+      // Size runs with depth, not against it: the far field is small and faint,
+      // the near field is large and bright. This mapping used to be inverted —
+      // the 15px sprite lived at the rim — which blurred the disc's edge and
+      // handed the core the smallest cell, flattening the whole field.
+      //
+      // The tier draw is now taken in every branch rather than only in the
+      // outermost one, so the stream advances by a fixed number of draws per
+      // particle instead of depending on which branch that particle took. That
+      // does shift the constellation relative to the old irregular stream; the
+      // layout stays a pure function of (seed, state), which is what is actually
+      // asserted, and an irregular stream was a latent trap for exactly the kind
+      // of change being made here.
+      // Two independent draws, because size and colour tier are independent: one
+      // shared draw would make every dust particle the small one and every cool
+      // particle the large one, a correlation that shows up as banding.
+      const tint = random()
+      const grade = random()
       if (normalized > 0.82) {
-        sizeIndex[index] = 2
-        tierRow[index] = random() < 0.55 ? ROW_DUST : ROW_COOL
+        sizeIndex[index] = grade < 0.4 ? 1 : 0
+        tierRow[index] = tint < 0.55 ? ROW_DUST : ROW_COOL
       } else if (normalized > 0.5) {
-        sizeIndex[index] = 1
+        sizeIndex[index] = grade < 0.55 ? 1 : 0
         tierRow[index] = ROW_COOL
       } else if (normalized > 0.3) {
-        sizeIndex[index] = 1
+        sizeIndex[index] = grade < 0.3 ? 2 : 1
         tierRow[index] = ROW_WARM
       } else {
-        sizeIndex[index] = 0
+        // The brightest few near stars carry the 15px bloom; the rest sit at 9px.
+        sizeIndex[index] = grade < 0.12 ? 3 : 2
         tierRow[index] = ROW_HOT
       }
     }
@@ -601,10 +723,20 @@ export function createOrbVisual(canvas, options = {}) {
     context.globalAlpha = 1
     context.clearRect(0, 0, ORB_SIZE, ORB_SIZE)
 
-    context.fillStyle = colors.plate
-    context.beginPath()
-    context.arc(CENTER, CENTER, PLATE_RADIUS, 0, TAU)
-    context.fill()
+    // The pre-composited plate: one blit instead of a flat fill, so the disc gets
+    // its whole depth stack — bloom, haze, vignette, rim light — at the same
+    // per-frame cost the single arc used to pay.
+    context.drawImage(
+      atlas.canvas,
+      0,
+      atlas.plateTop,
+      atlas.plateSize,
+      atlas.plateSize,
+      0,
+      0,
+      ORB_SIZE,
+      ORB_SIZE,
+    )
 
     if (ringOpacity > 0.01) {
       context.globalAlpha = ringOpacity
@@ -638,12 +770,23 @@ export function createOrbVisual(canvas, options = {}) {
         + jitter * JITTER_ARC * Math.cos(wobbleClock * wobbleFrequency[index] + wobblePhase[index])
       const twinkle = 0.5
         + 0.5 * Math.sin(wobbleClock * twinkleFrequency[index] + twinklePhase[index])
+      // Twinkle depth follows the particle's own depth: the far field flickers
+      // hard and dim, the core holds steady and bright. Derived from homeRadius
+      // rather than a fourth typed array, because this loop allocates nothing.
+      //
+      // The envelope sits above the flat 0.55 + 0.45 it replaced. A star is small
+      // and bright, not large and dim, and the field's sprite area is now a
+      // fraction of what it was — per-sprite alpha is what has to carry the
+      // brightness that overlapping 15px blobs used to supply.
+      const depth = homeRadius[index]
+      const floor = 0.78 - 0.36 * depth
+      const swing = 0.2 + 0.32 * depth
       blit(
         overrideRow >= 0 ? overrideRow : tierRow[index],
         sizeIndex[index],
         CENTER + Math.cos(heading) * radius,
         CENTER + Math.sin(heading) * radius,
-        alpha * (0.55 + 0.45 * twinkle),
+        alpha * (floor + swing * twinkle),
       )
     }
 

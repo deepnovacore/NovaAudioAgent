@@ -12,6 +12,7 @@
 import { z } from 'zod'
 import { canonicalJson } from '../canonical-json.js'
 import { jsonValueSchema, type JsonValue } from '../events.js'
+import {GUARD_ACTIVATION_PREFIX} from './cascaded/llm.js'
 import {
   ItemDeliveryUncertainError,
   MAX_REALTIME_PCM_BYTES,
@@ -44,7 +45,7 @@ export const MAX_TIMED_OUT_ITEM_IDS = 256
  */
 export const MAX_QWEN_EVENT_QUEUE = 4_096
 
-export const GUARD_ACTIVATION_PREFIX = 'Nova Audio Agent 宿主激活事实：'
+export {GUARD_ACTIVATION_PREFIX} from './cascaded/llm.js'
 
 const NO_ACTIVE_RESPONSE_MESSAGES: ReadonlySet<string> = new Set([
   'conversation has no active response',

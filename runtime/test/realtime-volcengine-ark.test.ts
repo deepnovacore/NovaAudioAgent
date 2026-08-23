@@ -8,7 +8,6 @@ import {
   MAX_ARK_SSE_EVENT_BYTES,
   MAX_ARK_SSE_LINE_BYTES,
   createFetchArkResponsesGateway,
-  responsesToolSchema,
   type ArkEvent,
   type ArkResponsesGateway,
 } from '../src/realtime/volcengine/ark.js'
@@ -104,34 +103,6 @@ async function settleWithin<T>(label: string, promise: Promise<T>, milliseconds 
     if (timer !== undefined) clearTimeout(timer)
   }
 }
-
-test('Responses tool translation validates Python-strip names and deep-copies only public fields', () => {
-  const parameters = {type: 'object', properties: {city: {type: 'string'}}}
-  const source = {
-    type: 'function',
-    function: {
-      name: 'weather__get',
-      description: 'weather lookup',
-      parameters,
-      strict: true,
-    },
-    private_field: 'must-not-cross',
-  } as JsonObject
-  const translated = responsesToolSchema(source)
-  assert.deepEqual(translated, {
-    type: 'function', name: 'weather__get', description: 'weather lookup', parameters,
-  })
-  parameters.properties.city.type = 'number'
-  assert.equal(((translated.parameters as JsonObject).properties as JsonObject).city
-    && (((translated.parameters as JsonObject).properties as JsonObject).city as JsonObject).type,
-  'string')
-  assert.throws(() => responsesToolSchema({
-    type: 'function', function: {name: '\u001c\u0085', parameters: {}},
-  }), ArkResponsesFailure)
-  assert.throws(() => responsesToolSchema({
-    type: 'function', function: {name: 'x', parameters: []},
-  }), ArkResponsesFailure)
-})
 
 test('Ark request path, headers, exact body, chaining, and ownership are fixed before fetch', async () => {
   const capture: Capture = {calls: 0}

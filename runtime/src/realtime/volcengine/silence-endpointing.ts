@@ -1,6 +1,6 @@
 import {ConfigurationError, type VolcengineRealtimeConfig} from '../../config.js'
 import {volcengineInputPcm} from './audio.js'
-import type {VolcEndpointingEvent, VolcEndpointingPort} from './adapter.js'
+import type {EndpointingEvent, EndpointingPort} from '../cascaded/ports.js'
 
 const SAMPLE_RATE = 16_000
 const BYTES_PER_SAMPLE = 2
@@ -25,7 +25,7 @@ export type SilenceVolcEndpointingConfig = Pick<VolcengineRealtimeConfig,
   | 'vadMaxUtteranceMs'
 >
 
-export class SilenceVolcEndpointing implements VolcEndpointingPort {
+export class SilenceVolcEndpointing implements EndpointingPort {
   readonly #preRollByteLimit: number
   readonly #minimumSpeechSamples: number
   readonly #silenceEndSamples: number
@@ -59,7 +59,7 @@ export class SilenceVolcEndpointing implements VolcEndpointingPort {
     this.#maximumUtteranceSamples = samplesForMilliseconds(config.vadMaxUtteranceMs)
   }
 
-  feed(pcm: Uint8Array, signal: AbortSignal): Promise<readonly VolcEndpointingEvent[]> {
+  feed(pcm: Uint8Array, signal: AbortSignal): Promise<readonly EndpointingEvent[]> {
     if (this.#closed) return Promise.reject(new Error('Silence endpointing is closed'))
     const owned = volcengineInputPcm(pcm).pcm
     const operation = this.#tail.then(() => {
@@ -84,9 +84,9 @@ export class SilenceVolcEndpointing implements VolcEndpointingPort {
     return Promise.resolve()
   }
 
-  #process(pcm: Uint8Array): readonly VolcEndpointingEvent[] {
+  #process(pcm: Uint8Array): readonly EndpointingEvent[] {
     const available = this.#partial.byteLength === 0 ? pcm : joinBytes([this.#partial, pcm])
-    const events: VolcEndpointingEvent[] = []
+    const events: EndpointingEvent[] = []
     let offset = 0
     while (available.byteLength - offset >= WINDOW_BYTES) {
       const window = available.slice(offset, offset + WINDOW_BYTES)
@@ -97,7 +97,7 @@ export class SilenceVolcEndpointing implements VolcEndpointingPort {
     return events
   }
 
-  #processWindow(window: Uint8Array, events: VolcEndpointingEvent[]): void {
+  #processWindow(window: Uint8Array, events: EndpointingEvent[]): void {
     const rms = normalizedRms(window)
     if (this.#state === 'idle') {
       if (rms < ACTIVATION_RMS) {
@@ -152,7 +152,7 @@ export class SilenceVolcEndpointing implements VolcEndpointingPort {
     }
   }
 
-  #commitCandidateIfReady(events: VolcEndpointingEvent[]): void {
+  #commitCandidateIfReady(events: EndpointingEvent[]): void {
     if (this.#candidateSamples < this.#minimumSpeechSamples) return
     events.push({kind: 'speech_start', pcm: joinBytes([...this.#preRoll, ...this.#candidate])})
     this.#preRoll = []
@@ -166,7 +166,7 @@ export class SilenceVolcEndpointing implements VolcEndpointingPort {
     }
   }
 
-  #endActive(events: VolcEndpointingEvent[]): void {
+  #endActive(events: EndpointingEvent[]): void {
     const tail = joinBytes(this.#pendingTail)
     const padBytes = Math.min(this.#speechPadBytes, tail.byteLength)
     if (padBytes > 0) events.push({kind: 'speech_audio', pcm: tail.slice(0, padBytes)})

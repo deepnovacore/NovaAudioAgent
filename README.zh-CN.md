@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](pyproject.toml)
+[![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
 [![Architecture](https://img.shields.io/badge/Arch-Control%20Plane-7B2CBF.svg)](#3-架构)
 [![Blog](https://img.shields.io/badge/Blog-Tradeoff%20Ruler-0B7285.svg)](docs/blog/2026-08-proactive-voice-agent-design-space.md)
 
@@ -126,14 +126,13 @@ executor 的完成并不待在一个回合制的 `reason → act → observe` �
 
 ## 4. 快速开始
 
-> **迁移状态：** 尚未发布的安装候选默认使用 Node；安装包中显式选择 Python 会稳定返回
-> `source_rollback_unavailable`。源码开发仍默认 Python，并保留显式
-> `NOVA_AUDIO_AGENT_BACKEND=python` 回滚。Node Codex 仅使用 app-server，JSONL 仅为
-> fixture-parser-only。三平台签名候选、clean-machine、硬件和发布证据仍为 pending；这不是
-> 已发布的 Node-default 声明。
+> **发布状态：** Node.js 与 TypeScript 是当前主运行时。Codex 只使用 app-server；JSONL 仅保留
+> 历史 parser fixture。三平台签名候选、clean-machine、硬件和正式发布证据仍待完成。
 
-环境要求：Python 3.11+、[uv](https://docs.astral.sh/uv/)、支持子模块的 Git、Node.js 22+
-（可选的桌面应用需要），以及 macOS（Ambient Orb 原生音频采集需要）。
+环境要求：Node.js 22+、npm、Git、已登录的 `codex` 可执行文件，以及受支持的桌面会话。构建原生
+helper 还需要：macOS 安装 Xcode Command Line Tools，Linux 在 `/usr/bin/cc` 提供 C 编译器，
+Windows 安装 Visual Studio Build Tools 并勾选 **Desktop development with C++** 工作负载。
+macOS 提供原生 Ambient Orb 音频采集；Windows 与 Linux 使用 Chromium 音频栈。
 
 ### 命名 Codex 工作区与持久 Session
 
@@ -145,8 +144,6 @@ NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
 NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/NovaWorkspaces
 NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
 
-uv run nova-audio-agent workspace register alpha /absolute/path/to/repository
-uv run nova-audio-agent workspace list
 ```
 
 语音可以列出、创建或选择工作区，也可以列出或继续已有 Session。create、select、resume
@@ -201,62 +198,70 @@ NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
 Elastic License 2.0；未来复用、捆绑或随产品交付任何上游 MyContext 代码或运行时之前，必须另行
 完成法律与分发审查。配置这个 client 本身不代表已经获得分发批准。
 
-克隆仓库及临时保留给 Python 源码回滚的子模块：
+克隆仓库并安装锁定的 Node 依赖：
 
 ```bash
-git clone --recurse-submodules \
+git clone \
   https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
 cd nova-audio-agent
-uv sync --dev
+npm ci
 cp .env.example .env
 ```
 
-使用文本 CLI 前，在 `.env` 中设置 `NOVA_AUDIO_AGENT_MODEL_API_KEY` 与 `TAVILY_API_KEY`，然后：
+使用默认的集成 Qwen 桌面端时，须在 `.env`（或启动命令所在的 shell）中同时设置
+`DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。Search 始终装配，因此即使没有把它选作 executor，
+Tavily 也仍是必需配置。
+
+构建后可以运行确定性 CLI：
 
 ```bash
-uv run nova-audio-agent --help
-uv run nova-audio-agent demo dual-axis
-uv run nova-audio-agent demo proactive
-uv run nova-audio-agent chat --executor fast_sim
+npm run build --workspace @nova-audio-agent/runtime
+node runtime/dist/src/cli.js diagnose --json
+node runtime/dist/src/cli.js demo all
 ```
 
-dual-axis 演示的是"一次 FastBrain 调用同时开口与派活"；proactive 演示的是 Surrogate 裁断一条
-环境观察值不值得发声。`demo async | dual-axis | timeout | proactive | all` 覆盖四个验收场景，
-`scorecard` 运行一次非门禁的真实模型评估，`./scripts/bootstrap_backend.sh` 是 Conda 替代方案。
-交互式对话可用 `/quit`、`/exit`、文件结束符或 `Ctrl-C` 退出。
+演示套件覆盖异步委派、说话与派活并行、超时和主动观察。`diagnose` 只检查配置，不会连接
+provider 或打开设备。
 
 小诺是中文优先的：人设、生产提示词、工具描述、CLI 报错与默认音色均为中文。各真实集成——
 当前 Node 能力包括确定性模拟器、Tavily 搜索、app-server Codex、摄像头 Watch/Guard，以及
-Qwen 或 Volcengine 实时语音；
-逐项安装、注意事项与完整变量参考见[上手指南](docs/getting-started.md)。
+集成或级联实时语音；
+逐项安装、注意事项与完整变量参考见[上手指南](docs/getting-started.zh-CN.md)。
 
 ## 5. Ambient Orb
 
-Ambient Orb 是本地语音界面。macOS 与 Linux 使用共用的 shell 启动器，Windows 使用 PowerShell 启动器：
+Ambient Orb 是本地语音界面。填写 `.env` 后，一条命令会安装缺失的锁定依赖、构建运行时与
+桌面端，并启动 Node 客户端：
 
 ```bash
-uv sync --extra vision --dev
-./scripts/start_ambient_orb.sh          # macOS、Linux
+npm run start:client
 ```
 
-```powershell
-.\scripts\start_ambient_orb.ps1         # Windows
-```
+启动器固定使用 Node 运行时，并拉起带上下文隔离、沙箱与窄 preload 桥的 Electron 渲染器。它需要
+Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或启动 shell 中的 `TAVILY_API_KEY`；shell
+变量优先于 `.env`。`DASHSCOPE_API_KEY` 只在集成 Qwen 和级联 Qwen 时必需。级联 Ark 的 LLM 需要
+`ARK_API_KEY`，并为火山 TTS 与 ASR 回退需要 `DOUBAO_BIGMODEL_API_KEY`；
+`DOUBAO_ASR_API_KEY` 是可选 ASR 覆盖。macOS 上还会构建原生 VoiceProcessingIO helper 以获得系统级
+回声消除；Windows 与 Linux 使用 Chromium 自带的回声消除。Linux 会话运行在 X11 上（Wayland 会话
+经由 XWayland）。分平台说明见[上手指南](docs/getting-started.zh-CN.md)。
 
-源码启动器会按开发选择启动后端并拉起 Electron 渲染器（上下文隔离、沙箱与窄 preload 桥）；
-回滚发布期默认仍为 Python。它需要
-Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或设置面板中的 `DASHSCOPE_API_KEY`。
-macOS 上还会构建原生 VoiceProcessingIO helper 以获得系统级回声消除；Windows 与 Linux 使用
-Chromium 自带的回声消除。Linux 会话运行在 X11 上（Wayland 会话经由 XWayland）。分平台说明见
-[上手指南](docs/getting-started.md)。
+默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 视频回放均使用 Chromium 摄像头链路。
 
-默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 视频回放均依赖上面安装的 `vision` extra。
+### 语音管线配置
 
-Qwen 仍是默认语音 provider；原生火山备选链路为
-`Silero VAD v5.1.2 -> Seed ASR -> Doubao Seed 2.0 Pro -> Seed TTS 2.0`，使用
-`uv sync --extra vision --extra volcengine --dev` 安装，并配置所选 provider 的凭据。上游
-`silero-vad==5.1.2` 即使选择 ONNX 推理仍会传递安装 PyTorch 与 torchaudio，因此这个 extra
-的体积较大。
+顶层选择是 `integrated` 或 `cascaded`。默认集成 Qwen 管线使用
+`qwen-audio-3.0-realtime-plus`、`longanqian` 音色和 `DASHSCOPE_API_KEY`，不暴露独立的 ASR、LLM
+或 TTS 节点。级联模式才显示端点检测、ASR、LLM 和 TTS；默认链路为
+火山 ASR -> Qwen `qwen-flash` -> 火山 TTS，Ark 只能显式选作级联 LLM。
+
+每个平台只存一把密钥并在该平台的选中节点间复用：Qwen 用 DashScope，Ark LLM 用 Ark，火山 TTS
+用 `DOUBAO_BIGMODEL_API_KEY`。`DOUBAO_ASR_API_KEY` 是可选的火山 ASR 覆盖；未填写时 ASR 回退到
+`DOUBAO_BIGMODEL_API_KEY`。没有 provider 自动故障转移。
+
+条件式设置面板先显示模式。集成模式显示 provider、模型和音色；级联模式显示端点检测、ASR、LLM
+和 TTS 卡片。密钥是只写的，渲染器只能收到是否存在的状态。管线、provider、模型、音色和密钥编辑
+均在下次启动生效；只有配色会实时应用。公共选择器和可选在线 smoke 命令见
+[上手指南](docs/getting-started.zh-CN.md)。
 
 orb 以 Canvas 2D 粒子场呈现，状态由粒子行为承载——聆听时向心聚拢，说话时随播放振幅脉动，
 Codex delegate 工作时外侧有一圈轨道带环绕——可选暖焰琥珀（Ember）或石墨月光（Graphite）配色。
@@ -268,14 +273,10 @@ Codex delegate 工作时外侧有一圈轨道带环绕——可选暖焰琥珀�
 ## 6. 仓库布局
 
 ```text
-src/nova_audio_agent/           运行时脊柱、端口、Floor、上下文、模型网关与 CLI
-src/nova_audio_agent/memory/    权威通道记忆与结构化用户状态
-src/nova_audio_agent/executors/ 模拟器与真实能力适配器
-src/nova_audio_agent/realtime/  Qwen 传输、会话桥、恢复、播放与遥测
+runtime/src/                    运行时脊柱、记忆、执行器、provider、CLI 与桌面入口
+runtime/test/                   确定性的运行时、协议、适配器与集成测试
 desktop/ambient-orb/            Electron UI 与原生 macOS 音频 helper
-tests/                          确定性的单元、场景、协议与仓库测试
 docs/                           公开的架构、论证、指南、状态与设计系列
-thirdparty/Open-AutoGLM/        Python 源码回滚临时子模块；Node 已退役
 resources/                      本地原始与剪辑媒体；有意被 Git 忽略
 ```
 
@@ -297,14 +298,10 @@ resources/                      本地原始与剪辑媒体；有意被 Git 忽�
 ## 8. 开发与验证
 
 ```bash
-# Python
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run pytest -q
-uv build
-
-# Electron
-(cd desktop/ambient-orb && npm ci && npm test && npm run build)
+npm ci
+npm run check
+npm run build
+npm test
 ```
 
 在线集成有意依赖凭据与硬件；它们不能替代确定性测试，其输出应留在被忽略的本地产物目录中。

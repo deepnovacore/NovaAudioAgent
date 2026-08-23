@@ -41,16 +41,17 @@ import type {
 import {memoryBoardMessage} from '../src/realtime/memory-board.js'
 import {workspaceGraphBoardMessage} from '../src/realtime/workspace-graph-board.js'
 import {buildProductionRealtimeAssembly} from '../src/production-realtime-assembly.js'
+import {createArkCascadedLlmSession} from '../src/realtime/cascaded/ark-llm.js'
 import {
   QwenSocketClosedError,
   type QwenSocket,
 } from '../src/realtime/qwen.js'
 import type {
-  VolcAsrClient,
-  VolcAsrSession,
-  VolcTtsClient,
-  VolcTtsSession,
-} from '../src/realtime/volcengine/adapter.js'
+  AsrClient,
+  AsrSession,
+  TtsClient,
+  TtsSession,
+} from '../src/realtime/cascaded/ports.js'
 import type {
   ArkEvent,
   ArkResponsesGateway,
@@ -845,7 +846,7 @@ class DesktopQwenSocket implements QwenSocket {
   }
 }
 
-class DesktopAsrSession implements VolcAsrSession {
+class DesktopAsrSession implements AsrSession {
   readonly appended: Uint8Array[] = []
   readonly #finished = deferred<void>()
   closeCalls = 0
@@ -869,21 +870,21 @@ class DesktopAsrSession implements VolcAsrSession {
   }
 }
 
-class DesktopAsrClient implements VolcAsrClient {
+class DesktopAsrClient implements AsrClient {
   readonly session: DesktopAsrSession
   readonly opened = deferred<void>()
   opens = 0
 
   constructor(session: DesktopAsrSession) { this.session = session }
 
-  open(): Promise<VolcAsrSession> {
+  open(): Promise<AsrSession> {
     this.opens += 1
     this.opened.resolve()
     return Promise.resolve(this.session)
   }
 }
 
-class DesktopTtsSession implements VolcTtsSession {
+class DesktopTtsSession implements TtsSession {
   readonly texts: string[] = []
   readonly #finished = deferred<void>()
   closeCalls = 0
@@ -909,13 +910,13 @@ class DesktopTtsSession implements VolcTtsSession {
   }
 }
 
-class DesktopTtsClient implements VolcTtsClient {
+class DesktopTtsClient implements TtsClient {
   readonly session: DesktopTtsSession
   opens = 0
 
   constructor(session: DesktopTtsSession) { this.session = session }
 
-  open(): Promise<VolcTtsSession> {
+  open(): Promise<TtsSession> {
     this.opens += 1
     return Promise.resolve(this.session)
   }
@@ -1193,7 +1194,7 @@ test('authenticated fake-provider loopback uses one service for duplex audio and
   assert.equal(serveCalls, 1)
 })
 
-test('selected Qwen production assembly uses the authenticated provider-neutral desktop graph', async t => {
+test('selected integrated Qwen assembly uses the authenticated provider-neutral desktop graph', async t => {
   const providerSocket = new DesktopQwenSocket()
   const stop = new AbortController()
   let callbacks: DesktopOutputCallbacks | undefined
@@ -1204,7 +1205,8 @@ test('selected Qwen production assembly uses the authenticated provider-neutral 
       callbacks = output
       return buildProductionRealtimeAssembly({
         settings: loadSettings({
-          NOVA_AUDIO_AGENT_REALTIME_PROVIDER: 'qwen',
+          NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+          DASHSCOPE_API_KEY: 'dash-key',
           NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
           TAVILY_API_KEY: 'search-key',
         }),
@@ -1315,7 +1317,7 @@ test('selected Qwen production assembly uses the authenticated provider-neutral 
   await assert.rejects(connectDesktop(ready.port))
 })
 
-test('selected Volc production assembly falls back before ASR on the same authenticated graph', async t => {
+test('selected cascaded production assembly falls back before ASR on the same authenticated graph', async t => {
   const trace: string[] = []
   const asrSession = new DesktopAsrSession()
   const asr = new DesktopAsrClient(asrSession)
@@ -1331,7 +1333,8 @@ test('selected Volc production assembly falls back before ASR on the same authen
       callbacks = output
       return buildProductionRealtimeAssembly({
         settings: loadSettings({
-          NOVA_AUDIO_AGENT_REALTIME_PROVIDER: 'volcengine',
+          NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+          NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
           ARK_API_KEY: 'ark-key',
           DOUBAO_BIGMODEL_API_KEY: 'doubao-key',
           TAVILY_API_KEY: 'search-key',
@@ -1349,7 +1352,10 @@ test('selected Volc production assembly falls back before ASR on the same authen
         },
         asrClient: () => { trace.push('asr.client'); return asr },
         ttsClient: () => { trace.push('tts.client'); return tts },
-        arkFactory: () => { trace.push('ark.client'); return ark },
+        arkLlmFactory: () => ({open: () => {
+          trace.push('ark.client')
+          return createArkCascadedLlmSession(ark)
+        }}),
         searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
         ...output,
         onDiagnostic: () => undefined,
@@ -1404,11 +1410,11 @@ test('selected Volc production assembly falls back before ASR on the same authen
     await Promise.allSettled([...sockets]
       .filter(socket => socket.readyState !== WebSocket.CLOSED)
       .map(socket => closeDesktop(socket)))
-    await settleNamed('Volc desktop failure cleanup', Promise.allSettled([owner.stop(), running]))
+    await settleNamed('cascaded desktop failure cleanup', Promise.allSettled([owner.stop(), running]))
   })
-  const ready = await settleNamed('Volc desktop readiness', announced.promise)
+  const ready = await settleNamed('cascaded desktop readiness', announced.promise)
   assert.deepEqual(trace.slice(0, 5), [
-    'endpointing.executor_unavailable', 'asr.client', 'tts.client', 'ark.client', 'ready',
+    'endpointing.executor_unavailable', 'asr.client', 'ark.client', 'tts.client', 'ready',
   ])
   assert.equal(asr.opens, 0)
 
@@ -1421,7 +1427,7 @@ test('selected Volc production assembly falls back before ASR on the same authen
 
   const socket = await connectDesktop(ready.port)
   sockets.add(socket)
-  await authenticateDesktop(socket, 'Volc desktop')
+  await authenticateDesktop(socket, 'cascaded desktop')
   const downlink = receiveFrames(socket, 5, 'Volc provider output')
   await sendDesktop(socket, speechThenSilencePcm(), 'Volc authenticated utterance')
   await settleNamed('Volc ASR opened after fallback', asr.opened.promise)
@@ -1439,7 +1445,7 @@ test('selected Volc production assembly falls back before ASR on the same authen
   await closeDesktop(socket)
 
   await settleNamed('Volc repeated desktop stop', Promise.all([owner.stop(), owner.stop()]))
-  await settleNamed('Volc desktop run', running)
+  await settleNamed('cascaded desktop run', running)
   await owner.stop()
   assert.deepEqual(shutdownTrace, ['listener.close', 'realtime.stop'])
   assert.equal(ark.closeCalls, 1)

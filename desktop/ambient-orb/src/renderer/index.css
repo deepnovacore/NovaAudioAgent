@@ -19,7 +19,7 @@ html, body {
    transparent, frameless surface get a rounded dark plate instead of a
    broken/black window. */
 body[data-opaque="1"] {
-  background: rgba(20, 14, 8, .92);
+  background: rgba(9, 8, 13, .94);
   border-radius: 24px;
 }
 
@@ -39,12 +39,16 @@ body[data-opaque="1"] {
   width: 116px;
   height: 116px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, .2);
+  /* Barely there: the plate draws its own rim light now, and a bright white ring
+     was half of what made the disc read as a coin instead of an opening. */
+  border: 1px solid rgba(255, 255, 255, .07);
   border-radius: 50%;
   /* Opaque ground for the particle plate: the window itself is transparent, so
-     the disc needs a hue-neutral dark base the palette can glow against. */
-  background: rgba(18, 13, 8, .72);
-  box-shadow: 0 14px 38px rgba(0, 0, 0, .34);
+     the disc needs a dark base the palette can glow against. Cool near-black
+     rather than the old warm brown — warmth here fought the plate's own bloom
+     and lifted the rim, which is exactly where depth needs the field to fall off. */
+  background: rgba(7, 6, 11, .82);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, .5);
   cursor: pointer;
   overflow: hidden;
   -webkit-app-region: no-drag;

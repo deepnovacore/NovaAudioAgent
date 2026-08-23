@@ -444,7 +444,10 @@ test('opaque mode renders a rounded dark plate behind the orb', async () => {
   const source = await readFile(new URL('../src/renderer/index.css', import.meta.url), 'utf8')
 
   assert.match(source, /body\[data-opaque="1"\]/)
-  assert.match(source, /rgba\(20,\s*14,\s*8,\s*\.92\)/)
+  // Cool near-black, tracking the plate's own abyss hue. This was a warm brown
+  // (rgba(20, 14, 8, .92)) back when the orb's CSS ground was warm too; the
+  // fallback plate has to stay the same material as the disc it stands in for.
+  assert.match(source, /rgba\(9,\s*8,\s*13,\s*\.94\)/)
   assert.match(source, /border-radius:\s*24px/)
 })
 

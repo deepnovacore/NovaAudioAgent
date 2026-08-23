@@ -1002,6 +1002,28 @@ test('plain sentinels and NFC-equivalent developer instructions remain redacted 
   assert.equal(rendered.includes('useful'), true)
 })
 
+test('bearer credentials separated by Python-only whitespace never reach final projection', async () => {
+  const tokens = ['alphaToken1', 'betaToken2', 'gammaToken3', 'abc~defghijklmnopqrstuvwxyz', 'short']
+  const owner = new MemoryAppServerOwner([], {
+    finalText: [
+      `bearer\u001c${tokens[0]}`,
+      `bearer\u001e${tokens[1]}`,
+      `bearer\u0085${tokens[2]}`,
+      `bearer\u001c${tokens[3]}`,
+      `bearer\u001e${tokens[4]}`,
+      'useful',
+    ].join(' '),
+  })
+  const result = await createTransport({spawn: async () => owner}).run(
+    {workOrder: 'sanitize uncommon credential separators'},
+    {},
+    {expiresAtMs: Date.now() + 5000},
+  )
+  const rendered = JSON.stringify(result)
+  for (const token of tokens) assert.equal(rendered.includes(token), false)
+  assert.equal(rendered.includes('useful'), true)
+})
+
 test('a written steer is registered as sensitive before concurrent final notifications', async () => {
   const steerSentinel = 'violet kiwi steer sentinel'
   const owner = new MemoryAppServerOwner([], {delayTurnStart: true, echoSteerInFinal: true})

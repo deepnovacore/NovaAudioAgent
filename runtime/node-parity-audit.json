@@ -20,12 +20,16 @@
     "desktop/ambient-orb/src/renderer/orb-visual.mjs",
     "desktop/ambient-orb/src/renderer/release-camera-contract.mjs",
     "desktop/ambient-orb/src/renderer/release-camera.mjs",
+    "desktop/ambient-orb/src/renderer/secret-revisions.mjs",
+    "desktop/ambient-orb/src/renderer/settings-controller.mjs",
     "desktop/ambient-orb/src/renderer/settings.mjs",
     "desktop/ambient-orb/src/renderer/state.mjs",
     "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
     "runtime/src/assembly.ts",
     "runtime/src/calls.ts",
     "runtime/src/canonical-json.ts",
+    "runtime/src/cascaded-realtime-assembly.ts",
+    "runtime/src/cascaded-realtime-config.ts",
     "runtime/src/causal-runtime.ts",
     "runtime/src/cli.ts",
     "runtime/src/clock.ts",
@@ -73,6 +77,7 @@
     "runtime/src/host-executor-capability.ts",
     "runtime/src/ids.ts",
     "runtime/src/index.ts",
+    "runtime/src/integrated-realtime-assembly.ts",
     "runtime/src/media-store.ts",
     "runtime/src/memory.ts",
     "runtime/src/model-adapters.ts",
@@ -89,6 +94,12 @@
     "runtime/src/qwen-realtime-assembly.ts",
     "runtime/src/realtime-assembly.ts",
     "runtime/src/realtime/bridge.ts",
+    "runtime/src/realtime/cascaded/adapter.ts",
+    "runtime/src/realtime/cascaded/ark-llm.ts",
+    "runtime/src/realtime/cascaded/llm.ts",
+    "runtime/src/realtime/cascaded/ports.ts",
+    "runtime/src/realtime/cascaded/provider.ts",
+    "runtime/src/realtime/cascaded/qwen-llm.ts",
     "runtime/src/realtime/evidence.ts",
     "runtime/src/realtime/history.ts",
     "runtime/src/realtime/memory-board.ts",
@@ -105,14 +116,12 @@
     "runtime/src/realtime/session.ts",
     "runtime/src/realtime/speech-prep.ts",
     "runtime/src/realtime/telemetry.ts",
-    "runtime/src/realtime/volcengine/adapter.ts",
     "runtime/src/realtime/volcengine/ark.ts",
     "runtime/src/realtime/volcengine/asr.ts",
     "runtime/src/realtime/volcengine/audio.ts",
     "runtime/src/realtime/volcengine/endpointing-capability.ts",
     "runtime/src/realtime/volcengine/livekit-endpointing.ts",
     "runtime/src/realtime/volcengine/protocol.ts",
-    "runtime/src/realtime/volcengine/provider.ts",
     "runtime/src/realtime/volcengine/silence-endpointing.ts",
     "runtime/src/realtime/volcengine/tts.ts",
     "runtime/src/realtime/volcengine/websocket.ts",
@@ -127,7 +136,6 @@
     "runtime/src/trace.ts",
     "runtime/src/unicode-casefold.ts",
     "runtime/src/unicode-normalize.ts",
-    "runtime/src/volcengine-realtime-assembly.ts",
     "runtime/src/workspace-graph/context.ts",
     "runtime/src/workspace-graph/factory.ts",
     "runtime/src/workspace-graph/identity.ts",
@@ -142,6 +150,51 @@
     "runtime/src/workspace-graph/store.ts"
   ],
   "occurrences": [
+    {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "snippet_sha256": "e4bbd87e4e69f04bbd796e31c93c95a1baa31f113ff9facf4e161751f3198d33",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 1,
+      "snippet_sha256": "dcb61be837b6f667f217abcc36ceb29da1b110c02559ed97e4d7e7ae995a17cf",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "snippet_sha256": "734a616732cc8f960a61a4289c3c9ba141a5c292c4e0662f2605ffdef22a874f",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "snippet_sha256": "67f892fad8d89283ccb62973245a226ead4b83262f76d5e42a530a5c3cbb5565",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/app-protocol.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "snippet_sha256": "0236fcedcb97aa639ddb276c7f9afdd3850fae5e7058d0b50057d6a67a7203d3",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
+      "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
     {
       "file": "desktop/ambient-orb/src/main/backend.mjs",
       "kind": "string_trim",
@@ -468,8 +521,17 @@
     },
     {
       "file": "runtime/src/codex-production-host.ts",
-      "kind": "string_trim",
+      "kind": "regex_unicode_semantics",
       "occurrence_index": 2,
+      "snippet_sha256": "ce19c7b71fbc75ebbd02b694fd07f41cedb18cd098ac5618f90d0474661a6c22",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-production-host.test.ts",
+      "behavior": "production preflight uses the fixed native probe and never passes credentials to commands"
+    },
+    {
+      "file": "runtime/src/codex-production-host.ts",
+      "kind": "string_trim",
+      "occurrence_index": 3,
       "snippet_sha256": "e987687cd6b5aa1ec0fc80b94a6e490e5e1d44d1500797a3ebffb40d38be1e58",
       "disposition": "host_only_unicode",
       "test": "runtime/test/codex-production-host.test.ts",
@@ -558,8 +620,17 @@
     },
     {
       "file": "runtime/src/config.ts",
-      "kind": "locale_unicode",
+      "kind": "numeric_string",
       "occurrence_index": 0,
+      "snippet_sha256": "dafa6e3dade5752468f1ee277dd6bca3aebaaa121b99928572f2b6b8f66a7ae7",
+      "disposition": "wire_json",
+      "test": "runtime/test/config.test.ts",
+      "behavior": "configuration failures never echo secret values"
+    },
+    {
+      "file": "runtime/src/config.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 1,
       "snippet_sha256": "2363322a01e8cbed64d90a151d3ded281b44f3080329426ebc7dad3791c32103",
       "disposition": "host_only_unicode",
       "test": "runtime/test/config.test.ts",
@@ -568,7 +639,7 @@
     {
       "file": "runtime/src/config.ts",
       "kind": "locale_unicode",
-      "occurrence_index": 1,
+      "occurrence_index": 2,
       "snippet_sha256": "d2b2b67bf54e29ae1a0eb274df76d51711b783ad02c28cbfe2b212be100f56f5",
       "disposition": "host_only_unicode",
       "test": "runtime/test/config.test.ts",
@@ -577,7 +648,7 @@
     {
       "file": "runtime/src/config.ts",
       "kind": "locale_unicode",
-      "occurrence_index": 2,
+      "occurrence_index": 3,
       "snippet_sha256": "9bda2509223eb60f1da77b84d8512fd9a0449d39cf6aa6cc5e2ceb108ab5871c",
       "disposition": "host_only_unicode",
       "test": "runtime/test/config.test.ts",
@@ -621,8 +692,80 @@
     },
     {
       "file": "runtime/src/desktop-bridge.ts",
-      "kind": "numeric_template",
+      "kind": "numeric_string",
       "occurrence_index": 2,
+      "snippet_sha256": "a1ad30e4114dec558375eaa5aa4ac9e47e950c71951498ab2d55cab8b6bbe6d0",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 3,
+      "snippet_sha256": "c778104bd510b23f0c81716a74c8de46c56a41f51853fdf4d87ffc8eec624352",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 4,
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 5,
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 6,
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 7,
+      "snippet_sha256": "0c357ef1951ce5eff8587249e365e780668c1e8b632864075895b991c4d69e91",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 8,
+      "snippet_sha256": "4e2e5cdfa76b3a83c80d52795f591223ba2411eb91f03db839d50116b3285407",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 9,
+      "snippet_sha256": "4e2e5cdfa76b3a83c80d52795f591223ba2411eb91f03db839d50116b3285407",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 10,
       "snippet_sha256": "1bc04b5291c26a46d918139138b992d2de976d6851d0893b0476b85bfbdfc6e6",
       "disposition": "wire_json",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -631,7 +774,7 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 3,
+      "occurrence_index": 11,
       "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
       "disposition": "byte_length",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -640,7 +783,7 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 4,
+      "occurrence_index": 12,
       "snippet_sha256": "f38f50dbfa76a64db16ee2343e7225138da1f399ae716bf71434657dc2bcb2e7",
       "disposition": "byte_length",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -649,7 +792,7 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 5,
+      "occurrence_index": 13,
       "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
       "disposition": "byte_length",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -839,6 +982,24 @@
       "file": "runtime/src/model-gateway.ts",
       "kind": "numeric_template",
       "occurrence_index": 2,
+      "snippet_sha256": "4154cb22e21883f732ea07e2b9af7a1019f010e11db05b53eff7096c39bb2375",
+      "disposition": "wire_json",
+      "test": "runtime/test/model-gateway.test.ts",
+      "behavior": "complete parses one choice and reports usage"
+    },
+    {
+      "file": "runtime/src/model-gateway.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 3,
+      "snippet_sha256": "114700f60a91db711a690b11a9268d687453a6ab61f62278438c235e0b11d218",
+      "disposition": "wire_json",
+      "test": "runtime/test/model-gateway.test.ts",
+      "behavior": "complete parses one choice and reports usage"
+    },
+    {
+      "file": "runtime/src/model-gateway.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 4,
       "snippet_sha256": "dde7b529529ea02cec1778d08f97837065ec3d2d081f472a7ca77dff5fa820eb",
       "disposition": "wire_json",
       "test": "runtime/test/model-gateway.test.ts",
@@ -847,7 +1008,7 @@
     {
       "file": "runtime/src/model-gateway.ts",
       "kind": "string_length",
-      "occurrence_index": 3,
+      "occurrence_index": 5,
       "snippet_sha256": "f77e45c070b0619090d183b78346c29511b10ab12a10b5ea0b8cb3dbfcff35e1",
       "disposition": "intentional_utf16",
       "test": "runtime/test/model-gateway.test.ts",
@@ -980,6 +1141,24 @@
       "behavior": "one provider session supports the realtime session connect and reconnect contract"
     },
     {
+      "file": "runtime/src/realtime/cascaded/qwen-llm.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-cascaded-qwen-llm.test.ts",
+      "behavior": "Qwen joins fragmented tool calls and retains a matched tool result with its assistant call"
+    },
+    {
+      "file": "runtime/src/realtime/evidence.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 0,
+      "snippet_sha256": "1b00aefebdba602a48cb3b5b7e68dffc9a2de3673054adbb9f244245d1612659",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-evidence.test.ts",
+      "behavior": "structured numeric evidence uses deterministic Python float spelling"
+    },
+    {
       "file": "runtime/src/realtime/project-confirmation.ts",
       "kind": "numeric_template",
       "occurrence_index": 0,
@@ -1044,8 +1223,17 @@
     },
     {
       "file": "runtime/src/realtime/qwen.ts",
-      "kind": "string_length",
+      "kind": "regex_unicode_semantics",
       "occurrence_index": 1,
+      "snippet_sha256": "5f7b84590a3642096576dacde4cbf79cfd36165badca7682d0016aa93460d885",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-qwen.test.ts",
+      "behavior": "a cancel with no active response becomes response_cancel_rejected"
+    },
+    {
+      "file": "runtime/src/realtime/qwen.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
       "snippet_sha256": "76fefe5208771adc79057ba49a3a4b44b0d11b3bfc4a5e7df57c64c53ff654bf",
       "disposition": "byte_length",
       "test": "runtime/test/realtime-qwen.test.ts",
@@ -1340,6 +1528,15 @@
       "behavior": "an unknown Guard history mode is refused before the session is touched"
     },
     {
+      "file": "runtime/src/realtime/speech-prep.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "17f6a1276c17e3ca8142420cedace9d07ad1e52acd9d7c94db84f3d27753d873",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-speech-prep.test.ts",
+      "behavior": "speech preparation uses Python regex boundaries around Unicode prose"
+    },
+    {
       "file": "runtime/src/realtime/workspace-graph-board.ts",
       "kind": "string_trim",
       "occurrence_index": 0,
@@ -1355,7 +1552,7 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "test": "runtime/test/realtime-workspace-graph-board.test.ts",
-      "behavior": "ready graph board exposes only the approved projection and evidence count"
+      "behavior": "board validates the exact bounded request id"
     },
     {
       "file": "runtime/src/realtime/workspace-graph-board.ts",
@@ -1364,7 +1561,7 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "test": "runtime/test/realtime-workspace-graph-board.test.ts",
-      "behavior": "ready graph board exposes only the approved projection and evidence count"
+      "behavior": "board validates the exact bounded request id"
     },
     {
       "file": "runtime/src/realtime/workspace-graph-board.ts",
@@ -1521,12 +1718,12 @@
     },
     {
       "file": "runtime/src/workspace-graph/context.ts",
-      "kind": "string_length",
+      "kind": "regex_unicode_semantics",
       "occurrence_index": 0,
-      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
-      "disposition": "intentional_utf16",
+      "snippet_sha256": "719515a16ce71da417e4c99802fa257e0d94b84fd42a2b881ade8c18e48b8177",
+      "disposition": "host_only_unicode",
       "test": "runtime/test/workspace-graph-context.test.ts",
-      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
+      "behavior": "all model-visible data is quoted, structurally neutralized, and confined to fixed wrappers"
     },
     {
       "file": "runtime/src/workspace-graph/context.ts",
@@ -1535,7 +1732,7 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "test": "runtime/test/workspace-graph-context.test.ts",
-      "behavior": "oversized schema-valid stable IDs omit the whole header before normalization work"
+      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
     },
     {
       "file": "runtime/src/workspace-graph/context.ts",
@@ -1544,7 +1741,7 @@
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
       "test": "runtime/test/workspace-graph-context.test.ts",
-      "behavior": "unrenderable schema-valid recall strings omit whole hints before normalization work"
+      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
     },
     {
       "file": "runtime/src/workspace-graph/context.ts",
@@ -1552,13 +1749,22 @@
       "occurrence_index": 3,
       "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
       "disposition": "intentional_utf16",
-      "test": "runtime/test/context-view.test.ts",
-      "behavior": "graph-context cloning rejects wrapper injection and measured-token bypasses"
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
     },
     {
       "file": "runtime/src/workspace-graph/context.ts",
       "kind": "string_length",
       "occurrence_index": 4,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
       "snippet_sha256": "b4918f14c37f3bcabbfd7d3e5c63d72773ff670f94848745c89214159c0282e4",
       "disposition": "intentional_utf16",
       "test": "runtime/test/context-view.test.ts",
@@ -1567,7 +1773,7 @@
     {
       "file": "runtime/src/workspace-graph/context.ts",
       "kind": "string_length",
-      "occurrence_index": 5,
+      "occurrence_index": 6,
       "snippet_sha256": "69e84623d7bcca05b2c79d9052fecfd5ef112f81b948a4a2dfad9ae5596cf6be",
       "disposition": "intentional_utf16",
       "test": "runtime/test/context-view.test.ts",
@@ -1581,6 +1787,51 @@
       "disposition": "intentional_utf16",
       "test": "runtime/test/workspace-graph-identity.test.ts",
       "behavior": "UTF-16-overlong aliases are rejected before producing invalid Task 0 cards"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "snippet_sha256": "1986e1117575a17e6878aa084e4c7fb7ce6f2cc85461c6663c3ba8c55dbccd78",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 1,
+      "snippet_sha256": "e7ec7209011b0521545f473801c011dbc1711dcf3c1af944d06c4b39b586cd4b",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "snippet_sha256": "1a508ce823598643bf50cb2414d65ab39409caebc94bb0fe31e6093585af05c4",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "snippet_sha256": "949bab2aa419d9dff6eb07cfd78393a5fc04d665bf869414043247672441dcb2",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "snippet_sha256": "53dec84c0b0a08faa57390ed76efc8d130d213b5f1f4e131aa7fecee6cf2d45c",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
     },
     {
       "file": "runtime/src/workspace-graph/recall.ts",
@@ -1611,8 +1862,125 @@
     },
     {
       "file": "runtime/src/workspace-graph/sensitivity.ts",
-      "kind": "locale_unicode",
+      "kind": "regex_unicode_semantics",
       "occurrence_index": 0,
+      "snippet_sha256": "efcf4825743ce3e16bddb2af951791b8fd56951cea212a1ac77276128bf3120b",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "later absolute traversal tokens cannot hide whitespace-bearing denied roots"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 1,
+      "snippet_sha256": "232b3ab8a9bd97a431bc172236f27c2a00cdc3bcd23fadda3c24005de81e8b8c",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "returns clean fields byte-identically"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "snippet_sha256": "afa0ae1fdb30a47231b1f88f8104b3d67813f7606ec84e2935bbe407d6b7d0bf",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "returns clean fields byte-identically"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "snippet_sha256": "719515a16ce71da417e4c99802fa257e0d94b84fd42a2b881ade8c18e48b8177",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "returns clean fields byte-identically"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "snippet_sha256": "719515a16ce71da417e4c99802fa257e0d94b84fd42a2b881ade8c18e48b8177",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "returns clean fields byte-identically"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 5,
+      "snippet_sha256": "61b674893d1fdcf1d0f5fc4870864d6d4aa085cdc602edb5e469d0b1c6b9c119",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts private URLs carrying query credentials"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 6,
+      "snippet_sha256": "9089e96f962c7ce8abba69186bacc35771867966a4519dac5b4d65569d7158be",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts complete authorization header values for every scheme"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 7,
+      "snippet_sha256": "6d8042c0aa4d75e5d264f2fb359f679157a78285bb32ca8d459311ddb8170ecd",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts cookie header values through end-of-line while retaining adjacent safe text"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 8,
+      "snippet_sha256": "270e38a3ce9c574659de586fb8a54bde9dfeb1cbea80c46e1aef01505a052b6a",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts quoted credential keys in JSON-like content"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 9,
+      "snippet_sha256": "e73a3bfe5b957fa9fa1adb3991ad822cbe99ace9bbfb6c3cbde2c5155915d08c",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts quoted credential keys in JSON-like content"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 10,
+      "snippet_sha256": "b4e6cda95a4fa41b485b9aba0c223ea976f5420444c7b9a75f6f7dd94657ec31",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts every credential span in a field"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 11,
+      "snippet_sha256": "94c16c8b22f2e9f04278593ed36e3d1a09c8981aa525a1287553daf95ee5e0d4",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts every credential span in a field"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 12,
+      "snippet_sha256": "d9cc6e4c4d8c9a71c9b689d851401b3465d7e595d259ddfb0fa51959f9097f55",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts every credential span in a field"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 13,
       "snippet_sha256": "91fbaa553a602a885443eb4a5b3e6dd76a368e8d576c0fe42ec2d07cf81b7d30",
       "disposition": "host_only_unicode",
       "test": "runtime/test/workspace-graph-sensitivity.test.ts",
@@ -1621,7 +1989,7 @@
     {
       "file": "runtime/src/workspace-graph/sensitivity.ts",
       "kind": "locale_unicode",
-      "occurrence_index": 1,
+      "occurrence_index": 14,
       "snippet_sha256": "8c758401279bbfcd5f28e3294e9d6a0f0eae40d4c3039938f9eecd55efc6d828",
       "disposition": "host_only_unicode",
       "test": "runtime/test/workspace-graph-sensitivity.test.ts",
@@ -1629,8 +1997,17 @@
     },
     {
       "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 15,
+      "snippet_sha256": "87c8959f09166cdc0c9ccab8815c909ea3ce397355984311dd940a0c158b794a",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts cookie header values through end-of-line while retaining adjacent safe text"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
       "kind": "unicode_property_regex",
-      "occurrence_index": 2,
+      "occurrence_index": 16,
       "snippet_sha256": "ae9ee458c51c90bdbec424d1e85d371fb2b0106889e59c3b8617de5a187d4813",
       "disposition": "host_only_unicode",
       "test": "runtime/test/workspace-graph-sensitivity.test.ts",
@@ -1639,7 +2016,7 @@
     {
       "file": "runtime/src/workspace-graph/sensitivity.ts",
       "kind": "string_length",
-      "occurrence_index": 3,
+      "occurrence_index": 17,
       "snippet_sha256": "f118a9ced4b942d3f573d52f4f9626a586d87ff5926de5579f32564466cdd803",
       "disposition": "intentional_utf16",
       "test": "runtime/test/workspace-graph-store.test.ts",
@@ -1648,7 +2025,7 @@
     {
       "file": "runtime/src/workspace-graph/sensitivity.ts",
       "kind": "string_length",
-      "occurrence_index": 4,
+      "occurrence_index": 18,
       "snippet_sha256": "ae8df7594e0c7aedf5376e8eeacfcf48e7bc34c19b9a5b37f13a240002b844d5",
       "disposition": "intentional_utf16",
       "test": "runtime/test/workspace-graph-store.test.ts",
@@ -1662,6 +2039,51 @@
       "disposition": "intentional_utf16",
       "test": "runtime/test/workspace-graph-service.test.ts",
       "behavior": "service rejects an empty database path before constructing the worker client"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 1,
+      "snippet_sha256": "1986e1117575a17e6878aa084e4c7fb7ce6f2cc85461c6663c3ba8c55dbccd78",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service sensitivity gates every lifecycle and episode text before SQLite and diagnostics"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "snippet_sha256": "e7ec7209011b0521545f473801c011dbc1711dcf3c1af944d06c4b39b586cd4b",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service sensitivity gates every lifecycle and episode text before SQLite and diagnostics"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "snippet_sha256": "1a508ce823598643bf50cb2414d65ab39409caebc94bb0fe31e6093585af05c4",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service sensitivity gates every lifecycle and episode text before SQLite and diagnostics"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "snippet_sha256": "949bab2aa419d9dff6eb07cfd78393a5fc04d665bf869414043247672441dcb2",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service sensitivity gates every lifecycle and episode text before SQLite and diagnostics"
+    },
+    {
+      "file": "runtime/src/workspace-graph/store.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "snippet_sha256": "2da915ab0bd33a4357392d51977a1dfd9a4cbaf6645bcf03cb55431cbb21212b",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-store.test.ts",
+      "behavior": "a genuine schema-v1 database advances through every explicit migration"
     }
   ]
 }

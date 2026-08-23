@@ -140,7 +140,7 @@ function settingsFile() {
 }
 
 // The single shape the settings panel is ever told. Key material is reduced to
-// four booleans here and nowhere else, so no handler can widen it by accident;
+// seven booleans here and nowhere else, so no handler can widen it by accident;
 // `keyringAvailable` is what turns the plaintext warning line on. It answers
 // for the file as it stands, not merely for today's keyring: an entry written
 // while no keyring existed is still readable by anyone, so the warning stays up
@@ -356,6 +356,9 @@ async function launchBackend(cameraSource, backendKind, smokeChannel) {
         appPath: app.getAppPath(),
         packageRoot,
       }),
+      nodeResourcesPath: app.isPackaged
+        ? process.resourcesPath
+        : resolve(packageRoot, 'build'),
       workspace,
       token,
       readyEndpoint: await listener.endpoint,
@@ -545,7 +548,8 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
       return { ...settingsView(), saved: false, rejectedSecrets: [] }
     }
-    // Only the palette is live; voice, proactivity, and keys are read at launch.
+    // Only the palette is live; pipeline, providers, models, voices,
+    // proactivity, and keys are read at launch.
     sendToOrb('nova:settings:changed', publicSettings(currentSettings))
     return { ...settingsView(), saved: true, rejectedSecrets }
   })

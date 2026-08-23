@@ -103,8 +103,10 @@ function visitSource(source, checker, file, output) {
     if (ts.isTemplateSpan(node) && isNumberType(checker.getTypeAtLocation(node.expression))) {
       add('numeric_template', node.expression)
     }
-    if (ts.isRegularExpressionLiteral(node) && /\\p\{/u.test(node.text)) {
-      add('unicode_property_regex', node)
+    if (ts.isRegularExpressionLiteral(node)) {
+      if (/\\p\{/u.test(node.text)) add('unicode_property_regex', node)
+      const withoutAnyCharacterClass = node.text.replaceAll('[\\s\\S]', '')
+      if (/\\[sb]/u.test(withoutAnyCharacterClass)) add('regex_unicode_semantics', node)
     }
     ts.forEachChild(node, visit)
   }
@@ -117,7 +119,7 @@ function isStringType(type) {
 }
 
 function isNumberType(type) {
-  if (type.isUnion()) return type.types.every(isNumberType)
+  if (type.isUnion()) return type.types.some(isNumberType)
   return (type.flags & ts.TypeFlags.NumberLike) !== 0
 }
 
@@ -132,6 +134,7 @@ async function validateManifest(manifest, current, repositoryRoot) {
     ['string_trim', new Set(['host_only_unicode'])],
     ['locale_unicode', new Set(['host_only_unicode'])],
     ['unicode_property_regex', new Set(['host_only_unicode'])],
+    ['regex_unicode_semantics', new Set(['host_only_unicode'])],
     ['number_format', new Set(['wire_json'])],
     ['numeric_string', new Set(['wire_json'])],
     ['numeric_template', new Set(['wire_json'])],

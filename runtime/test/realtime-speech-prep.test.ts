@@ -33,6 +33,18 @@ test('speech preparation preserves prose after bare URLs and unclosed fences', (
   assert.doesNotMatch(fence.text, /```/u)
 })
 
+test('speech preparation uses Python regex boundaries around Unicode prose', () => {
+  const url = prepareForSpeech('see https://example.com/a\u0085end', {limit: 600})
+  assert.equal(url.text, 'see （链接略） end')
+
+  const digest = 'af8a7d2c440a3463f6df0188beae281f'
+  const adjacentWord = prepareForSpeech(`é${digest}é`, {limit: 600})
+  assert.equal(adjacentWord.text, `é${digest}é`)
+
+  const heading = prepareForSpeech('before\u0085## title', {limit: 600})
+  assert.equal(heading.text, 'before title')
+})
+
 test('speech preparation clips by Unicode code point without splitting an emoji', () => {
   const prepared = prepareForSpeech('😀'.repeat(601), {limit: SPEECH_FINAL_LIMIT})
   assert.equal(prepared.truncated, true)

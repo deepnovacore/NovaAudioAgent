@@ -15,7 +15,10 @@ import {announceReadiness} from './desktop.js'
 import {selectDesktopCameraSource} from './desktop-camera-source.js'
 import {ChromiumFrameSource} from './executors/chromium-frame-source.js'
 import {RealClock} from './clock.js'
-import {buildProductionRealtimeAssembly} from './production-realtime-assembly.js'
+import {
+  buildProductionRealtimeAssembly,
+  type BuildProductionRealtimeAssemblyOptions,
+} from './production-realtime-assembly.js'
 import {NullTelemetry} from './realtime/telemetry.js'
 
 type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource}
@@ -44,7 +47,10 @@ process.exitCode = await runDesktopEntryWithStopSources({
     const telemetry = new NullTelemetry()
     ownership.own(() => telemetry.close())
     const clock = new RealClock()
-    const codexHost = createProductionCodexHost(settings)
+    const sourceResourcesPath = process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH
+    const codexHost = createProductionCodexHost(settings, sourceResourcesPath === undefined
+      ? {}
+      : {resourcesPath: sourceResourcesPath})
     const codexConfig = resolveCodexHostConfig(settings, codexHost.catalog)
     const codexResource = codexConfig === null
       ? null
@@ -74,7 +80,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
           transport,
           clock,
         })
-        return buildProductionRealtimeAssembly({
+        const realtimeOptions: BuildProductionRealtimeAssemblyOptions = {
           settings,
           telemetry,
           onDiagnostic,
@@ -82,7 +88,8 @@ process.exitCode = await runDesktopEntryWithStopSources({
           frameSource,
           ...(codexResource === null ? {} : {codexResource}),
           ...callbacks,
-        })
+        }
+        return buildProductionRealtimeAssembly(realtimeOptions)
       },
     })
     return {

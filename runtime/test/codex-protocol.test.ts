@@ -347,6 +347,34 @@ test('incremental framing handles split and coalesced lines and forwards safe no
   assert.deepEqual(await request, {ok: true})
 })
 
+test('notifications admit only a bounded Codex emission timestamp metadata field', async () => {
+  const notifications: unknown[] = []
+  const connection = new JsonRpcConnection({
+    write: () => Promise.resolve(),
+    onNotification: value => { notifications.push(value) },
+  })
+  await connection.feed(jsonLine({
+    method: 'remoteControl/status/changed',
+    params: {status: 'stopped'},
+    emittedAtMs: 1_777_000_000_000,
+  }))
+  assert.deepEqual(notifications, [{
+    method: 'remoteControl/status/changed',
+    params: {status: 'stopped'},
+  }])
+
+  for (const emittedAtMs of [-1, 1.5, '1777000000000', Number.MAX_SAFE_INTEGER + 1]) {
+    const malformed = new JsonRpcConnection({write: () => Promise.resolve()})
+    await assert.rejects(malformed.feed(jsonLine({
+      method: 'future/event', params: {}, emittedAtMs,
+    })), error => errorCode(error) === 'malformed_jsonl')
+  }
+  const unknown = new JsonRpcConnection({write: () => Promise.resolve()})
+  await assert.rejects(unknown.feed(jsonLine({
+    method: 'future/event', params: {}, emittedAtMs: 1, extra: null,
+  })), error => errorCode(error) === 'malformed_jsonl')
+})
+
 test('a feed arriving in the drain-finalizer window is routed before its shared promise settles', async () => {
   const notifications: unknown[] = []
   const connection = new JsonRpcConnection({

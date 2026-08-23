@@ -1,0 +1,240 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import {
+  assertNativeToolchain,
+  electronExecutablePath,
+  parseClientEnvironment,
+  planClientLaunch,
+  resolveClientCodexBinary,
+} from '../../../scripts/start-client.mjs'
+
+test('native toolchain preflight reports stable platform-specific setup guidance', () => {
+  assert.throws(() => assertNativeToolchain({
+    platform: 'darwin',
+    env: {},
+    pathExists: path => path !== '/usr/bin/swiftc',
+  }), /native toolchain unavailable: install Xcode Command Line Tools/u)
+
+  assert.throws(() => assertNativeToolchain({
+    platform: 'linux',
+    env: {},
+    pathExists: () => false,
+  }), /native toolchain unavailable: install a C compiler at \/usr\/bin\/cc/u)
+
+  assert.throws(() => assertNativeToolchain({
+    platform: 'win32',
+    env: {'ProgramFiles(x86)': 'C:\\Program Files (x86)'},
+    pathExists: () => true,
+    runVswhere: () => ({status: null, stdout: null}),
+  }), /native toolchain unavailable: install Visual Studio Build Tools with Desktop development with C\+\+/u)
+
+  assert.throws(() => assertNativeToolchain({
+    platform: 'win32',
+    env: {'ProgramFiles(x86)': 'C:\\Program Files (x86)'},
+    pathExists: path => !path.endsWith('vcvars64.bat'),
+    runVswhere: () => ({status: 0, stdout: 'C:\\Visual Studio\r\n'}),
+  }), /native toolchain unavailable: install Visual Studio Build Tools with Desktop development with C\+\+/u)
+
+  assert.doesNotThrow(() => assertNativeToolchain({
+    platform: 'darwin',
+    env: {},
+    pathExists: () => true,
+  }))
+  assert.doesNotThrow(() => assertNativeToolchain({
+    platform: 'linux',
+    env: {},
+    pathExists: () => true,
+  }))
+  assert.doesNotThrow(() => assertNativeToolchain({
+    platform: 'win32',
+    env: {INCLUDE: 'set', LIB: 'set', PATH: 'set'},
+    pathExists: () => false,
+  }))
+  assert.doesNotThrow(() => assertNativeToolchain({
+    platform: 'win32',
+    env: {'ProgramFiles(x86)': 'C:\\Program Files (x86)'},
+    pathExists: () => true,
+    runVswhere: () => ({status: 0, stdout: 'C:\\Visual Studio\r\n'}),
+  }))
+})
+
+test('client environment loads literal dotenv values while the invoking shell wins', () => {
+  const environment = parseClientEnvironment({
+    contents: [
+      'DASHSCOPE_API_KEY=from-file',
+      'TAVILY_API_KEY="file value"',
+      'LITERAL=$(touch /tmp/must-not-run)',
+      '',
+    ].join('\n'),
+    shellEnv: {
+      DASHSCOPE_API_KEY: 'from-shell',
+      KEEP_ME: 'yes',
+    },
+  })
+
+  assert.deepEqual(environment, {
+    DASHSCOPE_API_KEY: 'from-shell',
+    TAVILY_API_KEY: 'file value',
+    LITERAL: '$(touch /tmp/must-not-run)',
+    KEEP_ME: 'yes',
+  })
+})
+
+test('dependency readiness is based on the real Electron executable, not its package manifest', () => {
+  assert.equal(
+    electronExecutablePath('/repo', 'darwin'),
+    '/repo/desktop/ambient-orb/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron',
+  )
+  assert.equal(
+    electronExecutablePath('C:\\repo', 'win32'),
+    'C:\\repo\\desktop\\ambient-orb\\node_modules\\electron\\dist\\electron.exe',
+  )
+  assert.equal(
+    electronExecutablePath('/repo', 'linux'),
+    '/repo/desktop/ambient-orb/node_modules/electron/dist/electron',
+  )
+})
+
+test('client resolves the canonical Codex executable without invoking a shell', () => {
+  const attempted = []
+  assert.equal(resolveClientCodexBinary({
+    configured: 'codex',
+    platform: 'darwin',
+    pathValue: '/first:/second',
+    canonicalize: candidate => {
+      attempted.push(candidate)
+      return candidate === '/second/codex' ? '/canonical/codex' : null
+    },
+  }), '/canonical/codex')
+  assert.deepEqual(attempted, ['/first/codex', '/second/codex'])
+  assert.throws(() => resolveClientCodexBinary({
+    configured: 'relative-custom-codex',
+    platform: 'linux',
+    pathValue: '/bin',
+    canonicalize: () => null,
+  }), /Codex executable unavailable/u)
+})
+
+test('client launch plan installs when needed, builds once, and forces the Node desktop backend', () => {
+  const plan = planClientLaunch({
+    argv: [],
+    env: {KEEP_ME: 'yes'},
+    envFileContents: [
+      'TAVILY_API_KEY=from-file',
+      'KEEP_ME=from-file',
+      'NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/configured/workspace',
+      '',
+    ].join('\n'),
+    platform: 'darwin',
+    rootDir: '/repo',
+    nodeExecutable: '/opt/node',
+    npmCli: '/opt/npm/bin/npm-cli.js',
+    codexBinary: '/opt/codex/bin/codex',
+    envFileExists: true,
+    dependenciesInstalled: false,
+  })
+
+  assert.deepEqual(plan.map(step => ({command: step.command, args: step.args})), [
+    {command: '/opt/node', args: ['/opt/npm/bin/npm-cli.js', 'ci']},
+    {
+      command: '/opt/node',
+      args: ['/repo/desktop/ambient-orb/node_modules/electron/install.js'],
+    },
+    {command: '/opt/node', args: ['/opt/npm/bin/npm-cli.js', 'run', 'build']},
+    {
+      command: '/opt/node',
+      args: [
+        '/opt/npm/bin/npm-cli.js',
+        'run',
+        'start:built',
+        '--workspace',
+        '@nova-audio-agent/ambient-orb',
+      ],
+    },
+  ])
+  assert.equal(plan[3].env.KEEP_ME, 'yes')
+  assert.equal(plan[3].env.TAVILY_API_KEY, 'from-file')
+  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_BACKEND, 'node')
+  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_CODEX_BIN, '/opt/codex/bin/codex')
+  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/configured/workspace')
+  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_ENV_FILE, '/repo/.env')
+})
+
+test('client launch plan is Windows-safe and skips an unnecessary install', () => {
+  const plan = planClientLaunch({
+    argv: [],
+    env: {},
+    platform: 'win32',
+    rootDir: 'C:\\repo',
+    nodeExecutable: 'C:\\Node\\node.exe',
+    npmCli: 'C:\\Node\\node_modules\\npm\\bin\\npm-cli.js',
+    codexBinary: 'C:\\Tools\\codex.exe',
+    envFileExists: true,
+    dependenciesInstalled: true,
+  })
+
+  assert.deepEqual(plan.map(step => ({command: step.command, args: step.args})), [
+    {
+      command: 'C:\\Node\\node.exe',
+      args: [
+        'C:\\Node\\node_modules\\npm\\bin\\npm-cli.js',
+        'run',
+        'build',
+      ],
+    },
+    {
+      command: 'C:\\Node\\node.exe',
+      args: [
+        'C:\\Node\\node_modules\\npm\\bin\\npm-cli.js',
+        'run',
+        'start:built',
+        '--workspace',
+        '@nova-audio-agent/ambient-orb',
+      ],
+    },
+  ])
+})
+
+test('client launch plan fails before side effects when setup is incomplete', () => {
+  assert.throws(() => planClientLaunch({
+    argv: [],
+    env: {},
+    platform: 'linux',
+    rootDir: '/repo',
+    envFileExists: false,
+    dependenciesInstalled: false,
+  }), /missing \.env; run: cp \.env\.example \.env/u)
+
+  assert.throws(() => planClientLaunch({
+    argv: ['unexpected'],
+    env: {},
+    platform: 'linux',
+    rootDir: '/repo',
+    envFileExists: true,
+    dependenciesInstalled: true,
+  }), /does not accept arguments/u)
+
+  assert.throws(() => planClientLaunch({
+    argv: [],
+    env: {},
+    platform: 'win32',
+    rootDir: 'C:\\repo',
+    nodeExecutable: 'C:\\Node\\node.exe',
+    npmCli: 'npm-cli.js',
+    envFileExists: true,
+    dependenciesInstalled: true,
+  }), /npm CLI unavailable/u)
+
+  assert.throws(() => planClientLaunch({
+    argv: [],
+    env: {},
+    platform: 'linux',
+    rootDir: '/repo',
+    nodeExecutable: '/opt/node',
+    npmCli: '/opt/npm/bin/npm-cli.js',
+    codexBinary: 'codex',
+    envFileExists: true,
+    dependenciesInstalled: true,
+  }), /Codex executable unavailable/u)
+})

@@ -81,6 +81,22 @@ test('search, watch, and structured evidence use closed field allowlists', () =>
   assert.doesNotMatch(state, /private_name/u)
 })
 
+test('structured numeric evidence uses deterministic Python float spelling', () => {
+  const cases = [
+    [20, 'ha 报告：brightness_pct=20'],
+    [20.5, 'ha 报告：brightness_pct=20.5'],
+    [1e16, 'ha 报告：elapsed=1e+16'],
+    [1e-7, 'ha 报告：elapsed=1e-07'],
+    [-0, 'ha 报告：elapsed=-0.0'],
+  ] as const
+  for (const [value, expected] of cases) {
+    const key = expected.includes('brightness_pct') ? 'brightness_pct' : 'elapsed'
+    assert.equal(safeMemoryEvidence(item('ha', {[key]: value}, {
+      trust: 'trusted_system',
+    })), expected)
+  }
+})
+
 test('unknown channels cannot expose arbitrary nested content', () => {
   assert.equal(safeMemoryEvidence(item('unknown', {
     raw: 'NEVER-EXPOSE',
