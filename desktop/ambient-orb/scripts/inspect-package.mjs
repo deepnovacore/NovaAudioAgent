@@ -1227,14 +1227,19 @@ function parseSevenZipListing(listing) {
   const flush = () => {
     if (fields.size === 0) return
     if (
-      fields.has('Symbolic Link')
-      || fields.has('Hard Link')
+      fields.has('Hard Link')
       || !fields.has('Path')
       || !fields.has('Size')
     ) containerListingRejected()
     const attributes = fields.get('Attributes') ?? ''
     const posixMode = /(?:^|\s)([bcdlps-][rwxStTs-]{9})(?:\s|$)/u.exec(attributes)?.[1]
-    if (posixMode !== undefined && posixMode[0] !== '-' && posixMode[0] !== 'd') {
+    const symbolicTarget = fields.get('Symbolic Link')
+    if (
+      posixMode !== undefined
+      && posixMode[0] !== '-'
+      && posixMode[0] !== 'd'
+      && posixMode[0] !== 'l'
+    ) {
       containerListingRejected()
     }
     const folderField = fields.get('Folder')
@@ -1256,8 +1261,18 @@ function parseSevenZipListing(listing) {
     if (!/^(?:0|[1-9]\d*)$/u.test(rawSize)) containerListingRejected()
     const size = Number(rawSize)
     if (!Number.isSafeInteger(size) || size < 0) containerListingRejected()
-    if (/\bl[rwxStTs-]{9}\b/u.test(attributes) || /(?:^|\s)L(?:\s|$)/u.test(attributes)) {
-      containerListingRejected()
+    const linkAttributes = posixMode?.[0] === 'l' || /(?:^|\s)L(?:\s|$)/u.test(attributes)
+    if (symbolicTarget !== undefined || linkAttributes) {
+      if (
+        symbolicTarget === undefined
+        || folder
+        || (folderField !== undefined && folderField !== '-')
+        || (posixMode !== undefined && posixMode[0] !== 'l')
+      ) containerListingRejected()
+      assertSafeSymlink(path, symbolicTarget)
+      records.push({ path, raw_path: rawPath, type: 'link', size: 0, target: symbolicTarget })
+      fields = new Map()
+      return
     }
     if (folder && size !== 0) containerListingRejected()
     records.push({ path, raw_path: rawPath, type: folder ? 'directory' : 'file', size })
@@ -1283,11 +1298,14 @@ function parseDebListing(listing) {
   for (const line of boundedListingLines(listing)) {
     if (line === '') continue
     const match = /^([bcdlps-][rwxStTs-]{9})\s+\S+\/\S+\s+(\d+)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+(.+)$/u.exec(line)
-    if (!match || (match[1][0] !== 'd' && match[1][0] !== '-')) {
+    if (!match || (match[1][0] !== 'd' && match[1][0] !== '-' && match[1][0] !== 'l')) {
       containerListingRejected()
     }
     const directory = match[1][0] === 'd'
-    const listedPath = match[3]
+    const link = match[1][0] === 'l'
+    const linkMatch = link ? /^(.*?) -> (.+)$/u.exec(match[3]) : undefined
+    if (link && !linkMatch) containerListingRejected()
+    const listedPath = linkMatch?.[1] ?? match[3]
     const rawPath = directory && listedPath.endsWith('/') ? listedPath.slice(0, -1) : listedPath
     if (directory && (rawPath === '' || rawPath === '.')) continue
     const path = canonicalContainerPath(rawPath)
@@ -1295,7 +1313,13 @@ function parseDebListing(listing) {
     if (!Number.isSafeInteger(size) || size < 0 || (directory && size !== 0)) {
       containerListingRejected()
     }
-    records.push({ path, raw_path: rawPath, type: directory ? 'directory' : 'file', size })
+    if (link) {
+      const target = linkMatch[2]
+      assertSafeSymlink(path, target)
+      records.push({ path, raw_path: rawPath, type: 'link', size: 0, target })
+    } else {
+      records.push({ path, raw_path: rawPath, type: directory ? 'directory' : 'file', size })
+    }
   }
   return records
 }
@@ -1345,7 +1369,13 @@ function expectedContainerPaths(records) {
     }
     const prior = expected.get(record.path)
     if (prior && prior.type !== record.type) containerListingRejected()
-    expected.set(record.path, { type: record.type, size: record.size })
+    expected.set(record.path, {
+      type: record.type,
+      size: record.size,
+      sha256: record.type === 'link'
+        ? createHash('sha256').update(record.target).digest('hex')
+        : undefined,
+    })
     if (expected.size > MAX_CANDIDATE_FILES) containerListingRejected()
   }
   return expected
@@ -1375,6 +1405,7 @@ export async function extractPreflightedContainer({
         !wanted
         || actual.type !== wanted.type
         || (actual.type === 'file' && actual.size !== wanted.size)
+        || (actual.type === 'link' && actual.sha256 !== wanted.sha256)
       ) containerListingRejected()
     }
     return Object.freeze({ records, sha256: inventory.sha256 })

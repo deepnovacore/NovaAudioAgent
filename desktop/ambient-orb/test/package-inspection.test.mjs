@@ -619,6 +619,80 @@ test('container preflight accepts bounded 7z and deb file inventories', () => {
   ])
 })
 
+test('container preflight admits only internal relative links and verifies their extracted targets', async () => {
+  const sevenZip = packageInspection.preflightContainerListing({
+    format: 'appimage',
+    listing: [
+      'Path = AppRun',
+      'Size = 12',
+      'Packed Size = 0',
+      'Attributes = A lrwxrwxrwx',
+      'Symbolic Link = usr/bin/nova',
+      '',
+    ].join('\n'),
+  })
+  assert.deepEqual(sevenZip, [
+    { path: 'AppRun', raw_path: 'AppRun', type: 'link', size: 0, target: 'usr/bin/nova' },
+  ])
+
+  const deb = packageInspection.preflightContainerListing({
+    format: 'deb',
+    listing: 'lrwxrwxrwx root/root 12 2026-08-22 00:00 ./usr/bin/nova -> ../lib/nova\n',
+  })
+  assert.deepEqual(deb, [
+    {
+      path: 'usr/bin/nova', raw_path: './usr/bin/nova',
+      type: 'link', size: 0, target: '../lib/nova',
+    },
+  ])
+
+  for (const [format, listing] of [
+    ['appimage', [
+      'Path = AppRun', 'Size = 0', 'Attributes = A lrwxrwxrwx',
+      'Symbolic Link = /outside', '',
+    ].join('\n')],
+    ['deb', 'lrwxrwxrwx root/root 7 2026-08-22 00:00 ./usr/bin/nova -> ../../../outside\n'],
+  ]) {
+    assert.throws(
+      () => packageInspection.preflightContainerListing({ format, listing }),
+      PackageInspectionError,
+    )
+  }
+
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-container-safe-link-'))
+  const raw = resolve(root, 'raw')
+  try {
+    await packageInspection.extractPreflightedContainer({
+      format: 'appimage',
+      listing: [
+        'Path = usr', 'Size = 0', 'Attributes = D drwxr-xr-x', '',
+        'Path = usr/bin', 'Size = 0', 'Attributes = D drwxr-xr-x', '',
+        'Path = usr/bin/nova', 'Size = 4', 'Attributes = A -rwxr-xr-x', '',
+        'Path = AppRun', 'Size = 12', 'Attributes = A lrwxrwxrwx',
+        'Symbolic Link = usr/bin/nova', '',
+      ].join('\n'),
+      destinationRoot: raw,
+      extract: async () => {
+        await mkdir(resolve(raw, 'usr/bin'), { recursive: true })
+        await writeFile(resolve(raw, 'usr/bin/nova'), 'nova')
+        await symlink('usr/bin/nova', resolve(raw, 'AppRun'))
+      },
+    })
+    await rm(raw, { recursive: true, force: true })
+    await assert.rejects(packageInspection.extractPreflightedContainer({
+      format: 'appimage',
+      listing: [
+        'Path = AppRun', 'Size = 12', 'Attributes = A lrwxrwxrwx',
+        'Symbolic Link = usr/bin/nova', '',
+      ].join('\n'),
+      destinationRoot: raw,
+      extract: async () => symlink('usr/bin/other', resolve(raw, 'AppRun')),
+    }), PackageInspectionError)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('installer inspection never executes an ELECTRON_BUILDER_7ZIP_PATH override', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'nova-container-tool-override-'))
   const candidate = resolve(root, 'candidate.exe')
