@@ -1,6 +1,12 @@
 {
   "name": "@nova-audio-agent/ambient-orb",
   "version": "0.1.0",
+  "description": "Local-first ambient voice agent desktop client",
+  "homepage": "https://github.com/deepnovacore/NovaAudioAgent",
+  "author": {
+    "name": "DeepNova Core",
+    "email": "opensource@deepnovacore.ai"
+  },
   "private": true,
   "type": "module",
   "main": "src/main/main.mjs",

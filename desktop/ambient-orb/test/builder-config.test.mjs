@@ -234,6 +234,16 @@ test('linux is described for packaging: category, icon dir, executable name, syn
   assert.equal(config.linux.synopsis, 'Nova ambient voice orb')
 })
 
+test('the staged application carries the complete deb maintainer metadata', async () => {
+  const pkg = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf8'))
+  assert.equal(pkg.description, 'Local-first ambient voice agent desktop client')
+  assert.equal(pkg.homepage, 'https://github.com/deepnovacore/NovaAudioAgent')
+  assert.deepEqual(pkg.author, {
+    name: 'DeepNova Core',
+    email: 'opensource@deepnovacore.ai',
+  })
+})
+
 test('nsis is a per-user, non-silent installer', () => {
   assert.equal(config.nsis.oneClick, false)
   assert.equal(config.nsis.perMachine, false)
