@@ -133,10 +133,27 @@ function mediaStub() {
   return { matchMedia, queries, find, emit }
 }
 
+// The atlas layout, mirrored from orb-visual.mjs, which keeps these private: four
+// sprite sizes across, seven colour tiers down, each row SPRITE_MAX tall, and the
+// plate region below all of them. Used only to reason about the atlas geometry —
+// nothing here asserts a particular sprite size.
+const SPRITE_COLUMNS = 4
+const SPRITE_MAX = 15
+const ROW_COUNT = 7
+
+// Particle blits only. The plate is blitted from the same atlas at the top of
+// every frame, under 'source-over', so the additive operation is what separates
+// the field from its background here — and every helper below has to agree on
+// that, or a plate counted as a particle would skew both the counts and the
+// radius means.
+function particleBlits(context) {
+  return context.calls.drawImage.filter(call => call.operation === 'lighter')
+}
+
 // Sprites are drawn with the 9-argument form (atlas cell → destination box),
 // so the on-screen centre of each particle lives in the destination rect.
 function centres(context) {
-  return context.calls.drawImage.map(call => ({
+  return particleBlits(context).map(call => ({
     x: call.args[5] + call.args[7] / 2,
     y: call.args[6] + call.args[8] / 2,
   }))
@@ -151,7 +168,7 @@ function meanRadius(context) {
 }
 
 function drawnCount(context) {
-  return context.calls.drawImage.length
+  return particleBlits(context).length
 }
 
 function resetDraws(context) {
@@ -291,17 +308,36 @@ test('paletteColors returns the exact ember table', () => {
 
   assert.ok(Object.isFrozen(ember))
   assert.deepEqual({ ...ember }, {
+    // The four sprite tiers are unchanged: make-icons.mjs keeps its own copy of
+    // these three ember hexes, so the app icon tracks the orb's stars.
     core: '#FFB454',
     highlight: '#FFE3B3',
     deep: '#C96F2B',
     dust: '#8C5A2B',
     dustAlpha: 0.25,
-    plate: 'rgba(20, 14, 8, .55)',
+    // The flat `plate` fill is gone: the disc is composited from these layers
+    // instead, which is where its depth comes from.
+    abyss: 'rgba(6, 5, 10, .95)',
+    mantle: 'rgba(26, 17, 18, .9)',
+    bloom: 'rgba(92, 51, 27, .78)',
+    bloomOffset: 0.1,
+    haze: [
+      { x: -0.3, y: -0.26, radius: 0.62, color: '#8C4A1E', alpha: 0.2 },
+      { x: 0.32, y: 0.2, radius: 0.55, color: '#6E3D5A', alpha: 0.16 },
+      { x: 0.08, y: 0.38, radius: 0.44, color: '#2E4668', alpha: 0.13 },
+    ],
+    vignette: '#020205',
+    rim: 'rgba(255, 214, 156, .12)',
     ring: 'rgba(255, 214, 156, .22)',
     codexBand: '#FFD9A0',
     error: '#FF5A5A',
     inactive: '#6E6A63',
   })
+  // The haze list and its entries are frozen too: the plate is built from this
+  // table on every atlas rebuild, so a mutable entry would let one palette swap
+  // permanently alter how the disc composites.
+  assert.ok(Object.isFrozen(ember.haze))
+  for (const cloud of ember.haze) assert.ok(Object.isFrozen(cloud))
 })
 
 test('paletteColors returns the exact graphite table', () => {
@@ -312,11 +348,47 @@ test('paletteColors returns the exact graphite table', () => {
     core: '#E8ECF2',
     mid: '#9AA3AF',
     shadow: '#3A404A',
-    plate: 'rgba(10, 12, 16, .6)',
+    abyss: 'rgba(4, 6, 10, .95)',
+    mantle: 'rgba(16, 20, 27, .9)',
+    bloom: 'rgba(62, 74, 92, .72)',
+    bloomOffset: 0.1,
+    haze: [
+      { x: -0.28, y: -0.28, radius: 0.6, color: '#4A5A72', alpha: 0.18 },
+      { x: 0.3, y: 0.22, radius: 0.52, color: '#38506B', alpha: 0.14 },
+      { x: 0.06, y: 0.36, radius: 0.42, color: '#2A3346', alpha: 0.12 },
+    ],
+    vignette: '#010204',
+    rim: 'rgba(232, 236, 242, .1)',
     ring: 'rgba(232, 236, 242, .18)',
     accent: '#FFC978',
     error: '#FF6B6B',
   })
+  assert.ok(Object.isFrozen(graphite.haze))
+  for (const cloud of graphite.haze) assert.ok(Object.isFrozen(cloud))
+})
+
+// Both palettes feed the same renderPlate, so a field missing from one of them
+// would surface as a silently broken gradient stop rather than a throw.
+test('both palettes carry every layer renderPlate composites', () => {
+  for (const name of ['ember', 'graphite']) {
+    const colors = paletteColors(name)
+    for (const field of ['abyss', 'mantle', 'bloom', 'vignette', 'rim']) {
+      assert.equal(typeof colors[field], 'string', `${name}.${field} is a colour`)
+    }
+    assert.equal(typeof colors.bloomOffset, 'number', `${name}.bloomOffset is a number`)
+    // The bloom is lifted off centre to give the disc a near side; dead centre
+    // reads as a flat ring, and past a third of the radius it detaches.
+    assert.ok(
+      colors.bloomOffset > 0 && colors.bloomOffset < 0.35,
+      `${name}.bloomOffset lifts the core glow without detaching it`,
+    )
+    assert.ok(colors.haze.length >= 2, `${name} carries haze clouds`)
+    for (const cloud of colors.haze) {
+      assert.ok(Math.hypot(cloud.x, cloud.y) + cloud.radius <= 1.05, 'a cloud stays on the plate')
+      assert.ok(cloud.alpha > 0 && cloud.alpha < 0.5, 'a cloud stays a haze, not a blob')
+      assert.match(cloud.color, /^#[0-9A-Fa-f]{6}$/)
+    }
+  }
 })
 
 test('paletteColors falls back to ember for an unknown palette', () => {
@@ -358,12 +430,58 @@ test('composites particles additively from the atlas', () => {
   mounted.step()
 
   const draws = mounted.context.calls.drawImage
-  assert.ok(draws.length > 0)
-  for (const draw of draws) {
+  // The plate goes down first, under 'source-over': it is the background the
+  // field is composited onto, so it is the one blit that must not be additive.
+  assert.ok(draws.length > 1)
+  assert.equal(draws[0].operation, 'source-over')
+  assert.equal(draws[0].alpha, 1, 'the plate is blitted at full strength')
+
+  const particles = draws.slice(1)
+  assert.ok(particles.length > 0)
+  for (const draw of particles) {
     assert.equal(draw.operation, 'lighter')
     assert.equal(draw.args.length, 9, 'atlas cell blit')
     assert.ok(draw.alpha > 0 && draw.alpha <= 1)
   }
+  mounted.visual.destroy()
+})
+
+test('the plate is composited into the atlas once, then only blitted per frame', () => {
+  const mounted = mount()
+
+  // The plate shares the sprite atlas rather than taking a second texture, so
+  // one palette or pixel-ratio rebuild keeps both in step.
+  assert.equal(mounted.offscreen.length, 1, 'still a single offscreen texture')
+  const atlas = mounted.offscreen[0]
+  const gradientsAfterInit = atlas.calls.gradients
+  // Four sprite sizes across seven tiers, plus the plate's own base, haze, and
+  // vignette gradients: the plate's share is what the sprite grid cannot explain.
+  assert.ok(
+    gradientsAfterInit > SPRITE_COLUMNS * ROW_COUNT,
+    `the plate contributes gradients of its own (${gradientsAfterInit})`,
+  )
+  // Layers are painted, and the rim light is the only stroke in the build.
+  assert.ok(atlas.calls.fill > 0, 'the plate layers are filled')
+  assert.ok(atlas.calls.stroke > 0, 'the rim light is stroked')
+
+  mounted.step()
+  // drawImage(image, sx, sy, sW, sH, dx, dy, dW, dH)
+  const [image, sx, sy, sourceWidth, sourceHeight, ...destination] = mounted
+    .context.calls.drawImage[0].args
+  assert.equal(image, atlas, 'blitted from the atlas, not a second canvas')
+  assert.deepEqual(destination, [0, 0, 116, 116], 'covers the full orb box')
+  assert.equal(sx, 0)
+  assert.equal(sourceWidth, sourceHeight, 'a square source region')
+  assert.ok(sourceWidth > 0)
+  // The plate region sits below every sprite row, so its source y clears them
+  // and the region it names still fits inside the texture.
+  assert.ok(sy >= SPRITE_MAX * 2 * ROW_COUNT, `the plate clears the sprite rows (sy ${sy})`)
+  assert.equal(sy + sourceHeight, atlas.height, 'the plate closes out the texture')
+
+  for (let index = 0; index < 5; index += 1) mounted.step()
+  assert.equal(atlas.calls.gradients, gradientsAfterInit, 'no re-compositing per frame')
+  assert.equal(mounted.context.calls.gradients, 0, 'nothing gradient-drawn on screen')
+  assert.equal(mounted.offscreen.length, 1)
   mounted.visual.destroy()
 })
 
