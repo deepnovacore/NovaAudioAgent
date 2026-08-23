@@ -286,18 +286,34 @@ test('desktop and runtime peer surfaces cannot widen the production closure', ()
 })
 
 test('configured graph follows the target-applicable lock closure without treating package filenames as executables', async () => {
-  const result = await inspectConfiguredPackage({ targetId: 'darwin-arm64' })
+  const targetId = process.platform === 'darwin'
+    ? `darwin-${process.arch}`
+    : process.platform === 'win32'
+      ? `win32-${process.arch}`
+      : `linux-${process.arch}-gnu`
+  const localInferencePackage = {
+    'darwin-arm64': '@livekit/local-inference-darwin-arm64@0.2.7',
+    'darwin-x64': '@livekit/local-inference-darwin-x64@0.2.7',
+    'linux-x64-gnu': '@livekit/local-inference-linux-x64-gnu@0.2.7',
+    'win32-x64': '@livekit/local-inference-win32-x64-msvc@0.2.7',
+  }[targetId]
+  assert.ok(localInferencePackage, `unsupported package-inspection test target: ${targetId}`)
+
+  const result = await inspectConfiguredPackage({ targetId })
   assert.ok(result.selectedPackages.includes('@livekit/agents@1.6.4'))
   assert.ok(result.selectedPackages.includes('@livekit/local-inference@0.2.7'))
-  assert.ok(result.selectedPackages.includes('@livekit/local-inference-darwin-arm64@0.2.7'))
+  assert.ok(result.selectedPackages.includes(localInferencePackage))
   assert.ok(result.selectedPackages.includes('fluent-ffmpeg@2.1.3'))
   assert.deepEqual(
     result.selectedPackages.filter(value => /ffmpeg/iu.test(value)),
     ['fluent-ffmpeg@2.1.3'],
     'only the locked LiveKit public-root JavaScript wrapper exception is selected',
   )
-  assert.ok(!result.selectedPackages.some(value => value.includes('linux-x64')))
-  assert.ok(!result.selectedPackages.some(value => value.includes('win32-x64')))
+  assert.equal(
+    result.selectedPackages.filter(value => value.startsWith('@livekit/local-inference-')).length,
+    1,
+    'only the current target local-inference package is selected',
+  )
   assert.ok(!result.includedFiles.some(value => /\.test\.(?:c?m?js|ts)$/u.test(value)))
   assert.ok(!result.includedFiles.some(value => value.endsWith('.map')))
   assert.ok(!result.includedFiles.some(value => /\.(?:snap|png|mts)$/u.test(value)))
