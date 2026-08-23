@@ -119,7 +119,6 @@ async function establishRelatedWorkspaces(path: string, idPrefix: string) {
 test('durable relation restarts into bounded text-only suggestion context and read-only board', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-graph-e2e-text-'))
   const path = join(directory, 'graph.sqlite')
-  t.after(() => rm(directory, {recursive: true, force: true}))
   const established = await establishRelatedWorkspaces(path, 'established')
   await established.service.close()
 
@@ -136,7 +135,10 @@ test('durable relation restarts into bounded text-only suggestion context and re
       },
     },
   })
-  t.after(() => restarted.close())
+  t.after(async () => {
+    await restarted.close()
+    await rm(directory, {recursive: true, force: true})
+  })
   await restarted.open()
   const current = await restarted.openWorkspace({
     path: '/safe/nova-alpha', repository_fingerprint: 'host-alpha', now: 5,
@@ -559,7 +561,6 @@ test('ASR aliases cannot route while explicit confirmation only changes identity
 test('suppression survives compaction, removes recall, and does not lock a later receipted write', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-graph-e2e-compaction-'))
   const path = join(directory, 'graph.sqlite')
-  t.after(() => rm(directory, {recursive: true, force: true}))
   const established = await establishRelatedWorkspaces(path, 'compact-established')
   const sourceId = established.current.logical_workspace.logical_workspace_id
   const targetId = established.second.logical_workspace.logical_workspace_id
@@ -573,7 +574,12 @@ test('suppression survives compaction, removes recall, and does not lock a later
   await established.service.close()
 
   const store = new WorkspaceGraphStoreClient(path)
-  t.after(() => store.close())
+  const cleanup = {restarted: undefined as WorkspaceGraphService | undefined}
+  t.after(async () => {
+    await cleanup.restarted?.close()
+    await store.close()
+    await rm(directory, {recursive: true, force: true})
+  })
   await store.open()
   const suppressionOperationId = '88888888-8888-4888-8888-888888888888'
   await store.suppressRelation(sourceId, targetId, 'shares_runtime', {
@@ -614,7 +620,7 @@ test('suppression survives compaction, removes recall, and does not lock a later
   await store.close()
 
   const restarted = new WorkspaceGraphService({path, id_factory: sequence('compact-restarted')})
-  t.after(() => restarted.close())
+  cleanup.restarted = restarted
   await restarted.open()
   const current = await restarted.openWorkspace({
     path: '/safe/nova-alpha', repository_fingerprint: 'host-alpha', now: 1_000,
