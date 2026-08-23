@@ -33,6 +33,31 @@ cp .env.example .env
 npm run start:client
 ```
 
+对于集成 Qwen 的源码启动，通常使用 `DASHSCOPE_API_KEY` 作为 realtime 凭据。只有当
+`NOVA_AUDIO_AGENT_MODEL_BASE_URL` **完全等于**
+`https://dashscope.aliyuncs.com/compatible-mode/v1` 时，才可以改用
+`NOVA_AUDIO_AGENT_MODEL_API_KEY`；不同地址不会让通用密钥成为 Qwen realtime 凭据。
+
+## 未签名 Windows 与 Ubuntu 开发候选包
+
+GitHub Actions 工作流 **Unsigned Windows and Ubuntu packages** 产出的是未签名开发候选包，而非
+已签名发布版。请下载其 `unsigned-win32-x64` 或 `unsigned-linux-x64-gnu` 工作流 artifact，并使用其中
+稳定的文件名：`nova-win32-x64.exe`、`nova-linux-x64.AppImage` 与 `nova-linux-x64.deb`。使用前先确认
+下载来自预期的工作流运行。
+
+未签名的 `nova-win32-x64.exe` 在 Windows 上可能触发 SmartScreen 警告。请保持 SmartScreen 和其他
+Windows 安全防护开启；先核验工作流运行和文件，再决定是否使用该候选包。Linux 上，请先为 AppImage
+添加可执行权限并直接运行：
+
+```bash
+chmod u+x nova-linux-x64.AppImage
+./nova-linux-x64.AppImage
+```
+
+请通过系统包管理器安装 `nova-linux-x64.deb`（例如 Ubuntu 可运行
+`sudo apt install ./nova-linux-x64.deb`）。每个候选包的构建和验证状态以对应工作流为准；本指南不声称
+原生 CI 已通过。
+
 仓库内 Node 检查均可离线、确定性运行：
 
 ```bash

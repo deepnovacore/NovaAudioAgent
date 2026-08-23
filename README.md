@@ -152,6 +152,27 @@ Chromium's audio stack.
 > JSONL exists only for historical parser fixtures. Signed three-platform candidates,
 > clean-machine runs, hardware validation, and publication evidence remain pending.
 
+### Unsigned Windows and Ubuntu development candidates
+
+The GitHub Actions workflow **Unsigned Windows and Ubuntu packages** produces unsigned development
+candidates, not signed releases. Its workflow artifacts are `unsigned-win32-x64` and
+`unsigned-linux-x64-gnu`; look inside them for `nova-win32-x64.exe`,
+`nova-linux-x64.AppImage`, and `nova-linux-x64.deb`. Treat each download as a development
+candidate and verify that it came from the intended workflow run before using it.
+
+Windows may show a SmartScreen warning because `nova-win32-x64.exe` is unsigned. Keep SmartScreen
+and other Windows security protections enabled; verify the workflow run and file before deciding
+whether to use the candidate. On Linux, make the AppImage executable and run it directly:
+
+```bash
+chmod u+x nova-linux-x64.AppImage
+./nova-linux-x64.AppImage
+```
+
+Install `nova-linux-x64.deb` with the system package manager (on Ubuntu, for example,
+`sudo apt install ./nova-linux-x64.deb`). The workflow is the record for an individual candidate's
+build and validation state; this documentation does not claim native CI has passed.
+
 ### Named Codex workspaces and Sessions
 
 Realtime Codex can opt into isolated named workspaces and persistent Sessions. Project mode is
@@ -234,8 +255,12 @@ npm run start:client
 The launcher always starts the Node runtime and Electron renderer with context isolation,
 sandboxing, and a narrow preload bridge. It requires Node.js, the `codex` executable, microphone
 permission, and `TAVILY_API_KEY` in `.env` or the invoking shell; shell variables take precedence
-over `.env`. `DASHSCOPE_API_KEY` is required only for integrated Qwen and cascaded Qwen. Cascaded
-Ark requires `ARK_API_KEY` for its LLM plus `DOUBAO_BIGMODEL_API_KEY` for Volcengine TTS and ASR
+over `.env`. `DASHSCOPE_API_KEY` is required only for integrated Qwen and cascaded Qwen. For
+integrated-Qwen source startup, `NOVA_AUDIO_AGENT_MODEL_API_KEY` can stand in for it only when
+`NOVA_AUDIO_AGENT_MODEL_BASE_URL` is exactly
+`https://dashscope.aliyuncs.com/compatible-mode/v1`; another base URL does not make the generic
+key a Qwen realtime credential. Cascaded Ark requires `ARK_API_KEY` for its LLM plus
+`DOUBAO_BIGMODEL_API_KEY` for Volcengine TTS and ASR
 fallback; `DOUBAO_ASR_API_KEY` is an optional ASR override. On macOS it also builds the native
 VoiceProcessingIO helper for system-level echo cancellation; Windows and Linux use Chromium's echo
 cancellation instead. Linux sessions run on X11 (Wayland sessions go through XWayland). See

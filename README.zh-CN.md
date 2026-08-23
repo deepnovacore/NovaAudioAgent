@@ -129,6 +129,26 @@ executor 的完成并不待在一个回合制的 `reason → act → observe` �
 > **发布状态：** Node.js 与 TypeScript 是当前主运行时。Codex 只使用 app-server；JSONL 仅保留
 > 历史 parser fixture。三平台签名候选、clean-machine、硬件和正式发布证据仍待完成。
 
+### 未签名 Windows 与 Ubuntu 开发候选包
+
+GitHub Actions 工作流 **Unsigned Windows and Ubuntu packages** 产出的是未签名开发候选包，不是
+已签名发布版。其工作流 artifacts 分别为 `unsigned-win32-x64` 和
+`unsigned-linux-x64-gnu`，其中包含 `nova-win32-x64.exe`、`nova-linux-x64.AppImage` 与
+`nova-linux-x64.deb`。每个下载都应视为开发候选包，使用前先确认它来自预期的工作流运行。
+
+由于 `nova-win32-x64.exe` 未签名，Windows 可能显示 SmartScreen 警告。请保持 SmartScreen 和其他
+Windows 安全防护开启；先核验工作流运行和文件，再决定是否使用该候选包。Linux 上，请先为 AppImage
+添加可执行权限并直接运行：
+
+```bash
+chmod u+x nova-linux-x64.AppImage
+./nova-linux-x64.AppImage
+```
+
+请通过系统包管理器安装 `nova-linux-x64.deb`（例如 Ubuntu 可运行
+`sudo apt install ./nova-linux-x64.deb`）。每个候选包的构建和验证状态以对应工作流为准；本文不声称
+原生 CI 已通过。
+
 环境要求：Node.js 22+、npm、Git、已登录的 `codex` 可执行文件，以及受支持的桌面会话。构建原生
 helper 还需要：macOS 安装 Xcode Command Line Tools，Linux 在 `/usr/bin/cc` 提供 C 编译器，
 Windows 安装 Visual Studio Build Tools 并勾选 **Desktop development with C++** 工作负载。
@@ -204,8 +224,11 @@ npm run start:client
 
 启动器固定使用 Node 运行时，并拉起带上下文隔离、沙箱与窄 preload 桥的 Electron 渲染器。它需要
 Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或启动 shell 中的 `TAVILY_API_KEY`；shell
-变量优先于 `.env`。`DASHSCOPE_API_KEY` 只在集成 Qwen 和级联 Qwen 时必需。级联 Ark 的 LLM 需要
-`ARK_API_KEY`，并为火山 TTS 与 ASR 回退需要 `DOUBAO_BIGMODEL_API_KEY`；
+变量优先于 `.env`。`DASHSCOPE_API_KEY` 只在集成 Qwen 和级联 Qwen 时必需。对于集成 Qwen 的源码
+启动，只有当 `NOVA_AUDIO_AGENT_MODEL_BASE_URL` **完全等于**
+`https://dashscope.aliyuncs.com/compatible-mode/v1` 时，`NOVA_AUDIO_AGENT_MODEL_API_KEY` 才可替代
+它；其他地址不会让通用密钥成为 Qwen realtime 凭据。级联 Ark 的 LLM 需要 `ARK_API_KEY`，并为火山
+TTS 与 ASR 回退需要 `DOUBAO_BIGMODEL_API_KEY`；
 `DOUBAO_ASR_API_KEY` 是可选 ASR 覆盖。macOS 上还会构建原生 VoiceProcessingIO helper 以获得系统级
 回声消除；Windows 与 Linux 使用 Chromium 自带的回声消除。Linux 会话运行在 X11 上（Wayland 会话
 经由 XWayland）。分平台说明见[上手指南](docs/getting-started.zh-CN.md)。

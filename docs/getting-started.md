@@ -35,6 +35,33 @@ Start the desktop client:
 npm run start:client
 ```
 
+For integrated-Qwen source startup, `DASHSCOPE_API_KEY` is the normal realtime credential.
+`NOVA_AUDIO_AGENT_MODEL_API_KEY` can be used instead only when
+`NOVA_AUDIO_AGENT_MODEL_BASE_URL` is exactly
+`https://dashscope.aliyuncs.com/compatible-mode/v1`; a different base URL does not make the
+generic key a Qwen realtime credential.
+
+## Unsigned Windows and Ubuntu development candidates
+
+The GitHub Actions workflow **Unsigned Windows and Ubuntu packages** produces unsigned development
+candidates, not signed releases. Download its `unsigned-win32-x64` or
+`unsigned-linux-x64-gnu` workflow artifact and use the stable file names inside it:
+`nova-win32-x64.exe`, `nova-linux-x64.AppImage`, and `nova-linux-x64.deb`. Verify that a download
+came from the intended workflow run before using it.
+
+Windows may show a SmartScreen warning for the unsigned `nova-win32-x64.exe`. Keep SmartScreen and
+other Windows security protections enabled; verify the workflow run and file before deciding
+whether to use the candidate. On Linux, make the AppImage executable and run it directly:
+
+```bash
+chmod u+x nova-linux-x64.AppImage
+./nova-linux-x64.AppImage
+```
+
+Install `nova-linux-x64.deb` through the system package manager (on Ubuntu, for example,
+`sudo apt install ./nova-linux-x64.deb`). The workflow records an individual candidate's build and
+validation state; this guide does not claim native CI has passed.
+
 The repository-owned Node checks are offline and deterministic:
 
 ```bash
