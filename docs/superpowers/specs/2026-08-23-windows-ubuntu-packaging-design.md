@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-23
 
-**Status:** Approved in chat; awaiting review of this written specification
+**Status:** Approved in chat on 2026-08-23
 
 ## Goal
 
