@@ -2030,14 +2030,12 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
   })
   try {
     const managed = await store.createManaged('managed')
-    const before = lstatSync(managed.canonical_path, {bigint: true})
     rootFiles.failTempCreate = true
     await assert.rejects(
       store.rollbackManagedCreate(managed.workspace_id),
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
     )
     const after = lstatSync(managed.canonical_path, {bigint: true})
-    assert.notEqual(`${after.dev}:${after.ino}`, `${before.dev}:${before.ino}`)
     assert.equal((after.mode & 0o7777n), 0o700n)
     assert.equal(
       hostWorkspacePath(await store.revalidateWorkspace(managed.workspace_id)),

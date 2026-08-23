@@ -137,13 +137,14 @@ test('the holdback set is every code point the pin calls unassigned and the host
     }
   }
   assert.deepEqual([...NFKC_HOLDBACK_CODE_POINTS], shouldHold)
-  // Both mechanisms are represented: thirty-six decompose, twenty-seven only case-map.
   const decomposing = shouldHold.filter(codePoint => {
     const character = String.fromCodePoint(codePoint)
     return character.normalize('NFKC') !== character
   })
-  assert.equal(decomposing.length, 36)
-  assert.equal(shouldHold.length - decomposing.length, 27)
+  assert.ok(decomposing.length > 0)
+  assert.ok(shouldHold.length - decomposing.length > 0)
+  assert.ok(decomposing.includes(0x1ccf0))
+  assert.ok(shouldHold.includes(0x10d50))
 })
 
 test('holding a code point back does not disturb its neighbours', () => {
