@@ -1,41 +1,54 @@
-// The settings panel talks to nothing but main: no websocket, no backend, no
-// relay through the orb renderer. Every value it shows came from
-// `nova:settings:get`, and every change it makes goes out through
-// `nova:settings:set`, which answers with the stored state to render back.
+// The panel talks only to the constrained settings bridge. The controller
+// owns queued requests and drafts, which keeps an older bridge response from
+// erasing text the user typed while it was in flight.
+import { createSettingsController } from './settings-controller.mjs'
+import { createSecretRevisions } from './secret-revisions.mjs'
+
 const api = window.novaAudioAgentDesktop.settings
 
-const SECRET_KEYS = ['dashscopeApiKey', 'tavilyApiKey', 'modelApiKey', 'codexApiKey']
-// The panel's own labels for each key, reused for the rejected-secret error
-// line so it names fields the way the user sees them, not their JS key.
+const SECRET_KEYS = [
+  'dashscopeApiKey',
+  'tavilyApiKey',
+  'modelApiKey',
+  'codexApiKey',
+  'arkApiKey',
+  'doubaoBigmodelApiKey',
+  'doubaoAsrApiKey',
+]
 const SECRET_LABELS = {
   dashscopeApiKey: 'DashScope',
   tavilyApiKey: 'Tavily',
   modelApiKey: '模型网关',
   codexApiKey: 'Codex',
+  arkApiKey: 'Ark',
+  doubaoBigmodelApiKey: '豆包大模型',
+  doubaoAsrApiKey: '豆包 ASR',
 }
+const secretRevisions = createSecretRevisions(SECRET_KEYS)
 
 const statusLabel = document.querySelector('#status')
 const warning = document.querySelector('#keyring-warning')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
 const proactivityInputs = [...document.querySelectorAll('input[name="proactivity"]')]
+const pipelineModeInputs = [...document.querySelectorAll('input[name="pipelineMode"]')]
 const heartbeat = document.querySelector('#heartbeat')
 const heartbeatValue = document.querySelector('#heartbeat-value')
-const voice = document.querySelector('#voice')
-const saveSecretsButton = document.querySelector('#save-secrets')
-
-let saving = false
-// The newest patch waiting behind the save in flight, and the note to show once
-// it lands. Latest-wins per field is exactly right for radios and a slider: the
-// value on screen is the value the user last chose.
-let pendingPatch = null
-let pendingNote = null
+const integratedSection = document.querySelector('#integrated-pipeline')
+const cascadedSection = document.querySelector('#cascaded-pipeline')
+const integratedProvider = document.querySelector('#integratedProvider')
+const integratedModel = document.querySelector('#integratedModel')
+const integratedVoice = document.querySelector('#integratedVoice')
+const cascadedEndpointingProvider = document.querySelector('#cascadedEndpointingProvider')
+const cascadedAsrProvider = document.querySelector('#cascadedAsrProvider')
+const cascadedLlmProvider = document.querySelector('#cascadedLlmProvider')
+const cascadedLlmModel = document.querySelector('#cascadedLlmModel')
+const cascadedTtsProvider = document.querySelector('#cascadedTtsProvider')
+const cascadedTtsVoice = document.querySelector('#cascadedTtsVoice')
 
 function secretInput(key) {
   return document.querySelector(`#${key}`)
 }
 
-// Presence booleans only: main never sends a key value, so there is nothing
-// here to put back into a password field.
 function renderBadges(present) {
   for (const key of SECRET_KEYS) {
     const badge = document.querySelector(`#badge-${key}`)
@@ -45,127 +58,202 @@ function renderBadges(present) {
   }
 }
 
-function render(view) {
+// These labels reflect selected public providers only, never any key material.
+function keyUsage(view) {
+  return {
+    dashscopeApiKey: view.pipelineMode === 'integrated'
+      || view.cascadedLlmProvider === 'qwen' ? '必需' : '当前未使用',
+    arkApiKey: view.pipelineMode === 'cascaded'
+      && view.cascadedLlmProvider === 'ark' ? '必需' : '当前未使用',
+    doubaoBigmodelApiKey: view.pipelineMode === 'cascaded' ? '必需' : '当前未使用',
+    doubaoAsrApiKey: view.pipelineMode === 'cascaded' ? '可选覆盖' : '当前未使用',
+    tavilyApiKey: '可选',
+    modelApiKey: '可选',
+    codexApiKey: '可选',
+  }
+}
+
+function renderKeyUsage(view) {
+  for (const [key, usage] of Object.entries(keyUsage(view))) {
+    document.querySelector(`#usage-${key}`).textContent = usage
+  }
+}
+
+function renderText(input, draftKey, value, drafts) {
+  // A draft is a value typed locally after the response snapshot. Leave it on
+  // screen until its own exact save has synchronized it.
+  if (!Object.hasOwn(drafts, draftKey)) input.value = value ?? ''
+}
+
+function llmDraftKey(provider) {
+  return `cascadedLlmModel:${provider}`
+}
+
+function render(view, drafts) {
   if (!view) return
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
+  for (const input of pipelineModeInputs) input.checked = input.value === view.pipelineMode
   heartbeat.value = String(view.codexHeartbeatSeconds)
   heartbeatValue.textContent = `${view.codexHeartbeatSeconds} 秒`
-  voice.value = view.voice
+  integratedSection.hidden = view.pipelineMode !== 'integrated'
+  cascadedSection.hidden = view.pipelineMode !== 'cascaded'
+  integratedProvider.value = view.integratedProvider
+  renderText(integratedModel, 'integratedModel', view.integratedModel, drafts)
+  renderText(integratedVoice, 'integratedVoice', view.integratedVoice, drafts)
+  cascadedEndpointingProvider.value = view.cascadedEndpointingProvider
+  cascadedAsrProvider.value = view.cascadedAsrProvider
+  cascadedLlmProvider.value = view.cascadedLlmProvider
+  renderText(
+    cascadedLlmModel,
+    llmDraftKey(view.cascadedLlmProvider),
+    view.cascadedLlmModels?.[view.cascadedLlmProvider],
+    drafts,
+  )
+  cascadedTtsProvider.value = view.cascadedTtsProvider
+  renderText(cascadedTtsVoice, 'cascadedTtsVoice', view.cascadedTtsVoice, drafts)
   renderBadges(view.secretsPresent)
-  // No keyring on this machine: the file is plaintext-equivalent and says so.
+  renderKeyUsage(view)
   warning.hidden = view.keyringAvailable !== false
 }
 
-// Field-wise, and one level deeper wherever a field carries an object, so two
-// patches queued behind the same save cannot erase each other's fields. The
-// panel needs no knowledge of which field that is: the newest value wins per
-// leaf, which is what the radios, the slider, and the key form all want.
-function mergePatch(base, next) {
-  const merged = { ...base }
-  for (const [field, value] of Object.entries(next)) {
-    const existing = merged[field]
-    const bothObjects = value && typeof value === 'object'
-      && existing && typeof existing === 'object'
-    merged[field] = bothObjects ? { ...existing, ...value } : value
-  }
-  return merged
+const controller = createSettingsController({
+  api,
+  render,
+  status: note => { statusLabel.textContent = note },
+})
+
+function push(patch, note) {
+  return controller.push(patch, note)
 }
 
-async function push(patch, note) {
-  // A change made mid-save is coalesced rather than dropped: it waits for the
-  // in-flight save and is pushed the moment that one answers, so a quickly
-  // nudged slider still ends up stored at the value the user left it on.
-  if (saving) {
-    pendingPatch = mergePatch(pendingPatch, patch)
-    pendingNote = note
-    statusLabel.textContent = '保存中…'
-    return { saved: false, view: null }
+function recordDraft(input, key = input.id) {
+  controller.setDraft(key, input.value)
+}
+
+async function saveText(field, input) {
+  const value = input.value
+  recordDraft(input, field)
+  controller.applyLocal({ [field]: value })
+  const result = await push({ [field]: value }, '已保存')
+  if (result.saved && result.view?.[field] === value) controller.clearDraftIfEqual(field, value)
+}
+
+async function saveCascadedLlmModel() {
+  const provider = cascadedLlmProvider.value
+  const draftKey = llmDraftKey(provider)
+  const value = cascadedLlmModel.value
+  recordDraft(cascadedLlmModel, draftKey)
+  const patch = { cascadedLlmModels: { [provider]: value } }
+  controller.applyLocal(patch)
+  const result = await push(patch, '已保存')
+  if (result.saved && result.view?.cascadedLlmModels?.[provider] === value) {
+    controller.clearDraftIfEqual(draftKey, value)
   }
-  saving = true
-  saveSecretsButton.disabled = true
-  statusLabel.textContent = '保存中…'
-  let saved = false
-  let view = null
-  try {
-    view = await api.set(patch)
-    render(view)
-    saved = view?.saved !== false
-    statusLabel.textContent = saved ? note : '保存失败'
-  } catch {
-    statusLabel.textContent = '保存失败'
-  } finally {
-    saving = false
-    saveSecretsButton.disabled = false
-  }
-  if (pendingPatch) {
-    const nextPatch = pendingPatch
-    const nextNote = pendingNote
-    pendingPatch = null
-    pendingNote = null
-    void push(nextPatch, nextNote)
-  }
-  return { saved, view }
 }
 
 async function saveSecrets() {
   const secrets = {}
+  const submissions = {}
   for (const key of SECRET_KEYS) {
-    const value = secretInput(key).value
-    // Left blank means "keep whatever is stored", so it is simply not sent.
-    if (value) secrets[key] = value
+    const input = secretInput(key)
+    const value = input.value
+    if (!value) continue
+    // Capture a revision with the one forward write. Nothing secret is ever
+    // put in controller drafts or render snapshots.
+    const submission = secretRevisions.capture(key, value)
+    secrets[key] = submission.value
+    submissions[key] = submission
   }
   if (!Object.keys(secrets).length) {
     statusLabel.textContent = '没有要保存的密钥'
     return
   }
-  const { saved, view } = await push({ secrets }, '密钥已保存')
-  if (!saved) return
-  const rejected = new Set(view?.rejectedSecrets ?? [])
-  for (const key of Object.keys(secrets)) {
+  const result = await controller.saveSecrets(secrets)
+  if (!result.saved) return
+  for (const key of result.accepted) {
     const input = secretInput(key)
-    // Only what this call actually accepted is cleared: a rejected paste
-    // stays put so the user can see and fix it, instead of the field going
-    // blank while the badge still reads 未设置.
-    if (!rejected.has(key)) input.value = ''
+    if (secretRevisions.matches(key, input.value, submissions[key])) input.value = ''
   }
-  if (rejected.size) {
-    const labels = SECRET_KEYS.filter(key => rejected.has(key)).map(key => SECRET_LABELS[key])
+  if (result.rejected.length) {
+    const labels = result.rejected.map(key => SECRET_LABELS[key])
     statusLabel.textContent = `部分密钥未保存(含非法字符): ${labels.join('、')}`
   }
 }
 
 for (const input of paletteInputs) {
   input.addEventListener('change', () => {
+    controller.applyLocal({ palette: input.value })
     void push({ palette: input.value }, '配色已更新')
   })
 }
 for (const input of proactivityInputs) {
   input.addEventListener('change', () => {
+    controller.applyLocal({ proactivity: input.value })
     void push({ proactivity: input.value }, '已保存')
+  })
+}
+for (const input of pipelineModeInputs) {
+  input.addEventListener('change', () => {
+    controller.applyLocal({ pipelineMode: input.value })
+    void push({ pipelineMode: input.value }, '语音管线已保存')
   })
 }
 heartbeat.addEventListener('input', () => {
   heartbeatValue.textContent = `${heartbeat.value} 秒`
 })
 heartbeat.addEventListener('change', () => {
-  void push({ codexHeartbeatSeconds: Number(heartbeat.value) }, '已保存')
+  const value = Number(heartbeat.value)
+  controller.applyLocal({ codexHeartbeatSeconds: value })
+  void push({ codexHeartbeatSeconds: value }, '已保存')
 })
-voice.addEventListener('change', () => {
-  void push({ voice: voice.value }, '已保存')
+integratedProvider.addEventListener('change', () => {
+  controller.applyLocal({ integratedProvider: integratedProvider.value })
+  void push({ integratedProvider: integratedProvider.value }, '已保存')
 })
-saveSecretsButton.addEventListener('click', () => { void saveSecrets() })
+integratedModel.addEventListener('input', () => { recordDraft(integratedModel) })
+integratedModel.addEventListener('change', () => { void saveText('integratedModel', integratedModel) })
+integratedVoice.addEventListener('input', () => { recordDraft(integratedVoice) })
+integratedVoice.addEventListener('change', () => { void saveText('integratedVoice', integratedVoice) })
+cascadedEndpointingProvider.addEventListener('change', () => {
+  controller.applyLocal({ cascadedEndpointingProvider: cascadedEndpointingProvider.value })
+  void push({ cascadedEndpointingProvider: cascadedEndpointingProvider.value }, '已保存')
+})
+cascadedAsrProvider.addEventListener('change', () => {
+  controller.applyLocal({ cascadedAsrProvider: cascadedAsrProvider.value })
+  void push({ cascadedAsrProvider: cascadedAsrProvider.value }, '已保存')
+})
+cascadedLlmProvider.addEventListener('change', () => {
+  controller.applyLocal({ cascadedLlmProvider: cascadedLlmProvider.value })
+  void push({ cascadedLlmProvider: cascadedLlmProvider.value }, '已保存')
+})
+cascadedLlmModel.addEventListener('input', () => {
+  recordDraft(cascadedLlmModel, llmDraftKey(cascadedLlmProvider.value))
+})
+cascadedLlmModel.addEventListener('change', () => { void saveCascadedLlmModel() })
+cascadedTtsProvider.addEventListener('change', () => {
+  controller.applyLocal({ cascadedTtsProvider: cascadedTtsProvider.value })
+  void push({ cascadedTtsProvider: cascadedTtsProvider.value }, '已保存')
+})
+cascadedTtsVoice.addEventListener('input', () => { recordDraft(cascadedTtsVoice) })
+cascadedTtsVoice.addEventListener('change', () => { void saveText('cascadedTtsVoice', cascadedTtsVoice) })
+for (const key of SECRET_KEYS) {
+  secretInput(key).addEventListener('input', () => { secretRevisions.noteInput(key) })
+}
+document.querySelector('#save-secrets').addEventListener('click', () => { void saveSecrets() })
 for (const button of document.querySelectorAll('button.clear')) {
   button.addEventListener('click', () => {
-    const input = secretInput(button.dataset.key)
+    const key = button.dataset.key
+    const input = secretInput(key)
     input.value = ''
-    void push({ secrets: { [button.dataset.key]: '' } }, '密钥已清除')
+    secretRevisions.noteInput(key)
+    void push({ secrets: { [key]: '' } }, '密钥已清除')
   })
 }
 
 void (async () => {
   try {
-    render(await api.get())
+    controller.setView(await api.get())
   } catch {
     statusLabel.textContent = '读取设置失败'
   }

@@ -149,7 +149,8 @@ label.choice:focus-within {
 }
 
 input[type="text"],
-input[type="password"] {
+input[type="password"],
+select {
   background: var(--panel);
   color: var(--ink);
   border: 1px solid var(--line);
@@ -160,17 +161,18 @@ input[type="password"] {
 }
 
 input[type="text"]:focus,
-input[type="password"]:focus {
+input[type="password"]:focus,
+select:focus {
   outline: none;
   border-color: var(--accent);
 }
 
 .secret {
   display: grid;
-  grid-template-columns: 92px 1fr auto;
+  grid-template-columns: 92px auto 1fr auto;
   grid-template-areas:
-    "name badge clear"
-    "input input input";
+    "name badge usage clear"
+    "input input input input";
   align-items: center;
   gap: 6px;
   margin-bottom: 10px;
@@ -178,6 +180,7 @@ input[type="password"]:focus {
 
 .secret > label { grid-area: name; color: var(--ink-dim); }
 .secret > .badge { grid-area: badge; justify-self: start; }
+.secret > .key-usage { grid-area: usage; }
 .secret > input { grid-area: input; }
 .secret > button { grid-area: clear; }
 
@@ -192,6 +195,55 @@ input[type="password"]:focus {
 .badge[data-present="1"] {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.key-usage {
+  color: var(--ink-dim);
+  font-size: 11px;
+  justify-self: start;
+}
+
+.pipeline-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pipeline-tabs legend {
+  grid-column: 1 / -1;
+}
+
+.pipeline-tabs .choice {
+  margin-bottom: 0;
+}
+
+.pipeline-card {
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.pipeline-card h3 {
+  margin: 0 0 9px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.pipeline-card .field {
+  margin-bottom: 6px;
+}
+
+.pipeline-card .field:last-child {
+  margin-bottom: 0;
+}
+
+.pipeline-card select,
+.pipeline-card input[type="text"] {
+  flex: 1;
 }
 
 button {

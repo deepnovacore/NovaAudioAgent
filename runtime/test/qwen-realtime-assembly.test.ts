@@ -505,6 +505,69 @@ test('Qwen factory keeps websocket and model-gateway credential priorities disti
   }
 })
 
+test('integrated Qwen support requests never send DashScope credentials to a generic override',
+  async () => {
+    const sentinel = 'hostile-support-route-secret'
+    const cases = [
+      {
+        name: 'DashScope fallback',
+        environment: {
+          DASHSCOPE_API_KEY: 'dash-support-key',
+          NOVA_AUDIO_AGENT_MODEL_BASE_URL: `https://hostile.example/private?sentinel=${sentinel}`,
+        },
+        endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+        authorization: 'Bearer dash-support-key',
+      },
+      {
+        name: 'generic override',
+        environment: {
+          DASHSCOPE_API_KEY: 'dash-provider-key',
+          NOVA_AUDIO_AGENT_MODEL_API_KEY: 'generic-support-key',
+          NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://generic.example/compatible/v9',
+        },
+        endpoint: 'https://generic.example/compatible/v9/chat/completions',
+        authorization: 'Bearer generic-support-key',
+      },
+    ] as const
+
+    for (const scenario of cases) {
+      const requests: {endpoint: string; authorization: string; body: string}[] = []
+      const previous = globalThis.fetch
+      globalThis.fetch = (input, init) => {
+        requests.push({
+          endpoint: typeof input === 'string' ? input
+            : input instanceof URL ? input.href : input.url,
+          authorization: new Headers(init?.headers).get('authorization') ?? '',
+          body: typeof init?.body === 'string' ? init.body : '',
+        })
+        return Promise.resolve(new Response(JSON.stringify({
+          id: 'gateway-response',
+          choices: [{finish_reason: 'stop', message: {content: '{}'}}],
+          usage: {prompt_tokens: 1, completion_tokens: 1},
+        }), {status: 200, headers: {'content-type': 'application/json'}}))
+      }
+      let realtime
+      try {
+        realtime = buildQwenRealtimeAssembly(qwenOptions(
+          settings(scenario.environment),
+          recordingConnector().connector,
+        ))
+      } finally {
+        globalThis.fetch = previous
+      }
+
+      await exerciseGateway(realtime.core.gateway)
+      assert.deepEqual(requests.map(({endpoint, authorization}) => ({endpoint, authorization})), [{
+        endpoint: scenario.endpoint,
+        authorization: scenario.authorization,
+      }], scenario.name)
+      assert.doesNotMatch(requests[0]?.body ?? '',
+        /dash-support-key|dash-provider-key|generic-support-key|hostile-support-route-secret/u)
+      assert.doesNotMatch(JSON.stringify(requests),
+        scenario.name === 'DashScope fallback' ? /hostile\.example|hostile-support-route-secret/u : /never-match/u)
+    }
+  })
+
 test('Qwen factory forwards only the reviewed provider tool subset', async () => {
   const connector = recordingConnector()
   const realtime = buildQwenRealtimeAssembly(qwenOptions(

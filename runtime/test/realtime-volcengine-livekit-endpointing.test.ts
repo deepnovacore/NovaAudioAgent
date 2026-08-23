@@ -1,17 +1,14 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import type {RealtimeProviderEvent} from '../src/realtime/protocol.js'
-import {
-  VolcengineCascadedAdapter,
-  type VolcAsrClient,
-  type VolcAsrSession,
-  type VolcTtsClient,
-} from '../src/realtime/volcengine/adapter.js'
+import {CascadedRealtimeAdapter} from '../src/realtime/cascaded/adapter.js'
+import type {AsrClient, AsrSession, TtsClient} from '../src/realtime/cascaded/ports.js'
 import type {
-  ArkEvent,
-  ArkResponsesGateway,
-  ArkStreamInput,
-} from '../src/realtime/volcengine/ark.js'
+  CascadedLlmEvent,
+  CascadedLlmSession,
+} from '../src/realtime/cascaded/llm.js'
+
+type LlmStreamInput = Parameters<CascadedLlmSession['stream']>[0]
 import type {
   LiveKitAgentsPublicSurface,
   LiveKitAudioByteStream,
@@ -874,7 +871,7 @@ test('wholesale VAD frames beyond max utterance plus pre-roll are rejected inste
     await endpointing.close()
   })
 
-class OrderedAsrSession implements VolcAsrSession {
+class OrderedAsrSession implements AsrSession {
   readonly operations: string[]
   readonly appended: Uint8Array[] = []
   #release: (() => void) | null = null
@@ -902,28 +899,29 @@ class OrderedAsrSession implements VolcAsrSession {
   }
 }
 
-class OrderedAsrClient implements VolcAsrClient {
+class OrderedAsrClient implements AsrClient {
   readonly session: OrderedAsrSession
   readonly operations: string[]
   constructor(operations: string[]) {
     this.operations = operations
     this.session = new OrderedAsrSession(operations)
   }
-  open(): Promise<VolcAsrSession> {
+  open(): Promise<AsrSession> {
     this.operations.push('asr.open')
     return Promise.resolve(this.session)
   }
 }
 
-class EmptyArk implements ArkResponsesGateway {
-  async *stream(input: ArkStreamInput): AsyncIterable<ArkEvent> {
+class EmptyLlm implements CascadedLlmSession {
+  async *stream(input: LlmStreamInput): AsyncIterable<CascadedLlmEvent> {
     void input
     await Promise.resolve()
   }
+  abandonPendingResponse(): Promise<void> { return Promise.resolve() }
   close(): Promise<void> { return Promise.resolve() }
 }
 
-const unusedTts: VolcTtsClient = {
+const unusedTts: TtsClient = {
   open: () => Promise.reject(new Error('TTS is not expected in endpointing integration')),
 }
 
@@ -975,8 +973,8 @@ test('real Task7B adapter preserves endpoint start/audio/end, ASR, and transcrip
     const operations: string[] = []
     const asr = new OrderedAsrClient(operations)
     let nextId = 0
-    const adapter = new VolcengineCascadedAdapter({
-      endpointing, asr, tts: unusedTts, arkFactory: () => new EmptyArk(),
+    const adapter = new CascadedRealtimeAdapter({
+      endpointing, asr, tts: unusedTts, llm: new EmptyLlm(),
       idFactory: () => `livekit-order-${++nextId}`,
     })
     await adapter.connect({tools: [], signal: new AbortController().signal})

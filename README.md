@@ -199,9 +199,9 @@ npm ci
 cp .env.example .env
 ```
 
-For the default Qwen desktop, set both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in `.env` (or in
-the invoking shell). Search is always assembled, so Tavily is required even when it is not selected
-as an executor.
+For the default integrated Qwen desktop, set both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in
+`.env` (or in the invoking shell). Search is always assembled, so Tavily is required even when it
+is not selected as an executor.
 
 The deterministic CLI is available after a build:
 
@@ -217,8 +217,8 @@ devices.
 
 Nova is Chinese-first: the persona, production prompts, tool descriptions, CLI error messages, and
 default voice are Chinese. Current Node capabilities — deterministic sims, Tavily search, Codex
-over app-server, camera Watch/Guard, and Qwen or Volcengine realtime voice — are configured through
-environment variables;
+over app-server, camera Watch/Guard, and integrated or cascaded realtime voice — are configured
+through environment variables;
 per-integration setup, cautions, and the full variable reference are in
 [Getting started](docs/getting-started.md).
 
@@ -233,18 +233,35 @@ npm run start:client
 
 The launcher always starts the Node runtime and Electron renderer with context isolation,
 sandboxing, and a narrow preload bridge. It requires Node.js, the `codex` executable, microphone
-permission, and both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in `.env` or the invoking shell;
-shell variables take precedence over `.env`. On macOS it also builds the native VoiceProcessingIO
-helper for system-level echo cancellation; Windows and Linux use Chromium's echo cancellation
-instead. Linux sessions run on X11 (Wayland sessions go through XWayland). See
+permission, and `TAVILY_API_KEY` in `.env` or the invoking shell; shell variables take precedence
+over `.env`. `DASHSCOPE_API_KEY` is required only for integrated Qwen and cascaded Qwen. Cascaded
+Ark requires `ARK_API_KEY` for its LLM plus `DOUBAO_BIGMODEL_API_KEY` for Volcengine TTS and ASR
+fallback; `DOUBAO_ASR_API_KEY` is an optional ASR override. On macOS it also builds the native
+VoiceProcessingIO helper for system-level echo cancellation; Windows and Linux use Chromium's echo
+cancellation instead. Linux sessions run on X11 (Wayland sessions go through XWayland). See
 [Getting started](docs/getting-started.md) for the per-platform notes.
 
 Both the local-camera default and `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback use Chromium's
 camera pipeline.
 
-Qwen remains the default voice provider. The alternative Volcengine path is
-`Silero VAD v5.1.2 -> Seed ASR -> Doubao Seed 2.0 Pro -> Seed TTS 2.0`; configure the selected
-provider's credentials in `.env`.
+### Voice pipeline configuration
+
+The top-level choice is `integrated` or `cascaded`. The default integrated Qwen pipeline uses
+`qwen-audio-3.0-realtime-plus`, the `longanqian` voice, and `DASHSCOPE_API_KEY`; it does not expose
+separate ASR, LLM, or TTS nodes. Cascaded mode exposes endpointing, ASR, LLM, and TTS. Its default
+chain is Volcengine ASR -> Qwen `qwen-flash` -> Volcengine TTS; choose Ark only by explicitly
+selecting it as the cascaded LLM.
+
+A single key per platform is reused wherever that platform is selected: DashScope for Qwen, Ark
+for the Ark LLM, and `DOUBAO_BIGMODEL_API_KEY` for Volcengine TTS. `DOUBAO_ASR_API_KEY` is an
+optional Volcengine ASR override; its fallback is `DOUBAO_BIGMODEL_API_KEY`. There
+is no provider failover.
+
+The conditional Settings Panel puts the mode first. Integrated mode shows its provider, model, and
+voice; cascaded mode shows endpointing, ASR, LLM, and TTS cards. Keys are write-only and return only
+presence state to the renderer. Pipeline, provider, model, voice, and key edits take effect on the
+next launch; only palette changes apply live. See [Getting started](docs/getting-started.md) for
+the public selectors and opt-in live smoke command.
 
 The orb renders as a Canvas 2D particle field whose behavior carries state — particles converge
 while listening, pulse with playback amplitude while speaking, and an outer band orbits while a

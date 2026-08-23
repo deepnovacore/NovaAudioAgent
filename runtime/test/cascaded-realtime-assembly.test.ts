@@ -7,6 +7,7 @@ import {
   loadSettings,
   requireVolcengineRealtime,
   type Settings,
+  type VolcengineRealtimeConfig,
 } from '../src/config.js'
 import type {Frame, FrameSource} from '../src/executors/watcher.js'
 import {WatchAdapter} from '../src/executors/watcher.js'
@@ -14,7 +15,17 @@ import type {IdFactory} from '../src/ids.js'
 import {MediaStore} from '../src/media-store.js'
 import {handoffPolicySchema} from '../src/memory.js'
 import {delegateSchema, executorManifestSchema} from '../src/ports.js'
-import {VolcengineRealtimeError} from '../src/realtime/volcengine/adapter.js'
+import {createArkCascadedLlmSession} from '../src/realtime/cascaded/ark-llm.js'
+import type {CascadedLlmFactory} from '../src/realtime/cascaded/llm.js'
+import {CascadedRealtimeError} from '../src/realtime/cascaded/adapter.js'
+import {CascadedRealtimeProvider} from '../src/realtime/cascaded/provider.js'
+import type {
+  AsrClient,
+  AsrFactory,
+  EndpointingFactory,
+  TtsClient,
+  TtsFactory,
+} from '../src/realtime/cascaded/ports.js'
 import type {ArkEvent, ArkResponsesGateway, ArkStreamInput} from '../src/realtime/volcengine/ark.js'
 import type {
   EndpointingCapabilityReason,
@@ -22,16 +33,20 @@ import type {
   LiveKitAgentsPublicSurface,
   LiveKitExecutor,
   LiveKitVadEvent,
+  PreparedEndpointingCapability,
 } from '../src/realtime/volcengine/endpointing-capability.js'
-import {VolcengineRealtimeProvider} from '../src/realtime/volcengine/provider.js'
+import {LiveKitVolcEndpointing} from '../src/realtime/volcengine/livekit-endpointing.js'
+import {SilenceVolcEndpointing} from '../src/realtime/volcengine/silence-endpointing.js'
 import {
-  buildVolcengineRealtimeAssembly,
-  type BuildVolcengineRealtimeAssemblyOptions,
-} from '../src/volcengine-realtime-assembly.js'
+  buildCascadedRealtimeAssembly,
+  type BuildCascadedRealtimeAssemblyOptions,
+  type CascadedProviderRegistries,
+} from '../src/cascaded-realtime-assembly.js'
 
 function settings(environment: NodeJS.ProcessEnv = {}): Settings {
   return loadSettings({
-    NOVA_AUDIO_AGENT_REALTIME_PROVIDER: 'volcengine',
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
     ARK_API_KEY: 'ark-test-key',
     DOUBAO_BIGMODEL_API_KEY: 'doubao-test-key',
     TAVILY_API_KEY: 'tavily-test-key',
@@ -58,6 +73,34 @@ class EmptyArk implements ArkResponsesGateway {
     await Promise.resolve()
   }
   close(): Promise<void> { this.operations.push('ark.close'); return Promise.resolve() }
+}
+
+function testProvider(options: {
+  readonly config: VolcengineRealtimeConfig
+  readonly endpointingCapability: () => Promise<PreparedEndpointingCapability>
+  readonly asrClient: () => AsrClient
+  readonly ttsClient: () => TtsClient
+  readonly arkFactory: () => ArkResponsesGateway
+  readonly idFactory: () => string
+}): CascadedRealtimeProvider {
+  return new CascadedRealtimeProvider({
+    endpointingFactory: async () => {
+      const prepared = await options.endpointingCapability()
+      if (prepared.result.mode !== 'livekit_v1_mini') {
+        return new SilenceVolcEndpointing(options.config)
+      }
+      if (prepared.surface === undefined || prepared.executor === undefined) {
+        throw new CascadedRealtimeError('configuration')
+      }
+      return new LiveKitVolcEndpointing({
+        surface: prepared.surface, executor: prepared.executor, config: options.config,
+      })
+    },
+    asrFactory: {openClient: options.asrClient},
+    llmFactory: {open: () => createArkCascadedLlmSession(options.arkFactory())},
+    ttsFactory: {openClient: options.ttsClient},
+    idFactory: options.idFactory,
+  })
 }
 
 function deferred<T>(): {
@@ -238,8 +281,104 @@ function watchContext(clock: VirtualClock): ExecutorDispatchContext {
   }
 }
 
+const unusedEndpointing: EndpointingFactory = () => Promise.reject(new Error('unused'))
+const unusedAsr: AsrFactory = {openClient: () => { throw new Error('unused') }}
+const unusedLlm: CascadedLlmFactory = {open: () => { throw new Error('unused') }}
+const unusedTts: TtsFactory = {openClient: () => { throw new Error('unused') }}
+
+function recordingRegistries(calls: string[]): CascadedProviderRegistries {
+  return {
+    endpointing: {auto: input => {
+      calls.push('endpointing:auto')
+      assert.equal(Object.isFrozen(input.config), true)
+      return unusedEndpointing
+    }},
+    asr: {volcengine: input => {
+      calls.push('asr:volcengine')
+      assert.equal(Object.isFrozen(input.config), true)
+      return unusedAsr
+    }},
+    llm: {
+      qwen: input => {
+        calls.push('llm:qwen')
+        assert.equal(Object.isFrozen(input.config), true)
+        assert.equal(input.config.model, 'qwen-flash')
+        return unusedLlm
+      },
+      ark: input => {
+        calls.push('llm:ark')
+        assert.equal(Object.isFrozen(input.config), true)
+        assert.equal(input.config.model, 'ark-explicit')
+        return unusedLlm
+      },
+    },
+    tts: {volcengine: input => {
+      calls.push('tts:volcengine')
+      assert.equal(Object.isFrozen(input.config), true)
+      return unusedTts
+    }},
+  }
+}
+
+test('cascaded defaults resolve endpointing, ASR, Qwen LLM, and TTS in order', () => {
+  const calls: string[] = []
+  buildCascadedRealtimeAssembly({
+    settings: loadSettings({
+      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+      DASHSCOPE_API_KEY: 'dash-secret',
+      DOUBAO_BIGMODEL_API_KEY: 'doubao-secret',
+      TAVILY_API_KEY: 'search-secret',
+    }),
+  }, recordingRegistries(calls))
+  assert.deepEqual(calls, [
+    'endpointing:auto', 'asr:volcengine', 'llm:qwen', 'tts:volcengine',
+  ])
+})
+
+test('explicit Ark resolves no Qwen factory', () => {
+  const calls: string[] = []
+  buildCascadedRealtimeAssembly({
+    settings: loadSettings({
+      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+      NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+      NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-explicit',
+      ARK_API_KEY: 'ark-secret',
+      DOUBAO_BIGMODEL_API_KEY: 'doubao-secret',
+      TAVILY_API_KEY: 'search-secret',
+    }),
+  }, recordingRegistries(calls))
+  assert.deepEqual(calls, [
+    'endpointing:auto', 'asr:volcengine', 'llm:ark', 'tts:volcengine',
+  ])
+})
+
+test('cascaded assembly never reads unselected LLM credentials or config', () => {
+  for (const provider of ['qwen', 'ark'] as const) {
+    const inaccessible = provider === 'qwen'
+      ? new Set<PropertyKey>(['ark_api_key', 'volcengine_ark_base_url'])
+      : new Set<PropertyKey>(['dashscope_api_key'])
+    const base = loadSettings({
+      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+      NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: provider,
+      ...(provider === 'ark' ? {NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-explicit'} : {}),
+      ...(provider === 'qwen' ? {DASHSCOPE_API_KEY: 'dash-secret'} : {ARK_API_KEY: 'ark-secret'}),
+      DOUBAO_BIGMODEL_API_KEY: 'doubao-secret',
+      TAVILY_API_KEY: 'search-secret',
+    })
+    const configured = new Proxy(base, {
+      get(target, property, receiver) {
+        if (inaccessible.has(property)) throw new Error(`unselected read: ${String(property)}`)
+        return Reflect.get(target, property, receiver) as unknown
+      },
+    })
+    const calls: string[] = []
+    buildCascadedRealtimeAssembly({settings: configured}, recordingRegistries(calls))
+    assert.equal(calls.includes(`llm:${provider}`), true)
+  }
+})
+
 async function exerciseCoreModels(
-  realtime: ReturnType<typeof buildVolcengineRealtimeAssembly>,
+  realtime: ReturnType<typeof buildCascadedRealtimeAssembly>,
   records: GatewayRequest[],
 ): Promise<void> {
   await realtime.core.gateway.complete({model: 'gateway-probe', system: 'system', prompt: 'prompt'})
@@ -277,10 +416,10 @@ async function exerciseCoreModels(
   await settleNamed('model probe runtime', serving)
 }
 
-test('Volc owner resolves endpointing before epoch resources and reconnects monotonically', async () => {
+test('cascaded owner resolves endpointing before epoch resources and reconnects monotonically', async () => {
   const operations: string[] = []
   let ids = 0
-  const provider = new VolcengineRealtimeProvider({
+  const provider = testProvider({
     config: requireVolcengineRealtime(settings()),
     endpointingCapability: () => {
       operations.push('capability')
@@ -304,7 +443,7 @@ test('Volc owner resolves endpointing before epoch resources and reconnects mono
   assert.deepEqual(operations, [])
   const first = await provider.connect({tools: [], signal: new AbortController().signal})
   assert.deepEqual(operations.slice(0, 4), [
-    'capability', 'asr.client', 'tts.client', 'ark.client',
+    'capability', 'asr.client', 'ark.client', 'tts.client',
   ])
   assert.equal(first.epoch, 1)
   await provider.close()
@@ -322,7 +461,7 @@ test('close owns an in-flight capability resolution and prevents late resource c
   async () => {
     const gate = deferred<{readonly result: EndpointingCapabilityResult}>()
     let resources = 0
-    const provider = new VolcengineRealtimeProvider({
+    const provider = testProvider({
       config: requireVolcengineRealtime(settings()),
       endpointingCapability: () => gate.promise,
       asrClient: () => { resources += 1; return {open: () => Promise.reject(new Error('unused'))} },
@@ -338,7 +477,7 @@ test('close owns an in-flight capability resolution and prevents late resource c
     assert.equal(closeSettled, false)
     await assert.rejects(
       provider.connect({tools: [], signal: new AbortController().signal}),
-      error => error instanceof VolcengineRealtimeError && error.code === 'state',
+      error => error instanceof CascadedRealtimeError && error.code === 'state',
     )
 
     gate.resolve({result: fallback('executor_unavailable')})
@@ -349,7 +488,7 @@ test('close owns an in-flight capability resolution and prevents late resource c
 
 test('ready selects LiveKit while every unavailable result stays on bounded silence', async () => {
   let liveVad = 0
-  const liveProvider = new VolcengineRealtimeProvider({
+  const liveProvider = testProvider({
     config: requireVolcengineRealtime(settings()),
     endpointingCapability: () => Promise.resolve({
       result: {
@@ -375,7 +514,7 @@ test('ready selects LiveKit while every unavailable result stays on bounded sile
   ]
   for (const reason of reasons) {
     let asrOpens = 0
-    const provider = new VolcengineRealtimeProvider({
+    const provider = testProvider({
       config: requireVolcengineRealtime(settings()),
       endpointingCapability: () => Promise.resolve({result: fallback(reason)}),
       asrClient: () => ({open: () => { asrOpens += 1; return Promise.reject(new Error('unused')) }}),
@@ -395,7 +534,7 @@ test('failed epoch construction rolls back and a later connect builds fresh reso
   let asrClients = 0
   let ttsClients = 0
   let arkAttempts = 0
-  const provider = new VolcengineRealtimeProvider({
+  const provider = testProvider({
     config: requireVolcengineRealtime(settings()),
     endpointingCapability: () => {
       capabilities += 1
@@ -413,34 +552,34 @@ test('failed epoch construction rolls back and a later connect builds fresh reso
 
   await assert.rejects(
     provider.connect({tools: [], signal: new AbortController().signal}),
-    error => error instanceof VolcengineRealtimeError && error.code === 'configuration',
+    error => error instanceof CascadedRealtimeError && error.code === 'configuration',
   )
   const identity = await provider.connect({tools: [], signal: new AbortController().signal})
   assert.equal(identity.epoch, 1)
   assert.deepEqual({capabilities, asrClients, ttsClients, arkAttempts}, {
-    capabilities: 2, asrClients: 2, ttsClients: 2, arkAttempts: 2,
+    capabilities: 2, asrClients: 2, ttsClients: 1, arkAttempts: 2,
   })
   await provider.close()
 })
 
 function assemblyOptions(
   configured: Settings,
-  overrides: Partial<BuildVolcengineRealtimeAssemblyOptions> = {},
-): BuildVolcengineRealtimeAssemblyOptions {
+  overrides: Partial<BuildCascadedRealtimeAssemblyOptions> = {},
+): BuildCascadedRealtimeAssemblyOptions {
   return {
     settings: configured,
     searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
     endpointingCapability: () => Promise.resolve({result: fallback('executor_unavailable')}),
     asrClient: () => ({open: () => Promise.reject(new Error('ASR open was not expected'))}),
     ttsClient: () => ({open: () => Promise.reject(new Error('TTS open was not expected'))}),
-    arkFactory: () => new EmptyArk([]),
+    arkLlmFactory: () => ({open: () => createArkCascadedLlmSession(new EmptyArk([]))}),
     metrics: {record: () => undefined},
     onDiagnostic: () => undefined,
     ...overrides,
   }
 }
 
-test('Volc assembly preserves one graph, shared resources, and frozen Guard policy', async () => {
+test('cascaded assembly preserves one graph, shared resources, and frozen Guard policy', async () => {
   const operations: string[] = []
   const clock = new VirtualClock(10)
   const ids = new RecordingIds()
@@ -449,13 +588,12 @@ test('Volc assembly preserves one graph, shared resources, and frozen Guard poli
   let telemetryCloses = 0
   const configured = settings({
     NOVA_AUDIO_AGENT_MODEL_API_KEY: 'generic-model-key',
-    NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL: 'ark-realtime-distinct',
-    NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL: 'ark-support-distinct',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-realtime-distinct',
     NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT: 'true',
     NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY: 'packed',
     NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS: '1',
   })
-  const realtime = buildVolcengineRealtimeAssembly(assemblyOptions(configured, {
+  const realtime = buildCascadedRealtimeAssembly(assemblyOptions(configured, {
     clock, ids, frameSource, mediaStore,
     telemetry: {record: () => undefined, close: () => { telemetryCloses += 1 }},
     endpointingCapability: () => {
@@ -464,14 +602,14 @@ test('Volc assembly preserves one graph, shared resources, and frozen Guard poli
     },
     asrClient: () => { operations.push('asr'); return {open: () => Promise.reject(new Error('unused'))} },
     ttsClient: () => { operations.push('tts'); return {open: () => Promise.reject(new Error('unused'))} },
-    arkFactory: ({config}) => {
-      operations.push(`ark:${config.arkModel}`)
-      return new EmptyArk(operations)
-    },
+    arkLlmFactory: ({config}) => ({open: () => {
+      operations.push(`ark:${config.model}`)
+      return createArkCascadedLlmSession(new EmptyArk(operations))
+    }}),
   }))
 
   assert.deepEqual(operations, [])
-  assert.ok(realtime.provider instanceof VolcengineRealtimeProvider)
+  assert.ok(realtime.provider instanceof CascadedRealtimeProvider)
   assert.equal(realtime.core.runtime.clock, clock)
   assert.equal(realtime.core.frameSource, frameSource)
   assert.equal(realtime.core.mediaStore, mediaStore)
@@ -495,26 +633,26 @@ test('Volc assembly preserves one graph, shared resources, and frozen Guard poli
   const first = realtime.start()
   const second = realtime.start()
   assert.equal(first, second)
-  await settleNamed('Volc assembly start', Promise.all([first, second]))
+  await settleNamed('cascaded assembly start', Promise.all([first, second]))
   assert.deepEqual(operations.slice(0, 4), [
-    'capability', 'asr', 'tts', 'ark:ark-realtime-distinct',
+    'capability', 'asr', 'ark:ark-realtime-distinct', 'tts',
   ])
   assert.equal(serveCalls, 1)
   assert.equal(frameSource.starts, 1)
-  assert.ok(ids.calls.includes('volcengine'))
-  await settleNamed('Volc assembly stop', realtime.stop())
-  await settleNamed('Volc assembly repeated stop', realtime.stop())
+  assert.ok(ids.calls.includes('cascaded'))
+  await settleNamed('cascaded assembly stop', realtime.stop())
+  await settleNamed('cascaded assembly repeated stop', realtime.stop())
   assert.equal(frameSource.stops, 1)
   assert.equal(telemetryCloses, 0)
 })
 
-test('Volc credentials validate before composition-only resource mismatches', () => {
+test('cascaded credentials validate before composition-only resource mismatches', () => {
   const configured = settings({
     ARK_API_KEY: '',
     NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
   })
   assert.throws(
-    () => buildVolcengineRealtimeAssembly(assemblyOptions(configured)),
+    () => buildCascadedRealtimeAssembly(assemblyOptions(configured)),
     error => error instanceof ConfigurationError && error.message === '缺少 ARK_API_KEY',
   )
 })
@@ -540,7 +678,19 @@ test('core gateway preserves generic models or applies all Ark support overrides
         },
         endpoint: 'https://ark-support.example/api/v3/chat/completions',
         authorization: 'Bearer ark-test-key',
-        models: {watch: 'ark-support-distinct', surrogate: 'ark-support-distinct', compressor: 'ark-support-distinct'},
+        models: {watch: 'watch-original', surrogate: 'ark-selected', compressor: 'ark-selected'},
+      },
+      {
+        name: 'Qwen fallback',
+        environment: {
+          NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'qwen',
+          NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'qwen-flash',
+          DASHSCOPE_API_KEY: 'dash-support-key',
+          NOVA_AUDIO_AGENT_MODEL_API_KEY: '\u001c\u0085',
+        },
+        endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+        authorization: 'Bearer dash-support-key',
+        models: {watch: 'watch-original', surrogate: 'qwen-flash', compressor: 'qwen-flash'},
       },
     ] as const
     for (const scenario of cases) {
@@ -552,8 +702,7 @@ test('core gateway preserves generic models or applies all Ark support overrides
         NOVA_AUDIO_AGENT_SURROGATE_MODEL: 'surrogate-original',
         NOVA_AUDIO_AGENT_COMPRESSOR_MODEL: 'compressor-original',
         NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL: 'https://ark-support.example/api/v3',
-        NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL: 'ark-realtime-distinct',
-        NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL: 'ark-support-distinct',
+        NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-selected',
         ...scenario.environment,
       })
       const beforeModels = {
@@ -562,9 +711,9 @@ test('core gateway preserves generic models or applies all Ark support overrides
         surrogate: configured.surrogate_model,
         compressor: configured.compressor_model,
       }
-      let realtime: ReturnType<typeof buildVolcengineRealtimeAssembly>
+      let realtime: ReturnType<typeof buildCascadedRealtimeAssembly>
       try {
-        realtime = buildVolcengineRealtimeAssembly(assemblyOptions(configured, {
+        realtime = buildCascadedRealtimeAssembly(assemblyOptions(configured, {
           clock: new VirtualClock(),
           frameSource: new RecordingFrameSource(),
           executors: [modelProbeAdapter],

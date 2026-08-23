@@ -3,10 +3,152 @@ import { test } from 'node:test'
 import {
   ConfigurationError,
   loadSettings,
+  requireCascadedCredentials,
+  requireIntegratedRealtime,
   requireQwenRealtime,
   requireVolcengineRealtime,
+  resolveCascadedSelection,
   resolveProactivity,
 } from '../src/config.js'
+
+test('pipeline defaults are product-shaped and cascaded defaults use Qwen Flash', () => {
+  const settings = loadSettings({})
+  assert.equal(settings.pipeline_mode, 'integrated')
+  assert.equal('realtime_provider' in settings, false)
+  assert.deepEqual(resolveCascadedSelection(settings), {
+    endpointingProvider: 'auto',
+    asrProvider: 'volcengine',
+    llmProvider: 'qwen',
+    llmModel: 'qwen-flash',
+    ttsProvider: 'volcengine',
+  })
+})
+
+test('Ark receives its provider default only when no model override exists', () => {
+  const implicit = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+  })
+  const explicit = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: 'ark-custom',
+  })
+  assert.equal(resolveCascadedSelection(implicit).llmModel, 'doubao-seed-2-0-pro-260215')
+  assert.equal(resolveCascadedSelection(explicit).llmModel, 'ark-custom')
+  assert.throws(
+    () => resolveCascadedSelection(loadSettings({
+      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+      NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+      NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: '',
+    })),
+    /NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL 不能为空/u,
+  )
+})
+
+test('retired realtime provider configuration fails by field name only', () => {
+  assert.throws(
+    () => loadSettings({NOVA_AUDIO_AGENT_REALTIME_PROVIDER: 'secret-old-value'}),
+    error => error instanceof ConfigurationError
+      && error.code === 'retired_configuration'
+      && error.fields?.join(',') === 'NOVA_AUDIO_AGENT_REALTIME_PROVIDER'
+      && !error.message.includes('secret-old-value'),
+  )
+})
+
+test('retired Ark selector configuration fails by field name only', () => {
+  const sentinel = 'secret-old-ark-value'
+  for (const field of [
+    'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL',
+    'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL',
+  ] as const) {
+    assert.throws(
+      () => loadSettings({[field]: sentinel}),
+      error => error instanceof ConfigurationError
+        && error.code === 'retired_configuration'
+        && error.fields?.join(',') === field
+        && !error.message.includes(sentinel),
+    )
+  }
+})
+
+test('integrated loading never reads Ark or Doubao credential slots', () => {
+  const forbidden = new Set(['ARK_API_KEY', 'DOUBAO_ASR_API_KEY', 'DOUBAO_BIGMODEL_API_KEY'])
+  const environment = new Proxy<NodeJS.ProcessEnv>({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+    DASHSCOPE_API_KEY: 'dashscope-key',
+  }, {
+    get(target, key, receiver) {
+      if (typeof key === 'string' && forbidden.has(key)) {
+        throw new Error(`${key} must stay lazy`)
+      }
+      return Reflect.get(target, key, receiver) as string | undefined
+    },
+  })
+  assert.equal(requireIntegratedRealtime(loadSettings(environment)).apiKey, 'dashscope-key')
+})
+
+test('integrated loading never reads inactive cascaded selector or model slots', () => {
+  const forbidden = new Set([
+    'NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER',
+    'NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL',
+    'NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER',
+  ])
+  const environment = new Proxy<NodeJS.ProcessEnv>({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+  }, {
+    get(target, key, receiver) {
+      if (typeof key === 'string' && forbidden.has(key)) {
+        throw new Error(`${key} must stay inert`)
+      }
+      return Reflect.get(target, key, receiver) as string | undefined
+    },
+  })
+  assert.deepEqual(resolveCascadedSelection(loadSettings(environment)), {
+    endpointingProvider: 'auto',
+    asrProvider: 'volcengine',
+    llmProvider: 'qwen',
+    llmModel: 'qwen-flash',
+    ttsProvider: 'volcengine',
+  })
+})
+
+test('integrated loading ignores invalid inactive cascaded selector and model values', () => {
+  const settings = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+    NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER: 'invalid-endpointing',
+    NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER: 'invalid-asr',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'invalid-llm',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL: '',
+    NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER: 'invalid-tts',
+  })
+  assert.equal(settings.pipeline_mode, 'integrated')
+  assert.deepEqual(resolveCascadedSelection(settings), {
+    endpointingProvider: 'auto',
+    asrProvider: 'volcengine',
+    llmProvider: 'qwen',
+    llmModel: 'qwen-flash',
+    ttsProvider: 'volcengine',
+  })
+})
+
+test('cascaded Qwen resolution never reads ARK_API_KEY', () => {
+  const environment = new Proxy<NodeJS.ProcessEnv>({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+    DASHSCOPE_API_KEY: 'dashscope-key',
+    DOUBAO_BIGMODEL_API_KEY: 'doubao-key',
+  }, {
+    get(target, key, receiver) {
+      if (key === 'ARK_API_KEY') throw new Error('Ark key must stay lazy')
+      return Reflect.get(target, key, receiver) as string | undefined
+    },
+  })
+  const settings = loadSettings(environment)
+  const selection = resolveCascadedSelection(settings)
+  assert.equal(requireCascadedCredentials(settings, selection).llmApiKey, 'dashscope-key')
+})
 
 test('backend defaults to Python and supports the explicit Node development switch', () => {
   assert.equal(loadSettings({}).backend, 'python')
@@ -437,6 +579,8 @@ test('Qwen boolean and Guard enum settings do not strip their raw environment va
 
 test('Volcengine resolver returns a new immutable value and never aliases settings', () => {
   const settings = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
     ARK_API_KEY: 'ark-key',
     DOUBAO_BIGMODEL_API_KEY: 'tts-key',
   })
@@ -452,6 +596,8 @@ test('Volcengine resolver errors never echo credentials or submitted endpoints',
   let message = ''
   try {
     requireVolcengineRealtime(loadSettings({
+      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+      NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
       ARK_API_KEY: sentinel,
       DOUBAO_BIGMODEL_API_KEY: sentinel,
       NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT: `https://${sentinel}.example/asr`,
@@ -464,7 +610,12 @@ test('Volcengine resolver errors never echo credentials or submitted endpoints',
 })
 
 test('Volcengine numeric relationships retain the Python resolver errors', () => {
-  const credentials = {ARK_API_KEY: 'ark-key', DOUBAO_BIGMODEL_API_KEY: 'tts-key'}
+  const credentials = {
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'cascaded',
+    NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER: 'ark',
+    ARK_API_KEY: 'ark-key',
+    DOUBAO_BIGMODEL_API_KEY: 'tts-key',
+  }
   const cases: readonly [NodeJS.ProcessEnv, string][] = [
     [{NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS: '0'},
       'NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS 必须为正整数'],

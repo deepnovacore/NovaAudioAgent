@@ -4,22 +4,36 @@ import {findRetiredConfiguration} from './environment-contract.js'
 
 const backendSchema = z.enum(['python', 'node'])
 export const proactivityPresetSchema = z.enum(['conservative', 'balanced', 'eager'])
-const realtimeProviderSchema = z.enum(['qwen', 'volcengine'])
+const pipelineModeSchema = z.enum(['integrated', 'cascaded'])
+const integratedProviderNameSchema = z.enum(['qwen'])
+const cascadedEndpointingProviderNameSchema = z.enum(['auto'])
+const cascadedAsrProviderNameSchema = z.enum(['volcengine'])
+const cascadedLlmProviderNameSchema = z.enum(['qwen', 'ark'])
+const cascadedTtsProviderNameSchema = z.enum(['volcengine'])
 const qwenGuardHistoryRecoverySchema = z.enum(['none', 'packed'])
 const qwenGuardHistoryPairsSchema = z.union([z.literal(1), z.literal(2), z.literal(4)])
 const executorNameSchema = z.enum(['fast_sim', 'slow_sim', 'codex'])
 const volcFloatSchema = z.custom<number>(value => typeof value === 'number')
 
+export const DASHSCOPE_COMPATIBLE_BASE_URL =
+  'https://dashscope.aliyuncs.com/compatible-mode/v1'
+
 export const settingsSchema = z.object({
   backend: backendSchema.default('python'),
-  model_base_url: z.url().default('https://dashscope.aliyuncs.com/compatible-mode/v1'),
+  model_base_url: z.url().default(DASHSCOPE_COMPATIBLE_BASE_URL),
   model_api_key: z.string().nullable().default(null),
   tavily_api_key: z.string().nullable().default(null),
   fast_model: z.string().default('qwen3-vl-plus'),
   watch_model: z.string().nullable().default(null),
   surrogate_model: z.string().default('qwen-flash'),
   compressor_model: z.string().default('qwen-flash'),
-  realtime_provider: realtimeProviderSchema.default('qwen'),
+  pipeline_mode: pipelineModeSchema.default('integrated'),
+  integrated_provider: integratedProviderNameSchema.default('qwen'),
+  cascade_endpointing_provider: cascadedEndpointingProviderNameSchema.default('auto'),
+  cascade_asr_provider: cascadedAsrProviderNameSchema.default('volcengine'),
+  cascade_llm_provider: cascadedLlmProviderNameSchema.default('qwen'),
+  cascade_llm_model: z.string().nullable().default(null),
+  cascade_tts_provider: cascadedTtsProviderNameSchema.default('volcengine'),
   qwen_realtime_url: z.string().default('wss://dashscope.aliyuncs.com/api-ws/v1/realtime'),
   qwen_realtime_model: z.string().default('qwen-audio-3.0-realtime-plus'),
   qwen_realtime_voice: z.string().default('longanqian'),
@@ -66,6 +80,12 @@ export const settingsSchema = z.object({
 }).strict()
 
 export type Settings = z.infer<typeof settingsSchema>
+export type PipelineMode = z.infer<typeof pipelineModeSchema>
+export type IntegratedProviderName = z.infer<typeof integratedProviderNameSchema>
+export type CascadedEndpointingProviderName = z.infer<typeof cascadedEndpointingProviderNameSchema>
+export type CascadedAsrProviderName = z.infer<typeof cascadedAsrProviderNameSchema>
+export type CascadedLlmProviderName = z.infer<typeof cascadedLlmProviderNameSchema>
+export type CascadedTtsProviderName = z.infer<typeof cascadedTtsProviderNameSchema>
 
 export interface QwenRealtimeConfig {
   readonly url: string
@@ -94,6 +114,26 @@ export interface VolcengineRealtimeConfig {
   readonly vadSilenceEndMs: number
   readonly vadSpeechPadMs: number
   readonly vadMaxUtteranceMs: number
+}
+
+export interface CascadedSelection {
+  readonly endpointingProvider: 'auto'
+  readonly asrProvider: 'volcengine'
+  readonly llmProvider: 'qwen' | 'ark'
+  readonly llmModel: string
+  readonly ttsProvider: 'volcengine'
+}
+
+export interface CascadedCredentials {
+  readonly llmApiKey: string
+  readonly asrApiKey: string
+  readonly ttsApiKey: string
+}
+
+export interface SupportModelConnection {
+  readonly source: 'generic' | 'selected_provider'
+  readonly baseUrl: string
+  readonly apiKey: string
 }
 
 export interface ProactivityParams {
@@ -143,6 +183,20 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
       retired.fields,
     )
   }
+  const pipelineMode = parsePipelineMode(environment.NOVA_AUDIO_AGENT_PIPELINE_MODE)
+  const integratedProvider = pipelineMode === 'integrated'
+    ? parseIntegratedProvider(environment.NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER)
+    : undefined
+  const cascadedProviders = pipelineMode === 'cascaded'
+    ? {
+      endpointing: parseCascadedEndpointingProvider(
+        environment.NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER,
+      ),
+      asr: parseCascadedAsrProvider(environment.NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER),
+      llm: parseCascadedLlmProvider(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER),
+      tts: parseCascadedTtsProvider(environment.NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER),
+    }
+    : undefined
   const configuredExecutor = optionalString(environment.NOVA_AUDIO_AGENT_EXECUTOR)
   const executor = configuredExecutor === undefined || configuredExecutor === ''
     ? 'fast_sim'
@@ -158,61 +212,70 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     watch_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_WATCH_MODEL),
     surrogate_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_SURROGATE_MODEL),
     compressor_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_COMPRESSOR_MODEL),
-    realtime_provider: optionalString(environment.NOVA_AUDIO_AGENT_REALTIME_PROVIDER),
-    qwen_realtime_url: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL),
-    qwen_realtime_model: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL),
-    qwen_realtime_voice: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE),
-    dashscope_api_key: optionalSecret(environment.DASHSCOPE_API_KEY),
-    ark_api_key: rawEnvironmentValue(environment.ARK_API_KEY),
-    doubao_asr_api_key: rawEnvironmentValue(environment.DOUBAO_ASR_API_KEY),
-    doubao_bigmodel_api_key: rawEnvironmentValue(environment.DOUBAO_BIGMODEL_API_KEY),
-    volcengine_ark_base_url: rawEnvironmentValue(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL,
-    ),
-    volcengine_ark_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL),
-    volcengine_ark_support_model: rawEnvironmentValue(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL,
-    ),
-    doubao_asr_endpoint: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT),
-    doubao_asr_resource_id: rawEnvironmentValue(
-      environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID,
-    ),
-    doubao_asr_chunk_ms: optionalPydanticInteger(
-      environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS,
-    ),
-    doubao_tts_endpoint: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT),
-    doubao_tts_resource_id: rawEnvironmentValue(
-      environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID,
-    ),
-    doubao_tts_voice: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE),
-    doubao_tts_output_sample_rate: optionalPydanticInteger(
-      environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE,
-    ),
-    volcengine_vad_threshold: optionalPydanticFloat(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD,
-    ),
-    volcengine_vad_pre_roll_ms: optionalPydanticInteger(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS,
-    ),
-    volcengine_vad_min_speech_ms: optionalPydanticInteger(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS,
-    ),
-    volcengine_vad_silence_end_ms: optionalPydanticInteger(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS,
-    ),
-    volcengine_vad_speech_pad_ms: optionalPydanticInteger(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SPEECH_PAD_MS,
-    ),
-    volcengine_vad_max_utterance_ms: optionalPydanticInteger(
-      environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS,
-    ),
-    qwen_controlled_guard_reconnect: optionalBoolean(
-      environment.NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT,
-    ),
-    qwen_guard_history_recovery: environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY,
-    qwen_guard_history_pairs: optionalQwenGuardHistoryPairs(
-      environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS,
-    ),
+    pipeline_mode: pipelineMode,
+    ...(pipelineMode === 'integrated' ? {
+      integrated_provider: integratedProvider,
+      qwen_realtime_url: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL),
+      qwen_realtime_model: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL),
+      qwen_realtime_voice: optionalString(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE),
+      dashscope_api_key: optionalSecret(environment.DASHSCOPE_API_KEY),
+      qwen_controlled_guard_reconnect: optionalBoolean(
+        environment.NOVA_AUDIO_AGENT_QWEN_CONTROLLED_GUARD_RECONNECT,
+      ),
+      qwen_guard_history_recovery: environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_RECOVERY,
+      qwen_guard_history_pairs: optionalQwenGuardHistoryPairs(
+        environment.NOVA_AUDIO_AGENT_QWEN_GUARD_HISTORY_PAIRS,
+      ),
+    } : {
+      cascade_endpointing_provider: cascadedProviders!.endpointing,
+      cascade_asr_provider: cascadedProviders!.asr,
+      cascade_llm_provider: cascadedProviders!.llm,
+      cascade_llm_model: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL),
+      cascade_tts_provider: cascadedProviders!.tts,
+      ...(cascadedProviders!.llm === 'qwen'
+        ? {dashscope_api_key: optionalSecret(environment.DASHSCOPE_API_KEY)}
+        : {ark_api_key: optionalSecret(environment.ARK_API_KEY)}),
+      ...(cascadedProviders!.llm === 'ark' ? {
+        volcengine_ark_base_url: rawEnvironmentValue(
+          environment.NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL,
+        ),
+      } : {}),
+      doubao_asr_api_key: optionalSecret(environment.DOUBAO_ASR_API_KEY),
+      doubao_bigmodel_api_key: optionalSecret(environment.DOUBAO_BIGMODEL_API_KEY),
+      doubao_asr_endpoint: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT),
+      doubao_asr_resource_id: rawEnvironmentValue(
+        environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_RESOURCE_ID,
+      ),
+      doubao_asr_chunk_ms: optionalPydanticInteger(
+        environment.NOVA_AUDIO_AGENT_DOUBAO_ASR_CHUNK_MS,
+      ),
+      doubao_tts_endpoint: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_ENDPOINT),
+      doubao_tts_resource_id: rawEnvironmentValue(
+        environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_RESOURCE_ID,
+      ),
+      doubao_tts_voice: rawEnvironmentValue(environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_VOICE),
+      doubao_tts_output_sample_rate: optionalPydanticInteger(
+        environment.NOVA_AUDIO_AGENT_DOUBAO_TTS_OUTPUT_SAMPLE_RATE,
+      ),
+      volcengine_vad_threshold: optionalPydanticFloat(
+        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_THRESHOLD,
+      ),
+      volcengine_vad_pre_roll_ms: optionalPydanticInteger(
+        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_PRE_ROLL_MS,
+      ),
+      volcengine_vad_min_speech_ms: optionalPydanticInteger(
+        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MIN_SPEECH_MS,
+      ),
+      volcengine_vad_silence_end_ms: optionalPydanticInteger(
+        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SILENCE_END_MS,
+      ),
+      volcengine_vad_speech_pad_ms: optionalPydanticInteger(
+        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_SPEECH_PAD_MS,
+      ),
+      volcengine_vad_max_utterance_ms: optionalPydanticInteger(
+        environment.NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS,
+      ),
+    }),
     executor,
     executors,
     ...(codexSelected ? {
@@ -284,6 +347,74 @@ export function requireQwenRealtime(settings: Settings): QwenRealtimeConfig {
   return {url, model, voice, apiKey}
 }
 
+export function requireIntegratedRealtime(settings: Settings): QwenRealtimeConfig {
+  const url = secureEndpoint(
+    settings.qwen_realtime_url,
+    'wss',
+    'NOVA_AUDIO_AGENT_QWEN_REALTIME_URL',
+  )
+  const model = stripLikePython(settings.qwen_realtime_model)
+  const voice = stripLikePython(settings.qwen_realtime_voice)
+  if (model === '') {
+    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_MODEL 不能为空')
+  }
+  if (voice === '') {
+    throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE 不能为空')
+  }
+  const apiKey = requiredCredential(settings.dashscope_api_key, 'DASHSCOPE_API_KEY')
+  return Object.freeze({url, model, voice, apiKey})
+}
+
+/** Keeps a selected provider credential on its fixed compatible endpoint. */
+export function resolveSupportModelConnection(
+  settings: Settings,
+  selectedProvider: {readonly baseUrl: string; readonly apiKey: string},
+): SupportModelConnection {
+  const genericKey = stripLikePython(settings.model_api_key ?? '')
+  return genericKey === ''
+    ? Object.freeze({
+      source: 'selected_provider' as const,
+      baseUrl: selectedProvider.baseUrl,
+      apiKey: selectedProvider.apiKey,
+    })
+    : Object.freeze({
+      source: 'generic' as const,
+      baseUrl: secureEndpoint(
+        settings.model_base_url,
+        'https',
+        'NOVA_AUDIO_AGENT_MODEL_BASE_URL',
+      ),
+      apiKey: genericKey,
+    })
+}
+
+export function resolveCascadedSelection(settings: Settings): CascadedSelection {
+  const llmModel = settings.cascade_llm_model === null
+    ? (settings.cascade_llm_provider === 'qwen'
+      ? 'qwen-flash'
+      : 'doubao-seed-2-0-pro-260215')
+    : requiredSetting(settings.cascade_llm_model, 'NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL')
+  return Object.freeze({
+    endpointingProvider: settings.cascade_endpointing_provider,
+    asrProvider: settings.cascade_asr_provider,
+    llmProvider: settings.cascade_llm_provider,
+    llmModel,
+    ttsProvider: settings.cascade_tts_provider,
+  })
+}
+
+export function requireCascadedCredentials(
+  settings: Settings,
+  selection: CascadedSelection,
+): CascadedCredentials {
+  const llmApiKey = selection.llmProvider === 'qwen'
+    ? requiredCredential(settings.dashscope_api_key, 'DASHSCOPE_API_KEY')
+    : requiredCredential(settings.ark_api_key, 'ARK_API_KEY')
+  const ttsApiKey = requiredCredential(settings.doubao_bigmodel_api_key, 'DOUBAO_BIGMODEL_API_KEY')
+  const asrApiKey = stripLikePython(settings.doubao_asr_api_key ?? '') || ttsApiKey
+  return Object.freeze({llmApiKey, asrApiKey, ttsApiKey})
+}
+
 export function requireVolcengineRealtime(settings: Settings): VolcengineRealtimeConfig {
   const arkApiKey = stripLikePython(settings.ark_api_key ?? '')
   const ttsApiKey = stripLikePython(settings.doubao_bigmodel_api_key ?? '')
@@ -315,9 +446,9 @@ export function requireVolcengineRealtime(settings: Settings): VolcengineRealtim
     arkBaseUrl: secureEndpoint(settings.volcengine_ark_base_url, 'https',
       'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_BASE_URL'),
     arkModel: requiredSetting(settings.volcengine_ark_model,
-      'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_MODEL'),
+      'NOVA_AUDIO_AGENT_CASCADE_LLM_MODEL'),
     arkSupportModel: requiredSetting(settings.volcengine_ark_support_model,
-      'NOVA_AUDIO_AGENT_VOLCENGINE_ARK_SUPPORT_MODEL'),
+      'NOVA_AUDIO_AGENT_SURROGATE_MODEL'),
     arkApiKey,
     asrEndpoint: secureEndpoint(settings.doubao_asr_endpoint, 'wss',
       'NOVA_AUDIO_AGENT_DOUBAO_ASR_ENDPOINT'),
@@ -352,6 +483,66 @@ function parseExecutors(raw: string | undefined, fallback: string): string[] {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_EXECUTORS contains duplicate names')
   }
   return names
+}
+
+function parsePipelineMode(value: string | undefined): PipelineMode {
+  return parseSelector(pipelineModeSchema, value, 'integrated', 'NOVA_AUDIO_AGENT_PIPELINE_MODE')
+}
+
+function parseIntegratedProvider(value: string | undefined): IntegratedProviderName {
+  return parseSelector(
+    integratedProviderNameSchema,
+    value,
+    'qwen',
+    'NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER',
+  )
+}
+
+function parseCascadedEndpointingProvider(value: string | undefined): CascadedEndpointingProviderName {
+  return parseSelector(
+    cascadedEndpointingProviderNameSchema,
+    value,
+    'auto',
+    'NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER',
+  )
+}
+
+function parseCascadedAsrProvider(value: string | undefined): CascadedAsrProviderName {
+  return parseSelector(
+    cascadedAsrProviderNameSchema,
+    value,
+    'volcengine',
+    'NOVA_AUDIO_AGENT_CASCADE_ASR_PROVIDER',
+  )
+}
+
+function parseCascadedLlmProvider(value: string | undefined): CascadedLlmProviderName {
+  return parseSelector(
+    cascadedLlmProviderNameSchema,
+    value,
+    'qwen',
+    'NOVA_AUDIO_AGENT_CASCADE_LLM_PROVIDER',
+  )
+}
+
+function parseCascadedTtsProvider(value: string | undefined): CascadedTtsProviderName {
+  return parseSelector(
+    cascadedTtsProviderNameSchema,
+    value,
+    'volcengine',
+    'NOVA_AUDIO_AGENT_CASCADE_TTS_PROVIDER',
+  )
+}
+
+function parseSelector<T extends string>(
+  schema: z.ZodType<T>,
+  value: string | undefined,
+  fallback: T,
+  field: string,
+): T {
+  const result = schema.safeParse(optionalString(value) ?? fallback)
+  if (result.success) return result.data
+  throw new ConfigurationError(`invalid configuration: ${field}`)
 }
 
 function optionalString(value: string | undefined): string | undefined {
@@ -417,6 +608,12 @@ function rawEnvironmentValue(value: string | undefined): string | undefined {
 function requiredSetting(value: string, name: string): string {
   const normalized = stripLikePython(value)
   if (normalized === '') throw new ConfigurationError(`${name} 不能为空`)
+  return normalized
+}
+
+function requiredCredential(value: string | null, name: string): string {
+  const normalized = stripLikePython(value ?? '')
+  if (normalized === '') throw new ConfigurationError(`缺少 ${name}`)
   return normalized
 }
 

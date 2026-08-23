@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { isWellFormed, stripLikePython } from '../../python-text.js'
+import type {TtsAudio, TtsClient, TtsSession} from '../cascaded/ports.js'
 import { MAX_REALTIME_TEXT } from '../protocol.js'
 import { MAX_VOLCENGINE_WIRE_FRAME_BYTES, volcengineOutputPcm } from './audio.js'
 import { EventType, MessageType, VolcMessage } from './protocol.js'
@@ -84,9 +85,7 @@ export class DoubaoTtsFailure extends Error {
   }
 }
 
-export interface TtsAudio {
-  readonly pcm: Uint8Array
-}
+export type {TtsAudio} from '../cascaded/ports.js'
 
 export function ttsHeaders(input: {
   readonly apiKey: string
@@ -125,7 +124,7 @@ export interface DoubaoTtsClientOptions {
   readonly idFactory?: () => string
 }
 
-export class DoubaoTtsClient {
+export class DoubaoTtsClient implements TtsClient {
   readonly #options: Required<Omit<DoubaoTtsClientOptions, 'connector' | 'idFactory'>>
   readonly #connector: VolcBinaryConnector
   readonly #idFactory: () => string
@@ -209,7 +208,7 @@ export class DoubaoTtsClient {
   }
 }
 
-export class DoubaoTtsSession {
+export class DoubaoTtsSession implements TtsSession {
   readonly #socket: VolcBinarySocket
   readonly #sessionId: string
   readonly #voice: string
