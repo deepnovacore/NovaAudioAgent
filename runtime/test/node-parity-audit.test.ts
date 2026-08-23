@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises'
 import {promisify} from 'node:util'
 import {resolve} from 'node:path'
 import {test} from 'node:test'
+import {pathToFileURL} from 'node:url'
 
 import {
   codePointLengthLikePython,
@@ -39,10 +40,18 @@ function nodeParityPathHelpersFrom(value: unknown): NodeParityPathHelpers {
   return {canonicalAuditPath, isAuditedSource}
 }
 
-const nodeParityPathHelpers = nodeParityPathHelpersFrom(await import(
-  resolve(repositoryRoot, 'runtime/scripts/node-parity-paths.mjs'),
-))
+const nodeParityPathHelperModule: unknown = await import(
+  pathToFileURL(resolve(repositoryRoot, 'runtime/scripts/node-parity-paths.mjs')).href
+)
+const nodeParityPathHelpers = nodeParityPathHelpersFrom(nodeParityPathHelperModule)
 const {canonicalAuditPath, isAuditedSource} = nodeParityPathHelpers
+
+test('parity helper converts a Windows absolute path into an ESM file URL', () => {
+  assert.equal(
+    pathToFileURL('C:\\nova audio\\node-parity-paths.mjs', {windows: true}).href,
+    'file:///C:/nova%20audio/node-parity-paths.mjs',
+  )
+})
 
 test('parity path helper boundary rejects non-callable source exports', () => {
   assert.throws(

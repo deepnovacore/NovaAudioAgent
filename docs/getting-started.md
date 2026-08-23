@@ -25,9 +25,11 @@ npm ci
 cp .env.example .env
 ```
 
-For the default integrated Qwen path, set both `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` in `.env`.
-Search is always assembled, so Tavily is required. The launcher parses `.env` as data without shell
-evaluation; variables already set in the invoking shell take precedence.
+For the default integrated Qwen path, set `TAVILY_API_KEY` and either `DASHSCOPE_API_KEY` or the
+supported generic fallback in `.env`. The fallback is `NOVA_AUDIO_AGENT_MODEL_API_KEY`, and it is
+accepted for Qwen realtime only with the exact base URL documented below. Search is always
+assembled, so Tavily is required. The launcher parses `.env` as data without shell evaluation;
+variables already set in the invoking shell take precedence.
 
 Start the desktop client:
 

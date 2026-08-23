@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import {spawn} from 'node:child_process'
 import {readFile} from 'node:fs/promises'
+import {resolve} from 'node:path'
 import test from 'node:test'
 
 import {
@@ -9,6 +11,38 @@ import {
   classifyCameraCapability,
   smokeEnvironment,
 } from '../scripts/installed-candidate-smoke.mjs'
+
+const processTreeFixture = resolve(import.meta.dirname, 'fixtures/windows-guardian-target.cjs')
+
+function spawnSmokeFixture(mode) {
+  return spawn(process.execPath, [processTreeFixture, mode], {
+    detached: process.platform !== 'win32',
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
+  })
+}
+
+function readFixtureGrandchild(child) {
+  return new Promise((resolvePid, rejectPid) => {
+    let output = ''
+    const timer = setTimeout(() => rejectPid(new Error('fixture grandchild timeout')), 5_000)
+    child.stdout.on('data', chunk => {
+      output += chunk.toString('utf8')
+      const match = /^grandchild:([0-9]+)\n/u.exec(output)
+      if (match === null) return
+      clearTimeout(timer)
+      resolvePid(Number.parseInt(match[1], 10))
+    })
+    child.once('error', error => {
+      clearTimeout(timer)
+      rejectPid(error)
+    })
+  })
+}
+
+function assertPidGone(pid) {
+  assert.throws(() => process.kill(pid, 0), error => error?.code === 'ESRCH')
+}
 
 test('installed candidate plans use native install or mount boundaries for every closed artifact', () => {
   const root = '/private/smoke'
@@ -245,28 +279,67 @@ test('installed candidate CLI defaults release authority and accepts only explic
   )
 })
 
-test('unsigned installed smoke wrapper accepts only complete pass or exact camera pending evidence', async () => {
-  const {classifyUnsignedSmoke} = await import('../scripts/run-unsigned-installed-smoke.mjs')
-  assert.deepEqual(classifyUnsignedSmoke({
-    status: 0,
-    signal: null,
-    stdout: 'installed candidate smoke passed\n',
-    stderr: '',
-  }), {installed: 'passed', camera: 'passed'})
-  assert.deepEqual(classifyUnsignedSmoke({
-    status: 75,
-    signal: null,
-    stdout: 'camera-file-integration: chromium_codec_unavailable\n',
-    stderr: '',
+test('unsigned installed smoke wrapper accepts only complete in-process camera evidence', async () => {
+  const {classifyUnsignedCamera} = await import('../scripts/run-unsigned-installed-smoke.mjs')
+  assert.deepEqual(classifyUnsignedCamera(null), {installed: 'passed', camera: 'passed'})
+  assert.deepEqual(classifyUnsignedCamera({status: 'passed'}), {
+    installed: 'passed',
+    camera: 'passed',
+  })
+  assert.deepEqual(classifyUnsignedCamera({
+    status: 'pending',
+    result_code: 'chromium_codec_unavailable',
   }), {installed: 'passed', camera: 'pending'})
   for (const result of [
-    {status: 1, signal: null, stdout: '', stderr: 'private'},
-    {status: 75, signal: null, stdout: 'wrong\n', stderr: ''},
-    {status: 75, signal: null, stdout: 'camera-file-integration: chromium_codec_unavailable\n', stderr: 'private'},
-    {status: 0, signal: 'SIGTERM', stdout: 'installed candidate smoke passed\n', stderr: ''},
+    {status: 'pending', result_code: 'wrong'},
+    {status: 'failed'},
+    undefined,
   ]) {
-    assert.throws(() => classifyUnsignedSmoke(result), /unsigned_installed_smoke_failed/u)
+    assert.throws(() => classifyUnsignedCamera(result), /unsigned_installed_smoke_failed/u)
   }
+})
+
+test('managed installed-candidate cleanup kills and proves the complete descendant tree gone', async () => {
+  const {withCandidateProcessTree} = await import('../scripts/installed-candidate-smoke.mjs')
+  const child = spawnSmokeFixture('smoke-tree')
+  const grandchildPid = await readFixtureGrandchild(child)
+  await assert.rejects(
+    withCandidateProcessTree(child, process.env, () => {
+      throw new Error('synchronous exercise failure')
+    }),
+    /synchronous exercise failure/u,
+  )
+  assert.notEqual(child.pid, undefined)
+  assertPidGone(child.pid)
+  assertPidGone(grandchildPid)
+})
+
+test('managed installed-candidate cleanup runs after an asynchronous timeout rejection', async () => {
+  const {withCandidateProcessTree} = await import('../scripts/installed-candidate-smoke.mjs')
+  const child = spawnSmokeFixture('smoke-tree')
+  await readFixtureGrandchild(child)
+  await assert.rejects(
+    withCandidateProcessTree(child, process.env, async () => {
+      await new Promise((resolveWait, rejectWait) => {
+        const timer = setTimeout(() => rejectWait(new Error('exercise timeout')), 30)
+        timer.unref()
+      })
+    }),
+    /exercise timeout/u,
+  )
+})
+
+test('installed-candidate output overflow rejects immediately instead of waiting for readiness', async () => {
+  const {exerciseCandidateChild, withCandidateProcessTree} = await import(
+    '../scripts/installed-candidate-smoke.mjs'
+  )
+  const child = spawnSmokeFixture('smoke-output-flood')
+  const startedAt = Date.now()
+  await assert.rejects(
+    withCandidateProcessTree(child, process.env, () => exerciseCandidateChild(child)),
+    /installed_candidate_output_failed/u,
+  )
+  assert.ok(Date.now() - startedAt < 5_000, 'output overflow must beat the readiness timeout')
 })
 
 test('release workflow downloads exact candidates into checkout-free smoke jobs', async () => {

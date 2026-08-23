@@ -23,9 +23,10 @@ npm ci
 cp .env.example .env
 ```
 
-默认集成 Qwen 链路必须在 `.env` 中同时设置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。Search
-始终装配，因此 Tavily 是必需配置。启动器只把 `.env` 当数据解析，不做 shell 求值；启动 shell
-里已存在的变量优先于 `.env`。
+默认集成 Qwen 链路需要在 `.env` 中设置 `TAVILY_API_KEY`，并在 `DASHSCOPE_API_KEY` 与受支持的
+通用回退凭据中二选一。通用回退凭据是 `NOVA_AUDIO_AGENT_MODEL_API_KEY`，且只有配合下文所列的
+精确 base URL 时才能作为 Qwen realtime 凭据。Search 始终装配，因此 Tavily 是必需配置。启动器只把
+`.env` 当数据解析，不做 shell 求值；启动 shell 里已存在的变量优先于 `.env`。
 
 启动桌面客户端：
 

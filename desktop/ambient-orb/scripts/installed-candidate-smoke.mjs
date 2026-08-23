@@ -241,9 +241,9 @@ async function runInstalledCandidate({
     path: systemPath(process.platform, process.env),
   })
   const provider = await createQwenSmokeProvider()
-  let child
   let failure = null
   let cameraCapability = null
+  let cleanupSafe = true
   try {
     await runActions(plan.install, systemEnvironment)
     const executable = await realpath(plan.executable)
@@ -258,21 +258,14 @@ async function runInstalledCandidate({
       providerEndpoint: provider.endpoint,
       ...(cameraFile === undefined ? {} : {cameraFile: await exactCameraFile(cameraFile)}),
     })
-    child = spawn(executable, [`--user-data-dir=${userData}`], {
+    const child = spawn(executable, [`--user-data-dir=${userData}`], {
       cwd: workspace,
       env: environment,
       detached: process.platform !== 'win32',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
     })
-    const output = boundedOutput(child)
-    const readiness = await readReadiness(child.stdio[3])
-    await authenticateAndExercise(readiness)
-    child.stdio[4].end('quit\n')
-    const exit = await settleExit(child)
-    if (exit.code !== 0 || exit.signal !== null) throw new Error('installed_candidate_launch_failed')
-    await output
-    await requireTreeGone(child.pid, environment)
+    await withCandidateProcessTree(child, environment, () => exerciseCandidateChild(child))
     await runPackagedSourceRollback({
       executable,
       environment,
@@ -288,21 +281,24 @@ async function runInstalledCandidate({
     }
   } catch (error) {
     failure = error
-  }
-  if (child?.exitCode === null && child?.signalCode === null) child.kill('SIGKILL')
-  try { await provider.close() } catch {
-    failure ??= new Error('installed_candidate_provider_failed')
-  }
-  try { await runActions(plan.uninstall, systemEnvironment) } catch {
-    failure ??= new Error('installed_candidate_uninstall_failed')
-  }
-  for (const residue of plan.residue) {
-    try { await requireAbsent(residue) } catch {
-      failure ??= new Error('installed_candidate_residue')
+    if (error?.code === 'installed_candidate_tree_failed') cleanupSafe = false
+  } finally {
+    try { await provider.close() } catch {
+      failure ??= new Error('installed_candidate_provider_failed')
     }
-  }
-  try { await rm(scratch, {recursive: true, force: true}) } catch {
-    failure ??= new Error('installed_candidate_residue')
+    if (cleanupSafe) {
+      try { await runActions(plan.uninstall, systemEnvironment) } catch {
+        failure ??= new Error('installed_candidate_uninstall_failed')
+      }
+      for (const residue of plan.residue) {
+        try { await requireAbsent(residue) } catch {
+          failure ??= new Error('installed_candidate_residue')
+        }
+      }
+      try { await rm(scratch, {recursive: true, force: true}) } catch {
+        failure ??= new Error('installed_candidate_residue')
+      }
+    }
   }
   if (failure !== null) throw failure
   return cameraCapability
@@ -324,8 +320,8 @@ async function runPackagedSourceRollback({executable, environment, workspace, us
     maxBuffer: OUTPUT_LIMIT,
     stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
   })
-  classifySourceRollbackResult({...result, readiness: result.output?.[3] ?? ''})
-  await requireTreeGone(result.pid, rollbackEnvironment)
+  return withCandidateProcessTree(result, rollbackEnvironment, () =>
+    classifySourceRollbackResult({...result, readiness: result.output?.[3] ?? ''}))
 }
 
 async function runPackagedCameraCapability({executable, environment, userData}) {
@@ -342,10 +338,10 @@ async function runPackagedCameraCapability({executable, environment, userData}) 
     maxBuffer: OUTPUT_LIMIT,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  const capability = classifyCameraCapability(result)
-  if (!Number.isInteger(result.pid)) throw new Error('installed_camera_smoke_failed')
-  await requireTreeGone(result.pid, cameraEnvironment)
-  return capability
+  return withCandidateProcessTree(result, cameraEnvironment, () => {
+    if (!Number.isInteger(result.pid)) throw new Error('installed_camera_smoke_failed')
+    return classifyCameraCapability(result)
+  })
 }
 
 async function runActions(actions, environment) {
@@ -481,37 +477,117 @@ function settleExit(child) {
 }
 
 function boundedOutput(child) {
-  return new Promise((resolveOutput, reject) => {
+  let rejectFailure
+  const failure = new Promise((resolveNever, reject) => { rejectFailure = reject })
+  const done = new Promise(resolveOutput => {
     let size = 0
     let streams = 2
+    let failed = false
+    const fail = () => {
+      if (failed) return
+      failed = true
+      rejectFailure(new Error('installed_candidate_output_failed'))
+    }
     const finish = () => { if (--streams === 0) resolveOutput() }
     for (const stream of [child.stdout, child.stderr]) {
       stream.on('data', chunk => {
         size += Buffer.byteLength(chunk)
-        if (size > OUTPUT_LIMIT) reject(new Error('installed_candidate_output_failed'))
+        if (size > OUTPUT_LIMIT) fail()
       })
       stream.once('end', finish)
-      stream.once('error', () => reject(new Error('installed_candidate_output_failed')))
+      stream.once('error', fail)
     }
   })
+  return Object.freeze({done, failure})
+}
+
+export async function exerciseCandidateChild(child) {
+  const output = boundedOutput(child)
+  const readiness = await Promise.race([readReadiness(child.stdio[3]), output.failure])
+  await Promise.race([authenticateAndExercise(readiness), output.failure])
+  child.stdio[4].end('quit\n')
+  const exit = await Promise.race([settleExit(child), output.failure])
+  if (exit.code !== 0 || exit.signal !== null) throw new Error('installed_candidate_launch_failed')
+  await Promise.race([output.done, output.failure])
+}
+
+export async function withCandidateProcessTree(child, environment, operation) {
+  let value
+  let operationFailure = null
+  try {
+    value = await operation()
+  } catch (error) {
+    operationFailure = error
+  }
+  try {
+    if (Number.isInteger(child?.pid)) await stopAndRequireTreeGone(child, environment)
+  } catch (cleanupFailure) {
+    const error = new Error('installed_candidate_tree_failed', {
+      cause: operationFailure === null
+        ? cleanupFailure
+        : new AggregateError([operationFailure, cleanupFailure]),
+    })
+    error.code = 'installed_candidate_tree_failed'
+    throw error
+  }
+  if (operationFailure !== null) throw operationFailure
+  return value
+}
+
+async function stopAndRequireTreeGone(child, environment) {
+  const pid = child.pid
+  if (process.platform === 'win32') terminateWindowsTree(pid, environment)
+  else {
+    try { process.kill(-pid, 'SIGKILL') } catch (error) {
+      if (error?.code !== 'ESRCH') throw new Error('installed_candidate_tree_failed')
+    }
+  }
+  if (child.exitCode === null && child.signalCode === null && typeof child.once === 'function') {
+    await new Promise((resolveExit, rejectExit) => {
+      const timer = setTimeout(() => rejectExit(new Error('installed_candidate_tree_failed')), 5_000)
+      child.once('exit', () => {
+        clearTimeout(timer)
+        resolveExit()
+      })
+      child.once('error', () => {
+        clearTimeout(timer)
+        rejectExit(new Error('installed_candidate_tree_failed'))
+      })
+    })
+  }
+  await requireTreeGone(pid, environment)
+}
+
+function terminateWindowsTree(pid, environment) {
+  const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+  const script = windowsTreeScript(pid, true)
+  const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+    env: environment,
+    encoding: 'utf8', timeout: 10_000, maxBuffer: OUTPUT_LIMIT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (result.status !== 0 || result.error !== undefined || result.signal !== null) {
+    throw new Error('installed_candidate_tree_failed')
+  }
 }
 
 async function requireTreeGone(pid, environment) {
   if (!Number.isInteger(pid) || pid < 1) throw new Error('installed_candidate_tree_failed')
   if (process.platform === 'win32') {
     const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    const script = `$root=${pid};$p=Get-CimInstance Win32_Process;`+
-      '$ids=@($root);do{$n=@($p|?{$ids -contains $_.ParentProcessId}|% ProcessId|?{$ids -notcontains $_});$ids+= $n}while($n.Count);' +
-      '$alive=@($p|?{$ids -contains $_.ProcessId});if($alive.Count){exit 1}'
-    const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
-      env: environment,
-      encoding: 'utf8', timeout: 10_000, maxBuffer: OUTPUT_LIMIT,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    if (result.status !== 0 || result.error !== undefined || result.signal !== null) {
-      throw new Error('installed_candidate_tree_failed')
+    const script = windowsTreeScript(pid, false)
+    const deadline = Date.now() + 5_000
+    while (Date.now() < deadline) {
+      const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+        env: environment,
+        encoding: 'utf8', timeout: 10_000, maxBuffer: OUTPUT_LIMIT,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      if (result.status === 0 && result.error === undefined && result.signal === null) return
+      if (result.error !== undefined || result.signal !== null || ![0, 1].includes(result.status)) break
+      await new Promise(resolveWait => setTimeout(resolveWait, 50))
     }
-    return
+    throw new Error('installed_candidate_tree_failed')
   }
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {
@@ -522,6 +598,15 @@ async function requireTreeGone(pid, environment) {
     await new Promise(resolveWait => setTimeout(resolveWait, 50))
   }
   throw new Error('installed_candidate_tree_failed')
+}
+
+function windowsTreeScript(pid, terminate) {
+  const discover = `$root=${pid};$p=Get-CimInstance Win32_Process;`+
+    '$ids=@($root);do{$n=@($p|?{$ids -contains $_.ParentProcessId}|% ProcessId|?{$ids -notcontains $_});$ids+= $n}while($n.Count);' +
+    '$alive=@($p|?{$ids -contains $_.ProcessId});'
+  return terminate
+    ? `${discover}if($alive.Count){$alive|Sort-Object ProcessId -Descending|%{Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}}`
+    : `${discover}if($alive.Count){exit 1}`
 }
 
 function systemPath(platform, parentEnvironment) {
@@ -640,20 +725,24 @@ export function cliOptions(argv) {
   return values
 }
 
+export async function runInstalledCandidateCli(argv) {
+  const values = cliOptions(argv)
+  const expectedSha256 = values.has('--sha256-file')
+    ? (await readFile(resolve(values.get('--sha256-file')), 'utf8')).replace(/\n$/u, '')
+    : values.get('--sha256')
+  return runInstalledCandidate({
+    target: values.get('--target'),
+    artifact: resolve(values.get('--artifact')),
+    expectedSha256,
+    commit: values.get('--commit'),
+    signerWorkflow: values.get('--signer-workflow'),
+    ...(values.has('--camera-file') ? {cameraFile: resolve(values.get('--camera-file'))} : {}),
+  })
+}
+
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
   void (async () => {
-    const values = cliOptions(process.argv.slice(2))
-    const expectedSha256 = values.has('--sha256-file')
-      ? (await readFile(resolve(values.get('--sha256-file')), 'utf8')).replace(/\n$/u, '')
-      : values.get('--sha256')
-    const camera = await runInstalledCandidate({
-      target: values.get('--target'),
-      artifact: resolve(values.get('--artifact')),
-      expectedSha256,
-      commit: values.get('--commit'),
-      signerWorkflow: values.get('--signer-workflow'),
-      ...(values.has('--camera-file') ? {cameraFile: resolve(values.get('--camera-file'))} : {}),
-    })
+    const camera = await runInstalledCandidateCli(process.argv.slice(2))
     if (camera?.status === 'pending') {
       process.stdout.write(`${CAMERA_CAPABILITY_PENDING}\n`)
       process.exitCode = 75

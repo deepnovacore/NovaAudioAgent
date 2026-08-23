@@ -20,6 +20,16 @@ if (mode === undefined) {
   process.stdout.write(`grandchild:${grandchild.pid}\n`)
 } else if (mode === 'hold') {
   setInterval(() => {}, 1_000)
+} else if (mode === 'smoke-tree') {
+  const grandchild = spawn(process.execPath, [__filename, 'hold'], {
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+  process.stdout.write(`grandchild:${grandchild.pid}\n`)
+  setInterval(() => {}, 1_000)
+} else if (mode === 'smoke-output-flood') {
+  process.stdout.write('x'.repeat(70 * 1024))
+  setInterval(() => {}, 1_000)
 } else {
   process.exitCode = 2
 }
