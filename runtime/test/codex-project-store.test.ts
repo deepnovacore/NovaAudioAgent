@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  constants,
   chmodSync,
   fstatSync,
   lstatSync,
@@ -17,6 +18,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   realpath,
@@ -2030,19 +2032,30 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
   })
   try {
     const managed = await store.createManaged('managed')
+    const originalChild = await open(managed.canonical_path, constants.O_RDONLY)
+    const managedRootHandle = await open(managedRoot, constants.O_RDONLY)
     rootFiles.failTempCreate = true
-    await assert.rejects(
-      store.rollbackManagedCreate(managed.workspace_id),
-      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
-    )
-    const after = lstatSync(managed.canonical_path, {bigint: true})
-    assert.equal((after.mode & 0o7777n), 0o700n)
-    assert.equal(
-      hostWorkspacePath(await store.revalidateWorkspace(managed.workspace_id)),
-      managed.canonical_path,
-    )
-    rootFiles.failTempCreate = false
-    assert.equal(await store.rollbackManagedCreate(managed.workspace_id), true)
+    try {
+      await assert.rejects(
+        store.rollbackManagedCreate(managed.workspace_id),
+        (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
+      )
+      const after = lstatSync(managed.canonical_path, {bigint: true})
+      assert.equal((after.mode & 0o7777n), 0o700n)
+      assert.equal(
+        rootFiles.matchesAt(managedRootHandle.fd, basename(managed.canonical_path), originalChild.fd).status,
+        'mismatch',
+      )
+      assert.equal(
+        hostWorkspacePath(await store.revalidateWorkspace(managed.workspace_id)),
+        managed.canonical_path,
+      )
+      rootFiles.failTempCreate = false
+      assert.equal(await store.rollbackManagedCreate(managed.workspace_id), true)
+    } finally {
+      await originalChild.close()
+      await managedRootHandle.close()
+    }
   } finally {
     await store.close()
     await rm(root, {recursive: true, force: true})
