@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import {chmod, mkdtemp, realpath, rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import { test } from 'node:test'
 import { buildAssembly } from '../src/assembly.js'
 import type {CodexAssemblyResource} from '../src/codex-factory.js'
@@ -30,6 +33,7 @@ import {
 import {
   QwenAudioRealtimeAdapter,
   QwenSocketClosedError,
+  workspaceGraphFrontendInstructions,
   type QwenConnector,
   type QwenConnectorOptions,
   type QwenSocket,
@@ -246,6 +250,7 @@ test('Qwen factory builds a realtime-frontbrain core while ordinary assembly kee
   const qwenInput = realtime.runtime.core.post({kind: 'user_input', payload: {text: 'hello'}}, 0)
   realtime.runtime.core.apply(qwenInput)
   assert.equal(realtime.runtime.core.slots.inflight.fast, false)
+  assert.equal(realtime.workspaceGraph, undefined)
 
   const ordinary = buildAssembly({
     settings: settings({NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key'}),
@@ -257,6 +262,45 @@ test('Qwen factory builds a realtime-frontbrain core while ordinary assembly kee
   ordinary.runtime.core.apply(ordinaryInput)
   assert.equal(ordinary.runtime.core.slots.inflight.fast, true)
   assert.equal(connector.calls.length, 0)
+})
+
+test('Qwen factory owns enabled graph storage while unsafe graph config stays voice-only', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-qwen-graph-')))
+  try {
+    await chmod(root, 0o700)
+    const connector = recordingConnector()
+    const enabled = buildQwenRealtimeAssembly(qwenOptions(settings({
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+      NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED: 'true',
+      NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH: join(root, 'graph.sqlite'),
+    }), connector.connector))
+    assert.ok(enabled.workspaceGraph !== undefined)
+    await enabled.start()
+    const update = JSON.parse(connector.sockets[0]?.sent[0] ?? '{}') as {
+      readonly session?: {readonly instructions?: string}
+    }
+    assert.equal(update.session?.instructions, workspaceGraphFrontendInstructions)
+    await enabled.stop()
+
+    const diagnostics: string[] = []
+    const unsafeConnector = recordingConnector()
+    const unsafe = buildQwenRealtimeAssembly(qwenOptions(settings({
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+      NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED: 'true',
+      NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH: '/private/tmp/sensitive-graph.sqlite',
+    }), unsafeConnector.connector, {
+      onDiagnostic: line => { diagnostics.push(line) },
+    }))
+    assert.equal(unsafe.workspaceGraph, undefined)
+    assert.deepEqual(diagnostics, [
+      '[realtime-diagnostic] workspace_graph_configuration_invalid',
+    ])
+    await unsafe.start()
+    assert.equal(unsafeConnector.calls.length, 1)
+    await unsafe.stop()
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
 })
 
 test('Qwen factory construction does not invoke an unrelated LiveKit agents loader', () => {

@@ -44,6 +44,7 @@ import {
 import {LiveKitVolcEndpointing} from './realtime/volcengine/livekit-endpointing.js'
 import {SilenceVolcEndpointing} from './realtime/volcengine/silence-endpointing.js'
 import {DoubaoTtsClient} from './realtime/volcengine/tts.js'
+import {workspaceGraphServiceFromSettings} from './workspace-graph/factory.js'
 
 export type {
   ArkCascadedLlmConfig,
@@ -273,6 +274,13 @@ export function buildCascadedRealtimeAssembly(
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     idFactory: () => ids.next('cascaded'),
   })
+  const workspaceGraph = workspaceGraphServiceFromSettings(
+    options.settings,
+    code => {
+      if (code === 'workspace_graph_open_failed') return
+      try { options.onDiagnostic?.(`[realtime-diagnostic] ${code}`) } catch { /* advisory */ }
+    },
+  )
   return buildRealtimeAssembly({
     core,
     provider,
@@ -280,6 +288,7 @@ export function buildCascadedRealtimeAssembly(
     controlledGuardReconnect: false,
     guardHistoryRecovery: 'none',
     guardHistoryPairs: 4,
+    ...(workspaceGraph === undefined ? {} : {workspaceGraph}),
     ...(options.providerToolView === undefined ? {} : {providerToolView: options.providerToolView}),
     ...(options.onAudioFrame === undefined ? {} : {onAudioFrame: options.onAudioFrame}),
     ...(options.onAudioClear === undefined ? {} : {onAudioClear: options.onAudioClear}),

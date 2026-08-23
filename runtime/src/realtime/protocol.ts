@@ -26,6 +26,7 @@ export const hostItemKindSchema = z.enum([
   'recovery',
   'dialogue_context',
   'tool_output',
+  'workspace_context',
 ])
 
 export const hostContextItemSchema = z.object({
@@ -34,6 +35,9 @@ export const hostContextItemSchema = z.object({
   event_id: realtimeIdentifierSchema,
   content: boundedText(),
   call_id: realtimeIdentifierSchema.nullable().default(null),
+  session_epoch: epochSchema.optional(),
+  workspace_instance_id: realtimeIdentifierSchema.optional(),
+  revision: z.number().int().nonnegative().optional(),
 }).strict().superRefine((item, context) => {
   if (
     item.kind === 'dialogue_context'
@@ -54,9 +58,138 @@ export const hostContextItemSchema = z.object({
       message: 'call_id is only valid for tool output',
     })
   }
+  const workspaceContextFields = [
+    item.session_epoch,
+    item.workspace_instance_id,
+    item.revision,
+  ]
+  if (item.kind === 'workspace_context') {
+    for (const [index, field] of workspaceContextFields.entries()) {
+      if (field === undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: [['session_epoch', 'workspace_instance_id', 'revision'][index]!],
+          message: 'workspace context requires session_epoch, workspace_instance_id, and revision',
+        })
+      }
+    }
+  } else if (workspaceContextFields.some(field => field !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'workspace context fields are only valid for workspace_context',
+    })
+  }
 })
 
 export type HostContextItem = z.infer<typeof hostContextItemSchema>
+
+/**
+ * A provider adapter reports one of these capabilities before it is allowed to make a
+ * workspace-context item provider-visible. This is a contract declaration, not proof that a
+ * specific provider implements the operation; provider-specific proof belongs at the adapter.
+ */
+export const workspaceContextDeliveryCapabilitySchema = z.enum([
+  'replace_provider_item',
+  'refresh_session',
+  'unavailable',
+])
+
+/**
+ * The provider-visible transition for a workspace-context revision. A previous provider item is
+ * never left visible while a newer revision is accepted: it is either superseded explicitly or a
+ * session refresh is recorded. `unavailable` is intentionally a non-delivery state.
+ */
+const workspaceContextDeliveryIdentity = {
+  session_epoch: epochSchema,
+  workspace_instance_id: realtimeIdentifierSchema,
+  revision: z.number().int().nonnegative(),
+  // The adapter must attest to the prior provider-visible state, even when it was empty.
+  prior_provider_item_id: realtimeIdentifierSchema.nullable(),
+}
+
+const replaceWorkspaceContextDeliverySchema = z.object({
+  capability: z.literal('replace_provider_item'),
+  delivered: z.literal(true),
+  ...workspaceContextDeliveryIdentity,
+  provider_item_id: realtimeIdentifierSchema,
+  superseded_provider_item_id: realtimeIdentifierSchema.nullable(),
+}).strict().superRefine((delivery, context) => {
+  if (delivery.superseded_provider_item_id !== delivery.prior_provider_item_id) {
+    context.addIssue({
+      code: 'custom',
+      path: ['superseded_provider_item_id'],
+      message: 'prior provider state must be explicitly superseded before a newer revision is visible',
+    })
+  }
+  if (
+    delivery.prior_provider_item_id !== null
+    && delivery.provider_item_id === delivery.prior_provider_item_id
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['provider_item_id'],
+      message: 'newer revision requires a distinct provider item id',
+    })
+  }
+})
+
+const refreshWorkspaceContextDeliverySchema = z.object({
+  capability: z.literal('refresh_session'),
+  delivered: z.literal(true),
+  ...workspaceContextDeliveryIdentity,
+  refresh_id: realtimeIdentifierSchema,
+}).strict()
+
+const unavailableWorkspaceContextDeliverySchema = z.object({
+  capability: z.literal('unavailable'),
+  delivered: z.literal(false),
+  ...workspaceContextDeliveryIdentity,
+}).strict()
+
+export const workspaceContextDeliverySchema = z.discriminatedUnion('capability', [
+  replaceWorkspaceContextDeliverySchema,
+  refreshWorkspaceContextDeliverySchema,
+  unavailableWorkspaceContextDeliverySchema,
+])
+
+export const workspaceContextDeliveryRecordSchema = z.object({
+  item: hostContextItemSchema,
+  asUserActivation: z.literal(false),
+  delivery: workspaceContextDeliverySchema,
+}).strict().superRefine((injection, context) => {
+  if (injection.item.kind !== 'workspace_context') {
+    context.addIssue({
+      code: 'custom',
+      path: ['item'],
+      message: 'workspace context injection requires workspace_context item kind',
+    })
+  }
+  if (
+    injection.item.session_epoch !== injection.delivery.session_epoch
+    || injection.item.workspace_instance_id !== injection.delivery.workspace_instance_id
+    || injection.item.revision !== injection.delivery.revision
+  ) context.addIssue({
+    code: 'custom',
+    path: ['delivery'],
+    message: 'workspace context delivery proof must bind the exact session_epoch, workspace_instance_id, and revision',
+  })
+})
+
+export const workspaceContextInjectionSchema = workspaceContextDeliveryRecordSchema.superRefine(
+  (injection, context) => {
+    if (injection.delivery.capability === 'unavailable') {
+      context.addIssue({
+        code: 'custom',
+        path: ['delivery', 'capability'],
+        message: 'workspace context is unavailable and cannot be injected',
+      })
+    }
+  },
+)
+
+export type WorkspaceContextDeliveryCapability = z.infer<typeof workspaceContextDeliveryCapabilitySchema>
+export type WorkspaceContextDelivery = z.infer<typeof workspaceContextDeliverySchema>
+export type WorkspaceContextDeliveryRecord = z.infer<typeof workspaceContextDeliveryRecordSchema>
 
 export const hostResponseKindSchema = z.enum([
   'host_fact',
@@ -70,6 +203,13 @@ export const hostResponseIntentSchema = z.object({
   task_summary: boundedText().nullable().default(null),
   origin_spoken: z.boolean().default(false),
 }).strict().superRefine((intent, context) => {
+  if (intent.item.kind === 'workspace_context') {
+    context.addIssue({
+      code: 'custom',
+      path: ['item'],
+      message: 'workspace context cannot create a response',
+    })
+  }
   if (intent.kind === 'host_fact' && intent.item.kind === 'tool_output') {
     context.addIssue({code: 'custom', path: ['item'], message: 'host fact cannot be tool output'})
   }
@@ -245,6 +385,13 @@ export interface RealtimeProvider {
     options: {
       readonly confirmationTimeout: number | null
       readonly asUserActivation: boolean
+      readonly signal: AbortSignal
+    },
+  ): Promise<unknown>
+  injectWorkspaceContext?(
+    item: HostContextItem,
+    options: {
+      readonly confirmationTimeout: number | null
       readonly signal: AbortSignal
     },
   ): Promise<unknown>

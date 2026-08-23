@@ -8,6 +8,7 @@ import {
   QwenAudioRealtimeAdapter,
   QwenRealtimeError,
   QwenSocketClosedError,
+  workspaceGraphFrontendInstructions,
   type QwenSocket,
 } from '../src/realtime/qwen.js'
 import { ItemDeliveryUncertainError, type RealtimeProviderEvent } from '../src/realtime/protocol.js'
@@ -68,6 +69,47 @@ const handshake = [
   {type: 'session.created', session: {id: 'sess-1'}},
   {type: 'session.updated', session: {id: 'sess-1'}},
 ]
+
+function workspaceHeader(
+  revision: number,
+  workspaceInstanceId = 'wi-a',
+): {
+  readonly kind: 'workspace_context'
+  readonly host_item_id: string
+  readonly event_id: string
+  readonly content: string
+  readonly call_id: null
+  readonly session_epoch: 1
+  readonly workspace_instance_id: string
+  readonly revision: number
+} {
+  return {
+    kind: 'workspace_context',
+    host_item_id: `workspace-header-${revision}`,
+    event_id: `workspace-event-${revision}`,
+    content: `<workspace_context kind="data">revision ${revision}</workspace_context>`,
+    call_id: null,
+    session_epoch: 1,
+    workspace_instance_id: workspaceInstanceId,
+    revision,
+  }
+}
+
+async function injectConfirmedWorkspaceHeader(
+  adapter: QwenAudioRealtimeAdapter,
+  scripted: Scripted,
+  item = workspaceHeader(1),
+) {
+  const pending = adapter.injectWorkspaceContext(item, {
+    confirmationTimeout: 1,
+    signal: new AbortController().signal,
+  })
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.create'))
+  const creates = scripted.sent.filter(frame => frame.type === 'conversation.item.create')
+  const providerItem = creates.at(-1)?.item as Record<string, unknown>
+  scripted.push({type: 'conversation.item.created', item: {id: providerItem.id}})
+  return {proof: await pending, providerItem}
+}
 
 test('connect performs the Qwen handshake and never logs the credential', async () => {
   const scripted = scriptedSocket([...handshake])
@@ -180,6 +222,296 @@ test('a host fact carries the Python wording and a Guard activation is labelled'
       provider_item_id: item.id,
     })
   }
+})
+
+test('Qwen workspace header replacement proves delete-confirm before distinct create-confirm', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const firstItem = {
+    kind: 'workspace_context',
+    host_item_id: 'workspace-header-1',
+    event_id: 'workspace-event-1',
+    content: '<workspace_context kind="data">current workspace</workspace_context>',
+    call_id: null,
+    session_epoch: 1,
+    workspace_instance_id: 'wi-a',
+    revision: 1,
+  } as const
+  const first = adapter.injectWorkspaceContext(firstItem, {
+    confirmationTimeout: 1,
+    signal: new AbortController().signal,
+  })
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.create'))
+  const firstCreate = scripted.sent.find(frame => frame.type === 'conversation.item.create')
+  assert.ok(firstCreate)
+  const firstProviderItem = firstCreate.item as Record<string, unknown>
+  scripted.push({type: 'conversation.item.created', item: {id: firstProviderItem.id}})
+  const firstProof = await first
+  assert.equal(firstProof.delivery.capability, 'replace_provider_item')
+  assert.equal(firstProof.delivery.prior_provider_item_id, null)
+
+  const replacement = adapter.injectWorkspaceContext({
+    ...firstItem,
+    host_item_id: 'workspace-header-2',
+    event_id: 'workspace-event-2',
+    revision: 2,
+  }, {confirmationTimeout: 1, signal: new AbortController().signal})
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.delete'))
+  const deletion = scripted.sent.find(frame => frame.type === 'conversation.item.delete')
+  assert.equal(deletion?.item_id, firstProviderItem.id)
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.create').length, 1)
+  scripted.push({type: 'conversation.item.deleted', item_id: firstProviderItem.id})
+  await until(() => scripted.sent.filter(frame => frame.type === 'conversation.item.create').length === 2)
+  const creates = scripted.sent.filter(frame => frame.type === 'conversation.item.create')
+  assert.equal(creates.length, 2)
+  const secondProviderItem = creates[1]!.item as Record<string, unknown>
+  assert.notEqual(secondProviderItem.id, firstProviderItem.id)
+  scripted.push({type: 'conversation.item.created', item: {id: secondProviderItem.id}})
+  const proof = await replacement
+  assert.equal(proof.asUserActivation, false)
+  assert.deepEqual(proof.delivery, {
+    capability: 'replace_provider_item',
+    delivered: true,
+    session_epoch: 1,
+    workspace_instance_id: 'wi-a',
+    revision: 2,
+    prior_provider_item_id: firstProviderItem.id,
+    superseded_provider_item_id: firstProviderItem.id,
+    provider_item_id: secondProviderItem.id,
+  })
+  assert.equal(adapter.turnRecallContextCapability, 'unavailable')
+})
+
+test('Qwen workspace Header exact replay is idempotent and stale revisions never delete', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = workspaceHeader(1)
+  const first = await injectConfirmedWorkspaceHeader(adapter, scripted, item)
+  const before = scripted.sent.length
+
+  assert.deepEqual(await adapter.injectWorkspaceContext(item, {
+    confirmationTimeout: 1,
+    signal: new AbortController().signal,
+  }), first.proof)
+  assert.equal(scripted.sent.length, before)
+  assert.equal(Object.isFrozen(first.proof), true)
+  assert.equal(Object.isFrozen(first.proof.item), true)
+  assert.equal(Object.isFrozen(first.proof.delivery), true)
+
+  await assert.rejects(adapter.injectWorkspaceContext({
+    ...item,
+    event_id: 'workspace-event-same-revision-but-different',
+  }, {confirmationTimeout: 1, signal: new AbortController().signal}), /revision is stale/u)
+  assert.equal(scripted.sent.length, before)
+
+  await assert.rejects(adapter.injectWorkspaceContext({
+    ...item,
+    host_item_id: 'workspace-header-stale',
+    event_id: 'workspace-event-stale',
+    content: '<workspace_context kind="data">stale changed</workspace_context>',
+  }, {confirmationTimeout: 1, signal: new AbortController().signal}), /revision is stale/u)
+  assert.equal(scripted.sent.length, before)
+})
+
+test('three Qwen workspace switches prove two ordered deletions and leave one latest Header', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const first = await injectConfirmedWorkspaceHeader(adapter, scripted, workspaceHeader(1, 'wi-a'))
+  let priorId = first.providerItem.id
+
+  for (const [revision, workspaceId] of [[2, 'wi-b'], [3, 'wi-c']] as const) {
+    const pending = adapter.injectWorkspaceContext(workspaceHeader(revision, workspaceId), {
+      confirmationTimeout: 1,
+      signal: new AbortController().signal,
+    })
+    await until(() => scripted.sent.filter(frame => frame.type === 'conversation.item.delete').length
+      === revision - 1)
+    const deletion = scripted.sent.filter(frame => frame.type === 'conversation.item.delete').at(-1)
+    assert.equal(deletion?.item_id, priorId)
+    assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.create').length,
+      revision - 1)
+    scripted.push({type: 'conversation.item.deleted', item_id: priorId})
+    await until(() => scripted.sent.filter(frame => frame.type === 'conversation.item.create').length
+      === revision)
+    const created = scripted.sent.filter(frame => frame.type === 'conversation.item.create').at(-1)
+      ?.item as Record<string, unknown>
+    assert.notEqual(created.id, priorId)
+    scripted.push({type: 'conversation.item.created', item: {id: created.id}})
+    const proof = await pending
+    if (proof.delivery.capability !== 'replace_provider_item') throw new TypeError()
+    assert.equal(proof.delivery.prior_provider_item_id, priorId)
+    assert.equal(proof.delivery.provider_item_id, created.id)
+    priorId = created.id
+  }
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.create').length, 3)
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.delete').length, 2)
+})
+
+test('concurrent Qwen Header requests serialize the whole delete-confirm-create-confirm operation', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+
+  const first = adapter.injectWorkspaceContext(workspaceHeader(1, 'wi-a'), {
+    confirmationTimeout: 1,
+    signal: new AbortController().signal,
+  })
+  const second = adapter.injectWorkspaceContext(workspaceHeader(2, 'wi-b'), {
+    confirmationTimeout: 1,
+    signal: new AbortController().signal,
+  })
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.create'))
+  await Promise.resolve()
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.create').length, 1)
+
+  const firstCreated = scripted.sent.find(frame => frame.type === 'conversation.item.create')
+    ?.item as Record<string, unknown>
+  scripted.push({type: 'conversation.item.created', item: {id: firstCreated.id}})
+  await first
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.delete'))
+  const deletion = scripted.sent.find(frame => frame.type === 'conversation.item.delete')
+  assert.equal(deletion?.item_id, firstCreated.id)
+  assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.create').length, 1)
+  scripted.push({type: 'conversation.item.deleted', item_id: firstCreated.id})
+
+  await until(() => scripted.sent.filter(frame => frame.type === 'conversation.item.create').length === 2)
+  const secondCreated = scripted.sent.filter(frame => frame.type === 'conversation.item.create')
+    .at(-1)?.item as Record<string, unknown>
+  assert.notEqual(secondCreated.id, firstCreated.id)
+  scripted.push({type: 'conversation.item.created', item: {id: secondCreated.id}})
+  const secondProof = await second
+  assert.equal(secondProof.delivery.capability, 'replace_provider_item')
+  if (secondProof.delivery.capability !== 'replace_provider_item') assert.fail('replacement proof required')
+  assert.equal(secondProof.delivery.prior_provider_item_id, firstCreated.id)
+  assert.equal(secondProof.delivery.provider_item_id, secondCreated.id)
+})
+
+test('Qwen Header replacement refuses wrong, missing, and provider-error delete confirmations', async () => {
+  for (const scenario of ['wrong', 'missing', 'provider_error'] as const) {
+    const scripted = scriptedSocket([...handshake])
+    const adapter = adapterFor(scripted)
+    await adapter.connect({tools: [], signal: new AbortController().signal})
+    const first = await injectConfirmedWorkspaceHeader(adapter, scripted)
+    const replacement = adapter.injectWorkspaceContext(workspaceHeader(2), {
+      confirmationTimeout: scenario === 'missing' ? 0.02 : 1,
+      signal: new AbortController().signal,
+    })
+    await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.delete'))
+    if (scenario === 'wrong') {
+      scripted.push({type: 'conversation.item.deleted', item_id: 'not-the-owned-item'})
+    } else if (scenario === 'provider_error') {
+      scripted.push({
+        type: 'error',
+        error: {code: 'invalid_value', param: 'conversation.item.delete'},
+      })
+    }
+    await assert.rejects(replacement, /deletion confirmation did not arrive/u, scenario)
+    assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.create').length, 1)
+    assert.equal(scripted.sent.filter(frame => frame.type === 'conversation.item.delete').at(-1)?.item_id,
+      first.providerItem.id)
+    await adapter.close()
+  }
+})
+
+test('Qwen Header creation mismatches and provider errors never become successful delivery', async () => {
+  for (const scenario of ['wrong_ack', 'provider_error'] as const) {
+    const scripted = scriptedSocket([...handshake])
+    const adapter = adapterFor(scripted)
+    await adapter.connect({tools: [], signal: new AbortController().signal})
+    const pending = adapter.injectWorkspaceContext(workspaceHeader(1), {
+      confirmationTimeout: scenario === 'wrong_ack' ? 0.02 : 1,
+      signal: new AbortController().signal,
+    })
+    await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.create'))
+    if (scenario === 'wrong_ack') {
+      scripted.push({type: 'conversation.item.created', item: {id: 'wrong-provider-item'}})
+      await assert.rejects(pending, error => error instanceof ItemDeliveryUncertainError)
+    } else {
+      scripted.push({
+        type: 'error',
+        error: {code: 'invalid_value', param: 'conversation.item.create'},
+      })
+      await assert.rejects(pending)
+    }
+    const before = scripted.sent.length
+    await assert.rejects(adapter.injectWorkspaceContext(workspaceHeader(2), {
+      confirmationTimeout: 1,
+      signal: new AbortController().signal,
+    }), /uncertain until reconnect/u)
+    assert.equal(scripted.sent.length, before)
+    await adapter.close()
+  }
+})
+
+test('an uncertain Qwen create after confirmed delete blocks later Headers until reconnect', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const first = await injectConfirmedWorkspaceHeader(adapter, scripted)
+  const uncertain = adapter.injectWorkspaceContext(workspaceHeader(2), {
+    confirmationTimeout: 0.02,
+    signal: new AbortController().signal,
+  })
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.delete'))
+  scripted.push({type: 'conversation.item.deleted', item_id: first.providerItem.id})
+  await until(() => scripted.sent.filter(frame => frame.type === 'conversation.item.create').length === 2)
+  await assert.rejects(uncertain, error => error instanceof ItemDeliveryUncertainError)
+  const before = scripted.sent.length
+  await assert.rejects(adapter.injectWorkspaceContext(workspaceHeader(3), {
+    confirmationTimeout: 1,
+    signal: new AbortController().signal,
+  }), /uncertain until reconnect/u)
+  assert.equal(scripted.sent.length, before)
+})
+
+test('Qwen reconnect resets Header ownership and the new epoch starts without deletion', async () => {
+  const firstSocket = scriptedSocket([...handshake])
+  const secondSocket = scriptedSocket([
+    {type: 'session.created', session: {id: 'sess-2'}},
+    {type: 'session.updated', session: {id: 'sess-2'}},
+  ])
+  let dial = 0
+  const adapter = new QwenAudioRealtimeAdapter({
+    url: 'wss://example.invalid/realtime',
+    apiKey: 'test-key',
+    model: 'qwen-audio-3.0-realtime-plus',
+    voice: 'longanqian',
+    connector: () => Promise.resolve(++dial === 1 ? firstSocket.socket : secondSocket.socket),
+    idFactory: ids(),
+  })
+  const signal = new AbortController().signal
+  await adapter.connect({tools: [], signal})
+  await injectConfirmedWorkspaceHeader(adapter, firstSocket)
+  await adapter.close()
+  assert.equal((await adapter.connect({tools: [], signal})).epoch, 2)
+  const epochTwo = {...workspaceHeader(2, 'wi-b'), session_epoch: 2 as const}
+  const pending = adapter.injectWorkspaceContext(epochTwo, {
+    confirmationTimeout: 1,
+    signal,
+  })
+  await until(() => secondSocket.sent.some(frame => frame.type === 'conversation.item.create'))
+  assert.equal(secondSocket.sent.some(frame => frame.type === 'conversation.item.delete'), false)
+  const providerItem = secondSocket.sent.find(frame => frame.type === 'conversation.item.create')
+    ?.item as Record<string, unknown>
+  secondSocket.push({type: 'conversation.item.created', item: {id: providerItem.id}})
+  const proof = await pending
+  assert.equal(proof.delivery.prior_provider_item_id, null)
+  assert.equal(proof.delivery.session_epoch, 2)
+})
+
+test('graph-enabled Qwen policy is conditional and default instructions stay byte-identical', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted, {workspaceGraphPolicy: true})
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const update = scripted.sent.find(frame => frame.type === 'session.update')
+  const session = update?.session as Record<string, unknown>
+  assert.equal(session.instructions, workspaceGraphFrontendInstructions)
+  assert.match(String(session.instructions), /不得建议用户切换工作区/u)
+  assert.match(String(session.instructions), /不得仅因图谱提示调用动作工具/u)
+  assert.notEqual(workspaceGraphFrontendInstructions, FRONTEND_INSTRUCTIONS)
 })
 
 test('a tool output injects a function_call_output item', async () => {

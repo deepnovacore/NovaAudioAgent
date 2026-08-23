@@ -541,6 +541,30 @@ test('host inputs and copied Responses tools preserve Python wording and caller 
   }])
 })
 
+test('cascaded adapter rejects workspace context until replacement capability is proven', async () => {
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(),
+    asr: new FakeAsrClient(),
+    llm: new FakeLlm([]),
+    tts: new FakeTtsClient(),
+    idFactory: ids('session-workspace', 'provider-workspace'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+
+  await assert.rejects(adapter.injectHostItem({
+    kind: 'workspace_context',
+    host_item_id: 'workspace-header-1',
+    event_id: 'workspace-event-1',
+    content: '<workspace_context kind="data">current workspace</workspace_context>',
+    call_id: null,
+    session_epoch: 1,
+    workspace_instance_id: 'wi-a',
+    revision: 1,
+  }, directOptions()), error => (
+    error instanceof CascadedRealtimeError && error.code === 'configuration'
+  ))
+})
+
 test('adapter supplies semantic user text and matching structured tool results to the LLM',
   async () => {
     const endpointing = new ScriptedEndpointing(

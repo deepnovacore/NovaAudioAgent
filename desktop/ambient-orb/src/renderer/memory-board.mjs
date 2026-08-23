@@ -1,11 +1,24 @@
+import {
+  boardTabForKey,
+  createGraphTabController,
+  renderWorkspaceGraphBoard,
+} from './workspace-graph-board.mjs'
+
 const channelsRoot = document.querySelector('#channels')
 const statusLabel = document.querySelector('#status')
 const refreshButton = document.querySelector('#refresh')
 const exportButton = document.querySelector('#export')
+const memoryTab = document.querySelector('#memory-tab')
+const graphTab = document.querySelector('#graph-tab')
+const memoryPanel = document.querySelector('#memory-panel')
+const graphPanel = document.querySelector('#graph-panel')
+const graphRoot = document.querySelector('#workspace-graph')
+const graphState = document.querySelector('#graph-state')
 
 let latestPayload = null
 let inFlight = false
 let exportInFlight = false
+let activeTab = 'memory'
 
 function itemContent(raw) {
   try {
@@ -69,6 +82,7 @@ function renderChannel(channel) {
 }
 
 async function load() {
+  if (activeTab !== 'memory') return
   if (inFlight) return
   inFlight = true
   statusLabel.textContent = '加载中…'
@@ -80,7 +94,7 @@ async function load() {
       return
     }
     latestPayload = payload
-    exportButton.disabled = exportInFlight
+    exportButton.disabled = exportInFlight || activeTab === 'graph'
     channelsRoot.replaceChildren(...payload.channels.map(renderChannel))
     statusLabel.textContent = `更新于 ${new Date().toLocaleTimeString()}`
   } catch {
@@ -105,14 +119,66 @@ async function exportBoard() {
     statusLabel.textContent = '导出失败'
   } finally {
     exportInFlight = false
-    exportButton.disabled = false
+    exportButton.disabled = activeTab === 'graph'
   }
 }
 
-refreshButton.addEventListener('click', () => { void load() })
+const graphController = createGraphTabController({
+  request: () => window.novaAudioAgentDesktop.graphBoard.request(),
+  visible: () => !document.hidden,
+  render: payload => {
+    renderWorkspaceGraphBoard(payload, {
+      document,
+      root: graphRoot,
+      status: graphState,
+    })
+    statusLabel.textContent = `更新于 ${new Date().toLocaleTimeString()}`
+  },
+  failure: reason => {
+    graphRoot.replaceChildren()
+    graphState.textContent = reason === 'unavailable' ? '后端无响应' : '图谱数据无效'
+    statusLabel.textContent = '加载失败'
+  },
+})
+
+function selectTab(tab) {
+  activeTab = tab
+  const graphActive = activeTab === 'graph'
+  memoryTab.setAttribute('aria-selected', String(!graphActive))
+  memoryTab.tabIndex = graphActive ? -1 : 0
+  graphTab.setAttribute('aria-selected', String(graphActive))
+  graphTab.tabIndex = graphActive ? 0 : -1
+  memoryPanel.hidden = graphActive
+  graphPanel.hidden = !graphActive
+  exportButton.hidden = activeTab === 'graph'
+  exportButton.disabled = graphActive || exportInFlight || latestPayload === null
+  if (graphActive) void graphController.activate()
+  else {
+    graphController.deactivate()
+    void load()
+  }
+}
+
+memoryTab.addEventListener('click', () => { selectTab('memory') })
+graphTab.addEventListener('click', () => { selectTab('graph') })
+function handleTabKey(event) {
+  const nextTab = boardTabForKey(activeTab, event.key)
+  if (nextTab === null) return
+  event.preventDefault()
+  selectTab(nextTab)
+  const nextElement = nextTab === 'graph' ? graphTab : memoryTab
+  nextElement.focus()
+}
+memoryTab.addEventListener('keydown', handleTabKey)
+graphTab.addEventListener('keydown', handleTabKey)
+refreshButton.addEventListener('click', () => {
+  if (activeTab === 'graph') void graphController.refresh()
+  else void load()
+})
 exportButton.addEventListener('click', () => { void exportBoard() })
 setInterval(() => {
   if (document.hidden) return
-  void load()
+  if (activeTab === 'graph') void graphController.tick()
+  else void load()
 }, 2000)
-void load()
+selectTab('memory')

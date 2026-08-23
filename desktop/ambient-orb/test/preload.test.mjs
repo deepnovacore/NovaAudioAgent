@@ -62,10 +62,33 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   assert.equal(typeof exposed.settings.onChanged(null), 'function')
 })
 
+test('preload exposes a distinct read-only workspace graph board relay', async () => {
+  const { exposed, ipcRenderer, invokes, sends } = await loadPreload()
+
+  assert.deepEqual(Object.keys(exposed.graphBoard).sort(), ['onFetch', 'publish', 'request'])
+  assert.ok(Object.isFrozen(exposed.graphBoard))
+  await exposed.graphBoard.request()
+  assert.deepEqual(invokes, [{channel: 'nova:workspace-graph-board:request', payload: undefined}])
+
+  const requests = []
+  const unsubscribe = exposed.graphBoard.onFetch(requestId => requests.push(requestId))
+  ipcRenderer.emit('nova:workspace-graph-board:fetch', {}, 'graph-1')
+  unsubscribe()
+  ipcRenderer.emit('nova:workspace-graph-board:fetch', {}, 'graph-2')
+  assert.deepEqual(requests, ['graph-1'])
+
+  exposed.graphBoard.publish({type: 'workspace_graph.board', request_id: 'graph-1'})
+  assert.deepEqual(sends, [{
+    channel: 'nova:workspace-graph-board:data',
+    payload: {type: 'workspace_graph.board', request_id: 'graph-1'},
+  }])
+  assert.equal(exposed.graphBoard.export, undefined)
+})
+
 test('preload declares each bridge namespace exactly once', async () => {
   const { source } = await loadPreload()
 
-  for (const namespace of ['orbMenu', 'releaseCamera', 'memoryBoard', 'nativeAudio', 'windowDrag', 'settings']) {
+  for (const namespace of ['orbMenu', 'releaseCamera', 'memoryBoard', 'graphBoard', 'nativeAudio', 'windowDrag', 'settings']) {
     const declarations = source.match(new RegExp(`^  ${namespace}: `, 'gm')) || []
     assert.equal(declarations.length, 1, `${namespace} is declared once`)
   }

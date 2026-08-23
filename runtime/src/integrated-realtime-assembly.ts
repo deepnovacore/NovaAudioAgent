@@ -47,6 +47,7 @@ export function buildIntegratedRealtimeAssembly(
     ...(options.connector === undefined ? {} : {connector: options.connector}),
     idFactory: () => ids.next('qwen'),
     now: () => clock.now(),
+    workspaceGraphPolicy: options.settings.workspace_graph_enabled,
   })
   return buildQwenRealtimeAssembly({
     ...options,

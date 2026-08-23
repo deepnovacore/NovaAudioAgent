@@ -24,6 +24,7 @@
     "desktop/ambient-orb/src/renderer/settings-controller.mjs",
     "desktop/ambient-orb/src/renderer/settings.mjs",
     "desktop/ambient-orb/src/renderer/state.mjs",
+    "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
     "runtime/src/assembly.ts",
     "runtime/src/calls.ts",
     "runtime/src/canonical-json.ts",
@@ -124,6 +125,7 @@
     "runtime/src/realtime/volcengine/silence-endpointing.ts",
     "runtime/src/realtime/volcengine/tts.ts",
     "runtime/src/realtime/volcengine/websocket.ts",
+    "runtime/src/realtime/workspace-graph-board.ts",
     "runtime/src/runtime.ts",
     "runtime/src/scorecard.ts",
     "runtime/src/sim.ts",
@@ -133,7 +135,19 @@
     "runtime/src/tool-schema.ts",
     "runtime/src/trace.ts",
     "runtime/src/unicode-casefold.ts",
-    "runtime/src/unicode-normalize.ts"
+    "runtime/src/unicode-normalize.ts",
+    "runtime/src/workspace-graph/context.ts",
+    "runtime/src/workspace-graph/factory.ts",
+    "runtime/src/workspace-graph/identity.ts",
+    "runtime/src/workspace-graph/models.ts",
+    "runtime/src/workspace-graph/projector.ts",
+    "runtime/src/workspace-graph/provider.ts",
+    "runtime/src/workspace-graph/recall.ts",
+    "runtime/src/workspace-graph/sensitivity.ts",
+    "runtime/src/workspace-graph/service.ts",
+    "runtime/src/workspace-graph/store-client.ts",
+    "runtime/src/workspace-graph/store-worker.ts",
+    "runtime/src/workspace-graph/store.ts"
   ],
   "occurrences": [
     {
@@ -351,6 +365,33 @@
       "disposition": "wire_json",
       "test": "desktop/ambient-orb/test/orb-visual.test.mjs",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "snippet_sha256": "f6f9c83eccb7769affa383652ad5b819f8e1c29b41b4296b33df5f344cd3fb58",
+      "disposition": "wire_json",
+      "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs",
+      "behavior": "graph renderer uses owned text nodes for active weak degraded stale and omission states"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs",
+      "behavior": "graph payload validator clones the exact bounded view and rejects hidden or malformed data"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
+      "kind": "string_trim",
+      "occurrence_index": 2,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/workspace-graph-board.test.mjs",
+      "behavior": "graph payload validator clones the exact bounded view and rejects hidden or malformed data"
     },
     {
       "file": "runtime/src/causal-runtime.ts",
@@ -714,8 +755,17 @@
     },
     {
       "file": "runtime/src/desktop-bridge.ts",
-      "kind": "numeric_template",
+      "kind": "numeric_string",
       "occurrence_index": 9,
+      "snippet_sha256": "4e2e5cdfa76b3a83c80d52795f591223ba2411eb91f03db839d50116b3285407",
+      "disposition": "wire_json",
+      "test": "runtime/test/desktop-bridge.test.ts",
+      "behavior": "typed audio and controls route once through the same bridge behavior"
+    },
+    {
+      "file": "runtime/src/desktop-bridge.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 10,
       "snippet_sha256": "1bc04b5291c26a46d918139138b992d2de976d6851d0893b0476b85bfbdfc6e6",
       "disposition": "wire_json",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -724,7 +774,7 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 10,
+      "occurrence_index": 11,
       "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
       "disposition": "byte_length",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -733,7 +783,7 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 11,
+      "occurrence_index": 12,
       "snippet_sha256": "f38f50dbfa76a64db16ee2343e7225138da1f399ae716bf71434657dc2bcb2e7",
       "disposition": "byte_length",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -742,7 +792,7 @@
     {
       "file": "runtime/src/desktop-bridge.ts",
       "kind": "string_length",
-      "occurrence_index": 12,
+      "occurrence_index": 13,
       "snippet_sha256": "a4d716ff8f4946a325119dcfe45784a4761fe8db132f099b9f85bf7bca79a5a3",
       "disposition": "byte_length",
       "test": "runtime/test/desktop-bridge.test.ts",
@@ -1056,8 +1106,26 @@
     },
     {
       "file": "runtime/src/realtime-assembly.ts",
-      "kind": "numeric_string",
+      "kind": "string_length",
       "occurrence_index": 0,
+      "snippet_sha256": "f118a9ced4b942d3f573d52f4f9626a586d87ff5926de5579f32564466cdd803",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-assembly.test.ts",
+      "behavior": "workspace graph opens before project initialization, injects only the current Header, and owns hooks"
+    },
+    {
+      "file": "runtime/src/realtime-assembly.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "ae8df7594e0c7aedf5376e8eeacfcf48e7bc34c19b9a5b37f13a240002b844d5",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-assembly.test.ts",
+      "behavior": "workspace graph opens before project initialization, injects only the current Header, and owns hooks"
+    },
+    {
+      "file": "runtime/src/realtime-assembly.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 2,
       "snippet_sha256": "d2efa544579607640c4ad9a7049801e6e26cfc89d12ea29d1e127abd096902a1",
       "disposition": "wire_json",
       "test": "runtime/test/realtime-assembly.test.ts",
@@ -1066,7 +1134,7 @@
     {
       "file": "runtime/src/realtime-assembly.ts",
       "kind": "numeric_string",
-      "occurrence_index": 1,
+      "occurrence_index": 3,
       "snippet_sha256": "d2efa544579607640c4ad9a7049801e6e26cfc89d12ea29d1e127abd096902a1",
       "disposition": "wire_json",
       "test": "runtime/test/realtime-assembly.test.ts",
@@ -1469,6 +1537,42 @@
       "behavior": "speech preparation uses Python regex boundaries around Unicode prose"
     },
     {
+      "file": "runtime/src/realtime/workspace-graph-board.ts",
+      "kind": "string_trim",
+      "occurrence_index": 0,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-workspace-graph-board.test.ts",
+      "behavior": "board validates the exact bounded request id"
+    },
+    {
+      "file": "runtime/src/realtime/workspace-graph-board.ts",
+      "kind": "string_trim",
+      "occurrence_index": 1,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-workspace-graph-board.test.ts",
+      "behavior": "board validates the exact bounded request id"
+    },
+    {
+      "file": "runtime/src/realtime/workspace-graph-board.ts",
+      "kind": "string_trim",
+      "occurrence_index": 2,
+      "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/realtime-workspace-graph-board.test.ts",
+      "behavior": "board validates the exact bounded request id"
+    },
+    {
+      "file": "runtime/src/realtime/workspace-graph-board.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-workspace-graph-board.test.ts",
+      "behavior": "board validates the exact bounded request id"
+    },
+    {
       "file": "runtime/src/runtime.ts",
       "kind": "numeric_template",
       "occurrence_index": 0,
@@ -1611,6 +1715,375 @@
       "disposition": "host_only_unicode",
       "test": "runtime/test/unicode-nfkc.test.ts",
       "behavior": "the committed vectors were exported against the pinned Unicode version"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "snippet_sha256": "719515a16ce71da417e4c99802fa257e0d94b84fd42a2b881ade8c18e48b8177",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "all model-visible data is quoted, structurally neutralized, and confined to fixed wrappers"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "7293eb2dc9e4936576f6bfd743736746ccecf0f9c5a8ecd3a47de951909a04f9",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-context.test.ts",
+      "behavior": "character, measured-token, and UTF-8 byte caps independently drop whole preferences"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 5,
+      "snippet_sha256": "b4918f14c37f3bcabbfd7d3e5c63d72773ff670f94848745c89214159c0282e4",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/context-view.test.ts",
+      "behavior": "graph-context cloning rejects wrapper injection and measured-token bypasses"
+    },
+    {
+      "file": "runtime/src/workspace-graph/context.ts",
+      "kind": "string_length",
+      "occurrence_index": 6,
+      "snippet_sha256": "69e84623d7bcca05b2c79d9052fecfd5ef112f81b948a4a2dfad9ae5596cf6be",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/context-view.test.ts",
+      "behavior": "graph-context cloning rejects wrapper injection and measured-token bypasses"
+    },
+    {
+      "file": "runtime/src/workspace-graph/identity.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "cb4f911c7a29455ec50afe69005d65e02b717430c77c9ec16d4749d3550dd065",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-identity.test.ts",
+      "behavior": "UTF-16-overlong aliases are rejected before producing invalid Task 0 cards"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "snippet_sha256": "1986e1117575a17e6878aa084e4c7fb7ce6f2cc85461c6663c3ba8c55dbccd78",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 1,
+      "snippet_sha256": "e7ec7209011b0521545f473801c011dbc1711dcf3c1af944d06c4b39b586cd4b",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "snippet_sha256": "1a508ce823598643bf50cb2414d65ab39409caebc94bb0fe31e6093585af05c4",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "snippet_sha256": "949bab2aa419d9dff6eb07cfd78393a5fc04d665bf869414043247672441dcb2",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
+    },
+    {
+      "file": "runtime/src/workspace-graph/provider.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "snippet_sha256": "53dec84c0b0a08faa57390ed76efc8d130d213b5f1f4e131aa7fecee6cf2d45c",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-provider.test.ts",
+      "behavior": "all model-visible evidence structure is neutralized and unsafe opaque refs are omitted"
+    },
+    {
+      "file": "runtime/src/workspace-graph/recall.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "116a13413b87356802bdbb148830086ab64923dc88a6dbd903838b24d6bc6389",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-recall.test.ts",
+      "behavior": "schema-valid unprojectable snapshot fields become bounded degraded recall data"
+    },
+    {
+      "file": "runtime/src/workspace-graph/recall.ts",
+      "kind": "string_length",
+      "occurrence_index": 1,
+      "snippet_sha256": "116a13413b87356802bdbb148830086ab64923dc88a6dbd903838b24d6bc6389",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-recall.test.ts",
+      "behavior": "schema-valid unprojectable snapshot fields become bounded degraded recall data"
+    },
+    {
+      "file": "runtime/src/workspace-graph/recall.ts",
+      "kind": "string_length",
+      "occurrence_index": 2,
+      "snippet_sha256": "b4b565588c2a527dc83111754e0ba67cfa8792af99afd4d297640f861b9d06ea",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-recall.test.ts",
+      "behavior": "tokenization uses pinned NFKC/lower and CJK bigrams after bounding the utterance"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "snippet_sha256": "efcf4825743ce3e16bddb2af951791b8fd56951cea212a1ac77276128bf3120b",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "later absolute traversal tokens cannot hide whitespace-bearing denied roots"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 1,
+      "snippet_sha256": "232b3ab8a9bd97a431bc172236f27c2a00cdc3bcd23fadda3c24005de81e8b8c",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "returns clean fields byte-identically"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "snippet_sha256": "afa0ae1fdb30a47231b1f88f8104b3d67813f7606ec84e2935bbe407d6b7d0bf",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "returns clean fields byte-identically"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "snippet_sha256": "719515a16ce71da417e4c99802fa257e0d94b84fd42a2b881ade8c18e48b8177",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "returns clean fields byte-identically"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "snippet_sha256": "719515a16ce71da417e4c99802fa257e0d94b84fd42a2b881ade8c18e48b8177",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "returns clean fields byte-identically"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 5,
+      "snippet_sha256": "61b674893d1fdcf1d0f5fc4870864d6d4aa085cdc602edb5e469d0b1c6b9c119",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts private URLs carrying query credentials"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 6,
+      "snippet_sha256": "9089e96f962c7ce8abba69186bacc35771867966a4519dac5b4d65569d7158be",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts complete authorization header values for every scheme"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 7,
+      "snippet_sha256": "6d8042c0aa4d75e5d264f2fb359f679157a78285bb32ca8d459311ddb8170ecd",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts cookie header values through end-of-line while retaining adjacent safe text"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 8,
+      "snippet_sha256": "270e38a3ce9c574659de586fb8a54bde9dfeb1cbea80c46e1aef01505a052b6a",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts quoted credential keys in JSON-like content"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 9,
+      "snippet_sha256": "e73a3bfe5b957fa9fa1adb3991ad822cbe99ace9bbfb6c3cbde2c5155915d08c",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts quoted credential keys in JSON-like content"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 10,
+      "snippet_sha256": "b4e6cda95a4fa41b485b9aba0c223ea976f5420444c7b9a75f6f7dd94657ec31",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts every credential span in a field"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 11,
+      "snippet_sha256": "94c16c8b22f2e9f04278593ed36e3d1a09c8981aa525a1287553daf95ee5e0d4",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts every credential span in a field"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 12,
+      "snippet_sha256": "d9cc6e4c4d8c9a71c9b689d851401b3465d7e595d259ddfb0fa51959f9097f55",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts every credential span in a field"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 13,
+      "snippet_sha256": "91fbaa553a602a885443eb4a5b3e6dd76a368e8d576c0fe42ec2d07cf81b7d30",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "denies sensitive paths without returning their labels"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 14,
+      "snippet_sha256": "8c758401279bbfcd5f28e3294e9d6a0f0eae40d4c3039938f9eecd55efc6d828",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts private URLs carrying query credentials"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 15,
+      "snippet_sha256": "87c8959f09166cdc0c9ccab8815c909ea3ce397355984311dd940a0c158b794a",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "redacts cookie header values through end-of-line while retaining adjacent safe text"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "unicode_property_regex",
+      "occurrence_index": 16,
+      "snippet_sha256": "ae9ee458c51c90bdbec424d1e85d371fb2b0106889e59c3b8617de5a187d4813",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-sensitivity.test.ts",
+      "behavior": "rejects a field when a redaction leaves no meaningful content"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "string_length",
+      "occurrence_index": 17,
+      "snippet_sha256": "f118a9ced4b942d3f573d52f4f9626a586d87ff5926de5579f32564466cdd803",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-store.test.ts",
+      "behavior": "direct observation redaction stays inside the durable label boundary"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "string_length",
+      "occurrence_index": 18,
+      "snippet_sha256": "ae8df7594e0c7aedf5376e8eeacfcf48e7bc34c19b9a5b37f13a240002b844d5",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-store.test.ts",
+      "behavior": "direct observation redaction stays inside the durable label boundary"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "snippet_sha256": "0c9cd1841b9b2d5bdb1c02a35f03795cd257d6fef6794f63ce195be0407f1a3a",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service rejects an empty database path before constructing the worker client"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 1,
+      "snippet_sha256": "1986e1117575a17e6878aa084e4c7fb7ce6f2cc85461c6663c3ba8c55dbccd78",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service sensitivity gates every lifecycle and episode text before SQLite and diagnostics"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 2,
+      "snippet_sha256": "e7ec7209011b0521545f473801c011dbc1711dcf3c1af944d06c4b39b586cd4b",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service sensitivity gates every lifecycle and episode text before SQLite and diagnostics"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 3,
+      "snippet_sha256": "1a508ce823598643bf50cb2414d65ab39409caebc94bb0fe31e6093585af05c4",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service sensitivity gates every lifecycle and episode text before SQLite and diagnostics"
+    },
+    {
+      "file": "runtime/src/workspace-graph/service.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 4,
+      "snippet_sha256": "949bab2aa419d9dff6eb07cfd78393a5fc04d665bf869414043247672441dcb2",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-service.test.ts",
+      "behavior": "service sensitivity gates every lifecycle and episode text before SQLite and diagnostics"
+    },
+    {
+      "file": "runtime/src/workspace-graph/store.ts",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "snippet_sha256": "2da915ab0bd33a4357392d51977a1dfd9a4cbaf6645bcf03cb55431cbb21212b",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/workspace-graph-store.test.ts",
+      "behavior": "a genuine schema-v1 database advances through every explicit migration"
     }
   ]
 }

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import {chmod, mkdtemp, realpath, rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import {test} from 'node:test'
 import type {ExecutorAdapter, ExecutorDispatchContext} from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
@@ -645,6 +648,33 @@ test('cascaded assembly preserves one graph, shared resources, and frozen Guard 
   assert.equal(frameSource.stops, 1)
   assert.equal(telemetryCloses, 0)
 })
+
+test('cascaded assembly owns enabled graph storage without claiming provider Header delivery',
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-cascaded-graph-')))
+    await chmod(root, 0o700)
+    try {
+      const enabled = buildCascadedRealtimeAssembly(assemblyOptions(settings({
+        NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED: 'true',
+        NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH: join(root, 'graph.sqlite'),
+      })))
+      try {
+        assert.ok(enabled.workspaceGraph !== undefined)
+        assert.equal('injectWorkspaceContext' in enabled.provider, false)
+      } finally {
+        await enabled.stop()
+      }
+
+      const disabled = buildCascadedRealtimeAssembly(assemblyOptions(settings()))
+      try {
+        assert.equal(disabled.workspaceGraph, undefined)
+      } finally {
+        await disabled.stop()
+      }
+    } finally {
+      await rm(root, {recursive: true, force: true})
+    }
+  })
 
 test('cascaded credentials validate before composition-only resource mismatches', () => {
   const configured = settings({

@@ -404,6 +404,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     } catch {
       throw new CascadedRealtimeError('configuration')
     }
+    if (item.kind === 'workspace_context') throw new CascadedRealtimeError('configuration')
     if (options.asUserActivation && item.kind !== 'progress' && item.kind !== 'final') {
       throw new CascadedRealtimeError('configuration')
     }

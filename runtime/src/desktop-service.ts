@@ -18,6 +18,7 @@ import {deliveryToEvent} from './desktop-wire.js'
 import type {PlaybackCompletion, PlaybackFrame} from './playback.js'
 import type {RealtimeAssembly} from './realtime-assembly.js'
 import {memoryBoardMessage} from './realtime/memory-board.js'
+import {workspaceGraphBoardMessage} from './realtime/workspace-graph-board.js'
 import type {ProjectConfirmationView} from './realtime/project-confirmation.js'
 import type {CaptionFrame} from './realtime/session-state.js'
 import type {CodexState} from './realtime/service-state.js'
@@ -122,6 +123,7 @@ export function buildDesktopRealtimeComposition(
     service: realtime.service,
     stop: options.stop,
     memoryBoard: requestId => memoryBoardMessage(requestId, realtime.runtime.memory),
+    workspaceGraphBoard: requestId => workspaceGraphBoardForRealtime(requestId, realtime),
     clock: realtime.runtime.clock,
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     ...(options.projectView === undefined ? {} : {projectView: options.projectView}),
@@ -129,6 +131,21 @@ export function buildDesktopRealtimeComposition(
   })
   holder.desktop = desktop
   return {realtime, desktop}
+}
+
+/** Project one already-published graph snapshot without opening any graph capability. */
+export function workspaceGraphBoardForRealtime(
+  requestId: string,
+  realtime: Pick<RealtimeAssembly, 'workspaceGraph'>,
+): string {
+  const graph = realtime.workspaceGraph
+  if (graph === undefined) return workspaceGraphBoardMessage(requestId, null, 'disabled')
+  const snapshot = graph.publishedSnapshot
+  return workspaceGraphBoardMessage(
+    requestId,
+    snapshot,
+    graph.degraded === true || snapshot.degraded ? 'degraded' : 'ready',
+  )
 }
 
 function isCameraCaptureTransport(

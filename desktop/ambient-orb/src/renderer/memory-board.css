@@ -29,6 +29,26 @@ header h1 {
   opacity: 0.7;
 }
 
+.board-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 16px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+}
+
+.board-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 8px 12px;
+  background: transparent;
+  color: inherit;
+}
+
+.board-tabs button[aria-selected="true"] {
+  border-bottom-color: AccentColor;
+  font-weight: 600;
+}
+
 section.channel {
   margin-bottom: 20px;
 }
@@ -77,4 +97,70 @@ article.item pre {
 p.empty {
   font-size: 12px;
   opacity: 0.6;
+}
+
+.graph-state {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 22px;
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.graph-nodes,
+.graph-relations {
+  margin-bottom: 20px;
+}
+
+.graph-nodes > h2,
+.graph-relations > h2 {
+  font-size: 13px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  padding-bottom: 4px;
+}
+
+.graph-node,
+.graph-relation {
+  border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.graph-node h3,
+.graph-relation h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.graph-instance,
+.graph-relation-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 4px 0;
+  opacity: 0.8;
+}
+
+.graph-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  background: color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+.badge-active { color: #2f7d31; }
+.badge-inactive { opacity: 0.65; }
+.badge-weak { color: #9a681d; }
+.badge-degraded,
+.badge-stale { color: #a64536; }
+
+.graph-empty,
+.graph-omitted {
+  font-size: 12px;
+  opacity: 0.68;
 }

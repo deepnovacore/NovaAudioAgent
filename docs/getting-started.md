@@ -178,6 +178,9 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT` | `codex` | No | ~/NovaWorkspaces | Managed project root. |
 | `NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT` | `codex` | No | ~/.nova-audio-agent | Project state root. |
 | `NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL` | `codex` | No | 30 | Codex progress interval in seconds. |
+| `NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED` | `core` | No | false | Enable the local read-only workspace memory graph. |
+| `NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH` | `core` | No | ~/.nova-audio-agent/workspace-graph.sqlite | Workspace memory graph database path. |
+| `NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL` | `core` | No | None | Optional loopback-only Nova-compatible read-only MyContext adapter base URL. |
 | `TAVILY_API_KEY` | `search` | When selected | None | Tavily search credential. |
 | `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` | `camera` | No | None | Absolute deterministic desktop video input. |
 | `NOVA_AUDIO_AGENT_REALTIME_TELEMETRY` | `telemetry` | No | None | Source-runtime telemetry output path. |

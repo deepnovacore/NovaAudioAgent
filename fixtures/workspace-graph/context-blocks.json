@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "description": "Node-owned graph-present context and prompt bytes. Python has no graph-present ContextView contract.",
+  "cases": [
+    {
+      "id": "current-workspace-with-one-suggestion",
+      "current": {
+        "session_epoch": 2,
+        "revision": 2,
+        "logical_workspace": {
+          "logical_workspace_id": "lw-nova",
+          "display_name": "Nova Audio Agent",
+          "aliases": ["Nova"],
+          "canonical_remote": "git@example.com:nova-audio-agent.git",
+          "created_at": 1,
+          "updated_at": 8,
+          "revision": 2
+        },
+        "workspace_instance": {
+          "instance_id": "wi-nova-main",
+          "logical_workspace_id": "lw-nova",
+          "display_name": "Nova main checkout",
+          "path_label": "private-path-must-not-render",
+          "branch": "main",
+          "repository_fingerprint": "private-fingerprint-must-not-render",
+          "status": "active",
+          "first_seen_at": 1,
+          "last_seen_at": 8,
+          "revision": 3
+        }
+      },
+      "recall": {
+        "hints": [
+          {
+            "hint_id": "hint-001",
+            "logical_workspace_id": "lw-desktop",
+            "relation_type": "shares_runtime",
+            "relation_status": "active",
+            "confidence": 0.8,
+            "reason": "Desktop uses the Nova runtime",
+            "evidence_refs": [
+              {"source": "user", "ref": "confirmation-006", "observed_at": 6}
+            ],
+            "revision": 1
+          }
+        ],
+        "omitted_hints": 0,
+        "degraded": false
+      },
+      "preferences": ["用中文"],
+      "options": {
+        "maxHeaderTokens": 300,
+        "maxRecallTokens": 800,
+        "maxHeaderChars": 900,
+        "maxRecallChars": 2400,
+        "maxHeaderBytes": 3600,
+        "maxRecallBytes": 9600
+      },
+      "expected": {
+        "header": "<workspace_context kind=\"data\">{\"content\":\"{\\\"branch\\\":\\\"main\\\",\\\"current_instance_name\\\":\\\"Nova main checkout\\\",\\\"current_logical_name\\\":\\\"Nova Audio Agent\\\",\\\"degraded\\\":false,\\\"preferences\\\":[\\\"用中文\\\"]}\",\"logical_workspace_id\":\"lw-nova\",\"revision\":2,\"session_epoch\":2,\"token_estimate\":150,\"workspace_instance_id\":\"wi-nova-main\"}</workspace_context>",
+        "recall_pack": "<workspace_hints authority=\"suggestion_only\" scope=\"current_workspace_next_step\" cross_workspace=\"forbidden\" action=\"forbidden\">{\"content\":\"{\\\"current_logical_name\\\":\\\"Nova Audio Agent\\\",\\\"logical_workspace_id\\\":\\\"lw-nova\\\"}\",\"degraded\":false,\"hints\":[{\"confidence\":0.8,\"evidence_refs\":[{\"observed_at\":6,\"ref\":\"confirmation-006\",\"source\":\"user\"}],\"hint_id\":\"hint-001\",\"logical_workspace_id\":\"lw-desktop\",\"reason\":\"Desktop uses the Nova runtime\",\"relation_status\":\"active\",\"relation_type\":\"shares_runtime\",\"revision\":1}],\"omitted_hints\":0,\"revision\":2,\"session_epoch\":2,\"token_estimate\":300,\"workspace_instance_id\":\"wi-nova-main\"}</workspace_hints>",
+        "omitted_preferences": 0,
+        "omitted_hints": 0,
+        "degraded": false,
+        "diagnostic": null,
+        "rendered_plain": "# 现在 t=0.0，说话权状态：idle\n\n## 在飞的活\n- 无\n\n## 现在手边的素材\n- 无\n\n<workspace_context kind=\"data\">{\"content\":\"{\\\"branch\\\":\\\"main\\\",\\\"current_instance_name\\\":\\\"Nova main checkout\\\",\\\"current_logical_name\\\":\\\"Nova Audio Agent\\\",\\\"degraded\\\":false,\\\"preferences\\\":[\\\"用中文\\\"]}\",\"logical_workspace_id\":\"lw-nova\",\"revision\":2,\"session_epoch\":2,\"token_estimate\":150,\"workspace_instance_id\":\"wi-nova-main\"}</workspace_context>\n<workspace_hints authority=\"suggestion_only\" scope=\"current_workspace_next_step\" cross_workspace=\"forbidden\" action=\"forbidden\">{\"content\":\"{\\\"current_logical_name\\\":\\\"Nova Audio Agent\\\",\\\"logical_workspace_id\\\":\\\"lw-nova\\\"}\",\"degraded\":false,\"hints\":[{\"confidence\":0.8,\"evidence_refs\":[{\"observed_at\":6,\"ref\":\"confirmation-006\",\"source\":\"user\"}],\"hint_id\":\"hint-001\",\"logical_workspace_id\":\"lw-desktop\",\"reason\":\"Desktop uses the Nova runtime\",\"relation_status\":\"active\",\"relation_type\":\"shares_runtime\",\"revision\":1}],\"omitted_hints\":0,\"revision\":2,\"session_epoch\":2,\"token_estimate\":300,\"workspace_instance_id\":\"wi-nova-main\"}</workspace_hints>\n\n## 意图\n- 猜测：（还没有）\n- 约束：（无）\n- 不确定度：0.5\n- 待澄清：（无）\n\n## 目标\n- 目标：（无）\n- 验收：（无）\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：（无）\n- deny：（无）\n- evidence_refs：（无）",
+        "rendered_with_trigger": "# 现在 t=0.0，说话权状态：idle\n当前触发事件：unspecified\n\n## 在飞的活\n- 无\n\n## 现在手边的素材\n- 无\n\n<workspace_context kind=\"data\">{\"content\":\"{\\\"branch\\\":\\\"main\\\",\\\"current_instance_name\\\":\\\"Nova main checkout\\\",\\\"current_logical_name\\\":\\\"Nova Audio Agent\\\",\\\"degraded\\\":false,\\\"preferences\\\":[\\\"用中文\\\"]}\",\"logical_workspace_id\":\"lw-nova\",\"revision\":2,\"session_epoch\":2,\"token_estimate\":150,\"workspace_instance_id\":\"wi-nova-main\"}</workspace_context>\n<workspace_hints authority=\"suggestion_only\" scope=\"current_workspace_next_step\" cross_workspace=\"forbidden\" action=\"forbidden\">{\"content\":\"{\\\"current_logical_name\\\":\\\"Nova Audio Agent\\\",\\\"logical_workspace_id\\\":\\\"lw-nova\\\"}\",\"degraded\":false,\"hints\":[{\"confidence\":0.8,\"evidence_refs\":[{\"observed_at\":6,\"ref\":\"confirmation-006\",\"source\":\"user\"}],\"hint_id\":\"hint-001\",\"logical_workspace_id\":\"lw-desktop\",\"reason\":\"Desktop uses the Nova runtime\",\"relation_status\":\"active\",\"relation_type\":\"shares_runtime\",\"revision\":1}],\"omitted_hints\":0,\"revision\":2,\"session_epoch\":2,\"token_estimate\":300,\"workspace_instance_id\":\"wi-nova-main\"}</workspace_hints>\n\n## 意图\n- 猜测：（还没有）\n- 约束：（无）\n- 不确定度：0.5\n- 待澄清：（无）\n\n## 目标\n- 目标：（无）\n- 验收：（无）\n- 状态：unset\n\n## 授权画像（不是执行许可）\n- allow：（无）\n- deny：（无）\n- evidence_refs：（无）"
+      }
+    }
+  ]
+}

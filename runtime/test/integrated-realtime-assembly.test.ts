@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import {chmod, mkdtemp, realpath, rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import {test} from 'node:test'
 
 import {loadSettings} from '../src/config.js'
@@ -21,6 +24,7 @@ test('integrated registry resolves only Qwen and passes an immutable selected co
         voice: 'voice-test',
         apiKey: 'dash-secret',
       })
+      assert.equal(input.workspaceGraphPolicy, false)
       expected = new QwenAudioRealtimeAdapter({
         ...input.config,
         connector: () => Promise.reject(new Error('unused')),
@@ -81,7 +85,10 @@ test('integrated registry receives only selected provider inputs and cannot insp
         assert.equal('settings' in input, false)
         assert.equal('searchTransport' in input, false)
         assert.equal('codexResource' in input, false)
-        assert.deepEqual(Object.keys(input).sort(), ['config', 'connector', 'idFactory', 'now'])
+        assert.deepEqual(Object.keys(input).sort(), [
+          'config', 'connector', 'idFactory', 'now', 'workspaceGraphPolicy',
+        ])
+        assert.equal(input.workspaceGraphPolicy, false)
         assert.equal(Object.isFrozen(input.config), true)
         const config = input.config as {
           readonly url: string
@@ -113,6 +120,45 @@ test('integrated registry receives only selected provider inputs and cannot insp
 
   assert.ok(realtime.provider instanceof QwenAudioRealtimeAdapter)
 })
+
+test('integrated Qwen receives graph policy while the complete builder owns graph storage',
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-integrated-graph-')))
+    await chmod(root, 0o700)
+    try {
+      let graphPolicy: boolean | undefined
+      const registry: IntegratedProviderRegistry = {
+        qwen: input => {
+          graphPolicy = input.workspaceGraphPolicy
+          return new QwenAudioRealtimeAdapter({
+            ...input.config,
+            connector: () => Promise.reject(new Error('unused')),
+            idFactory: input.idFactory,
+            now: input.now,
+            workspaceGraphPolicy: input.workspaceGraphPolicy,
+          })
+        },
+      }
+
+      const realtime = buildIntegratedRealtimeAssembly({
+        settings: loadSettings({
+          NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+          DASHSCOPE_API_KEY: 'selected-dash-secret',
+          TAVILY_API_KEY: 'host-search-secret',
+          NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED: 'true',
+          NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH: join(root, 'graph.sqlite'),
+        }),
+      }, registry)
+      try {
+        assert.equal(graphPolicy, true)
+        assert.ok(realtime.workspaceGraph !== undefined)
+      } finally {
+        await realtime.stop()
+      }
+    } finally {
+      await rm(root, {recursive: true, force: true})
+    }
+  })
 
 test('default integrated Qwen delegates without acquiring its socket before start', () => {
   let connections = 0

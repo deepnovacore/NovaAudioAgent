@@ -115,6 +115,7 @@ const secretCodec = createSafeStorageCodec(safeStorage)
 // rather than lost.
 let backendExited = false
 const pendingBoardRequests = new Map()
+let pendingGraphBoardRequest = null
 
 function pythonExecutable() {
   if (process.env.NOVA_AUDIO_AGENT_PYTHON) return process.env.NOVA_AUDIO_AGENT_PYTHON
@@ -211,6 +212,11 @@ function openMemoryBoard(launchId) {
   })
   window.once('ready-to-show', () => window.show())
   window.on('closed', () => {
+    if (pendingGraphBoardRequest) {
+      clearTimeout(pendingGraphBoardRequest.timer)
+      pendingGraphBoardRequest.resolve({ error: 'unavailable' })
+      pendingGraphBoardRequest = null
+    }
     boardWindow = null
   })
   boardWindow = window
@@ -457,6 +463,34 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     const pending = pendingBoardRequests.get(payload.request_id)
     if (!pending) return
     pendingBoardRequests.delete(payload.request_id)
+    clearTimeout(pending.timer)
+    pending.resolve(payload)
+  })
+  ipcMain.handle('nova:workspace-graph-board:request', event => {
+    if (!boardWindow || event.sender !== boardWindow.webContents) {
+      throw new Error('workspace graph board request rejected')
+    }
+    if (!mainWindow) return { error: 'unavailable' }
+    if (pendingGraphBoardRequest) {
+      clearTimeout(pendingGraphBoardRequest.timer)
+      pendingGraphBoardRequest.resolve({ error: 'superseded' })
+      pendingGraphBoardRequest = null
+    }
+    const requestId = `graph-${randomBytes(8).toString('hex')}`
+    return new Promise(resolveRequest => {
+      const timer = setTimeout(() => {
+        if (pendingGraphBoardRequest?.requestId === requestId) pendingGraphBoardRequest = null
+        resolveRequest({ error: 'timeout' })
+      }, 5000)
+      pendingGraphBoardRequest = { requestId, resolve: resolveRequest, timer }
+      sendToOrb('nova:workspace-graph-board:fetch', requestId)
+    })
+  })
+  ipcMain.on('nova:workspace-graph-board:data', (event, payload) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || !payload) return
+    if (!pendingGraphBoardRequest || payload.request_id !== pendingGraphBoardRequest.requestId) return
+    const pending = pendingGraphBoardRequest
+    pendingGraphBoardRequest = null
     clearTimeout(pending.timer)
     pending.resolve(payload)
   })

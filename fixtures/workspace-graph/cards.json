@@ -1,0 +1,33 @@
+{
+  "logical_workspace_cases": [
+    {
+      "id": "nova-logical-workspace",
+      "value": {
+        "logical_workspace_id": "lw-nova",
+        "display_name": "Nova Audio Agent",
+        "aliases": ["Nova", "Audio Agent"],
+        "canonical_remote": "git@example.com:nova-audio-agent.git",
+        "created_at": 1,
+        "updated_at": 8,
+        "revision": 2
+      }
+    }
+  ],
+  "workspace_instance_cases": [
+    {
+      "id": "nova-main-instance",
+      "value": {
+        "instance_id": "wi-nova-main",
+        "logical_workspace_id": "lw-nova",
+        "display_name": "Nova main checkout",
+        "path_label": "nova-audio-agent",
+        "branch": "main",
+        "repository_fingerprint": "repo-fingerprint-nova",
+        "status": "active",
+        "first_seen_at": 1,
+        "last_seen_at": 8,
+        "revision": 3
+      }
+    }
+  ]
+}

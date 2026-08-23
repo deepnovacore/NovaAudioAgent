@@ -14,6 +14,7 @@ import {
 } from '../src/prompting.js'
 
 const fixtureRoot = resolve(import.meta.dirname, '../../../fixtures/prompting/v1')
+const graphFixtureRoot = resolve(import.meta.dirname, '../../../fixtures/workspace-graph')
 
 function loadJson<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(fixtureRoot, name), 'utf8')) as T
@@ -34,6 +35,23 @@ interface Golden {
   readonly fixed_one_renderings: Readonly<Record<string, string>>
   readonly systems: Readonly<Record<string, string>>
   readonly rendered: Readonly<Record<string, {readonly plain: string, readonly with_trigger: string}>>
+}
+
+interface GraphGolden {
+  readonly schema_version: number
+  readonly cases: readonly {
+    readonly id: string
+    readonly expected: {
+      readonly header: string | null
+      readonly recall_pack: string | null
+      readonly omitted_preferences: number
+      readonly omitted_hints: number
+      readonly degraded: boolean
+      readonly diagnostic: 'graph_context_omitted_budget' | null
+      readonly rendered_plain: string
+      readonly rendered_with_trigger: string
+    }
+  }[]
 }
 
 test('every system prompt is character-identical to the Python oracle', () => {
@@ -119,4 +137,44 @@ test('Python .1f half-even rounding is reproduced for the media age', () => {
     }
   }
   assert.ok(sawMidpoint, 'the exact-midpoint vector must be present')
+})
+
+test('Node-owned graph-present goldens render after materials and before intent', () => {
+  const fixture = loadJson<Fixture>('context-views.json')
+  const empty = fixture.scenarios.find(scenario => scenario.id === 'empty-view')
+  assert.ok(empty !== undefined)
+  const graphGolden = JSON.parse(readFileSync(
+    resolve(graphFixtureRoot, 'context-blocks.json'),
+    'utf8',
+  )) as GraphGolden
+  assert.equal(graphGolden.schema_version, 1)
+  assert.ok(graphGolden.cases.length > 0)
+
+  for (const scenario of graphGolden.cases) {
+    const graph = {
+      header: scenario.expected.header,
+      recall_pack: scenario.expected.recall_pack,
+      omitted_preferences: scenario.expected.omitted_preferences,
+      omitted_hints: scenario.expected.omitted_hints,
+      degraded: scenario.expected.degraded,
+      diagnostic: scenario.expected.diagnostic,
+    } as const
+    const view: ContextView = {...empty.view, graph_context: graph}
+    const plain = renderContextSnapshot(view, false)
+    const withTrigger = renderContextSnapshot(view, true)
+    assert.equal(plain, scenario.expected.rendered_plain, `${scenario.id} plain`)
+    assert.equal(withTrigger, scenario.expected.rendered_with_trigger, `${scenario.id} trigger`)
+    assert.ok(plain.indexOf('## 现在手边的素材') < plain.indexOf('<workspace_context'))
+    assert.ok(plain.indexOf('</workspace_hints>') < plain.indexOf('## 意图'))
+  }
+})
+
+test('an explicit null graph context leaves prompt bytes identical to the absent fixture', () => {
+  const fixture = loadJson<Fixture>('context-views.json')
+  const empty = fixture.scenarios.find(scenario => scenario.id === 'empty-view')
+  assert.ok(empty !== undefined)
+  assert.equal(
+    renderContextSnapshot({...empty.view, graph_context: null}),
+    renderContextSnapshot(empty.view),
+  )
 })

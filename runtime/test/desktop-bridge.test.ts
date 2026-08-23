@@ -429,6 +429,70 @@ test('a memory board request is answered when a provider is wired, and ignored o
   assert.equal(unwired.stopped(), false, 'and not treated as an overflow')
 })
 
+test('workspace graph board requests use a distinct latest read-only response slot', async () => {
+  const {bridge, calls} = harness({
+    workspaceGraphBoard: requestId => JSON.stringify({
+      type: 'workspace_graph.board', request_id: requestId,
+    }),
+  })
+  await bridge.receive(
+    '{"type":"workspace_graph.board.request","request_id":"graph-1"}',
+    {authenticated: true},
+  )
+  await bridge.receive(
+    '{"type":"workspace_graph.board.request","request_id":"graph-2"}',
+    {authenticated: true},
+  )
+  assert.deepEqual(calls, [], 'a graph read never reaches voice service methods')
+  assert.deepEqual(bridge.pendingCounts, {
+    outbound: 0, preempt: 0, codex: false, project: false, workspaceGraph: true,
+  })
+  assert.equal(
+    bridge.takeNextDelivery()?.frame,
+    '{"type":"workspace_graph.board","request_id":"graph-2"}',
+  )
+  assert.equal(bridge.takeNextDelivery(), null, 'the superseded graph-1 response is gone')
+})
+
+test('workspace graph board latest delivery never consumes or stops the voice queue', async () => {
+  const {bridge, stopped} = harness({
+    maxOutboundFrames: 1,
+    workspaceGraphBoard: requestId => JSON.stringify({
+      type: 'workspace_graph.board', request_id: requestId,
+    }),
+  })
+  bridge.onAudioFrame(frame(2, 0))
+  await bridge.receive(
+    '{"type":"workspace_graph.board.request","request_id":"graph-full"}',
+    {authenticated: true},
+  )
+  assert.equal(stopped(), false)
+  assert.equal(bridge.pendingCounts.outbound, 1)
+  assert.equal(bridge.pendingCounts.workspaceGraph, true)
+  assert.ok(bridge.takeNextFrame() instanceof Uint8Array, 'voice remains ahead of graph UI data')
+  assert.equal(
+    bridge.takeNextDelivery()?.policy,
+    'latest',
+    'graph UI data is refreshable latest state',
+  )
+})
+
+test('malformed workspace graph frames are rejected without changing transport state', async () => {
+  const {bridge, stopped} = harness({
+    workspaceGraphBoard: () => '{"type":"workspace_graph.board"}',
+  })
+  await assert.rejects(() => bridge.receive(
+    '{"type":"workspace_graph.board.request","request_id":""}',
+    {authenticated: true},
+  ), /unsupported|request_id/u)
+  assert.equal(stopped(), false)
+  assert.equal(bridge.takeNextFrame(), null)
+  await assert.rejects(() => bridge.receive(
+    '{"type":"workspace_graph.board.request","request_id":"\\ud800"}',
+    {authenticated: true},
+  ), /request_id/u)
+})
+
 test('a clock pong is only measured against a ping that was actually sent', async () => {
   // Otherwise a renderer could report an arbitrary round trip for an id nobody issued.
   const {bridge, telemetry, clock} = harness()
