@@ -361,7 +361,14 @@ export function requireIntegratedRealtime(settings: Settings): QwenRealtimeConfi
   if (voice === '') {
     throw new ConfigurationError('NOVA_AUDIO_AGENT_QWEN_REALTIME_VOICE 不能为空')
   }
-  const apiKey = requiredCredential(settings.dashscope_api_key, 'DASHSCOPE_API_KEY')
+  const explicitKey = stripLikePython(settings.dashscope_api_key ?? '')
+  const compatibleGenericKey = settings.model_base_url === DASHSCOPE_COMPATIBLE_BASE_URL
+    ? stripLikePython(settings.model_api_key ?? '')
+    : ''
+  const apiKey = explicitKey || compatibleGenericKey
+  if (apiKey === '') {
+    throw new ConfigurationError('缺少 DASHSCOPE_API_KEY')
+  }
   return Object.freeze({url, model, voice, apiKey})
 }
 

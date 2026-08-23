@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  DASHSCOPE_COMPATIBLE_BASE_URL,
   ConfigurationError,
   loadSettings,
   requireCascadedCredentials,
@@ -86,6 +87,33 @@ test('integrated loading never reads Ark or Doubao credential slots', () => {
     },
   })
   assert.equal(requireIntegratedRealtime(loadSettings(environment)).apiKey, 'dashscope-key')
+})
+
+test('integrated Qwen credential resolution binds generic keys to the DashScope endpoint', () => {
+  const compatible = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+    NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER: 'qwen',
+    NOVA_AUDIO_AGENT_MODEL_BASE_URL: DASHSCOPE_COMPATIBLE_BASE_URL,
+    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'generic-dashscope-key',
+  })
+  assert.equal(requireIntegratedRealtime(compatible).apiKey, 'generic-dashscope-key')
+
+  const explicit = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+    NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER: 'qwen',
+    NOVA_AUDIO_AGENT_MODEL_BASE_URL: DASHSCOPE_COMPATIBLE_BASE_URL,
+    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'generic-dashscope-key',
+    DASHSCOPE_API_KEY: 'explicit-dashscope-key',
+  })
+  assert.equal(requireIntegratedRealtime(explicit).apiKey, 'explicit-dashscope-key')
+
+  const foreign = loadSettings({
+    NOVA_AUDIO_AGENT_PIPELINE_MODE: 'integrated',
+    NOVA_AUDIO_AGENT_INTEGRATED_PROVIDER: 'qwen',
+    NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://example.invalid/v1',
+    NOVA_AUDIO_AGENT_MODEL_API_KEY: 'foreign-key',
+  })
+  assert.throws(() => requireIntegratedRealtime(foreign), /DASHSCOPE_API_KEY/u)
 })
 
 test('integrated loading never reads inactive cascaded selector or model slots', () => {
