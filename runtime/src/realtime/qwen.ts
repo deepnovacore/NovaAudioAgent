@@ -1027,8 +1027,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       await Promise.race([
         reader.catch(() => undefined),
         new Promise<void>(resolve => {
-          const timer = setTimeout(resolve, this.#closeTimeout * 1000)
-          timer.unref()
+          setTimeout(resolve, this.#closeTimeout * 1000)
         }),
       ])
     }

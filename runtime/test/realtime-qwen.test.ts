@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import {execFile} from 'node:child_process'
 import { getEventListeners } from 'node:events'
 import { test } from 'node:test'
+import {fileURLToPath} from 'node:url'
+import {promisify} from 'node:util'
 import {
   FRONTEND_INSTRUCTIONS,
   GUARD_ACTIVATION_PREFIX,
@@ -12,6 +15,8 @@ import {
   type QwenSocket,
 } from '../src/realtime/qwen.js'
 import { ItemDeliveryUncertainError, type RealtimeProviderEvent } from '../src/realtime/protocol.js'
+
+const execFileAsync = promisify(execFile)
 
 interface Scripted {
   readonly socket: QwenSocket
@@ -1112,4 +1117,14 @@ test('close does not hang behind a receive that the transport never unblocks', a
   await within(adapter.close(), 3_000, 'close to return')
   assert.ok(Date.now() - started < 2_000, 'close must not block on a parked read')
   stop.abort()
+})
+
+test('the close deadline keeps an otherwise idle child alive until cleanup settles', async () => {
+  const fixture = fileURLToPath(new URL('fixtures/qwen-close-handle-child.js', import.meta.url))
+  const result = await execFileAsync(process.execPath, [fixture], {
+    encoding: 'utf8',
+    timeout: 3_000,
+  })
+  assert.equal(result.stdout, 'closed\n')
+  assert.equal(result.stderr, '')
 })
