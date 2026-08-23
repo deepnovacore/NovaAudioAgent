@@ -21,6 +21,7 @@ const SIGNER_WORKFLOWS = new Set([
 const TOKEN_PATTERN = /^[0-9a-f]{32}$/u
 const READY_LIMIT = 4096
 const OUTPUT_LIMIT = 64 * 1024
+const OUTPUT_DRAIN_MS = 5_000
 const SETTLE_MS = 30_000
 const COMMON_CHILD_ENVIRONMENT = Object.freeze(['LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ'])
 const PLATFORM_CHILD_ENVIRONMENT = Object.freeze({
@@ -508,7 +509,22 @@ export async function exerciseCandidateChild(child) {
   child.stdio[4].end('quit\n')
   const exit = await Promise.race([settleExit(child), output.failure])
   if (exit.code !== 0 || exit.signal !== null) throw new Error('installed_candidate_launch_failed')
-  await Promise.race([output.done, output.failure])
+  await settleCandidateOutput(output)
+}
+
+export async function settleCandidateOutput(output, timeoutMs = OUTPUT_DRAIN_MS) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error('installed_candidate_output_failed')
+  }
+  let timer
+  const timeout = new Promise((resolveNever, reject) => {
+    timer = setTimeout(() => reject(new Error('installed_candidate_output_failed')), timeoutMs)
+  })
+  try {
+    await Promise.race([output.done, output.failure, timeout])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export async function withCandidateProcessTree(child, environment, operation) {

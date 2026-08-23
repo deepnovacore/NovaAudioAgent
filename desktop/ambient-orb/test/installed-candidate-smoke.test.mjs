@@ -342,6 +342,17 @@ test('installed-candidate output overflow rejects immediately instead of waiting
   assert.ok(Date.now() - startedAt < 5_000, 'output overflow must beat the readiness timeout')
 })
 
+test('installed-candidate output drain is bounded when an orphan retains the pipes', async () => {
+  const {settleCandidateOutput} = await import('../scripts/installed-candidate-smoke.mjs')
+  const never = new Promise(() => {})
+  const startedAt = Date.now()
+  await assert.rejects(
+    settleCandidateOutput({done: never, failure: never}, 25),
+    /installed_candidate_output_failed/u,
+  )
+  assert.ok(Date.now() - startedAt < 1_000, 'orphan-held output must not prevent tree cleanup')
+})
+
 test('release workflow downloads exact candidates into checkout-free smoke jobs', async () => {
   const workflow = await readFile(new URL('../../../.github/workflows/release-candidate.yml', import.meta.url), 'utf8')
   assert.match(workflow, /installed-candidate-smoke/u)
