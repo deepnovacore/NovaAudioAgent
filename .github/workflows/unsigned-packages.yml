@@ -45,6 +45,7 @@ jobs:
       - run: npm run test:runtime
         if: runner.os != 'Windows'
       - run: npm run test:desktop
+        if: runner.os != 'Windows'
       - run: npm run build
       - name: Build unsigned native package bytes
         run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb

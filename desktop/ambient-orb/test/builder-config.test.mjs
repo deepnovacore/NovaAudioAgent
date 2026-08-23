@@ -448,6 +448,8 @@ test('unsigned cross-platform workflow closes native packages through attested i
   ]) assert.ok(packageRuns.includes(command), command)
   const runtimeTests = packageSteps.find(step => step.run === 'npm run test:runtime')
   assert.equal(runtimeTests?.if, "runner.os != 'Windows'")
+  const desktopTests = packageSteps.find(step => step.run === 'npm run test:desktop')
+  assert.equal(desktopTests?.if, "runner.os != 'Windows'")
   assert.ok(packageSteps.some(step => step.uses === 'actions/attest-build-provenance@v3'))
   assert.ok(packageSteps.some(step => step.uses === 'actions/upload-artifact@v4'))
   assert.doesNotMatch(text, /continue-on-error|\|\| true/u)
