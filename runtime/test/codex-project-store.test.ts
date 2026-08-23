@@ -277,25 +277,14 @@ class FailTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthorit
 
 class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthority {
   failTempCreate = false
-  private originalManagedIdentity: ProjectFileIdentity | null = null
-  private originalManagedChildRemoved = false
-  readonly #managedRootPath: string
+  readonly #managedIdentities = new Map<string, symbol>()
 
-  constructor(paths: readonly string[]) {
-    super(paths)
-    this.#managedRootPath = paths[1]!
+  managedIdentityForTest(name: string): symbol | null {
+    return this.#managedIdentities.get(name) ?? null
   }
 
-  get originalManagedIdentityForTest(): ProjectFileIdentity | null {
-    return this.originalManagedIdentity
-  }
-
-  matchesAtIdentity(name: string, identity: ProjectFileIdentity): ProjectRootFileResult {
-    if (identity !== this.originalManagedIdentity || !this.originalManagedChildRemoved) {
-      return {status: 'mismatch'}
-    }
-    const current = lstatSync(join(this.#managedRootPath, name), {bigint: true})
-    return current.dev === identity.device && current.ino === identity.inode
+  matchesManagedIdentity(name: string, identity: symbol): ProjectRootFileResult {
+    return this.#managedIdentities.get(name) === identity
       ? {status: 'ok'}
       : {status: 'mismatch'}
   }
@@ -312,17 +301,8 @@ class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthor
   override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
     const result = super.mkdirAt(rootDescriptor, name)
     if (result.status === 'ok' && name.startsWith('managed-')) {
-      if (this.originalManagedIdentity === null) this.originalManagedIdentity = result.identity
+      this.#managedIdentities.set(name, Symbol(name))
     }
-    return result
-  }
-
-  override matchesAt(
-    rootDescriptor: number,
-    name: string,
-    childDescriptor: number,
-  ): ProjectRootFileResult {
-    const result = super.matchesAt(rootDescriptor, name, childDescriptor)
     return result
   }
 
@@ -333,15 +313,8 @@ class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthor
     kind: 'file' | 'directory',
   ): ProjectRootFileResult {
     const result = super.unlinkAt(rootDescriptor, name, expected, kind)
-    if (
-      name.startsWith('managed-')
-      && kind === 'directory'
-      && result.status === 'ok'
-      && this.originalManagedIdentity !== null
-      && expected.device === this.originalManagedIdentity.device
-      && expected.inode === this.originalManagedIdentity.inode
-    ) {
-      this.originalManagedChildRemoved = true
+    if (name.startsWith('managed-') && kind === 'directory' && result.status === 'ok') {
+      this.#managedIdentities.delete(name)
     }
     return result
   }
@@ -2089,6 +2062,9 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
   })
   try {
     const managed = await store.createManaged('managed')
+    const managedName = basename(managed.canonical_path)
+    const originalIdentity = rootFiles.managedIdentityForTest(managedName)
+    if (originalIdentity === null) assert.fail('managed child identity was not captured')
     rootFiles.failTempCreate = true
     await assert.rejects(
       store.rollbackManagedCreate(managed.workspace_id),
@@ -2096,12 +2072,15 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
     )
     const after = lstatSync(managed.canonical_path, {bigint: true})
     assert.equal((after.mode & 0o7777n), 0o700n)
+    const currentIdentity = rootFiles.managedIdentityForTest(managedName)
+    if (currentIdentity === null) assert.fail('restored managed child identity was not captured')
     assert.deepEqual(
-      rootFiles.matchesAtIdentity(
-        basename(managed.canonical_path),
-        rootFiles.originalManagedIdentityForTest!,
-      ),
+      rootFiles.matchesManagedIdentity(managedName, originalIdentity),
       {status: 'mismatch'},
+    )
+    assert.deepEqual(
+      rootFiles.matchesManagedIdentity(managedName, currentIdentity),
+      {status: 'ok'},
     )
     assert.equal(
       hostWorkspacePath(await store.revalidateWorkspace(managed.workspace_id)),
