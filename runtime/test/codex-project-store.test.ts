@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import {
-  constants,
   chmodSync,
   fstatSync,
   lstatSync,
@@ -18,7 +17,6 @@ import {
   lstat,
   mkdir,
   mkdtemp,
-  open,
   readFile,
   readdir,
   realpath,
@@ -279,6 +277,13 @@ class FailTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthorit
 
 class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthority {
   failTempCreate = false
+  private originalManagedIdentity: ProjectFileIdentity | null = null
+  private originalManagedChildRemoved = false
+  private replacementManagedChildMatched = false
+
+  get originalManagedChildWasRejected(): boolean {
+    return this.originalManagedChildRemoved && this.replacementManagedChildMatched
+  }
 
   override createFileAt(
     rootDescriptor: number,
@@ -287,6 +292,47 @@ class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthor
   ): ProjectRootFileCreateResult {
     if (this.failTempCreate && exclusive && name.endsWith('.tmp')) return {status: 'failed'}
     return super.createFileAt(rootDescriptor, name, exclusive)
+  }
+
+  override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    const result = super.mkdirAt(rootDescriptor, name)
+    if (result.status === 'ok' && name.startsWith('managed-')) {
+      if (this.originalManagedIdentity === null) this.originalManagedIdentity = result.identity
+      else this.replacementManagedChildMatched = false
+    }
+    return result
+  }
+
+  override matchesAt(
+    rootDescriptor: number,
+    name: string,
+    childDescriptor: number,
+  ): ProjectRootFileResult {
+    const result = super.matchesAt(rootDescriptor, name, childDescriptor)
+    if (name.startsWith('managed-') && this.originalManagedChildRemoved && result.status === 'ok') {
+      this.replacementManagedChildMatched = true
+    }
+    return result
+  }
+
+  override unlinkAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
+    kind: 'file' | 'directory',
+  ): ProjectRootFileResult {
+    const result = super.unlinkAt(rootDescriptor, name, expected, kind)
+    if (
+      name.startsWith('managed-')
+      && kind === 'directory'
+      && result.status === 'ok'
+      && this.originalManagedIdentity !== null
+      && expected.device === this.originalManagedIdentity.device
+      && expected.inode === this.originalManagedIdentity.inode
+    ) {
+      this.originalManagedChildRemoved = true
+    }
+    return result
   }
 }
 
@@ -2032,30 +2078,20 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
   })
   try {
     const managed = await store.createManaged('managed')
-    const originalChild = await open(managed.canonical_path, constants.O_RDONLY)
-    const managedRootHandle = await open(managedRoot, constants.O_RDONLY)
     rootFiles.failTempCreate = true
-    try {
-      await assert.rejects(
-        store.rollbackManagedCreate(managed.workspace_id),
-        (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
-      )
-      const after = lstatSync(managed.canonical_path, {bigint: true})
-      assert.equal((after.mode & 0o7777n), 0o700n)
-      assert.equal(
-        rootFiles.matchesAt(managedRootHandle.fd, basename(managed.canonical_path), originalChild.fd).status,
-        'mismatch',
-      )
-      assert.equal(
-        hostWorkspacePath(await store.revalidateWorkspace(managed.workspace_id)),
-        managed.canonical_path,
-      )
-      rootFiles.failTempCreate = false
-      assert.equal(await store.rollbackManagedCreate(managed.workspace_id), true)
-    } finally {
-      await originalChild.close()
-      await managedRootHandle.close()
-    }
+    await assert.rejects(
+      store.rollbackManagedCreate(managed.workspace_id),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
+    )
+    const after = lstatSync(managed.canonical_path, {bigint: true})
+    assert.equal((after.mode & 0o7777n), 0o700n)
+    assert.equal(rootFiles.originalManagedChildWasRejected, true)
+    assert.equal(
+      hostWorkspacePath(await store.revalidateWorkspace(managed.workspace_id)),
+      managed.canonical_path,
+    )
+    rootFiles.failTempCreate = false
+    assert.equal(await store.rollbackManagedCreate(managed.workspace_id), true)
   } finally {
     await store.close()
     await rm(root, {recursive: true, force: true})
