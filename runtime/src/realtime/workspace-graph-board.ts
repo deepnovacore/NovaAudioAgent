@@ -186,17 +186,8 @@ function enforceMessageBudget(board: MutableBoard): void {
       board.omitted.workspace_instances += 1
       continue
     }
-    const referenced = new Set<string>()
-    for (const relation of board.relations) {
-      referenced.add(relation.source_logical_id)
-      referenced.add(relation.target_logical_id)
-    }
-    for (const instance of board.workspace_instances) referenced.add(instance.logical_workspace_id)
-    const removable = board.logical_workspaces.findLastIndex(node => (
-      !referenced.has(node.logical_workspace_id)
-    ))
-    if (removable >= 0) {
-      board.logical_workspaces.splice(removable, 1)
+    if (board.logical_workspaces.length > 0) {
+      board.logical_workspaces.pop()
       board.omitted.logical_workspaces += 1
       continue
     }

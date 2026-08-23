@@ -36,11 +36,121 @@ import {
 
 export const WORKSPACE_GRAPH_SCHEMA_VERSION = 3
 const DERIVED_TABLE_ROW_CAP = 128
+const OBSERVATION_ROW_CAP_PER_WORKSPACE = 512
+const OBSERVATION_ROW_CAP_GLOBAL = 4_096
 const OPERATION_RECEIPT_CAP = 4096
 const OPERATION_RECEIPT_MIN_AGE_MS = 24 * 60 * 60 * 1_000
 
 type GraphSqlInput = null | number | bigint | string | NodeJS.ArrayBufferView
 type GraphSqlOutput = null | number | bigint | string | NodeJS.NonSharedUint8Array
+
+interface SchemaColumn {
+  readonly name: string
+  readonly type: 'INTEGER' | 'REAL' | 'TEXT'
+  readonly notnull: 0 | 1
+  readonly pk: number
+}
+
+const column = (
+  name: string,
+  type: SchemaColumn['type'],
+  notnull: SchemaColumn['notnull'] = 1,
+  pk = 0,
+): SchemaColumn => ({name, type, notnull, pk})
+
+const V1_TABLE_SHAPES = Object.freeze({
+  observations: Object.freeze([
+    column('observation_id', 'TEXT'), column('observation_type', 'TEXT'),
+    column('occurred_at', 'REAL'), column('source', 'TEXT'), column('ref', 'TEXT'),
+    column('trust', 'TEXT'), column('logical_workspace_id', 'TEXT', 0),
+    column('workspace_instance_id', 'TEXT', 0),
+    column('related_logical_workspace_id', 'TEXT', 0), column('summary', 'TEXT', 0),
+    column('outcome', 'TEXT', 0), column('payload_json', 'TEXT'),
+  ]),
+  logical_workspaces: Object.freeze([
+    column('logical_workspace_id', 'TEXT', 1, 1), column('display_name', 'TEXT'),
+    column('canonical_remote', 'TEXT', 0), column('created_at', 'REAL'),
+    column('updated_at', 'REAL'), column('revision', 'INTEGER'), column('payload_json', 'TEXT'),
+  ]),
+  workspace_instances: Object.freeze([
+    column('instance_id', 'TEXT', 1, 1), column('logical_workspace_id', 'TEXT'),
+    column('display_name', 'TEXT'), column('path_label', 'TEXT'), column('branch', 'TEXT', 0),
+    column('repository_fingerprint', 'TEXT', 0), column('status', 'TEXT'),
+    column('first_seen_at', 'REAL'), column('last_seen_at', 'REAL'),
+    column('revision', 'INTEGER'), column('payload_json', 'TEXT'),
+  ]),
+  relation_cards: Object.freeze([
+    column('source_logical_id', 'TEXT', 1, 1), column('target_logical_id', 'TEXT', 1, 2),
+    column('relation_type', 'TEXT', 1, 3), column('confidence', 'REAL'),
+    column('reason', 'TEXT'), column('first_seen_at', 'REAL'), column('last_seen_at', 'REAL'),
+    column('status', 'TEXT'), column('revision', 'INTEGER'), column('payload_json', 'TEXT'),
+  ]),
+  relation_evidence: Object.freeze([
+    column('source_logical_id', 'TEXT', 1, 1), column('target_logical_id', 'TEXT', 1, 2),
+    column('relation_type', 'TEXT', 1, 3), column('evidence_source', 'TEXT', 1, 4),
+    column('evidence_ref', 'TEXT', 1, 5), column('observed_at', 'REAL'),
+    column('evidence_json', 'TEXT'),
+  ]),
+})
+
+const V2_TABLE_SHAPES = Object.freeze({
+  ...V1_TABLE_SHAPES,
+  operation_receipts: Object.freeze([
+    column('receipt_sequence', 'INTEGER', 0, 1), column('operation_id', 'TEXT'),
+    column('operation_type', 'TEXT'), column('input_digest', 'TEXT'),
+    column('committed_at', 'INTEGER'), column('result_json', 'TEXT'),
+  ]),
+})
+
+const V3_TABLE_SHAPES = Object.freeze({
+  ...V2_TABLE_SHAPES,
+  identity_bindings: Object.freeze([
+    column('binding_id', 'TEXT', 1, 1), column('instance_id', 'TEXT'),
+    column('payload_json', 'TEXT'),
+  ]),
+  alias_observations: Object.freeze([
+    column('observation_id', 'TEXT', 1, 1), column('logical_workspace_id', 'TEXT'),
+    column('evidence_ref', 'TEXT'), column('payload_json', 'TEXT'),
+  ]),
+  projection_records: Object.freeze([
+    column('record_id', 'TEXT', 1, 1), column('observation_source', 'TEXT'),
+    column('observation_id', 'TEXT'), column('relation_delta_digest', 'TEXT'),
+    column('payload_json', 'TEXT'),
+  ]),
+})
+
+const TABLE_UNIQUE_KEYS: Readonly<Record<string, readonly (readonly string[])[]>> = Object.freeze({
+  observations: Object.freeze([
+    Object.freeze(['observation_id']),
+    Object.freeze(['source', 'ref']),
+  ]),
+  operation_receipts: Object.freeze([Object.freeze(['operation_id'])]),
+  alias_observations: Object.freeze([Object.freeze(['evidence_ref'])]),
+  projection_records: Object.freeze([
+    Object.freeze(['observation_source', 'observation_id']),
+  ]),
+})
+
+const RELATION_EVIDENCE_FOREIGN_KEYS = Object.freeze([
+  Object.freeze({
+    id: 0, seq: 0, target_table: 'relation_cards', from_column: 'source_logical_id',
+    to_column: 'source_logical_id', on_update: 'NO ACTION', on_delete: 'CASCADE', match: 'NONE',
+  }),
+  Object.freeze({
+    id: 0, seq: 1, target_table: 'relation_cards', from_column: 'target_logical_id',
+    to_column: 'target_logical_id', on_update: 'NO ACTION', on_delete: 'CASCADE', match: 'NONE',
+  }),
+  Object.freeze({
+    id: 0, seq: 2, target_table: 'relation_cards', from_column: 'relation_type',
+    to_column: 'relation_type', on_update: 'NO ACTION', on_delete: 'CASCADE', match: 'NONE',
+  }),
+])
+
+function compareSchemaKeys(left: readonly string[], right: readonly string[]): number {
+  const leftKey = left.join('\u0000')
+  const rightKey = right.join('\u0000')
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+}
 
 export interface GraphStatement {
   all(...parameters: GraphSqlInput[]): Record<string, GraphSqlOutput>[]
@@ -641,6 +751,7 @@ export class WorkspaceGraphStore {
         'last_seen_at ASC, instance_id ASC',
       )
       this.#compactRelations(database)
+      this.#compactObservations(database)
       this.#compactOperationReceipts(database)
       const result = {derived_rows_before: before, derived_rows_after: this.#derivedRowCount(database)}
       return {result, receipt: {kind: 'compaction', ...result}}
@@ -823,6 +934,50 @@ export class WorkspaceGraphStore {
           version INTEGER PRIMARY KEY,
           applied_at INTEGER NOT NULL
         ) STRICT;
+      `)
+      this.#assertTableShape(database, 'schema_migrations', [
+        column('version', 'INTEGER', 0, 1),
+        column('applied_at', 'INTEGER'),
+      ])
+      let version = this.#schemaVersion(database)
+      if (version > WORKSPACE_GRAPH_SCHEMA_VERSION) {
+        throw new WorkspaceGraphStoreError('STORE_SCHEMA_UNSUPPORTED')
+      }
+      if (version === 0) {
+        if (Object.keys(V3_TABLE_SHAPES).some(table => this.#tableExists(database, table))) {
+          throw new Error('unversioned workspace graph tables')
+        }
+        this.#createV1Schema(database)
+        this.#createV2Schema(database)
+        this.#createV3Schema(database)
+        this.#recordMigration(database, WORKSPACE_GRAPH_SCHEMA_VERSION)
+        version = WORKSPACE_GRAPH_SCHEMA_VERSION
+      }
+      if (version === 1) {
+        this.#assertSchemaShape(database, V1_TABLE_SHAPES)
+        this.#createV2Schema(database)
+        this.#recordMigration(database, 2)
+        version = 2
+      }
+      if (version === 2) {
+        this.#assertSchemaShape(database, V2_TABLE_SHAPES)
+        this.#createV3Schema(database)
+        this.#recordMigration(database, 3)
+        version = 3
+      }
+      if (version !== WORKSPACE_GRAPH_SCHEMA_VERSION) throw new Error('schema version gap')
+      this.#assertSchemaShape(database, V3_TABLE_SHAPES)
+      this.#createIndexes(database)
+      database.exec('COMMIT')
+    } catch (error) {
+      rollback(database)
+      if (error instanceof WorkspaceGraphStoreError) throw error
+      throw new WorkspaceGraphStoreError('STORE_MIGRATION_FAILED')
+    }
+  }
+
+  #createV1Schema(database: GraphDatabase): void {
+    database.exec(`
         CREATE TABLE IF NOT EXISTS observations(
           observation_id TEXT NOT NULL UNIQUE,
           observation_type TEXT NOT NULL,
@@ -895,6 +1050,24 @@ export class WorkspaceGraphStore {
             REFERENCES relation_cards(source_logical_id, target_logical_id, relation_type)
             ON DELETE CASCADE
         ) STRICT;
+    `)
+  }
+
+  #createV2Schema(database: GraphDatabase): void {
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS operation_receipts(
+          receipt_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          operation_id TEXT NOT NULL UNIQUE,
+          operation_type TEXT NOT NULL,
+          input_digest TEXT NOT NULL,
+          committed_at INTEGER NOT NULL,
+          result_json TEXT NOT NULL
+        ) STRICT;
+    `)
+  }
+
+  #createV3Schema(database: GraphDatabase): void {
+    database.exec(`
         CREATE TABLE IF NOT EXISTS identity_bindings(
           binding_id TEXT PRIMARY KEY,
           instance_id TEXT NOT NULL,
@@ -918,29 +1091,115 @@ export class WorkspaceGraphStore {
           payload_json TEXT NOT NULL,
           UNIQUE(observation_source, observation_id)
         ) STRICT;
-        CREATE TABLE IF NOT EXISTS operation_receipts(
-          receipt_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-          operation_id TEXT NOT NULL UNIQUE,
-          operation_type TEXT NOT NULL,
-          input_digest TEXT NOT NULL,
-          committed_at INTEGER NOT NULL,
-          result_json TEXT NOT NULL
-        ) STRICT;
-      `)
-      const version = this.#schemaVersion(database)
-      if (version > WORKSPACE_GRAPH_SCHEMA_VERSION) {
-        throw new WorkspaceGraphStoreError('STORE_SCHEMA_UNSUPPORTED')
-      }
-      if (version < WORKSPACE_GRAPH_SCHEMA_VERSION) {
-        database.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)')
-          .run(WORKSPACE_GRAPH_SCHEMA_VERSION, Date.now())
-      }
-      database.exec('COMMIT')
-    } catch (error) {
-      rollback(database)
-      if (error instanceof WorkspaceGraphStoreError) throw error
-      throw new WorkspaceGraphStoreError('STORE_MIGRATION_FAILED')
+    `)
+  }
+
+  #createIndexes(database: GraphDatabase): void {
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS observations_scope_time
+        ON observations(logical_workspace_id, occurred_at);
+      CREATE INDEX IF NOT EXISTS workspace_instances_logical_status
+        ON workspace_instances(logical_workspace_id, status);
+      CREATE INDEX IF NOT EXISTS relation_cards_source_status
+        ON relation_cards(source_logical_id, status);
+      CREATE INDEX IF NOT EXISTS identity_bindings_instance
+        ON identity_bindings(instance_id);
+      CREATE INDEX IF NOT EXISTS alias_observations_logical
+        ON alias_observations(logical_workspace_id);
+    `)
+  }
+
+  #recordMigration(database: GraphDatabase, version: number): void {
+    database.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)')
+      .run(version, Date.now())
+  }
+
+  #assertSchemaShape(
+    database: GraphDatabase,
+    shapes: Readonly<Record<string, readonly SchemaColumn[]>>,
+  ): void {
+    for (const [table, columns] of Object.entries(shapes)) {
+      this.#assertTableShape(database, table, columns)
     }
+  }
+
+  #assertTableShape(
+    database: GraphDatabase,
+    table: string,
+    expected: readonly SchemaColumn[],
+  ): void {
+    const rawColumns = database.prepare(`PRAGMA table_xinfo("${table}")`).all()
+    if (rawColumns.some(row => numberColumn(row, 'hidden') !== 0)) {
+      throw new Error(`invalid workspace graph hidden column: ${table}`)
+    }
+    const actual = rawColumns.map(row => ({
+      name: stringColumn(row, 'name'),
+      type: stringColumn(row, 'type'),
+      notnull: numberColumn(row, 'notnull'),
+      pk: numberColumn(row, 'pk'),
+    }))
+    const tableInfo = database.prepare('PRAGMA table_list').all().find(row => (
+      row.name === table && row.type === 'table'
+    ))
+    if (
+      tableInfo === undefined
+      || numberColumn(tableInfo, 'strict') !== 1
+      || canonicalJson(actual) !== canonicalJson(expected)
+    ) throw new Error(`invalid workspace graph table shape: ${table}`)
+    this.#assertTableConstraints(database, table)
+  }
+
+  #assertTableConstraints(database: GraphDatabase, table: string): void {
+    const uniqueKeys = database.prepare(`
+      SELECT name FROM pragma_index_list(?)
+      WHERE "unique" = 1 AND origin = 'u'
+    `).all(table).map(row => database.prepare(`
+      SELECT name FROM pragma_index_info(?) ORDER BY seqno
+    `).all(stringColumn(row, 'name')).map(columnRow => stringColumn(columnRow, 'name')))
+      .sort(compareSchemaKeys)
+    const expectedUniqueKeys = [...(TABLE_UNIQUE_KEYS[table] ?? [])]
+      .map(key => [...key])
+      .sort(compareSchemaKeys)
+    if (canonicalJson(uniqueKeys) !== canonicalJson(expectedUniqueKeys)) {
+      throw new Error(`invalid workspace graph unique constraints: ${table}`)
+    }
+
+    const foreignKeys = database.prepare(`
+      SELECT
+        id, seq, "table" AS target_table, "from" AS from_column, "to" AS to_column,
+        on_update, on_delete, match
+      FROM pragma_foreign_key_list(?) ORDER BY id, seq
+    `).all(table).map(row => ({
+      id: numberColumn(row, 'id'),
+      seq: numberColumn(row, 'seq'),
+      target_table: stringColumn(row, 'target_table'),
+      from_column: stringColumn(row, 'from_column'),
+      to_column: stringColumn(row, 'to_column'),
+      on_update: stringColumn(row, 'on_update'),
+      on_delete: stringColumn(row, 'on_delete'),
+      match: stringColumn(row, 'match'),
+    }))
+    const expectedForeignKeys = table === 'relation_evidence'
+      ? RELATION_EVIDENCE_FOREIGN_KEYS
+      : []
+    if (canonicalJson(foreignKeys) !== canonicalJson(expectedForeignKeys)) {
+      throw new Error(`invalid workspace graph foreign keys: ${table}`)
+    }
+
+    const createRow = database.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(table)
+    const hasAutoincrement = createRow !== undefined
+      && /\bAUTOINCREMENT\b/iu.test(stringColumn(createRow, 'sql'))
+    if (hasAutoincrement !== (table === 'operation_receipts')) {
+      throw new Error(`invalid workspace graph autoincrement: ${table}`)
+    }
+  }
+
+  #tableExists(database: GraphDatabase, table: string): boolean {
+    return database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(table) !== undefined
   }
 
   #schemaVersion(database: GraphDatabase): number {
@@ -1422,6 +1681,34 @@ export class WorkspaceGraphStore {
         FROM relation_cards
         WHERE status = 'stale'
         ORDER BY last_seen_at, source_logical_id, target_logical_id, relation_type
+        LIMIT ?
+      )
+    `).run(remove)
+  }
+
+  #compactObservations(database: GraphDatabase): void {
+    database.prepare(`
+      DELETE FROM observations WHERE observation_id IN (
+        SELECT observation_id FROM (
+          SELECT
+            observation_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY COALESCE(logical_workspace_id, '')
+              ORDER BY occurred_at DESC, observation_id DESC
+            ) AS workspace_rank
+          FROM observations
+        ) WHERE workspace_rank > ?
+      )
+    `).run(OBSERVATION_ROW_CAP_PER_WORKSPACE)
+    const remove = Math.max(
+      0,
+      this.#tableCount(database, 'observations') - OBSERVATION_ROW_CAP_GLOBAL,
+    )
+    if (remove === 0) return
+    database.prepare(`
+      DELETE FROM observations WHERE observation_id IN (
+        SELECT observation_id FROM observations
+        ORDER BY occurred_at ASC, observation_id ASC
         LIMIT ?
       )
     `).run(remove)

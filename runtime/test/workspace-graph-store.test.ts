@@ -520,7 +520,7 @@ test('same-candidate traversal cannot persist whitespace-bearing denied-root byt
   )
 })
 
-test('compaction bounds derived rows without deleting observations or locking later writes', async t => {
+test('compaction bounds derived rows and does not lock later writes', async t => {
   const {client} = await createStore(t)
   for (let index = 0; index < 4; index += 1) {
     await client.appendObservation(workspaceOpened(`observation-${index}`))
@@ -534,6 +534,36 @@ test('compaction bounds derived rows without deleting observations or locking la
   assert.equal((await client.listObservations()).length, 4)
   await client.replaceCard(workspaceInstance('instance-after-compaction', 141))
   assert.equal((await client.getWorkspaceInstance('instance-after-compaction'))?.revision, 141)
+})
+
+test('compaction bounds recent observations per workspace and globally', async t => {
+  const {client} = await createStore(t)
+  let occurredAt = 0
+  for (let workspaceIndex = 0; workspaceIndex < 9; workspaceIndex += 1) {
+    for (let observationIndex = 0; observationIndex < 520; observationIndex += 1) {
+      occurredAt += 1
+      const observationId = `bounded-${workspaceIndex}-${observationIndex}`
+      await client.appendObservation({
+        ...workspaceOpened(observationId, 'bounded observation'),
+        occurred_at: occurredAt,
+        logical_workspace_id: `lw-${workspaceIndex}`,
+        workspace_instance_id: `wi-${workspaceIndex}`,
+      })
+    }
+  }
+
+  await client.compact()
+
+  const retained = await client.listObservations()
+  assert.equal(retained.length, 4_096)
+  const counts = new Map<string, number>()
+  for (const observation of retained) {
+    const logicalId = observation.logical_workspace_id ?? 'none'
+    counts.set(logicalId, (counts.get(logicalId) ?? 0) + 1)
+  }
+  assert.ok([...counts.values()].every(count => count <= 512))
+  assert.equal(retained.some(item => item.observation_id === 'bounded-0-0'), false)
+  assert.equal(retained.some(item => item.observation_id === 'bounded-8-519'), true)
 })
 
 test('compaction preserves suppression tombstones and their complete evidence history', async t => {
@@ -750,6 +780,60 @@ test('relation receipt replay returns its exact committed result after derived s
   })
 })
 
+test('a genuine schema-v1 database advances through every explicit migration', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-workspace-graph-v1-'))
+  const path = join(directory, 'graph.sqlite')
+  t.after(() => rm(directory, {recursive: true, force: true}))
+  await execSqlite(path, `
+    CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL) STRICT;
+    INSERT INTO schema_migrations(version, applied_at) VALUES (1, 1);
+    CREATE TABLE observations(
+      observation_id TEXT NOT NULL UNIQUE, observation_type TEXT NOT NULL,
+      occurred_at REAL NOT NULL, source TEXT NOT NULL, ref TEXT NOT NULL,
+      trust TEXT NOT NULL, logical_workspace_id TEXT, workspace_instance_id TEXT,
+      related_logical_workspace_id TEXT, summary TEXT, outcome TEXT,
+      payload_json TEXT NOT NULL, UNIQUE(source, ref)
+    ) STRICT;
+    CREATE TABLE logical_workspaces(
+      logical_workspace_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+      canonical_remote TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+      revision INTEGER NOT NULL, payload_json TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE workspace_instances(
+      instance_id TEXT PRIMARY KEY, logical_workspace_id TEXT NOT NULL,
+      display_name TEXT NOT NULL, path_label TEXT NOT NULL, branch TEXT,
+      repository_fingerprint TEXT, status TEXT NOT NULL, first_seen_at REAL NOT NULL,
+      last_seen_at REAL NOT NULL, revision INTEGER NOT NULL, payload_json TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE relation_cards(
+      source_logical_id TEXT NOT NULL, target_logical_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL, confidence REAL NOT NULL, reason TEXT NOT NULL,
+      first_seen_at REAL NOT NULL, last_seen_at REAL NOT NULL, status TEXT NOT NULL,
+      revision INTEGER NOT NULL, payload_json TEXT NOT NULL,
+      PRIMARY KEY(source_logical_id, target_logical_id, relation_type)
+    ) STRICT;
+    CREATE TABLE relation_evidence(
+      source_logical_id TEXT NOT NULL, target_logical_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL, evidence_source TEXT NOT NULL,
+      evidence_ref TEXT NOT NULL, observed_at REAL NOT NULL, evidence_json TEXT NOT NULL,
+      PRIMARY KEY(source_logical_id, target_logical_id, relation_type, evidence_source, evidence_ref),
+      FOREIGN KEY(source_logical_id, target_logical_id, relation_type)
+        REFERENCES relation_cards(source_logical_id, target_logical_id, relation_type)
+        ON DELETE CASCADE
+    ) STRICT;
+  `)
+
+  const client = new WorkspaceGraphStoreClient(path)
+  t.after(() => client.close())
+  await client.open()
+
+  assert.equal((await client.diagnostics()).schema_version, 3)
+  assert.deepEqual(
+    await querySqlite(path, 'SELECT version FROM schema_migrations ORDER BY version'),
+    [{version: 1}, {version: 2}, {version: 3}],
+  )
+})
+
 test('a genuine schema-v2 relation receipt remains retained and conflicts stably after advancement', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-workspace-graph-v2-'))
   const path = join(directory, 'graph.sqlite')
@@ -772,6 +856,24 @@ test('a genuine schema-v2 relation receipt remains retained and conflicts stably
   await execSqlite(path, `
     CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL) STRICT;
     INSERT INTO schema_migrations(version, applied_at) VALUES (2, 1);
+    CREATE TABLE observations(
+      observation_id TEXT NOT NULL UNIQUE, observation_type TEXT NOT NULL,
+      occurred_at REAL NOT NULL, source TEXT NOT NULL, ref TEXT NOT NULL,
+      trust TEXT NOT NULL, logical_workspace_id TEXT, workspace_instance_id TEXT,
+      related_logical_workspace_id TEXT, summary TEXT, outcome TEXT,
+      payload_json TEXT NOT NULL, UNIQUE(source, ref)
+    ) STRICT;
+    CREATE TABLE logical_workspaces(
+      logical_workspace_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+      canonical_remote TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+      revision INTEGER NOT NULL, payload_json TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE workspace_instances(
+      instance_id TEXT PRIMARY KEY, logical_workspace_id TEXT NOT NULL,
+      display_name TEXT NOT NULL, path_label TEXT NOT NULL, branch TEXT,
+      repository_fingerprint TEXT, status TEXT NOT NULL, first_seen_at REAL NOT NULL,
+      last_seen_at REAL NOT NULL, revision INTEGER NOT NULL, payload_json TEXT NOT NULL
+    ) STRICT;
     CREATE TABLE relation_cards(
       source_logical_id TEXT NOT NULL, target_logical_id TEXT NOT NULL,
       relation_type TEXT NOT NULL, confidence REAL NOT NULL, reason TEXT NOT NULL,
@@ -1027,6 +1129,116 @@ test('a failed migration rolls back every schema object created in its transacti
   )
   assert.deepEqual(objects.map(row => row.name), ['observations', 'schema_migrations'])
   assert.deepEqual(await querySqlite(path, 'SELECT version FROM schema_migrations'), [])
+})
+
+test('schema-v2 migration rejects an old table shape without stamping version 3', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-workspace-graph-v2-shape-'))
+  const path = join(directory, 'graph.sqlite')
+  t.after(() => rm(directory, {recursive: true, force: true}))
+  await execSqlite(path, `
+    CREATE TABLE schema_migrations(
+      version INTEGER PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    ) STRICT;
+    INSERT INTO schema_migrations(version, applied_at) VALUES (2, 1);
+    CREATE TABLE observations(
+      observation_id TEXT NOT NULL UNIQUE,
+      observation_type TEXT NOT NULL,
+      occurred_at REAL NOT NULL,
+      source TEXT NOT NULL,
+      ref TEXT NOT NULL,
+      trust TEXT NOT NULL,
+      logical_workspace_id TEXT,
+      workspace_instance_id TEXT,
+      related_logical_workspace_id TEXT,
+      outcome TEXT,
+      payload_json TEXT NOT NULL,
+      UNIQUE(source, ref)
+    ) STRICT;
+  `)
+
+  const client = new WorkspaceGraphStoreClient(path)
+  t.after(() => client.close())
+  await assert.rejects(client.open(), {
+    code: 'STORE_MIGRATION_FAILED',
+  })
+  assert.deepEqual(await querySqlite(path, 'SELECT version FROM schema_migrations'), [{version: 2}])
+  assert.deepEqual(
+    await querySqlite(path, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"),
+    [{name: 'observations'}, {name: 'schema_migrations'}],
+  )
+})
+
+test('schema-v2 migration independently rejects each missing storage invariant', async t => {
+  const missingInvariants = [
+    'observation_unique', 'relation_foreign_key', 'receipt_unique', 'receipt_autoincrement',
+  ] as const
+  for (const missing of missingInvariants) {
+    const directory = await mkdtemp(join(tmpdir(), `nova-workspace-graph-v2-${missing}-`))
+    const path = join(directory, 'graph.sqlite')
+    t.after(() => rm(directory, {recursive: true, force: true}))
+    const observationUnique = missing === 'observation_unique' ? '' : ', UNIQUE(source, ref)'
+    const relationForeignKey = missing === 'relation_foreign_key' ? '' : `,
+      FOREIGN KEY(source_logical_id, target_logical_id, relation_type)
+        REFERENCES relation_cards(source_logical_id, target_logical_id, relation_type)
+        ON DELETE CASCADE`
+    const receiptSequence = missing === 'receipt_autoincrement'
+      ? 'INTEGER PRIMARY KEY'
+      : 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    const receiptOperationId = missing === 'receipt_unique'
+      ? 'TEXT NOT NULL'
+      : 'TEXT NOT NULL UNIQUE'
+    await execSqlite(path, `
+      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL) STRICT;
+      INSERT INTO schema_migrations(version, applied_at) VALUES (2, 1);
+      CREATE TABLE observations(
+        observation_id TEXT NOT NULL UNIQUE, observation_type TEXT NOT NULL,
+        occurred_at REAL NOT NULL, source TEXT NOT NULL, ref TEXT NOT NULL,
+        trust TEXT NOT NULL, logical_workspace_id TEXT, workspace_instance_id TEXT,
+        related_logical_workspace_id TEXT, summary TEXT, outcome TEXT, payload_json TEXT NOT NULL
+        ${observationUnique}
+      ) STRICT;
+      CREATE TABLE logical_workspaces(
+        logical_workspace_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+        canonical_remote TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+        revision INTEGER NOT NULL, payload_json TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE workspace_instances(
+        instance_id TEXT PRIMARY KEY, logical_workspace_id TEXT NOT NULL,
+        display_name TEXT NOT NULL, path_label TEXT NOT NULL, branch TEXT,
+        repository_fingerprint TEXT, status TEXT NOT NULL, first_seen_at REAL NOT NULL,
+        last_seen_at REAL NOT NULL, revision INTEGER NOT NULL, payload_json TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE relation_cards(
+        source_logical_id TEXT NOT NULL, target_logical_id TEXT NOT NULL,
+        relation_type TEXT NOT NULL, confidence REAL NOT NULL, reason TEXT NOT NULL,
+        first_seen_at REAL NOT NULL, last_seen_at REAL NOT NULL, status TEXT NOT NULL,
+        revision INTEGER NOT NULL, payload_json TEXT NOT NULL,
+        PRIMARY KEY(source_logical_id, target_logical_id, relation_type)
+      ) STRICT;
+      CREATE TABLE relation_evidence(
+        source_logical_id TEXT NOT NULL, target_logical_id TEXT NOT NULL,
+        relation_type TEXT NOT NULL, evidence_source TEXT NOT NULL,
+        evidence_ref TEXT NOT NULL, observed_at REAL NOT NULL, evidence_json TEXT NOT NULL,
+        PRIMARY KEY(source_logical_id, target_logical_id, relation_type, evidence_source, evidence_ref)
+        ${relationForeignKey}
+      ) STRICT;
+      CREATE TABLE operation_receipts(
+        receipt_sequence ${receiptSequence}, operation_id ${receiptOperationId},
+        operation_type TEXT NOT NULL, input_digest TEXT NOT NULL,
+        committed_at INTEGER NOT NULL, result_json TEXT NOT NULL
+      ) STRICT;
+    `)
+
+    const client = new WorkspaceGraphStoreClient(path)
+    t.after(() => client.close())
+    await assert.rejects(client.open(), {code: 'STORE_MIGRATION_FAILED'})
+    assert.deepEqual(
+      await querySqlite(path, 'SELECT version FROM schema_migrations'),
+      [{version: 2}],
+      missing,
+    )
+  }
 })
 
 test('only the runtime store worker owns the node:sqlite import', async () => {

@@ -437,7 +437,7 @@ export class RealtimeAssembly {
     try {
       await this.workspaceGraph.recordTaskCompletion({
         workspace_instance_id: workspaceInstanceId,
-        summary: event.work_order,
+        summary: boundedTaskCompletionSummary(event.work_order),
         outcome: event.handoff.outcome === 'ok' ? 'ok' : 'failed',
         now: this.#wallClockNow(),
         relation_cue: null,
@@ -596,6 +596,15 @@ export class RealtimeAssembly {
     }
     return result
   }
+}
+
+function boundedTaskCompletionSummary(value: string): string | null {
+  let bounded = ''
+  for (const character of value) {
+    if (bounded.length + character.length > 239) break
+    bounded += character
+  }
+  return /\S/u.test(bounded) ? bounded : null
 }
 
 function isWorkspaceGraphQueueFull(error: unknown): boolean {

@@ -44,10 +44,17 @@ evidence, while conflict retains evidence without overwriting confirmed user wor
 is a separate durable relation state that prevents later recall.
 
 Publication is last-good: a locked, unavailable, or failed store leaves the prior immutable snapshot
-readable with a degraded marker. Bounded compaction preserves observations, suppression history, and
-the configured receipt-retention/idempotency invariants; sufficiently old overflow receipts may be
-pruned after their retention window. Compaction cannot lock out a later valid write. No graph
-operation reads work state from a second workspace.
+readable with a degraded marker. Bounded compaction retains the 512 most recent observations per
+logical workspace subject to a 4096-observation global ceiling. Observation pruning does not cascade
+into relation cards, evidence, projection provenance, or suppression history. A separate derived-row
+bound may remove overflow inactive workspace instances and stale relation cards; evidence belonging
+to a removed stale relation follows that card, while active, weak, and suppressed relations remain.
+The configured receipt-retention/idempotency invariants are separate again; sufficiently old
+overflow receipts may be pruned after their retention window. The service requests advisory
+compaction on startup and after every 64 successful observation writes. A compaction failure is
+visible as a fixed diagnostic, is retried after the next successful observation write, and cannot
+turn an already committed graph write into a failure. Compaction cannot lock out a later valid
+write. No graph operation reads work state from a second workspace.
 
 Adjacent authoritative committed workspace transitions contribute only weak `discussed_with`
 metadata. The runtime records a fixed, non-imperative reason and one runtime evidence reference; it
@@ -73,6 +80,12 @@ payload. Migration retains those receipt rows and may reconstruct a result only 
 relation revision is still current; after the relation advances, the old operation returns the
 stable `STORE_OPERATION_CONFLICT` error. Nova never fabricates a historical card or discards the
 retained receipt to claim success.
+
+Database upgrades are explicit and transactional. Nova validates the exact STRICT table columns,
+unique keys, composite foreign key, and receipt autoincrement invariant for the recorded version,
+applies v1→v2 and v2→v3 steps in order, validates the resulting v3 schema, and only then commits the
+new version rows. An unversioned partial schema or a recorded legacy schema with missing, extra, or
+incompatible structure fails with `STORE_MIGRATION_FAILED`; it is never merely stamped as current.
 
 ## Optional MyContext gain and limits
 

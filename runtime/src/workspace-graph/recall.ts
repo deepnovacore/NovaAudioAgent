@@ -85,7 +85,7 @@ interface ArrayProjection<Value> {
 
 /**
  * Builds an owned bounded index once; turn-time suggestions never traverse the published snapshot.
- * Task 6 should rebuild/swap this index off the hot turn path after snapshot publication.
+ * The service rebuilds this index when it accepts a newly published snapshot.
  */
 export class GraphRecall {
   readonly #index: RecallIndex

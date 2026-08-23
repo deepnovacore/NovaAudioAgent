@@ -46,6 +46,7 @@ function blockingClient(gate: Promise<void>) {
       aliases: Object.freeze([]),
     }),
     open: () => Promise.resolve(),
+    compact: () => Promise.resolve({derived_rows_before: 0, derived_rows_after: 0}),
     loadGraphState: () => Promise.resolve({
       identity_state: emptyWorkspaceIdentityState(),
       projection_state: emptyProjectionState,
@@ -92,6 +93,230 @@ async function holdWriteLock(path: string) {
 
 test('service rejects an empty database path before constructing the worker client', () => {
   assert.throws(() => new WorkspaceGraphService({path: ''}), {code: 'GRAPH_SERVICE_INVALID_INPUT'})
+})
+
+test('service open schedules compaction before rebuilding its in-memory state', async () => {
+  const calls: string[] = []
+  const client = {
+    publishedSnapshot: Object.freeze({
+      schema_version: 3,
+      publication_revision: 1,
+      degraded: false,
+      logical_workspaces: Object.freeze([]),
+      workspace_instances: Object.freeze([]),
+      relations: Object.freeze([]),
+      aliases: Object.freeze([]),
+    }),
+    open: () => { calls.push('open'); return Promise.resolve() },
+    compact: () => {
+      calls.push('compact')
+      return Promise.resolve({derived_rows_before: 0, derived_rows_after: 0})
+    },
+    loadGraphState: () => {
+      calls.push('load')
+      return Promise.resolve({
+        identity_state: emptyWorkspaceIdentityState(),
+        projection_state: emptyProjectionState,
+      })
+    },
+    close: () => Promise.resolve(),
+  } as unknown as WorkspaceGraphStoreClient
+  const service = new WorkspaceGraphService({path: '/safe/not-used.sqlite', store_client: client})
+
+  await service.open()
+
+  assert.deepEqual(calls, ['open', 'compact', 'load'])
+  await service.close()
+})
+
+test('startup compaction failure is advisory and still rebuilds service state', async () => {
+  const calls: string[] = []
+  const diagnostics: string[] = []
+  const client = {
+    publishedSnapshot: Object.freeze({
+      schema_version: 3,
+      publication_revision: 1,
+      degraded: false,
+      logical_workspaces: Object.freeze([]),
+      workspace_instances: Object.freeze([]),
+      relations: Object.freeze([]),
+      aliases: Object.freeze([]),
+    }),
+    open: () => { calls.push('open'); return Promise.resolve() },
+    compact: () => { calls.push('compact'); return Promise.reject(new Error('private failure')) },
+    loadGraphState: () => {
+      calls.push('load')
+      return Promise.resolve({
+        identity_state: emptyWorkspaceIdentityState(),
+        projection_state: emptyProjectionState,
+      })
+    },
+    close: () => Promise.resolve(),
+  } as unknown as WorkspaceGraphStoreClient
+  const service = new WorkspaceGraphService({
+    path: '/safe/not-used.sqlite',
+    store_client: client,
+    on_diagnostic: code => diagnostics.push(code),
+  })
+
+  await service.open()
+
+  assert.deepEqual(calls, ['open', 'compact', 'load'])
+  assert.deepEqual(diagnostics, ['workspace_graph_write_failed'])
+  assert.equal(service.degraded, false)
+  await service.close()
+})
+
+test('startup compaction failure is retried after the next committed observation', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-startup-compaction-retry-'))
+  const path = join(directory, 'graph.sqlite')
+  const client = new WorkspaceGraphStoreClient(path)
+  const originalCompact = client.compact.bind(client)
+  let compactionAttempts = 0
+  client.compact = async (...args) => {
+    compactionAttempts += 1
+    if (compactionAttempts === 1) throw new Error('private startup failure')
+    return originalCompact(...args)
+  }
+  const service = new WorkspaceGraphService({path, store_client: client})
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+
+  await service.open()
+  assert.equal(compactionAttempts, 1)
+  assert.equal((await service.openWorkspace({
+    path: '/safe/startup-retry', repository_fingerprint: 'host-startup-retry', now: 1,
+  })).kind, 'resolved')
+
+  assert.equal(compactionAttempts, 2)
+  assert.equal((await client.diagnostics()).observations, 1)
+  assert.equal((await client.diagnostics()).operation_receipts, 2)
+})
+
+test('task completion rejects an empty string but persists an explicit null summary', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-empty-summary-'))
+  const path = join(directory, 'graph.sqlite')
+  const service = new WorkspaceGraphService({
+    path,
+    id_factory: (() => { let value = 0; return () => `summary-observation-${++value}` })(),
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const opened = await service.openWorkspace({
+    path: '/safe/summary', repository_fingerprint: 'host-summary', now: 1,
+  })
+  assert.equal(opened.kind, 'resolved')
+
+  await assert.rejects(Promise.resolve().then(() => service.recordTaskCompletion({
+    workspace_instance_id: opened.instance.instance_id,
+    summary: '',
+    outcome: 'ok',
+    now: 2,
+    relation_cue: null,
+  })), {code: 'GRAPH_SERVICE_INVALID_INPUT'})
+  await service.recordTaskCompletion({
+    workspace_instance_id: opened.instance.instance_id,
+    summary: null,
+    outcome: 'ok',
+    now: 3,
+    relation_cue: null,
+  })
+  await service.recordTaskCompletion({
+    workspace_instance_id: opened.instance.instance_id,
+    summary: '🚀'.repeat(119),
+    outcome: 'ok',
+    now: 4,
+    relation_cue: null,
+  })
+
+  await service.close()
+  const store = new WorkspaceGraphStoreClient(path)
+  t.after(() => store.close())
+  await store.open()
+  const completions = (await store.listObservations()).filter(observation => (
+    observation.observation_type === 'task_completed'
+  ))
+  assert.deepEqual(completions.map(observation => observation.summary), [null, '🚀'.repeat(119)])
+  assert.deepEqual(completions.map(observation => observation.outcome), ['ok', 'ok'])
+})
+
+test('service schedules periodic compaction after 64 observation writes', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-periodic-compaction-'))
+  const path = join(directory, 'graph.sqlite')
+  const service = new WorkspaceGraphService({path})
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const opened = await service.openWorkspace({
+    path: '/safe/periodic-compaction', repository_fingerprint: 'host-periodic-compaction', now: 1,
+  })
+  assert.equal(opened.kind, 'resolved')
+  for (let index = 0; index < 63; index += 1) {
+    await service.recordTaskCompletion({
+      workspace_instance_id: opened.instance.instance_id,
+      summary: `periodic observation ${index}`,
+      outcome: 'ok',
+      now: index + 2,
+      relation_cue: null,
+    })
+  }
+  await service.close()
+
+  const store = new WorkspaceGraphStoreClient(path)
+  t.after(() => store.close())
+  await store.open()
+  const diagnostics = await store.diagnostics()
+  assert.equal(diagnostics.observations, 64)
+  assert.equal(diagnostics.operation_receipts, 66)
+})
+
+test('periodic compaction failure preserves the committed write and retries after the next write', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-compaction-retry-'))
+  const path = join(directory, 'graph.sqlite')
+  const diagnostics: string[] = []
+  const client = new WorkspaceGraphStoreClient(path)
+  const originalCompact = client.compact.bind(client)
+  let compactionAttempts = 0
+  client.compact = async (...args) => {
+    compactionAttempts += 1
+    if (compactionAttempts === 2) throw new Error('private periodic failure')
+    return originalCompact(...args)
+  }
+  const service = new WorkspaceGraphService({
+    path,
+    store_client: client,
+    on_diagnostic: code => diagnostics.push(code),
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const opened = await service.openWorkspace({
+    path: '/safe/compaction-retry', repository_fingerprint: 'host-compaction-retry', now: 1,
+  })
+  assert.equal(opened.kind, 'resolved')
+  for (let index = 0; index < 64; index += 1) {
+    await service.recordTaskCompletion({
+      workspace_instance_id: opened.instance.instance_id,
+      summary: `retry observation ${index}`,
+      outcome: 'ok',
+      now: index + 2,
+      relation_cue: null,
+    })
+  }
+
+  assert.equal(compactionAttempts, 3)
+  assert.deepEqual(diagnostics, ['workspace_graph_write_failed'])
+  assert.equal((await client.diagnostics()).observations, 65)
+  assert.equal((await client.diagnostics()).operation_receipts, 67)
 })
 
 test('service commits confirmed workspace lifecycle and reconstructs it after restart', async t => {
@@ -544,6 +769,7 @@ test('degraded publication retains the last-good service identity and recall pro
   const client = {
     get publishedSnapshot() { return snapshot },
     open: () => Promise.resolve(),
+    compact: () => Promise.resolve({derived_rows_before: 0, derived_rows_after: 0}),
     loadGraphState: () => Promise.resolve({identity_state: identityState, projection_state: projectionState}),
     applyGraphBatch: (batch: Parameters<WorkspaceGraphStoreClient['applyGraphBatch']>[0]) => {
       identityState = applyWorkspaceIdentityDeltas(identityState, batch.identity_deltas)

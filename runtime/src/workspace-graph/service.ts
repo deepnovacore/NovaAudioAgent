@@ -119,7 +119,7 @@ export interface TaskCompletionRelationCue {
 
 export interface TaskCompletionInput {
   readonly workspace_instance_id: string
-  readonly summary: string
+  readonly summary: string | null
   readonly outcome: 'ok' | 'unknown' | 'failed'
   readonly now: number
   readonly relation_cue?: TaskCompletionRelationCue | null
@@ -127,7 +127,7 @@ export interface TaskCompletionInput {
 
 const taskCompletionInputSchema = z.object({
   workspace_instance_id: z.string().min(1).regex(/\S/u),
-  summary: z.string().max(239),
+  summary: z.string().min(1).max(239).regex(/\S/u).nullable(),
   outcome: z.enum(['ok', 'unknown', 'failed']),
   now: z.number().finite().nonnegative(),
   relation_cue: z.object({
@@ -172,6 +172,7 @@ interface HintLocation {
 }
 
 type ServiceState = 'new' | 'open' | 'closing' | 'closed' | 'failed'
+const OBSERVATION_WRITES_PER_COMPACTION = 64
 
 export class WorkspaceGraphService {
   readonly #client: WorkspaceGraphStoreClient
@@ -205,6 +206,7 @@ export class WorkspaceGraphService {
   #currentWorkspaceInstanceId: string | null = null
   #lastConfirmedWorkspaceInstanceId: string | null = null
   #workspaceScopeGeneration = 0
+  #observationWritesSinceCompaction = 0
 
   constructor(options: WorkspaceGraphServiceOptions) {
     if (typeof options.path !== 'string' || options.path.length === 0) {
@@ -250,6 +252,9 @@ export class WorkspaceGraphService {
     }
     try {
       await this.#client.open()
+      if (!(await this.#compactAdvisory())) {
+        this.#observationWritesSinceCompaction = OBSERVATION_WRITES_PER_COMPACTION
+      }
       await this.#reloadState()
       this.#state = 'open'
     } catch (error) {
@@ -346,6 +351,7 @@ export class WorkspaceGraphService {
           identity_deltas: resolution.deltas,
           projection_deltas: projected.deltas,
         }, this.#operationIdFactory())
+        await this.#compactAfterObservationWrite()
         await this.#reloadState()
         const committedInstanceId = this.#publishedIdentityState.workspace_instances.some(
           candidate => candidate.instance_id === resolution.instance.instance_id
@@ -371,7 +377,9 @@ export class WorkspaceGraphService {
         this.#pathPolicy,
         this.#contentPolicy,
       )
-      const summary = scrubFreeText('summary', admitted.summary, this.#pathPolicy, this.#contentPolicy)
+      const summary = admitted.summary === null
+        ? null
+        : scrubFreeText('summary', admitted.summary, this.#pathPolicy, this.#contentPolicy)
       const admittedCue = admitted.relation_cue === undefined || admitted.relation_cue === null
         ? null
         : {
@@ -443,6 +451,7 @@ export class WorkspaceGraphService {
         identity_deltas: [],
         projection_deltas: projected.deltas,
       }, this.#operationIdFactory())
+      await this.#compactAfterObservationWrite()
       await this.#reloadState()
     }))
   }
@@ -618,6 +627,25 @@ export class WorkspaceGraphService {
         await this.#reloadState()
       }
     }
+  }
+
+  async #compactAdvisory(): Promise<boolean> {
+    try {
+      await this.#client.compact(this.#operationIdFactory())
+      return true
+    } catch {
+      this.#emitDiagnostic('workspace_graph_write_failed')
+      return false
+    }
+  }
+
+  async #compactAfterObservationWrite(): Promise<void> {
+    this.#observationWritesSinceCompaction = Math.min(
+      OBSERVATION_WRITES_PER_COMPACTION,
+      this.#observationWritesSinceCompaction + 1,
+    )
+    if (this.#observationWritesSinceCompaction < OBSERVATION_WRITES_PER_COMPACTION) return
+    if (await this.#compactAdvisory()) this.#observationWritesSinceCompaction = 0
   }
 
   async #reloadState(): Promise<void> {

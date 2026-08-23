@@ -29,6 +29,7 @@ const data = workerData as FixtureWorkerData
 if (data.mode === 'silent') {
   port.on('message', () => undefined)
 } else if (data.mode === 'open_then_silent') {
+  let publicationRevision = 1
   port.on('message', message => {
     const request = message as {readonly request_id?: unknown; readonly operation?: unknown}
     if (request.operation === 'open') {
@@ -40,6 +41,23 @@ if (data.mode === 'silent') {
         snapshot: {
           schema_version: 3,
           publication_revision: 1,
+          degraded: false,
+          logical_workspaces: [],
+          workspace_instances: [],
+          relations: [],
+          aliases: [],
+        },
+      })
+    } else if (request.operation === 'compact') {
+      publicationRevision += 1
+      port.postMessage({
+        kind: 'response',
+        request_id: request.request_id,
+        ok: true,
+        result: {derived_rows_before: 0, derived_rows_after: 0},
+        snapshot: {
+          schema_version: 3,
+          publication_revision: publicationRevision,
           degraded: false,
           logical_workspaces: [],
           workspace_instances: [],

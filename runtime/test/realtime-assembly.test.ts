@@ -1031,6 +1031,64 @@ test('workspace graph opens before project initialization, injects only the curr
     relation_cue: null,
   })
 
+  const oversizedWorkOrder = '🚀'.repeat(4_000)
+  await terminal({
+    workspace,
+    work_order: oversizedWorkOrder,
+    handoff: {
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {},
+      refs: [],
+    },
+  })
+  await waitNamed('bounded terminal graph episode', () => graphCalls.filter(call => (
+    typeof call === 'object' && call !== null && 'summary' in call
+  )).length === 2)
+  const boundedTask = graphCalls.at(-1)
+  assert.ok(boundedTask !== null && typeof boundedTask === 'object' && 'summary' in boundedTask)
+  assert.equal(boundedTask.summary, '🚀'.repeat(119))
+  assert.equal([...String(boundedTask.summary)].length, 119)
+  assert.equal(String(boundedTask.summary).length, 238)
+
+  await terminal({
+    workspace,
+    work_order: 'x'.repeat(4_000),
+    handoff: {
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {},
+      refs: [],
+    },
+  })
+  await waitNamed('bounded ASCII terminal graph episode', () => graphCalls.filter(call => (
+    typeof call === 'object' && call !== null && 'summary' in call
+  )).length === 3)
+  const boundedAsciiTask = graphCalls.at(-1)
+  assert.ok(
+    boundedAsciiTask !== null
+    && typeof boundedAsciiTask === 'object'
+    && 'summary' in boundedAsciiTask,
+  )
+  assert.equal(boundedAsciiTask.summary, 'x'.repeat(239))
+
+  await terminal({
+    workspace,
+    work_order: ' \t\n ',
+    handoff: {
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {},
+      refs: [],
+    },
+  })
+  await waitNamed('empty terminal graph episode', () => graphCalls.filter(call => (
+    typeof call === 'object' && call !== null && 'summary' in call
+  )).length === 4)
+  const emptyTask = graphCalls.at(-1)
+  assert.ok(emptyTask !== null && typeof emptyTask === 'object' && 'summary' in emptyTask)
+  assert.equal(emptyTask.summary, null)
+
   holdLifecycle = true
   const promptObserverResult = workspaceObserver({workspace})
   try {
