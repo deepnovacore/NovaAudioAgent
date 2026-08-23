@@ -5,6 +5,8 @@ import {fileURLToPath} from 'node:url'
 
 import ts from 'typescript'
 
+import {canonicalAuditPath, isAuditedSource} from './node-parity-paths.mjs'
+
 const mode = process.argv[2]
 if (mode === '--write') {
   process.stderr.write('Node parity audit refuses bulk exemptions; review each occurrence manually\n')
@@ -19,8 +21,11 @@ if (mode === '--write') {
   const sourceFiles = [
     ...await sourceTree(resolve(runtimeRoot, 'src'), new Set(['.ts'])),
     ...await sourceTree(resolve(repositoryRoot, 'desktop/ambient-orb/src'), new Set(['.js', '.mjs', '.ts'])),
-  ].filter(path => relative(repositoryRoot, path) !== 'runtime/src/unicode-tables.ts')
-    .sort(compareStrings)
+  ].map(absolute => ({
+    absolute,
+    canonical: canonicalAuditPath(relative(repositoryRoot, absolute)),
+  })).filter(file => isAuditedSource(file.canonical))
+    .sort((left, right) => compareStrings(left.canonical, right.canonical))
   const configPath = resolve(runtimeRoot, 'tsconfig.json')
   const config = ts.readConfigFile(configPath, ts.sys.readFile)
   if (config.error !== undefined) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'))
@@ -29,16 +34,18 @@ if (mode === '--write') {
     checkJs: false,
     noEmit: true,
   }, configPath)
-  const program = ts.createProgram({rootNames: sourceFiles, options: parsed.options})
+  const program = ts.createProgram({
+    rootNames: sourceFiles.map(file => file.absolute),
+    options: parsed.options,
+  })
   const checker = program.getTypeChecker()
   const occurrences = []
-  for (const absolute of sourceFiles) {
-    const source = program.getSourceFile(absolute)
-    if (source === undefined) throw new Error(`typed audit source unavailable: ${absolute}`)
-    const file = relative(repositoryRoot, absolute).replaceAll('\\', '/')
-    visitSource(source, checker, file, occurrences)
+  for (const file of sourceFiles) {
+    const source = program.getSourceFile(file.absolute)
+    if (source === undefined) throw new Error(`typed audit source unavailable: ${file.absolute}`)
+    visitSource(source, checker, file.canonical, occurrences)
   }
-  const files = sourceFiles.map(path => relative(repositoryRoot, path).replaceAll('\\', '/'))
+  const files = sourceFiles.map(file => file.canonical)
   const current = {schema_version: 1, files, occurrences}
   if (mode === '--inventory') {
     process.stdout.write(`${JSON.stringify(current, null, 2)}\n`)

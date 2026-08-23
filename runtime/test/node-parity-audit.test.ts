@@ -13,6 +13,16 @@ import {
 
 const run = promisify(execFile)
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
+const {canonicalAuditPath, isAuditedSource} = await import(
+  resolve(repositoryRoot, 'runtime/scripts/node-parity-paths.mjs'),
+)
+
+test('platform-independent source inventory', () => {
+  assert.equal(canonicalAuditPath('runtime\\src\\config.ts'), 'runtime/src/config.ts')
+  assert.equal(isAuditedSource('runtime\\src\\unicode-tables.ts'), false)
+  assert.equal(isAuditedSource('runtime/src/unicode-tables.ts'), false)
+  assert.equal(isAuditedSource('runtime\\src\\config.ts'), true)
+})
 
 test('typed Node parity audit accepts only reviewed hashed occurrences', async () => {
   const result = await run(process.execPath, ['runtime/scripts/node-parity-audit.mjs', '--check'], {
