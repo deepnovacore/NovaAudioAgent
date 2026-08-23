@@ -106,6 +106,7 @@ linux:
   icon: build/icons
   executableName: nova-ambient-orb
   synopsis: "Nova ambient voice orb"
+  artifactName: "nova-ambient-orb-${version}-${arch}.${ext}"
   extraResources:
     - from: build/native/codex-sandbox-probe
       to: native/codex-sandbox-probe

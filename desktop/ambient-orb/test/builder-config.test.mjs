@@ -232,6 +232,7 @@ test('linux is described for packaging: category, icon dir, executable name, syn
   assert.equal(config.linux.icon, 'build/icons')
   assert.equal(config.linux.executableName, 'nova-ambient-orb')
   assert.equal(config.linux.synopsis, 'Nova ambient voice orb')
+  assert.equal(config.linux.artifactName, 'nova-ambient-orb-${version}-${arch}.${ext}')
 })
 
 test('the staged application carries the complete deb maintainer metadata', async () => {
