@@ -609,7 +609,7 @@ async function requireTreeGone(pid, environment) {
   while (Date.now() < deadline) {
     try { process.kill(-pid, 0) } catch (error) {
       if (error?.code === 'ESRCH') return
-      throw new Error('installed_candidate_tree_failed')
+      if (error?.code !== 'EPERM') throw new Error('installed_candidate_tree_failed')
     }
     await new Promise(resolveWait => setTimeout(resolveWait, 50))
   }
