@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto'
 import {readFileSync, writeFileSync} from 'node:fs'
 import {mkdir, mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
-import {join} from 'node:path'
+import {basename, join} from 'node:path'
 import {test} from 'node:test'
 
 import {loadProjectNativeHostFromResources} from '../src/project-native-resource.js'
@@ -62,7 +62,7 @@ test('project native host loads only one fixed manifest-bound addon for the exac
       moduleLoader: path => {
         loads += 1
         assert.notEqual(path, addonPath)
-        assert.equal(path.endsWith('/nova_project_native.node'), true)
+        assert.equal(basename(path), 'nova_project_native.node')
         assert.deepEqual(readFileSync(path), body)
         return module
       },

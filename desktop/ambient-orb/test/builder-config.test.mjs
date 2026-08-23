@@ -446,6 +446,8 @@ test('unsigned cross-platform workflow closes native packages through attested i
     'npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}',
     'npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb',
   ]) assert.ok(packageRuns.includes(command), command)
+  const runtimeTests = packageSteps.find(step => step.run === 'npm run test:runtime')
+  assert.equal(runtimeTests?.if, "runner.os != 'Windows'")
   assert.ok(packageSteps.some(step => step.uses === 'actions/attest-build-provenance@v3'))
   assert.ok(packageSteps.some(step => step.uses === 'actions/upload-artifact@v4'))
   assert.doesNotMatch(text, /continue-on-error|\|\| true/u)

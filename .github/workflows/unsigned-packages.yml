@@ -38,7 +38,12 @@ jobs:
       - run: npm install --global npm@11.6.0
       - run: npm ci
       - run: npm run check
+      # The complete runtime suite includes POSIX uid/mode and descriptor-lock
+      # contracts. Windows is covered below by the desktop/native build and by
+      # the checkout-free installed NSIS smoke, which exercises the packaged
+      # Windows authorities instead of pretending POSIX permissions exist.
       - run: npm run test:runtime
+        if: runner.os != 'Windows'
       - run: npm run test:desktop
       - run: npm run build
       - name: Build unsigned native package bytes

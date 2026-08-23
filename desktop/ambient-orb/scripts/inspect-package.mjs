@@ -1421,7 +1421,7 @@ export async function extractPreflightedContainer({
   }
 }
 
-function runBoundedListing(command, arguments_, workingDirectory) {
+export function runBoundedListing(command, arguments_, workingDirectory) {
   const result = spawnSync(command, arguments_, {
     cwd: workingDirectory,
     encoding: 'utf8',
@@ -1433,8 +1433,9 @@ function runBoundedListing(command, arguments_, workingDirectory) {
     result.status !== 0
     || result.error
     || typeof result.stdout !== 'string'
+    || typeof result.stderr !== 'string'
     || Buffer.byteLength(result.stdout, 'utf8') > MAX_CONTAINER_LISTING_BYTES
-    || result.stderr !== ''
+    || Buffer.byteLength(result.stderr, 'utf8') > MAX_CONTAINER_LISTING_BYTES
   ) containerListingRejected('tool-output')
   boundedListingLines(result.stdout)
   return result.stdout

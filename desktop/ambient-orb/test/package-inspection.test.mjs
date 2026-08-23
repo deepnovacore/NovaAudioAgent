@@ -544,6 +544,25 @@ test('container preflight rejects a compressed bomb before creating extraction o
   }
 })
 
+test('a successful bounded container listing may carry an ignored stderr warning', async () => {
+  assert.equal(typeof packageInspection.runBoundedListing, 'function')
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-container-listing-warning-'))
+  const tool = resolve(root, 'listing-tool.mjs')
+  try {
+    await writeFile(tool, [
+      "process.stdout.write('Path = payload\\nSize = 0\\nFolder = +\\n\\n')",
+      "process.stderr.write('bounded extractor warning\\n')",
+      '',
+    ].join('\n'))
+    assert.equal(
+      packageInspection.runBoundedListing(process.execPath, [tool], root),
+      'Path = payload\nSize = 0\nFolder = +\n\n',
+    )
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('container preflight rejects excessive entries and unsafe paths before extraction', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'nova-container-entries-'))
   const raw = resolve(root, 'container-raw')

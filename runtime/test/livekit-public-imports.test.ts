@@ -236,7 +236,9 @@ test('repository production sources and workspace manifests obey the public boun
   })
   assert.deepEqual(violations, [])
 
-  const runtimeEntry = packageManifests.find(entry => entry.path === 'runtime/package.json')
+  const runtimeEntry = packageManifests.find(
+    entry => entry.path.replaceAll('\\', '/') === 'runtime/package.json',
+  )
   assert.ok(runtimeEntry)
   const runtimeManifest = runtimeEntry.manifest as {
     readonly dependencies?: Readonly<Record<string, unknown>>

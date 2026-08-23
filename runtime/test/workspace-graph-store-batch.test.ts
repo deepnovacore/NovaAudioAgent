@@ -132,7 +132,11 @@ async function transitionBatch(client: WorkspaceGraphStoreClient) {
 test('atomic graph batch reconstructs identity private state after restart', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-graph-batch-'))
   const path = join(directory, 'graph.sqlite')
-  t.after(() => rm(directory, {recursive: true, force: true}))
+  let reopened: WorkspaceGraphStoreClient | null = null
+  t.after(async () => {
+    await reopened?.close()
+    await rm(directory, {recursive: true, force: true})
+  })
   const decision = new WorkspaceIdentityResolver(emptyWorkspaceIdentityState()).resolve({
     path: '/safe/demo',
     git_remote: null,
@@ -152,9 +156,8 @@ test('atomic graph batch reconstructs identity private state after restart', asy
   assert.equal(Object.isFrozen(committed.evidence), true)
   await first.close()
 
-  const reopened = new WorkspaceGraphStoreClient(path)
+  reopened = new WorkspaceGraphStoreClient(path)
   await reopened.open()
-  t.after(() => reopened.close())
   const state = await reopened.loadGraphState()
   assert.equal(Object.isFrozen(state), true)
   assert.equal(Object.isFrozen(state.identity_state), true)
