@@ -784,6 +784,21 @@ test('a secret carrying a NUL or other control character is refused, not stored'
   }
 })
 
+test('a sealed secret too large for the stored schema is rejected without replacing the key', () => {
+  const stored = applySettingsUpdate(DEFAULT_SETTINGS, {
+    secrets: { arkApiKey: 'ark-existing' },
+  }, fakeCodec())
+  const oversizedAfterUtf8Encoding = '密'.repeat(2100)
+
+  const patched = applySettingsUpdate(stored, {
+    secrets: { arkApiKey: oversizedAfterUtf8Encoding },
+  }, fakeCodec({ available: false }))
+
+  assert.deepEqual(patched.secrets.arkApiKey, stored.secrets.arkApiKey)
+  assert.deepEqual(patched.rejectedSecrets, ['arkApiKey'])
+  assert.equal(readSecret(patched, 'arkApiKey', fakeCodec()), 'ark-existing')
+})
+
 test('readSecret returns null instead of throwing when the ciphertext no longer decrypts', () => {
   const stored = normalizeSettings({
     secrets: { codexApiKey: { enc: 'safeStorage', data: 'bm90LW91cnM=' } },

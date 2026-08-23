@@ -379,7 +379,12 @@ function updatedSecrets(stored, updates, codec) {
       rejected.push(key)
       continue
     }
-    secrets[key] = sealSecret(value, codec)
+    const sealed = validSecretEntry(sealSecret(value, codec))
+    if (sealed === null) {
+      rejected.push(key)
+      continue
+    }
+    secrets[key] = sealed
   }
   return { secrets, rejected }
 }
