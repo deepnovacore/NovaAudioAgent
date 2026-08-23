@@ -77,7 +77,14 @@ for (const candidate of candidates.sort((left, right) => (
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }
 
-main().catch(() => {
-  process.stderr.write('desktop package inspection rejected\n')
+main().catch(error => {
+  const detail = error instanceof PackageInspectionError
+    ? error.message.replace(/^desktop package contract rejected: /u, '')
+    : ''
+  const diagnostic = process.env.NOVA_RELEASE_INSPECTION_DIAGNOSTICS === '1'
+    && /^[a-zA-Z0-9 @._:+/<>,= -]{1,256}$/u.test(detail)
+    ? `: ${detail}`
+    : ''
+  process.stderr.write(`desktop package inspection rejected${diagnostic}\n`)
   process.exitCode = 1
 })

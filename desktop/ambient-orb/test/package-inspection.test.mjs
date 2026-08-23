@@ -496,6 +496,19 @@ test('built candidate CLI emits only a stable bounded rejection', () => {
   assert.notEqual(command.status, 0)
   assert.equal(command.stderr, 'desktop package inspection rejected\n')
   assert.doesNotMatch(command.stderr, /node-typescript-runtime|nova-release-candidate|at async/u)
+
+  const diagnostic = spawnSync(process.execPath, [
+    resolve(import.meta.dirname, '../scripts/inspect-built-preview.mjs'),
+    '--caller-selected-artifact',
+  ], {
+    cwd: resolve(import.meta.dirname, '..'),
+    encoding: 'utf8',
+    timeout: 30_000,
+    env: {...process.env, NOVA_RELEASE_INSPECTION_DIAGNOSTICS: '1'},
+  })
+  assert.notEqual(diagnostic.status, 0)
+  assert.equal(diagnostic.stderr, 'desktop package inspection rejected: usage rejected\n')
+  assert.doesNotMatch(diagnostic.stderr, /node-typescript-runtime|nova-release-candidate|at async/u)
 })
 
 test('container preflight rejects a compressed bomb before creating extraction output', async () => {

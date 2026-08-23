@@ -44,6 +44,8 @@ jobs:
       - name: Build unsigned native package bytes
         run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb
       - name: Inspect exact unsigned application and installer bytes
+        env:
+          NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"
         run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
       - name: Normalize closed release artifact names and final digests
         run: npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}
