@@ -401,7 +401,10 @@ function resealPlaintext(secrets, codec) {
     const entry = migrated[key]
     if (!entry || entry.enc !== 'none') continue
     try {
-      migrated[key] = sealSecret(Buffer.from(entry.data, 'base64').toString('utf8'), codec)
+      const sealed = validSecretEntry(
+        sealSecret(Buffer.from(entry.data, 'base64').toString('utf8'), codec),
+      )
+      if (sealed !== null) migrated[key] = sealed
     } catch {
       // Keep what is stored: the next save tries again.
     }

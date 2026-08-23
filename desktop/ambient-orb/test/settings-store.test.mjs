@@ -756,6 +756,21 @@ test('a re-seal that throws leaves that one entry untouched rather than losing i
   assert.equal(migrated.palette, 'graphite')
 })
 
+test('an oversized re-seal leaves a boundary-valid plaintext entry intact', () => {
+  const plaintext = '密'.repeat(2048)
+  const stored = normalizeSettings({
+    secrets: { arkApiKey: plaintextEntry(plaintext) },
+  })
+
+  const migrated = applySettingsUpdate(stored, { palette: 'graphite' }, fakeCodec())
+
+  assert.deepEqual(migrated.secrets.arkApiKey, stored.secrets.arkApiKey)
+  assert.deepEqual(normalizeSettings(migrated).secrets.arkApiKey, stored.secrets.arkApiKey)
+  assert.equal(readSecret(migrated, 'arkApiKey', fakeCodec()), plaintext)
+  assert.equal(migrated.palette, 'graphite')
+  assert.deepEqual(migrated.rejectedSecrets, [])
+})
+
 test('a secret carrying a NUL or other control character is refused, not stored', () => {
   const codec = fakeCodec()
   const stored = applySettingsUpdate(DEFAULT_SETTINGS, {
