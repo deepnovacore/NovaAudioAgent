@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import {chmod, mkdtemp, realpath, rm} from 'node:fs/promises'
+import {chmod, mkdtemp, readFile, realpath, rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
-import {join} from 'node:path'
+import {join, resolve} from 'node:path'
 import { test } from 'node:test'
 import { buildAssembly } from '../src/assembly.js'
 import type {CodexAssemblyResource} from '../src/codex-factory.js'
@@ -357,6 +357,12 @@ test('Qwen composition registers the exact Codex resource and starts prewarm aft
   prewarmGate.resolve()
   await realtime.stop()
   assert.equal(closes, 1)
+})
+
+test('desktop entry leaves Codex prewarm to the realtime owner instead of blocking readiness', async () => {
+  const entry = await readFile(resolve(import.meta.dirname, '../../src/desktop-entry.ts'), 'utf8')
+  assert.match(entry, /ownership\.own\(\(\) => codexResource\.close\(\)\)/u)
+  assert.doesNotMatch(entry, /await codexResource\.start\(\)/u)
 })
 
 test('Qwen factory preserves resource identity, explicit Guard settings, and one start path', async () => {

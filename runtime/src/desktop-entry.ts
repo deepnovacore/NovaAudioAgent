@@ -62,10 +62,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
           idFactory: () => randomUUID().replaceAll('-', ''),
           ...(codexHost.projectHost === null ? {} : {projectHost: codexHost.projectHost}),
         })
-    if (codexResource !== null) {
-      ownership.own(() => codexResource.close())
-      await codexResource.start()
-    }
+    if (codexResource !== null) ownership.own(() => codexResource.close())
     const camera = selectDesktopCameraSource(process.env)
     const composition = buildDesktopRealtimeComposition({
       token,
