@@ -56,15 +56,32 @@ test('installed launch deletes backend selection and poisons every Python resolu
   const environment = smokeEnvironment({
     parentEnvironment: {
       PATH: '/usr/bin',
+      GH_TOKEN: 'private-gh-token',
+      GITHUB_WORKSPACE: '/private/runner/workspace',
+      GITHUB_ENV: '/private/runner/github-env',
+      RUNNER_TEMP: '/private/runner/temp',
+      RUNNER_TOOL_CACHE: '/private/runner/tool-cache',
+      SSH_AUTH_SOCK: '/private/runner/ssh-agent',
       NOVA_AUDIO_AGENT_BACKEND: 'python',
       NOVA_AUDIO_AGENT_PYTHON: '/private/python',
       PYTHONPATH: '/private/modules',
       VIRTUAL_ENV: '/private/venv',
       CONDA_PREFIX: '/private/conda',
       HOME: '/private/home',
+      TMPDIR: '/private/runner/tmpdir',
+      TMP: '/private/runner/tmp',
+      TEMP: '/private/runner/temp',
+      LANG: 'en_US.UTF-8',
+      DISPLAY: ':99',
+      WAYLAND_DISPLAY: 'wayland-0',
+      XAUTHORITY: '/private/runner/xauthority',
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/private/runner/dbus',
+      XDG_RUNTIME_DIR: '/private/runner/xdg-runtime',
     },
+    platform: 'linux',
     poisonPath: '/private/smoke/poison',
     workspace: '/private/smoke/workspace',
+    userDataRoot: '/private/smoke/user-data',
     caCertificate: '/private/smoke/public-ca.pem',
     providerEndpoint: 'wss://127.0.0.1:49152/',
     cameraFile: '/private/smoke/camera.mp4',
@@ -74,19 +91,114 @@ test('installed launch deletes backend selection and poisons every Python resolu
   for (const key of ['NOVA_AUDIO_AGENT_PYTHON', 'PYTHONPATH', 'VIRTUAL_ENV', 'CONDA_PREFIX']) {
     assert.equal(key in environment, false)
   }
+  for (const key of [
+    'GH_TOKEN', 'GITHUB_WORKSPACE', 'GITHUB_ENV', 'RUNNER_TEMP', 'RUNNER_TOOL_CACHE',
+    'SSH_AUTH_SOCK',
+  ]) assert.equal(key in environment, false, key)
+  assert.equal(environment.LANG, 'en_US.UTF-8')
+  assert.equal(environment.DISPLAY, ':99')
+  assert.equal(environment.WAYLAND_DISPLAY, 'wayland-0')
+  assert.equal(environment.XAUTHORITY, '/private/runner/xauthority')
+  assert.equal(environment.DBUS_SESSION_BUS_ADDRESS, 'unix:path=/private/runner/dbus')
+  assert.equal(environment.XDG_RUNTIME_DIR, '/private/runner/xdg-runtime')
+  for (const key of ['HOME', 'TMPDIR', 'TMP', 'TEMP', 'APPDATA', 'LOCALAPPDATA']) {
+    assert.equal(environment[key], '/private/smoke/user-data', key)
+  }
   assert.equal(environment.NOVA_AUDIO_AGENT_RELEASE_SMOKE, RELEASE_SMOKE_MODE)
   assert.equal(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL, 'wss://127.0.0.1:49152/')
   assert.equal(environment.NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE, '/private/smoke/camera.mp4')
 })
 
+test('installed candidate system children receive only controlled OS and GUI environment', async () => {
+  const {candidateBaseEnvironment} = await import('../scripts/installed-candidate-smoke.mjs')
+  assert.equal(typeof candidateBaseEnvironment, 'function')
+  const environment = candidateBaseEnvironment({
+    parentEnvironment: {
+      PATH: '/private/runner/tools',
+      GH_TOKEN: 'private-gh-token',
+      GITHUB_WORKSPACE: '/private/runner/workspace',
+      RUNNER_TEMP: '/private/runner/temp',
+      LANG: 'C.UTF-8',
+      DISPLAY: ':99',
+      XAUTHORITY: '/private/runner/xauthority',
+    },
+    platform: 'linux',
+    userDataRoot: '/private/smoke/system-user',
+    path: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+  })
+  assert.deepEqual(environment, {
+    LANG: 'C.UTF-8',
+    DISPLAY: ':99',
+    XAUTHORITY: '/private/runner/xauthority',
+    PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    HOME: '/private/smoke/system-user',
+    XDG_CONFIG_HOME: '/private/smoke/system-user',
+    XDG_CACHE_HOME: '/private/smoke/system-user',
+    XDG_DATA_HOME: '/private/smoke/system-user',
+    APPDATA: '/private/smoke/system-user',
+    LOCALAPPDATA: '/private/smoke/system-user',
+    TMPDIR: '/private/smoke/system-user',
+    TMP: '/private/smoke/system-user',
+    TEMP: '/private/smoke/system-user',
+  })
+})
+
+test('Windows system child environment keeps only paths required for native launch and tree checks', async () => {
+  const {candidateBaseEnvironment} = await import('../scripts/installed-candidate-smoke.mjs')
+  const environment = candidateBaseEnvironment({
+    parentEnvironment: {
+      SystemRoot: 'C:\\Windows',
+      WINDIR: 'C:\\Windows',
+      ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+      SystemDrive: 'C:',
+      PSModulePath: 'C:\\Users\\runneradmin\\Documents\\WindowsPowerShell\\Modules',
+      USERPROFILE: 'C:\\Users\\runneradmin',
+      GH_TOKEN: 'private-gh-token',
+      RUNNER_TEMP: 'C:\\private\\runner-temp',
+    },
+    platform: 'win32',
+    userDataRoot: 'C:\\private\\smoke-user',
+    path: 'C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\Wbem',
+  })
+  assert.equal(environment.SystemRoot, 'C:\\Windows')
+  assert.equal(environment.ComSpec, 'C:\\Windows\\System32\\cmd.exe')
+  assert.equal(
+    environment.PSModulePath,
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+  )
+  assert.equal(environment.USERPROFILE, 'C:\\private\\smoke-user')
+  assert.equal('GH_TOKEN' in environment, false)
+  assert.equal('RUNNER_TEMP' in environment, false)
+})
+
 test('packaged camera evidence is pass or the exact non-green capability sentinel', () => {
-  assert.deepEqual(classifyCameraCapability(0, '{"ok":true}\n'), {status: 'passed'})
-  assert.deepEqual(classifyCameraCapability(75, `${CAMERA_CAPABILITY_PENDING}\n`), {
+  assert.deepEqual(classifyCameraCapability({
+    status: 0,
+    signal: null,
+    error: undefined,
+    stdout: '{"ok":true}\n',
+    stderr: '',
+  }), {status: 'passed'})
+  assert.deepEqual(classifyCameraCapability({
+    status: 75,
+    signal: null,
+    error: undefined,
+    stdout: `${CAMERA_CAPABILITY_PENDING}\n`,
+    stderr: '',
+  }), {
     status: 'pending',
     result_code: 'chromium_codec_unavailable',
   })
-  for (const [code, line] of [[0, 'wrong\n'], [75, 'wrong\n'], [1, CAMERA_CAPABILITY_PENDING]]) {
-    assert.throws(() => classifyCameraCapability(code, line), /installed_camera_smoke_failed/u)
+  for (const result of [
+    {status: 0, signal: null, stdout: 'wrong\n', stderr: ''},
+    {status: 75, signal: null, stdout: 'wrong\n', stderr: ''},
+    {status: 1, signal: null, stdout: CAMERA_CAPABILITY_PENDING, stderr: ''},
+    {status: 75, signal: null, stdout: `${CAMERA_CAPABILITY_PENDING}\n`, stderr: 'private'},
+    {status: 0, signal: 'SIGTERM', stdout: '{"ok":true}\n', stderr: ''},
+    {status: 0, signal: null, error: new Error('private'), stdout: '{"ok":true}\n', stderr: ''},
+  ]) {
+    assert.throws(() => classifyCameraCapability(result), /installed_camera_smoke_failed/u)
   }
 })
 

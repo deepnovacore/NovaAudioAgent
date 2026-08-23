@@ -22,6 +22,15 @@ const TOKEN_PATTERN = /^[0-9a-f]{32}$/u
 const READY_LIMIT = 4096
 const OUTPUT_LIMIT = 64 * 1024
 const SETTLE_MS = 30_000
+const COMMON_CHILD_ENVIRONMENT = Object.freeze(['LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ'])
+const PLATFORM_CHILD_ENVIRONMENT = Object.freeze({
+  darwin: Object.freeze(['__CF_USER_TEXT_ENCODING', 'SECURITYSESSIONID']),
+  linux: Object.freeze([
+    'DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'DBUS_SESSION_BUS_ADDRESS',
+    'XDG_RUNTIME_DIR', 'XDG_SESSION_TYPE',
+  ]),
+  win32: Object.freeze(['SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'SystemDrive']),
+})
 
 export function candidateInstallPlan({target, artifact, scratch}) {
   for (const value of [artifact, scratch]) {
@@ -90,6 +99,7 @@ export function candidateInstallPlan({target, artifact, scratch}) {
 
 export function smokeEnvironment({
   parentEnvironment,
+  platform = process.platform,
   poisonPath,
   workspace,
   caCertificate,
@@ -97,19 +107,13 @@ export function smokeEnvironment({
   cameraFile,
   userDataRoot = workspace,
 }) {
-  const env = {...parentEnvironment}
-  for (const key of [
-    'NOVA_AUDIO_AGENT_BACKEND', 'NOVA_AUDIO_AGENT_PYTHON', 'PYTHONPATH', 'PYTHONHOME',
-    'VIRTUAL_ENV', 'CONDA_PREFIX', 'DASHSCOPE_API_KEY', 'NOVA_AUDIO_AGENT_MODEL_API_KEY',
-    'NOVA_AUDIO_AGENT_CODEX_API_KEY', 'NOVA_AUDIO_AGENT_CODEX_BIN',
-    'NOVA_AUDIO_AGENT_RELEASE_CAMERA_SMOKE',
-  ]) delete env[key]
+  const env = candidateBaseEnvironment({
+    parentEnvironment,
+    platform,
+    userDataRoot,
+    path: poisonPath,
+  })
   Object.assign(env, {
-    PATH: poisonPath,
-    HOME: userDataRoot,
-    XDG_CONFIG_HOME: userDataRoot,
-    APPDATA: userDataRoot,
-    LOCALAPPDATA: userDataRoot,
     NODE_EXTRA_CA_CERTS: caCertificate,
     NOVA_AUDIO_AGENT_RELEASE_SMOKE: RELEASE_SMOKE_MODE,
     NOVA_AUDIO_AGENT_QWEN_REALTIME_URL: providerEndpoint,
@@ -127,9 +131,56 @@ export function smokeEnvironment({
   return env
 }
 
-export function classifyCameraCapability(exitCode, stdout) {
-  if (exitCode === 0 && stdout === '{"ok":true}\n') return Object.freeze({status: 'passed'})
-  if (exitCode === 75 && stdout === `${CAMERA_CAPABILITY_PENDING}\n`) {
+export function candidateBaseEnvironment({
+  parentEnvironment,
+  platform = process.platform,
+  userDataRoot,
+  path,
+}) {
+  if (parentEnvironment === null || typeof parentEnvironment !== 'object'
+    || !Object.hasOwn(PLATFORM_CHILD_ENVIRONMENT, platform)
+    || typeof userDataRoot !== 'string' || typeof path !== 'string') {
+    throw new Error('installed_candidate_invalid')
+  }
+  const env = {}
+  for (const key of [...COMMON_CHILD_ENVIRONMENT, ...PLATFORM_CHILD_ENVIRONMENT[platform]]) {
+    if (typeof parentEnvironment[key] === 'string') env[key] = parentEnvironment[key]
+  }
+  Object.assign(env, {
+    PATH: path,
+    HOME: userDataRoot,
+    XDG_CONFIG_HOME: userDataRoot,
+    XDG_CACHE_HOME: userDataRoot,
+    XDG_DATA_HOME: userDataRoot,
+    APPDATA: userDataRoot,
+    LOCALAPPDATA: userDataRoot,
+    TMPDIR: userDataRoot,
+    TMP: userDataRoot,
+    TEMP: userDataRoot,
+  })
+  if (platform === 'win32') {
+    env.USERPROFILE = userDataRoot
+    const systemRoot = env.SystemRoot ?? env.WINDIR
+    if (typeof systemRoot !== 'string' || !/^[A-Za-z]:\\/u.test(systemRoot)) {
+      throw new Error('installed_candidate_invalid')
+    }
+    env.PSModulePath = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\Modules`
+  }
+  return env
+}
+
+export function classifyCameraCapability(result) {
+  const stdout = Buffer.isBuffer(result?.stdout)
+    ? result.stdout.toString('utf8')
+    : result?.stdout
+  const stderr = Buffer.isBuffer(result?.stderr)
+    ? result.stderr.toString('utf8')
+    : result?.stderr
+  if (result?.error !== undefined || result?.signal !== null || stderr !== '') {
+    throw new Error('installed_camera_smoke_failed')
+  }
+  if (result.status === 0 && stdout === '{"ok":true}\n') return Object.freeze({status: 'passed'})
+  if (result.status === 75 && stdout === `${CAMERA_CAPABILITY_PENDING}\n`) {
     return Object.freeze({status: 'pending', result_code: 'chromium_codec_unavailable'})
   }
   throw new Error('installed_camera_smoke_failed')
@@ -183,12 +234,18 @@ async function runInstalledCandidate({
     mkdir(plan.mountRoot, {recursive: true, mode: 0o700}),
   ])
   await installPoisonInterpreters(poisonPath)
+  const systemEnvironment = candidateBaseEnvironment({
+    parentEnvironment: process.env,
+    platform: process.platform,
+    userDataRoot: scratch,
+    path: systemPath(process.platform, process.env),
+  })
   const provider = await createQwenSmokeProvider()
   let child
   let failure = null
   let cameraCapability = null
   try {
-    await runActions(plan.install)
+    await runActions(plan.install, systemEnvironment)
     const executable = await realpath(plan.executable)
     const status = await lstat(executable)
     assert.ok(status.isFile() && !status.isSymbolicLink(), 'installed_candidate_invalid')
@@ -215,7 +272,7 @@ async function runInstalledCandidate({
     const exit = await settleExit(child)
     if (exit.code !== 0 || exit.signal !== null) throw new Error('installed_candidate_launch_failed')
     await output
-    await requireTreeGone(child.pid)
+    await requireTreeGone(child.pid, environment)
     await runPackagedSourceRollback({
       executable,
       environment,
@@ -236,7 +293,7 @@ async function runInstalledCandidate({
   try { await provider.close() } catch {
     failure ??= new Error('installed_candidate_provider_failed')
   }
-  try { await runActions(plan.uninstall) } catch {
+  try { await runActions(plan.uninstall, systemEnvironment) } catch {
     failure ??= new Error('installed_candidate_uninstall_failed')
   }
   for (const residue of plan.residue) {
@@ -268,7 +325,7 @@ async function runPackagedSourceRollback({executable, environment, workspace, us
     stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
   })
   classifySourceRollbackResult({...result, readiness: result.output?.[3] ?? ''})
-  await requireTreeGone(result.pid)
+  await requireTreeGone(result.pid, rollbackEnvironment)
 }
 
 async function runPackagedCameraCapability({executable, environment, userData}) {
@@ -285,15 +342,13 @@ async function runPackagedCameraCapability({executable, environment, userData}) 
     maxBuffer: OUTPUT_LIMIT,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  if (result.error !== undefined || result.signal !== null || !Number.isInteger(result.pid)) {
-    throw new Error('installed_camera_smoke_failed')
-  }
-  const capability = classifyCameraCapability(result.status, result.stdout)
-  await requireTreeGone(result.pid)
+  const capability = classifyCameraCapability(result)
+  if (!Number.isInteger(result.pid)) throw new Error('installed_camera_smoke_failed')
+  await requireTreeGone(result.pid, cameraEnvironment)
   return capability
 }
 
-async function runActions(actions) {
+async function runActions(actions, environment) {
   for (const action of actions) {
     if (action.op === 'remove_tree') {
       await rm(action.path, {recursive: true, force: true})
@@ -306,6 +361,7 @@ async function runActions(actions) {
     }
     const result = spawnSync(action.command, action.args, {
       ...(action.cwd === undefined ? {} : {cwd: action.cwd}),
+      env: environment,
       encoding: 'utf8', timeout: SETTLE_MS, maxBuffer: OUTPUT_LIMIT,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -440,7 +496,7 @@ function boundedOutput(child) {
   })
 }
 
-async function requireTreeGone(pid) {
+async function requireTreeGone(pid, environment) {
   if (!Number.isInteger(pid) || pid < 1) throw new Error('installed_candidate_tree_failed')
   if (process.platform === 'win32') {
     const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
@@ -448,6 +504,7 @@ async function requireTreeGone(pid) {
       '$ids=@($root);do{$n=@($p|?{$ids -contains $_.ParentProcessId}|% ProcessId|?{$ids -notcontains $_});$ids+= $n}while($n.Count);' +
       '$alive=@($p|?{$ids -contains $_.ProcessId});if($alive.Count){exit 1}'
     const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+      env: environment,
       encoding: 'utf8', timeout: 10_000, maxBuffer: OUTPUT_LIMIT,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -465,6 +522,16 @@ async function requireTreeGone(pid) {
     await new Promise(resolveWait => setTimeout(resolveWait, 50))
   }
   throw new Error('installed_candidate_tree_failed')
+}
+
+function systemPath(platform, parentEnvironment) {
+  if (platform === 'darwin') return '/usr/bin:/bin:/usr/sbin:/sbin'
+  if (platform === 'linux') return '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+  const systemRoot = parentEnvironment.SystemRoot ?? parentEnvironment.WINDIR
+  if (typeof systemRoot !== 'string' || !/^[A-Za-z]:\\/u.test(systemRoot)) {
+    throw new Error('installed_candidate_invalid')
+  }
+  return `${systemRoot}\\System32;${systemRoot};${systemRoot}\\System32\\Wbem`
 }
 
 async function requireAbsent(path) {
