@@ -279,10 +279,25 @@ class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthor
   failTempCreate = false
   private originalManagedIdentity: ProjectFileIdentity | null = null
   private originalManagedChildRemoved = false
-  private replacementManagedChildMatched = false
+  readonly #managedRootPath: string
 
-  get originalManagedChildWasRejected(): boolean {
-    return this.originalManagedChildRemoved && this.replacementManagedChildMatched
+  constructor(paths: readonly string[]) {
+    super(paths)
+    this.#managedRootPath = paths[1]!
+  }
+
+  get originalManagedIdentityForTest(): ProjectFileIdentity | null {
+    return this.originalManagedIdentity
+  }
+
+  matchesAtIdentity(name: string, identity: ProjectFileIdentity): ProjectRootFileResult {
+    if (identity !== this.originalManagedIdentity || !this.originalManagedChildRemoved) {
+      return {status: 'mismatch'}
+    }
+    const current = lstatSync(join(this.#managedRootPath, name), {bigint: true})
+    return current.dev === identity.device && current.ino === identity.inode
+      ? {status: 'ok'}
+      : {status: 'mismatch'}
   }
 
   override createFileAt(
@@ -298,7 +313,6 @@ class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthor
     const result = super.mkdirAt(rootDescriptor, name)
     if (result.status === 'ok' && name.startsWith('managed-')) {
       if (this.originalManagedIdentity === null) this.originalManagedIdentity = result.identity
-      else this.replacementManagedChildMatched = false
     }
     return result
   }
@@ -309,9 +323,6 @@ class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthor
     childDescriptor: number,
   ): ProjectRootFileResult {
     const result = super.matchesAt(rootDescriptor, name, childDescriptor)
-    if (name.startsWith('managed-') && this.originalManagedChildRemoved && result.status === 'ok') {
-      this.replacementManagedChildMatched = true
-    }
     return result
   }
 
@@ -2085,7 +2096,13 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
     )
     const after = lstatSync(managed.canonical_path, {bigint: true})
     assert.equal((after.mode & 0o7777n), 0o700n)
-    assert.equal(rootFiles.originalManagedChildWasRejected, true)
+    assert.deepEqual(
+      rootFiles.matchesAtIdentity(
+        basename(managed.canonical_path),
+        rootFiles.originalManagedIdentityForTest!,
+      ),
+      {status: 'mismatch'},
+    )
     assert.equal(
       hostWorkspacePath(await store.revalidateWorkspace(managed.workspace_id)),
       managed.canonical_path,
