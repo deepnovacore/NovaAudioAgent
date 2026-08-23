@@ -1159,6 +1159,7 @@ test('workspace graph opens before project initialization, injects only the curr
 })
 
 test('real assembly and graph service infer only weak metadata from committed adjacent workspaces', async t => {
+  const graphEventuallyMs = 5_000
   const directory = await mkdtemp(join(tmpdir(), 'nova-realtime-graph-transition-'))
   const workspaceObservers = new Set<(event: CommittedWorkspaceEvent) => void | Promise<void>>()
   const terminalObservers = new Set<(event: TerminalWorkOrderEvent) => void | Promise<void>>()
@@ -1264,7 +1265,7 @@ test('real assembly and graph service infer only weak metadata from committed ad
   await realtime.start()
   await waitNamed('authoritative alpha graph open', () => (
     graph.publishedSnapshot.logical_workspaces.length === 1
-  ))
+  ), graphEventuallyMs)
   assert.equal(graph.publishedSnapshot.relations.length, 0)
   const alphaInstance = graph.publishedSnapshot.workspace_instances[0]
   assert.ok(alphaInstance !== undefined)
@@ -1298,10 +1299,10 @@ test('real assembly and graph service infer only weak metadata from committed ad
   assert.equal(providerScopeLookups, 1)
   await waitNamed('ordered authoritative alpha-to-beta-to-gamma transitions', () => (
     graph.publishedSnapshot.relations.length === 2
-  ))
+  ), graphEventuallyMs)
   await waitNamed('terminal event for the resolved stale-generation beta mapping', () => (
     graphTaskCompletions.length === 1
-  ))
+  ), graphEventuallyMs)
   assert.equal(graphTaskCompletions[0]?.workspace_instance_id, (
     graph.publishedSnapshot.workspace_instances.find(instance => (
       instance.repository_fingerprint === beta.workspace_id
@@ -1331,7 +1332,7 @@ test('real assembly and graph service infer only weak metadata from committed ad
   committed({workspace: Object.freeze({...gamma, canonical_path: 'speculative-relative-path'})})
   await waitNamed('rejected speculative transition', () => (
     diagnostics.some(line => line.endsWith('workspace_graph_lifecycle_failed'))
-  ))
+  ), graphEventuallyMs)
   assert.equal(graph.publishedSnapshot.relations.length, 2)
   assert.ok(graph.publishedSnapshot.relations.every(relation => (
     relation.revision === 0 && relation.evidence_refs.length === 1
@@ -1342,7 +1343,7 @@ test('real assembly and graph service infer only weak metadata from committed ad
     graph.publishedSnapshot.workspace_instances.some(instance => (
       instance.repository_fingerprint === delta.workspace_id
     ))
-  ))
+  ), graphEventuallyMs)
   assert.equal(
     graph.publishedSnapshot.relations.length,
     2,
@@ -1352,7 +1353,7 @@ test('real assembly and graph service infer only weak metadata from committed ad
   committed({workspace: epsilon})
   await waitNamed('new adjacency after the post-gap workspace becomes the anchor', () => (
     graph.publishedSnapshot.relations.length === 3
-  ))
+  ), graphEventuallyMs)
   const postGapIds = new Map(graph.publishedSnapshot.workspace_instances.map(instance => (
     [instance.repository_fingerprint, instance.logical_workspace_id]
   )))

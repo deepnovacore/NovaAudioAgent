@@ -20,6 +20,7 @@ import {
   WorkspaceGraphStoreClientError,
   type WorkspaceGraphWorker,
 } from '../src/workspace-graph/store-client.js'
+import {GraphRecall} from '../src/workspace-graph/recall.js'
 
 const fixtureWorkerUrl = new URL('./fixtures/workspace-graph-sqlite-worker.js', import.meta.url)
 
@@ -209,6 +210,98 @@ test('observation append is immutable and suppression preserves evidence history
   assert.deepEqual(
     (await client.listRelationEvidence('lw-a', 'lw-b', 'depends_on')).map(item => item.ref),
     ['observation-a', 'user-suppression'],
+  )
+})
+
+test('relation writes keep a bounded synchronized evidence window recallable', async t => {
+  const {client, path} = await createStore(t)
+  await client.replaceCard({
+    logical_workspace_id: 'lw-a', display_name: 'workspace a', aliases: [],
+    canonical_remote: null, created_at: 1, updated_at: 1, revision: 0,
+  })
+  await client.replaceCard({
+    logical_workspace_id: 'lw-b', display_name: 'workspace b', aliases: [],
+    canonical_remote: null, created_at: 1, updated_at: 1, revision: 0,
+  })
+  await client.replaceCard({
+    instance_id: 'wi-a', logical_workspace_id: 'lw-a', display_name: 'workspace a',
+    path_label: 'workspace-a', branch: null, repository_fingerprint: null,
+    status: 'active', first_seen_at: 1, last_seen_at: 1, revision: 0,
+  })
+  const evidence = [
+    userEvidence('retained-user', 1),
+    ...Array.from({length: 60}, (_, index) => runtimeEvidence(`runtime-${index}`, index + 2)),
+  ]
+
+  const persisted = await client.upsertRelation(relation(0, 'active', evidence))
+
+  assert.equal(persisted.evidence_refs.length, 48)
+  assert.equal(persisted.evidence_refs.some(item => item.ref === 'retained-user'), true)
+  assert.equal(persisted.evidence_refs.some(item => item.ref === 'runtime-59'), true)
+  assert.equal(persisted.evidence_refs.some(item => item.ref === 'runtime-0'), false)
+  assert.deepEqual(await client.listRelationEvidence('lw-a', 'lw-b', 'depends_on'), persisted.evidence_refs)
+  const recall = new GraphRecall(client.publishedSnapshot).suggest(
+    'wi-a', 'shared runtime 下一步', 4,
+  )
+  assert.equal(recall.degraded, false)
+  assert.equal(recall.hints.length, 1)
+  const counts = await querySqlite(path, `
+    SELECT
+      (SELECT COUNT(*) FROM relation_evidence) AS evidence_rows,
+      json_array_length((SELECT payload_json -> 'evidence_refs' FROM relation_cards)) AS payload_refs
+  `)
+  assert.deepEqual(counts, [{evidence_rows: 48, payload_refs: 48}])
+
+  const suppressed = await client.suppressRelation(
+    'lw-a', 'lw-b', 'depends_on', userEvidence('new-suppression', 100),
+  )
+  assert.equal(suppressed.evidence_refs.length, 48)
+  assert.equal(suppressed.evidence_refs.some(item => item.ref === 'retained-user'), true)
+  assert.equal(suppressed.evidence_refs.some(item => item.ref === 'new-suppression'), true)
+  assert.deepEqual(
+    await client.listRelationEvidence('lw-a', 'lw-b', 'depends_on'),
+    suppressed.evidence_refs,
+  )
+})
+
+test('compaction repairs historical over-limit relation evidence in card and table', async t => {
+  const {client, path} = await createStore(t)
+  await client.upsertRelation(relation())
+  await client.close()
+  const historicalEvidence = [
+    userEvidence('historical-user', 1),
+    ...Array.from({length: 70}, (_, index) => runtimeEvidence(`historical-${index}`, index + 2)),
+  ]
+  const historical = relation(0, 'active', historicalEvidence)
+  const evidenceRows = historicalEvidence.map(evidence => `(
+    'lw-a', 'lw-b', 'depends_on', '${evidence.source}', '${evidence.ref}',
+    ${evidence.observed_at}, '${canonicalJson(evidence).replaceAll("'", "''")}'
+  )`).join(',')
+  await execSqlite(path, `
+    UPDATE relation_cards
+    SET payload_json = '${canonicalJson(historical).replaceAll("'", "''")}'
+    WHERE source_logical_id = 'lw-a' AND target_logical_id = 'lw-b'
+      AND relation_type = 'depends_on';
+    DELETE FROM relation_evidence;
+    INSERT INTO relation_evidence(
+      source_logical_id, target_logical_id, relation_type,
+      evidence_source, evidence_ref, observed_at, evidence_json
+    ) VALUES ${evidenceRows};
+  `)
+
+  const reopened = new WorkspaceGraphStoreClient(path)
+  t.after(() => reopened.close())
+  await reopened.open()
+  await reopened.compact()
+
+  const retained = await reopened.getRelation('lw-a', 'lw-b', 'depends_on')
+  assert.equal(retained?.evidence_refs.length, 48)
+  assert.equal(retained?.evidence_refs.some(item => item.ref === 'historical-user'), true)
+  assert.equal(retained?.evidence_refs.some(item => item.ref === 'historical-69'), true)
+  assert.equal(retained?.evidence_refs.some(item => item.ref === 'historical-0'), false)
+  assert.deepEqual(
+    await reopened.listRelationEvidence('lw-a', 'lw-b', 'depends_on'),
+    retained?.evidence_refs,
   )
 })
 
@@ -421,6 +514,30 @@ test('every observation string is gated before canonical persistence', async t =
   assert.equal(await fileContains(`${path}-wal`, referenceSecret), false)
 })
 
+test('direct observation redaction stays inside the durable label boundary', async t => {
+  const {client} = await createStore(t, {deniedRoots: ['/d']})
+  const cookieTail = ' Cookie:a'
+  const deniedPathTail = ' /d'
+  const summaries = [
+    `${'c'.repeat(239 - cookieTail.length)}${cookieTail}`,
+    `${'p'.repeat(239 - deniedPathTail.length)}${deniedPathTail}`,
+  ]
+  for (const [index, summary] of summaries.entries()) {
+    await client.appendObservation({
+      ...workspaceOpened(`direct-redacted-${index}`, summary),
+      observation_type: 'task_completed',
+      source: 'executor',
+    })
+  }
+
+  const retained = (await client.listObservations()).map(item => item.summary)
+  assert.equal(retained.length, 2)
+  for (const summary of retained) {
+    assert.equal(summary?.includes('[redacted]'), true)
+    assert.equal((summary?.length ?? 240) <= 239, true)
+  }
+})
+
 test('normalized denied-root text is absent from live WAL and DB without overmatching a prefix', async t => {
   const deniedRoot = '/private/My Folder'
   const repeatedRoot = '/private//My Folder'
@@ -564,6 +681,102 @@ test('compaction bounds recent observations per workspace and globally', async t
   assert.ok([...counts.values()].every(count => count <= 512))
   assert.equal(retained.some(item => item.observation_id === 'bounded-0-0'), false)
   assert.equal(retained.some(item => item.observation_id === 'bounded-8-519'), true)
+})
+
+test('compaction bounds private histories while retaining relation decision provenance', async t => {
+  const {client, path} = await createStore(t)
+  await client.close()
+  const digestA = 'a'.repeat(64)
+  const digestB = 'b'.repeat(64)
+  const protectedRecords = [
+    {
+      record_id: 'protected-user', relation_delta_digest: digestA,
+      observation_source: 'user', observation_id: 'protected-user-observation',
+      signal_digest: digestB, source_logical_id: 'lw-a', target_logical_id: 'lw-b',
+      relation_type: 'depends_on', cue_kind: 'user_statement', stance: 'confirm',
+      authority: 'user_confirmed', occurred_at: 1,
+      evidence_refs: [userEvidence('protected-user-evidence', 1)],
+    },
+    {
+      record_id: 'protected-suppression', relation_delta_digest: digestA,
+      observation_source: 'user', observation_id: 'protected-suppression-observation',
+      signal_digest: digestB, source_logical_id: 'lw-a', target_logical_id: 'lw-b',
+      relation_type: 'depends_on', cue_kind: 'suppression', stance: 'suppress',
+      authority: 'user_confirmed', occurred_at: 2,
+      evidence_refs: [userEvidence('protected-suppression-evidence', 2)],
+    },
+    {
+      record_id: 'protected-system', relation_delta_digest: digestA,
+      observation_source: 'executor', observation_id: 'protected-system-observation',
+      signal_digest: digestB, source_logical_id: 'lw-a', target_logical_id: 'lw-b',
+      relation_type: 'depends_on', cue_kind: 'task_completion', stance: 'supplement',
+      authority: 'trusted_system', occurred_at: 3,
+      evidence_refs: [{source: 'executor', ref: 'protected-system-evidence', observed_at: 3}],
+    },
+  ] as const
+  const ordinaryRecords = Array.from({length: 517}, (_, index) => ({
+    record_id: `ordinary-${String(index).padStart(3, '0')}`,
+    relation_delta_digest: digestA,
+    observation_source: 'provider',
+    observation_id: `ordinary-observation-${index}`,
+    signal_digest: digestB,
+    source_logical_id: 'lw-a',
+    target_logical_id: 'lw-b',
+    relation_type: 'depends_on',
+    cue_kind: 'provider_evidence',
+    stance: 'supplement',
+    authority: 'provider',
+    occurred_at: index + 4,
+    evidence_refs: [{source: 'provider', ref: `ordinary-evidence-${index}`, observed_at: index + 4}],
+  }))
+  const aliases = Array.from({length: 520}, (_, index) => ({
+    observation_id: `alias-${String(index).padStart(3, '0')}`,
+    logical_workspace_id: 'lw-a',
+    spoken_alias: `alias ${index}`,
+    normalized_alias: `alias ${index}`,
+    status: 'candidate',
+    confidence: 0.2,
+    evidence_ref: `alias-evidence-${index}`,
+    observed_at: index,
+  }))
+  const projectionRows = [...protectedRecords, ...ordinaryRecords].map(record => `(
+    '${record.record_id}', '${record.observation_source}', '${record.observation_id}',
+    '${record.relation_delta_digest}', '${canonicalJson(record).replaceAll("'", "''")}'
+  )`).join(',')
+  const aliasRows = aliases.map(alias => `(
+    '${alias.observation_id}', '${alias.logical_workspace_id}', '${alias.evidence_ref}',
+    '${canonicalJson(alias).replaceAll("'", "''")}'
+  )`).join(',')
+  await execSqlite(path, `
+    INSERT INTO projection_records(
+      record_id, observation_source, observation_id, relation_delta_digest, payload_json
+    ) VALUES ${projectionRows};
+    INSERT INTO alias_observations(
+      observation_id, logical_workspace_id, evidence_ref, payload_json
+    ) VALUES ${aliasRows};
+  `)
+
+  const reopened = new WorkspaceGraphStoreClient(path)
+  t.after(() => reopened.close())
+  await reopened.open()
+  const compacted = await reopened.compact()
+  const state = await reopened.loadGraphState()
+
+  assert.deepEqual(compacted, {derived_rows_before: 1_040, derived_rows_after: 1_024})
+  assert.equal(state.projection_state.projection_records.length, 512)
+  assert.equal(state.identity_state.alias_observations.length, 512)
+  const recordIds = new Set(state.projection_state.projection_records.map(record => record.record_id))
+  assert.equal(recordIds.has('protected-user'), true)
+  assert.equal(recordIds.has('protected-suppression'), true)
+  assert.equal(recordIds.has('protected-system'), true)
+  assert.equal(recordIds.has('ordinary-516'), true)
+  assert.equal(recordIds.has('ordinary-000'), false)
+  const aliasIds = new Set(state.identity_state.alias_observations.map(item => item.observation_id))
+  assert.equal(aliasIds.has('alias-519'), true)
+  assert.equal(aliasIds.has('alias-007'), false)
+  assert.equal(aliasIds.has('alias-008'), true)
+  await reopened.appendObservation(workspaceOpened('after-history-compaction'))
+  assert.equal((await reopened.listObservations()).at(-1)?.observation_id, 'after-history-compaction')
 })
 
 test('compaction preserves suppression tombstones and their complete evidence history', async t => {

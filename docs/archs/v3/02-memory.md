@@ -46,15 +46,29 @@ is a separate durable relation state that prevents later recall.
 Publication is last-good: a locked, unavailable, or failed store leaves the prior immutable snapshot
 readable with a degraded marker. Bounded compaction retains the 512 most recent observations per
 logical workspace subject to a 4096-observation global ceiling. Observation pruning does not cascade
-into relation cards, evidence, projection provenance, or suppression history. A separate derived-row
-bound may remove overflow inactive workspace instances and stale relation cards; evidence belonging
-to a removed stale relation follows that card, while active, weak, and suppressed relations remain.
-The configured receipt-retention/idempotency invariants are separate again; sufficiently old
-overflow receipts may be pruned after their retention window. The service requests advisory
-compaction on startup and after every 64 successful observation writes. A compaction failure is
-visible as a fixed diagnostic, is retried after the next successful observation write, and cannot
-turn an already committed graph write into a failure. Compaction cannot lock out a later valid
-write. No graph operation reads work state from a second workspace.
+into relation cards or their current state. Relation evidence has its own hard 48-reference window,
+enforced transactionally on every relation write and repaired at startup: the incoming evidence,
+user evidence, and then the newest remaining evidence are retained. This stays below the
+recall projection's independent 64-reference defensive limit, so a long-lived relation cannot make
+recall permanently degraded. Relation-card payloads and the normalized evidence table are always
+updated together.
+
+Private decision history is intentionally bounded rather than an infinite audit log. Compaction
+keeps at most 512 projection records. Within that absolute window it selects the latest suppression,
+user-confirmed, and trusted-system record per relation in that priority order, then fills remaining
+capacity with the newest records. It also keeps the newest 512 private alias observations. These
+windows preserve the current relation state and prioritize suppression and high-authority
+provenance while bounding the state reloaded and validated after a write. A separate derived-row
+bound may remove overflow inactive workspace
+instances and stale relation cards; evidence belonging to a removed stale relation follows that
+card, while active, weak, and suppressed relations remain. Compaction row counts cover observations,
+relation evidence, projection records, and alias observations as well as cards. Receipt retention
+and idempotency are separate again; sufficiently old overflow receipts may be pruned after their
+retention window. The service requests advisory compaction on startup and after every 64 successful
+observation writes. A compaction failure is visible as a fixed diagnostic, is retried after the next
+successful observation write, and cannot turn an already committed graph write into a failure.
+Compaction cannot lock out a later valid write. No graph operation reads work state from a second
+workspace.
 
 Adjacent authoritative committed workspace transitions contribute only weak `discussed_with`
 metadata. The runtime records a fixed, non-imperative reason and one runtime evidence reference; it

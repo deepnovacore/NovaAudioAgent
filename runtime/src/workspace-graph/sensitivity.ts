@@ -236,3 +236,24 @@ function hasMeaningfulContent(value: string): boolean {
     .replace(/\b(?:set-cookie|cookie)\s*:/giu, '')
   return /[\p{L}\p{N}]/u.test(withoutRedactions)
 }
+
+/** Keeps a scrubbed graph label schema-valid without splitting a redaction marker or code point. */
+export function boundRedactedLabel(value: string, maxUtf16Units = 239): string | null {
+  const redaction = '[redacted]'
+  const redactionUtf16Units = 10
+  const crossingRedaction = value.lastIndexOf(redaction, maxUtf16Units - 1)
+  const bounded = crossingRedaction >= 0
+    && crossingRedaction + redactionUtf16Units > maxUtf16Units
+    ? `${truncateUtf16(value.slice(0, crossingRedaction), maxUtf16Units - redactionUtf16Units)}${redaction}`
+    : truncateUtf16(value, maxUtf16Units)
+  return /\S/u.test(bounded) ? bounded : null
+}
+
+function truncateUtf16(value: string, maxUnits: number): string {
+  let bounded = ''
+  for (const character of value) {
+    if (bounded.length + character.length > maxUnits) break
+    bounded += character
+  }
+  return bounded
+}

@@ -33,7 +33,11 @@ import type {
   PersonalContextProvider,
   ProviderEnrichmentResult,
 } from './provider.js'
-import {SensitiveContentPolicy, SensitivePathPolicy} from './sensitivity.js'
+import {
+  SensitiveContentPolicy,
+  SensitivePathPolicy,
+  boundRedactedLabel,
+} from './sensitivity.js'
 import {
   WorkspaceGraphStoreClient,
   WorkspaceGraphStoreClientError,
@@ -835,5 +839,5 @@ function scrubFreeText(
   const afterContent = content.kind === 'redacted' ? content.value : value
   const path = pathPolicy.scrubText(field, afterContent)
   if (path.kind === 'rejected') return null
-  return path.kind === 'redacted' ? path.value : afterContent
+  return boundRedactedLabel(path.kind === 'redacted' ? path.value : afterContent)
 }

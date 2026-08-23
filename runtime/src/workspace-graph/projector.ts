@@ -55,6 +55,7 @@ export interface ProjectionSignal {
 
 const projectionReasonSchema = z.string().min(1).max(239).regex(/\S/u)
 export const WORKSPACE_TRANSITION_REASON = 'adjacent confirmed workspace transition'
+export const RELATION_EVIDENCE_CAP = 48
 
 const relationProjectionCueSchema = z.object({
   kind: z.enum([
@@ -277,6 +278,9 @@ export class GraphProjector {
     if (!cueMatchesObservation(cue, signal.observation)) {
       return ignoredResult('PROJECTOR_INVALID_CUE')
     }
+    if (cue.evidence_refs.length > RELATION_EVIDENCE_CAP) {
+      return ignoredResult('PROJECTOR_INVALID_CUE')
+    }
     const authority = projectionAuthority(signal)
     if (authority === undefined) {
       return ignoredResult('PROJECTOR_UNAUTHORIZED_SIGNAL')
@@ -329,7 +333,7 @@ export class GraphProjector {
     const incomingConfidence = cue.stance === 'suppress' ? 0 : authorityConfidence(authority)
     const mergedEvidence = current === undefined
       ? sortedEvidence(cue.evidence_refs)
-      : unionEvidence(current.evidence_refs, cue.evidence_refs)
+      : retainRelationEvidence(current.evidence_refs, cue.evidence_refs)
     const confidence = current === undefined
       ? incomingConfidence
       : cue.stance === 'conflict'
@@ -459,7 +463,9 @@ export class GraphProjector {
       changed_cards: 0,
       changed_relations: 1,
       recorded_signals: 1,
-      evidence_added: relation.evidence_refs.length - (current?.evidence_refs.length ?? 0),
+      evidence_added: cue.evidence_refs.filter(incoming => !current?.evidence_refs.some(existing => (
+        sameEvidenceKey(existing, incoming)
+      ))).length,
       ignored_reason: null,
       conflicts,
     })
@@ -969,13 +975,28 @@ function sortedEvidence(evidenceRefs: readonly EvidenceRef[]): EvidenceRef[] {
   return evidence
 }
 
-function unionEvidence(
+export function retainRelationEvidence(
   existing: readonly EvidenceRef[],
   incoming: readonly EvidenceRef[],
 ): EvidenceRef[] {
-  const evidence = new Map(existing.map(item => [evidenceKey(item), item] as const))
-  for (const item of incoming) evidence.set(evidenceKey(item), item)
-  return sortedEvidence([...evidence.values()])
+  const selected = new Map<string, EvidenceRef>()
+  const addNewest = (items: readonly EvidenceRef[]) => {
+    const newest = [...items].sort((left, right) => (
+      right.observed_at - left.observed_at
+      || compareCodePoints(right.source, left.source)
+      || compareCodePoints(right.ref, left.ref)
+    ))
+    for (const item of newest) {
+      if (selected.size >= RELATION_EVIDENCE_CAP) break
+      const key = evidenceKey(item)
+      if (!selected.has(key)) selected.set(key, item)
+    }
+  }
+  addNewest(incoming.filter(item => item.source === 'user'))
+  addNewest(incoming)
+  addNewest(existing.filter(item => item.source === 'user'))
+  addNewest(existing)
+  return sortedEvidence([...selected.values()])
 }
 
 function sameEvidenceKey(left: EvidenceRef, right: EvidenceRef): boolean {

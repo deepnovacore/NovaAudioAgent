@@ -5,6 +5,7 @@ import {
   GraphProjector,
   GraphProjectorError,
   applyWorkspaceGraphProjectionDeltas,
+  retainRelationEvidence,
   type ProjectionResult,
   type ProjectionSignal,
   type WorkspaceGraphProjectionState,
@@ -480,6 +481,52 @@ test('natural-language relation prose without a typed cue creates no edge', () =
   assert.equal(result.ignored_reason, 'PROJECTOR_MISSING_CUE')
   assert.deepEqual(result.deltas, [])
   assert.equal(result.changed_relations, 0)
+})
+
+test('relation projection retains bounded user, incoming, and newest remaining evidence', () => {
+  const existingEvidence: EvidenceRef[] = [
+    Object.freeze({source: 'user', ref: 'evidence-retention-user', observed_at: 1}),
+    ...Array.from({length: 47}, (_, index) => Object.freeze({
+      source: 'executor' as const,
+      ref: `evidence-retention-runtime-${index}`,
+      observed_at: index + 2,
+    })),
+  ]
+  Object.freeze(existingEvidence)
+  const state = projectionState([Object.freeze({
+    source_logical_id: 'lw-a',
+    target_logical_id: 'lw-b',
+    relation_type: 'shares_runtime',
+    confidence: 0.8,
+    reason: 'Shared runtime contract',
+    evidence_refs: existingEvidence,
+    first_seen_at: 1,
+    last_seen_at: 48,
+    status: 'active',
+    revision: 47,
+  })])
+  const result = new GraphProjector(state, projectorOptions).apply(relationSignal({
+    id: 'retention-runtime-incoming',
+    observation_type: 'task_completed',
+    source: 'executor',
+    trust: 'trusted_system',
+    origin: 'trusted_runtime',
+    cue_kind: 'task_completion',
+    occurred_at: 0,
+  }))
+  const evidence = relationDelta(result).relation.evidence_refs
+
+  assert.equal(evidence.length, 48)
+  assert.equal(evidence.some(item => item.ref === 'evidence-retention-user'), true)
+  assert.equal(evidence.some(item => item.ref === 'evidence-retention-runtime-incoming'), true)
+  assert.equal(evidence.some(item => item.ref === 'evidence-retention-runtime-0'), false)
+  assert.deepEqual(
+    retainRelationEvidence(
+      [{source: 'runtime', ref: 'same-key', observed_at: 1}],
+      [{source: 'runtime', ref: 'same-key', observed_at: 2}],
+    ),
+    [{source: 'runtime', ref: 'same-key', observed_at: 2}],
+  )
 })
 
 test('self and unknown workspace cues are ignored without a delta', () => {

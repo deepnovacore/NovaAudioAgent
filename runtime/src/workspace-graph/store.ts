@@ -16,7 +16,11 @@ import {
   type RelationCard,
   type WorkspaceInstance,
 } from './models.js'
-import { SensitiveContentPolicy, SensitivePathPolicy } from './sensitivity.js'
+import {
+  SensitiveContentPolicy,
+  SensitivePathPolicy,
+  boundRedactedLabel,
+} from './sensitivity.js'
 import {
   applyWorkspaceIdentityDeltas,
   type WorkspaceAliasObservation,
@@ -29,6 +33,7 @@ import {
   WORKSPACE_TRANSITION_REASON,
   applyWorkspaceGraphProjectionDeltas,
   relationDeltaDigest,
+  retainRelationEvidence,
   type ProjectionRecord,
   type WorkspaceGraphProjectionDelta,
   type WorkspaceGraphProjectionState,
@@ -38,6 +43,8 @@ export const WORKSPACE_GRAPH_SCHEMA_VERSION = 3
 const DERIVED_TABLE_ROW_CAP = 128
 const OBSERVATION_ROW_CAP_PER_WORKSPACE = 512
 const OBSERVATION_ROW_CAP_GLOBAL = 4_096
+const PROJECTION_RECORD_CAP = 512
+const ALIAS_OBSERVATION_CAP = 512
 const OPERATION_RECEIPT_CAP = 4096
 const OPERATION_RECEIPT_MIN_AGE_MS = 24 * 60 * 60 * 1_000
 
@@ -677,9 +684,7 @@ export class WorkspaceGraphStore {
         }
       }
       this.#writeRelation(database, relation)
-      for (const evidence of relation.evidence_refs) {
-        this.#writeRelationEvidence(database, relation, evidence)
-      }
+      this.#syncRelationEvidence(database, relation)
         return {result: relation, receipt: relationReceipt(relation)}
       },
     )
@@ -721,13 +726,15 @@ export class WorkspaceGraphStore {
       ))
       const suppressed = RelationCardSchema.parse({
         ...current,
-        evidence_refs: hasEvidence ? current.evidence_refs : [...current.evidence_refs, evidence],
+        evidence_refs: hasEvidence
+          ? current.evidence_refs
+          : retainRelationEvidence(current.evidence_refs, [evidence]),
         last_seen_at: Math.max(current.last_seen_at, evidence.observed_at),
         status: 'suppressed',
         revision: current.revision + 1,
       })
       this.#writeRelation(database, suppressed)
-      this.#writeRelationEvidence(database, suppressed, evidence)
+      this.#syncRelationEvidence(database, suppressed)
         return {result: suppressed, receipt: relationReceipt(suppressed)}
       },
     )
@@ -751,7 +758,10 @@ export class WorkspaceGraphStore {
         'last_seen_at ASC, instance_id ASC',
       )
       this.#compactRelations(database)
+      this.#compactRelationEvidence(database)
       this.#compactObservations(database)
+      this.#compactProjectionRecords(database)
+      this.#compactAliasObservations(database)
       this.#compactOperationReceipts(database)
       const result = {derived_rows_before: before, derived_rows_after: this.#derivedRowCount(database)}
       return {result, receipt: {kind: 'compaction', ...result}}
@@ -1232,13 +1242,12 @@ export class WorkspaceGraphStore {
     const contentSafe = content.kind === 'redacted' ? content.value : observation.summary
     const path = this.#pathPolicy.scrubText('summary', contentSafe)
     if (content.kind === 'clean' && path.kind === 'clean') return observation
+    const scrubbed = path.kind === 'rejected'
+      ? null
+      : boundRedactedLabel(path.kind === 'redacted' ? path.value : contentSafe)
     return ObservationSchema.parse({
       ...observation,
-      summary: path.kind === 'rejected'
-        ? null
-        : path.kind === 'redacted'
-          ? path.value
-          : contentSafe,
+      summary: scrubbed,
     })
   }
 
@@ -1386,9 +1395,7 @@ export class WorkspaceGraphStore {
   #persistProjectionState(database: GraphDatabase, state: WorkspaceGraphProjectionState): void {
     for (const relation of state.relations) {
       this.#writeRelation(database, relation)
-      for (const evidence of relation.evidence_refs) {
-        this.#writeRelationEvidence(database, relation, evidence)
-      }
+      this.#syncRelationEvidence(database, relation)
     }
     for (const record of state.projection_records) {
       database.prepare(`INSERT INTO projection_records(
@@ -1525,20 +1532,23 @@ export class WorkspaceGraphStore {
       this.#assertSafeIdentity('evidence_source', evidence.source)
       this.#assertSafeIdentity('evidence_ref', evidence.ref)
     }
-    const content = this.#contentPolicy.scrub('reason', parsed.data.reason)
+    const bounded = RelationCardSchema.parse({
+      ...parsed.data,
+      evidence_refs: retainRelationEvidence([], parsed.data.evidence_refs),
+    })
+    const content = this.#contentPolicy.scrub('reason', bounded.reason)
     if (content.kind === 'rejected') {
       throw new WorkspaceGraphStoreError('STORE_SENSITIVE_CONTENT_REJECTED')
     }
-    const contentSafe = content.kind === 'redacted' ? content.value : parsed.data.reason
+    const contentSafe = content.kind === 'redacted' ? content.value : bounded.reason
     const path = this.#pathPolicy.scrubText('reason', contentSafe)
-    if (content.kind === 'clean' && path.kind === 'clean') return parsed.data
+    if (content.kind === 'clean' && path.kind === 'clean') return bounded
+    const scrubbed = boundRedactedLabel(path.kind === 'redacted' ? path.value : contentSafe)
     const redacted = RelationCardSchema.safeParse({
-      ...parsed.data,
+      ...bounded,
       reason: path.kind === 'rejected'
         ? '[redacted]'
-        : path.kind === 'redacted'
-          ? path.value
-          : contentSafe,
+        : scrubbed ?? '[redacted]',
     })
     if (!redacted.success) throw new WorkspaceGraphStoreError('STORE_INVALID_RELATION')
     return redacted.data
@@ -1653,6 +1663,16 @@ export class WorkspaceGraphStore {
     )
   }
 
+  #syncRelationEvidence(database: GraphDatabase, relation: RelationCard): void {
+    database.prepare(`
+      DELETE FROM relation_evidence
+      WHERE source_logical_id = ? AND target_logical_id = ? AND relation_type = ?
+    `).run(relation.source_logical_id, relation.target_logical_id, relation.relation_type)
+    for (const evidence of relation.evidence_refs) {
+      this.#writeRelationEvidence(database, relation, evidence)
+    }
+  }
+
   #compactTable(
     database: GraphDatabase,
     table: 'workspace_instances',
@@ -1686,6 +1706,21 @@ export class WorkspaceGraphStore {
     `).run(remove)
   }
 
+  #compactRelationEvidence(database: GraphDatabase): void {
+    const relations = this.#parseRows(
+      database.prepare('SELECT payload_json FROM relation_cards').all(),
+      RelationCardSchema,
+    )
+    for (const relation of relations) {
+      const evidenceRefs = retainRelationEvidence([], relation.evidence_refs)
+      const retained = evidenceRefs.length === relation.evidence_refs.length
+        ? relation
+        : RelationCardSchema.parse({...relation, evidence_refs: evidenceRefs})
+      if (retained !== relation) this.#writeRelation(database, retained)
+      this.#syncRelationEvidence(database, retained)
+    }
+  }
+
   #compactObservations(database: GraphDatabase): void {
     database.prepare(`
       DELETE FROM observations WHERE observation_id IN (
@@ -1714,6 +1749,59 @@ export class WorkspaceGraphStore {
     `).run(remove)
   }
 
+  #compactProjectionRecords(database: GraphDatabase): void {
+    const records = this.#parseRows(
+      database.prepare('SELECT payload_json FROM projection_records').all(),
+      projectionRecordSchema,
+    )
+    if (records.length <= PROJECTION_RECORD_CAP) return
+    const protectedByRelation = new Map<string, ProjectionRecord>()
+    for (const record of records) {
+      const category = projectionRetentionCategory(record)
+      if (category === null) continue
+      const key = `${projectionRelationKey(record)}\u0000${category}`
+      const current = protectedByRelation.get(key)
+      if (current === undefined || compareRecordRecency(record, current) > 0) {
+        protectedByRelation.set(key, record)
+      }
+    }
+    const protectedRecords = [...protectedByRelation.values()].sort((left, right) => (
+      projectionRetentionPriority(left) - projectionRetentionPriority(right)
+      || compareRecordRecency(right, left)
+    ))
+    const retained = new Set<string>()
+    for (const record of protectedRecords) {
+      if (retained.size >= PROJECTION_RECORD_CAP) break
+      retained.add(record.record_id)
+    }
+    const newest = [...records].sort((left, right) => compareRecordRecency(right, left))
+    for (const record of newest) {
+      if (retained.size >= PROJECTION_RECORD_CAP) break
+      retained.add(record.record_id)
+    }
+    const remove = database.prepare('DELETE FROM projection_records WHERE record_id = ?')
+    for (const record of records) {
+      if (!retained.has(record.record_id)) remove.run(record.record_id)
+    }
+  }
+
+  #compactAliasObservations(database: GraphDatabase): void {
+    const observations = this.#parseRows(
+      database.prepare('SELECT payload_json FROM alias_observations').all(),
+      workspaceAliasObservationSchema,
+    )
+    if (observations.length <= ALIAS_OBSERVATION_CAP) return
+    const newest = [...observations].sort((left, right) => (
+      right.observed_at - left.observed_at
+      || compareCodePoints(right.observation_id, left.observation_id)
+    ))
+    const retained = new Set(newest.slice(0, ALIAS_OBSERVATION_CAP).map(item => item.observation_id))
+    const remove = database.prepare('DELETE FROM alias_observations WHERE observation_id = ?')
+    for (const observation of observations) {
+      if (!retained.has(observation.observation_id)) remove.run(observation.observation_id)
+    }
+  }
+
   #compactOperationReceipts(database: GraphDatabase): void {
     const count = this.#tableCount(database, 'operation_receipts')
     const remove = Math.max(0, count - (OPERATION_RECEIPT_CAP - 1))
@@ -1732,6 +1820,9 @@ export class WorkspaceGraphStore {
       + this.#tableCount(database, 'workspace_instances')
       + this.#tableCount(database, 'relation_cards')
       + this.#tableCount(database, 'relation_evidence')
+      + this.#tableCount(database, 'observations')
+      + this.#tableCount(database, 'projection_records')
+      + this.#tableCount(database, 'alias_observations')
   }
 
   #tableCount(database: GraphDatabase, table: string): number {
@@ -1886,6 +1977,29 @@ function projectionRelationKey(value: Pick<
   'source_logical_id' | 'target_logical_id' | 'relation_type'
 >): string {
   return `${value.source_logical_id}\u0000${value.target_logical_id}\u0000${value.relation_type}`
+}
+
+function projectionRetentionCategory(
+  record: ProjectionRecord,
+): 'suppression' | 'user_confirmed' | 'trusted_system' | null {
+  if (record.stance === 'suppress') return 'suppression'
+  if (record.authority === 'user_confirmed') return 'user_confirmed'
+  if (record.authority === 'trusted_system') return 'trusted_system'
+  return null
+}
+
+function projectionRetentionPriority(record: ProjectionRecord): number {
+  switch (projectionRetentionCategory(record)) {
+    case 'suppression': return 0
+    case 'user_confirmed': return 1
+    case 'trusted_system': return 2
+    case null: return 3
+  }
+}
+
+function compareRecordRecency(left: ProjectionRecord, right: ProjectionRecord): number {
+  return left.occurred_at - right.occurred_at
+    || compareCodePoints(left.record_id, right.record_id)
 }
 
 function isLogicalWorkspaceInput(input: WorkspaceCard): input is LogicalWorkspace {

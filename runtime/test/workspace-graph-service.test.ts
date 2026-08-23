@@ -245,6 +245,55 @@ test('task completion rejects an empty string but persists an explicit null summ
   assert.deepEqual(completions.map(observation => observation.outcome), ['ok', 'ok'])
 })
 
+test('task completion keeps redacted summaries inside the durable label boundary', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-redacted-summary-'))
+  const path = join(directory, 'graph.sqlite')
+  const service = new WorkspaceGraphService({
+    path,
+    denied_roots: ['/d'],
+    id_factory: (() => { let value = 0; return () => `redacted-summary-${++value}` })(),
+  })
+  t.after(async () => {
+    await service.close()
+    await rm(directory, {recursive: true, force: true})
+  })
+  await service.open()
+  const opened = await service.openWorkspace({
+    path: '/safe/redacted-summary', repository_fingerprint: 'host-redacted-summary', now: 1,
+  })
+  assert.equal(opened.kind, 'resolved')
+
+  const cookieTail = ' Cookie:a'
+  const deniedPathTail = ' /d'
+  const summaries = [
+    `${'c'.repeat(239 - cookieTail.length)}${cookieTail}`,
+    `${'p'.repeat(239 - deniedPathTail.length)}${deniedPathTail}`,
+  ]
+  for (const [index, summary] of summaries.entries()) {
+    assert.equal(summary.length, 239)
+    await service.recordTaskCompletion({
+      workspace_instance_id: opened.instance.instance_id,
+      summary,
+      outcome: 'ok',
+      now: index + 2,
+      relation_cue: null,
+    })
+  }
+
+  await service.close()
+  const store = new WorkspaceGraphStoreClient(path)
+  t.after(() => store.close())
+  await store.open()
+  const completions = (await store.listObservations()).filter(observation => (
+    observation.observation_type === 'task_completed'
+  ))
+  assert.equal(completions.length, 2)
+  for (const completion of completions) {
+    assert.equal(completion.summary?.includes('[redacted]'), true)
+    assert.equal((completion.summary?.length ?? 240) <= 239, true)
+  }
+})
+
 test('service schedules periodic compaction after 64 observation writes', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-periodic-compaction-'))
   const path = join(directory, 'graph.sqlite')

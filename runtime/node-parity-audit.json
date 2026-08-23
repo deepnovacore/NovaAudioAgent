@@ -1637,6 +1637,24 @@
       "behavior": "rejects a field when a redaction leaves no meaningful content"
     },
     {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "string_length",
+      "occurrence_index": 3,
+      "snippet_sha256": "f118a9ced4b942d3f573d52f4f9626a586d87ff5926de5579f32564466cdd803",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-store.test.ts",
+      "behavior": "direct observation redaction stays inside the durable label boundary"
+    },
+    {
+      "file": "runtime/src/workspace-graph/sensitivity.ts",
+      "kind": "string_length",
+      "occurrence_index": 4,
+      "snippet_sha256": "ae8df7594e0c7aedf5376e8eeacfcf48e7bc34c19b9a5b37f13a240002b844d5",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/workspace-graph-store.test.ts",
+      "behavior": "direct observation redaction stays inside the durable label boundary"
+    },
+    {
       "file": "runtime/src/workspace-graph/service.ts",
       "kind": "string_length",
       "occurrence_index": 0,
