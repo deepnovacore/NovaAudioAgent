@@ -78,9 +78,14 @@ for (const candidate of candidates.sort((left, right) => (
 }
 
 main().catch(error => {
-  const detail = error instanceof PackageInspectionError
+  const baseDetail = error instanceof PackageInspectionError
     ? error.message.replace(/^desktop package contract rejected: /u, '')
     : ''
+  const diagnosticCode = error instanceof PackageInspectionError
+    && typeof error.diagnosticCode === 'string'
+    ? error.diagnosticCode
+    : ''
+  const detail = diagnosticCode === '' ? baseDetail : `${baseDetail} ${diagnosticCode}`
   const diagnostic = process.env.NOVA_RELEASE_INSPECTION_DIAGNOSTICS === '1'
     && /^[a-zA-Z0-9 @._:+/<>,= -]{1,256}$/u.test(detail)
     ? `: ${detail}`

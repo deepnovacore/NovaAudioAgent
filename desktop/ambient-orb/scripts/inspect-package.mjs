@@ -1168,11 +1168,15 @@ async function captureCandidateFile(sourcePath, destinationPath) {
   }
 }
 
-function containerListingRejected() {
-  throw new PackageInspectionError('candidate container listing rejected')
+function containerListingRejected(reason = '') {
+  const error = new PackageInspectionError('candidate container listing rejected')
+  if (reason !== '') {
+    Object.defineProperty(error, 'diagnosticCode', {value: reason})
+  }
+  throw error
 }
 
-function canonicalContainerPath(path) {
+function canonicalContainerPath(path, reason = 'path') {
   if (
     typeof path !== 'string'
     || path === ''
@@ -1183,7 +1187,7 @@ function canonicalContainerPath(path) {
     || path.startsWith('\\')
     || /^[a-zA-Z]:/u.test(path)
     || path.startsWith('-')
-  ) containerListingRejected()
+  ) containerListingRejected(reason)
   const stripped = path.startsWith('./') ? path.slice(2) : path
   const segments = stripped.split(/[\\/]/u)
   if (
@@ -1197,7 +1201,7 @@ function canonicalContainerPath(path) {
       || segment.endsWith('.')
       || segment.endsWith(' ')
     ))
-  ) containerListingRejected()
+  ) containerListingRejected(reason)
   return segments.join('/')
 }
 
@@ -1230,7 +1234,7 @@ function parseSevenZipListing(listing) {
       fields.has('Hard Link')
       || !fields.has('Path')
       || !fields.has('Size')
-    ) containerListingRejected()
+    ) containerListingRejected('sevenzip-fields')
     const attributes = fields.get('Attributes') ?? ''
     const posixMode = /(?:^|\s)([bcdlps-][rwxStTs-]{9})(?:\s|$)/u.exec(attributes)?.[1]
     const symbolicTarget = fields.get('Symbolic Link')
@@ -1240,27 +1244,27 @@ function parseSevenZipListing(listing) {
       && posixMode[0] !== 'd'
       && posixMode[0] !== 'l'
     ) {
-      containerListingRejected()
+      containerListingRejected('sevenzip-type')
     }
     const folderField = fields.get('Folder')
     if (folderField !== undefined && folderField !== '+' && folderField !== '-') {
-      containerListingRejected()
+      containerListingRejected('sevenzip-folder')
     }
     const folder = folderField === '+'
       || /(?:^|\s)D(?:\s|$)/u.test(attributes)
       || posixMode?.[0] === 'd'
-    if (folderField === '-' && folder) containerListingRejected()
+    if (folderField === '-' && folder) containerListingRejected('sevenzip-folder-conflict')
     const listedPath = fields.get('Path')
     const rawPath = folder && /[\\/]$/u.test(listedPath) ? listedPath.slice(0, -1) : listedPath
     if (folder && (rawPath === '' || rawPath === '.')) {
       fields = new Map()
       return
     }
-    const path = canonicalContainerPath(rawPath)
+    const path = canonicalContainerPath(rawPath, 'sevenzip-path')
     const rawSize = fields.get('Size')
-    if (!/^(?:0|[1-9]\d*)$/u.test(rawSize)) containerListingRejected()
+    if (!/^(?:0|[1-9]\d*)$/u.test(rawSize)) containerListingRejected('sevenzip-size')
     const size = Number(rawSize)
-    if (!Number.isSafeInteger(size) || size < 0) containerListingRejected()
+    if (!Number.isSafeInteger(size) || size < 0) containerListingRejected('sevenzip-size')
     const linkAttributes = posixMode?.[0] === 'l' || /(?:^|\s)L(?:\s|$)/u.test(attributes)
     if (symbolicTarget !== undefined || linkAttributes) {
       if (
@@ -1268,13 +1272,13 @@ function parseSevenZipListing(listing) {
         || folder
         || (folderField !== undefined && folderField !== '-')
         || (posixMode !== undefined && posixMode[0] !== 'l')
-      ) containerListingRejected()
+      ) containerListingRejected('sevenzip-link')
       assertSafeSymlink(path, symbolicTarget)
       records.push({ path, raw_path: rawPath, type: 'link', size: 0, target: symbolicTarget })
       fields = new Map()
       return
     }
-    if (folder && size !== 0) containerListingRejected()
+    if (folder && size !== 0) containerListingRejected('sevenzip-folder-size')
     records.push({ path, raw_path: rawPath, type: folder ? 'directory' : 'file', size })
     fields = new Map()
   }
@@ -1285,7 +1289,7 @@ function parseSevenZipListing(listing) {
     }
     const match = /^([^=]{1,64}) = (.*)$/u.exec(line)
     if (!match || !allowedKeys.has(match[1]) || fields.has(match[1])) {
-      containerListingRejected()
+      containerListingRejected('sevenzip-line')
     }
     fields.set(match[1], match[2])
   }
@@ -1308,7 +1312,7 @@ function parseDebListing(listing) {
     const listedPath = linkMatch?.[1] ?? match[3]
     const rawPath = directory && listedPath.endsWith('/') ? listedPath.slice(0, -1) : listedPath
     if (directory && (rawPath === '' || rawPath === '.')) continue
-    const path = canonicalContainerPath(rawPath)
+    const path = canonicalContainerPath(rawPath, 'deb-path')
     const size = Number(match[2])
     if (!Number.isSafeInteger(size) || size < 0 || (directory && size !== 0)) {
       containerListingRejected()
@@ -1331,7 +1335,7 @@ export function preflightContainerListing({ format, listing }) {
       ? parseSevenZipListing(listing)
       : containerListingRejected()
   if (records.length === 0 || records.length > MAX_CONTAINER_ENTRIES) {
-    containerListingRejected()
+    containerListingRejected('entry-count')
   }
   const paths = new Set()
   const collisionKeys = new Set()
@@ -1339,20 +1343,22 @@ export function preflightContainerListing({ format, listing }) {
   let expandedBytes = 0
   for (const record of records) {
     const collisionKey = record.path.normalize('NFC').toLowerCase()
-    if (paths.has(record.path) || collisionKeys.has(collisionKey)) containerListingRejected()
+    if (paths.has(record.path) || collisionKeys.has(collisionKey)) {
+      containerListingRejected('path-collision')
+    }
     paths.add(record.path)
     collisionKeys.add(collisionKey)
     recordTypes.set(record.path, record.type)
     expandedBytes += record.size
     if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_CANDIDATE_BYTES) {
-      containerListingRejected()
+      containerListingRejected('expanded-bytes')
     }
   }
   for (const record of records) {
     const segments = record.path.split('/')
     for (let index = 1; index < segments.length; index += 1) {
       if (recordTypes.get(segments.slice(0, index).join('/')) === 'file') {
-        containerListingRejected()
+        containerListingRejected('file-parent')
       }
     }
   }
@@ -1429,7 +1435,7 @@ function runBoundedListing(command, arguments_, workingDirectory) {
     || typeof result.stdout !== 'string'
     || Buffer.byteLength(result.stdout, 'utf8') > MAX_CONTAINER_LISTING_BYTES
     || result.stderr !== ''
-  ) containerListingRejected()
+  ) containerListingRejected('tool-output')
   boundedListingLines(result.stdout)
   return result.stdout
 }
