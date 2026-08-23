@@ -421,7 +421,7 @@ test('unsigned cross-platform workflow closes native packages through attested i
   })
   assert.deepEqual(packageJob.strategy.matrix.include, [
     {
-      os: 'windows-latest',
+      os: 'windows-2022',
       target_id: 'win32-x64',
       package_script: 'package:win',
       artifact_name: 'unsigned-win32-x64',
@@ -469,7 +469,7 @@ test('unsigned cross-platform workflow closes native packages through attested i
   assert.deepEqual(smokeJob.permissions, {contents: 'read', attestations: 'read'})
   assert.deepEqual(smokeJob.strategy.matrix.include, [
     {
-      os: 'windows-latest',
+      os: 'windows-2022',
       target: 'win32-x64:nsis',
       artifact_name: 'unsigned-win32-x64',
       filename: 'nova-win32-x64.exe',

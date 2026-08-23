@@ -19,7 +19,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          # Pin the audited VS2022 toolchain; windows-latest now rolls to
+          # Visual Studio 2026 and is not a reproducible native build input.
+          - os: windows-2022
             target_id: win32-x64
             package_script: package:win
             artifact_name: unsigned-win32-x64
@@ -82,7 +84,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: windows-2022
             target: win32-x64:nsis
             artifact_name: unsigned-win32-x64
             filename: nova-win32-x64.exe
