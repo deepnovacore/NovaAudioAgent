@@ -328,7 +328,13 @@ export class NodeDesktopServer {
           if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
             throw new DesktopProtocolError('desktop input must be aligned PCM16 bytes')
           }
-          await this.#options.onAudio?.(pcm)
+          try {
+            await this.#options.onAudio?.(pcm)
+          } catch {
+            // The renderer frame is already fully validated here. A provider can be temporarily
+            // unavailable while its session reconnects; that host-side delivery failure drops only
+            // this PCM frame and must not be reclassified as a renderer protocol violation.
+          }
           return
         }
         const raw = rawText(data)
@@ -337,7 +343,13 @@ export class NodeDesktopServer {
           this.#receiveCameraError(socket, generation, cameraError.request_id)
           return
         }
-        await this.#options.onControl?.(parseDesktopControl(raw))
+        const control = parseDesktopControl(raw)
+        try {
+          await this.#options.onControl?.(control)
+        } catch {
+          // Control parsing succeeded, so a host-side failure (for example cancellation while the
+          // provider reconnects) is not evidence that the renderer violated the desktop protocol.
+        }
       }).catch(error => {
         if (error instanceof DesktopGraphRequestError) return
         rejected = true

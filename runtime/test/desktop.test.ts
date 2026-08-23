@@ -332,6 +332,70 @@ test('a malformed graph request is ignored without tearing down authenticated vo
   }
 })
 
+test('a transient audio host failure does not misclassify valid renderer PCM as a protocol violation', async () => {
+  let audioCalls = 0
+  let secondAudioArrived: (() => void) | undefined
+  const secondAudio = new Promise<void>(resolve => { secondAudioArrived = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onAudio: () => {
+      audioCalls += 1
+      if (audioCalls === 1) return Promise.reject(new Error('provider reconnecting'))
+      secondAudioArrived?.()
+      return Promise.resolve()
+    },
+  })
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    const closed = waitForClose(socket).then(() => 'closed' as const)
+    socket.send(Buffer.from([0, 0]))
+    socket.send(Buffer.from([1, 0]))
+    const outcome = await settleWithin(
+      'post-reconnect desktop audio',
+      Promise.race([secondAudio.then(() => 'delivered' as const), closed]),
+    )
+    assert.equal(outcome, 'delivered')
+    assert.equal(socket.readyState, WebSocket.OPEN)
+    assert.equal(audioCalls, 2)
+  } finally {
+    await closeDesktopClientAndServer(socket, server)
+  }
+})
+
+test('a transient control host failure does not misclassify a valid renderer command as a protocol violation', async () => {
+  let controlCalls = 0
+  let secondControlArrived: (() => void) | undefined
+  const secondControl = new Promise<void>(resolve => { secondControlArrived = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onControl: () => {
+      controlCalls += 1
+      if (controlCalls === 1) return Promise.reject(new Error('provider reconnecting'))
+      secondControlArrived?.()
+      return Promise.resolve()
+    },
+  })
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    const closed = waitForClose(socket).then(() => 'closed' as const)
+    socket.send(JSON.stringify({type: 'speech.onset', speech_id: 'during-reconnect'}))
+    socket.send(JSON.stringify({type: 'speech.onset', speech_id: 'after-reconnect'}))
+    const outcome = await settleWithin(
+      'post-reconnect desktop control',
+      Promise.race([secondControl.then(() => 'delivered' as const), closed]),
+    )
+    assert.equal(outcome, 'delivered')
+    assert.equal(socket.readyState, WebSocket.OPEN)
+    assert.equal(controlCalls, 2)
+  } finally {
+    await closeDesktopClientAndServer(socket, server)
+  }
+})
+
 test('desktop controls preserve the Python accepted shape and strip unknown evidence', () => {
   assert.deepEqual(parseDesktopControl(JSON.stringify({
     type: 'playback.started',
