@@ -12,6 +12,12 @@ import {WebSocket, WebSocketServer} from 'ws'
 export const RELEASE_SMOKE_MODE = 'installed-candidate-v1'
 export const CAMERA_CAPABILITY_PENDING = 'camera-file-integration: chromium_codec_unavailable'
 
+const DEFAULT_SIGNER_WORKFLOW = 'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml'
+const SIGNER_WORKFLOWS = new Set([
+  DEFAULT_SIGNER_WORKFLOW,
+  'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
+])
+
 const TOKEN_PATTERN = /^[0-9a-f]{32}$/u
 const READY_LIMIT = 4096
 const OUTPUT_LIMIT = 64 * 1024
@@ -148,10 +154,22 @@ export function classifySourceRollbackResult(result) {
   return Object.freeze({status: 'passed'})
 }
 
-async function runInstalledCandidate({target, artifact, expectedSha256, commit, cameraFile}) {
+export function canonicalSignerWorkflow(value = DEFAULT_SIGNER_WORKFLOW) {
+  if (!SIGNER_WORKFLOWS.has(value)) throw new Error('installed_candidate_attestation_failed')
+  return value
+}
+
+async function runInstalledCandidate({
+  target,
+  artifact,
+  expectedSha256,
+  commit,
+  signerWorkflow,
+  cameraFile,
+}) {
   requireHostTarget(target)
   const candidate = await exactCandidate(artifact, expectedSha256)
-  requireCandidateAttestation(candidate, commit)
+  requireCandidateAttestation(candidate, commit, signerWorkflow)
   const scratch = await realpath(await mkdtemp(join(tmpdir(), 'nova-installed-candidate-')))
   const plan = candidateInstallPlan({target, artifact: candidate, scratch})
   const poisonPath = resolve(scratch, 'poison-path')
@@ -489,15 +507,16 @@ function digestFile(path) {
   })
 }
 
-function requireCandidateAttestation(candidate, commit) {
+function requireCandidateAttestation(candidate, commit, signerWorkflow) {
   if (typeof commit !== 'string' || !/^[0-9a-f]{40}$/u.test(commit)) {
     throw new Error('installed_candidate_attestation_failed')
   }
+  const canonicalWorkflow = canonicalSignerWorkflow(signerWorkflow)
   const result = spawnSync('gh', [
     'attestation', 'verify', candidate,
     '--repo', 'deepnovacore/NovaAudioAgent',
     '--signer-workflow',
-    'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml',
+    canonicalWorkflow,
     '--source-digest', commit,
   ], {
     encoding: 'utf8', timeout: 120_000, maxBuffer: OUTPUT_LIMIT,
@@ -532,12 +551,15 @@ function requireHostTarget(target) {
   if (!target.startsWith(host)) throw new Error('installed_candidate_target_failed')
 }
 
-function cliOptions(argv) {
+export function cliOptions(argv) {
   const values = new Map()
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index]
     const value = argv[index + 1]
-    if (!['--target', '--artifact', '--sha256', '--sha256-file', '--commit', '--camera-file'].includes(name)
+    if (![
+      '--target', '--artifact', '--sha256', '--sha256-file', '--commit', '--camera-file',
+      '--signer-workflow',
+    ].includes(name)
       || value === undefined || values.has(name)) throw new Error('installed_candidate_usage_failed')
     values.set(name, value)
   }
@@ -547,6 +569,7 @@ function cliOptions(argv) {
   for (const required of ['--target', '--artifact', '--commit']) {
     if (!values.has(required)) throw new Error('installed_candidate_usage_failed')
   }
+  values.set('--signer-workflow', canonicalSignerWorkflow(values.get('--signer-workflow')))
   return values
 }
 
@@ -561,6 +584,7 @@ if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
       artifact: resolve(values.get('--artifact')),
       expectedSha256,
       commit: values.get('--commit'),
+      signerWorkflow: values.get('--signer-workflow'),
       ...(values.has('--camera-file') ? {cameraFile: resolve(values.get('--camera-file'))} : {}),
     })
     if (camera?.status === 'pending') {

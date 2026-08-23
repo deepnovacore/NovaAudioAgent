@@ -12,6 +12,7 @@ import test from 'node:test'
 
 const CONFIG_PATH = resolve(import.meta.dirname, '../electron-builder.yml')
 const PACKAGE_JSON_PATH = resolve(import.meta.dirname, '../package.json')
+const UNSIGNED_WORKFLOW_PATH = resolve(import.meta.dirname, '../../../.github/workflows/unsigned-packages.yml')
 const ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.plist')
 const INHERIT_ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.inherit.plist')
 const HTML_PATH = resolve(import.meta.dirname, '../src/renderer/index.html')
@@ -106,6 +107,15 @@ function parseYaml(text) {
     return value
   }
 
+  function parseBlockScalar(parentIndent) {
+    const values = []
+    while (pos < lines.length && lines[pos].indent > parentIndent) {
+      values.push(lines[pos].text)
+      pos += 1
+    }
+    return values.join('\n')
+  }
+
   // Parses every line whose indent is >= minIndent into a block (map or
   // list), stopping as soon as a line falls back below minIndent.
   function parseBlock(minIndent) {
@@ -131,6 +141,8 @@ function parseYaml(text) {
           pos += 1
           if (valuePart === '') {
             Object.assign(item, { [key]: parseBlock(blockIndent + 2) })
+          } else if (/^[>|]-?$/u.test(valuePart)) {
+            item[key] = parseBlockScalar(blockIndent)
           } else {
             item[key] = parseScalar(valuePart)
           }
@@ -144,6 +156,8 @@ function parseYaml(text) {
             pos += 1
             if (siblingValue === '') {
               item[siblingKey] = parseBlock(itemIndent + 2)
+            } else if (/^[>|]-?$/u.test(siblingValue)) {
+              item[siblingKey] = parseBlockScalar(itemIndent)
             } else {
               item[siblingKey] = parseScalar(siblingValue)
             }
@@ -167,6 +181,8 @@ function parseYaml(text) {
       pos += 1
       if (valuePart === '') {
         map[key] = parseBlock(blockIndent + 1)
+      } else if (/^[>|]-?$/u.test(valuePart)) {
+        map[key] = parseBlockScalar(blockIndent)
       } else {
         map[key] = parseScalar(valuePart)
       }
@@ -376,6 +392,99 @@ test('every package: script disables publishing explicitly', async () => {
       `expected "${name}" to pass --publish never so CI never attempts to publish a release`,
     )
   }
+})
+
+test('unsigned cross-platform workflow closes native packages through attested installed smoke', async () => {
+  const text = await readFile(UNSIGNED_WORKFLOW_PATH, 'utf8')
+  const workflow = parseYaml(text)
+
+  assert.deepEqual(Object.keys(workflow.on).sort(), ['push', 'workflow_dispatch'])
+  assert.deepEqual(workflow.on.push.branches, ['main'])
+  assert.deepEqual(workflow.permissions, {contents: 'read'})
+
+  const packageJob = workflow.jobs.package
+  assert.deepEqual(packageJob.permissions, {
+    contents: 'read',
+    'id-token': 'write',
+    attestations: 'write',
+  })
+  assert.deepEqual(packageJob.strategy.matrix.include, [
+    {
+      os: 'windows-latest',
+      target_id: 'win32-x64',
+      package_script: 'package:win',
+      artifact_name: 'unsigned-win32-x64',
+    },
+    {
+      os: 'ubuntu-latest',
+      target_id: 'linux-x64-gnu',
+      package_script: 'package:linux',
+      artifact_name: 'unsigned-linux-x64-gnu',
+    },
+  ])
+
+  const packageSteps = packageJob.steps
+  const packageRuns = packageSteps.map(step => step.run).filter(Boolean).join('\n')
+  for (const command of [
+    'npm run check',
+    'npm run test:runtime',
+    'npm run test:desktop',
+    'npm run build',
+    'npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb',
+    'npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb',
+    'npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}',
+    'npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb',
+  ]) assert.ok(packageRuns.includes(command), command)
+  assert.ok(packageSteps.some(step => step.uses === 'actions/attest-build-provenance@v3'))
+  assert.ok(packageSteps.some(step => step.uses === 'actions/upload-artifact@v4'))
+  assert.doesNotMatch(text, /continue-on-error|\|\| true/u)
+
+  const attest = packageSteps.find(step => step.uses === 'actions/attest-build-provenance@v3')
+  assert.equal(attest.with['subject-path'], 'desktop/ambient-orb/build/release-artifacts/*')
+  const upload = packageSteps.find(step => step.uses === 'actions/upload-artifact@v4')
+  assert.deepEqual(upload.with.path.split('\n'), [
+    'desktop/ambient-orb/build/release-artifacts/**',
+    'desktop/ambient-orb/build/release-digests/**',
+    'desktop/ambient-orb/build/release-smoke-kit/**',
+  ])
+  assert.doesNotMatch(upload.with.path, /(?:^|\/)dist(?:\/|$)/u)
+
+  const smokeJob = workflow.jobs['installed-smoke']
+  assert.equal(smokeJob.needs, 'package')
+  assert.deepEqual(smokeJob.permissions, {contents: 'read', attestations: 'read'})
+  assert.deepEqual(smokeJob.strategy.matrix.include, [
+    {
+      os: 'windows-latest',
+      target: 'win32-x64:nsis',
+      artifact_name: 'unsigned-win32-x64',
+      filename: 'nova-win32-x64.exe',
+      command: 'node',
+    },
+    {
+      os: 'ubuntu-latest',
+      target: 'linux-x64-gnu:appimage',
+      artifact_name: 'unsigned-linux-x64-gnu',
+      filename: 'nova-linux-x64.AppImage',
+      command: 'xvfb-run -a node',
+    },
+    {
+      os: 'ubuntu-latest',
+      target: 'linux-x64-gnu:deb',
+      artifact_name: 'unsigned-linux-x64-gnu',
+      filename: 'nova-linux-x64.deb',
+      command: 'xvfb-run -a node',
+    },
+  ])
+  assert.equal(smokeJob.steps.some(step => step.uses === 'actions/checkout@v4'), false)
+  assert.ok(smokeJob.steps.some(step => step.uses === 'actions/download-artifact@v4'))
+  const smokeStep = smokeJob.steps.find(step => step.run?.includes('run-unsigned-installed-smoke.mjs'))
+  assert.deepEqual(smokeStep.env, {GH_TOKEN: '${{ github.token }}'})
+  for (const argument of [
+    '--commit ${{ github.sha }}',
+    '--sha256-file candidate/release-digests/${{ matrix.filename }}.sha256',
+    '--camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4',
+    '--signer-workflow deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
+  ]) assert.ok(smokeStep.run.includes(argument), argument)
 })
 
 function parseBooleanPlist(text) {

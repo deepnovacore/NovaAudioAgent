@@ -90,6 +90,73 @@ test('packaged camera evidence is pass or the exact non-green capability sentine
   }
 })
 
+test('installed candidate signer workflow authority is closed to the two release workflows', async () => {
+  const {canonicalSignerWorkflow} = await import('../scripts/installed-candidate-smoke.mjs')
+  assert.equal(typeof canonicalSignerWorkflow, 'function')
+  assert.equal(
+    canonicalSignerWorkflow('deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml'),
+    'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
+  )
+  assert.equal(
+    canonicalSignerWorkflow('deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml'),
+    'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml',
+  )
+  assert.throws(
+    () => canonicalSignerWorkflow('owner/repo/.github/workflows/arbitrary.yml'),
+    /installed_candidate_attestation_failed/u,
+  )
+})
+
+test('installed candidate CLI defaults release authority and accepts only explicit unsigned authority', async () => {
+  const {cliOptions} = await import('../scripts/installed-candidate-smoke.mjs')
+  assert.equal(typeof cliOptions, 'function')
+  const required = [
+    '--target', 'linux-x64-gnu:appimage',
+    '--artifact', '/candidate/nova-linux-x64.AppImage',
+    '--sha256', 'a'.repeat(64),
+    '--commit', 'b'.repeat(40),
+  ]
+  assert.equal(
+    cliOptions(required).get('--signer-workflow'),
+    'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml',
+  )
+  assert.equal(
+    cliOptions([
+      ...required,
+      '--signer-workflow', 'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
+    ]).get('--signer-workflow'),
+    'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
+  )
+  assert.throws(
+    () => cliOptions([...required, '--signer-workflow', 'owner/repo/.github/workflows/arbitrary.yml']),
+    /installed_candidate_attestation_failed/u,
+  )
+})
+
+test('unsigned installed smoke wrapper accepts only complete pass or exact camera pending evidence', async () => {
+  const {classifyUnsignedSmoke} = await import('../scripts/run-unsigned-installed-smoke.mjs')
+  assert.deepEqual(classifyUnsignedSmoke({
+    status: 0,
+    signal: null,
+    stdout: 'installed candidate smoke passed\n',
+    stderr: '',
+  }), {installed: 'passed', camera: 'passed'})
+  assert.deepEqual(classifyUnsignedSmoke({
+    status: 75,
+    signal: null,
+    stdout: 'camera-file-integration: chromium_codec_unavailable\n',
+    stderr: '',
+  }), {installed: 'passed', camera: 'pending'})
+  for (const result of [
+    {status: 1, signal: null, stdout: '', stderr: 'private'},
+    {status: 75, signal: null, stdout: 'wrong\n', stderr: ''},
+    {status: 75, signal: null, stdout: 'camera-file-integration: chromium_codec_unavailable\n', stderr: 'private'},
+    {status: 0, signal: 'SIGTERM', stdout: 'installed candidate smoke passed\n', stderr: ''},
+  ]) {
+    assert.throws(() => classifyUnsignedSmoke(result), /unsigned_installed_smoke_failed/u)
+  }
+})
+
 test('release workflow downloads exact candidates into checkout-free smoke jobs', async () => {
   const workflow = await readFile(new URL('../../../.github/workflows/release-candidate.yml', import.meta.url), 'utf8')
   assert.match(workflow, /installed-candidate-smoke/u)
