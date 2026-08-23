@@ -13,9 +13,15 @@ import {
 
 const run = promisify(execFile)
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
-const {canonicalAuditPath, isAuditedSource} = await import(
+interface NodeParityPathHelpers {
+  readonly canonicalAuditPath: (value: string) => string
+  readonly isAuditedSource: (value: string) => boolean
+}
+
+const nodeParityPathHelpers = await import(
   resolve(repositoryRoot, 'runtime/scripts/node-parity-paths.mjs'),
-)
+) as unknown as NodeParityPathHelpers
+const {canonicalAuditPath, isAuditedSource} = nodeParityPathHelpers
 
 test('platform-independent source inventory', () => {
   assert.equal(canonicalAuditPath('runtime\\src\\config.ts'), 'runtime/src/config.ts')
