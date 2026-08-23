@@ -8,22 +8,25 @@ import type {
   RealtimeProviderEvent,
 } from '../src/realtime/protocol.js'
 import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
-import {
-  VolcengineCascadedAdapter,
-  type VolcAsrClient,
-  type VolcAsrSession,
-  type VolcEndpointingEvent,
-  type VolcEndpointingPort,
-  type VolcTtsClient,
-  type VolcTtsSession,
-} from '../src/realtime/volcengine/adapter.js'
+import {CascadedRealtimeAdapter} from '../src/realtime/cascaded/adapter.js'
 import type {
-  ArkEvent,
-  ArkResponsesGateway,
-  ArkStreamInput,
-} from '../src/realtime/volcengine/ark.js'
-import type { AsrTranscript } from '../src/realtime/volcengine/asr.js'
-import type { TtsAudio } from '../src/realtime/volcengine/tts.js'
+  AsrClient,
+  AsrSession,
+  AsrTranscript,
+  EndpointingEvent,
+  EndpointingPort,
+  TtsAudio,
+  TtsClient,
+  TtsSession,
+} from '../src/realtime/cascaded/ports.js'
+import type {
+  CascadedLlmEvent,
+  CascadedLlmInput,
+  CascadedLlmSession,
+  CascadedLlmTool,
+} from '../src/realtime/cascaded/llm.js'
+
+type LlmStreamInput = Parameters<CascadedLlmSession['stream']>[0]
 
 const FIXTURE = new URL(
   '../../../fixtures/realtime/volcengine/v1/adapter.json',
@@ -122,7 +125,7 @@ function encode(pcm: Uint8Array): string {
   return Buffer.from(pcm).toString('base64')
 }
 
-class ScriptedEndpointing implements VolcEndpointingPort {
+class ScriptedEndpointing implements EndpointingPort {
   readonly #batches: (readonly VadEntry[])[]
   inSpeech = false
   feedCalls = 0
@@ -132,11 +135,11 @@ class ScriptedEndpointing implements VolcEndpointingPort {
     this.#batches = batches.map(batch => [...batch])
   }
 
-  feed(pcm: Uint8Array): Promise<readonly VolcEndpointingEvent[]> {
+  feed(pcm: Uint8Array): Promise<readonly EndpointingEvent[]> {
     const batch = this.#batches[this.feedCalls]
     if (batch === undefined) return Promise.reject(new Error('endpoint fixture exhausted'))
     this.feedCalls += 1
-    const events: VolcEndpointingEvent[] = []
+    const events: EndpointingEvent[] = []
     const wasSpeech = this.inSpeech
     const started = batch.find(entry => entry.kind === 'speech_started')
     if (started !== undefined) {
@@ -168,7 +171,7 @@ class ScriptedEndpointing implements VolcEndpointingPort {
   }
 }
 
-class ScriptedAsrSession implements VolcAsrSession {
+class ScriptedAsrSession implements AsrSession {
   readonly #label: string
   readonly #spec: AsrSpec
   readonly #operations: Row[]
@@ -217,7 +220,7 @@ class ScriptedAsrSession implements VolcAsrSession {
   }
 }
 
-class ScriptedAsr implements VolcAsrClient {
+class ScriptedAsr implements AsrClient {
   readonly #specs: readonly AsrSpec[]
   opens = 0
   readonly operations: Row[] = []
@@ -226,7 +229,7 @@ class ScriptedAsr implements VolcAsrClient {
     this.#specs = specs
   }
 
-  open(): Promise<VolcAsrSession> {
+  open(): Promise<AsrSession> {
     const spec = this.#specs[this.opens]
     if (spec === undefined) return Promise.reject(new Error('ASR fixture exhausted'))
     this.opens += 1
@@ -238,59 +241,109 @@ class ScriptedAsr implements VolcAsrClient {
   }
 }
 
-class ScriptedArk implements ArkResponsesGateway {
+class ScriptedLlm implements CascadedLlmSession {
   readonly #scripts: (readonly ArkEntry[])[]
   readonly calls: Row[] = []
+  #previousResponseId: string | null = null
+  #pendingToolCallId: string | null = null
   closed = false
 
   constructor(scripts: readonly (readonly ArkEntry[])[]) {
     this.#scripts = scripts.map(entries => [...entries])
   }
 
-  async *stream(input: ArkStreamInput): AsyncIterable<ArkEvent> {
+  async *stream(input: LlmStreamInput): AsyncIterable<CascadedLlmEvent> {
     const entries = this.#scripts[this.calls.length]
-    if (entries === undefined) throw new Error('Ark fixture exhausted')
+    if (entries === undefined) throw new Error('LLM fixture exhausted')
+    if (this.#pendingToolCallId !== null && !input.inputs.some(candidate =>
+      candidate.kind === 'tool_result' && candidate.call_id === this.#pendingToolCallId)) {
+      this.#previousResponseId = null
+      this.#pendingToolCallId = null
+    }
     this.calls.push({
-      input_items: structuredClone(input.inputItems),
-      tools: structuredClone(input.tools),
-      previous_response_id: input.previousResponseId,
+      input_items: input.inputs.map(oracleInputItem),
+      tools: input.tools.map(oracleToolSchema),
+      previous_response_id: this.#previousResponseId,
     })
+    let responseId: string | null = null
+    let pendingCallId: string | null = null
+    let textSeen = false
+    let toolSeen = false
     for (const entry of entries) {
       if (entry.kind === 'started') {
-        yield {kind: 'response_started', response_id: String(entry.response_id)}
+        responseId = String(entry.response_id)
+        yield {kind: 'response_started', response_id: responseId}
       } else if (entry.kind === 'text') {
+        textSeen = true
         yield {kind: 'text_delta', text: String(entry.text)}
       } else if (entry.kind === 'tool') {
+        toolSeen = true
+        pendingCallId = String(entry.call_id)
         yield {
-          kind: 'tool_call', item_id: String(entry.item_id), call_id: String(entry.call_id),
+          kind: 'tool_call', item_id: String(entry.item_id), call_id: pendingCallId,
           name: String(entry.name), arguments: structuredClone(entry.arguments as JsonObject),
         }
       } else if (entry.kind === 'completed') {
-        yield {kind: 'response_completed', response_id: String(entry.response_id)}
+        const completedId = String(entry.response_id)
+        this.#previousResponseId = completedId
+        this.#pendingToolCallId = pendingCallId
+        yield {kind: 'response_completed', response_id: completedId}
       } else if (entry.kind === 'failed') {
+        this.#previousResponseId = null
+        this.#pendingToolCallId = null
         yield {kind: 'response_failed', response_id: String(entry.response_id),
           code: entry.code === 'incomplete' ? 'incomplete' : 'failed'}
       } else if (entry.kind === 'yield') {
         await yieldToTasks()
       } else {
         const signal = input.signal
-        if (signal === undefined) throw new Error('blocking Ark fixture requires a signal')
-        await settleWithin('blocking Ark abort', new Promise<void>(resolve => {
+        if (signal === undefined) throw new Error('blocking LLM fixture requires a signal')
+        await settleWithin('blocking LLM abort', new Promise<void>(resolve => {
           if (signal.aborted) resolve()
           else signal.addEventListener('abort', () => resolve(), {once: true})
         }))
         throw new DOMException('aborted', 'AbortError')
       }
+      if (textSeen && toolSeen) {
+        this.#previousResponseId = null
+        this.#pendingToolCallId = null
+      }
     }
+    void responseId
+  }
+
+  abandonPendingResponse(): Promise<void> {
+    if (this.#pendingToolCallId !== null) this.#previousResponseId = null
+    this.#pendingToolCallId = null
+    return Promise.resolve()
   }
 
   close(): Promise<void> {
     this.closed = true
+    this.#previousResponseId = null
+    this.#pendingToolCallId = null
     return Promise.resolve()
   }
 }
 
-class ScriptedTtsSession implements VolcTtsSession {
+function oracleInputItem(input: CascadedLlmInput): JsonObject {
+  if (input.kind === 'tool_result') {
+    return {type: 'function_call_output', call_id: input.call_id, output: JSON.stringify(input.output)}
+  }
+  if (input.kind === 'user_text') return {role: 'user', content: input.text}
+  const asActivation = input.content.includes('以下内容不是用户说的话')
+  return {role: asActivation ? 'user' : 'system', content: input.content}
+}
+
+function oracleToolSchema(tool: CascadedLlmTool): JsonObject {
+  return {
+    type: 'function', name: tool.name,
+    ...(tool.description === undefined ? {} : {description: tool.description}),
+    parameters: structuredClone(tool.parameters),
+  }
+}
+
+class ScriptedTtsSession implements TtsSession {
   readonly #label: string
   readonly #spec: TtsSpec
   readonly #operations: Row[]
@@ -346,7 +399,7 @@ class ScriptedTtsSession implements VolcTtsSession {
   }
 }
 
-class ScriptedTts implements VolcTtsClient {
+class ScriptedTts implements TtsClient {
   readonly #specs: readonly TtsSpec[]
   opens = 0
   readonly operations: Row[] = []
@@ -355,7 +408,7 @@ class ScriptedTts implements VolcTtsClient {
     this.#specs = specs
   }
 
-  open(): Promise<VolcTtsSession> {
+  open(): Promise<TtsSession> {
     const spec = this.#specs[this.opens] ?? {}
     this.opens += 1
     const label = `tts-${this.opens}`
@@ -380,7 +433,7 @@ class EventObserver {
   readonly events: RealtimeProviderEvent[] = []
   readonly #task: Promise<void>
 
-  constructor(adapter: VolcengineCascadedAdapter) {
+  constructor(adapter: CascadedRealtimeAdapter) {
     this.#task = (async () => {
       for await (const event of adapter.events(new AbortController().signal)) {
         this.events.push(event)
@@ -442,15 +495,15 @@ function directOptions(): {
 
 async function runScenario(spec: Scenario, tools: readonly JsonObject[]): Promise<{
   readonly observed: Row
-  readonly arkClosed: boolean
+  readonly llmClosed: boolean
 }> {
   const endpointing = new ScriptedEndpointing(spec.vad ?? [])
   const asr = new ScriptedAsr(spec.asr ?? [])
-  const ark = new ScriptedArk(spec.ark ?? [])
+  const llm = new ScriptedLlm(spec.ark ?? [])
   const tts = new ScriptedTts(spec.tts ?? [])
   const telemetry = new RecordingTelemetry()
-  const adapter = new VolcengineCascadedAdapter({
-    endpointing, asr, tts, arkFactory: () => ark, telemetry,
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing, asr, tts, llm, telemetry,
     idFactory: idFactory(spec.name), settleTimeoutMs: SETTLE_MS,
   })
   const session = await adapter.connect({tools, signal: new AbortController().signal}) as Row
@@ -516,13 +569,13 @@ async function runScenario(spec: Scenario, tools: readonly JsonObject[]): Promis
       session,
       steps,
       events: observer.events.map(normalizeNodeEvent),
-      ark_calls: ark.calls,
+      ark_calls: llm.calls,
       asr_operations: asr.operations,
       tts_operations: tts.operations,
       telemetry: telemetry.records,
       vad: {feed_calls: endpointing.feedCalls, reset_calls: endpointing.resetCalls},
     },
-    arkClosed: ark.closed,
+    llmClosed: llm.closed,
   }
 }
 
@@ -544,6 +597,19 @@ function normalizeSpeechEnd(events: readonly Row[]): Row[] {
   })
 }
 
+function projectProviderNeutralOwnerCodes(events: readonly Row[]): Row[] {
+  return events.map(event => {
+    const projected = structuredClone(event)
+    if (projected.code === 'volcengine_mixed_text_tool') {
+      return {...projected, code: 'cascaded_mixed_text_tool'}
+    }
+    if (projected.code === 'volcengine_response_failed') {
+      return {...projected, code: 'cascaded_response_failed'}
+    }
+    return projected
+  })
+}
+
 function normalizeEndpointDeviation(name: string, actual: readonly Row[]): Row[] {
   const normalized = normalizeSpeechEnd(actual)
   if (name !== 'asr-start-recovery') return normalized
@@ -560,8 +626,19 @@ function normalizeEndpointDeviation(name: string, actual: readonly Row[]): Row[]
 function normalizedStepResult(result: unknown): unknown {
   if (result === null || typeof result !== 'object' || Array.isArray(result)) return result
   const row = result as Row
-  if (row.error !== 'VolcengineRealtimeError') return structuredClone(row)
-  return {error: 'VolcengineRealtimeError', code: 'duplicate_host_item'}
+  if (row.error !== 'VolcengineRealtimeError' && row.error !== 'CascadedRealtimeError') {
+    return structuredClone(row)
+  }
+  return {error: 'CascadedRealtimeError', code: 'duplicate_host_item'}
+}
+
+function cascadedTelemetry(rows: readonly Row[]): Row[] {
+  return rows.map(row => ({
+    ...structuredClone(row),
+    ...(typeof row.name === 'string'
+      ? {name: row.name.replace(/^volcengine[.]llm[.]/u, 'cascaded.llm.')}
+      : {}),
+  }))
 }
 
 function expectedProjection(expected: ExpectedScenario): Row {
@@ -573,11 +650,11 @@ function expectedProjection(expected: ExpectedScenario): Row {
       op: step.op,
       result: normalizedStepResult(step.result),
     })),
-    events: normalizeSpeechEnd(expected.events),
+    events: projectProviderNeutralOwnerCodes(normalizeSpeechEnd(expected.events)),
     ark_calls: expected.ark_calls,
     asr_operations: expected.asr_operations,
     tts_operations: expected.tts_operations,
-    telemetry: expected.telemetry,
+    telemetry: cascadedTelemetry(expected.telemetry),
     vad: expected.vad,
   }
 }
@@ -701,8 +778,8 @@ test('real Volcengine adapter replays every Python oracle scenario', async conte
       const expectedScenario = golden.scenarios.find(row => row.name === spec.name)
       assert.ok(expectedScenario !== undefined)
       const expected = expectedProjection(expectedScenario)
-      const {observed, arkClosed} = await runScenario(spec, fixture.tools)
-      assert.equal(arkClosed, true, 'Node must close its fresh epoch-owned Ark gateway')
+      const {observed, llmClosed} = await runScenario(spec, fixture.tools)
+      assert.equal(llmClosed, true, 'Node must close its fresh epoch-owned LLM gateway')
       assert.doesNotMatch(JSON.stringify(observed), /sentinel-provider-secret/u)
       assert.deepEqual(projectActual(spec.name, observed, expected), expected)
     })

@@ -12,6 +12,12 @@ Repository additions include offline redacted diagnostics, committed configurati
 fixtures, four deterministic reducer-backed demos, a pure scorecard evaluator, and generated
 bilingual environment references.
 
+Audio configuration now selects `integrated` or `cascaded` at the product level. Integrated Qwen
+uses `qwen-audio-3.0-realtime-plus`, `longanqian`, and one DashScope key. Cascaded defaults to
+Volcengine ASR -> Qwen `qwen-flash` -> Volcengine TTS; Ark is an explicit cascaded LLM selection.
+Platform keys are stored once and reused, with the Volcengine ASR override falling back to the
+Volcengine big-model key. Settings changes apply on the next launch and remain credential-safe.
+
 Repository-owned release work now includes signed-candidate workflows, exact seven-artifact
 digests, GitHub/OIDC attestation verification, checkout-free installed-candidate smoke, bounded
 authenticated control, process-tree cleanup, and packaged file-camera pass/exit-75 classification.

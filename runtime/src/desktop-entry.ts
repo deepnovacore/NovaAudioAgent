@@ -15,7 +15,10 @@ import {announceReadiness} from './desktop.js'
 import {selectDesktopCameraSource} from './desktop-camera-source.js'
 import {ChromiumFrameSource} from './executors/chromium-frame-source.js'
 import {RealClock} from './clock.js'
-import {buildProductionRealtimeAssembly} from './production-realtime-assembly.js'
+import {
+  buildProductionRealtimeAssembly,
+  type BuildProductionRealtimeAssemblyOptions,
+} from './production-realtime-assembly.js'
 import {NullTelemetry} from './realtime/telemetry.js'
 
 type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource}
@@ -77,7 +80,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
           transport,
           clock,
         })
-        return buildProductionRealtimeAssembly({
+        const realtimeOptions: BuildProductionRealtimeAssemblyOptions = {
           settings,
           telemetry,
           onDiagnostic,
@@ -85,7 +88,8 @@ process.exitCode = await runDesktopEntryWithStopSources({
           frameSource,
           ...(codexResource === null ? {} : {codexResource}),
           ...callbacks,
-        })
+        }
+        return buildProductionRealtimeAssembly(realtimeOptions)
       },
     })
     return {

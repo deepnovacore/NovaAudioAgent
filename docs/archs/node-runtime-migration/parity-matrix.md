@@ -1,7 +1,8 @@
 # Nova Audio Agent Python to Node Parity Matrix
 
 Status: repository parity and Task 8B release-candidate implementation are active as of 2026-08-22.
-Packaged candidates default to Node; Python remains the source-development default/oracle.
+Packaged candidates and source development use Node; Python remains an oracle only for explicitly
+preserved fixture behavior. It is no longer the configuration oracle for extensible audio pipelines.
 Signed three-platform runs and external acceptance remain pending evidence.
 
 ## How to Use This Matrix
@@ -78,7 +79,7 @@ the foundation that work will build on.
 | Suggestion cooldown and re-arm | suggestion/proactive tests | Fixture parity | Same eligibility and selected suggestion |
 | Floor arbitration | floor and speak/act scenarios | Fixture parity | Same allow/preempt/defer decision |
 | Slots and model job completion | slot/runtime tests | Fixture parity | Stale jobs cannot mutate live state |
-| Configuration and secret hygiene | config/contract-failure tests | Zod and redaction tests | Supported env behavior matches |
+| Extensible audio-pipeline configuration and secret hygiene | Node config/assembly tests, desktop settings tests | Node validates the integrated Qwen default, the Volcengine ASR -> Qwen `qwen-flash` -> Volcengine TTS default, explicit Ark, selected-only credentials, and conditional write-only settings | Intentional divergence: Python is no longer the configuration oracle for this feature; Node configuration and desktop contracts are the audited source of truth |
 | Deterministic demos and scorecard fixtures | demo/scorecard tests | Node tests and fixtures | Equivalent scenario outcomes |
 
 Scorecard and demo caveats:

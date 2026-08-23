@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { gzipSync, gunzipSync } from 'node:zlib'
 import { isWellFormed, stripLikePython } from '../../python-text.js'
+import type {AsrClient, AsrSession, AsrTranscript} from '../cascaded/ports.js'
 import { MAX_REALTIME_PCM_BYTES } from '../protocol.js'
 import {
   MAX_VOLCENGINE_WIRE_FRAME_BYTES,
@@ -19,10 +20,7 @@ import {
 
 export const MAX_VOLCENGINE_JSON_BYTES = 1_024 * 1_024
 
-export interface AsrTranscript {
-  readonly text: string
-  readonly final: boolean
-}
+export type {AsrTranscript} from '../cascaded/ports.js'
 
 export class DoubaoAsrError extends Error {
   constructor(message: string) {
@@ -175,7 +173,7 @@ export interface DoubaoAsrClientOptions {
   readonly idFactory?: () => string
 }
 
-export class DoubaoAsrClient {
+export class DoubaoAsrClient implements AsrClient {
   readonly #options: Required<Omit<DoubaoAsrClientOptions, 'connector' | 'idFactory'>>
   readonly #connector: VolcBinaryConnector
   readonly #idFactory: () => string
@@ -264,7 +262,7 @@ export class DoubaoAsrClient {
   }
 }
 
-export class DoubaoAsrSession {
+export class DoubaoAsrSession implements AsrSession {
   readonly #socket: VolcBinarySocket
   readonly #protocol: DoubaoAsrProtocol
   readonly #chunkBytes: number

@@ -1,7 +1,7 @@
 import {ReadableStream} from 'node:stream/web'
 import type {Clock} from '../../clock.js'
 import {ConfigurationError, type VolcengineRealtimeConfig} from '../../config.js'
-import type {VolcEndpointingEvent, VolcEndpointingPort} from './adapter.js'
+import type {EndpointingEvent, EndpointingPort} from '../cascaded/ports.js'
 import {volcengineInputPcm} from './audio.js'
 import type {
   LiveKitAgentsPublicSurface, LiveKitAudioByteStream, LiveKitAudioFrame, LiveKitExecutor,
@@ -70,7 +70,7 @@ interface LiveEpoch {
 }
 interface ProgressWaiter {readonly position: number; readonly resolve: () => void; readonly reject: (error: Error) => void}
 
-export class LiveKitVolcEndpointing implements VolcEndpointingPort {
+export class LiveKitVolcEndpointing implements EndpointingPort {
   readonly #surface: LiveKitAgentsPublicSurface
   readonly #executor: LiveKitExecutor
   readonly #config: LiveKitVolcEndpointingConfig
@@ -85,7 +85,7 @@ export class LiveKitVolcEndpointing implements VolcEndpointingPort {
   #rotationReplay = new Uint8Array()
   #records: FrameRecord[] = []
   #utterance: UtteranceState | null = null
-  #events: VolcEndpointingEvent[] = []
+  #events: EndpointingEvent[] = []
   #epoch: LiveEpoch | null = null
   #tail: Promise<void> = Promise.resolve()
   #closePromise: Promise<void> | null = null
@@ -104,7 +104,7 @@ export class LiveKitVolcEndpointing implements VolcEndpointingPort {
       + samplesForMilliseconds(options.config.vadPreRollMs) + FRAME_SAMPLES
   }
 
-  feed(pcm: Uint8Array, signal: AbortSignal): Promise<readonly VolcEndpointingEvent[]> {
+  feed(pcm: Uint8Array, signal: AbortSignal): Promise<readonly EndpointingEvent[]> {
     if (this.#closed) return Promise.reject(new Error('LiveKit endpointing is closed'))
     let owned: Uint8Array
     try { owned = volcengineInputPcm(pcm).pcm } catch (error) {
@@ -615,7 +615,7 @@ function audioFrameBytes(frame: LiveKitAudioFrame): Uint8Array {
   frame.data.forEach((sample, index) => view.setInt16(index * BYTES_PER_SAMPLE, sample, true))
   return pcm
 }
-function copyEndpointEvent(event: VolcEndpointingEvent): VolcEndpointingEvent {
+function copyEndpointEvent(event: EndpointingEvent): EndpointingEvent {
   return event.kind === 'speech_end' ? {...event} : {...event, pcm: event.pcm.slice()}
 }
 function samplesForMilliseconds(milliseconds: number): number {
