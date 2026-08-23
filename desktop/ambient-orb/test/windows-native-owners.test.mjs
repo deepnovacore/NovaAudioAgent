@@ -107,6 +107,8 @@ test('Windows native builders select audited sources and MSVC hardening', async 
   assert.match(project, /\/DELAYLOAD:NODE\.EXE/u)
   assert.match(project, /Delayimp\.lib/u)
   assert.match(compiler, /lib\.exe/u)
+  assert.match(compiler, /\[\s*'\/d', '\/c', command,\s*\]/u)
+  assert.doesNotMatch(compiler, /\['\/d', '\/s', '\/c', command\]/u)
   assert.match(probe, /codex_sandbox_probe_windows\.c/u)
   assert.match(guardian, /windows_job_guardian\.c/u)
 })

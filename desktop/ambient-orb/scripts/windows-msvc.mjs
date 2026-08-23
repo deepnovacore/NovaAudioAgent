@@ -54,7 +54,7 @@ async function visualStudioEnvironment() {
   assert.equal(await existing(vcvars), true, 'windows_msvc_unavailable')
   const command = `call "${vcvars}" >nul && set`
   const configured = spawnSync(inherited.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe', [
-    '/d', '/s', '/c', command,
+    '/d', '/c', command,
   ], {encoding: 'utf8', env: inherited, windowsHide: true})
   assert.equal(configured.status, 0, 'windows_msvc_unavailable')
   const environment = parseEnvironment(configured.stdout)
