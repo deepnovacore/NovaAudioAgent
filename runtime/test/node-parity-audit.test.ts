@@ -18,10 +18,41 @@ interface NodeParityPathHelpers {
   readonly isAuditedSource: (value: string) => boolean
 }
 
-const nodeParityPathHelpers = await import(
+function isCanonicalAuditPath(value: unknown): value is NodeParityPathHelpers['canonicalAuditPath'] {
+  return typeof value === 'function'
+}
+
+function isAuditedSourceHelper(value: unknown): value is NodeParityPathHelpers['isAuditedSource'] {
+  return typeof value === 'function'
+}
+
+function nodeParityPathHelpersFrom(value: unknown): NodeParityPathHelpers {
+  if (typeof value !== 'object' || value === null) {
+    throw new TypeError('invalid node parity path helper exports')
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  const canonicalAuditPath: unknown = descriptors.canonicalAuditPath?.value
+  const isAuditedSource: unknown = descriptors.isAuditedSource?.value
+  if (!isCanonicalAuditPath(canonicalAuditPath) || !isAuditedSourceHelper(isAuditedSource)) {
+    throw new TypeError('invalid node parity path helper exports')
+  }
+  return {canonicalAuditPath, isAuditedSource}
+}
+
+const nodeParityPathHelpers = nodeParityPathHelpersFrom(await import(
   resolve(repositoryRoot, 'runtime/scripts/node-parity-paths.mjs'),
-) as unknown as NodeParityPathHelpers
+))
 const {canonicalAuditPath, isAuditedSource} = nodeParityPathHelpers
+
+test('parity path helper boundary rejects non-callable source exports', () => {
+  assert.throws(
+    () => nodeParityPathHelpersFrom({
+      canonicalAuditPath: 'not a function',
+      isAuditedSource: () => true,
+    }),
+    /invalid node parity path helper exports/u,
+  )
+})
 
 test('platform-independent source inventory', () => {
   assert.equal(canonicalAuditPath('runtime\\src\\config.ts'), 'runtime/src/config.ts')
