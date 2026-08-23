@@ -259,7 +259,8 @@ over `.env`. `DASHSCOPE_API_KEY` is required only for integrated Qwen and cascad
 integrated-Qwen source startup, `NOVA_AUDIO_AGENT_MODEL_API_KEY` can stand in for it only when
 `NOVA_AUDIO_AGENT_MODEL_BASE_URL` is exactly
 `https://dashscope.aliyuncs.com/compatible-mode/v1`; another base URL does not make the generic
-key a Qwen realtime credential. Cascaded Ark requires `ARK_API_KEY` for its LLM plus
+key a Qwen realtime credential. When both credentials are set, `DASHSCOPE_API_KEY` takes
+precedence. Cascaded Ark requires `ARK_API_KEY` for its LLM plus
 `DOUBAO_BIGMODEL_API_KEY` for Volcengine TTS and ASR
 fallback; `DOUBAO_ASR_API_KEY` is an optional ASR override. On macOS it also builds the native
 VoiceProcessingIO helper for system-level echo cancellation; Windows and Linux use Chromium's echo

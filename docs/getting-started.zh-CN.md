@@ -36,7 +36,8 @@ npm run start:client
 对于集成 Qwen 的源码启动，通常使用 `DASHSCOPE_API_KEY` 作为 realtime 凭据。只有当
 `NOVA_AUDIO_AGENT_MODEL_BASE_URL` **完全等于**
 `https://dashscope.aliyuncs.com/compatible-mode/v1` 时，才可以改用
-`NOVA_AUDIO_AGENT_MODEL_API_KEY`；不同地址不会让通用密钥成为 Qwen realtime 凭据。
+`NOVA_AUDIO_AGENT_MODEL_API_KEY`；不同地址不会让通用密钥成为 Qwen realtime 凭据。两种凭据同时设置时，
+`DASHSCOPE_API_KEY` 优先。
 
 ## 未签名 Windows 与 Ubuntu 开发候选包
 

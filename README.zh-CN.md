@@ -227,7 +227,8 @@ Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或启动 sh
 变量优先于 `.env`。`DASHSCOPE_API_KEY` 只在集成 Qwen 和级联 Qwen 时必需。对于集成 Qwen 的源码
 启动，只有当 `NOVA_AUDIO_AGENT_MODEL_BASE_URL` **完全等于**
 `https://dashscope.aliyuncs.com/compatible-mode/v1` 时，`NOVA_AUDIO_AGENT_MODEL_API_KEY` 才可替代
-它；其他地址不会让通用密钥成为 Qwen realtime 凭据。级联 Ark 的 LLM 需要 `ARK_API_KEY`，并为火山
+它；其他地址不会让通用密钥成为 Qwen realtime 凭据。同时设置两种凭据时，`DASHSCOPE_API_KEY` 优先。
+级联 Ark 的 LLM 需要 `ARK_API_KEY`，并为火山
 TTS 与 ASR 回退需要 `DOUBAO_BIGMODEL_API_KEY`；
 `DOUBAO_ASR_API_KEY` 是可选 ASR 覆盖。macOS 上还会构建原生 VoiceProcessingIO helper 以获得系统级
 回声消除；Windows 与 Linux 使用 Chromium 自带的回声消除。Linux 会话运行在 X11 上（Wayland 会话

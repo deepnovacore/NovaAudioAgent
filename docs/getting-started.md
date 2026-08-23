@@ -39,7 +39,8 @@ For integrated-Qwen source startup, `DASHSCOPE_API_KEY` is the normal realtime c
 `NOVA_AUDIO_AGENT_MODEL_API_KEY` can be used instead only when
 `NOVA_AUDIO_AGENT_MODEL_BASE_URL` is exactly
 `https://dashscope.aliyuncs.com/compatible-mode/v1`; a different base URL does not make the
-generic key a Qwen realtime credential.
+generic key a Qwen realtime credential. When both credentials are set, `DASHSCOPE_API_KEY` takes
+precedence.
 
 ## Unsigned Windows and Ubuntu development candidates
 
