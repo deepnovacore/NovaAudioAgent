@@ -202,7 +202,9 @@ test('task completion rejects an empty string but persists an explicit null summ
     path,
     id_factory: (() => { let value = 0; return () => `summary-observation-${++value}` })(),
   })
+  const store = new WorkspaceGraphStoreClient(path)
   t.after(async () => {
+    await store.close()
     await service.close()
     await rm(directory, {recursive: true, force: true})
   })
@@ -235,8 +237,6 @@ test('task completion rejects an empty string but persists an explicit null summ
   })
 
   await service.close()
-  const store = new WorkspaceGraphStoreClient(path)
-  t.after(() => store.close())
   await store.open()
   const completions = (await store.listObservations()).filter(observation => (
     observation.observation_type === 'task_completed'
@@ -253,7 +253,9 @@ test('task completion keeps redacted summaries inside the durable label boundary
     denied_roots: ['/d'],
     id_factory: (() => { let value = 0; return () => `redacted-summary-${++value}` })(),
   })
+  const store = new WorkspaceGraphStoreClient(path)
   t.after(async () => {
+    await store.close()
     await service.close()
     await rm(directory, {recursive: true, force: true})
   })
@@ -281,8 +283,6 @@ test('task completion keeps redacted summaries inside the durable label boundary
   }
 
   await service.close()
-  const store = new WorkspaceGraphStoreClient(path)
-  t.after(() => store.close())
   await store.open()
   const completions = (await store.listObservations()).filter(observation => (
     observation.observation_type === 'task_completed'
@@ -298,7 +298,9 @@ test('service schedules periodic compaction after 64 observation writes', async 
   const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-periodic-compaction-'))
   const path = join(directory, 'graph.sqlite')
   const service = new WorkspaceGraphService({path})
+  const store = new WorkspaceGraphStoreClient(path)
   t.after(async () => {
+    await store.close()
     await service.close()
     await rm(directory, {recursive: true, force: true})
   })
@@ -318,8 +320,6 @@ test('service schedules periodic compaction after 64 observation writes', async 
   }
   await service.close()
 
-  const store = new WorkspaceGraphStoreClient(path)
-  t.after(() => store.close())
   await store.open()
   const diagnostics = await store.diagnostics()
   assert.equal(diagnostics.observations, 64)
@@ -371,7 +371,11 @@ test('periodic compaction failure preserves the committed write and retries afte
 test('service commits confirmed workspace lifecycle and reconstructs it after restart', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-'))
   const path = join(directory, 'graph.sqlite')
-  t.after(() => rm(directory, {recursive: true, force: true}))
+  const reopened = new WorkspaceGraphService({path})
+  t.after(async () => {
+    await reopened.close()
+    await rm(directory, {recursive: true, force: true})
+  })
   let sequence = 0
   const first = new WorkspaceGraphService({
     path,
@@ -394,9 +398,7 @@ test('service commits confirmed workspace lifecycle and reconstructs it after re
   assert.match(context?.header ?? '', /workspace_context/)
   await first.close()
 
-  const reopened = new WorkspaceGraphService({path})
   await reopened.open()
-  t.after(() => reopened.close())
   assert.match(reopened.contextForTurn({
     session_epoch: 2,
     workspace_instance_id: opened.instance.instance_id,
@@ -695,7 +697,9 @@ test('episode admission gates every field before lookup and persists no rejected
   const directory = await mkdtemp(join(tmpdir(), 'nova-graph-service-admission-'))
   const path = join(directory, 'graph.sqlite')
   const service = new WorkspaceGraphService({path})
+  const client = new WorkspaceGraphStoreClient(path)
   t.after(async () => {
+    await client.close()
     await service.close()
     await rm(directory, {recursive: true, force: true})
   })
@@ -731,9 +735,7 @@ test('episode admission gates every field before lookup and persists no rejected
   })
   await service.close()
 
-  const client = new WorkspaceGraphStoreClient(path)
   await client.open()
-  t.after(() => client.close())
   const episode = (await client.listObservations()).find(item => item.observation_type === 'task_completed')
   assert.equal(episode?.related_logical_workspace_id, null)
 })
