@@ -275,18 +275,21 @@ class FailTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthorit
   }
 }
 
+type ManagedMatchAuthorityForTest = Readonly<{
+  rootDescriptor: number
+  name: string
+  childDescriptor: number
+  generation: symbol
+}>
+
 class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthority {
   failTempCreate = false
-  readonly #managedIdentities = new Map<string, symbol>()
+  readonly #managedAuthorities = new Map<string, ManagedMatchAuthorityForTest>()
+  readonly #managedAuthorityTokens = new Map<number, ManagedMatchAuthorityForTest>()
+  #nextManagedDescriptorToken = -1
 
-  managedIdentityForTest(name: string): symbol | null {
-    return this.#managedIdentities.get(name) ?? null
-  }
-
-  matchesManagedIdentity(name: string, identity: symbol): ProjectRootFileResult {
-    return this.#managedIdentities.get(name) === identity
-      ? {status: 'ok'}
-      : {status: 'mismatch'}
+  managedAuthorityForTest(name: string): ManagedMatchAuthorityForTest | null {
+    return this.#managedAuthorities.get(name) ?? null
   }
 
   override createFileAt(
@@ -301,9 +304,40 @@ class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthor
   override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
     const result = super.mkdirAt(rootDescriptor, name)
     if (result.status === 'ok' && name.startsWith('managed-')) {
-      this.#managedIdentities.set(name, Symbol(name))
+      const authority = Object.freeze({
+        rootDescriptor,
+        name,
+        childDescriptor: this.#nextManagedDescriptorToken,
+        generation: Symbol(name),
+      })
+      this.#managedAuthorities.set(name, authority)
+      this.#managedAuthorityTokens.set(authority.childDescriptor, authority)
+      this.#nextManagedDescriptorToken -= 1
     }
     return result
+  }
+
+  override matchesAt(
+    rootDescriptor: number,
+    name: string,
+    childDescriptor: number,
+  ): ProjectRootFileResult {
+    const supplied = this.#managedAuthorityTokens.get(childDescriptor)
+    if (supplied === undefined) {
+      return childDescriptor < 0
+        ? {status: 'failed'}
+        : super.matchesAt(rootDescriptor, name, childDescriptor)
+    }
+    const current = this.#managedAuthorities.get(name)
+    if (current === undefined) return {status: 'failed'}
+    if (
+      supplied.rootDescriptor !== rootDescriptor
+      || supplied.name !== name
+      || current.rootDescriptor !== rootDescriptor
+    ) return {status: 'mismatch'}
+    return current.generation === supplied.generation
+      ? {status: 'ok'}
+      : {status: 'mismatch'}
   }
 
   override unlinkAt(
@@ -314,7 +348,7 @@ class ToggleTempCreateRootFileAuthority extends DescriptorRelativeRootFileAuthor
   ): ProjectRootFileResult {
     const result = super.unlinkAt(rootDescriptor, name, expected, kind)
     if (name.startsWith('managed-') && kind === 'directory' && result.status === 'ok') {
-      this.#managedIdentities.delete(name)
+      this.#managedAuthorities.delete(name)
     }
     return result
   }
@@ -2063,8 +2097,9 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
   try {
     const managed = await store.createManaged('managed')
     const managedName = basename(managed.canonical_path)
-    const originalIdentity = rootFiles.managedIdentityForTest(managedName)
-    if (originalIdentity === null) assert.fail('managed child identity was not captured')
+    const originalAuthority = rootFiles.managedAuthorityForTest(managedName)
+    if (originalAuthority === null) assert.fail('managed child authority was not captured')
+    assert.equal(typeof originalAuthority.generation, 'symbol')
     rootFiles.failTempCreate = true
     await assert.rejects(
       store.rollbackManagedCreate(managed.workspace_id),
@@ -2072,14 +2107,24 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
     )
     const after = lstatSync(managed.canonical_path, {bigint: true})
     assert.equal((after.mode & 0o7777n), 0o700n)
-    const currentIdentity = rootFiles.managedIdentityForTest(managedName)
-    if (currentIdentity === null) assert.fail('restored managed child identity was not captured')
+    const currentAuthority = rootFiles.managedAuthorityForTest(managedName)
+    if (currentAuthority === null) assert.fail('restored managed child authority was not captured')
+    assert.equal(typeof currentAuthority.generation, 'symbol')
+    assert.notEqual(currentAuthority.generation, originalAuthority.generation)
     assert.deepEqual(
-      rootFiles.matchesManagedIdentity(managedName, originalIdentity),
+      rootFiles.matchesAt(
+        originalAuthority.rootDescriptor,
+        managedName,
+        originalAuthority.childDescriptor,
+      ),
       {status: 'mismatch'},
     )
     assert.deepEqual(
-      rootFiles.matchesManagedIdentity(managedName, currentIdentity),
+      rootFiles.matchesAt(
+        currentAuthority.rootDescriptor,
+        managedName,
+        currentAuthority.childDescriptor,
+      ),
       {status: 'ok'},
     )
     assert.equal(
