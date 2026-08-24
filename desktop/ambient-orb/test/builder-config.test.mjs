@@ -423,7 +423,7 @@ test('automatic CI is temporarily Windows-only while cross-platform runners are 
   assert.doesNotMatch(text, /(?:ubuntu|macos)-/u)
 })
 
-test('unsigned Windows workflow closes the native package through attested installed smoke', async () => {
+test('unsigned Windows workflow closes the native package through digest-bound installed smoke', async () => {
   const text = await readFile(UNSIGNED_WORKFLOW_PATH, 'utf8')
   const workflow = parseYaml(text)
 
@@ -433,11 +433,7 @@ test('unsigned Windows workflow closes the native package through attested insta
   assert.deepEqual(workflow.permissions, {contents: 'read'})
 
   const packageJob = workflow.jobs.package
-  assert.deepEqual(packageJob.permissions, {
-    contents: 'read',
-    'id-token': 'write',
-    attestations: 'write',
-  })
+  assert.deepEqual(packageJob.permissions, {contents: 'read'})
   assert.deepEqual(packageJob.strategy.matrix.include, [
     {
       os: 'windows-2022',
@@ -463,12 +459,10 @@ test('unsigned Windows workflow closes the native package through attested insta
   assert.equal(runtimeTests?.if, "runner.os != 'Windows'")
   const desktopTests = packageSteps.find(step => step.run === 'npm run test:desktop')
   assert.equal(desktopTests?.if, "runner.os != 'Windows'")
-  assert.ok(packageSteps.some(step => step.uses === 'actions/attest-build-provenance@v3'))
+  assert.equal(packageSteps.some(step => step.uses === 'actions/attest-build-provenance@v3'), false)
   assert.ok(packageSteps.some(step => step.uses === 'actions/upload-artifact@v4'))
   assert.doesNotMatch(text, /continue-on-error|\|\| true/u)
 
-  const attest = packageSteps.find(step => step.uses === 'actions/attest-build-provenance@v3')
-  assert.equal(attest.with['subject-path'], 'desktop/ambient-orb/build/release-artifacts/*')
   const upload = packageSteps.find(step => step.uses === 'actions/upload-artifact@v4')
   assert.deepEqual(upload.with.path.split('\n'), [
     'desktop/ambient-orb/build/release-artifacts/**',
@@ -479,7 +473,7 @@ test('unsigned Windows workflow closes the native package through attested insta
 
   const smokeJob = workflow.jobs['installed-smoke']
   assert.equal(smokeJob.needs, 'package')
-  assert.deepEqual(smokeJob.permissions, {contents: 'read', attestations: 'read'})
+  assert.deepEqual(smokeJob.permissions, {contents: 'read'})
   assert.deepEqual(smokeJob.strategy.matrix.include, [
     {
       os: 'windows-2022',
@@ -493,13 +487,13 @@ test('unsigned Windows workflow closes the native package through attested insta
   assert.equal(smokeJob.steps.some(step => step.uses === 'actions/checkout@v4'), false)
   assert.ok(smokeJob.steps.some(step => step.uses === 'actions/download-artifact@v4'))
   const smokeStep = smokeJob.steps.find(step => step.run?.includes('run-unsigned-installed-smoke.mjs'))
-  assert.deepEqual(smokeStep.env, {GH_TOKEN: '${{ github.token }}'})
+  assert.equal(smokeStep.env, undefined)
   for (const argument of [
-    '--commit ${{ github.sha }}',
     '--sha256-file candidate/release-digests/${{ matrix.filename }}.sha256',
     '--camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4',
-    '--signer-workflow deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
   ]) assert.ok(smokeStep.run.includes(argument), argument)
+  assert.doesNotMatch(smokeStep.run, /--commit|--signer-workflow/u)
+  assert.doesNotMatch(text, /attestations:|id-token:|attest-build-provenance/u)
 })
 
 function parseBooleanPlist(text) {

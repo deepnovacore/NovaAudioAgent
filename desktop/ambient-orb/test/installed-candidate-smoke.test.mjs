@@ -236,24 +236,20 @@ test('packaged camera evidence is pass or the exact non-green capability sentine
   }
 })
 
-test('installed candidate signer workflow authority is closed to the two release workflows', async () => {
+test('attested candidate signer authority is closed to the formal release workflow', async () => {
   const {canonicalSignerWorkflow} = await import('../scripts/installed-candidate-smoke.mjs')
   assert.equal(typeof canonicalSignerWorkflow, 'function')
-  assert.equal(
-    canonicalSignerWorkflow('deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml'),
-    'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
-  )
   assert.equal(
     canonicalSignerWorkflow('deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml'),
     'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml',
   )
-  assert.throws(
-    () => canonicalSignerWorkflow('owner/repo/.github/workflows/arbitrary.yml'),
-    /installed_candidate_attestation_failed/u,
-  )
+  for (const workflow of [
+    'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
+    'owner/repo/.github/workflows/arbitrary.yml',
+  ]) assert.throws(() => canonicalSignerWorkflow(workflow), /installed_candidate_attestation_failed/u)
 })
 
-test('installed candidate CLI defaults release authority and accepts only explicit unsigned authority', async () => {
+test('installed candidate CLI defaults to and permits only formal release authority', async () => {
   const {cliOptions} = await import('../scripts/installed-candidate-smoke.mjs')
   assert.equal(typeof cliOptions, 'function')
   const required = [
@@ -266,17 +262,37 @@ test('installed candidate CLI defaults release authority and accepts only explic
     cliOptions(required).get('--signer-workflow'),
     'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml',
   )
-  assert.equal(
-    cliOptions([
-      ...required,
-      '--signer-workflow', 'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
-    ]).get('--signer-workflow'),
+  for (const workflow of [
     'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
-  )
-  assert.throws(
-    () => cliOptions([...required, '--signer-workflow', 'owner/repo/.github/workflows/arbitrary.yml']),
-    /installed_candidate_attestation_failed/u,
-  )
+    'owner/repo/.github/workflows/arbitrary.yml',
+  ]) {
+    assert.throws(
+      () => cliOptions([...required, '--signer-workflow', workflow]),
+      /installed_candidate_attestation_failed/u,
+    )
+  }
+})
+
+test('same-workflow unsigned artifact CLI is digest-bound and refuses attestation claims', async () => {
+  const {workflowArtifactCliOptions} = await import('../scripts/installed-candidate-smoke.mjs')
+  assert.equal(typeof workflowArtifactCliOptions, 'function')
+  const required = [
+    '--target', 'win32-x64:nsis',
+    '--artifact', 'C:\\candidate\\nova-win32-x64.exe',
+    '--sha256', 'a'.repeat(64),
+  ]
+  const values = workflowArtifactCliOptions(required)
+  assert.equal(values.get('--target'), 'win32-x64:nsis')
+  assert.equal(values.get('--sha256'), 'a'.repeat(64))
+  for (const forbidden of [
+    ['--commit', 'b'.repeat(40)],
+    ['--signer-workflow', 'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml'],
+  ]) {
+    assert.throws(
+      () => workflowArtifactCliOptions([...required, ...forbidden]),
+      /installed_candidate_usage_failed/u,
+    )
+  }
 })
 
 test('unsigned installed smoke wrapper accepts only complete in-process camera evidence', async () => {

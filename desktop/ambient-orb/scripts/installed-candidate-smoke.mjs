@@ -15,7 +15,6 @@ export const CAMERA_CAPABILITY_PENDING = 'camera-file-integration: chromium_code
 const DEFAULT_SIGNER_WORKFLOW = 'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml'
 const SIGNER_WORKFLOWS = new Set([
   DEFAULT_SIGNER_WORKFLOW,
-  'deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml',
 ])
 
 const TOKEN_PATTERN = /^[0-9a-f]{32}$/u
@@ -218,10 +217,12 @@ async function runInstalledCandidate({
   commit,
   signerWorkflow,
   cameraFile,
+  trustMode,
 }) {
   requireHostTarget(target)
   const candidate = await exactCandidate(artifact, expectedSha256)
-  requireCandidateAttestation(candidate, commit, signerWorkflow)
+  if (trustMode === 'attested') requireCandidateAttestation(candidate, commit, signerWorkflow)
+  else if (trustMode !== 'workflow-artifact') throw new Error('installed_candidate_attestation_failed')
   const scratch = await realpath(await mkdtemp(join(tmpdir(), 'nova-installed-candidate-')))
   const plan = candidateInstallPlan({target, artifact: candidate, scratch})
   const poisonPath = resolve(scratch, 'poison-path')
@@ -719,39 +720,65 @@ function requireHostTarget(target) {
   if (!target.startsWith(host)) throw new Error('installed_candidate_target_failed')
 }
 
-export function cliOptions(argv) {
+function parseCliOptions(argv, {attested}) {
   const values = new Map()
+  const allowed = [
+    '--target', '--artifact', '--sha256', '--sha256-file', '--camera-file',
+    ...(attested ? ['--commit', '--signer-workflow'] : []),
+  ]
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index]
     const value = argv[index + 1]
-    if (![
-      '--target', '--artifact', '--sha256', '--sha256-file', '--commit', '--camera-file',
-      '--signer-workflow',
-    ].includes(name)
+    if (!allowed.includes(name)
       || value === undefined || values.has(name)) throw new Error('installed_candidate_usage_failed')
     values.set(name, value)
   }
   if (values.has('--sha256') === values.has('--sha256-file')) {
     throw new Error('installed_candidate_usage_failed')
   }
-  for (const required of ['--target', '--artifact', '--commit']) {
+  for (const required of ['--target', '--artifact', ...(attested ? ['--commit'] : [])]) {
     if (!values.has(required)) throw new Error('installed_candidate_usage_failed')
   }
-  values.set('--signer-workflow', canonicalSignerWorkflow(values.get('--signer-workflow')))
+  if (attested) {
+    values.set('--signer-workflow', canonicalSignerWorkflow(values.get('--signer-workflow')))
+  }
   return values
+}
+
+export function cliOptions(argv) {
+  return parseCliOptions(argv, {attested: true})
+}
+
+export function workflowArtifactCliOptions(argv) {
+  return parseCliOptions(argv, {attested: false})
+}
+
+async function expectedSha256(values) {
+  return values.has('--sha256-file')
+    ? (await readFile(resolve(values.get('--sha256-file')), 'utf8')).replace(/\n$/u, '')
+    : values.get('--sha256')
 }
 
 export async function runInstalledCandidateCli(argv) {
   const values = cliOptions(argv)
-  const expectedSha256 = values.has('--sha256-file')
-    ? (await readFile(resolve(values.get('--sha256-file')), 'utf8')).replace(/\n$/u, '')
-    : values.get('--sha256')
   return runInstalledCandidate({
     target: values.get('--target'),
     artifact: resolve(values.get('--artifact')),
-    expectedSha256,
+    expectedSha256: await expectedSha256(values),
     commit: values.get('--commit'),
     signerWorkflow: values.get('--signer-workflow'),
+    trustMode: 'attested',
+    ...(values.has('--camera-file') ? {cameraFile: resolve(values.get('--camera-file'))} : {}),
+  })
+}
+
+export async function runWorkflowArtifactCandidateCli(argv) {
+  const values = workflowArtifactCliOptions(argv)
+  return runInstalledCandidate({
+    target: values.get('--target'),
+    artifact: resolve(values.get('--artifact')),
+    expectedSha256: await expectedSha256(values),
+    trustMode: 'workflow-artifact',
     ...(values.has('--camera-file') ? {cameraFile: resolve(values.get('--camera-file'))} : {}),
   })
 }

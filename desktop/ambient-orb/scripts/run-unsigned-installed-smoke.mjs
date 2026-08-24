@@ -1,7 +1,7 @@
 import {resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
-import {runInstalledCandidateCli} from './installed-candidate-smoke.mjs'
+import {runWorkflowArtifactCandidateCli} from './installed-candidate-smoke.mjs'
 
 export function classifyUnsignedCamera(camera) {
   if (camera === null || (camera?.status === 'passed' && Object.keys(camera).length === 1)) {
@@ -15,7 +15,7 @@ export function classifyUnsignedCamera(camera) {
 }
 
 async function runUnsignedInstalledSmoke(argv) {
-  const camera = await runInstalledCandidateCli(argv)
+  const camera = await runWorkflowArtifactCandidateCli(argv)
   return classifyUnsignedCamera(camera)
 }
 

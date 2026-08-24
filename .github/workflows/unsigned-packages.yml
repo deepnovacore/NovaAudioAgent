@@ -13,8 +13,6 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -59,10 +57,9 @@ jobs:
         run: npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb
       - name: Add portable unsigned result classifier to checkout-free kit
         run: node -e "require('node:fs').copyFileSync('desktop/ambient-orb/scripts/run-unsigned-installed-smoke.mjs','desktop/ambient-orb/build/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs')"
-      - name: Attest exact unsigned candidate files
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: desktop/ambient-orb/build/release-artifacts/*
+      # This is a same-workflow debugging artifact, not a release candidate.
+      # The private repository's current plan does not provide attestations;
+      # the downstream job still rehashes the closed bytes before execution.
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
@@ -77,7 +74,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      attestations: read
     strategy:
       fail-fast: false
       matrix:
@@ -96,14 +92,10 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: candidate
-      - name: Rehash, attest, install, authenticate, exercise, quit, and remove candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Rehash, install, authenticate, exercise, quit, and remove candidate
         run: >-
           ${{ matrix.command }} candidate/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs
           --target ${{ matrix.target }}
           --artifact candidate/release-artifacts/${{ matrix.filename }}
           --sha256-file candidate/release-digests/${{ matrix.filename }}.sha256
-          --commit ${{ github.sha }}
           --camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4
-          --signer-workflow deepnovacore/NovaAudioAgent/.github/workflows/unsigned-packages.yml
