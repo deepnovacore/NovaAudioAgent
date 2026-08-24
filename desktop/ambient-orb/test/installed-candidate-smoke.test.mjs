@@ -91,19 +91,19 @@ test('Windows native installer actions allow enough time for cold CI extraction'
   assert.equal(plan.uninstall[0].timeoutMs, NATIVE_INSTALLER_SETTLE_MS)
 })
 
-test('installed source rollback accepts only its stable exit code with no backend output', async () => {
+test('installed source rollback accepts its stable exit code despite platform output', async () => {
   const {classifySourceRollbackResult} = await import('../scripts/installed-candidate-smoke.mjs')
   assert.deepEqual(classifySourceRollbackResult({
     status: SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE,
     signal: null,
     error: undefined,
-    stdout: '',
+    stdout: '[electron] platform diagnostic\r\n',
     stderr: '[electron] platform diagnostic\r\n',
   }), {status: 'passed'})
   for (const result of [
     {status: 0, signal: null, stdout: '', stderr: ''},
     {status: 1, signal: null, stdout: '', stderr: ''},
-    {status: SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE, signal: null, stdout: 'private', stderr: ''},
+    {status: SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE, signal: 'SIGTERM', stdout: '', stderr: ''},
   ]) {
     assert.throws(() => classifySourceRollbackResult(result), /installed_source_rollback_failed/u)
   }

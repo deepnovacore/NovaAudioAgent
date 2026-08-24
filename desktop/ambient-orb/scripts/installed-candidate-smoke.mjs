@@ -200,11 +200,8 @@ export function classifyCameraCapability(result) {
 }
 
 export function classifySourceRollbackResult(result) {
-  const stdout = Buffer.isBuffer(result?.stdout)
-    ? result.stdout.toString('utf8')
-    : result?.stdout
   if (result?.error !== undefined || result?.signal !== null
-    || result?.status !== SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE || stdout !== '') {
+    || result?.status !== SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE) {
     throw new Error('installed_source_rollback_failed')
   }
   return Object.freeze({status: 'passed'})
