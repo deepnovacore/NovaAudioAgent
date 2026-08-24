@@ -42,6 +42,7 @@ import type {CodexHostCatalog} from './codex-host-config.js'
 import type {Settings} from './config.js'
 import {
   loadProjectNativeHostFromResources,
+  protectDefaultProjectDirectories,
   type ProjectNativeHost,
 } from './project-native-resource.js'
 import {stripLikePython} from './python-text.js'
@@ -180,7 +181,7 @@ export function createProductionCodexHost(
     transportFactory: unavailableCodexBackendTransportFactory,
     projectHost: null,
   })
-  const projectHost = settings.codex_projects_enabled
+  let projectHost = settings.codex_projects_enabled
     ? loadProjectNativeHostFromResources({
         resourcesPath,
         platform,
@@ -188,6 +189,12 @@ export function createProductionCodexHost(
         electronAbi: options.electronAbi ?? process.versions.modules,
       })
     : null
+  if (projectHost !== null && !protectDefaultProjectDirectories(projectHost, {
+    homeDirectory,
+    stateRoot: canonicalDirectory(stripLikePython(settings.codex_project_state_root)),
+    managedRoot: canonicalDirectory(stripLikePython(settings.codex_managed_root)),
+    workspace,
+  })) projectHost = null
   const temporaryDirectory = options.temporaryDirectory === undefined
     ? canonicalSystemTemporaryDirectoryForTest(tmpdir())
     : canonicalDirectory(options.temporaryDirectory)

@@ -217,6 +217,7 @@ test('resolved desktop settings override inherited Codex and model configuration
       NOVA_AUDIO_AGENT_CODEX_BIN: '/environment/codex',
       NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'false',
       NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: '/environment/managed',
+      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '/environment/state',
       NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://environment.example/v1',
     },
     resolvedConfig: {
@@ -225,6 +226,7 @@ test('resolved desktop settings override inherited Codex and model configuration
       codexProjectsEnabled: true,
       managedRoot: '/settings/managed',
       modelBaseUrl: 'https://settings.example/v1',
+      paths: {stateRoot: '/settings/state'},
     },
   })
 
@@ -232,6 +234,7 @@ test('resolved desktop settings override inherited Codex and model configuration
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_BIN, '/settings/codex')
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED, 'true')
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT, '/settings/managed')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT, '/settings/state')
   assert.equal(spec.env.NOVA_AUDIO_AGENT_MODEL_BASE_URL, 'https://settings.example/v1')
 })
 
@@ -250,6 +253,7 @@ test('resolved desktop configuration removes an invalid inherited Codex binary',
       codexProjectsEnabled: false,
       managedRoot: '/managed',
       modelBaseUrl: '',
+      paths: {stateRoot: '/state'},
     },
   })
 

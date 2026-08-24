@@ -186,6 +186,7 @@ export function backendLaunchSpec({
   if (resolvedConfig && typeof resolvedConfig === 'object') {
     delete env.NOVA_AUDIO_AGENT_CODEX_BIN
     delete env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT
+    delete env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT
     delete env.NOVA_AUDIO_AGENT_MODEL_BASE_URL
     env.NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED = String(
       resolvedConfig.codexProjectsEnabled === true,
@@ -195,6 +196,9 @@ export function backendLaunchSpec({
     }
     if (typeof resolvedConfig.managedRoot === 'string' && resolvedConfig.managedRoot) {
       env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT = resolvedConfig.managedRoot
+    }
+    if (typeof resolvedConfig.paths?.stateRoot === 'string') {
+      env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT = resolvedConfig.paths.stateRoot
     }
     if (typeof resolvedConfig.modelBaseUrl === 'string' && resolvedConfig.modelBaseUrl) {
       env.NOVA_AUDIO_AGENT_MODEL_BASE_URL = resolvedConfig.modelBaseUrl

@@ -36,6 +36,7 @@ if (mode === 'hold') {
     const rootDescriptor = openDirectory(root)
     let lockChild = null
     try {
+      assert.deepEqual(addon.protectDirectory(root), {status: 'ok'})
       assert.deepEqual(addon.probe(rootDescriptor), {status: 'ok'})
       assert.deepEqual(addon.lookupAt(rootDescriptor, '../escape'), {status: 'failed'})
       assert.deepEqual(addon.createFileAt(rootDescriptor, '/absolute', true), {status: 'failed'})
@@ -47,9 +48,13 @@ if (mode === 'hold') {
       assert.deepEqual(addon.createFileAt(rootDescriptor, 'state.tmp', true), {status: 'exists'})
       assert.deepEqual(addon.lookupAt(rootDescriptor, 'missing'), {status: 'missing'})
 
-      const childDescriptor = openSync(join(root, 'state.tmp'), 'r+')
+      let childDescriptor = openSync(join(root, 'state.tmp'), 'r+')
       try {
         assert.deepEqual(addon.matchesAt(rootDescriptor, 'state.tmp', childDescriptor), {status: 'ok'})
+        if (process.platform === 'win32') {
+          closeSync(childDescriptor)
+          childDescriptor = null
+        }
         assert.deepEqual(addon.renameAt(rootDescriptor, 'state.tmp', 'state.json'), {status: 'ok'})
         assert.deepEqual(
           addon.unlinkAt(rootDescriptor, 'state.json', {device: 0n, inode: 0n}, 'file'),
@@ -60,7 +65,7 @@ if (mode === 'hold') {
           {status: 'ok'},
         )
       } finally {
-        closeSync(childDescriptor)
+        if (childDescriptor !== null) closeSync(childDescriptor)
       }
 
       const directory = addon.mkdirAt(rootDescriptor, 'workspace-01')

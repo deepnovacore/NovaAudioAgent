@@ -179,6 +179,32 @@ static napi_value nova_probe(napi_env env, napi_callback_info info) {
   return nova_status(env, "ok");
 }
 
+static napi_value nova_protect_directory(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  size_t length = 0;
+  if (!nova_args(env, info, 1, args) ||
+      napi_get_value_string_utf8(env, args[0], NULL, 0, &length) != napi_ok ||
+      length == 0 || length > 32767) return nova_status(env, "failed");
+  char* path = (char*)malloc(length + 1);
+  if (path == NULL) return nova_status(env, "failed");
+  if (napi_get_value_string_utf8(env, args[0], path, length + 1, &length) != napi_ok) {
+    free(path);
+    return nova_status(env, "failed");
+  }
+  int descriptor = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  free(path);
+  if (descriptor < 0) return nova_status(env, "failed");
+  struct stat before;
+  int valid = fstat(descriptor, &before) == 0 && S_ISDIR(before.st_mode) &&
+      before.st_uid == geteuid() && fchmod(descriptor, 0700) == 0;
+  struct stat after;
+  valid = valid && fstat(descriptor, &after) == 0 && S_ISDIR(after.st_mode) &&
+      after.st_dev == before.st_dev && after.st_ino == before.st_ino &&
+      after.st_uid == geteuid() && (after.st_mode & 0777) == 0700;
+  (void)close(descriptor);
+  return nova_status(env, valid ? "ok" : "failed");
+}
+
 static napi_value nova_matches_at(napi_env env, napi_callback_info info) {
   napi_value args[3];
   int root_descriptor;
@@ -325,6 +351,7 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "lookupAt", nova_lookup_at) ||
       !nova_export(env, exports, "createFileAt", nova_create_file_at) ||
       !nova_export(env, exports, "mkdirAt", nova_mkdir_at) ||
+      !nova_export(env, exports, "protectDirectory", nova_protect_directory) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
       !nova_export(env, exports, "unlinkAt", nova_unlink_at)) return NULL;
   return exports;

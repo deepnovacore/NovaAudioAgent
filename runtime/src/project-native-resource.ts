@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import {createRequire} from 'node:module'
 import {tmpdir} from 'node:os'
-import {isAbsolute, join, resolve} from 'node:path'
+import {isAbsolute, join, resolve, type PlatformPath} from 'node:path'
 
 import type {NativeFileLockAuthority} from './native-file-lock.js'
 import type {ProjectFileIdentity, ProjectRootFileAuthority} from './project-root-file.js'
@@ -23,12 +23,38 @@ const PROJECT_ADDON_ID = 'project_native_addon'
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
-  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'probe', 'renameAt', 'unlinkAt',
+  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'probe', 'protectDirectory',
+  'renameAt', 'unlinkAt',
 ])
 
 export interface ProjectNativeHost {
   readonly nativeLocks: NativeFileLockAuthority
   readonly rootFiles: ProjectRootFileAuthority
+  /** Protects only a host-selected canonical application directory. */
+  protectDirectory(path: string): boolean
+}
+
+export function protectDefaultProjectDirectories(
+  host: ProjectNativeHost,
+  paths: Readonly<{
+    homeDirectory: string
+    stateRoot: string | null
+    managedRoot: string | null
+    workspace: string | null
+    pathApi?: PlatformPath
+  }>,
+): boolean {
+  const joinPath = (...parts: string[]): string => paths.pathApi?.join(...parts) ?? join(...parts)
+  const productRoot = joinPath(paths.homeDirectory, '.nova-audio-agent')
+  const defaults = new Set([
+    joinPath(productRoot, 'state'),
+    joinPath(productRoot, 'workspaces'),
+    joinPath(productRoot, 'workspaces', 'default'),
+  ])
+  for (const path of [paths.stateRoot, paths.managedRoot, paths.workspace]) {
+    if (path !== null && defaults.has(path) && !host.protectDirectory(path)) return false
+  }
+  return true
 }
 
 interface ProjectNativeLoadOptions {
@@ -114,6 +140,10 @@ export function loadProjectNativeHostFromResources(
     return Object.freeze({
       nativeLocks,
       rootFiles,
+      protectDirectory: (path: string) => {
+        const result: unknown = addon.protectDirectory(path)
+        return isStatus(result, 'ok')
+      },
     })
   } catch {
     return null
@@ -285,7 +315,17 @@ function validBinary(bytes: Buffer, platform: string, arch: string): boolean {
     && (bytes.readUInt16LE(offset + 22) & 0x2000) !== 0
 }
 
-interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {}
+interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {
+  protectDirectory(path: string): unknown
+}
+
+function isStatus(value: unknown, status: string): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  const descriptor = descriptors.status
+  if (Object.keys(descriptors).length !== 1 || descriptor?.enumerable !== true) return false
+  return Object.hasOwn(descriptor, 'value') && descriptor.value === status
+}
 
 function requireAddon(value: unknown): ProjectAddon | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null

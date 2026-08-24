@@ -52,12 +52,16 @@
 #define NOVA_STATUS_OBJECT_NAME_COLLISION ((NTSTATUS)0xC0000035L)
 #define NOVA_STATUS_OBJECT_PATH_NOT_FOUND ((NTSTATUS)0xC000003AL)
 #define NOVA_STATUS_SUCCESS ((NTSTATUS)0x00000000L)
+#define NOVA_FILE_RENAME_INFORMATION ((FILE_INFORMATION_CLASS)10)
 
 typedef NTSTATUS(NTAPI *nova_nt_create_file_fn)(PHANDLE, ACCESS_MASK,
                                                 POBJECT_ATTRIBUTES,
                                                 PIO_STATUS_BLOCK,
                                                 PLARGE_INTEGER, ULONG, ULONG,
                                                 ULONG, ULONG, PVOID, ULONG);
+typedef intptr_t(__cdecl *nova_uv_get_osfhandle_fn)(int);
+typedef NTSTATUS(NTAPI *nova_nt_set_information_file_fn)(
+    HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
 
 typedef struct {
   HANDLE handle;
@@ -114,7 +118,18 @@ static int nova_handle_from_value(napi_env env, napi_value value,
   if (napi_get_value_int32(env, value, &descriptor) != napi_ok ||
       descriptor < 0)
     return 0;
-  intptr_t raw = _get_osfhandle(descriptor);
+  HMODULE executable = GetModuleHandleW(NULL);
+  if (executable == NULL)
+    return 0;
+#pragma warning(push)
+#pragma warning(disable : 4055)
+  nova_uv_get_osfhandle_fn get_os_handle =
+      (nova_uv_get_osfhandle_fn)(void *)GetProcAddress(executable,
+                                                     "uv_get_osfhandle");
+#pragma warning(pop)
+  if (get_os_handle == NULL)
+    return 0;
+  intptr_t raw = get_os_handle(descriptor);
   if (raw == -1)
     return 0;
   *output = (HANDLE)raw;
@@ -360,6 +375,19 @@ static nova_nt_create_file_fn nova_nt_create_file(void) {
   return result;
 }
 
+static nova_nt_set_information_file_fn nova_nt_set_information_file(void) {
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (ntdll == NULL)
+    return NULL;
+#pragma warning(push)
+#pragma warning(disable : 4055)
+  nova_nt_set_information_file_fn result =
+      (nova_nt_set_information_file_fn)(void *)GetProcAddress(
+          ntdll, "NtSetInformationFile");
+#pragma warning(pop)
+  return result;
+}
+
 static NTSTATUS nova_open_at(HANDLE root, const WCHAR *name, USHORT name_bytes,
                              ACCESS_MASK access, ULONG disposition,
                              ULONG options, PSECURITY_DESCRIPTOR security,
@@ -483,6 +511,49 @@ static napi_value nova_probe(napi_env env, napi_callback_info info) {
       !nova_validate_handle(root, 1, NULL))
     return nova_status(env, "failed");
   return nova_status(env, "ok");
+}
+
+static napi_value nova_protect_directory(napi_env env,
+                                         napi_callback_info info) {
+  napi_value args[1];
+  size_t length = 0;
+  if (!nova_args(env, info, 1, args) ||
+      napi_get_value_string_utf16(env, args[0], NULL, 0, &length) != napi_ok ||
+      length == 0 || length > 32767)
+    return nova_status(env, "failed");
+  WCHAR *path = (WCHAR *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                                   (length + 1) * sizeof(WCHAR));
+  if (path == NULL)
+    return nova_status(env, "failed");
+  if (napi_get_value_string_utf16(env, args[0], (char16_t *)path, length + 1,
+                                  &length) != napi_ok) {
+    HeapFree(GetProcessHeap(), 0, path);
+    return nova_status(env, "failed");
+  }
+  HANDLE handle = CreateFileW(
+      path, FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+      OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+      NULL);
+  HeapFree(GetProcessHeap(), 0, path);
+  if (handle == INVALID_HANDLE_VALUE)
+    return nova_status(env, "failed");
+  BY_HANDLE_FILE_INFORMATION before;
+  nova_private_security security;
+  ZeroMemory(&security, sizeof(security));
+  int valid = nova_handle_info(handle, &before) &&
+              (before.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+              nova_private_security_create(&security);
+  if (valid) {
+    DWORD status = SetSecurityInfo(
+        handle, SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        NULL, NULL, security.acl, NULL);
+    valid = status == ERROR_SUCCESS && nova_validate_handle(handle, 1, NULL);
+  }
+  nova_private_security_destroy(&security);
+  CloseHandle(handle);
+  return nova_status(env, valid ? "ok" : "failed");
 }
 
 static napi_value nova_matches_at(napi_env env, napi_callback_info info) {
@@ -617,7 +688,7 @@ static napi_value nova_rename_at(napi_env env, napi_callback_info info) {
       CloseHandle(opened);
     return nova_status(env, "failed");
   }
-  SIZE_T bytes = FIELD_OFFSET(FILE_RENAME_INFO, FileName) + to_bytes;
+  SIZE_T bytes = FIELD_OFFSET(FILE_RENAME_INFO, FileName) + to_bytes + sizeof(WCHAR);
   FILE_RENAME_INFO *rename =
       (FILE_RENAME_INFO *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bytes);
   if (rename == NULL) {
@@ -628,11 +699,16 @@ static napi_value nova_rename_at(napi_env env, napi_callback_info info) {
   rename->RootDirectory = root;
   rename->FileNameLength = to_bytes;
   CopyMemory(rename->FileName, to, to_bytes);
-  BOOL renamed =
-      SetFileInformationByHandle(opened, FileRenameInfo, rename, (DWORD)bytes);
+  nova_nt_set_information_file_fn set_information = nova_nt_set_information_file();
+  IO_STATUS_BLOCK io;
+  NTSTATUS rename_status = set_information == NULL
+                               ? (NTSTATUS)0xC0000001L
+                               : set_information(opened, &io, rename,
+                                                 (ULONG)bytes,
+                                                 NOVA_FILE_RENAME_INFORMATION);
   HeapFree(GetProcessHeap(), 0, rename);
   CloseHandle(opened);
-  return nova_status(env, renamed ? "ok" : "failed");
+  return nova_status(env, rename_status == NOVA_STATUS_SUCCESS ? "ok" : "failed");
 }
 
 static napi_value nova_unlink_at(napi_env env, napi_callback_info info) {
@@ -707,6 +783,7 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "lookupAt", nova_lookup_at) ||
       !nova_export(env, exports, "createFileAt", nova_create_file_at) ||
       !nova_export(env, exports, "mkdirAt", nova_mkdir_at) ||
+      !nova_export(env, exports, "protectDirectory", nova_protect_directory) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
       !nova_export(env, exports, "unlinkAt", nova_unlink_at))
     return NULL;

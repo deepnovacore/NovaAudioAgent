@@ -161,6 +161,8 @@ export interface CodexProjectStoreOptions {
   readonly live?: boolean
   readonly lockClock?: Clock
   readonly onDurabilityStep?: (step: DurabilityStep) => void
+  /** Host-only seam: Windows security is enforced by the native handle authority. */
+  readonly platform?: NodeJS.Platform
 }
 
 export interface ProjectTransactionWaitOptions {
@@ -189,21 +191,27 @@ interface StateRootIdentity extends FileIdentity {
 type TransactionResult<T> = readonly [value: T, changed: boolean]
 
 export function hostProjectRootFromConfig(configured: string): HostProjectRoot {
-  return brandProjectRoot(requireProjectRoot(configured, 'state_permissions'))
+  return brandProjectRoot(requireProjectRoot(configured, 'state_permissions', process.platform))
 }
 
 /** Test-only constructor; it enforces the same canonical owner-only directory contract. */
-export function hostProjectRootForTest(configured: string): HostProjectRoot {
-  return brandProjectRoot(requireProjectRoot(configured, 'state_permissions'))
+export function hostProjectRootForTest(
+  configured: string,
+  platform: NodeJS.Platform = process.platform,
+): HostProjectRoot {
+  return brandProjectRoot(requireProjectRoot(configured, 'state_permissions', platform))
 }
 
 export function hostManagedProjectRootFromConfig(configured: string): HostManagedProjectRoot {
-  return brandManagedProjectRoot(requireManagedProjectRoot(configured))
+  return brandManagedProjectRoot(requireManagedProjectRoot(configured, process.platform))
 }
 
 /** Test-only constructor; it enforces the same canonical owner-controlled directory contract. */
-export function hostManagedProjectRootForTest(configured: string): HostManagedProjectRoot {
-  return brandManagedProjectRoot(requireManagedProjectRoot(configured))
+export function hostManagedProjectRootForTest(
+  configured: string,
+  platform: NodeJS.Platform = process.platform,
+): HostManagedProjectRoot {
+  return brandManagedProjectRoot(requireManagedProjectRoot(configured, platform))
 }
 
 export class CodexProjectStore {
@@ -216,6 +224,7 @@ export class CodexProjectStore {
   readonly #recoverStarting: boolean
   readonly #lockClock: Clock
   readonly #onDurabilityStep: ((step: DurabilityStep) => void) | undefined
+  readonly #platform: NodeJS.Platform
   readonly #activeTransactions = new Set<Promise<void>>()
   readonly #workspaceIdentities = new Map<string, FileIdentity>()
   readonly #closeAbort = new AbortController()
@@ -240,6 +249,7 @@ export class CodexProjectStore {
     this.#recoverStarting = options.live === true
     this.#lockClock = options.lockClock ?? new RealClock()
     this.#onDurabilityStep = options.onDurabilityStep
+    this.#platform = options.platform ?? process.platform
   }
 
   static async open(options: CodexProjectStoreOptions): Promise<CodexProjectStore> {
@@ -427,7 +437,7 @@ export class CodexProjectStore {
           const initialInfo = await candidateFile.stat({bigint: true})
           if (
             !initialInfo.isDirectory()
-            || !ownedByCurrentUserBigInt(initialInfo.uid)
+            || !privateDirectoryMetadata(initialInfo, this.#platform)
             || !sameFileIdentity(initialIdentity, fileIdentity(initialInfo))
           ) throw new ProjectStateError('workspace_boundary_changed')
           await candidateFile.chmod(0o700)
@@ -442,8 +452,7 @@ export class CodexProjectStore {
           await this.#validateManagedRoot()
           if (
             !verified.isDirectory()
-            || !ownedByCurrentUserBigInt(verified.uid)
-            || (verified.mode & 0o7777n) !== 0o700n
+            || !privateDirectoryMetadata(verified, this.#platform)
             || canonical !== candidate
             || !isDirectChild(managed, canonical)
             || !sameFileIdentity(initialIdentity, fileIdentity(verified))
@@ -939,8 +948,7 @@ export class CodexProjectStore {
       if (
         !info.isDirectory()
         || canonical !== path
-        || !ownedByCurrentUserBigInt(info.uid)
-        || (info.mode & 0o7777n) !== 0o700n
+        || !privateDirectoryMetadata(info, this.#platform)
         || !isDirectChild(managed, canonical)
       ) throw new Error('unsafe')
       await this.#validateManagedRoot()
@@ -1016,13 +1024,13 @@ export class CodexProjectStore {
   }
 
   async #retainStateRoot(): Promise<void> {
-    const retained = await openStateRoot(this.#stateRoot)
+    const retained = await openStateRoot(this.#stateRoot, this.#platform)
     this.#stateRootHandle = retained.file
     this.#stateRootIdentity = retained.identity
   }
 
   async #retainManagedRoot(): Promise<void> {
-    const retained = await openManagedRoot(this.#managedRoot)
+    const retained = await openManagedRoot(this.#managedRoot, this.#platform)
     this.#managedRootHandle = retained.file
     this.#managedRootIdentity = retained.identity
   }
@@ -1047,14 +1055,14 @@ export class CodexProjectStore {
     let current: FileHandle | null = null
     try {
       const retainedInfo = await retained.stat({bigint: true})
-      if (!stateRootMatches(retainedInfo, expected)) throw new Error('retained root changed')
+      if (!stateRootMatches(retainedInfo, expected, this.#platform)) throw new Error('retained root changed')
       current = await open(
         this.#stateRoot,
         constants.O_RDONLY | directoryFlag() | noFollowFlag(),
       )
       const currentInfo = await current.stat({bigint: true})
       const canonical = await realpath(this.#stateRoot)
-      if (!stateRootMatches(currentInfo, expected) || canonical !== expected.canonical) {
+      if (!stateRootMatches(currentInfo, expected, this.#platform) || canonical !== expected.canonical) {
         throw new Error('state root identity changed')
       }
     } catch {
@@ -1078,8 +1086,7 @@ export class CodexProjectStore {
       const retainedInfo = await retained.stat({bigint: true})
       if (
         !retainedInfo.isDirectory()
-        || !ownedByCurrentUserBigInt(retainedInfo.uid)
-        || unsafeManagedMode(Number(retainedInfo.mode))
+        || !managedDirectoryMetadata(retainedInfo, this.#platform)
         || !sameFileIdentity(expected, fileIdentity(retainedInfo))
       ) throw new Error('retained managed root changed')
       current = await open(
@@ -1091,8 +1098,7 @@ export class CodexProjectStore {
       if (
         canonical !== this.#managedRoot
         || !currentInfo.isDirectory()
-        || !ownedByCurrentUserBigInt(currentInfo.uid)
-        || unsafeManagedMode(Number(currentInfo.mode))
+        || !managedDirectoryMetadata(currentInfo, this.#platform)
         || !sameFileIdentity(expected, fileIdentity(currentInfo))
       ) throw new Error('managed root identity changed')
       return canonical
@@ -1246,8 +1252,7 @@ export class CodexProjectStore {
       const canonical = await realpath(path)
       if (
         !info.isDirectory()
-        || !ownedByCurrentUserBigInt(info.uid)
-        || (info.mode & 0o7777n) !== 0o700n
+        || !privateDirectoryMetadata(info, this.#platform)
         || canonical !== path
         || !isDirectChild(rootPath, canonical)
       ) throw new ProjectStateError('state_permissions')
@@ -1280,6 +1285,7 @@ export class CodexProjectStore {
       join(this.#stateRoot, fileName),
       constants.O_RDWR | noFollowFlag(),
       null,
+      this.#platform,
     )
     const waitSignal = signal === undefined
       ? this.#closeAbort.signal
@@ -1339,6 +1345,7 @@ export class CodexProjectStore {
         path,
         constants.O_RDONLY | nonblockFlag() | noFollowFlag(),
         null,
+        this.#platform,
       )
     } catch (error) {
       if (isNodeError(error, 'ENOENT')) {
@@ -1420,8 +1427,7 @@ export class CodexProjectStore {
       const info = await file.stat({bigint: true})
       if (
         !info.isFile()
-        || !ownedByCurrentUserBigInt(info.uid)
-        || (info.mode & 0o7777n) !== 0o600n
+        || !privateRegularFileMetadata(info, this.#platform)
         || !sameFileIdentity(tempIdentity, fileIdentity(info))
       ) throw new ProjectStateError('state_permissions')
       await this.#revalidateStateRoot()
@@ -1492,7 +1498,7 @@ export class CodexProjectStore {
       const canonical = await realpath(candidate.path)
       if (
         !info.isDirectory()
-        || !ownedByCurrentUserBigInt(info.uid)
+        || !privateDirectoryMetadata(info, this.#platform)
         || !sameFileIdentity(candidate.identity, fileIdentity(info))
         || canonical !== candidate.path
       ) return false
@@ -1540,8 +1546,7 @@ export class CodexProjectStore {
       const canonical = await realpath(removed.path)
       if (
         !info.isDirectory()
-        || !ownedByCurrentUserBigInt(info.uid)
-        || (info.mode & 0o7777n) !== 0o700n
+        || !privateDirectoryMetadata(info, this.#platform)
         || canonical !== removed.path
       ) return
       this.#requireMatchesAt(root, removed.name, file, 'workspace_boundary_changed')
@@ -1750,7 +1755,11 @@ function managedProjectRootPath(value: HostManagedProjectRoot): string {
   return path
 }
 
-function requireProjectRoot(configured: string, code: ProjectStateCode): string {
+function requireProjectRoot(
+  configured: string,
+  code: ProjectStateCode,
+  platform: NodeJS.Platform,
+): string {
   try {
     if (typeof configured !== 'string' || !isAbsolute(configured) || !isWellFormed(configured)) {
       throw new Error('invalid')
@@ -1761,8 +1770,7 @@ function requireProjectRoot(configured: string, code: ProjectStateCode): string 
       info.isSymbolicLink()
       || !info.isDirectory()
       || canonical !== resolve(configured)
-      || !ownedByCurrentUser(info)
-      || (info.mode & 0o7777) !== 0o700
+      || !privateDirectoryMetadata(info, platform)
     ) throw new Error('unsafe')
     return canonical
   } catch {
@@ -1770,7 +1778,7 @@ function requireProjectRoot(configured: string, code: ProjectStateCode): string 
   }
 }
 
-function requireManagedProjectRoot(configured: string): string {
+function requireManagedProjectRoot(configured: string, platform: NodeJS.Platform): string {
   try {
     if (typeof configured !== 'string' || !isAbsolute(configured) || !isWellFormed(configured)) {
       throw new Error('invalid')
@@ -1781,8 +1789,7 @@ function requireManagedProjectRoot(configured: string): string {
       info.isSymbolicLink()
       || !info.isDirectory()
       || canonical !== resolve(configured)
-      || !ownedByCurrentUser(info)
-      || unsafeManagedMode(info.mode)
+      || !managedDirectoryMetadata(info, platform)
     ) throw new Error('unsafe')
     return canonical
   } catch {
@@ -1813,6 +1820,7 @@ async function openValidatedRegularFile(
   path: string,
   flags: number,
   createMode: number | null,
+  platform: NodeJS.Platform,
 ): Promise<FileHandle> {
   let file: FileHandle | null = null
   try {
@@ -1820,8 +1828,7 @@ async function openValidatedRegularFile(
     const info = await file.stat()
     if (
       !info.isFile()
-      || !ownedByCurrentUser(info)
-      || (info.mode & 0o7777) !== 0o600
+      || !privateRegularFileMetadata(info, platform)
     ) throw new ProjectStateError('state_permissions')
     return file
   } catch (error) {
@@ -1832,12 +1839,32 @@ async function openValidatedRegularFile(
   }
 }
 
-function ownedByCurrentUser(info: Stats): boolean {
-  return typeof process.getuid === 'function' && info.uid === process.getuid()
+function privateDirectoryMetadata(
+  info: Pick<Stats, 'uid' | 'mode'> | {readonly uid: bigint; readonly mode: bigint},
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === 'win32') return true
+  return ownedByCurrentUserValue(info.uid) && (BigInt(info.mode) & 0o7777n) === 0o700n
 }
 
-function ownedByCurrentUserBigInt(uid: bigint): boolean {
-  return typeof process.getuid === 'function' && uid === BigInt(process.getuid())
+function privateRegularFileMetadata(
+  info: Pick<Stats, 'uid' | 'mode'> | {readonly uid: bigint; readonly mode: bigint},
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === 'win32') return true
+  return ownedByCurrentUserValue(info.uid) && (BigInt(info.mode) & 0o7777n) === 0o600n
+}
+
+function managedDirectoryMetadata(
+  info: Pick<Stats, 'uid' | 'mode'> | {readonly uid: bigint; readonly mode: bigint},
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === 'win32') return true
+  return ownedByCurrentUserValue(info.uid) && !unsafeManagedMode(Number(info.mode))
+}
+
+function ownedByCurrentUserValue(uid: number | bigint): boolean {
+  return typeof process.getuid === 'function' && BigInt(uid) === BigInt(process.getuid())
 }
 
 function fileIdentity(info: {readonly dev: bigint; readonly ino: bigint}): FileIdentity {
@@ -1850,6 +1877,7 @@ function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
 
 async function openStateRoot(
   path: string,
+  platform: NodeJS.Platform,
 ): Promise<{readonly file: FileHandle; readonly identity: StateRootIdentity}> {
   let file: FileHandle | null = null
   try {
@@ -1859,8 +1887,7 @@ async function openStateRoot(
     if (
       !info.isDirectory()
       || canonical !== path
-      || !ownedByCurrentUserBigInt(info.uid)
-      || (info.mode & 0o7777n) !== 0o700n
+      || !privateDirectoryMetadata(info, platform)
     ) throw new Error('unsafe')
     return {
       file,
@@ -1879,6 +1906,7 @@ async function openStateRoot(
 
 async function openManagedRoot(
   path: string,
+  platform: NodeJS.Platform,
 ): Promise<{readonly file: FileHandle; readonly identity: FileIdentity}> {
   let file: FileHandle | null = null
   try {
@@ -1888,8 +1916,7 @@ async function openManagedRoot(
     if (
       !info.isDirectory()
       || canonical !== path
-      || !ownedByCurrentUserBigInt(info.uid)
-      || unsafeManagedMode(Number(info.mode))
+      || !managedDirectoryMetadata(info, platform)
     ) throw new Error('unsafe')
     return {file, identity: fileIdentity(info)}
   } catch {
@@ -1901,12 +1928,16 @@ async function openManagedRoot(
 function stateRootMatches(
   info: {readonly dev: bigint; readonly ino: bigint; readonly uid: bigint; readonly mode: bigint; isDirectory(): boolean},
   expected: StateRootIdentity,
+  platform: NodeJS.Platform,
 ): boolean {
   return info.isDirectory()
     && info.dev === expected.device
     && info.ino === expected.inode
-    && info.uid === expected.owner
-    && (info.mode & 0o7777n) === expected.mode
+    && (platform === 'win32' || (
+      info.uid === expected.owner
+      && (info.mode & 0o7777n) === expected.mode
+      && privateDirectoryMetadata(info, platform)
+    ))
 }
 
 function unsafeManagedMode(mode: number): boolean {

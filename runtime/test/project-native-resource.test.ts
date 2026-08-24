@@ -4,9 +4,14 @@ import {readFileSync, writeFileSync} from 'node:fs'
 import {mkdir, mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {basename, join} from 'node:path'
+import {posix} from 'node:path'
 import {test} from 'node:test'
 
-import {loadProjectNativeHostFromResources} from '../src/project-native-resource.js'
+import {
+  loadProjectNativeHostFromResources,
+  protectDefaultProjectDirectories,
+  type ProjectNativeHost,
+} from '../src/project-native-resource.js'
 
 function fakeMachAddon(): Buffer {
   const body = Buffer.alloc(64)
@@ -20,6 +25,7 @@ function fakeAddon(): Record<string, (...args: readonly unknown[]) => unknown> {
   return {
     acquire: () => ({status: 'busy'}),
     probe: () => ({status: 'ok'}),
+    protectDirectory: () => ({status: 'ok'}),
     matchesAt: () => ({status: 'ok'}),
     lookupAt: () => ({status: 'missing'}),
     createFileAt: () => ({status: 'exists'}),
@@ -71,6 +77,7 @@ test('project native host loads only one fixed manifest-bound addon for the exac
     assert.equal(loads, 1)
     assert.deepEqual(loaded?.nativeLocks.acquire(7), {status: 'busy'})
     assert.deepEqual(loaded?.rootFiles.probe(8), {status: 'ok'})
+    assert.equal(loaded?.protectDirectory('/host-owned/default'), true)
 
     const swappedDuringLoad = loadProjectNativeHostFromResources({
       resourcesPath: root,
@@ -136,4 +143,35 @@ test('project native host rejects wrong ABI and decorated addon exports without 
   } finally {
     await rm(root, {recursive: true, force: true})
   }
+})
+
+test('default project directories are protected while custom roots are only validated later', () => {
+  const protectedPaths: string[] = []
+  const host = {
+    protectDirectory: (path: string) => {
+      protectedPaths.push(path)
+      return !path.endsWith('default')
+    },
+  } as unknown as ProjectNativeHost
+  assert.equal(protectDefaultProjectDirectories(host, {
+    homeDirectory: '/home/nova',
+    stateRoot: '/home/nova/.nova-audio-agent/state',
+    managedRoot: '/home/nova/.nova-audio-agent/workspaces',
+    workspace: '/home/nova/.nova-audio-agent/workspaces/default',
+    pathApi: posix,
+  }), false)
+  assert.deepEqual(protectedPaths, [
+    '/home/nova/.nova-audio-agent/state',
+    '/home/nova/.nova-audio-agent/workspaces',
+    '/home/nova/.nova-audio-agent/workspaces/default',
+  ])
+  protectedPaths.length = 0
+  assert.equal(protectDefaultProjectDirectories(host, {
+    homeDirectory: '/home/nova',
+    stateRoot: '/srv/custom-state',
+    managedRoot: '/srv/custom-workspaces',
+    workspace: '/srv/custom-workspace',
+    pathApi: posix,
+  }), true)
+  assert.deepEqual(protectedPaths, [])
 })

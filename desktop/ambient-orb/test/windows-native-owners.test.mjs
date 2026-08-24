@@ -29,7 +29,10 @@ test('Windows project authority owns nonblocking locks and handle-relative proje
     /GetSecurityInfo/u,
     /GetTokenInformation/u,
     /SetFileInformationByHandle/u,
-    /FileRenameInfo/u,
+    /NtSetInformationFile/u,
+    /NOVA_FILE_RENAME_INFORMATION/u,
+    /uv_get_osfhandle/u,
+    /SetSecurityInfo/u,
     /FileDispositionInfoEx/u,
     /__pfnDliNotifyHook2/u,
     /GetModuleHandleW\(NULL\)/u,
@@ -37,9 +40,11 @@ test('Windows project authority owns nonblocking locks and handle-relative proje
   assert.match(body, /const PfnDliHook __pfnDliNotifyHook2 = nova_delay_load_hook;/u)
   assert.doesNotMatch(body, /\nPfnDliHook __pfnDliNotifyHook2/u)
   for (const exported of [
-    'acquire', 'probe', 'matchesAt', 'lookupAt', 'createFileAt', 'mkdirAt', 'renameAt', 'unlinkAt',
+    'acquire', 'probe', 'protectDirectory', 'matchesAt', 'lookupAt', 'createFileAt', 'mkdirAt',
+    'renameAt', 'unlinkAt',
   ]) assert.match(body, new RegExp(`"${exported}"`, 'u'))
-  assert.doesNotMatch(body, /CreateFileW\s*\(\s*(?:root|path)/u)
+  assert.equal(body.match(/CreateFileW\s*\(/gu)?.length, 1)
+  assert.match(body, /static napi_value nova_protect_directory/u)
 })
 
 test('Windows sandbox probe measures child, filesystem, network, and limit isolation', async () => {
