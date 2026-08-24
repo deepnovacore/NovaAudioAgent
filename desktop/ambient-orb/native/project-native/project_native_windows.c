@@ -87,7 +87,7 @@ static FARPROC WINAPI nova_delay_load_hook(unsigned notification,
   return NULL;
 }
 
-PfnDliHook __pfnDliNotifyHook2 = nova_delay_load_hook;
+const PfnDliHook __pfnDliNotifyHook2 = nova_delay_load_hook;
 
 static napi_value nova_status(napi_env env, const char *status) {
   napi_value result;
