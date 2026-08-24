@@ -86,8 +86,7 @@ export const settingsSchema = z.object({
   codex_bin: z.string().default('codex'),
   codex_api_key: z.string().nullable().default(null),
   codex_prewarm: z.boolean().default(true),
-  codex_projects_enabled: z.boolean().default(false),
-  codex_managed_root: z.string().default('~/NovaWorkspaces'),
+  codex_managed_root: z.string().default('~/.nova-audio-agent/workspaces'),
   codex_project_state_root: z.string().default('~/.nova-audio-agent'),
   proactivity_preset: proactivityPresetSchema.default('balanced'),
   codex_working_interval: z.number().finite().min(5).max(600).default(30),
@@ -302,9 +301,6 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
       codex_bin: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_BIN),
       codex_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_API_KEY),
       codex_prewarm: optionalBoolean(environment.NOVA_AUDIO_AGENT_CODEX_PREWARM),
-      codex_projects_enabled: optionalBoolean(
-        environment.NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED,
-      ),
       codex_managed_root: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT),
       codex_project_state_root: optionalString(
         environment.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT,

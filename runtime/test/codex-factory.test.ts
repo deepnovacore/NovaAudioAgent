@@ -46,6 +46,7 @@ import type {
   ProjectRootFileLookupResult,
   ProjectRootFileResult,
 } from '../src/project-root-file.js'
+import {compileToolSchema} from '../src/tool-schema.js'
 
 const PREFLIGHT: SafePreflightReport = Object.freeze({
   version: '0.145.0',
@@ -86,15 +87,6 @@ class RecordingTransport implements CodexAppServerTransport {
   close(): Promise<void> {
     this.closes += 1
     return Promise.resolve()
-  }
-}
-
-class RetryableCloseTransport extends RecordingTransport {
-  override close(): Promise<void> {
-    this.closes += 1
-    return this.closes === 1
-      ? Promise.reject(new Error('transient retained transport cleanup'))
-      : Promise.resolve()
   }
 }
 
@@ -284,7 +276,6 @@ function projectHostConfig(t: TestContext): {
   const config = resolveCodexHostConfig(loadSettings({
     NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
     NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
-    NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'true',
     NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
     NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
   }), {
@@ -297,7 +288,7 @@ function projectHostConfig(t: TestContext): {
   return {config, stateRoot, managedRoot}
 }
 
-test('one app-server factory selects exact ordinary and realtime live adapters', async t => {
+test('ordinary composition keeps the non-realtime Codex adapter', async t => {
   const config = hostConfig(t)
   assert.ok(config !== null)
 
@@ -322,28 +313,6 @@ test('one app-server factory selects exact ordinary and realtime live adapters',
   await ordinary.close()
   assert.equal(ordinaryFactory.transports[0]?.closes, 1)
 
-  const liveFactory = new RecordingTransportFactory()
-  const live = await createCodexAssemblyResource({
-    config,
-    composition: 'realtime' as const,
-    transportFactory: liveFactory,
-    clock: new VirtualClock(),
-    idFactory: () => 'live-id',
-  })
-  assert.equal(live.mode, 'live')
-  assert.deepEqual(live.adapter.manifest.ops.map(operation => operation.name), [
-    'run', 'steer', 'status',
-  ])
-  assert.equal(liveFactory.calls.length, 1)
-  assert.equal(liveFactory.calls[0]?.mode, 'live')
-  const firstStart = live.start()
-  assert.equal(live.start(), firstStart)
-  await firstStart
-  assert.equal(liveFactory.transports[0]?.preflights, 1)
-  assert.equal(liveFactory.transports[0]?.prewarms, 1)
-  await live.close()
-  await live.close()
-  assert.equal(liveFactory.transports[0]?.closes, 1)
 })
 
 test('owned factory removes a preflight-only ephemeral home after transport close', async t => {
@@ -376,21 +345,17 @@ test('owned factory removes a preflight-only ephemeral home after transport clos
   assert.throws(() => lstatSync(home), error => isErrno(error, 'ENOENT'))
 })
 
-test('live resource retries retained raw transport cleanup before releasing shutdown ownership', async t => {
+test('realtime composition fails closed when the packaged project host is unavailable', async t => {
   const config = hostConfig(t)
   assert.ok(config !== null)
-  const transport = new RetryableCloseTransport()
-  const resource = await createCodexAssemblyResource({
+  await assert.rejects(createCodexAssemblyResource({
     config,
     composition: 'realtime' as const,
-    transportFactory: {available: true, create: () => transport},
+    transportFactory: new RecordingTransportFactory(),
     clock: new VirtualClock(),
-    idFactory: () => 'cleanup-id',
-  })
-
-  await resource.close()
-  await resource.close()
-  assert.equal(transport.closes, 2)
+    idFactory: () => 'unsupported-project-id',
+  }), error => error instanceof CodexHostConfigurationError
+    && error.code === 'codex_project_host_unsupported')
 })
 
 test('configured Codex rejects an unavailable or malformed host transport before adapter registration', async t => {
@@ -403,7 +368,7 @@ test('configured Codex rejects an unavailable or malformed host transport before
   ]) {
     await assert.rejects(createCodexAssemblyResource({
       config,
-      composition: 'realtime',
+      composition: 'ordinary',
       transportFactory,
       clock: new VirtualClock(),
       idFactory: () => 'unavailable-id',
@@ -413,7 +378,7 @@ test('configured Codex rejects an unavailable or malformed host transport before
   assert.equal(unavailableCreates, 0)
 })
 
-test('ordinary composition never upgrades to project mode from the realtime projects setting', async t => {
+test('ordinary composition never upgrades to project mode', async t => {
   const {config} = projectHostConfig(t)
   const transportFactory = new RecordingTransportFactory()
   const resource = await createCodexAssemblyResource({
@@ -430,7 +395,7 @@ test('ordinary composition never upgrades to project mode from the realtime proj
   await resource.close()
 })
 
-test('project mode opens one live store, imports the host workspace, and exposes only public view', async t => {
+test('realtime mode always opens one project store and exposes only project tools and public view', async t => {
   const {config, stateRoot, managedRoot} = projectHostConfig(t)
   const transportFactory = new RecordingTransportFactory()
   const views: unknown[] = []
@@ -451,8 +416,9 @@ test('project mode opens one live store, imports the host workspace, and exposes
 
   assert.equal(resource.mode, 'project')
   assert.deepEqual(resource.adapter.manifest.ops.map(operation => operation.name), [
-    'run', 'project', 'steer', 'status',
+    'project', 'confirm_project_action', 'steer', 'status',
   ])
+  assert.equal(compileToolSchema([resource.adapter.manifest]).bindings.has('codex__run'), false)
   assert.deepEqual(resource.projectView, {
     workspace_display_name: 'workspace',
     session_title: null,

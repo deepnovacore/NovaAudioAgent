@@ -269,6 +269,33 @@ test('production schema probe invokes the host binary and returns only the revie
   }
 })
 
+test('production host expands a leading tilde in the configured workspace', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-codex-home-workspace-')))
+  const home = join(root, 'home')
+  const workspace = join(home, 'workspace')
+  const binary = join(root, 'codex')
+  try {
+    await mkdir(workspace, {recursive: true, mode: 0o700})
+    await chmod(home, 0o700)
+    await chmod(workspace, 0o700)
+    await writeFile(binary, '#!/fixture\n', {mode: 0o700})
+    await chmod(binary, 0o700)
+
+    const host = createProductionCodexHost(loadSettings({
+      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+      NOVA_AUDIO_AGENT_CODEX_WORKSPACE: '~/workspace',
+      NOVA_AUDIO_AGENT_CODEX_BIN: binary,
+    }), {
+      resourcesPath: root,
+      homeDirectory: home,
+    })
+
+    assert.deepEqual(host.catalog.canonicalWorkspaces, [await realpath(workspace)])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('production host catalog admits only absolute host config and a packaged fixed probe', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-codex-production-catalog-')))
   const workspace = join(root, 'workspace')

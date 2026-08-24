@@ -3,8 +3,10 @@ import {chmod, mkdtemp, realpath, rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {test} from 'node:test'
+import {AssemblyError} from '../src/assembly.js'
 import type {ExecutorAdapter, ExecutorDispatchContext} from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
+import type {CodexAssemblyResource} from '../src/codex-factory.js'
 import {
   ConfigurationError,
   loadSettings,
@@ -684,6 +686,23 @@ test('cascaded credentials validate before composition-only resource mismatches'
   assert.throws(
     () => buildCascadedRealtimeAssembly(assemblyOptions(configured)),
     error => error instanceof ConfigurationError && error.message === '缺少 ARK_API_KEY',
+  )
+})
+
+test('cascaded realtime composition rejects a live Codex fallback', () => {
+  const configured = settings({NOVA_AUDIO_AGENT_EXECUTOR: 'codex'})
+  const resource: CodexAssemblyResource = {
+    adapter: modelProbeAdapter,
+    mode: 'live',
+    projectView: null,
+    start: () => Promise.resolve(),
+    close: () => Promise.resolve(),
+  }
+
+  assert.throws(
+    () => buildCascadedRealtimeAssembly(assemblyOptions(configured, {codexResource: resource})),
+    error => error instanceof AssemblyError
+      && error.message === 'realtime Codex project mode mismatch',
   )
 })
 

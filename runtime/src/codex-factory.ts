@@ -31,7 +31,6 @@ import {
 import type {ExecutorAdapter} from './causal-runtime.js'
 import type {Clock} from './clock.js'
 import {CodexHostConfigurationError} from './codex-host-config.js'
-import {CodexLiveAdapter} from './executors/codex-live.js'
 import {ProjectCodexAdapter} from './executors/codex-project-live.js'
 import {CodexAdapter} from './executors/codex.js'
 import {ProjectConfirmationController} from './realtime/project-confirmation.js'
@@ -182,12 +181,11 @@ export async function createCodexAssemblyResource(
   if (!available) {
     throw new CodexHostConfigurationError('codex_host_unavailable')
   }
-  if (options.composition === 'realtime' && options.config.projectsEnabled) {
+  if (options.composition === 'realtime') {
     return await createProjectResource(options)
   }
-  const mode = options.composition === 'ordinary' ? 'ordinary' : 'live'
   const binding: CodexTransportBinding = Object.freeze({
-    mode,
+    mode: 'ordinary',
     binary: options.config.binary,
     workspace: options.config.workspace,
     codexHome: null,
@@ -204,20 +202,9 @@ export async function createCodexAssemblyResource(
   if (!isCodexTransport(transport)) {
     throw new CodexHostConfigurationError('codex_host_unavailable')
   }
-  if (mode === 'ordinary') {
-    return new BasicCodexAssemblyResource(
-      new CodexAdapter(transport),
-      transport,
-      transport,
-      false,
-    )
-  }
-  const adapter = new CodexLiveAdapter(transport)
   return new BasicCodexAssemblyResource(
-    adapter,
-    adapter,
+    new CodexAdapter(transport),
     transport,
-    options.config.prewarm,
   )
 }
 
@@ -241,7 +228,7 @@ async function createProjectResource(
   const host = options.projectHost
   const stateRoot = options.config.stateRoot
   const managedRoot = options.config.managedRoot
-  if (host === undefined || stateRoot === null || managedRoot === null) {
+  if (host === undefined) {
     throw new CodexHostConfigurationError('codex_project_host_unsupported')
   }
   let store: CodexProjectStore | null = null
@@ -308,31 +295,18 @@ async function createProjectResource(
   }
 }
 
-interface ClosableCodexResource {
-  close(reason?: 'shutdown' | 'cancel' | 'failure'): Promise<void>
-}
-
 class BasicCodexAssemblyResource implements CodexAssemblyResource {
-  readonly mode: 'ordinary' | 'live'
+  readonly mode = 'ordinary'
   readonly projectView = null
-  readonly #closeTarget: ClosableCodexResource
   readonly #rawTransport: CodexAppServerTransport
-  readonly #prewarm: (() => Promise<void>) | null
   #startOperation: Promise<void> | null = null
   #closeOperation: Promise<void> | null = null
 
   constructor(
     readonly adapter: ExecutorAdapter,
-    closeTarget: ClosableCodexResource,
     rawTransport: CodexAppServerTransport,
-    prewarm: boolean,
   ) {
-    this.mode = prewarm || adapter instanceof CodexLiveAdapter ? 'live' : 'ordinary'
-    this.#closeTarget = closeTarget
     this.#rawTransport = rawTransport
-    this.#prewarm = prewarm && adapter instanceof CodexLiveAdapter
-      ? () => adapter.prewarm()
-      : null
   }
 
   start(): Promise<void> {
@@ -343,7 +317,6 @@ class BasicCodexAssemblyResource implements CodexAssemblyResource {
 
   async #startFresh(): Promise<void> {
     await this.#rawTransport.preflight({expiresAtMs: Date.now() + 20_000})
-    await this.#prewarm?.()
   }
 
   close(): Promise<void> {
@@ -359,7 +332,7 @@ class BasicCodexAssemblyResource implements CodexAssemblyResource {
 
   async #closeWithRetainedTransportRetry(): Promise<void> {
     try {
-      await this.#closeTarget.close('shutdown')
+      await this.#rawTransport.close('shutdown')
     } catch (firstFailure) {
       try {
         await this.#rawTransport.close('shutdown')

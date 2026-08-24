@@ -16,7 +16,6 @@
         "NOVA_AUDIO_AGENT_CODEX_BIN": "/fixture/bin/codex",
         "NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT": "/fixture/managed",
         "NOVA_AUDIO_AGENT_CODEX_PREWARM": "false",
-        "NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED": "true",
         "NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT": "/fixture/state",
         "NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL": "5",
         "NOVA_AUDIO_AGENT_CODEX_WORKSPACE": "/fixture/workspace",

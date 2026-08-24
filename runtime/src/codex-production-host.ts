@@ -38,7 +38,7 @@ import {
   type CodexBackendTransportFactory,
 } from './codex-factory.js'
 import {CredentialSnapshotter} from './codex-credential-snapshot.js'
-import type {CodexHostCatalog} from './codex-host-config.js'
+import {expandUserPath, type CodexHostCatalog} from './codex-host-config.js'
 import type {Settings} from './config.js'
 import {
   loadProjectNativeHostFromResources,
@@ -146,7 +146,9 @@ export function createProductionCodexHost(
   const platform = options.platform ?? process.platform
   const arch = options.arch ?? process.arch
   const homeDirectory = canonicalDirectory(options.homeDirectory ?? homedir())
-  const workspace = canonicalDirectory(stripLikePython(settings.codex_workspace ?? ''))
+  const workspace = homeDirectory === null
+    ? null
+    : canonicalDirectory(expandUserPath(settings.codex_workspace ?? '', homeDirectory))
   const configuredBinary = stripLikePython(settings.codex_bin)
   const binary = configuredBinary === 'codex' ? null : canonicalRegularExecutable(configuredBinary)
   const catalog: CodexHostCatalog = Object.freeze({
@@ -180,14 +182,12 @@ export function createProductionCodexHost(
     transportFactory: unavailableCodexBackendTransportFactory,
     projectHost: null,
   })
-  const projectHost = settings.codex_projects_enabled
-    ? loadProjectNativeHostFromResources({
-        resourcesPath,
-        platform,
-        arch,
-        electronAbi: options.electronAbi ?? process.versions.modules,
-      })
-    : null
+  const projectHost = loadProjectNativeHostFromResources({
+    resourcesPath,
+    platform,
+    arch,
+    electronAbi: options.electronAbi ?? process.versions.modules,
+  })
   const temporaryDirectory = options.temporaryDirectory === undefined
     ? canonicalSystemTemporaryDirectoryForTest(tmpdir())
     : canonicalDirectory(options.temporaryDirectory)

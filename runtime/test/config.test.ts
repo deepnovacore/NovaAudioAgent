@@ -243,7 +243,6 @@ test('selected Codex settings preserve the established host environment defaults
     binary: defaults.codex_bin,
     apiKey: defaults.codex_api_key,
     prewarm: defaults.codex_prewarm,
-    projects: defaults.codex_projects_enabled,
     managedRoot: defaults.codex_managed_root,
     stateRoot: defaults.codex_project_state_root,
   }, {
@@ -251,10 +250,10 @@ test('selected Codex settings preserve the established host environment defaults
     binary: 'codex',
     apiKey: null,
     prewarm: true,
-    projects: false,
-    managedRoot: '~/NovaWorkspaces',
+    managedRoot: '~/.nova-audio-agent/workspaces',
     stateRoot: '~/.nova-audio-agent',
   })
+  assert.equal(Object.hasOwn(defaults, 'codex_projects_enabled'), false)
 
   const explicit = loadSettings({
     NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
@@ -262,7 +261,7 @@ test('selected Codex settings preserve the established host environment defaults
     NOVA_AUDIO_AGENT_CODEX_BIN: '\u001c/private/bin/codex\u0085',
     NOVA_AUDIO_AGENT_CODEX_API_KEY: '\u001csecret\u0085',
     NOVA_AUDIO_AGENT_CODEX_PREWARM: 'false',
-    NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'true',
+    NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'false',
     NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: '\u001c/private/managed\u0085',
     NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '\u001c/private/state\u0085',
   }) as unknown as Record<string, unknown>
@@ -271,7 +270,6 @@ test('selected Codex settings preserve the established host environment defaults
     binary: explicit.codex_bin,
     apiKey: explicit.codex_api_key,
     prewarm: explicit.codex_prewarm,
-    projects: explicit.codex_projects_enabled,
     managedRoot: explicit.codex_managed_root,
     stateRoot: explicit.codex_project_state_root,
   }, {
@@ -279,10 +277,10 @@ test('selected Codex settings preserve the established host environment defaults
     binary: '/private/bin/codex',
     apiKey: 'secret',
     prewarm: false,
-    projects: true,
     managedRoot: '/private/managed',
     stateRoot: '/private/state',
   })
+  assert.equal(Object.hasOwn(explicit, 'codex_projects_enabled'), false)
 })
 
 test('Codex working interval follows Pydantic numeric whitespace and keeps both bounds', () => {

@@ -23,6 +23,9 @@ def _safe_project_root(value: Path, variable: str) -> Path:
         expanded = value.expanduser().absolute()
         if expanded.is_symlink() or (expanded.exists() and not expanded.is_dir()):
             raise OSError
+        if not expanded.exists():
+            expanded.mkdir(parents=True, mode=0o700)
+            expanded.chmod(0o700)
         resolved = expanded.resolve(strict=False)
         if expanded.exists() and resolved != expanded:
             raise OSError
@@ -172,8 +175,7 @@ class Settings(BaseSettings):
     codex_bin: str = "codex"
     codex_api_key: SecretStr | None = None
     codex_prewarm: bool = True
-    codex_projects_enabled: bool = False
-    codex_managed_root: Path = Path("~/NovaWorkspaces")
+    codex_managed_root: Path = Path("~/.nova-audio-agent/workspaces")
     codex_project_state_root: Path = Path("~/.nova-audio-agent")
     autoglm_repo: Path | None = Path("thirdparty/Open-AutoGLM")
     autoglm_python: str = Field(default_factory=lambda: _venv_python(".autoglm-venv"))
@@ -351,7 +353,7 @@ class Settings(BaseSettings):
         if workspace is None:
             raise ConfigurationError("缺少 NOVA_AUDIO_AGENT_CODEX_WORKSPACE")
         try:
-            resolved = workspace.resolve()
+            resolved = workspace.expanduser().resolve()
             usable = resolved.is_dir()
         except (OSError, RuntimeError):
             usable = False
@@ -366,16 +368,15 @@ class Settings(BaseSettings):
         return resolved, binary, api_key or None
 
     def require_codex_projects(self) -> tuple[Path, Path]:
-        return (
-            _safe_project_root(
-                self.codex_managed_root,
-                "NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT",
-            ),
-            _safe_project_root(
-                self.codex_project_state_root,
-                "NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT",
-            ),
+        state_root = _safe_project_root(
+            self.codex_project_state_root,
+            "NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT",
         )
+        managed_root = _safe_project_root(
+            self.codex_managed_root,
+            "NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT",
+        )
+        return managed_root, state_root
 
     def require_autoglm(
         self,

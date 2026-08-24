@@ -63,7 +63,6 @@ void (async () => {
   }
   const projectSettings = configModule.loadSettings({
     ...baseEnvironment,
-    NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'true',
     NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
     NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
   })
@@ -107,7 +106,6 @@ void (async () => {
   stage = 'settings_live'
   const liveSettings = configModule.loadSettings({
     ...baseEnvironment,
-    NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'false',
     NOVA_AUDIO_AGENT_CODEX_PREWARM: 'true',
   })
   stage = 'host_live'

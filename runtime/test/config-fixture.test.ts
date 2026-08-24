@@ -151,7 +151,6 @@ function projectSettings(settings: Settings): Readonly<Record<string, unknown>> 
     codex_managed_root: settings.codex_managed_root,
     codex_prewarm: settings.codex_prewarm,
     codex_project_state_root: settings.codex_project_state_root,
-    codex_projects_enabled: settings.codex_projects_enabled,
     codex_working_interval: settings.codex_working_interval,
     codex_workspace: settings.codex_workspace,
     compressor_model: settings.compressor_model,

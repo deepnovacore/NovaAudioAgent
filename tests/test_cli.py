@@ -69,17 +69,19 @@ def test_settings_have_stage_c_defaults(monkeypatch: pytest.MonkeyPatch) -> None
 def test_project_settings_read_prefixed_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED", "true")
+    monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED", "false")
     monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT", str(tmp_path / "managed"))
     monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT", str(tmp_path / "state"))
 
     settings = Settings(_env_file=None)
 
-    assert settings.codex_projects_enabled is True
+    assert not hasattr(settings, "codex_projects_enabled")
     assert settings.require_codex_projects() == (
         (tmp_path / "managed").resolve(),
         (tmp_path / "state").resolve(),
     )
+    assert (tmp_path / "managed").stat().st_mode & 0o777 == 0o700
+    assert (tmp_path / "state").stat().st_mode & 0o777 == 0o700
 
 
 def test_workspace_register_and_list_hide_local_paths(
@@ -274,6 +276,22 @@ def test_codex_settings_default_to_the_codex_binary(tmp_path: Path) -> None:
     )
 
     assert settings.require_codex() == (tmp_path.resolve(), "codex", None)
+
+
+def test_codex_workspace_expands_a_leading_tilde(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    settings = Settings(
+        executor="codex",
+        codex_workspace=Path("~/workspace"),
+        _env_file=None,
+    )
+
+    assert settings.require_codex()[0] == workspace.resolve()
 
 
 def test_codex_api_key_is_returned_as_an_exact_builtin_string(tmp_path: Path) -> None:

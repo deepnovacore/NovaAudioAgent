@@ -1,4 +1,4 @@
-import {lstatSync, realpathSync} from 'node:fs'
+import {chmodSync, lstatSync, mkdirSync, realpathSync} from 'node:fs'
 import {isAbsolute, join, resolve} from 'node:path'
 
 import {
@@ -52,10 +52,9 @@ export interface ResolvedCodexHostConfig {
   readonly workspace: HostWorkspace
   readonly credential: CodexCredentialProfile
   readonly prewarm: boolean
-  readonly projectsEnabled: boolean
   readonly workingInterval: number
-  readonly stateRoot: HostProjectRoot | null
-  readonly managedRoot: HostManagedProjectRoot | null
+  readonly stateRoot: HostProjectRoot
+  readonly managedRoot: HostManagedProjectRoot
 }
 
 export function resolveCodexHostConfig(
@@ -63,9 +62,10 @@ export function resolveCodexHostConfig(
   catalog: CodexHostCatalog,
 ): ResolvedCodexHostConfig | null {
   if (!settings.executors.includes('codex')) return null
-  const workspacePath = stripLikePython(settings.codex_workspace ?? '')
-  if (workspacePath === '') throw new CodexHostConfigurationError('codex_workspace_missing')
+  const configuredWorkspace = stripLikePython(settings.codex_workspace ?? '')
+  if (configuredWorkspace === '') throw new CodexHostConfigurationError('codex_workspace_missing')
   const safeCatalog = validateCatalog(catalog)
+  const workspacePath = expandUserPath(configuredWorkspace, safeCatalog.homeDirectory)
   if (
     safeCatalog.canonicalBinaries.length === 0
     || safeCatalog.canonicalWorkspaces.length === 0
@@ -96,25 +96,23 @@ export function resolveCodexHostConfig(
 
   const credential = Object.freeze({[codexCredentialProfileBrand]: true as const})
   credentialValues.set(credential, settings.codex_api_key)
-  let stateRoot: HostProjectRoot | null = null
-  let managedRoot: HostManagedProjectRoot | null = null
-  if (settings.codex_projects_enabled) {
-    try {
-      stateRoot = hostProjectRootFromConfig(expandUser(
-        settings.codex_project_state_root,
-        safeCatalog.homeDirectory,
-      ))
-    } catch {
-      throw new CodexHostConfigurationError('codex_project_state_invalid')
-    }
-    try {
-      managedRoot = hostManagedProjectRootFromConfig(expandUser(
-        settings.codex_managed_root,
-        safeCatalog.homeDirectory,
-      ))
-    } catch {
-      throw new CodexHostConfigurationError('codex_managed_root_invalid')
-    }
+  let stateRoot: HostProjectRoot
+  try {
+    stateRoot = hostProjectRootFromConfig(ensurePrivateDirectory(expandUserPath(
+      settings.codex_project_state_root,
+      safeCatalog.homeDirectory,
+    )))
+  } catch {
+    throw new CodexHostConfigurationError('codex_project_state_invalid')
+  }
+  let managedRoot: HostManagedProjectRoot
+  try {
+    managedRoot = hostManagedProjectRootFromConfig(ensurePrivateDirectory(expandUserPath(
+      settings.codex_managed_root,
+      safeCatalog.homeDirectory,
+    )))
+  } catch {
+    throw new CodexHostConfigurationError('codex_managed_root_invalid')
   }
   return Object.freeze({
     [resolvedCodexHostConfigBrand]: true as const,
@@ -122,7 +120,6 @@ export function resolveCodexHostConfig(
     workspace,
     credential,
     prewarm: settings.codex_prewarm,
-    projectsEnabled: settings.codex_projects_enabled,
     workingInterval: settings.codex_working_interval,
     stateRoot,
     managedRoot,
@@ -170,11 +167,22 @@ function validateCatalog(catalog: CodexHostCatalog): CodexHostCatalog {
   }
 }
 
-function expandUser(configured: string, homeDirectory: string): string {
+export function expandUserPath(configured: string, homeDirectory: string): string {
   const value = stripLikePython(configured)
   if (value === '~') return homeDirectory
   if (value.startsWith('~/')) return join(homeDirectory, value.slice(2))
   return value
+}
+
+function ensurePrivateDirectory(path: string): string {
+  try {
+    lstatSync(path)
+  } catch (error) {
+    if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    mkdirSync(path, {recursive: true, mode: 0o700})
+    chmodSync(path, 0o700)
+  }
+  return path
 }
 
 function hasRejectedScriptSuffix(path: string): boolean {

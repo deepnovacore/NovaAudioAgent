@@ -643,58 +643,50 @@ def _build_home_assistant(context: _ExecutorBuildContext) -> ExecutorAdapter:
 def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
     workspace, binary, codex_api_key = context.settings.require_codex()
     if context.codex_live:
-        if context.settings.codex_projects_enabled:
-            managed_root, state_root = context.settings.require_codex_projects()
-            store = None
-            try:
-                store = CodexProjectStore(state_root, managed_root, recover_starting=True)
-                store.ensure_imported(workspace.name or "workspace", workspace)
-            except ProjectStateError as failure:
-                # Release the owner flock taken in the constructor; leaving it
-                # to GC would make the next startup attempt in this process
-                # fail with state_busy although nothing is running.
-                if store is not None:
-                    store.close()
-                raise ConfigurationError(
-                    f"Codex project state unavailable: {failure.code}"
-                ) from None
-            confirmation = ProjectConfirmationController(
-                clock=context.clock,
-                id_factory=lambda: uuid4().hex,
-                # The realtime service publishes confirmation-only changes from
-                # the adapter's cached public view; never read the registry on
-                # the audio event loop.
-                on_change=None,
-            )
+        managed_root, state_root = context.settings.require_codex_projects()
+        store = None
+        try:
+            store = CodexProjectStore(state_root, managed_root, recover_starting=True)
+            store.ensure_imported(workspace.name or "workspace", workspace)
+        except ProjectStateError as failure:
+            # Release the owner flock taken in the constructor; leaving it
+            # to GC would make the next startup attempt in this process
+            # fail with state_busy although nothing is running.
+            if store is not None:
+                store.close()
+            raise ConfigurationError(
+                f"Codex project state unavailable: {failure.code}"
+            ) from None
+        confirmation = ProjectConfirmationController(
+            clock=context.clock,
+            id_factory=lambda: uuid4().hex,
+            # The realtime service publishes confirmation-only changes from
+            # the adapter's cached public view; never read the registry on
+            # the audio event loop.
+            on_change=None,
+        )
 
-            def worker_factory(
-                selected_workspace: Path,
-                codex_home: Path,
-                resume_thread_id: str | None,
-                on_thread_ready: Callable[[str], None],
-            ) -> CodexAppServerTransport:
-                return CodexAppServerTransport(
-                    binary=binary,
-                    workspace=selected_workspace,
-                    api_key=codex_api_key,
-                    codex_home=codex_home,
-                    resume_thread_id=resume_thread_id,
-                    on_thread_ready=on_thread_ready,
-                )
-
-            return ProjectCodexAdapter(
-                store=store,
-                confirmation=confirmation,
-                worker_factory=worker_factory,
-                on_project_view=context.on_codex_project,
-            )
-        return CodexLiveAdapter(
-            CodexAppServerTransport(
+        def worker_factory(
+            selected_workspace: Path,
+            codex_home: Path,
+            resume_thread_id: str | None,
+            on_thread_ready: Callable[[str], None],
+        ) -> CodexAppServerTransport:
+            return CodexAppServerTransport(
                 binary=binary,
-                workspace=workspace,
+                workspace=selected_workspace,
                 api_key=codex_api_key,
+                codex_home=codex_home,
+                resume_thread_id=resume_thread_id,
+                on_thread_ready=on_thread_ready,
                 working_interval=context.settings.codex_working_interval,
             )
+
+        return ProjectCodexAdapter(
+            store=store,
+            confirmation=confirmation,
+            worker_factory=worker_factory,
+            on_project_view=context.on_codex_project,
         )
     return CodexAdapter(
         CodexTransport(

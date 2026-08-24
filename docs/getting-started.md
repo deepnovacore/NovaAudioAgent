@@ -174,8 +174,7 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_CODEX_BIN` | `codex` | No | codex | Host-approved Codex app-server binary. |
 | `NOVA_AUDIO_AGENT_CODEX_API_KEY` | `codex` | No | Codex login | Optional Codex credential override. |
 | `NOVA_AUDIO_AGENT_CODEX_PREWARM` | `codex` | No | true | Prewarm Codex app-server. |
-| `NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED` | `codex` | No | false | Enable Codex projects. |
-| `NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT` | `codex` | No | ~/NovaWorkspaces | Managed project root. |
+| `NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT` | `codex` | No | ~/.nova-audio-agent/workspaces | Managed project root. |
 | `NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT` | `codex` | No | ~/.nova-audio-agent | Project state root. |
 | `NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL` | `codex` | No | 30 | Codex progress interval in seconds. |
 | `NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED` | `core` | No | false | Enable the local read-only workspace memory graph. |

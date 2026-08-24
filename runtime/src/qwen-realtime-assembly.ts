@@ -84,13 +84,9 @@ export function buildQwenRealtimeAssembly(
   if (codexSelected !== (options.codexResource !== undefined)) {
     throw new AssemblyError('realtime Codex resource selection mismatch')
   }
-  if (options.codexResource?.mode === 'ordinary') {
-    throw new AssemblyError('ordinary Codex resource cannot enter realtime composition')
+  if (options.codexResource !== undefined && options.codexResource.mode !== 'project') {
+    throw new AssemblyError('realtime Codex project mode mismatch')
   }
-  if (
-    options.codexResource !== undefined
-    && options.settings.codex_projects_enabled !== (options.codexResource.mode === 'project')
-  ) throw new AssemblyError('realtime Codex project mode mismatch')
   const qwen = options.qwenConfig ?? requireQwenRealtime(options.settings)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()

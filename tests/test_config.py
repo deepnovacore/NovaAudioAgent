@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import ValidationError
 import pytest
 
@@ -107,6 +109,14 @@ def test_proactivity_override_rejects_a_negative_environment_value(
 
 def test_codex_working_interval_defaults_to_thirty_seconds() -> None:
     assert Settings(_env_file=None).codex_working_interval == 30.0
+
+
+def test_codex_projects_are_unconditional_and_default_to_private_home_storage() -> None:
+    settings = Settings(_env_file=None)
+
+    assert not hasattr(settings, "codex_projects_enabled")
+    assert settings.codex_managed_root == Path("~/.nova-audio-agent/workspaces")
+    assert settings.codex_project_state_root == Path("~/.nova-audio-agent")
 
 
 @pytest.mark.parametrize("value", [5.0, 30.0, 600.0])

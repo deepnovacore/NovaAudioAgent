@@ -29,7 +29,6 @@ from nova_audio_agent.executors.camera import (
     VideoFileFrameSource,
 )
 from nova_audio_agent.executors.codex import CODEX_POLICY, CodexAdapter
-from nova_audio_agent.executors.codex_live import CodexLiveAdapter
 from nova_audio_agent.executors.codex_project_live import ProjectCodexAdapter
 from nova_audio_agent.executors.codex_projects import (
     CodexProjectStore,
@@ -368,7 +367,7 @@ def test_production_assembly_loads_search_plus_codex_in_fixed_order(
     assert sum(any(not op.readonly for op in manifest.ops) for manifest in manifests) == 1
 
 
-def test_explicit_live_assembly_adds_steer_without_changing_default(
+def test_explicit_live_assembly_uses_project_tools_without_changing_default(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -380,23 +379,31 @@ def test_explicit_live_assembly_adds_steer_without_changing_default(
         codex_workspace=tmp_path,
         codex_bin="/opt/tools/codex",
         codex_api_key=SecretStr("codex-private-key"),
+        codex_managed_root=tmp_path / "managed",
+        codex_project_state_root=tmp_path / "state",
         _env_file=None,
     )
 
     live = build_codex_live_assembly(settings, sink=_Sink())
     default = build_assembly(settings, sink=_Sink())
 
-    assert isinstance(live.runtime.executors["codex"], CodexLiveAdapter)
+    assert isinstance(live.runtime.executors["codex"], ProjectCodexAdapter)
     assert isinstance(default.runtime.executors["codex"], CodexAdapter)
     assert "codex.steer" in live.runtime.fastbrain._system
     assert "codex.steer" not in default.runtime.fastbrain._system
     live_tools = [schema["function"]["name"] for schema in live.tools.schemas]
     default_tools = [schema["function"]["name"] for schema in default.tools.schemas]
-    assert live_tools[-3:] == ["codex__run", "codex__steer", "codex__status"]
+    assert live_tools[-4:] == [
+        "codex__project",
+        "codex__confirm_project_action",
+        "codex__steer",
+        "codex__status",
+    ]
+    assert "codex__run" not in live_tools
     assert default_tools[-2:] == ["codex__run", "codex__status"]
 
 
-def test_explicit_qwen_realtime_assembly_reuses_live_manifest_without_fastbrain(
+def test_explicit_qwen_realtime_assembly_reuses_project_manifest_without_fastbrain(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -419,6 +426,8 @@ def test_explicit_qwen_realtime_assembly_reuses_live_manifest_without_fastbrain(
         tavily_api_key=SecretStr("tavily-secret"),
         executor="codex",
         codex_workspace=tmp_path,
+        codex_managed_root=tmp_path / "managed",
+        codex_project_state_root=tmp_path / "state",
         qwen_realtime_url="wss://dashscope.example/realtime",
         qwen_realtime_model="qwen-audio-3.0-realtime-plus",
         qwen_realtime_voice="longanqian",
@@ -440,12 +449,13 @@ def test_explicit_qwen_realtime_assembly_reuses_live_manifest_without_fastbrain(
     )
     default = build_assembly(settings, sink=_Sink())
 
-    assert isinstance(realtime.runtime.executors["codex"], CodexLiveAdapter)
+    assert isinstance(realtime.runtime.executors["codex"], ProjectCodexAdapter)
     assert isinstance(default.runtime.executors["codex"], CodexAdapter)
     assert realtime.runtime.fastbrain is None
     assert default.runtime.fastbrain is not None
-    assert [schema["function"]["name"] for schema in realtime.tools.schemas][-3:] == [
-        "codex__run",
+    assert [schema["function"]["name"] for schema in realtime.tools.schemas][-4:] == [
+        "codex__project",
+        "codex__confirm_project_action",
         "codex__steer",
         "codex__status",
     ]
@@ -468,8 +478,8 @@ def test_explicit_qwen_realtime_assembly_reuses_live_manifest_without_fastbrain(
         Delegate(
             delegate_id="delegate-1",
             executor="codex",
-            op="run",
-            request={},
+            op="project",
+            request={"action": "list_workspaces"},
             origin_ref="conversation:1",
             deadline=30.0,
             routing_class="user_awaited",
@@ -480,7 +490,7 @@ def test_explicit_qwen_realtime_assembly_reuses_live_manifest_without_fastbrain(
         ProgressEvent(
             channel="codex",
             delegate_id="delegate-1",
-            op="run",
+            op="project",
             phase="working",
             internal_activity=1,
             elapsed=0.5,
@@ -506,8 +516,7 @@ def test_qwen_controlled_guard_reconnect_and_history_arm_are_opt_in_at_assembly(
                 model_api_key=SecretStr("model-key"),
                 dashscope_api_key=SecretStr("realtime-key"),
                 tavily_api_key=SecretStr("tavily-key"),
-                executor="codex",
-                codex_workspace=tmp_path,
+                executor="fast_sim",
                 qwen_controlled_guard_reconnect=enabled,
                 qwen_guard_history_recovery=history,
                 _env_file=None,
@@ -562,8 +571,7 @@ async def test_qwen_realtime_provider_tool_view_narrows_provider_only(
         model_api_key=SecretStr("model-secret"),
         dashscope_api_key=SecretStr("realtime-secret"),
         tavily_api_key=SecretStr("tavily-secret"),
-        executor="codex",
-        codex_workspace=tmp_path,
+        executor="fast_sim",
         _env_file=None,
     )
 
@@ -611,8 +619,7 @@ def test_qwen_realtime_provider_tool_view_rejects_authority_expansion(
         model_api_key=SecretStr("model-secret"),
         dashscope_api_key=SecretStr("realtime-secret"),
         tavily_api_key=SecretStr("tavily-secret"),
-        executor="codex",
-        codex_workspace=tmp_path,
+        executor="fast_sim",
         _env_file=None,
     )
 
@@ -697,8 +704,7 @@ def test_qwen_realtime_assembly_wires_suggestion_callback_after_service_construc
     settings = Settings(
         model_api_key=SecretStr("model-secret"),
         tavily_api_key=SecretStr("tavily-secret"),
-        executor="codex",
-        codex_workspace=tmp_path,
+        executor="fast_sim",
         _env_file=None,
     )
     realtime = build_qwen_realtime_assembly(
@@ -762,6 +768,8 @@ def test_qwen_realtime_assembly_relays_attention_decision_to_service_telemetry(
             tavily_api_key=SecretStr("tavily-secret"),
             executor="codex",
             codex_workspace=tmp_path,
+            codex_managed_root=tmp_path / "managed",
+            codex_project_state_root=tmp_path / "state",
             _env_file=None,
         ),
         sink=_Sink(),
@@ -933,19 +941,31 @@ def test_codex_live_assembly_threads_working_interval_into_the_protocol_transpor
         codex_workspace=tmp_path,
         codex_bin="/opt/tools/codex",
         codex_working_interval=45.5,
+        codex_managed_root=tmp_path / "managed",
+        codex_project_state_root=tmp_path / "state",
         _env_file=None,
     )
 
-    build_codex_live_assembly(settings, sink=_Sink())
+    live = build_codex_live_assembly(settings, sink=_Sink())
+    adapter = live.runtime.executors["codex"]
+    assert isinstance(adapter, ProjectCodexAdapter)
+    adapter._worker_factory(
+        tmp_path,
+        tmp_path / "codex-home",
+        "thread-1",
+        lambda _thread_id: None,
+    )
 
-    assert transport_calls == [
-        {
-            "binary": "/opt/tools/codex",
-            "workspace": tmp_path.resolve(),
-            "api_key": None,
-            "working_interval": 45.5,
-        }
-    ]
+    assert len(transport_calls) == 1
+    assert callable(transport_calls[0].pop("on_thread_ready"))
+    assert transport_calls == [{
+        "binary": "/opt/tools/codex",
+        "workspace": tmp_path.resolve(),
+        "api_key": None,
+        "codex_home": tmp_path / "codex-home",
+        "resume_thread_id": "thread-1",
+        "working_interval": 45.5,
+    }]
 
 
 def test_build_assembly_threads_proactivity_preset_into_runtime_pacing(
@@ -1262,7 +1282,7 @@ async def test_qwen_realtime_prewarm_toggle_off_keeps_lazy_behaviour() -> None:
     assert adapter.aclose_calls == 1  # teardown still owns the worker lifecycle
 
 
-def test_qwen_realtime_build_exposes_the_live_adapter_handle(
+def test_qwen_realtime_build_exposes_the_project_adapter_handle(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -1273,6 +1293,8 @@ def test_qwen_realtime_build_exposes_the_live_adapter_handle(
         tavily_api_key=SecretStr("tavily-secret"),
         executor="codex",
         codex_workspace=tmp_path,
+        codex_managed_root=tmp_path / "managed-on",
+        codex_project_state_root=tmp_path / "state-on",
         _env_file=None,
     )
     assert settings.codex_prewarm is True
@@ -1287,7 +1309,8 @@ def test_qwen_realtime_build_exposes_the_live_adapter_handle(
     )
 
     assert realtime.codex_live_adapter is realtime.runtime.executors["codex"]
-    assert realtime.codex_prewarm is True
+    assert isinstance(realtime.codex_live_adapter, ProjectCodexAdapter)
+    assert realtime.codex_prewarm is False
 
     lazy = Settings(
         model_api_key=SecretStr("model-secret"),
@@ -1295,6 +1318,8 @@ def test_qwen_realtime_build_exposes_the_live_adapter_handle(
         executor="codex",
         codex_workspace=tmp_path,
         codex_prewarm=False,
+        codex_managed_root=tmp_path / "managed-off",
+        codex_project_state_root=tmp_path / "state-off",
         _env_file=None,
     )
     off = build_qwen_realtime_assembly(
@@ -1305,6 +1330,7 @@ def test_qwen_realtime_build_exposes_the_live_adapter_handle(
         on_audio_terminal=lambda _utterance_id, _epoch: None,
         on_delivery=lambda _completion: None,
     )
+    assert isinstance(off.codex_live_adapter, ProjectCodexAdapter)
     assert off.codex_prewarm is False
 
 
@@ -1321,7 +1347,6 @@ def test_project_realtime_assembly_exposes_exact_codex_tool_surface(
         tavily_api_key=SecretStr("tavily-secret"),
         executor="codex",
         codex_workspace=workspace,
-        codex_projects_enabled=True,
         codex_managed_root=tmp_path / "managed",
         codex_project_state_root=tmp_path / "state",
         _env_file=None,
@@ -1342,7 +1367,13 @@ def test_project_realtime_assembly_exposes_exact_codex_tool_surface(
         for schema in realtime.tools.schemas
         if schema["function"]["name"].startswith("codex__")
     ]
-    assert names == ["codex__run", "codex__project", "codex__steer", "codex__status"]
+    assert names == [
+        "codex__project",
+        "codex__confirm_project_action",
+        "codex__steer",
+        "codex__status",
+    ]
+    assert "codex__run" not in names
     assert realtime.service._project_confirmation is realtime.codex_live_adapter.confirmation
     assert realtime.codex_prewarm is False
 
@@ -1365,7 +1396,6 @@ def test_project_registry_failure_becomes_bounded_configuration_error(
         tavily_api_key=SecretStr("tavily-secret"),
         executor="codex",
         codex_workspace=workspace,
-        codex_projects_enabled=True,
         codex_managed_root=tmp_path / "managed",
         codex_project_state_root=tmp_path / "private-state",
         _env_file=None,

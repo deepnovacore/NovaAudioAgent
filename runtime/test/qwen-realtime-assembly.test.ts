@@ -3,8 +3,9 @@ import {chmod, mkdtemp, readFile, realpath, rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join, resolve} from 'node:path'
 import { test } from 'node:test'
-import { buildAssembly } from '../src/assembly.js'
+import {AssemblyError, buildAssembly} from '../src/assembly.js'
 import type {CodexAssemblyResource} from '../src/codex-factory.js'
+import {CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
 import type {
   CodexAppServerTransport,
   SafePreflightReport,
@@ -40,6 +41,7 @@ import {
 } from '../src/realtime/qwen.js'
 import type { CompiledTools } from '../src/tool-schema.js'
 import {CodexLiveAdapter} from '../src/executors/codex-live.js'
+import {ProjectConfirmationController} from '../src/realtime/project-confirmation.js'
 
 async function settleNamed<T>(
   name: string,
@@ -55,15 +57,6 @@ async function settleNamed<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer)
   }
-}
-
-function deferred<T = void>(): {
-  readonly promise: Promise<T>
-  readonly resolve: (value: T | PromiseLike<T>) => void
-} {
-  let resolve: ((value: T | PromiseLike<T>) => void) | undefined
-  const promise = new Promise<T>(promiseResolve => { resolve = promiseResolve })
-  return {promise, resolve: resolve!}
 }
 
 class RecordingIds implements IdFactory {
@@ -329,21 +322,44 @@ test('Qwen factory construction does not invoke an unrelated LiveKit agents load
   assert.equal(connector.calls.length, 0)
 })
 
-test('Qwen composition registers the exact Codex resource and starts prewarm after service', async () => {
+test('Qwen composition registers the exact project Codex resource and starts it after service', async () => {
   const connector = recordingConnector()
-  const adapter = new CodexLiveAdapter(new CompositionCodexTransport())
-  const prewarmEntered = deferred<void>()
-  const prewarmGate = deferred<void>()
+  const confirmationController = new ProjectConfirmationController({
+    clock: new VirtualClock(),
+    idFactory: () => 'unused-project-confirmation-id',
+  })
+  const adapter = {
+    manifest: CODEX_PROJECT_MANIFEST,
+    dispatch: () => Promise.resolve({
+      outcome: 'ok' as const,
+      trust: 'trusted_system' as const,
+      content: {code: 'unused'},
+      refs: [],
+    }),
+    confirmationController,
+    initialize: () => Promise.resolve(),
+    commitConfirmed: () => Promise.resolve({accepted: false, code: 'unused'}),
+    publicProjectView: () => ({
+      workspace_display_name: null,
+      session_title: null,
+      pending_confirmation: false,
+    }),
+    activeCommittedWorkspace: () => Promise.resolve(null),
+    observeProjectView: () => () => undefined,
+    observeCommittedWorkspace: () => () => undefined,
+    observeTerminalWorkOrder: () => () => undefined,
+  }
+  let starts = 0
   let closes = 0
   const resource: CodexAssemblyResource = {
     adapter,
-    mode: 'live',
+    mode: 'project',
     projectView: null,
     start: () => {
-      prewarmEntered.resolve()
-      return prewarmGate.promise
+      starts += 1
+      return Promise.resolve()
     },
-    close: () => { closes += 1; return adapter.close() },
+    close: () => { closes += 1; return Promise.resolve() },
   }
   const input = {
     ...qwenOptions(settings({
@@ -355,14 +371,32 @@ test('Qwen composition registers the exact Codex resource and starts prewarm aft
   const realtime = buildQwenRealtimeAssembly(input)
   assert.equal(realtime.runtime.executors.get('codex'), adapter)
 
-  const starting = realtime.start()
-  await settleNamed('provider service before Codex prewarm', prewarmEntered.promise)
-  await settleNamed('Codex prewarm does not delay realtime start', starting)
+  await settleNamed('Qwen composition start', realtime.start())
   assert.equal(connector.calls.length, 1)
+  assert.equal(starts, 1)
 
-  prewarmGate.resolve()
   await realtime.stop()
   assert.equal(closes, 1)
+})
+
+test('Qwen realtime composition rejects a live Codex fallback', () => {
+  const adapter = new CodexLiveAdapter(new CompositionCodexTransport())
+  const resource: CodexAssemblyResource = {
+    adapter,
+    mode: 'live',
+    projectView: null,
+    start: () => Promise.resolve(),
+    close: () => adapter.close(),
+  }
+
+  assert.throws(() => buildQwenRealtimeAssembly({
+    ...qwenOptions(settings({
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    }), recordingConnector().connector),
+    codexResource: resource,
+  }), error => error instanceof AssemblyError
+    && error.message === 'realtime Codex project mode mismatch')
 })
 
 test('desktop entry leaves Codex prewarm to the realtime owner instead of blocking readiness', async () => {

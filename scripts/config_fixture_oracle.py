@@ -93,7 +93,6 @@ def _cases() -> list[dict[str, Any]]:
                 "NOVA_AUDIO_AGENT_CODEX_BIN": "/fixture/bin/codex",
                 "NOVA_AUDIO_AGENT_CODEX_API_KEY": "fixture-codex-key",
                 "NOVA_AUDIO_AGENT_CODEX_PREWARM": "false",
-                "NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED": "true",
                 "NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT": "/fixture/managed",
                 "NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT": "/fixture/state",
                 "NOVA_AUDIO_AGENT_PROACTIVITY_PRESET": "eager",

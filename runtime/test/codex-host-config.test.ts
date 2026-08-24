@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import {
   chmodSync,
+  existsSync,
+  lstatSync,
   mkdtempSync,
   mkdirSync,
   realpathSync,
@@ -60,19 +62,33 @@ test('host resolver is lazy without Codex and brands one allowlisted launch tupl
   assert.equal(hostWorkspacePath(resolved.workspace), fixture.workspace)
   assert.deepEqual({
     prewarm: resolved.prewarm,
-    projects: resolved.projectsEnabled,
     interval: resolved.workingInterval,
-    stateRoot: resolved.stateRoot,
-    managedRoot: resolved.managedRoot,
   }, {
     prewarm: true,
-    projects: false,
     interval: 30,
-    stateRoot: null,
-    managedRoot: null,
   })
+  assert.equal(Object.hasOwn(resolved, 'projectsEnabled'), false)
+  assert.ok(resolved.stateRoot !== null)
+  assert.ok(resolved.managedRoot !== null)
+  const stateRoot = join(fixture.root, '.nova-audio-agent')
+  const managedRoot = join(stateRoot, 'workspaces')
+  assert.equal(existsSync(stateRoot), true)
+  assert.equal(existsSync(managedRoot), true)
+  assert.equal(lstatSync(stateRoot).mode & 0o777, 0o700)
+  assert.equal(lstatSync(managedRoot).mode & 0o777, 0o700)
   assert.equal(Object.hasOwn(resolved, 'apiKey'), false)
   assert.equal(JSON.stringify(resolved).includes('secret-must-remain-opaque'), false)
+})
+
+test('host resolver expands a leading tilde in the selected Codex workspace', t => {
+  const fixture = hostFixture(t)
+  const resolved = resolveCodexHostConfig(loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: '~/workspace',
+  }), fixture.catalog)
+
+  assert.ok(resolved !== null)
+  assert.equal(hostWorkspacePath(resolved.workspace), fixture.workspace)
 })
 
 test('selected Codex fails as host-unavailable when Task 8 has not supplied a catalog', t => {
