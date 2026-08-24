@@ -24,6 +24,7 @@
     "desktop/ambient-orb/src/renderer/settings-controller.mjs",
     "desktop/ambient-orb/src/renderer/settings.mjs",
     "desktop/ambient-orb/src/renderer/state.mjs",
+    "desktop/ambient-orb/src/renderer/voice-choice.mjs",
     "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
     "runtime/src/assembly.ts",
     "runtime/src/calls.ts",
