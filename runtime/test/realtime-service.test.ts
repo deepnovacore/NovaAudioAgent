@@ -2893,6 +2893,7 @@ function confirmationService(options: {
   readonly service: RealtimeService
   readonly controller: ProjectConfirmationController
   readonly actions: string[]
+  readonly injected: HostContextItem[]
   readonly views: ProjectConfirmationView[]
   readonly clock: VirtualClock
 } {
@@ -2930,6 +2931,7 @@ function confirmationService(options: {
   const memory = new Memory({policies: [manifest.policy]})
   const executors = new Map([[manifest.name, {manifest}]])
   const actions: string[] = []
+  const injected: HostContextItem[] = []
   const views: ProjectConfirmationView[] = []
   let ids = 0
   const nextId = (): string => `id-${++ids}`
@@ -2942,6 +2944,7 @@ function confirmationService(options: {
     },
     injectHostItem: (item: {readonly host_item_id: string; readonly event_id: string}) => {
       actions.push(`inject:${item.event_id}`)
+      injected.push(item as HostContextItem)
       if (options.hangInjection === true) return new Promise<never>(() => undefined)
       return Promise.resolve({session_epoch: epoch, host_item_id: item.host_item_id})
     },
@@ -3021,7 +3024,7 @@ function confirmationService(options: {
     onProjectView: view => views.push(view),
     onDiagnostic: () => undefined,
   })
-  return {service, controller, actions, views, clock}
+  return {service, controller, actions, injected, views, clock}
 }
 
 /**
@@ -3038,8 +3041,8 @@ function toldAboutConfirmation(service: RealtimeService, actions: readonly strin
     ))
 }
 
-function propose(controller: ProjectConfirmationController): void {
-  controller.prepare({
+function propose(controller: ProjectConfirmationController) {
+  return controller.prepare({
     action: 'create',
     workspace_display_name: '研究项目',
     workspace_id: null,
@@ -3047,6 +3050,43 @@ function propose(controller: ProjectConfirmationController): void {
     session_id: null,
     work_order: null,
     origin_ref: 'conversation:1',
+  })
+}
+
+async function confirmationTurn(
+  service: RealtimeService,
+  input: {
+    readonly proposalId: string
+    readonly confirmed: JsonValue
+    readonly callId?: string
+    readonly itemId?: string
+    readonly responseId?: string
+    readonly transcript?: string
+  },
+): Promise<void> {
+  const itemId = input.itemId ?? 'user-item-1'
+  const responseId = input.responseId ?? 'response-1'
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: `speech-${itemId}`,
+    provider_item_id: itemId,
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: itemId,
+    text: input.transcript ?? '好，创建吧',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: input.callId ?? 'confirm-1',
+    item_id: 'function-1',
+    response_id: responseId,
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: input.proposalId, confirmed: input.confirmed},
   })
 }
 
@@ -3071,53 +3111,144 @@ async function speak(service: RealtimeService, itemId: string, text: string): Pr
   })
 }
 
-test('a spoken confirmation commits the operation', async () => {
-  const {service, controller, actions} = confirmationService()
+test('the dedicated confirmation function commits the reserved proposal', async () => {
+  const commits: string[] = []
+  const {service, controller, injected} = confirmationService({
+    commit: operation => {
+      commits.push(operation.proposal_id)
+      return Promise.resolve({accepted: true, code: 'committed'})
+    },
+  })
   await service.connect()
-  propose(controller)
-  await speak(service, 'user-item-1', '确认')
-  assert.ok(actions.includes('commit'), 'the operation was carried out')
-  assert.equal(controller.pending, false, 'and the proposal is settled')
+  const proposal = propose(controller)
+
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
+
+  assert.deepEqual(commits, [proposal.proposal_id])
+  assert.match(injected.at(-1)?.content ?? '', /"code":"confirmed"/u)
+  assert.equal(controller.pending, false)
 })
 
-test('a cancellation does not commit, and says so', async () => {
-  const {service, controller, actions} = confirmationService()
+test('a structured false decision cancels without committing', async () => {
+  const {service, controller, actions, injected} = confirmationService()
   await service.connect()
-  propose(controller)
-  await speak(service, 'user-item-1', '取消')
+  const proposal = propose(controller)
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: false})
   assert.equal(actions.includes('commit'), false, 'nothing was committed')
   assert.equal(controller.pending, false)
+  assert.match(injected.find(item => item.kind === 'tool_output')?.content ?? '', /cancelled/u)
   assert.ok(toldAboutConfirmation(service, actions), 'and the user is told')
 })
 
-test('a failing commit still tells the user something', async () => {
-  // A confirmation that produced silence is the worst outcome available: the user said yes and has no
-  // idea whether anything happened.
-  const {service, controller, actions} = confirmationService({
-    commit: () => Promise.reject(new Error('workspace service is down')),
-  })
+test('non-boolean confirmation arguments fail closed without committing', async () => {
+  const {service, controller, actions, injected} = confirmationService()
   await service.connect()
-  propose(controller)
-  await speak(service, 'user-item-1', '确认')
-  assert.ok(toldAboutConfirmation(service, actions), 'the user hears that it did not happen')
+  const proposal = propose(controller)
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: 'true'})
+  assert.equal(actions.includes('commit'), false)
+  assert.equal(controller.pending, true)
+  assert.match(injected.find(item => item.kind === 'tool_output')?.content ?? '', /invalid/u)
 })
 
-test('a refused commit reports the reason it gave', async () => {
-  const {service, controller, actions} = confirmationService({
-    commit: () => Promise.resolve({accepted: false, code: 'workspace_name_conflict'}),
-  })
+test('a stale proposal id fails closed without committing', async () => {
+  const {service, controller, actions} = confirmationService()
   await service.connect()
   propose(controller)
-  await speak(service, 'user-item-1', '确认')
-  assert.ok(toldAboutConfirmation(service, actions))
+  await confirmationTurn(service, {proposalId: 'proposal-stale', confirmed: true})
+  assert.equal(actions.includes('commit'), false)
+  assert.equal(controller.pending, true)
 })
 
-test('with no commit callback wired, a confirmation says so rather than pretending', async () => {
-  const {service, controller, actions} = confirmationService({withoutCommit: true})
+test('a confirmation call replay commits and produces provider output once', async () => {
+  const {service, controller, actions, injected} = confirmationService()
   await service.connect()
-  propose(controller)
-  await speak(service, 'user-item-1', '确认')
-  assert.ok(toldAboutConfirmation(service, actions))
+  const proposal = propose(controller)
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
+  const replay = {
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'confirm-1',
+    item_id: 'function-1',
+    response_id: 'response-1',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  } as const
+  await service.handleEvent(replay)
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+  assert.equal(injected.filter(item => item.call_id === 'confirm-1').length, 1)
+})
+
+test('a confirmation function from another response or epoch fails closed', async () => {
+  const {service, controller, actions, injected} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-user-1',
+    provider_item_id: 'user-1',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-1',
+    text: '确认',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 2,
+    call_id: 'confirm-stale-epoch',
+    item_id: 'function-stale-epoch',
+    response_id: 'response-1',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+  assert.equal(actions.includes('commit'), false)
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'confirm-other',
+    item_id: 'function-other',
+    response_id: 'response-other',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+  assert.equal(actions.includes('commit'), false)
+  assert.equal(controller.pending, true)
+  assert.match(injected.at(-1)?.content ?? '', /confirmation_not_pending/u)
+})
+
+test('a terminal without a confirmation function releases the item for the next utterance', async () => {
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-first',
+    provider_item_id: 'first',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-first'})
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'first', text: '我没说清楚',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'response-first',
+    status: 'completed',
+    reason: '',
+  })
+  assert.equal(controller.pending, true, 'the proposal remains live')
+  await confirmationTurn(service, {
+    proposalId: proposal.proposal_id,
+    confirmed: true,
+    itemId: 'second',
+    responseId: 'response-second',
+    callId: 'confirm-second',
+  })
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
 })
 
 test('a tool call in a blocked turn is refused and answered', async () => {
@@ -3217,8 +3348,8 @@ test('the project view is published on every state change', async () => {
   // The renderer has no other way to learn a confirmation is pending, or that it stopped being.
   const {service, controller, views} = confirmationService()
   await service.connect()
-  propose(controller)
-  await speak(service, 'user-item-1', '确认')
+  const proposal = propose(controller)
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
   assert.ok(views.length > 0, 'the renderer was told')
   assert.equal(views.at(-1)?.pending_confirmation, false, 'and told it is over')
 })
@@ -3525,7 +3656,7 @@ test('a settled confirmation stops blocking, so later turns work again', async (
   // every tool call for the rest of the session — the agent would appear to work and quietly do nothing.
   const {service, controller} = confirmationService()
   await service.connect()
-  propose(controller)
+  const proposal = propose(controller)
   await service.handleEvent({
     kind: 'user_speech_started',
     session_epoch: 1,
@@ -3546,6 +3677,15 @@ test('a settled confirmation stops blocking, so later turns work again', async (
     item_id: 'user-item-1',
     text: '确认',
   })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'confirm-1',
+    item_id: 'function-1',
+    response_id: 'r-1',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
   assert.equal(controller.pending, false, 'the proposal is settled')
   assert.deepEqual(service.confirmationItemsForTest, [], 'no item reserved')
   assert.deepEqual(service.confirmationClosingItemsForTest, [], 'and none closing')
@@ -3556,7 +3696,7 @@ test('a settled confirmation stops blocking, so later turns work again', async (
   )
 })
 
-test('an unspent fence keeps the block open even after the item is released', async () => {
+test('a transcript alone keeps the reserved item and unspent fence blocked', async () => {
   // The fence is what stops the question being spoken over. While it is still armed the confirmation is
   // not finished, whatever happened to the reserved item -- which is why the recomputation counts it.
   const {service, controller} = confirmationService()
@@ -3575,7 +3715,7 @@ test('an unspent fence keeps the block open even after the item is released', as
     item_id: 'user-item-1',
     text: '确认',
   })
-  assert.deepEqual(service.confirmationItemsForTest, [], 'the item was consumed')
+  assert.deepEqual(service.confirmationItemsForTest, ['1:user-item-1'], 'the item stays reserved')
   assert.equal(
     service.projectConfirmationBlockingForTest,
     true,
@@ -3583,7 +3723,7 @@ test('an unspent fence keeps the block open even after the item is released', as
   )
 })
 
-test('a response spends the fence, and the block lifts with it', async () => {
+test('a response spends the fence but cannot lift a still-undecided item', async () => {
   const {service, controller} = confirmationService()
   await service.connect()
   propose(controller)
@@ -3605,13 +3745,13 @@ test('a response spends the fence, and the block lifts with it', async () => {
     item_id: 'user-item-1',
     text: '确认',
   })
-  // The item is gone but the fence is not, so the block stands.
+  // Transcript text is evidence only; the structured decision has not arrived.
   assert.equal(service.projectConfirmationBlockingForTest, true)
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
   assert.equal(
     service.projectConfirmationBlockingForTest,
-    false,
-    'the response spent the fence and the block lifted',
+    true,
+    'the response spent the fence but the undecided item still blocks',
   )
 })
 
@@ -3621,7 +3761,7 @@ test('a response recorded while blocking keeps blocking its own epoch after the 
   // to act inside the turn it was told to wait in.
   const {service, controller} = confirmationService()
   await service.connect()
-  propose(controller)
+  const proposal = propose(controller)
   await service.handleEvent({
     kind: 'user_speech_started',
     session_epoch: 1,
@@ -3640,6 +3780,12 @@ test('a response recorded while blocking keeps blocking its own epoch after the 
     session_epoch: 1,
     item_id: 'user-item-1',
     text: '确认',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'confirm-1', item_id: 'function-1',
+    name: 'codex__confirm_project_action', arguments: {
+      proposal_id: proposal.proposal_id, confirmed: true,
+    }, response_id: 'r-1',
   })
   assert.equal(service.projectConfirmationBlockingForTest, false, 'the block has lifted')
   assert.deepEqual(service.confirmationResponsesForTest, ['1:r-1'], 'but r-1 is still recorded')
@@ -3662,7 +3808,7 @@ test('after the block lifts, a call in any response of that epoch is still refus
   // caught by neither the exact-key check nor the blocking flag -- only by the epoch.
   const {service, controller} = confirmationService()
   await service.connect()
-  propose(controller)
+  const proposal = propose(controller)
   await service.handleEvent({
     kind: 'user_speech_started',
     session_epoch: 1,
@@ -3681,6 +3827,12 @@ test('after the block lifts, a call in any response of that epoch is still refus
     session_epoch: 1,
     item_id: 'user-item-1',
     text: '确认',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'confirm-1', item_id: 'function-1',
+    name: 'codex__confirm_project_action', arguments: {
+      proposal_id: proposal.proposal_id, confirmed: true,
+    }, response_id: 'r-1',
   })
   assert.equal(service.projectConfirmationBlockingForTest, false, 'the block has lifted')
 
@@ -3766,7 +3918,7 @@ test('a cancelled commit propagates instead of being reported as a failed operat
   aborted.name = 'AbortError'
   const {service, controller} = confirmationService({commit: () => Promise.reject(aborted)})
   await service.connect()
-  propose(controller)
+  const proposal = propose(controller)
   await service.handleEvent({
     kind: 'user_speech_started',
     session_epoch: 1,
@@ -3779,12 +3931,16 @@ test('a cancelled commit propagates instead of being reported as a failed operat
     speech_id: 'speech-1',
     provider_item_id: 'user-item-1',
   })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-item-1', text: '确认',
+  })
   await assert.rejects(
     () => service.handleEvent({
-      kind: 'user_transcript_final',
-      session_epoch: 1,
-      item_id: 'user-item-1',
-      text: '确认',
+      kind: 'tool_call_ready', session_epoch: 1, call_id: 'confirm-1', item_id: 'function-1',
+      name: 'codex__confirm_project_action', arguments: {
+        proposal_id: proposal.proposal_id, confirmed: true,
+      }, response_id: 'r-1',
     }),
     /operation aborted/u,
     'the cancellation reaches the caller',

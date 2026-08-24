@@ -81,6 +81,14 @@ import { finalSpeechView, genericFinalSpeechView } from './evidence.js'
 import { SPEECH_FINAL_LIMIT, prepareForSpeech } from './speech-prep.js'
 import type { RealtimeTelemetry } from './telemetry.js'
 
+const PROJECT_CONFIRMATION_TOOL = 'codex__confirm_project_action'
+
+interface BoundToolOrigin {
+  readonly observedProviderResponseId: string | null
+  readonly originItemId: string | null
+  readonly originRef: string | null
+}
+
 /** The runtime surface the service reads. Thirteen call sites in the oracle, mostly reads. */
 /** What the projection needs to know about one dispatched delegate. */
 export interface DelegateLike {
@@ -1759,12 +1767,18 @@ export class RealtimeService {
     // A tool call in a turn that is meant to be waiting for a confirmation is refused before the
     // session sees it: letting it through would have the model acting inside the very turn whose answer
     // it is supposed to be waiting for.
+    const isConfirmationDecision = event.kind === 'tool_call_ready'
+      && event.name === PROJECT_CONFIRMATION_TOOL
     const blockedConfirmationTool = event.kind === 'tool_call_ready'
       && this.#blocksProjectConfirmationTool(event)
+      && !isConfirmationDecision
     const accepted = blockedConfirmationTool ? false : await this.session.accept(event)
 
     if (event.kind === 'response_started' && this.#projectConfirmationBlocking) {
       this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
+      if (!this.#responseUserOriginItems.has(callKey(event.session_epoch, event.response_id))) {
+        this.#bindResponseUserOrigin(event.response_id)
+      }
       // The armed fence has been spent by this response, so it no longer holds the block open.
       this.#projectConfirmationFencePending = false
       this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
@@ -1850,6 +1864,16 @@ export class RealtimeService {
       this.#finishSemanticAcknowledgement(event)
       this.#finishContinuation(event)
       this.#finishOrigin(event.response_id)
+      const itemId = this.#responseUserOriginItems.get(
+        callKey(event.session_epoch, event.response_id),
+      )
+      if (
+        itemId !== undefined
+        && this.#isProjectConfirmationItem(event.session_epoch, itemId)
+      ) {
+        this.#projectConfirmation?.releaseUndecided({epoch: event.session_epoch, itemId})
+        this.#endProjectConfirmationItem(event.session_epoch, itemId)
+      }
       // Released only when the terminal is *not* the current generation: if it is, playback is still
       // running and the owner is what keeps the alert's audio attributable.
       if (
@@ -1871,8 +1895,11 @@ export class RealtimeService {
         this.#rememberUserOriginRef(event.item_id, originRef)
         this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
         if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
-        if (this.#isProjectConfirmationItem(event.session_epoch, event.item_id)) {
-          await this.#finishProjectConfirmation(event, originRef)
+        if (
+          this.#isProjectConfirmationItem(event.session_epoch, event.item_id)
+          && this.#projectConfirmation?.pending !== true
+        ) {
+          await this.#closeConfirmationDeferredCalls(event.item_id)
         } else {
           await this.#releaseDeferredOriginCalls(event.item_id, originRef)
         }
@@ -1935,8 +1962,9 @@ export class RealtimeService {
     if (originItemId !== undefined) {
       const originRef = this.#userOriginRefs.get(originItemId)
       if (originRef !== undefined) {
-        await this.#handleToolCall(event, {
+        await this.#handleBoundToolCall(event, {
           observedProviderResponseId: observedResponseId,
+          originItemId,
           originRef,
         })
       } else if (this.#originDeferredToolCalls.length >= MAX_PENDING_TOOL_REFUSALS) {
@@ -1948,6 +1976,15 @@ export class RealtimeService {
           user_item_id: originItemId,
         })
       }
+      return
+    }
+
+    if (event.name === PROJECT_CONFIRMATION_TOOL) {
+      await this.#handleProjectConfirmationDecision(event, {
+        observedProviderResponseId: observedResponseId,
+        originItemId: null,
+        originRef: null,
+      })
       return
     }
 
@@ -2121,11 +2158,23 @@ export class RealtimeService {
         this.#originDeferredToolCalls.push(entry)
         continue
       }
-      await this.#handleToolCall(entry.event, {
+      await this.#handleBoundToolCall(entry.event, {
         observedProviderResponseId: entry.response_id,
+        originItemId: entry.user_item_id,
         originRef,
       })
     }
+  }
+
+  async #handleBoundToolCall(event: ToolCallReady, origin: BoundToolOrigin): Promise<void> {
+    if (event.name === PROJECT_CONFIRMATION_TOOL) {
+      await this.#handleProjectConfirmationDecision(event, origin)
+      return
+    }
+    await this.#handleToolCall(event, {
+      observedProviderResponseId: origin.observedProviderResponseId,
+      originRef: origin.originRef,
+    })
   }
 
   /** Where a batch's originating response ended up, collapsed to the four states a batch tracks. */
@@ -2697,62 +2746,99 @@ export class RealtimeService {
       || this.#projectConfirmationFencePending
   }
 
-  /**
-   * Judge the transcript that answers a proposal, and act on it.
-   *
-   * The re-entrancy check is first: an item already closing means this transcript arrived twice, and
-   * the only outstanding work is the deferred calls. Running the controller again would let a second
-   * delivery of the same words confirm something the first delivery already declined.
-   *
-   * The commit callback is wrapped because a failing one must still tell the user *something*. A
-   * confirmation that produced silence is the worst outcome available: the user said yes and has no
-   * idea whether anything happened.
-   */
-  async #finishProjectConfirmation(
-    event: {readonly session_epoch: number; readonly item_id: string; readonly text: string},
-    originRef: string,
+  #endProjectConfirmationItem(epoch: number, itemId: string): void {
+    this.#projectConfirmationItems.delete(callKey(epoch, itemId))
+    this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
+      || this.#projectConfirmationClosingItems.size > 0
+      || this.#projectConfirmationFencePending
+  }
+
+  async #handleProjectConfirmationDecision(
+    event: ToolCallReady,
+    origin: BoundToolOrigin,
   ): Promise<void> {
-    const key = callKey(event.session_epoch, event.item_id)
-    if (this.#projectConfirmationClosingItems.has(key)) {
-      await this.#closeConfirmationDeferredCalls(event.item_id)
-      return
-    }
-    this.#beginProjectConfirmationClose(event.session_epoch, event.item_id)
+    const call = callKey(event.session_epoch, event.call_id)
+    if (
+      this.#projectConfirmationClosingCalls.has(call)
+      || this.#projectConfirmationClosedCalls.has(call)
+    ) return
+    this.#projectConfirmationClosingCalls.add(call)
+
+    let code = 'confirmation_not_pending'
+    let state = 'refused'
     try {
-      await this.#closeConfirmationDeferredCalls(event.item_id)
-    } finally {
-      this.#endProjectConfirmationClose(event.session_epoch, event.item_id)
-    }
-    const controller = this.#projectConfirmation
-    if (controller === undefined) return
-    const outcome = controller.acceptTranscript({
-      epoch: event.session_epoch,
-      itemId: event.item_id,
-      text: event.text,
-    })
-    let text = outcome.response_text
-    if (outcome.kind === 'confirmed' && outcome.operation !== null) {
-      const callback = this.#commitProjectOperation
-      if (callback === undefined) {
-        text = '确认处理不可用，本次操作未执行。'
-      } else {
+      const itemId = origin.originItemId
+      const controller = this.#projectConfirmation
+      if (
+        controller !== undefined
+        && itemId !== null
+        && origin.originRef !== null
+        && origin.observedProviderResponseId !== null
+        && event.response_id === origin.observedProviderResponseId
+        && this.#isProjectConfirmationItem(event.session_epoch, itemId)
+      ) {
+        this.#beginProjectConfirmationClose(event.session_epoch, itemId)
+        let text: string | null = null
         try {
-          const result = await callback(outcome.operation, originRef)
-          text = result.accepted
-            ? '已确认，正在处理。'
-            : projectCommitFailureText(result.code)
-        } catch (failure) {
-          // A cancellation is not a failed operation: the caller is trying to stop or replace this, and
-          // reporting an authoritative outcome would contradict that. It propagates.
-          if (isAbort(failure)) throw failure
-          // Everything else is deliberately vague: the failure came from somewhere this layer does not
-          // model, and naming a reason would be inventing one.
-          text = '已确认，但操作未执行。'
+          await this.#closeConfirmationDeferredCalls(itemId)
+          const proposalId = event.arguments.proposal_id
+          const confirmed = event.arguments.confirmed
+          if (typeof proposalId !== 'string' || typeof confirmed !== 'boolean') {
+            code = 'confirmation_invalid'
+            text = '确认请求无效，操作尚未执行。'
+            controller.releaseUndecided({epoch: event.session_epoch, itemId})
+          } else {
+            const outcome = controller.acceptDecision({
+              epoch: event.session_epoch,
+              itemId,
+              proposalId,
+              confirmed,
+            })
+            code = outcome.kind === 'ignored' ? 'confirmation_not_pending' : outcome.kind
+            state = outcome.kind === 'confirmed' ? 'accepted' : 'refused'
+            text = outcome.response_text
+            if (outcome.kind === 'confirmed' && outcome.operation !== null) {
+              const callback = this.#commitProjectOperation
+              if (callback === undefined) {
+                state = 'failed'
+                text = '确认处理不可用，本次操作未执行。'
+              } else {
+                try {
+                  const result = await callback(outcome.operation, origin.originRef)
+                  state = result.accepted ? 'accepted' : 'failed'
+                  text = result.accepted
+                    ? '已确认，正在处理。'
+                    : projectCommitFailureText(result.code)
+                } catch (failure) {
+                  if (isAbort(failure)) throw failure
+                  state = 'failed'
+                  text = '已确认，但操作未执行。'
+                }
+              }
+            } else if (outcome.kind === 'invalid' || outcome.kind === 'ignored') {
+              controller.releaseUndecided({epoch: event.session_epoch, itemId})
+            }
+          }
+          if (text !== null && text !== '') this.#queueProjectConfirmationFact(text)
+          this.#publishProjectView()
+        } finally {
+          this.#endProjectConfirmationClose(event.session_epoch, itemId)
         }
       }
+      const item: HostContextItem = {
+        kind: 'tool_output',
+        host_item_id: this.#idFactory(),
+        event_id: this.#idFactory(),
+        call_id: event.call_id,
+        content: JSON.stringify({code, state}),
+      }
+      await this.session.injectToolOutput(item)
+    } catch (cause) {
+      this.#projectConfirmationClosingCalls.delete(call)
+      throw cause
     }
-    if (text !== null && text !== '') this.#queueProjectConfirmationFact(text)
-    this.#publishProjectView()
+    this.#projectConfirmationClosingCalls.delete(call)
+    this.#rememberClosedProjectConfirmationCall(call)
   }
 
   /** Transcription failed, so the answer is unknowable and the proposal is cancelled. */
@@ -2806,6 +2892,10 @@ export class RealtimeService {
       throw cause
     }
     this.#projectConfirmationClosingCalls.delete(key)
+    this.#rememberClosedProjectConfirmationCall(key)
+  }
+
+  #rememberClosedProjectConfirmationCall(key: string): void {
     this.#projectConfirmationClosedCalls.delete(key)
     this.#projectConfirmationClosedCalls.set(key, null)
     while (this.#projectConfirmationClosedCalls.size > MAX_TRACKED_TOOL_CALLS) {

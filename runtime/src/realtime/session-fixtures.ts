@@ -85,6 +85,12 @@ export const sessionFixtureManifestSchema = z.object({
 
 const providerEventBase = {session_epoch: epoch}
 
+/** Host-only structured decision payload; transcript text is never part of this authority. */
+export const fixtureProjectConfirmationDecisionArgumentsSchema = z.object({
+  proposal_id: z.string().min(1).max(128),
+  confirmed: z.boolean(),
+}).strict()
+
 export const fixtureProviderEventSchema = z.discriminatedUnion('kind', [
   z.object({
     ...providerEventBase,

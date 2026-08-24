@@ -61,11 +61,14 @@ from nova_audio_agent.realtime.project_confirmation import (
     ProjectConfirmationController,
     ProjectConfirmationView,
 )
+
 from nova_audio_agent.realtime.speech_prep import SPEECH_FINAL_LIMIT, prepare_for_speech
 from nova_audio_agent.realtime.telemetry import RealtimeTelemetry
 from nova_audio_agent.runtime import Runtime, observation_delegate
 from nova_audio_agent.suggestions import Suggestion
 from nova_audio_agent.tool_schema import CompiledTools
+
+PROJECT_CONFIRMATION_TOOL = "codex__confirm_project_action"
 
 MAX_HOST_FACT_CHARS = 3000
 MAX_TRACKED_TOOL_CALLS = 500
@@ -182,6 +185,13 @@ class _DeferredOriginToolCall:
     event: ToolCallReady
     response_id: str
     user_item_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundToolOrigin:
+    observed_provider_response_id: str | None
+    origin_item_id: str | None
+    origin_ref: MemoryRef | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -844,15 +854,22 @@ class RealtimeService:
             if isinstance(event, ResponseTerminal)
             else None
         )
-        blocked_confirmation_tool = isinstance(
-            event, ToolCallReady
-        ) and self._blocks_project_confirmation_tool(event)
+        is_confirmation_decision = (
+            isinstance(event, ToolCallReady) and event.name == PROJECT_CONFIRMATION_TOOL
+        )
+        blocked_confirmation_tool = (
+            isinstance(event, ToolCallReady)
+            and self._blocks_project_confirmation_tool(event)
+            and not is_confirmation_decision
+        )
         if blocked_confirmation_tool:
             accepted = False
         else:
             accepted = await self.session.accept(event)
         if isinstance(event, ResponseStarted) and self._project_confirmation_blocking:
             self._project_confirmation_responses.add((event.session_epoch, event.response_id))
+            if (event.session_epoch, event.response_id) not in self._response_user_origin_items:
+                self._bind_response_user_origin(event.response_id)
             self._project_confirmation_fence_pending = False
             self._project_confirmation_blocking = bool(
                 self._project_confirmation_items or self._project_confirmation_closing_items
@@ -922,6 +939,17 @@ class RealtimeService:
                 self._reopen_failed_semantic_acknowledgements()
             self._finish_continuation(event)
             self._finish_origin(event.response_id)
+            item_id = self._response_user_origin_items.get(
+                (event.session_epoch, event.response_id)
+            )
+            if item_id is not None and self._is_project_confirmation_item(
+                event.session_epoch, item_id
+            ):
+                if self._project_confirmation is not None:
+                    self._project_confirmation.release_undecided(
+                        epoch=event.session_epoch, item_id=item_id
+                    )
+                self._end_project_confirmation_item(event.session_epoch, item_id)
             generation = self.session.current_generation
             if (
                 generation is None
@@ -940,8 +968,14 @@ class RealtimeService:
                 self._awaiting_user_origin = bool(self._unbound_user_origin_items)
                 if not self._awaiting_user_origin:
                     self._user_origin_preexisting_response_id = None
-                if self._is_project_confirmation_item(event.session_epoch, event.item_id):
-                    await self._finish_project_confirmation(event, origin_ref)
+                if (
+                    self._is_project_confirmation_item(event.session_epoch, event.item_id)
+                    and (
+                        self._project_confirmation is None
+                        or not self._project_confirmation.pending
+                    )
+                ):
+                    await self._close_confirmation_deferred_calls(event.item_id)
                 else:
                     await self._release_deferred_origin_calls(event.item_id, origin_ref)
         elif isinstance(event, UserTranscriptFailed):
@@ -979,10 +1013,13 @@ class RealtimeService:
             if origin_item_id is not None:
                 origin_ref = self._user_origin_refs.get(origin_item_id)
                 if origin_ref is not None:
-                    await self._handle_tool_call(
+                    await self._handle_bound_tool_call(
                         event,
-                        observed_provider_response_id=observed_response_id,
-                        origin_ref=origin_ref,
+                        _BoundToolOrigin(
+                            observed_provider_response_id=observed_response_id,
+                            origin_item_id=origin_item_id,
+                            origin_ref=origin_ref,
+                        ),
                     )
                 elif len(self._origin_deferred_tool_calls) >= MAX_PENDING_TOOL_REFUSALS:
                     await self._reconnect_provider_session()
@@ -994,6 +1031,15 @@ class RealtimeService:
                             user_item_id=origin_item_id,
                         )
                     )
+            elif event.name == PROJECT_CONFIRMATION_TOOL:
+                await self._handle_project_confirmation_decision(
+                    event,
+                    _BoundToolOrigin(
+                        observed_provider_response_id=observed_response_id,
+                        origin_item_id=None,
+                        origin_ref=None,
+                    ),
+                )
             elif self._awaiting_user_origin:
                 origin_is_active = (
                     observed_response_id is not None
@@ -1096,46 +1142,110 @@ class RealtimeService:
             or self._project_confirmation_fence_pending
         )
 
-    async def _finish_project_confirmation(
-        self,
-        event: UserTranscriptFinal,
-        origin_ref: MemoryRef,
-    ) -> None:
-        key = (event.session_epoch, event.item_id)
-        if key in self._project_confirmation_closing_items:
-            await self._close_confirmation_deferred_calls(event.item_id)
-            return
-        self._begin_project_confirmation_close(event.session_epoch, event.item_id)
-        try:
-            await self._close_confirmation_deferred_calls(event.item_id)
-        finally:
-            self._end_project_confirmation_close(event.session_epoch, event.item_id)
-        controller = self._project_confirmation
-        if controller is None:
-            return
-        outcome = controller.accept_transcript(
-            epoch=event.session_epoch,
-            item_id=event.item_id,
-            text=event.text,
+    def _end_project_confirmation_item(self, epoch: int, item_id: str) -> None:
+        self._project_confirmation_items.discard((epoch, item_id))
+        self._project_confirmation_blocking = (
+            bool(self._project_confirmation_items or self._project_confirmation_closing_items)
+            or self._project_confirmation_fence_pending
         )
-        text = outcome.response_text
-        if outcome.kind == "confirmed" and outcome.operation is not None:
-            callback = self._commit_project_operation
-            if callback is None:
-                text = "确认处理不可用，本次操作未执行。"
-            else:
+
+    async def _handle_project_confirmation_decision(
+        self,
+        event: ToolCallReady,
+        origin: _BoundToolOrigin,
+    ) -> None:
+        key = (event.session_epoch, event.call_id)
+        if key in self._project_confirmation_closing_calls or key in (
+            self._project_confirmation_closed_calls
+        ):
+            return
+        self._project_confirmation_closing_calls.add(key)
+        code = "confirmation_not_pending"
+        state = "refused"
+        try:
+            item_id = origin.origin_item_id
+            controller = self._project_confirmation
+            if (
+                controller is not None
+                and item_id is not None
+                and origin.origin_ref is not None
+                and origin.observed_provider_response_id is not None
+                and event.response_id == origin.observed_provider_response_id
+                and self._is_project_confirmation_item(event.session_epoch, item_id)
+            ):
+                self._begin_project_confirmation_close(event.session_epoch, item_id)
+                text: str | None = None
                 try:
-                    result = await callback(outcome.operation, origin_ref)
-                    accepted = getattr(result, "accepted", False) is True
-                    code = getattr(result, "code", "commit_failed")
-                    text = "已确认，正在处理。" if accepted else _project_commit_failure_text(code)
-                except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
-                    raise
-                except Exception:
-                    text = "已确认，但操作未执行。"
-        if text:
-            self._queue_project_confirmation_fact(text)
-        self._publish_project_view()
+                    await self._close_confirmation_deferred_calls(item_id)
+                    proposal_id = event.arguments.get("proposal_id")
+                    confirmed = event.arguments.get("confirmed")
+                    if type(proposal_id) is not str or type(confirmed) is not bool:
+                        code = "confirmation_invalid"
+                        text = "确认请求无效，操作尚未执行。"
+                        controller.release_undecided(
+                            epoch=event.session_epoch, item_id=item_id
+                        )
+                    else:
+                        outcome = controller.accept_decision(
+                            epoch=event.session_epoch,
+                            item_id=item_id,
+                            proposal_id=proposal_id,
+                            confirmed=confirmed,
+                        )
+                        code = (
+                            "confirmation_not_pending"
+                            if outcome.kind == "ignored"
+                            else outcome.kind
+                        )
+                        state = "accepted" if outcome.kind == "confirmed" else "refused"
+                        text = outcome.response_text
+                        if outcome.kind == "confirmed" and outcome.operation is not None:
+                            callback = self._commit_project_operation
+                            if callback is None:
+                                state = "failed"
+                                text = "确认处理不可用，本次操作未执行。"
+                            else:
+                                try:
+                                    result = await callback(outcome.operation, origin.origin_ref)
+                                    accepted = getattr(result, "accepted", False) is True
+                                    state = "accepted" if accepted else "failed"
+                                    result_code = getattr(result, "code", "commit_failed")
+                                    text = (
+                                        "已确认，正在处理。"
+                                        if accepted
+                                        else _project_commit_failure_text(result_code)
+                                    )
+                                except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                                    raise
+                                except Exception:
+                                    state = "failed"
+                                    text = "已确认，但操作未执行。"
+                        elif outcome.kind in {"invalid", "ignored"}:
+                            controller.release_undecided(
+                                epoch=event.session_epoch, item_id=item_id
+                            )
+                    if text:
+                        self._queue_project_confirmation_fact(text)
+                    self._publish_project_view()
+                finally:
+                    self._end_project_confirmation_close(event.session_epoch, item_id)
+            token = self._id_factory()
+            item = HostContextItem.tool_output(
+                host_item_id=token,
+                event_id=self._id_factory(),
+                call_id=event.call_id,
+                content=json.dumps(
+                    {"code": code, "state": state},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            )
+            await self.session.inject_tool_output(item)
+        except BaseException:
+            self._project_confirmation_closing_calls.discard(key)
+            raise
+        self._project_confirmation_closing_calls.discard(key)
+        self._remember_closed_project_confirmation_call(key)
 
     async def _fail_project_confirmation(self, epoch: int, item_id: str) -> None:
         if (epoch, item_id) in self._project_confirmation_closing_items:
@@ -1177,6 +1287,9 @@ class RealtimeService:
             self._project_confirmation_closing_calls.discard(key)
             raise
         self._project_confirmation_closing_calls.discard(key)
+        self._remember_closed_project_confirmation_call(key)
+
+    def _remember_closed_project_confirmation_call(self, key: tuple[int, str]) -> None:
         self._project_confirmation_closed_calls[key] = None
         self._project_confirmation_closed_calls.move_to_end(key)
         while len(self._project_confirmation_closed_calls) > MAX_TRACKED_TOOL_CALLS:
@@ -1410,11 +1523,28 @@ class RealtimeService:
             if not matches_keyed and not matches_unkeyed_batch:
                 self._origin_deferred_tool_calls.append(deferred)
                 continue
-            await self._handle_tool_call(
+            await self._handle_bound_tool_call(
                 deferred.event,
-                observed_provider_response_id=deferred.response_id,
-                origin_ref=origin_ref,
+                _BoundToolOrigin(
+                    observed_provider_response_id=deferred.response_id,
+                    origin_item_id=deferred.user_item_id,
+                    origin_ref=origin_ref,
+                ),
             )
+
+    async def _handle_bound_tool_call(
+        self,
+        event: ToolCallReady,
+        origin: _BoundToolOrigin,
+    ) -> None:
+        if event.name == PROJECT_CONFIRMATION_TOOL:
+            await self._handle_project_confirmation_decision(event, origin)
+            return
+        await self._handle_tool_call(
+            event,
+            observed_provider_response_id=origin.observed_provider_response_id,
+            origin_ref=origin.origin_ref,
+        )
 
     async def _handle_tool_call(
         self,

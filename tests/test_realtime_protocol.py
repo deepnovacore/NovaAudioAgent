@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
@@ -251,6 +251,25 @@ def test_tool_call_requires_object_arguments() -> None:
             name="codex__run",
             arguments=[],  # type: ignore[arg-type]
         )
+
+
+def test_confirmation_tool_arguments_preserve_exact_boolean_type_for_host_validation() -> None:
+    false_decision = ToolCallReady(
+        session_epoch=1,
+        call_id="confirm-false",
+        item_id="function-false",
+        name="codex__confirm_project_action",
+        arguments={"proposal_id": "proposal-1", "confirmed": False},
+        response_id="response-1",
+    )
+    string_impostor = replace(
+        false_decision,
+        call_id="confirm-string",
+        arguments={"proposal_id": "proposal-1", "confirmed": "true"},
+    )
+
+    assert false_decision.arguments["confirmed"] is False
+    assert type(string_impostor.arguments["confirmed"]) is str
 
 
 def test_response_terminal_rejects_unknown_status() -> None:

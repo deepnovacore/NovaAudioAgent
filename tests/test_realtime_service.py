@@ -448,7 +448,7 @@ def make_policy_enabled_codex_service(
 
 
 @pytest.mark.asyncio
-async def test_confirmation_asr_is_recorded_but_provider_tool_cannot_authorize() -> None:
+async def test_confirmation_function_commits_while_transcript_only_records_origin() -> None:
     clock = VirtualClock()
     controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
     controller.prepare(
@@ -493,6 +493,17 @@ async def test_confirmation_asr_is_recorded_but_provider_tool_cannot_authorize()
     await service.handle_event(call)
     await service.handle_event(
         UserTranscriptFinal(session_epoch=1, item_id="user-confirm", text="可以啊")
+    )
+    assert commits == []
+    await service.handle_event(
+        ToolCallReady(
+            session_epoch=1,
+            response_id="response-confirm",
+            call_id="confirm-1",
+            item_id="function-1",
+            name="codex__confirm_project_action",
+            arguments={"proposal_id": "nonce", "confirmed": True},
+        )
     )
     await service.handle_event(
         ToolCallReady(
@@ -543,6 +554,148 @@ async def test_confirmation_asr_is_recorded_but_provider_tool_cannot_authorize()
         "call-late-without-response",
         "call-late-forged-response",
     }
+    confirmation_outputs = [
+        item.content
+        for item in provider.injected
+        if item.kind == "tool_output" and item.call_id == "confirm-1"
+    ]
+    assert confirmation_outputs == ['{"code":"confirmed","state":"accepted"}']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("proposal_id", "confirmed", "expected_pending", "output_code"),
+    [
+        ("nonce", False, False, "cancelled"),
+        ("nonce", "true", True, "confirmation_invalid"),
+        ("stale", True, True, "invalid"),
+    ],
+)
+async def test_confirmation_function_fail_closed_inputs(
+    proposal_id: str,
+    confirmed: object,
+    expected_pending: bool,
+    output_code: str,
+) -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select",
+        workspace_display_name="alpha",
+        workspace_id="workspace-alpha",
+        session_title=None,
+        session_id=None,
+        work_order=None,
+        origin_ref="conversation:1",
+    )
+    commits: list[object] = []
+
+    async def commit(operation: object, _origin_ref: str) -> ProjectCommitResult:
+        commits.append(operation)
+        return ProjectCommitResult(accepted=True, code="committed")
+
+    service, provider, _runtime, _frames = make_service(
+        clock=clock,
+        id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+        commit_project_operation=commit,
+    )
+    await service.connect()
+    await service.handle_event(UserSpeechStarted(
+        session_epoch=1, speech_id="speech-1", provider_item_id="user-1"
+    ))
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="response-1"))
+    await service.handle_event(UserTranscriptFinal(
+        session_epoch=1, item_id="user-1", text="模型不能据此决定"
+    ))
+    await service.handle_event(ToolCallReady(
+        session_epoch=1,
+        response_id="response-1",
+        call_id="confirm-1",
+        item_id="function-1",
+        name="codex__confirm_project_action",
+        arguments={"proposal_id": proposal_id, "confirmed": confirmed},
+    ))
+
+    assert commits == []
+    assert controller.pending is expected_pending
+    outputs = [item for item in provider.injected if item.call_id == "confirm-1"]
+    assert len(outputs) == 1
+    assert json.loads(outputs[0].content)["code"] == output_code
+
+
+@pytest.mark.asyncio
+async def test_confirmation_function_replay_and_other_response_fail_closed() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select", workspace_display_name="alpha", workspace_id="workspace-alpha",
+        session_title=None, session_id=None, work_order=None, origin_ref="conversation:1",
+    )
+    commits: list[object] = []
+
+    async def commit(operation: object, _origin_ref: str) -> ProjectCommitResult:
+        commits.append(operation)
+        return ProjectCommitResult(accepted=True, code="committed")
+
+    service, provider, _runtime, _frames = make_service(
+        clock=clock, id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller, commit_project_operation=commit,
+    )
+    await service.connect()
+    await service.handle_event(UserSpeechStarted(
+        session_epoch=1, speech_id="speech-1", provider_item_id="user-1"
+    ))
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="response-1"))
+    await service.handle_event(UserTranscriptFinal(
+        session_epoch=1, item_id="user-1", text="确认"
+    ))
+    wrong = ToolCallReady(
+        session_epoch=1, response_id="response-other", call_id="confirm-other",
+        item_id="function-other", name="codex__confirm_project_action",
+        arguments={"proposal_id": "nonce", "confirmed": True},
+    )
+    await service.handle_event(replace(
+        wrong,
+        session_epoch=2,
+        response_id="response-1",
+        call_id="confirm-stale-epoch",
+    ))
+    assert commits == []
+    await service.handle_event(wrong)
+    assert commits == []
+    call = replace(wrong, response_id="response-1", call_id="confirm-1")
+    await service.handle_event(call)
+    await service.handle_event(call)
+    assert len(commits) == 1
+    assert sum(item.call_id == "confirm-1" for item in provider.injected) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirmation_terminal_without_function_releases_for_next_item() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select", workspace_display_name="alpha", workspace_id="workspace-alpha",
+        session_title=None, session_id=None, work_order=None, origin_ref="conversation:1",
+    )
+    service, _provider, _runtime, _frames = make_service(
+        clock=clock, id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller,
+    )
+    await service.connect()
+    await service.handle_event(UserSpeechStarted(
+        session_epoch=1, speech_id="speech-first", provider_item_id="first"
+    ))
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="response-first"))
+    await service.handle_event(UserTranscriptFinal(
+        session_epoch=1, item_id="first", text="我没说清楚"
+    ))
+    await service.handle_event(ResponseTerminal(
+        session_epoch=1, response_id="response-first", status="completed", reason="completed"
+    ))
+    assert controller.pending is True
+    assert controller.reserve_user_item(epoch=1, item_id="second") is True
 
 
 @pytest.mark.asyncio
@@ -580,6 +733,16 @@ async def test_project_commit_failure_uses_bounded_chinese_instead_of_internal_c
     await service.handle_event(ResponseStarted(session_epoch=1, response_id="confirm-response"))
     await service.handle_event(
         UserTranscriptFinal(session_epoch=1, item_id="user-confirm", text="确认")
+    )
+    await service.handle_event(
+        ToolCallReady(
+            session_epoch=1,
+            response_id="confirm-response",
+            call_id="confirm-rejected",
+            item_id="function-rejected",
+            name="codex__confirm_project_action",
+            arguments={"proposal_id": "nonce", "confirmed": True},
+        )
     )
     await service.handle_event(
         ResponseTerminal(
