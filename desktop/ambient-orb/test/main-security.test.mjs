@@ -351,7 +351,10 @@ test('backend mode is admitted before camera selection or permission work', asyn
   assert.ok(selection >= 0 && camera > selection)
   assert.match(body, /createReleaseSmokeChannel\(\{/u)
   assert.match(body, /start: camera => startSelectedCamera\(camera, backendKind, releaseSmokeChannel\)/u)
-  assert.match(source, /source_rollback_unavailable/u)
+  assert.match(
+    source,
+    /process\.stderr\.write\(\s*'\[desktop-diagnostic\] source_rollback_unavailable\\n',\s*\(\) => app\.quit\(\),?\s*\)/u,
+  )
 })
 
 test('packaged smoke readiness is private, post-backend, and closed by every quit', async () => {

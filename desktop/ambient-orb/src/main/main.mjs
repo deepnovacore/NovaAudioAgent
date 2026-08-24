@@ -736,7 +736,11 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => mainWindow?.show())
   app.whenReady().then(start).catch(error => {
     if (error?.code === 'source_rollback_unavailable') {
-      console.error('[desktop-diagnostic] source_rollback_unavailable')
+      process.stderr.write(
+        '[desktop-diagnostic] source_rollback_unavailable\n',
+        () => app.quit(),
+      )
+      return
     }
     app.quit()
   })
