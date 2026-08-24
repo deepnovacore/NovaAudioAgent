@@ -546,9 +546,6 @@ def _normalize_project_request(request: object) -> dict[str, str] | None:
     ):
         return None
     action = request.get("action")
-    workspace = request.get("workspace")
-    session = request.get("session")
-    work_order = request.get("work_order")
     expected = {
         "list_workspaces": {"action"},
         "create_workspace": {"action", "workspace"},
@@ -570,20 +567,22 @@ def _normalize_project_request(request: object) -> dict[str, str] | None:
         allowed.update(("workspace", "session"))
     if set(request) - allowed or not expected[action].issubset(request):
         return None
-    if action == "create_workspace" and (session is None) != (work_order is None):
+    if action == "create_workspace" and (
+        ("session" in request) != ("work_order" in request)
+    ):
         return None
     result = {"action": action}
-    for name, value, limit in (
-        ("workspace", workspace, 80),
-        ("session", session, 120),
-        ("work_order", work_order, 4000),
+    for name, limit in (
+        ("workspace", 80),
+        ("session", 120),
+        ("work_order", 4000),
     ):
-        if value is not None and (
-            type(value) is not str or not value.strip() or len(value) > limit
-        ):
+        if name not in request:
+            continue
+        value = request[name]
+        if type(value) is not str or not value.strip() or len(value) > limit:
             return None
-        if value is not None:
-            result[name] = value.strip()
+        result[name] = value.strip()
     return result
 
 

@@ -39,3 +39,23 @@ npm run build --workspace @nova-audio-agent/runtime && node --test runtime/dist/
 Result: build succeeded; TypeScript contract tests 15/15 passed; runtime tests 46/46 passed; Python tests 48/48 passed.
 
 `git diff --check` passed before commit.
+
+## Follow-up fix: explicit null parity
+
+Review found that the Python project normalizer treated an explicitly supplied JSON `null` optional field as if it were absent, unlike the TypeScript validator. Added a table-driven test covering optional `workspace`, `session`, and `work_order` appearances across the relevant actions.
+
+RED:
+
+```sh
+uv run pytest tests/test_codex_project_live.py -q
+```
+
+Result: 5 new cases failed; each `null` field was silently omitted from the normalized request.
+
+GREEN:
+
+```sh
+uv run pytest tests/test_codex_project_live.py -q
+```
+
+Result: 30 passed. The normalizer now distinguishes omitted keys from present keys and requires every present optional value to be a bounded, non-empty string.

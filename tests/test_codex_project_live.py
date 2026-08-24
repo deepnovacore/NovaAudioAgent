@@ -194,6 +194,27 @@ def test_project_mode_exposes_project_and_confirmation_tools() -> None:
     }) == {"action": "start_session", "work_order": "fix login"}
 
 
+@pytest.mark.parametrize(
+    "normalized_request",
+    (
+        {"action": "list_sessions", "workspace": None},
+        {
+            "action": "create_workspace",
+            "workspace": "alpha",
+            "session": None,
+            "work_order": None,
+        },
+        {"action": "start_session", "work_order": "fix login", "session": None},
+        {"action": "resume_session", "work_order": "continue", "workspace": None},
+        {"action": "resume_session", "work_order": "continue", "session": None},
+    ),
+)
+def test_project_request_rejects_explicit_null_for_optional_fields(
+    normalized_request: dict[str, object],
+) -> None:
+    assert _normalize_project_request(normalized_request) is None
+
+
 @pytest.mark.asyncio
 async def test_project_action_validation_and_proposal_only_dispatch(tmp_path: Path) -> None:
     adapter, store = _adapter(tmp_path)
