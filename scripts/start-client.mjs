@@ -3,8 +3,11 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, posix, resolve, win32 } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { parseEnv } from 'node:util'
+
+import { codexCandidates } from '../desktop/ambient-orb/src/main/codex-discovery.mjs'
 
 const DESKTOP_WORKSPACE = '@nova-audio-agent/ambient-orb'
 const SUPPORTED_PLATFORMS = new Set(['darwin', 'linux', 'win32'])
@@ -74,6 +77,9 @@ function canonicalClientExecutable(candidate, platform) {
 export function resolveClientCodexBinary({
   configured,
   platform,
+  arch = process.arch,
+  home,
+  environment = {},
   pathValue,
   canonicalize = candidate => canonicalClientExecutable(candidate, platform),
 }) {
@@ -81,20 +87,26 @@ export function resolveClientCodexBinary({
   const requested = typeof configured === 'string' && configured.trim() !== ''
     ? configured.trim()
     : 'codex'
+  const effectiveHome = home
+    || environment.USERPROFILE
+    || environment.HOME
+    || (platform === 'win32' ? 'C:\\' : '/')
   const candidates = pathApi.isAbsolute(requested)
-    ? [requested]
+    ? [{ path: requested, source: 'manual' }]
     : requested === 'codex'
-      ? String(pathValue ?? '').split(platform === 'win32' ? ';' : ':')
-        .filter(entry => entry !== '')
-        .flatMap(entry => platform === 'win32'
-          ? [pathApi.join(entry, 'codex.exe'), pathApi.join(entry, 'codex')]
-          : [pathApi.join(entry, 'codex')])
+      ? codexCandidates({
+        platform,
+        arch,
+        env: { ...environment, PATH: pathValue ?? environment.PATH },
+        home: effectiveHome,
+        pathApi,
+      })
       : []
   for (const candidate of candidates) {
-    const canonical = canonicalize(candidate)
+    const canonical = canonicalize(candidate.path)
     if (typeof canonical === 'string' && pathApi.isAbsolute(canonical)) return canonical
   }
-  throw new Error('Codex executable unavailable; install and log in to Codex CLI')
+  return null
 }
 
 export function planClientLaunch({
@@ -115,24 +127,21 @@ export function planClientLaunch({
   if (!SUPPORTED_PLATFORMS.has(platform)) {
     throw new Error('the Ambient Orb client requires macOS, Linux, or Windows')
   }
-  if (!envFileExists) throw new Error('missing .env; run: cp .env.example .env')
   const pathApi = platform === 'win32' ? win32 : posix
   if (typeof npmCli !== 'string' || !pathApi.isAbsolute(npmCli)) {
     throw new Error('npm CLI unavailable; start this command with npm run start:client')
   }
-  if (typeof codexBinary !== 'string' || !pathApi.isAbsolute(codexBinary)) {
-    throw new Error('Codex executable unavailable; install and log in to Codex CLI')
-  }
+  const hasCodexBinary = typeof codexBinary === 'string' && pathApi.isAbsolute(codexBinary)
 
   const npm = args => ({command: nodeExecutable, args: [npmCli, ...args]})
   const configuredEnv = parseClientEnvironment({contents: envFileContents, shellEnv: env})
   const clientEnv = {
     ...configuredEnv,
     NOVA_AUDIO_AGENT_BACKEND: 'node',
-    NOVA_AUDIO_AGENT_CODEX_BIN: codexBinary,
     NOVA_AUDIO_AGENT_CODEX_WORKSPACE:
       configuredEnv.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || rootDir,
-    NOVA_AUDIO_AGENT_ENV_FILE: pathApi.join(rootDir, '.env'),
+    ...(hasCodexBinary ? { NOVA_AUDIO_AGENT_CODEX_BIN: codexBinary } : {}),
+    ...(envFileExists ? { NOVA_AUDIO_AGENT_ENV_FILE: pathApi.join(rootDir, '.env') } : {}),
   }
   const steps = []
   if (!dependenciesInstalled) {
@@ -191,8 +200,7 @@ export async function main({
   const pathApi = platform === 'win32' ? win32 : posix
   const envFile = pathApi.join(rootDir, '.env')
   const envFileExists = existsSync(envFile)
-  if (!envFileExists) throw new Error('missing .env; run: cp .env.example .env')
-  const envFileContents = readFileSync(envFile, 'utf8')
+  const envFileContents = envFileExists ? readFileSync(envFile, 'utf8') : ''
   const configuredEnv = parseClientEnvironment({contents: envFileContents, shellEnv: env})
   assertNativeToolchain({
     platform,
@@ -220,6 +228,9 @@ export async function main({
     codexBinary: resolveClientCodexBinary({
       configured: configuredEnv.NOVA_AUDIO_AGENT_CODEX_BIN,
       platform,
+      arch: process.arch,
+      home: homedir(),
+      environment: configuredEnv,
       pathValue: configuredEnv.PATH,
     }),
     envFileExists,
