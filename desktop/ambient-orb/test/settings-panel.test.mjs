@@ -449,15 +449,38 @@ test('the proactivity control offers three tiers explained in push-and-pull term
   assert.equal(proactivityNotes.length, 3, 'each tier is explained with push-and-pull wording')
 })
 
-test('the heartbeat slider and all model or voice fields carry Main-compatible bounds', () => {
+test('common choices use compact segmented groups without losing radio semantics', () => {
+  for (const id of ['palette', 'proactivity', 'pipeline-mode']) {
+    assert.match(html, new RegExp(`<fieldset id="${id}" class="[^"]*segmented[^"]*"`))
+  }
+  assert.match(css, /\.segmented\s*\{/)
+  assert.match(css, /\.segmented label\.choice:has\(:checked\)/)
+})
+
+test('the heartbeat slider and model fields carry Main-compatible bounds', () => {
   assert.match(html, /Codex 播报间隔/)
   assert.match(html, /<input type="range" id="heartbeat" min="15" max="120" step="1"/)
   assert.match(html, /Qwen 实时模型/)
   assert.match(html, /<input type="text" id="integratedModel" maxlength="64"/)
-  assert.match(html, /Qwen 语音音色/)
-  assert.match(html, /<input type="text" id="integratedVoice" maxlength="64"/)
   assert.match(html, /<input type="text" id="cascadedLlmModel" maxlength="64"/)
-  assert.match(html, /<input type="text" id="cascadedTtsVoice" maxlength="64"/)
+})
+
+test('both voice fields offer presets while keeping a bounded custom id path', () => {
+  for (const [preset, custom, label] of [
+    ['integratedVoicePreset', 'integratedVoiceCustom', 'Qwen 自定义音色 ID'],
+    ['cascadedTtsVoicePreset', 'cascadedTtsVoiceCustom', 'TTS 自定义音色 ID'],
+  ]) {
+    assert.match(html, new RegExp(`<select id="${preset}"`))
+    assert.match(
+      html,
+      new RegExp(`<input type="text" id="${custom}"[^>]*maxlength="64"[^>]*aria-label="${label}"[^>]*hidden`),
+    )
+  }
+  assert.match(script, /resolveVoiceChoice/)
+  assert.match(script, /QWEN_VOICES/)
+  assert.match(script, /VOLCENGINE_TTS_VOICES/)
+  assert.match(script, /bindVoicePicker\('integratedVoice', integratedVoicePreset, integratedVoiceCustom\)/)
+  assert.match(script, /bindVoicePicker\('cascadedTtsVoice', cascadedTtsVoicePreset, cascadedTtsVoiceCustom\)/)
 })
 
 test('every API key is a password field with a badge, hint, and clear button', () => {
@@ -485,6 +508,20 @@ test('every API key is a password field with a badge, hint, and clear button', (
   assert.equal((html.match(/type="password"/g) || []).length, 7)
 })
 
+test('API keys live in a collapsed semantic disclosure with a readable summary', () => {
+  assert.match(html, /<details id="secrets" class="secret-disclosure">/)
+  assert.match(html, /<summary>[\s\S]*API 密钥[\s\S]*按需展开[\s\S]*<\/summary>/)
+  assert.doesNotMatch(html, /<details id="secrets"[^>]*\sopen(?:\s|>)/)
+})
+
+test('the compact theme preserves motion contrast and forced-color accessibility', () => {
+  assert.match(css, /color-scheme:\s*light/)
+  assert.doesNotMatch(css, /color-scheme:\s*dark/)
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
+  assert.match(css, /@media \(prefers-contrast: more\)/)
+  assert.match(css, /@media \(forced-colors: active\)/)
+})
+
 test('pipeline selection shows the integrated path or the cascaded nodes', () => {
   assert.match(html, /<input type="radio" name="pipelineMode" value="integrated">/)
   assert.match(html, /<input type="radio" name="pipelineMode" value="cascaded">/)
@@ -496,7 +533,8 @@ test('pipeline selection shows the integrated path or the cascaded nodes', () =>
     'cascadedLlmProvider',
     'cascadedLlmModel',
     'cascadedTtsProvider',
-    'cascadedTtsVoice',
+    'cascadedTtsVoicePreset',
+    'cascadedTtsVoiceCustom',
   ]) assert.match(html, new RegExp(`id="${id}"`))
   assert.match(script, /integratedSection\.hidden = view\.pipelineMode !== 'integrated'/)
   assert.match(script, /cascadedSection\.hidden = view\.pipelineMode !== 'cascaded'/)

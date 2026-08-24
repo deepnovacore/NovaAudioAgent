@@ -9,13 +9,16 @@
   </head>
   <body>
     <header>
-      <h1>设置</h1>
+      <div class="title-lockup">
+        <span class="eyebrow">NOVA</span>
+        <h1>设置</h1>
+      </div>
       <span id="status" aria-live="polite"></span>
     </header>
     <main>
-      <section>
+      <section class="setting-section">
         <h2>外观</h2>
-        <fieldset id="palette">
+        <fieldset id="palette" class="segmented segmented-palette">
           <legend>光球配色</legend>
           <label class="choice">
             <input type="radio" name="palette" value="ember">
@@ -35,9 +38,9 @@
           </label>
         </fieldset>
       </section>
-      <section>
+      <section class="setting-section">
         <h2>主动性</h2>
-        <fieldset id="proactivity">
+        <fieldset id="proactivity" class="segmented segmented-proactivity">
           <legend>推拉节奏</legend>
           <label class="choice">
             <input type="radio" name="proactivity" value="conservative">
@@ -62,7 +65,7 @@
           </label>
         </fieldset>
       </section>
-      <section>
+      <section class="setting-section rhythm-section">
         <h2>节奏与声音</h2>
         <div class="field">
           <label for="heartbeat">Codex 播报间隔</label>
@@ -70,9 +73,9 @@
           <output id="heartbeat-value" for="heartbeat">30 秒</output>
         </div>
       </section>
-      <section id="pipeline">
+      <section id="pipeline" class="setting-section">
         <h2>语音管线</h2>
-        <fieldset id="pipeline-mode" class="pipeline-tabs">
+        <fieldset id="pipeline-mode" class="segmented segmented-pipeline">
           <legend>处理方式</legend>
           <label class="choice">
             <input type="radio" name="pipelineMode" value="integrated">
@@ -103,8 +106,11 @@
               <input type="text" id="integratedModel" maxlength="64" autocomplete="off" spellcheck="false">
             </div>
             <div class="field">
-              <label for="integratedVoice">Qwen 语音音色</label>
-              <input type="text" id="integratedVoice" maxlength="64" autocomplete="off" spellcheck="false">
+              <label for="integratedVoicePreset">Qwen 语音音色</label>
+              <div class="voice-picker">
+                <select id="integratedVoicePreset"></select>
+                <input type="text" id="integratedVoiceCustom" maxlength="64" aria-label="Qwen 自定义音色 ID" hidden autocomplete="off" spellcheck="false" placeholder="输入复刻或自定义音色 ID">
+              </div>
             </div>
           </div>
         </section>
@@ -150,14 +156,24 @@
               </select>
             </div>
             <div class="field">
-              <label for="cascadedTtsVoice">音色</label>
-              <input type="text" id="cascadedTtsVoice" maxlength="64" autocomplete="off" spellcheck="false">
+              <label for="cascadedTtsVoicePreset">音色</label>
+              <div class="voice-picker">
+                <select id="cascadedTtsVoicePreset"></select>
+                <input type="text" id="cascadedTtsVoiceCustom" maxlength="64" aria-label="TTS 自定义音色 ID" hidden autocomplete="off" spellcheck="false" placeholder="输入自定义音色 ID">
+              </div>
             </div>
           </div>
         </section>
       </section>
-      <section id="secrets">
-        <h2>API 密钥</h2>
+      <details id="secrets" class="secret-disclosure">
+        <summary>
+          <span class="summary-copy">
+            <span class="summary-title">API 密钥</span>
+            <span class="summary-note">仅在本机保存 · 按需展开</span>
+          </span>
+          <span class="summary-chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="secret-content">
         <p id="keyring-warning" class="warning" hidden>密钥将以明文保存(系统未提供钥匙串)</p>
         <div class="secret">
           <label for="dashscopeApiKey">DashScope</label>
@@ -209,11 +225,11 @@
           <button type="button" class="clear" data-key="doubaoAsrApiKey">清除</button>
         </div>
         <button type="button" id="save-secrets">保存密钥</button>
-      </section>
+        </div>
+      </details>
     </main>
     <footer>
-      <p class="note">配色更改立即生效，其余选项修改后自动保存。</p>
-      <p class="note">语音、主动性与 API 密钥设置将在下次启动生效（语音管线配置同样如此）</p>
+      <p class="note">配色更改立即生效；语音、主动性与 API 密钥设置将在下次启动生效。</p>
     </footer>
     <script type="module" src="./settings.mjs"></script>
   </body>

@@ -1,179 +1,230 @@
-/* The panel is a companion to the orb, not the memory board: it commits to the
-   orb's own dark plate and ember accent rather than following the system theme,
-   so a settings window opened next to the orb reads as the same object.
-
-   Every interactive surface here is one of two primitives — a card (a choice, a
-   key row) or a row (a labelled control) — and both share one border, one radius,
-   one hover, and one focus treatment. The panel used to style each control on its
-   own terms, which is what made it read as assembled rather than designed. */
 :root {
-  color-scheme: dark;
-  font-family: system-ui, -apple-system, sans-serif;
-  --plate: #14100a;
-  --panel: #1d1811;
-  /* One step brighter than --panel: hover and the checked card need somewhere to
-     go that is still clearly the same material. */
-  --panel-raised: #262019;
-  --line: rgba(255, 214, 156, .16);
-  --line-strong: rgba(255, 214, 156, .32);
-  --ink: #F2ECE2;
-  --ink-dim: rgba(242, 236, 226, .62);
-  --accent: #FFB454;
-  --accent-wash: rgba(255, 180, 84, .09);
-  --warn: #FF5A5A;
-  --warn-wash: rgba(255, 90, 90, .08);
-  /* Shared geometry. The label column is a single token because the panel had two
-     (104px for sliders, 92px for keys) and nothing lined up down the page. */
-  --label-col: 104px;
-  --radius: 9px;
-  --radius-sm: 6px;
-  --gap: 10px;
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  --plate: #fff;
+  --surface: #f6f7f9;
+  --surface-raised: #eef1f4;
+  --surface-active: #fff;
+  --line: rgba(24, 31, 41, .1);
+  --line-strong: rgba(24, 31, 41, .2);
+  --ink: #20252c;
+  --ink-dim: #626b76;
+  --ink-faint: #858e99;
+  --accent: #c86712;
+  --accent-strong: #aa520c;
+  --accent-wash: rgba(200, 103, 18, .09);
+  --warn: #b42318;
+  --warn-wash: rgba(180, 35, 24, .07);
+  --label-col: 106px;
+  --radius: 11px;
+  --radius-sm: 7px;
 }
 
 * { box-sizing: border-box; }
 
-body {
-  margin: 0;
-  padding: 0 18px 18px;
+[hidden] { display: none !important; }
+
+html {
+  min-height: 100%;
   background: var(--plate);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  padding: 0 16px 14px;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 80% -12%, rgba(171, 184, 204, .12), transparent 34%),
+    var(--plate);
   color: var(--ink);
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+body::-webkit-scrollbar { width: 8px; }
+body::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(24, 31, 41, .18);
+  background-clip: padding-box;
 }
 
 header {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
   position: sticky;
   top: 0;
-  z-index: 1;
-  padding: 14px 0 10px;
-  background: var(--plate);
-  /* Sticky over a scrolling body: without a bottom edge the header and the first
-     section run together the moment anything scrolls under it. */
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  min-height: 58px;
+  margin-bottom: 14px;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 16px;
+  background: rgba(255, 255, 255, .9);
+  backdrop-filter: blur(18px) saturate(120%);
 }
 
-header h1 {
-  font-size: 15px;
-  margin: 0;
+.title-lockup {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   flex: 1;
-  letter-spacing: 0.04em;
-}
-
-#status {
-  font-size: 12px;
-  color: var(--ink-dim);
-  text-align: right;
-}
-
-section {
-  margin-bottom: 20px;
-}
-
-section > h2 {
-  font-size: 11px;
-  margin: 0 0 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--ink-dim);
-  font-weight: 600;
-}
-
-fieldset {
-  border: 0;
-  margin: 0;
-  padding: 0;
   min-width: 0;
 }
 
-/* Each fieldset's legend repeats the h2 above it ("外观" / "光球配色"), so it is
-   kept for the grouping semantics a fieldset needs and taken off the screen. */
+.eyebrow {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .18em;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: .02em;
+}
+
+#status {
+  max-width: 210px;
+  overflow: hidden;
+  color: var(--ink-dim);
+  font-size: 11px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main { min-width: 0; }
+
+.setting-section {
+  margin: 0 0 15px;
+}
+
+.setting-section > h2 {
+  margin: 0 0 7px;
+  color: var(--ink-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 legend {
   position: absolute;
   width: 1px;
   height: 1px;
   margin: -1px;
-  padding: 0;
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
-  border: 0;
 }
 
-/* Card: the shared surface behind a palette choice, a proactivity tier, and a key
-   row. One definition so the three cannot drift apart. */
-label.choice,
-.secret {
-  position: relative;
+.segmented {
+  display: grid;
+  gap: 3px;
+  padding: 3px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--panel);
-  /* The left edge is where the checked state lands, so every card reserves it and
-     an unselected one simply leaves it transparent — no reflow on selection. */
-  border-left: 3px solid transparent;
+  background: rgba(246, 247, 249, .94);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .8);
 }
 
-label.choice {
+.segmented-palette,
+.segmented-pipeline {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.segmented-proactivity {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.segmented label.choice {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--gap);
-  padding: 9px 11px;
-  margin-bottom: 7px;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 35px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--ink-dim);
   cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
 }
 
-label.choice:hover {
-  background: var(--panel-raised);
+.segmented label.choice:hover {
+  color: var(--ink);
+  background: rgba(24, 31, 41, .035);
+}
+
+.segmented label.choice:has(:checked) {
+  color: var(--ink);
   border-color: var(--line-strong);
+  background: var(--surface-active);
+  box-shadow: 0 1px 4px rgba(24, 31, 41, .1), inset 0 1px rgba(255, 255, 255, .9);
 }
 
-/* Selection was previously carried by the native radio dot alone: a chosen card
-   and an unchosen one were otherwise identical, which is the panel's single
-   biggest legibility problem. Now the whole card answers. */
-label.choice:has(:checked) {
-  background: var(--accent-wash);
-  border-color: var(--line-strong);
-  border-left-color: var(--accent);
+.segmented label.choice:has(:checked)::after {
+  position: absolute;
+  right: 14px;
+  bottom: 3px;
+  left: 14px;
+  height: 1px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: "";
 }
 
-label.choice:has(:checked) .option-name {
-  color: var(--accent);
-}
-
-label.choice input[type="radio"] {
-  flex: none;
-  margin: 0;
-  accent-color: var(--accent);
+.segmented input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .option {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
   min-width: 0;
+  flex-direction: column;
+  align-items: center;
 }
 
 .option-name {
-  font-size: 13px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 540;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.option-note {
-  font-size: 11px;
-  color: var(--ink-dim);
+.segmented .option-note {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
-/* The two swatches are the orb's own core colours, so the preview cannot drift
-   away from what the renderer actually paints. */
 .swatch {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
+  width: 16px;
+  height: 16px;
   flex: none;
-  box-shadow: inset 0 0 0 1px var(--line);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--line-strong), 0 1px 4px rgba(24, 31, 41, .12);
 }
 
 .swatch-ember {
@@ -184,91 +235,233 @@ label.choice input[type="radio"] {
   background: radial-gradient(circle at 34% 30%, #E8ECF2, #9AA3AF 46%, #3A404A);
 }
 
-/* Row: a labelled control on one line, sharing the card's label column so the
-   slider and the voice field line up with each other and with the key rows. */
-.field {
-  display: flex;
-  align-items: center;
-  gap: var(--gap);
-  margin-bottom: 10px;
+.rhythm-section,
+#integrated-pipeline,
+#cascaded-pipeline {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(246, 247, 249, .9);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .8);
 }
 
-.field label {
-  flex: none;
-  width: var(--label-col);
+.rhythm-section {
+  padding: 10px 12px;
+}
+
+.rhythm-section > h2 {
+  margin-bottom: 6px;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: var(--label-col) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  margin-bottom: 7px;
+}
+
+.field:last-child { margin-bottom: 0; }
+
+.field > label {
+  min-width: 0;
   color: var(--ink-dim);
+  font-size: 11.5px;
 }
 
 .field input[type="range"] {
-  flex: 1;
   min-width: 0;
+  height: 20px;
+  margin: 0;
   accent-color: var(--accent);
-  /* The native track is a hairline against this plate; a defined one makes the
-     slider read as the same material as the cards around it. */
-  height: 22px;
   background: transparent;
 }
 
-.field input[type="text"] {
-  flex: 1;
-}
-
 #heartbeat-value {
-  flex: none;
-  width: 52px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+  width: 45px;
   color: var(--accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 input[type="text"],
 input[type="password"],
 select {
-  background: var(--plate);
-  color: var(--ink);
+  width: 100%;
+  min-width: 0;
+  min-height: 31px;
+  padding: 5px 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  padding: 6px 9px;
+  outline: 0;
+  background: var(--plate);
+  color: var(--ink);
   font: inherit;
-  min-width: 0;
-  transition: border-color 120ms ease;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
 input[type="text"]:hover,
 input[type="password"]:hover,
 select:hover {
   border-color: var(--line-strong);
+  background: #fbfcfd;
 }
 
-input::placeholder {
-  color: rgba(242, 236, 226, .34);
-}
+input::placeholder { color: #9aa2ac; }
 
-/* One focus treatment for every control on the page. The panel previously moved a
-   border colour on :focus-within and had no keyboard-visible ring at all. */
-:is(input, select, button, [tabindex]):focus-visible {
+:is(input, select, button, summary):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-label.choice:has(:focus-visible) {
+.segmented label.choice:has(:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.segmented-pipeline {
+  margin-bottom: 8px;
+}
+
+#integrated-pipeline,
+#cascaded-pipeline {
+  margin: 0;
+}
+
+.pipeline-card {
+  margin: 0;
+  padding: 10px 11px;
+  border-top: 1px solid var(--line);
+}
+
+.pipeline-card:first-child { border-top: 0; }
+
+.pipeline-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.pipeline-card h3::before {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(200, 103, 18, .28);
+  content: "";
+}
+
+.pipeline-card .field {
+  grid-template-columns: var(--label-col) minmax(0, 1fr);
+  margin-bottom: 6px;
+}
+
+.voice-picker {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+button {
+  min-height: 29px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+button:hover:not(:disabled) {
   border-color: var(--line-strong);
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  background: var(--surface-active);
 }
 
-/* A key row is a card too, laid out as name + state on top and the field it feeds
-   underneath — the label column matches .field so the page keeps one left edge. */
+button:active:not(:disabled) { background: var(--surface); }
+button:disabled { cursor: default; opacity: .45; }
+
+.secret-disclosure {
+  overflow: hidden;
+  margin: 0 0 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(246, 247, 249, .9);
+}
+
+.secret-disclosure summary {
+  display: flex;
+  align-items: center;
+  min-height: 50px;
+  padding: 9px 12px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 120ms ease;
+}
+
+.secret-disclosure summary::-webkit-details-marker { display: none; }
+.secret-disclosure summary:hover { background: rgba(24, 31, 41, .025); }
+
+.summary-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.summary-title {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.summary-note {
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-chevron {
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-right: 1.5px solid var(--ink-dim);
+  border-bottom: 1.5px solid var(--ink-dim);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 140ms ease;
+}
+
+.secret-disclosure[open] .summary-chevron {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.secret-content {
+  padding: 0 10px 10px;
+  border-top: 1px solid var(--line);
+}
+
 .secret {
   display: grid;
-  grid-template-columns: var(--label-col) auto 1fr auto;
+  grid-template-columns: var(--label-col) auto minmax(0, 1fr) auto;
   grid-template-areas:
     "name badge usage clear"
     "input input input input";
   align-items: center;
-  gap: 7px var(--gap);
-  padding: 9px 11px;
-  margin-bottom: 8px;
+  gap: 6px 8px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--line);
 }
 
 .secret > label { grid-area: name; color: var(--ink-dim); }
@@ -278,173 +471,107 @@ label.choice:has(:focus-visible) {
 .secret > button { grid-area: clear; }
 
 .badge {
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 999px;
+  padding: 1px 6px;
   border: 1px solid var(--line);
-  color: var(--ink-dim);
+  border-radius: 999px;
+  color: var(--ink-faint);
+  font-size: 9.5px;
   white-space: nowrap;
 }
 
 .badge[data-present="1"] {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  border-color: rgba(200, 103, 18, .35);
   background: var(--accent-wash);
+  color: var(--accent);
 }
 
 .key-usage {
-  color: var(--ink-dim);
-  font-size: 11px;
-  justify-self: start;
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.pipeline-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.pipeline-tabs legend {
-  grid-column: 1 / -1;
-}
-
-.pipeline-tabs .choice {
-  margin-bottom: 0;
-}
-
-.pipeline-card {
-  margin-bottom: 8px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-}
-
-.pipeline-card h3 {
-  margin: 0 0 9px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink-dim);
-}
-
-.pipeline-card .field {
-  margin-bottom: 6px;
-}
-
-.pipeline-card .field:last-child {
-  margin-bottom: 0;
-}
-
-.pipeline-card select,
-.pipeline-card input[type="text"] {
-  flex: 1;
-}
-
-/* Secondary weight: every button except the one that commits the key form. */
-button {
-  background: var(--panel-raised);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 5px 12px;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
-}
-
-button:hover:not(:disabled) {
-  border-color: var(--line-strong);
-  background: #2f271e;
-}
-
-button:active:not(:disabled) {
-  background: var(--panel);
-}
-
-button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-/* Primary: the only button on the page that commits anything, so it is the only
-   one carrying the accent as a fill. Everything else stays a ghost. */
 #save-secrets {
-  margin-top: 4px;
-  background: var(--accent);
+  min-width: 92px;
+  margin-top: 10px;
   border-color: var(--accent);
-  color: #1a1206;
-  font-weight: 600;
-  padding: 6px 16px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
 }
 
 #save-secrets:hover:not(:disabled) {
-  background: #FFC271;
-  border-color: #FFC271;
-}
-
-#save-secrets:active:not(:disabled) {
-  background: #F0A544;
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
 }
 
 .warning {
-  margin: 0 0 12px;
-  padding: 7px 10px;
+  margin: 10px 0 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 115, 115, .35);
   border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--warn);
-  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
-  /* A bare outline read as another input; the wash makes it read as a notice. */
   background: var(--warn-wash);
+  color: var(--warn);
+  font-size: 10.5px;
 }
 
 footer {
+  padding: 9px 0 1px;
   border-top: 1px solid var(--line);
-  padding-top: 12px;
 }
 
 .note {
-  margin: 0 0 4px;
-  font-size: 11px;
-  color: var(--ink-dim);
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  line-height: 1.45;
 }
 
-.note:last-child { margin-bottom: 0; }
-
-/* Matching index.css: the orb and its panel must answer the same two preferences
-   the same way, or turning either on fixes one window and not the other. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
-/* High contrast drops the washes and the hue-carried meaning: the checked card,
-   the badge, and the warning all keep a border and a text colour that survive a
-   grayscale display, and nothing depends on a 9%-alpha tint any more. */
 @media (prefers-contrast: more) {
   :root {
-    --panel: #000;
-    --panel-raised: #111;
-    --plate: #000;
-    --line: rgba(255, 255, 255, .55);
-    --line-strong: #fff;
-    --ink: #fff;
-    --ink-dim: #fff;
+    --plate: #fff;
+    --surface: #fff;
+    --surface-raised: #eee;
+    --surface-active: #fff;
+    --line: rgba(0, 0, 0, .58);
+    --line-strong: #000;
+    --ink: #000;
+    --ink-dim: #000;
+    --ink-faint: #222;
     --accent-wash: transparent;
     --warn-wash: transparent;
   }
 
-  label.choice:has(:checked) {
-    border-color: #fff;
-    border-left-width: 5px;
+  .segmented label.choice:has(:checked) { border-color: var(--accent); }
+  :is(input, select, button, summary):focus-visible,
+  .segmented label.choice:has(:focus-visible) { outline-width: 3px; }
+}
+
+@media (forced-colors: active) {
+  .segmented label.choice:has(:checked) {
+    border-color: Highlight;
+    color: Highlight;
+  }
+
+  .segmented label.choice:has(:checked)::after,
+  .pipeline-card h3::before {
+    background: Highlight;
   }
 
   .badge[data-present="1"] {
-    border-color: var(--accent);
+    border-color: Highlight;
+    color: Highlight;
   }
 
-  :is(input, select, button, [tabindex]):focus-visible,
-  label.choice:has(:focus-visible) {
-    outline-width: 3px;
-  }
+  .swatch { forced-color-adjust: none; }
 }

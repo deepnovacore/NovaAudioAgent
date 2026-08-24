@@ -3,6 +3,12 @@
 // erasing text the user typed while it was in flight.
 import { createSettingsController } from './settings-controller.mjs'
 import { createSecretRevisions } from './secret-revisions.mjs'
+import {
+  CUSTOM_VOICE_VALUE,
+  QWEN_VOICES,
+  VOLCENGINE_TTS_VOICES,
+  resolveVoiceChoice,
+} from './voice-choice.mjs'
 
 const api = window.novaAudioAgentDesktop.settings
 
@@ -37,13 +43,31 @@ const integratedSection = document.querySelector('#integrated-pipeline')
 const cascadedSection = document.querySelector('#cascaded-pipeline')
 const integratedProvider = document.querySelector('#integratedProvider')
 const integratedModel = document.querySelector('#integratedModel')
-const integratedVoice = document.querySelector('#integratedVoice')
+const integratedVoicePreset = document.querySelector('#integratedVoicePreset')
+const integratedVoiceCustom = document.querySelector('#integratedVoiceCustom')
 const cascadedEndpointingProvider = document.querySelector('#cascadedEndpointingProvider')
 const cascadedAsrProvider = document.querySelector('#cascadedAsrProvider')
 const cascadedLlmProvider = document.querySelector('#cascadedLlmProvider')
 const cascadedLlmModel = document.querySelector('#cascadedLlmModel')
 const cascadedTtsProvider = document.querySelector('#cascadedTtsProvider')
-const cascadedTtsVoice = document.querySelector('#cascadedTtsVoice')
+const cascadedTtsVoicePreset = document.querySelector('#cascadedTtsVoicePreset')
+const cascadedTtsVoiceCustom = document.querySelector('#cascadedTtsVoiceCustom')
+
+function populateVoiceOptions(select, presets) {
+  for (const preset of presets) {
+    const option = document.createElement('option')
+    option.value = preset.value
+    option.textContent = preset.label
+    select.append(option)
+  }
+  const custom = document.createElement('option')
+  custom.value = CUSTOM_VOICE_VALUE
+  custom.textContent = '自定义音色 ID…'
+  select.append(custom)
+}
+
+populateVoiceOptions(integratedVoicePreset, QWEN_VOICES)
+populateVoiceOptions(cascadedTtsVoicePreset, VOLCENGINE_TTS_VOICES)
 
 function secretInput(key) {
   return document.querySelector(`#${key}`)
@@ -85,6 +109,14 @@ function renderText(input, draftKey, value, drafts) {
   if (!Object.hasOwn(drafts, draftKey)) input.value = value ?? ''
 }
 
+function renderVoice(select, customInput, draftKey, value, drafts, presets) {
+  const displayValue = Object.hasOwn(drafts, draftKey) ? drafts[draftKey] : value
+  const choice = resolveVoiceChoice(displayValue, presets)
+  select.value = choice.selected
+  customInput.hidden = choice.selected !== CUSTOM_VOICE_VALUE
+  if (choice.selected === CUSTOM_VOICE_VALUE) customInput.value = choice.custom
+}
+
 function llmDraftKey(provider) {
   return `cascadedLlmModel:${provider}`
 }
@@ -100,7 +132,14 @@ function render(view, drafts) {
   cascadedSection.hidden = view.pipelineMode !== 'cascaded'
   integratedProvider.value = view.integratedProvider
   renderText(integratedModel, 'integratedModel', view.integratedModel, drafts)
-  renderText(integratedVoice, 'integratedVoice', view.integratedVoice, drafts)
+  renderVoice(
+    integratedVoicePreset,
+    integratedVoiceCustom,
+    'integratedVoice',
+    view.integratedVoice,
+    drafts,
+    QWEN_VOICES,
+  )
   cascadedEndpointingProvider.value = view.cascadedEndpointingProvider
   cascadedAsrProvider.value = view.cascadedAsrProvider
   cascadedLlmProvider.value = view.cascadedLlmProvider
@@ -111,7 +150,14 @@ function render(view, drafts) {
     drafts,
   )
   cascadedTtsProvider.value = view.cascadedTtsProvider
-  renderText(cascadedTtsVoice, 'cascadedTtsVoice', view.cascadedTtsVoice, drafts)
+  renderVoice(
+    cascadedTtsVoicePreset,
+    cascadedTtsVoiceCustom,
+    'cascadedTtsVoice',
+    view.cascadedTtsVoice,
+    drafts,
+    VOLCENGINE_TTS_VOICES,
+  )
   renderBadges(view.secretsPresent)
   renderKeyUsage(view)
   warning.hidden = view.keyringAvailable !== false
@@ -137,6 +183,31 @@ async function saveText(field, input) {
   controller.applyLocal({ [field]: value })
   const result = await push({ [field]: value }, '已保存')
   if (result.saved && result.view?.[field] === value) controller.clearDraftIfEqual(field, value)
+}
+
+async function saveVoiceSelection(field, value) {
+  controller.setDraft(field, value)
+  controller.applyLocal({ [field]: value })
+  const result = await push({ [field]: value }, '音色已保存')
+  if (result.saved && result.view?.[field] === value) controller.clearDraftIfEqual(field, value)
+}
+
+function bindVoicePicker(field, select, customInput) {
+  select.addEventListener('change', () => {
+    const custom = select.value === CUSTOM_VOICE_VALUE
+    customInput.hidden = !custom
+    if (custom) {
+      customInput.focus()
+      return
+    }
+    void saveVoiceSelection(field, select.value)
+  })
+  customInput.addEventListener('input', () => {
+    controller.setDraft(field, customInput.value)
+  })
+  customInput.addEventListener('change', () => {
+    void saveVoiceSelection(field, customInput.value)
+  })
 }
 
 async function saveCascadedLlmModel() {
@@ -213,8 +284,7 @@ integratedProvider.addEventListener('change', () => {
 })
 integratedModel.addEventListener('input', () => { recordDraft(integratedModel) })
 integratedModel.addEventListener('change', () => { void saveText('integratedModel', integratedModel) })
-integratedVoice.addEventListener('input', () => { recordDraft(integratedVoice) })
-integratedVoice.addEventListener('change', () => { void saveText('integratedVoice', integratedVoice) })
+bindVoicePicker('integratedVoice', integratedVoicePreset, integratedVoiceCustom)
 cascadedEndpointingProvider.addEventListener('change', () => {
   controller.applyLocal({ cascadedEndpointingProvider: cascadedEndpointingProvider.value })
   void push({ cascadedEndpointingProvider: cascadedEndpointingProvider.value }, '已保存')
@@ -235,8 +305,7 @@ cascadedTtsProvider.addEventListener('change', () => {
   controller.applyLocal({ cascadedTtsProvider: cascadedTtsProvider.value })
   void push({ cascadedTtsProvider: cascadedTtsProvider.value }, '已保存')
 })
-cascadedTtsVoice.addEventListener('input', () => { recordDraft(cascadedTtsVoice) })
-cascadedTtsVoice.addEventListener('change', () => { void saveText('cascadedTtsVoice', cascadedTtsVoice) })
+bindVoicePicker('cascadedTtsVoice', cascadedTtsVoicePreset, cascadedTtsVoiceCustom)
 for (const key of SECRET_KEYS) {
   secretInput(key).addEventListener('input', () => { secretRevisions.noteInput(key) })
 }
