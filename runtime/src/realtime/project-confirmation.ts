@@ -227,6 +227,7 @@ export class ProjectConfirmationController {
     readonly itemId: string
     readonly text: string
   }): ConfirmationOutcome {
+    void _input
     return outcome('ignored')
   }
 

@@ -140,6 +140,9 @@ test('active project context renders only the authoritative current display name
 test('Qwen project instructions route the six actions and structured confirmation semantically', () => {
   assert.match(FRONTEND_INSTRUCTIONS, /codex__confirm_project_action/u)
   assert.match(FRONTEND_INSTRUCTIONS, /list_workspaces.*list_sessions/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /候选上下文.*select_workspace/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /目标 workspace.*list_sessions/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /Session 候选上下文.*resume_session/su)
   assert.match(FRONTEND_INSTRUCTIONS, /独立.*create_workspace/su)
   assert.match(FRONTEND_INSTRUCTIONS, /当前.*start_session/su)
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /新的独立开发需求调用 codex__run/u)

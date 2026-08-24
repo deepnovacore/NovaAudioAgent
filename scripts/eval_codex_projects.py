@@ -12,7 +12,7 @@ from nova_audio_agent.evals.codex_projects import evaluate_project_routing
 def main() -> int:
     raw = json.load(sys.stdin)
     predictions = {
-        str(case_id): (str(value.get("tool", "none")), value.get("action"))
+        str(case_id): (str(value.get("tool", "none")), value.get("arguments"))
         for case_id, value in raw.items()
         if type(value) is dict
     }
