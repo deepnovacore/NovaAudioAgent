@@ -355,8 +355,8 @@ test('backend mode is admitted before camera selection or permission work', asyn
     source,
     /process\.stderr\.write\(\s*'\[desktop-diagnostic\] source_rollback_unavailable\\n',\s*\(\) => app\.exit\(0\),?\s*\)/u,
   )
-  assert.match(source, /writeReleaseSmokeSourceRollback\(\{/u)
-  assert.match(source, /onDone: \(\) => app\.exit\(0\)/u)
+  assert.match(source, /releaseSmokeSourceRollbackExitCode\(\{/u)
+  assert.match(source, /app\.exit\(sourceRollbackExitCode\)/u)
   const rollbackPreflight = source.indexOf("process.env.NOVA_AUDIO_AGENT_BACKEND === 'python'")
   assert.ok(rollbackPreflight >= 0 && rollbackPreflight < source.indexOf('app.requestSingleInstanceLock()'))
 })

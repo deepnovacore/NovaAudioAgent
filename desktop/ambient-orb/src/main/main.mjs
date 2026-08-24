@@ -37,7 +37,7 @@ import { createDragController } from './drag-controller.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
   createReleaseSmokeChannel,
-  writeReleaseSmokeSourceRollback,
+  releaseSmokeSourceRollbackExitCode,
 } from './release-smoke-channel.mjs'
 import {
   createSafeStorageCodec,
@@ -96,6 +96,8 @@ const WINDOW_SIZE = Object.freeze({ width: 184, height: 184 })
 // window creation is delayed a beat on linux only.
 const LINUX_WINDOW_DELAY_MS = 300
 const RELEASE_CAMERA_SMOKE_MODE = 'installed-file-v1'
+const RELEASE_CAMERA_PASSED_EXIT_CODE = 76
+const RELEASE_CAMERA_PENDING_EXIT_CODE = 75
 const opaque = process.env.NOVA_ORB_OPAQUE === '1'
 
 let backend = null
@@ -714,14 +716,11 @@ async function runInstalledFileCameraSmoke() {
 
 function finishInstalledFileCameraSmoke(result) {
   if (result === 'passed') {
-    process.stdout.write('{"ok":true}\n', () => app.exit(0))
+    app.exit(RELEASE_CAMERA_PASSED_EXIT_CODE)
   } else if (result === 'chromium_codec_unavailable') {
-    process.stdout.write(
-      'camera-file-integration: chromium_codec_unavailable\n',
-      () => app.exit(75),
-    )
+    app.exit(RELEASE_CAMERA_PENDING_EXIT_CODE)
   } else {
-    process.stderr.write('installed camera smoke rejected\n', () => app.exit(1))
+    app.exit(1)
   }
 }
 
@@ -731,16 +730,16 @@ const packagedSourceRollbackUnavailable = app.isPackaged
   && process.env.NOVA_AUDIO_AGENT_BACKEND === 'python'
 
 if (packagedSourceRollbackUnavailable) {
-  if (!writeReleaseSmokeSourceRollback({
+  const sourceRollbackExitCode = releaseSmokeSourceRollbackExitCode({
     environment: process.env,
     isPackaged: app.isPackaged,
-    onDone: () => app.exit(0),
-  })) {
+  })
+  if (sourceRollbackExitCode === null) {
     process.stderr.write(
       '[desktop-diagnostic] source_rollback_unavailable\n',
       () => app.exit(0),
     )
-  }
+  } else app.exit(sourceRollbackExitCode)
 } else if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else if (installedFileCameraSmoke) {

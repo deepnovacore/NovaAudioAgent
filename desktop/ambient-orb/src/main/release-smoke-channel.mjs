@@ -1,33 +1,16 @@
 import {createReadStream, createWriteStream} from 'node:fs'
 
 export const RELEASE_SMOKE_MODE = 'installed-candidate-v1'
-export const SOURCE_ROLLBACK_UNAVAILABLE_RESULT = '{"type":"source_rollback_unavailable"}\n'
+export const SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE = 78
 
 const TOKEN = /^[0-9a-f]{32}$/u
 const ENDPOINT = /^ws:\/\/127\.0\.0\.1:([0-9]{1,5})\/$/u
 const MAX_CONTROL_BYTES = 16
 
-export function writeReleaseSmokeSourceRollback({
-  environment,
-  isPackaged,
-  onDone,
-  openOutput = () => createWriteStream('', {fd: 3, autoClose: false}),
-}) {
-  if (!isPackaged || environment?.NOVA_AUDIO_AGENT_RELEASE_SMOKE !== RELEASE_SMOKE_MODE) {
-    return false
-  }
-  if (typeof onDone !== 'function') throw new Error('release_smoke_invalid')
-  const output = openOutput()
-  if (typeof output?.end !== 'function') throw new Error('release_smoke_invalid')
-  let completed = false
-  const finish = () => {
-    if (completed) return
-    completed = true
-    onDone()
-  }
-  output.once?.('error', finish)
-  output.end(SOURCE_ROLLBACK_UNAVAILABLE_RESULT, finish)
-  return true
+export function releaseSmokeSourceRollbackExitCode({environment, isPackaged}) {
+  return isPackaged && environment?.NOVA_AUDIO_AGENT_RELEASE_SMOKE === RELEASE_SMOKE_MODE
+    ? SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE
+    : null
 }
 
 export function createReleaseSmokeChannel({

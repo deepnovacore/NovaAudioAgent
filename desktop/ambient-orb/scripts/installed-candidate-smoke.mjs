@@ -11,7 +11,9 @@ import {WebSocket, WebSocketServer} from 'ws'
 
 export const RELEASE_SMOKE_MODE = 'installed-candidate-v1'
 export const CAMERA_CAPABILITY_PENDING = 'camera-file-integration: chromium_codec_unavailable'
-export const SOURCE_ROLLBACK_UNAVAILABLE_RESULT = '{"type":"source_rollback_unavailable"}\n'
+export const CAMERA_CAPABILITY_PASSED_EXIT_CODE = 76
+export const CAMERA_CAPABILITY_PENDING_EXIT_CODE = 75
+export const SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE = 78
 export const SCRATCH_REMOVAL_OPTIONS = Object.freeze({
   recursive: true,
   force: true,
@@ -178,17 +180,13 @@ export function candidateBaseEnvironment({
 }
 
 export function classifyCameraCapability(result) {
-  const stdout = Buffer.isBuffer(result?.stdout)
-    ? result.stdout.toString('utf8')
-    : result?.stdout
-  const stderr = Buffer.isBuffer(result?.stderr)
-    ? result.stderr.toString('utf8')
-    : result?.stderr
-  if (result?.error !== undefined || result?.signal !== null || stderr !== '') {
+  if (result?.error !== undefined || result?.signal !== null) {
     throw new Error('installed_camera_smoke_failed')
   }
-  if (result.status === 0 && stdout === '{"ok":true}\n') return Object.freeze({status: 'passed'})
-  if (result.status === 75 && stdout === `${CAMERA_CAPABILITY_PENDING}\n`) {
+  if (result.status === CAMERA_CAPABILITY_PASSED_EXIT_CODE) {
+    return Object.freeze({status: 'passed'})
+  }
+  if (result.status === CAMERA_CAPABILITY_PENDING_EXIT_CODE) {
     return Object.freeze({status: 'pending', result_code: 'chromium_codec_unavailable'})
   }
   throw new Error('installed_camera_smoke_failed')
@@ -198,12 +196,8 @@ export function classifySourceRollbackResult(result) {
   const stdout = Buffer.isBuffer(result?.stdout)
     ? result.stdout.toString('utf8')
     : result?.stdout
-  const readiness = Buffer.isBuffer(result?.readiness)
-    ? result.readiness
-    : Buffer.from(result?.readiness ?? '')
-  if (result?.error !== undefined || result?.signal !== null || result?.status !== 0
-    || stdout !== ''
-    || readiness.toString('utf8') !== SOURCE_ROLLBACK_UNAVAILABLE_RESULT) {
+  if (result?.error !== undefined || result?.signal !== null
+    || result?.status !== SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE || stdout !== '') {
     throw new Error('installed_source_rollback_failed')
   }
   return Object.freeze({status: 'passed'})
@@ -342,10 +336,10 @@ async function runPackagedSourceRollback({executable, environment, workspace, us
     encoding: 'utf8',
     timeout: SETTLE_MS,
     maxBuffer: OUTPUT_LIMIT,
-    stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
   return withCandidateProcessTree(result, rollbackEnvironment, () =>
-    classifySourceRollbackResult({...result, readiness: result.output?.[3] ?? ''}))
+    classifySourceRollbackResult(result))
 }
 
 async function runPackagedCameraCapability({executable, environment, userData}) {

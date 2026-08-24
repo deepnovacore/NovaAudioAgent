@@ -5,10 +5,11 @@ import {resolve} from 'node:path'
 import test from 'node:test'
 
 import {
-  CAMERA_CAPABILITY_PENDING,
+  CAMERA_CAPABILITY_PASSED_EXIT_CODE,
+  CAMERA_CAPABILITY_PENDING_EXIT_CODE,
   RELEASE_SMOKE_MODE,
   SCRATCH_REMOVAL_OPTIONS,
-  SOURCE_ROLLBACK_UNAVAILABLE_RESULT,
+  SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE,
   candidateInstallPlan,
   classifyCameraCapability,
   smokeEnvironment,
@@ -78,21 +79,19 @@ test('installed candidate plans use native install or mount boundaries for every
   }
 })
 
-test('installed source rollback accepts only the private result with no backend output', async () => {
+test('installed source rollback accepts only its stable exit code with no backend output', async () => {
   const {classifySourceRollbackResult} = await import('../scripts/installed-candidate-smoke.mjs')
   assert.deepEqual(classifySourceRollbackResult({
-    status: 0,
+    status: SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE,
     signal: null,
     error: undefined,
     stdout: '',
     stderr: '[electron] platform diagnostic\r\n',
-    readiness: Buffer.from(SOURCE_ROLLBACK_UNAVAILABLE_RESULT),
   }), {status: 'passed'})
   for (const result of [
-    {status: 1, signal: null, stdout: '', stderr: '', readiness: Buffer.from(SOURCE_ROLLBACK_UNAVAILABLE_RESULT)},
-    {status: 0, signal: null, stdout: 'private', stderr: '', readiness: Buffer.from(SOURCE_ROLLBACK_UNAVAILABLE_RESULT)},
-    {status: 0, signal: null, stdout: '', stderr: '', readiness: Buffer.alloc(0)},
-    {status: 0, signal: null, stdout: '', stderr: '', readiness: Buffer.from('ready\n')},
+    {status: 0, signal: null, stdout: '', stderr: ''},
+    {status: 1, signal: null, stdout: '', stderr: ''},
+    {status: SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE, signal: null, stdout: 'private', stderr: ''},
   ]) {
     assert.throws(() => classifySourceRollbackResult(result), /installed_source_rollback_failed/u)
   }
@@ -221,29 +220,27 @@ test('Windows system child environment keeps only paths required for native laun
 
 test('packaged camera evidence is pass or the exact non-green capability sentinel', () => {
   assert.deepEqual(classifyCameraCapability({
-    status: 0,
+    status: CAMERA_CAPABILITY_PASSED_EXIT_CODE,
     signal: null,
     error: undefined,
-    stdout: '{"ok":true}\n',
-    stderr: '',
+    stdout: '',
+    stderr: '[electron] platform diagnostic\r\n',
   }), {status: 'passed'})
   assert.deepEqual(classifyCameraCapability({
-    status: 75,
+    status: CAMERA_CAPABILITY_PENDING_EXIT_CODE,
     signal: null,
     error: undefined,
-    stdout: `${CAMERA_CAPABILITY_PENDING}\n`,
+    stdout: '',
     stderr: '',
   }), {
     status: 'pending',
     result_code: 'chromium_codec_unavailable',
   })
   for (const result of [
-    {status: 0, signal: null, stdout: 'wrong\n', stderr: ''},
-    {status: 75, signal: null, stdout: 'wrong\n', stderr: ''},
-    {status: 1, signal: null, stdout: CAMERA_CAPABILITY_PENDING, stderr: ''},
-    {status: 75, signal: null, stdout: `${CAMERA_CAPABILITY_PENDING}\n`, stderr: 'private'},
-    {status: 0, signal: 'SIGTERM', stdout: '{"ok":true}\n', stderr: ''},
-    {status: 0, signal: null, error: new Error('private'), stdout: '{"ok":true}\n', stderr: ''},
+    {status: 0, signal: null, stdout: '', stderr: ''},
+    {status: 1, signal: null, stdout: '', stderr: ''},
+    {status: CAMERA_CAPABILITY_PASSED_EXIT_CODE, signal: 'SIGTERM', stdout: '', stderr: ''},
+    {status: CAMERA_CAPABILITY_PASSED_EXIT_CODE, signal: null, error: new Error('private'), stdout: '', stderr: ''},
   ]) {
     assert.throws(() => classifyCameraCapability(result), /installed_camera_smoke_failed/u)
   }
