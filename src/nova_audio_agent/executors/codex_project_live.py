@@ -174,6 +174,9 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         self._on_project_view = on_project_view
         self._public_project_view = store.public_view(pending_confirmation=confirmation.pending)
         self._project_view_refresh_seq = 0
+        self._confirmed_bindings: dict[
+            int, tuple[ConfirmedProjectOperation, str, str]
+        ] = {}
 
     async def dispatch(
         self,
@@ -181,8 +184,32 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         request: dict[str, Any],
         ctx: DispatchContext,
     ) -> Handoff:
-        if op != "project":
+        private_operation = getattr(ctx.delegate, "private", None)
+        if private_operation is not None:
+            if op != "project" or request != {"action": "execute_confirmed"}:
+                return _failure("invalid_operation", op)
+            if type(private_operation) is not ConfirmedProjectOperation:
+                return _failure("confirmation_binding_mismatch", op)
+            binding = self._confirmed_bindings.get(id(private_operation))
+            if (
+                binding is None
+                or binding[0] is not private_operation
+                or binding[1] != ctx.delegate.delegate_id
+                or binding[2] != ctx.delegate.origin_ref
+            ):
+                return _failure("confirmation_binding_mismatch", op)
+            del self._confirmed_bindings[id(private_operation)]
+            if self._run_lock.locked():
+                return _failure("busy", "project")
+            await self._run_lock.acquire()
+            try:
+                return await self._run_confirmed(private_operation, ctx)
+            finally:
+                self._run_lock.release()
+        if op in {"status", "steer"}:
             return await super().dispatch(op, request, ctx)
+        if op != "project":
+            return _failure("unknown_op", op)
         result = await self._dispatch_project(request, ctx)
         await self._refresh_project_view_tolerant()
         return result
@@ -190,19 +217,10 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     async def _dispatch_start_session(
         self, work_order: str, session_title: str | None, ctx: DispatchContext
     ) -> Handoff:
-        private = getattr(ctx.delegate, "private", None)
-        if private is not None and type(private) is not ConfirmedProjectOperation:
-            return _failure("confirmation_binding_mismatch", "project")
-        confirmed = private if type(private) is ConfirmedProjectOperation else None
-        if confirmed is not None and work_order != confirmed.work_order:
-            return _failure("confirmation_binding_mismatch", "project")
         if self._run_lock.locked():
             return _failure("busy", "project")
         await self._run_lock.acquire()
         try:
-            if confirmed is not None:
-                assert confirmed.work_order is not None
-                return await self._run_confirmed(confirmed, confirmed.work_order, ctx)
             return await self._run_new(work_order, session_title, ctx)
         finally:
             self._run_lock.release()
@@ -287,7 +305,9 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             return await self._lookup_failure(failure.code)
         return _project_ok(
             code="confirmation_required",
-            action=proposal.action,
+            proposal_id=proposal.nonce,
+            expires_at=proposal.expires_at,
+            action=action,
             workspace=proposal.workspace_display_name,
             session=proposal.session_title,
             confirmation_prompt=proposal.confirmation_prompt,
@@ -320,9 +340,11 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     async def _run_confirmed(
         self,
         operation: ConfirmedProjectOperation,
-        work_order: str,
         ctx: DispatchContext,
     ) -> Handoff:
+        work_order = operation.work_order
+        if work_order is None:
+            return _failure("invalid_operation", "project")
         try:
             if operation.action == "create":
                 workspace = await _complete_sync(
@@ -470,7 +492,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             DelegateRequest(
                 executor="codex",
                 op="project",
-                request={"action": "start_session", "work_order": work_order},
+                request={"action": "execute_confirmed"},
                 origin_ref=origin_ref,
                 private=operation,
             ),
@@ -478,6 +500,11 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         )
         if not admission.accepted or admission.delegate_id is None:
             return ProjectCommitResult(False, "runtime_rejected")
+        self._confirmed_bindings[id(operation)] = (
+            operation,
+            admission.delegate_id,
+            origin_ref,
+        )
         return ProjectCommitResult(True, "accepted", admission.delegate_id)
 
     async def _refresh_project_view(self) -> None:

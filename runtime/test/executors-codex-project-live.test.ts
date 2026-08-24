@@ -323,7 +323,7 @@ async function fixture(options: {
   await mkdir(managedRoot, {mode: 0o700})
   await mkdir(workspace, {mode: 0o700})
   const identifiers = Array.from(
-    {length: 40},
+    {length: 100},
     (_unused, index) => `${index % 2 === 0 ? 'workspace' : 'session'}-${String(index).padStart(4, '0')}`,
   )[Symbol.iterator]()
   const store = await CodexProjectStore.open({
@@ -413,12 +413,14 @@ function context(
 test('project manifest and tool schema preserve exact flat operation order and sensitivity', () => {
   const adapter = new ProjectCodexAdapter({} as never)
   assert.equal(adapter.manifest, CODEX_PROJECT_MANIFEST)
-  assert.deepEqual(adapter.manifest.ops.map(op => op.name), ['run', 'project', 'steer', 'status'])
+  assert.deepEqual(adapter.manifest.ops.map(op => op.name), [
+    'project', 'confirm_project_action', 'steer', 'status',
+  ])
   assert.deepEqual([...compileToolSchema([adapter.manifest]).bindings.keys()].slice(-4), [
-    'codex__run', 'codex__project', 'codex__steer', 'codex__status',
+    'codex__project', 'codex__confirm_project_action', 'codex__steer', 'codex__status',
   ])
   assert.deepEqual(adapter.manifest.ops[0]?.sensitive_params, ['work_order'])
-  assert.deepEqual(adapter.manifest.ops[1]?.sensitive_params, ['work_order'])
+  assert.deepEqual(adapter.manifest.ops[1]?.sensitive_params, [])
 })
 
 test('project create proposal validates without mutating state or constructing transport', async () => {
@@ -427,15 +429,20 @@ test('project create proposal validates without mutating state or constructing t
     const before = await value.store.snapshot()
     const result = await value.adapter.dispatch(
       'project',
-      {action: 'create', workspace: 'beta', work_order: 'build it'},
+      {
+        action: 'create_workspace', workspace: 'beta', session: 'Initial build',
+        work_order: 'build it',
+      },
       context('project', {}, value.clock),
     )
     assert.deepEqual(result.content, {
       op: 'project',
       code: 'confirmation_required',
-      action: 'create',
+      proposal_id: 'nonce-1',
+      expires_at: 100,
+      action: 'create_workspace',
       workspace: 'beta',
-      session: null,
+      session: 'Initial build',
       confirmation_prompt: '准备创建工作区beta，并在其中开始任务，请确认或取消。',
     })
     assert.deepEqual(await value.store.snapshot(), before)
@@ -443,11 +450,95 @@ test('project create proposal validates without mutating state or constructing t
 
     const invalid = await value.adapter.dispatch(
       'project',
-      {action: 'create', workspace: '../escape'},
+      {action: 'create_workspace', workspace: '../escape'},
       context('project', {}, value.clock),
     )
     assert.deepEqual(invalid.content, {op: 'project', code: 'workspace_name_invalid'})
     assert.equal(value.factory.calls.length, 0)
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('list and start_session use the active workspace while public run and execute_confirmed stay closed', async () => {
+  const value = await fixture()
+  try {
+    const listed = await value.adapter.dispatch(
+      'project', {action: 'list_workspaces'}, context('project', {}, value.clock),
+    )
+    assert.equal(listed.content.code, 'listed')
+    const started = await value.adapter.dispatch(
+      'project',
+      {action: 'start_session', session: 'Login fix', work_order: 'Fix login and run tests'},
+      context('project', {}, value.clock),
+    )
+    assert.equal(started.outcome, 'ok')
+    const active = await value.store.resolveWorkspace(null)
+    assert.equal((await value.store.listSessions(active))[0]?.display_title, 'Login fix')
+    assert.equal((await value.adapter.dispatch(
+      'run', {work_order: 'forbidden'}, context('run', {work_order: 'forbidden'}, value.clock),
+    )).outcome, 'failed')
+    assert.equal((await value.adapter.dispatch(
+      'project', {action: 'execute_confirmed'}, context('project', {}, value.clock),
+    )).outcome, 'failed')
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('workspace and Session listings are capped at twenty most-recent records', async () => {
+  const value = await fixture()
+  try {
+    for (let index = 0; index < 21; index += 1) {
+      await value.store.createManaged(`workspace-${String(index).padStart(2, '0')}`)
+    }
+    const listed = await value.adapter.dispatch(
+      'project', {action: 'list_workspaces'}, context('project', {}, value.clock),
+    )
+    assert.equal((listed.content.workspaces as readonly unknown[]).length, 20)
+    const active = await value.store.resolveWorkspace(null)
+    for (let index = 0; index < 21; index += 1) {
+      const session = await value.store.beginSession(active.workspace_id, `task-${index}`)
+      await value.store.markSessionReady(session.session_id, `thread-${index}`)
+    }
+    const sessions = await value.adapter.dispatch(
+      'project', {action: 'list_sessions'}, context('project', {}, value.clock),
+    )
+    assert.equal((sessions.content.sessions as readonly unknown[]).length, 20)
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('select and resume proposals expose public action IDs, expiry, and resolved display names', async () => {
+  const value = await fixture({preexistingSession: true})
+  try {
+    const selected = await value.adapter.dispatch(
+      'project',
+      {action: 'select_workspace', workspace: 'alpha'},
+      context('project', {}, value.clock),
+    )
+    assert.deepEqual(selected.content, {
+      op: 'project', code: 'confirmation_required', proposal_id: 'nonce-1', expires_at: 100,
+      action: 'select_workspace', workspace: 'alpha', session: null,
+      confirmation_prompt: '准备切换到工作区alpha，请确认或取消。',
+    })
+    const resumed = await value.adapter.dispatch(
+      'project',
+      {
+        action: 'resume_session', workspace: 'alpha', session: 'existing',
+        work_order: 'Continue the exact Session',
+      },
+      context('project', {}, value.clock),
+    )
+    assert.deepEqual(resumed.content, {
+      op: 'project', code: 'confirmation_required', proposal_id: 'nonce-2', expires_at: 100,
+      action: 'resume_session', workspace: 'alpha', session: 'Existing',
+      confirmation_prompt: '准备切换到alpha，并继续 Session“Existing”，请确认或取消。',
+    })
   } finally {
     await value.adapter.close()
     await rm(value.root, {recursive: true, force: true})
@@ -469,17 +560,17 @@ test('initialize publishes the pre-existing active project using only the public
     })
     assert.deepEqual(views.at(-1), value.adapter.publicProjectView(false))
     await value.adapter.dispatch(
-      'run',
-      {work_order: 'fresh session', session: 'Fresh'},
-      context('run', {work_order: 'fresh session'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'fresh session', session: 'Fresh'},
+      context('project', {}, value.clock),
     )
     assert.equal(views.at(-1)?.session_title, 'Fresh')
     const beforeUnsubscribe = views.length
     unsubscribe()
     await value.adapter.dispatch(
-      'run',
-      {work_order: 'silent observer', session: 'Silent'},
-      context('run', {work_order: 'silent observer'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'silent observer', session: 'Silent'},
+      context('project', {}, value.clock),
     )
     assert.equal(views.length, beforeUnsubscribe)
   } finally {
@@ -512,14 +603,14 @@ test('plain runs create distinct ready sessions with one fresh closed transport 
   const value = await fixture()
   try {
     const first = await value.adapter.dispatch(
-      'run',
-      {work_order: 'first', session: 'Task'},
-      context('run', {work_order: 'first'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'first', session: 'Task'},
+      context('project', {}, value.clock),
     )
     const second = await value.adapter.dispatch(
-      'run',
-      {work_order: 'second', session: 'task'},
-      context('run', {work_order: 'second'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'second', session: 'task'},
+      context('project', {}, value.clock),
     )
     assert.equal(first.outcome, 'ok')
     assert.equal(second.outcome, 'ok')
@@ -559,9 +650,9 @@ test('committed workspace and typed terminal observers run after authoritative b
       completions.push(`${event.workspace.workspace_id}:${event.work_order}:${event.handoff.outcome}`)
     })
     const result = await value.adapter.dispatch(
-      'run',
-      {work_order: 'typed completion', session: 'Observed'},
-      context('run', {work_order: 'typed completion'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'typed completion', session: 'Observed'},
+      context('project', {}, value.clock),
     )
     assert.equal(result.outcome, 'ok')
     assert.equal(workspaces.length, 1)
@@ -579,13 +670,13 @@ test('confirmed resume binds one exact capability, delegate, origin, work order,
   const value = await fixture()
   try {
     await value.adapter.dispatch(
-      'run',
-      {work_order: 'first', session: 'Task'},
-      context('run', {work_order: 'first'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'first', session: 'Task'},
+      context('project', {}, value.clock),
     )
     const proposed = await value.adapter.dispatch(
       'project',
-      {action: 'resume', workspace: 'alpha', session: 'Task', work_order: 'continue'},
+      {action: 'resume_session', workspace: 'alpha', session: 'Task', work_order: 'continue'},
       context('project', {}, value.clock),
     )
     assert.equal(proposed.content.code, 'confirmation_required')
@@ -618,9 +709,9 @@ test('confirmed resume binds one exact capability, delegate, origin, work order,
     assert.equal(delegatedCapability, confirmed.operation)
 
     const resumed = await value.adapter.dispatch(
-      'run',
-      {work_order: 'continue'},
-      context('run', {work_order: 'continue'}, value.clock, {
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-resume',
         originRef: 'conversation:2',
@@ -630,15 +721,15 @@ test('confirmed resume binds one exact capability, delegate, origin, work order,
     assert.deepEqual(value.factory.calls, [{resume: false}, {resume: true}])
 
     const replay = await value.adapter.dispatch(
-      'run',
-      {work_order: 'continue'},
-      context('run', {work_order: 'continue'}, value.clock, {
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-resume',
         originRef: 'conversation:2',
       }),
     )
-    assert.deepEqual(replay.content, {error: 'confirmation_binding_mismatch', op: 'run'})
+    assert.deepEqual(replay.content, {error: 'confirmation_binding_mismatch', op: 'project'})
     assert.equal(value.factory.calls.length, 2)
   } finally {
     await value.adapter.close()
@@ -665,7 +756,7 @@ test('real external dispatch carries one opaque confirmation identity outside ev
   try {
     await value.adapter.dispatch(
       'project',
-      {action: 'create', workspace: 'beta', work_order: 'exact work'},
+      {action: 'create_workspace', workspace: 'beta', session: 'Initial', work_order: 'exact work'},
       context('project', {}, value.clock, {originRef}),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-real'})
@@ -702,6 +793,8 @@ test('real external dispatch carries one opaque confirmation identity outside ev
       (await value.store.listWorkspaces()).map(workspace => workspace.display_name).sort(),
       ['alpha', 'beta'],
     )
+    const beta = await value.store.resolveWorkspace('beta')
+    assert.equal((await value.store.listSessions(beta))[0]?.display_title, 'Initial')
   } finally {
     stop.abort()
     await serving
@@ -710,12 +803,12 @@ test('real external dispatch carries one opaque confirmation identity outside ev
   }
 })
 
-test('wrong delegate, origin, altered work order, copied capability, rejection, and replay have zero side effects', async () => {
+test('wrong delegate, origin, copied capability, rejection, and replay have zero side effects', async () => {
   const value = await fixture()
   try {
     const proposal = await value.adapter.dispatch(
       'project',
-      {action: 'create', workspace: 'beta', work_order: 'exact work'},
+      {action: 'create_workspace', workspace: 'beta', session: 'Initial', work_order: 'exact work'},
       context('project', {}, value.clock),
     )
     assert.equal(proposal.content.code, 'confirmation_required')
@@ -732,21 +825,21 @@ test('wrong delegate, origin, altered work order, copied capability, rejection, 
     assert.equal(value.factory.calls.length, 0)
 
     const replayAfterRejection = await value.adapter.dispatch(
-      'run',
-      {work_order: 'exact work'},
-      context('run', {work_order: 'exact work'}, value.clock, {
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
         private: outcome.operation,
         delegateId: 'delegate-rejected',
         originRef: 'conversation:2',
       }),
     )
     assert.deepEqual(replayAfterRejection.content, {
-      error: 'confirmation_binding_mismatch', op: 'run',
+      error: 'confirmation_binding_mismatch', op: 'project',
     })
 
     const secondProposal = await value.adapter.dispatch(
       'project',
-      {action: 'create', workspace: 'beta', work_order: 'exact work'},
+      {action: 'create_workspace', workspace: 'beta', session: 'Initial', work_order: 'exact work'},
       context('project', {}, value.clock),
     )
     assert.equal(secondProposal.content.code, 'confirmation_required')
@@ -763,22 +856,21 @@ test('wrong delegate, origin, altered work order, copied capability, rejection, 
       {private: copied, delegateId: 'delegate-exact', originRef: 'conversation:3', workOrder: 'exact work'},
       {private: second.operation, delegateId: 'delegate-wrong', originRef: 'conversation:3', workOrder: 'exact work'},
       {private: second.operation, delegateId: 'delegate-exact', originRef: 'conversation:4', workOrder: 'exact work'},
-      {private: second.operation, delegateId: 'delegate-exact', originRef: 'conversation:3', workOrder: 'altered'},
     ]) {
       const result = await value.adapter.dispatch(
-        'run',
-        {work_order: attempt.workOrder},
-        context('run', {work_order: attempt.workOrder}, value.clock, attempt),
+        'project',
+        {action: 'execute_confirmed'},
+        context('project', {action: 'execute_confirmed'}, value.clock, attempt),
       )
-      assert.deepEqual(result.content, {error: 'confirmation_binding_mismatch', op: 'run'})
+      assert.deepEqual(result.content, {error: 'confirmation_binding_mismatch', op: 'project'})
       assert.equal(value.factory.calls.length, 0)
       assert.deepEqual((await value.store.listWorkspaces()).map(item => item.display_name), ['alpha'])
     }
 
     const accepted = await value.adapter.dispatch(
-      'run',
-      {work_order: 'exact work'},
-      context('run', {work_order: 'exact work'}, value.clock, {
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
         private: second.operation,
         delegateId: 'delegate-exact',
         originRef: 'conversation:3',
@@ -805,9 +897,9 @@ test('new-run missing thread rolls back provisional session and failed confirmed
     })
     value.factory.reportThread = false
     const failed = await value.adapter.dispatch(
-      'run',
-      {work_order: 'cannot bind'},
-      context('run', {work_order: 'cannot bind'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'cannot bind'},
+      context('project', {}, value.clock),
     )
     assert.deepEqual(failed.content, {error: 'thread_id_invalid', op: 'run'})
     const alpha = await value.store.resolveWorkspace('alpha')
@@ -815,7 +907,7 @@ test('new-run missing thread rolls back provisional session and failed confirmed
 
     await value.adapter.dispatch(
       'project',
-      {action: 'create', workspace: 'beta', work_order: 'cannot bind'},
+      {action: 'create_workspace', workspace: 'beta', session: 'Initial', work_order: 'cannot bind'},
       context('project', {}, value.clock),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm'})
@@ -827,9 +919,9 @@ test('new-run missing thread rolls back provisional session and failed confirmed
       () => ({accepted: true, delegate_id: 'delegate-create'}),
     )
     const result = await value.adapter.dispatch(
-      'run',
-      {work_order: 'cannot bind'},
-      context('run', {work_order: 'cannot bind'}, value.clock, {
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
         private: outcome.operation,
         delegateId: 'delegate-create',
         originRef: 'conversation:2',
@@ -863,9 +955,9 @@ test('caller cancellation is propagated only after provisional-session rollback 
     value.factory.onRun = () => { cancellation.abort() }
     await assert.rejects(
       value.adapter.dispatch(
-        'run',
-        {work_order: 'cancel after begin'},
-        context('run', {work_order: 'cancel after begin'}, value.clock, {
+        'project',
+        {action: 'start_session', work_order: 'cancel after begin'},
+        context('project', {}, value.clock, {
           signal: cancellation.signal,
         }),
       ),
@@ -887,9 +979,9 @@ test('transport close rejection cannot downgrade a completed side effect into a 
   try {
     value.factory.closeFailures = 1
     const result = await value.adapter.dispatch(
-      'run',
-      {work_order: 'completed before cleanup'},
-      context('run', {work_order: 'completed before cleanup'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'completed before cleanup'},
+      context('project', {}, value.clock),
     )
     assert.equal(result.outcome, 'ok')
     const workspace = await value.store.resolveWorkspace('alpha')
@@ -900,9 +992,9 @@ test('transport close rejection cannot downgrade a completed side effect into a 
     assert.equal(value.factory.transports[0]?.closeCalls, 1)
     value.factory.closeFailures = 0
     const second = await value.adapter.dispatch(
-      'run',
-      {work_order: 'new process only after retained cleanup'},
-      context('run', {work_order: 'new process only after retained cleanup'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'new process only after retained cleanup'},
+      context('project', {}, value.clock),
     )
     assert.equal(second.outcome, 'ok')
     assert.equal(value.factory.transports[0]?.closeCalls, 2)
@@ -920,9 +1012,9 @@ test('close joins an active project run and its durable session finalizer before
   value.factory.onRun = startedResolve
   value.factory.runGate = new Promise<TransportOutcome>(() => undefined)
   const running = value.adapter.dispatch(
-    'run',
-    {work_order: 'close while running'},
-    context('run', {work_order: 'close while running'}, value.clock),
+    'project',
+    {action: 'start_session', work_order: 'close while running'},
+    context('project', {}, value.clock),
   )
   const runningOutcome = running.then<Error | null, Error | null>(() => null, error => (
     error instanceof Error ? error : new Error('non-error project rejection')
@@ -958,9 +1050,9 @@ test('workspace replacement is rejected before a provisional session or transpor
     await symlink(replacement, workspacePath, 'dir')
 
     const result = await value.adapter.dispatch(
-      'run',
-      {work_order: 'must not start'},
-      context('run', {work_order: 'must not start'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'must not start'},
+      context('project', {}, value.clock),
     )
     assert.deepEqual(result.content, {error: 'workspace_boundary_changed', op: 'run'})
     const workspace = await value.store.resolveWorkspace('alpha')
@@ -990,9 +1082,9 @@ test('workspace replacement after persistent-home setup is rejected by the facto
   try {
     replace = true
     const result = await value.adapter.dispatch(
-      'run',
-      {work_order: 'must not bind replacement'},
-      context('run', {work_order: 'must not bind replacement'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'must not bind replacement'},
+      context('project', {}, value.clock),
     )
     assert.deepEqual(result.content, {error: 'workspace_boundary_changed', op: 'run'})
     assert.equal(value.factory.calls.length, 0)
@@ -1008,9 +1100,9 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
   const value = await fixture()
   try {
     await value.adapter.dispatch(
-      'run',
-      {work_order: 'first', session: 'Task'},
-      context('run', {work_order: 'first'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'first', session: 'Task'},
+      context('project', {}, value.clock),
     )
     const workspace = await value.store.resolveWorkspace('alpha')
     const session = await value.store.resolveSession(workspace.workspace_id, 'Task')
@@ -1018,7 +1110,7 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
     const proposeAndCommit = async (delegateId: string): Promise<object> => {
       await value.adapter.dispatch(
         'project',
-        {action: 'resume', workspace: 'alpha', session: 'Task', work_order: 'continue'},
+        {action: 'resume_session', workspace: 'alpha', session: 'Task', work_order: 'continue'},
         context('project', {}, value.clock),
       )
       const epoch = delegateId === 'delegate-transient' ? 1 : 2
@@ -1039,9 +1131,9 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
     }
     const transientOperation = await proposeAndCommit('delegate-transient')
     const transient = await value.adapter.dispatch(
-      'run',
-      {work_order: 'continue'},
-      context('run', {work_order: 'continue'}, value.clock, {
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
         private: transientOperation,
         delegateId: 'delegate-transient',
         originRef: 'conversation:2',
@@ -1055,9 +1147,9 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
     value.factory.overrideThreadId = 'wrong-thread'
     const mismatchOperation = await proposeAndCommit('delegate-mismatch')
     const mismatch = await value.adapter.dispatch(
-      'run',
-      {work_order: 'continue'},
-      context('run', {work_order: 'continue'}, value.clock, {
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
         private: mismatchOperation,
         delegateId: 'delegate-mismatch',
         originRef: 'conversation:2',
@@ -1075,14 +1167,14 @@ test('private resume-unavailable disposition marks the exact stored session unav
   const value = await fixture()
   try {
     await value.adapter.dispatch(
-      'run',
-      {work_order: 'first', session: 'Task'},
-      context('run', {work_order: 'first'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'first', session: 'Task'},
+      context('project', {}, value.clock),
     )
     const workspace = await value.store.resolveWorkspace('alpha')
     await value.adapter.dispatch(
       'project',
-      {action: 'resume', workspace: 'alpha', session: 'Task', work_order: 'continue'},
+      {action: 'resume_session', workspace: 'alpha', session: 'Task', work_order: 'continue'},
       context('project', {}, value.clock),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-unavailable'})
@@ -1100,9 +1192,9 @@ test('private resume-unavailable disposition marks the exact stored session unav
       classification: 'refused', code: 'resume_unavailable', turnStartWritten: false, completion: null,
     }
     const unavailable = await value.adapter.dispatch(
-      'run',
-      {work_order: 'continue'},
-      context('run', {work_order: 'continue'}, value.clock, {
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-unavailable',
         originRef: 'conversation:2',
@@ -1125,15 +1217,15 @@ test('resume state changed after persistent-home setup is rejected before transp
   })
   try {
     await value.adapter.dispatch(
-      'run',
-      {work_order: 'first', session: 'Task'},
-      context('run', {work_order: 'first'}, value.clock),
+      'project',
+      {action: 'start_session', work_order: 'first', session: 'Task'},
+      context('project', {}, value.clock),
     )
     const workspace = await value.store.resolveWorkspace('alpha')
     const session = await value.store.resolveSession(workspace.workspace_id, 'Task')
     await value.adapter.dispatch(
       'project',
-      {action: 'resume', workspace: 'alpha', session: 'Task', work_order: 'continue'},
+      {action: 'resume_session', workspace: 'alpha', session: 'Task', work_order: 'continue'},
       context('project', {}, value.clock),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-late-state'})
@@ -1151,9 +1243,9 @@ test('resume state changed after persistent-home setup is rejected before transp
       await value.store.markSessionUnavailable(session.session_id, {wait: true})
     }
     const result = await value.adapter.dispatch(
-      'run',
-      {work_order: 'continue'},
-      context('run', {work_order: 'continue'}, value.clock, {
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-late-state',
         originRef: 'conversation:2',

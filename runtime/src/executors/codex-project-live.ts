@@ -169,9 +169,33 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     request: Readonly<Record<string, JsonValue>>,
     context: ExecutorDispatchContext,
   ): Promise<ExecutorHandoff> {
+    const privateValue = consumeHostExecutorCapability(context)
+    if (privateValue !== undefined) {
+      if (
+        op !== 'project'
+        || request.action !== 'execute_confirmed'
+        || Object.keys(request).length !== 1
+      ) return failureHandoff('invalid_operation', op)
+      const binding = this.#confirmedBindings.get(privateValue)
+      if (
+        binding?.operation !== privateValue
+        || binding.delegateId !== context.delegate.delegate_id
+        || binding.originRef !== context.delegate.origin_ref
+      ) return failureHandoff('confirmation_binding_mismatch', op)
+      this.#confirmedBindings.delete(privateValue)
+      return await this.#dispatchRun(binding.operation, null, binding.workOrder, context)
+    }
     const admitted = validateCodexRequest('project', op, request)
     if (!admitted.ok) return failureHandoff(admitted.error, admitted.op)
     if (op === 'project') {
+      if (admitted.value.action === 'start_session') {
+        return await this.#dispatchRun(
+          null,
+          typeof admitted.value.session === 'string' ? admitted.value.session : null,
+          String(admitted.value.work_order),
+          context,
+        )
+      }
       const result = await this.#dispatchProject(admitted.value, context)
       await this.#refreshProjectViewTolerant()
       return result
@@ -180,30 +204,16 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       if (op === 'steer' && !this.#runActive) return projectNoActiveTurn()
       return await this.#current.dispatch(op, request, context)
     }
-    if (this.#closed) return failureHandoff('closed', op)
-    const workOrder = admitted.value.work_order
-    const sessionTitle = admitted.value.session
-    if (
-      typeof workOrder !== 'string'
-      || (sessionTitle !== undefined && typeof sessionTitle !== 'string')
-    ) return failureHandoff('invalid_params', op)
-    const privateValue = consumeHostExecutorCapability(context)
-    let confirmed: ConfirmedProjectOperation | null = null
-    if (privateValue !== undefined) {
-      if (typeof privateValue !== 'object' || privateValue === null) {
-        return failureHandoff('confirmation_binding_mismatch', op)
-      }
-      const binding = this.#confirmedBindings.get(privateValue)
-      if (
-        binding?.operation !== privateValue
-        || binding.workOrder !== workOrder
-        || binding.delegateId !== context.delegate.delegate_id
-        || binding.originRef !== context.delegate.origin_ref
-        || sessionTitle !== undefined
-      ) return failureHandoff('confirmation_binding_mismatch', op)
-      this.#confirmedBindings.delete(privateValue)
-      confirmed = binding.operation
-    }
+    return failureHandoff('invalid_operation', op)
+  }
+
+  async #dispatchRun(
+    confirmed: ConfirmedProjectOperation | null,
+    sessionTitle: string | null,
+    workOrder: string,
+    context: ExecutorDispatchContext,
+  ): Promise<ExecutorHandoff> {
+    if (this.#closed) return failureHandoff('closed', 'project')
     if (this.#runActive) return failureHandoff('busy', 'run')
     this.#runActive = true
     const controller = new AbortController()
@@ -214,7 +224,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     const runContext: ExecutorDispatchContext = {...context, signal: controller.signal}
     const work = confirmed !== null
       ? this.#runConfirmed(confirmed, workOrder, runContext)
-      : this.#runDefault(sessionTitle ?? null, workOrder, runContext)
+      : this.#runDefault(sessionTitle, workOrder, runContext)
     this.#runTask = work
     try {
       return await work
@@ -257,7 +267,9 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       await this.#refreshProjectViewTolerant()
       return commitResult(true, 'committed')
     }
-    const normalized = validateCodexRequest('project', 'run', {work_order: workOrder})
+    const normalized = validateCodexRequest('project', 'project', {
+      action: 'start_session', work_order: workOrder,
+    })
     if (!normalized.ok || normalized.value.work_order !== workOrder || this.#runActive) {
       return commitResult(false, this.#runActive ? 'busy' : 'invalid_operation')
     }
@@ -269,8 +281,8 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     const admission = runtimeDispatch(
       {
         executor: 'codex',
-        op: 'run',
-        request: {work_order: workOrder},
+        op: 'project',
+        request: {action: 'execute_confirmed'},
         origin_ref: originRef,
       },
       {
@@ -354,7 +366,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   ): Promise<ExecutorHandoff> {
     const action = request.action
     try {
-      if (action === 'list') {
+      if (action === 'list_workspaces') {
         const snapshot = await this.#store.snapshot()
         return projectHandoff('listed', {
           workspaces: recent(snapshot.workspaces).map(workspace => ({
@@ -363,7 +375,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
           })),
         })
       }
-      if (action === 'sessions') {
+      if (action === 'list_sessions') {
         const workspace = await this.#store.resolveWorkspace(
           typeof request.workspace === 'string' ? request.workspace : null,
         )
@@ -379,14 +391,14 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       }
       let workspace: WorkspaceRecord | null = null
       let session: ProjectSessionRecord | null = null
-      if (action === 'create') {
+      if (action === 'create_workspace') {
         if (typeof request.workspace !== 'string') return failureHandoff('invalid_params', 'project')
         await this.#store.validateManagedCreate(request.workspace)
       } else {
         workspace = await this.#store.resolveWorkspace(
           typeof request.workspace === 'string' ? request.workspace : null,
         )
-        if (action === 'resume') {
+        if (action === 'resume_session') {
           session = await this.#store.resolveSession(
             workspace.workspace_id,
             typeof request.session === 'string' ? request.session : null,
@@ -396,20 +408,29 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
           }
         }
       }
-      if (action !== 'create' && action !== 'select' && action !== 'resume') {
+      if (
+        action !== 'create_workspace'
+        && action !== 'select_workspace'
+        && action !== 'resume_session'
+      ) {
         return failureHandoff('invalid_params', 'project')
       }
       const proposal = this.#confirmation.prepare({
-        action,
+        action: action === 'create_workspace'
+          ? 'create'
+          : action === 'select_workspace' ? 'select' : 'resume',
         workspace_display_name: workspace?.display_name ?? String(request.workspace),
         workspace_id: workspace?.workspace_id ?? null,
-        session_title: session?.display_title ?? null,
+        session_title: session?.display_title
+          ?? (typeof request.session === 'string' ? request.session : null),
         session_id: session?.session_id ?? null,
         work_order: typeof request.work_order === 'string' ? request.work_order : null,
         origin_ref: context.delegate.origin_ref,
       })
       return projectHandoff('confirmation_required', {
-        action: proposal.action,
+        proposal_id: proposal.nonce,
+        expires_at: proposal.expires_at,
+        action,
         workspace: proposal.workspace_display_name,
         session: proposal.session_title,
         confirmation_prompt: proposal.confirmation_prompt,
