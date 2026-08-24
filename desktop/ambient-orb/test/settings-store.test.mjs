@@ -71,10 +71,17 @@ async function withTempDirectory(run) {
 
 test('the default settings are the documented schema', () => {
   assert.deepEqual(DEFAULT_SETTINGS, {
-    version: 2,
+    version: 3,
     palette: 'ember',
     proactivity: 'balanced',
     codexHeartbeatSeconds: 30,
+    codexBinaryMode: 'auto',
+    codexBinaryPath: '',
+    codexProjectsEnabled: false,
+    codexWorkspace: '',
+    codexManagedRoot: '',
+    modelBaseUrl: '',
+    startListeningOnLaunch: false,
     pipelineMode: 'integrated',
     integratedProvider: 'qwen',
     integratedModel: 'qwen-audio-3.0-realtime-plus',
@@ -90,6 +97,42 @@ test('the default settings are the documented schema', () => {
   assert.deepEqual([...SECRET_KEYS], ALL_SECRET_KEYS)
 })
 
+test('version 3 supplies packaged desktop configuration without an env file', () => {
+  const migrated = normalizeSettings({
+    version: 2,
+    integratedModel: 'qwen-custom',
+    integratedVoice: 'longanqian',
+  })
+
+  assert.equal(migrated.version, 3)
+  assert.equal(migrated.integratedModel, 'qwen-custom')
+  assert.equal(migrated.codexBinaryMode, 'auto')
+  assert.equal(migrated.codexBinaryPath, '')
+  assert.equal(migrated.codexProjectsEnabled, false)
+  assert.equal(migrated.codexWorkspace, '')
+  assert.equal(migrated.codexManagedRoot, '')
+  assert.equal(migrated.modelBaseUrl, '')
+  assert.equal(migrated.startListeningOnLaunch, false)
+})
+
+test('model base URL accepts HTTPS and loopback HTTP but refuses unsafe schemes', () => {
+  assert.equal(
+    normalizeSettings({ modelBaseUrl: ' https://models.example/v1 ' }).modelBaseUrl,
+    'https://models.example/v1',
+  )
+  assert.equal(
+    normalizeSettings({ modelBaseUrl: 'http://127.0.0.1:8080/v1' }).modelBaseUrl,
+    'http://127.0.0.1:8080/v1',
+  )
+  for (const modelBaseUrl of [
+    'ftp://models.example/v1',
+    'http://models.example/v1',
+    'https://user:password@models.example/v1',
+  ]) {
+    assert.equal(normalizeSettings({ modelBaseUrl }).modelBaseUrl, '')
+  }
+})
+
 test('normalizeSettings rebuilds defaults from nothing at all', () => {
   assert.deepEqual(normalizeSettings(undefined), DEFAULT_SETTINGS)
   assert.deepEqual(normalizeSettings(null), DEFAULT_SETTINGS)
@@ -103,6 +146,13 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
     palette: 'graphite',
     proactivity: 'reckless',
     codexHeartbeatSeconds: 45,
+    codexBinaryMode: 'auto',
+    codexBinaryPath: '',
+    codexProjectsEnabled: false,
+    codexWorkspace: '',
+    codexManagedRoot: '',
+    modelBaseUrl: '',
+    startListeningOnLaunch: false,
     pipelineMode: 'cascaded',
     integratedProvider: 'not-qwen',
     integratedModel: '  qwen-realtime-custom  ',
@@ -119,10 +169,17 @@ test('normalizeSettings keeps valid fields and defaults each invalid one on its 
   })
 
   assert.deepEqual(normalized, {
-    version: 2,
+    version: 3,
     palette: 'graphite',
     proactivity: 'balanced',
     codexHeartbeatSeconds: 45,
+    codexBinaryMode: 'auto',
+    codexBinaryPath: '',
+    codexProjectsEnabled: false,
+    codexWorkspace: '',
+    codexManagedRoot: '',
+    modelBaseUrl: '',
+    startListeningOnLaunch: false,
     pipelineMode: 'cascaded',
     integratedProvider: 'qwen',
     integratedModel: 'qwen-realtime-custom',
@@ -181,14 +238,21 @@ test('normalizeSettings drops unknown keys instead of carrying them forward', ()
     'cascadedLlmProvider',
     'cascadedTtsProvider',
     'cascadedTtsVoice',
+    'codexBinaryMode',
+    'codexBinaryPath',
     'codexHeartbeatSeconds',
+    'codexManagedRoot',
+    'codexProjectsEnabled',
+    'codexWorkspace',
     'integratedModel',
     'integratedProvider',
     'integratedVoice',
+    'modelBaseUrl',
     'palette',
     'pipelineMode',
     'proactivity',
     'secrets',
+    'startListeningOnLaunch',
     'version',
   ])
 })
@@ -534,13 +598,20 @@ test('publicSettings never carries the secrets object', () => {
     'cascadedLlmProvider',
     'cascadedTtsProvider',
     'cascadedTtsVoice',
+    'codexBinaryMode',
+    'codexBinaryPath',
     'codexHeartbeatSeconds',
+    'codexManagedRoot',
+    'codexProjectsEnabled',
+    'codexWorkspace',
     'integratedModel',
     'integratedProvider',
     'integratedVoice',
+    'modelBaseUrl',
     'palette',
     'pipelineMode',
     'proactivity',
+    'startListeningOnLaunch',
     'version',
   ])
   assert.doesNotMatch(JSON.stringify(view), /sk-visible|sealed/)
@@ -970,7 +1041,7 @@ test('saveSettings round-trips through loadSettings and leaves no temporary behi
   })
 })
 
-test('saveSettings writes owner-only and never spells a secret in plaintext', async () => {
+test('saveSettings uses POSIX owner mode and never spells a secret in plaintext', async () => {
   await withTempDirectory(async directory => {
     const file = join(directory, 'ambient-orb-settings.json')
     const settings = applySettingsUpdate(DEFAULT_SETTINGS, {
@@ -979,7 +1050,7 @@ test('saveSettings writes owner-only and never spells a secret in plaintext', as
 
     await saveSettings(file, settings)
 
-    assert.equal((await stat(file)).mode & 0o777, 0o600)
+    if (process.platform !== 'win32') assert.equal((await stat(file)).mode & 0o777, 0o600)
     const body = await readFile(file, 'utf8')
     assert.doesNotMatch(body, /sk-never-on-disk/)
     assert.match(body, /"enc":"safeStorage"/)
