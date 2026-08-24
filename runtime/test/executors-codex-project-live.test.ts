@@ -28,6 +28,7 @@ import {
   CodexProjectStore,
   hostManagedProjectRootForTest,
   hostProjectRootForTest,
+  ProjectStateError,
   type PublicProjectView,
 } from '../src/codex-project-store.js'
 import {hostWorkspaceForTest} from '../src/codex-process-owner.js'
@@ -73,6 +74,20 @@ function proposalId(content: {readonly proposal_id?: unknown}): string {
   const value = content.proposal_id
   if (typeof value !== 'string') assert.fail('proposal_id must be a string')
   return value
+}
+
+function observeCriticalProjectContext(
+  adapter: ProjectCodexAdapter,
+  observer: (context: {
+    readonly workspace_id: string | null
+    readonly view: PublicProjectView
+  }) => void | Promise<void>,
+): () => void {
+  const method = (adapter as unknown as {
+    observeProjectContext?: (candidate: typeof observer) => () => void
+  }).observeProjectContext
+  if (typeof method !== 'function') assert.fail('critical project-context observer is required')
+  return method.call(adapter, observer)
 }
 
 async function settleWithin<T>(name: string, work: Promise<T>, milliseconds = 2_000): Promise<T> {
@@ -1048,6 +1063,301 @@ test('active Session view publishes before transport run and republishes rollbac
     assert.equal(value.adapter.publicProjectView(false).session_title, '任务 1')
     assert.deepEqual(views.slice(-2).map(view => view.session_title), ['任务 2', '任务 1'])
   } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('critical active Session publication fails closed and rolls back on persistent state_busy',
+  async () => {
+    const value = await fixture({
+      decorateStore: store => new Proxy(store, {
+        get(target, property) {
+          if (property === 'publicContext') {
+            return (): never => { throw new ProjectStateError('state_busy') }
+          }
+          const member: unknown = Reflect.get(target, property, target)
+          if (typeof member !== 'function') return member
+          const bound: unknown = member.bind(target)
+          return bound
+        },
+      }),
+    })
+    try {
+      const result = await value.adapter.dispatch(
+        'project',
+        {action: 'start_session', work_order: 'must not run without provider context'},
+        context('project', {}, value.clock),
+      )
+
+      assert.deepEqual(result.content, {error: 'state_busy', op: 'run'})
+      assert.equal(value.factory.calls.length, 0)
+      const active = await value.store.resolveWorkspace(null)
+      assert.equal(active.display_name, 'alpha')
+      assert.deepEqual(await value.store.listSessions(active), [])
+    } finally {
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
+
+test('critical provider publication failure rolls back before transport while UI remains advisory',
+  async () => {
+    const value = await fixture()
+    const critical: {readonly workspace_id: string | null; readonly title: string | null}[] = []
+    value.adapter.observeProjectView(() => { throw new Error('UI renderer failed') })
+    const unsubscribe = observeCriticalProjectContext(value.adapter, contextValue => {
+      critical.push({
+        workspace_id: contextValue.workspace_id,
+        title: contextValue.view.session_title,
+      })
+      if (contextValue.view.session_title === '任务 1') {
+        throw new Error('provider delivery proof mismatch')
+      }
+    })
+    try {
+      const result = await value.adapter.dispatch(
+        'project',
+        {action: 'start_session', work_order: 'must not reach transport'},
+        context('project', {}, value.clock),
+      )
+
+      assert.deepEqual(result.content, {error: 'context_delivery_failed', op: 'run'})
+      assert.equal(value.factory.calls.length, 0)
+      const active = await value.store.resolveWorkspace(null)
+      assert.equal(active.display_name, 'alpha')
+      assert.deepEqual(await value.store.listSessions(active), [])
+      assert.deepEqual(critical, [
+        {workspace_id: active.workspace_id, title: '任务 1'},
+        {workspace_id: active.workspace_id, title: null},
+      ])
+    } finally {
+      unsubscribe()
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
+
+test('critical resume publication failure restores the previously active workspace before transport',
+  async () => {
+    const value = await fixture({preexistingSession: true})
+    const alpha = await value.store.resolveWorkspace('alpha')
+    const other = await value.store.beginSession(alpha.workspace_id, 'Other')
+    await value.store.markSessionReady(other.session_id, 'thread-other')
+    const beta = await value.store.createManaged('beta')
+    const critical: {readonly workspace: string | null; readonly session: string | null}[] = []
+    let rejectResume = true
+    const unsubscribe = observeCriticalProjectContext(value.adapter, contextValue => {
+      critical.push({
+        workspace: contextValue.view.workspace_display_name,
+        session: contextValue.view.session_title,
+      })
+      if (rejectResume && contextValue.view.session_title === 'Existing') {
+        rejectResume = false
+        throw new Error('provider rejected resumed context')
+      }
+    })
+    try {
+      const proposed = await value.adapter.dispatch(
+        'project',
+        {
+          action: 'resume_session', workspace: 'alpha', session: 'Existing',
+          work_order: 'must not reach transport',
+        },
+        context('project', {}, value.clock),
+      )
+      value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-resume-barrier'})
+      const confirmed = value.confirmation.acceptDecision({
+        epoch: 1,
+        itemId: 'confirm-resume-barrier',
+        proposalId: proposalId(proposed.content),
+        confirmed: true,
+      })
+      assert.ok(confirmed.operation)
+      assert.equal((await value.adapter.commitConfirmed(
+        confirmed.operation,
+        'conversation:2',
+        () => ({accepted: true, delegate_id: 'delegate-resume-barrier'}),
+      )).accepted, true)
+
+      const result = await value.adapter.dispatch(
+        'project',
+        {action: 'execute_confirmed'},
+        context('project', {action: 'execute_confirmed'}, value.clock, {
+          private: confirmed.operation,
+          delegateId: 'delegate-resume-barrier',
+          originRef: 'conversation:2',
+        }),
+      )
+
+      assert.deepEqual(result.content, {error: 'context_delivery_failed', op: 'run'})
+      assert.equal(value.factory.calls.length, 0)
+      assert.equal((await value.store.resolveWorkspace(null)).workspace_id, beta.workspace_id)
+      assert.equal(
+        (await value.store.resolveWorkspace('alpha')).active_session_id,
+        other.session_id,
+      )
+      assert.deepEqual(critical, [
+        {workspace: 'alpha', session: 'Existing'},
+        {workspace: 'beta', session: null},
+      ])
+    } finally {
+      unsubscribe()
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
+
+test('critical confirmed-create publication failure removes the workspace and republishes prior state',
+  async () => {
+    const value = await fixture()
+    const critical: {readonly workspace: string | null; readonly session: string | null}[] = []
+    let rejectCreate = true
+    const unsubscribe = observeCriticalProjectContext(value.adapter, contextValue => {
+      critical.push({
+        workspace: contextValue.view.workspace_display_name,
+        session: contextValue.view.session_title,
+      })
+      if (rejectCreate && contextValue.view.workspace_display_name === 'beta') {
+        rejectCreate = false
+        throw new Error('provider rejected created workspace context')
+      }
+    })
+    try {
+      const proposed = await value.adapter.dispatch(
+        'project',
+        {action: 'create_workspace', workspace: 'beta', work_order: 'must not reach transport'},
+        context('project', {}, value.clock),
+      )
+      value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-create-barrier'})
+      const confirmed = value.confirmation.acceptDecision({
+        epoch: 1,
+        itemId: 'confirm-create-barrier',
+        proposalId: proposalId(proposed.content),
+        confirmed: true,
+      })
+      assert.ok(confirmed.operation)
+      assert.equal((await value.adapter.commitConfirmed(
+        confirmed.operation,
+        'conversation:2',
+        () => ({accepted: true, delegate_id: 'delegate-create-barrier'}),
+      )).accepted, true)
+
+      const result = await value.adapter.dispatch(
+        'project',
+        {action: 'execute_confirmed'},
+        context('project', {action: 'execute_confirmed'}, value.clock, {
+          private: confirmed.operation,
+          delegateId: 'delegate-create-barrier',
+          originRef: 'conversation:2',
+        }),
+      )
+
+      assert.deepEqual(result.content, {error: 'context_delivery_failed', op: 'run'})
+      assert.equal(value.factory.calls.length, 0)
+      assert.deepEqual((await value.store.listWorkspaces()).map(item => item.display_name), ['alpha'])
+      assert.deepEqual(critical.at(-1), {workspace: 'alpha', session: null})
+    } finally {
+      unsubscribe()
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
+
+test('confirmed select publishes one atomic context before committed graph notification', async () => {
+  const value = await fixture()
+  await value.store.createManaged('beta')
+  const order: string[] = []
+  const unsubscribeContext = observeCriticalProjectContext(value.adapter, contextValue => {
+    order.push(`context:${contextValue.workspace_id}:${contextValue.view.workspace_display_name}`)
+  })
+  const unsubscribeCommitted = value.adapter.observeCommittedWorkspace(event => {
+    order.push(`committed:${event.workspace.workspace_id}:${event.workspace.display_name}`)
+  })
+  try {
+    const proposed = await value.adapter.dispatch(
+      'project',
+      {action: 'select_workspace', workspace: 'alpha'},
+      context('project', {}, value.clock),
+    )
+    value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-select-order'})
+    const confirmed = value.confirmation.acceptDecision({
+      epoch: 1,
+      itemId: 'confirm-select-order',
+      proposalId: proposalId(proposed.content),
+      confirmed: true,
+    })
+    assert.ok(confirmed.operation)
+    const committed = await value.adapter.commitConfirmed(
+      confirmed.operation,
+      'conversation:2',
+      () => ({accepted: false, delegate_id: null}),
+    )
+    assert.deepEqual(committed, {accepted: true, code: 'committed'})
+    const alpha = await value.store.resolveWorkspace('alpha')
+    assert.deepEqual(order, [
+      `context:${alpha.workspace_id}:alpha`,
+      `committed:${alpha.workspace_id}:alpha`,
+    ])
+  } finally {
+    unsubscribeContext()
+    unsubscribeCommitted()
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('confirmed resume publishes atomic Session before graph notification and transport', async () => {
+  const value = await fixture({preexistingSession: true})
+  await value.store.createManaged('beta')
+  const order: string[] = []
+  const unsubscribeContext = observeCriticalProjectContext(value.adapter, contextValue => {
+    order.push(`context:${contextValue.view.workspace_display_name}:${contextValue.view.session_title}`)
+  })
+  const unsubscribeCommitted = value.adapter.observeCommittedWorkspace(event => {
+    order.push(`committed:${event.workspace.display_name}`)
+  })
+  value.factory.onRun = () => { order.push('transport') }
+  try {
+    const proposed = await value.adapter.dispatch(
+      'project',
+      {
+        action: 'resume_session', workspace: 'alpha', session: 'Existing',
+        work_order: 'continue after atomic publication',
+      },
+      context('project', {}, value.clock),
+    )
+    value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-resume-order'})
+    const confirmed = value.confirmation.acceptDecision({
+      epoch: 1,
+      itemId: 'confirm-resume-order',
+      proposalId: proposalId(proposed.content),
+      confirmed: true,
+    })
+    assert.ok(confirmed.operation)
+    assert.equal((await value.adapter.commitConfirmed(
+      confirmed.operation,
+      'conversation:2',
+      () => ({accepted: true, delegate_id: 'delegate-resume-order'}),
+    )).accepted, true)
+    const result = await value.adapter.dispatch(
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
+        private: confirmed.operation,
+        delegateId: 'delegate-resume-order',
+        originRef: 'conversation:2',
+      }),
+    )
+    assert.equal(result.outcome, 'ok')
+    assert.deepEqual(order.slice(0, 3), [
+      'context:alpha:Existing',
+      'committed:alpha',
+      'transport',
+    ])
+  } finally {
+    unsubscribeContext()
+    unsubscribeCommitted()
     await value.adapter.close()
     await rm(value.root, {recursive: true, force: true})
   }

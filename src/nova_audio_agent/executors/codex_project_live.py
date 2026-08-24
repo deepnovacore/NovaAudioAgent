@@ -175,6 +175,9 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         self._project_view_observers: set[Callable[[PublicProjectView], Awaitable[None] | None]] = (
             set()
         )
+        self._project_context_observers: set[
+            Callable[[str | None, PublicProjectView], Awaitable[None] | None]
+        ] = set()
         if on_project_view is not None:
             self._project_view_observers.add(on_project_view)
         (
@@ -353,6 +356,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             return _failure("invalid_operation", "project")
         try:
             if operation.action == "create":
+                previous_workspace = await self._active_workspace_or_none()
                 workspace = await _complete_sync(
                     self.store.create_managed, operation.workspace_display_name
                 )
@@ -364,10 +368,14 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                         workspace, None, operation.session_title, operation.work_order, ctx
                     )
                 except BaseException:
-                    await self._rollback_confirmed_create(workspace.workspace_id)
+                    await self._rollback_confirmed_create(
+                        workspace.workspace_id, previous_workspace
+                    )
                     raise
                 if result.outcome != "ok":
-                    await self._rollback_confirmed_create(workspace.workspace_id)
+                    await self._rollback_confirmed_create(
+                        workspace.workspace_id, previous_workspace
+                    )
                 return result
             assert operation.workspace_id is not None
             workspace = await _complete_sync(
@@ -376,8 +384,21 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             if workspace.workspace_id != operation.workspace_id:
                 raise ProjectStateError("workspace_boundary_changed")
             if operation.action == "select":
+                previous = await _complete_sync(self.store.resolve_workspace, None)
                 selected = await _complete_sync(self.store.select_workspace, workspace.display_name)
-                await self._refresh_project_view_tolerant()
+                try:
+                    await self._refresh_project_context_barrier()
+                except ProjectStateError:
+                    await _complete_sync(
+                        self.store.select_workspace_exact,
+                        previous.display_name,
+                        previous.workspace_id,
+                    )
+                    try:
+                        await self._refresh_project_context_barrier()
+                    except ProjectStateError:
+                        pass
+                    raise
                 return _project_ok(code="selected", workspace=selected.display_name)
             assert operation.session_id is not None
             session = await _complete_sync(
@@ -387,9 +408,6 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             )
             if session.session_id != operation.session_id or session.codex_thread_id is None:
                 raise ProjectStateError("session_workspace_mismatch")
-            session = await _complete_sync(
-                self.store.activate_session, workspace.workspace_id, session.session_id
-            )
             return await self._run_bound(workspace, session, None, work_order, ctx)
         except ProjectStateError as failure:
             return _failure(failure.code, "run")
@@ -403,9 +421,16 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         ctx: DispatchContext,
     ) -> Handoff:
         path = await _complete_sync(self.store.revalidate_workspace, workspace.workspace_id)
+        resume_rollback = None
         session = resumed or await _complete_sync(
             self.store.begin_session, workspace.workspace_id, session_title
         )
+        if resumed is not None:
+            session, resume_rollback = await _complete_sync(
+                self.store.activate_session_for_resume,
+                workspace.workspace_id,
+                resumed.session_id,
+            )
         ready = False
         binding_invalid = False
         reported_thread_id: str | None = None
@@ -421,7 +446,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             reported_thread_id = thread_id
 
         try:
-            await self._refresh_project_view_tolerant()
+            await self._refresh_project_context_barrier()
             worker = self._worker_factory(
                 path,
                 self.store.codex_home(workspace),
@@ -445,8 +470,9 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                 except ProjectStateError:
                     ready = False
             if not ready:
+                state_changed = False
                 if resumed is None:
-                    await _complete_sync(
+                    state_changed = await _complete_sync(
                         self.store.rollback_session_start,
                         session.session_id,
                         wait=True,
@@ -459,7 +485,16 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                         session.session_id,
                         wait=True,
                     )
-                await self._refresh_project_view_tolerant()
+                    state_changed = True
+                elif result is None and resume_rollback is not None:
+                    await _complete_sync(
+                        self.store.rollback_session_resume,
+                        resume_rollback,
+                        wait=True,
+                    )
+                    state_changed = True
+                if state_changed:
+                    await self._refresh_project_context_barrier()
 
     async def commit_confirmed(
         self,
@@ -472,13 +507,16 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             return ProjectCommitResult(False, "confirmation_invalid")
         work_order = operation.work_order
         if work_order is None:
+            previous: WorkspaceRecord | None = None
+            committed_workspace: WorkspaceRecord | None = None
             try:
+                previous = await self._active_workspace_or_none()
                 if operation.action == "create":
-                    await _complete_sync(
+                    committed_workspace = await _complete_sync(
                         self.store.create_managed, operation.workspace_display_name
                     )
                 elif operation.action == "select" and operation.workspace_id is not None:
-                    await _complete_sync(
+                    committed_workspace = await _complete_sync(
                         self.store.select_workspace_exact,
                         operation.workspace_display_name,
                         operation.workspace_id,
@@ -487,7 +525,34 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                     return ProjectCommitResult(False, "invalid_operation")
             except ProjectStateError as failure:
                 return ProjectCommitResult(False, failure.code)
-            await self._refresh_project_view_tolerant()
+            try:
+                await self._refresh_project_context_barrier()
+            except ProjectStateError as failure:
+                assert committed_workspace is not None
+                if operation.action == "create":
+                    rolled_back = await _complete_sync(
+                        self.store.rollback_managed_create,
+                        committed_workspace.workspace_id,
+                        wait=True,
+                    )
+                    if rolled_back and previous is not None:
+                        await _complete_sync(
+                            self.store.select_workspace_exact,
+                            previous.display_name,
+                            previous.workspace_id,
+                        )
+                else:
+                    assert previous is not None
+                    await _complete_sync(
+                        self.store.select_workspace_exact,
+                        previous.display_name,
+                        previous.workspace_id,
+                    )
+                try:
+                    await self._refresh_project_context_barrier()
+                except ProjectStateError:
+                    pass
+                return ProjectCommitResult(False, failure.code)
             return ProjectCommitResult(True, "committed")
         normalized_request = _normalize_project_request(
             {"action": "start_session", "work_order": work_order}
@@ -515,7 +580,15 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         )
         return ProjectCommitResult(True, "accepted", admission.delegate_id)
 
-    async def _refresh_project_view(self) -> None:
+    async def _active_workspace_or_none(self) -> WorkspaceRecord | None:
+        try:
+            return await _complete_sync(self.store.resolve_workspace, None)
+        except ProjectStateError as failure:
+            if failure.code == "workspace_not_found":
+                return None
+            raise
+
+    async def _load_project_context(self) -> tuple[str | None, PublicProjectView] | None:
         self._project_view_refresh_seq += 1
         refresh_seq = self._project_view_refresh_seq
         workspace_id, view = await _complete_sync(
@@ -523,10 +596,29 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             pending_confirmation=self.confirmation.pending,
         )
         if refresh_seq != self._project_view_refresh_seq:
-            return
+            return None
         self._public_workspace_id = workspace_id
         self._public_project_view = view
-        await self._publish_project_view()
+        return workspace_id, view
+
+    async def _refresh_project_view(self) -> None:
+        context = await self._load_project_context()
+        if context is not None:
+            await self._publish_project_view(context[1])
+
+    async def _refresh_project_context_barrier(self) -> None:
+        context = await self._load_project_context()
+        if context is None:
+            raise ProjectStateError("context_delivery_failed")
+        workspace_id, view = context
+        await self._publish_project_view(view)
+        for observer in tuple(self._project_context_observers):
+            try:
+                result = observer(workspace_id, view)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                raise ProjectStateError("context_delivery_failed") from None
 
     async def _refresh_project_view_tolerant(self) -> None:
         """Refresh the cached view, tolerating a transiently locked registry.
@@ -541,7 +633,11 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             if failure.code != "state_busy":
                 raise
 
-    async def _rollback_confirmed_create(self, workspace_id: str) -> None:
+    async def _rollback_confirmed_create(
+        self,
+        workspace_id: str,
+        previous_workspace: WorkspaceRecord | None,
+    ) -> None:
         """Best-effort removal of a just-created workspace whose first run failed.
 
         The store refuses to remove a workspace that gained sessions or files,
@@ -553,7 +649,13 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                 self.store.rollback_managed_create, workspace_id, wait=True
             )
             if rolled_back:
-                await self._refresh_project_view_tolerant()
+                if previous_workspace is not None:
+                    await _complete_sync(
+                        self.store.select_workspace_exact,
+                        previous_workspace.display_name,
+                        previous_workspace.workspace_id,
+                    )
+                await self._refresh_project_context_barrier()
         except ProjectStateError:
             return
 
@@ -583,8 +685,14 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         self._project_view_observers.add(observer)
         return lambda: self._project_view_observers.discard(observer)
 
-    async def _publish_project_view(self) -> None:
-        view = self.public_project_view(pending_confirmation=self.confirmation.pending)
+    def observe_project_context(
+        self,
+        observer: Callable[[str | None, PublicProjectView], Awaitable[None] | None],
+    ) -> Callable[[], None]:
+        self._project_context_observers.add(observer)
+        return lambda: self._project_context_observers.discard(observer)
+
+    async def _publish_project_view(self, view: PublicProjectView) -> None:
         for observer in tuple(self._project_view_observers):
             try:
                 result = observer(view)

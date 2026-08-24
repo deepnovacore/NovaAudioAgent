@@ -75,6 +75,14 @@ class ProjectSessionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SessionResumeRollback:
+    previous_active_workspace_id: str | None
+    workspace_id: str
+    previous_active_session_id: str | None
+    resumed_session_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectSnapshot:
     version: int
     active_workspace_id: str | None
@@ -564,7 +572,18 @@ class CodexProjectStore:
         workspace_id: str,
         session_id: str,
     ) -> ProjectSessionRecord:
-        def update(state: _State) -> tuple[ProjectSessionRecord, bool]:
+        return self.activate_session_for_resume(workspace_id, session_id)[0]
+
+    def activate_session_for_resume(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> tuple[ProjectSessionRecord, SessionResumeRollback]:
+        """Atomically activate a resume target and capture its exact rollback state."""
+
+        def update(
+            state: _State,
+        ) -> tuple[tuple[ProjectSessionRecord, SessionResumeRollback], bool]:
             workspace = state.workspaces.get(workspace_id)
             session = state.sessions.get(session_id)
             if workspace is None:
@@ -573,6 +592,12 @@ class CodexProjectStore:
                 raise ProjectStateError("session_workspace_mismatch")
             if session.state != "ready" or session.codex_thread_id is None:
                 raise ProjectStateError("session_unavailable")
+            rollback = SessionResumeRollback(
+                previous_active_workspace_id=state.active_workspace_id,
+                workspace_id=workspace_id,
+                previous_active_session_id=workspace.active_session_id,
+                resumed_session_id=session_id,
+            )
             stamp = self._stamp()
             state.workspaces[workspace_id] = replace(
                 workspace,
@@ -582,9 +607,46 @@ class CodexProjectStore:
             session = replace(session, last_used_at=stamp)
             state.sessions[session_id] = session
             state.active_workspace_id = workspace_id
-            return session, True
+            return (session, rollback), True
 
         return self._transaction(update)
+
+    def rollback_session_resume(
+        self,
+        rollback: SessionResumeRollback,
+        *,
+        wait: bool = False,
+    ) -> bool:
+        """Undo only the exact resume activation represented by ``rollback``."""
+
+        def update(state: _State) -> tuple[bool, bool]:
+            workspace = state.workspaces.get(rollback.workspace_id)
+            if (
+                workspace is None
+                or state.active_workspace_id != rollback.workspace_id
+                or workspace.active_session_id != rollback.resumed_session_id
+            ):
+                return False, False
+            if (
+                rollback.previous_active_workspace_id is not None
+                and rollback.previous_active_workspace_id not in state.workspaces
+            ):
+                return False, False
+            if rollback.previous_active_session_id is not None:
+                previous_session = state.sessions.get(rollback.previous_active_session_id)
+                if (
+                    previous_session is None
+                    or previous_session.workspace_id != rollback.workspace_id
+                ):
+                    return False, False
+            state.workspaces[rollback.workspace_id] = replace(
+                workspace,
+                active_session_id=rollback.previous_active_session_id,
+            )
+            state.active_workspace_id = rollback.previous_active_workspace_id
+            return True, True
+
+        return self._transaction(update, wait=wait)
 
     def public_view(self, *, pending_confirmation: bool) -> PublicProjectView:
         return self.public_context(pending_confirmation=pending_confirmation)[1]

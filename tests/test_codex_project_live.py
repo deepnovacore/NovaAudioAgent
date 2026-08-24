@@ -1156,7 +1156,9 @@ async def test_prepared_confirmation_survives_busy_view_refresh(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_run_tolerates_busy_view_refresh_and_keeps_session_ready(tmp_path: Path) -> None:
+async def test_run_fails_closed_before_worker_and_restores_active_on_busy_context(
+    tmp_path: Path,
+) -> None:
     clock = VirtualClock(start=10.0)
     store = CodexProjectStore(
         tmp_path / "state",
@@ -1165,10 +1167,11 @@ async def test_run_tolerates_busy_view_refresh_and_keeps_session_ready(tmp_path:
         id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
     )
     workspace = store.create_managed("alpha")
+    factory = _ProjectFactory()
     adapter = ProjectCodexAdapter(
         store=store,
         confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
-        worker_factory=_ProjectFactory(),
+        worker_factory=factory,
     )
 
     def busy_view(*, pending_confirmation: bool) -> Any:
@@ -1179,21 +1182,240 @@ async def test_run_tolerates_busy_view_refresh_and_keeps_session_ready(tmp_path:
         "project", {"action": "start_session", "work_order": "task"}, _context(clock)
     )
 
-    assert result.outcome == "ok"
-    assert [item.state for item in store.list_sessions(workspace)] == ["ready"]
+    assert result.outcome == "failed"
+    assert result.content == {"op": "run", "error": "state_busy"}
+    assert factory.calls == []
+    assert store.snapshot().active_workspace_id == workspace.workspace_id
+    assert store.list_sessions(workspace) == ()
 
 
 @pytest.mark.asyncio
-async def test_committed_select_reports_success_despite_busy_view_refresh(
+async def test_critical_provider_failure_rolls_back_before_worker_while_ui_is_advisory(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    workspace = store.create_managed("alpha")
+    factory = _ProjectFactory()
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=factory,
+        on_project_view=lambda _view: (_ for _ in ()).throw(RuntimeError("UI failed")),
+    )
+    observed: list[tuple[str | None, str | None]] = []
+
+    async def critical(workspace_id: str | None, view: PublicProjectView) -> None:
+        observed.append((workspace_id, view.session_title))
+        if view.session_title == "任务 1":
+            raise RuntimeError("provider delivery proof mismatch")
+
+    observe = getattr(adapter, "observe_project_context", None)
+    assert callable(observe), "critical project-context observer is required"
+    unsubscribe = observe(critical)
+    try:
+        result = await adapter.dispatch(
+            "project", {"action": "start_session", "work_order": "must not run"}, _context(clock)
+        )
+    finally:
+        unsubscribe()
+
+    assert result.outcome == "failed"
+    assert result.content == {"op": "run", "error": "context_delivery_failed"}
+    assert factory.calls == []
+    assert store.snapshot().active_workspace_id == workspace.workspace_id
+    assert store.list_sessions(workspace) == ()
+    assert observed == [(workspace.workspace_id, "任务 1"), (workspace.workspace_id, None)]
+
+
+@pytest.mark.asyncio
+async def test_critical_resume_failure_restores_previous_active_workspace_before_worker(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    alpha = store.create_managed("alpha")
+    confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    factory = _ProjectFactory()
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=confirmation,
+        worker_factory=factory,
+    )
+    first = await adapter.dispatch(
+        "project",
+        {"action": "start_session", "work_order": "first", "session": "Existing"},
+        _context(clock),
+    )
+    assert first.outcome == "ok"
+    saved = store.resolve_session(alpha.workspace_id, "Existing")
+    other = store.begin_session(alpha.workspace_id, "Other")
+    store.mark_session_ready(other.session_id, "thread-other")
+    beta = store.create_managed("beta")
+    observed: list[tuple[str | None, str | None]] = []
+    reject_resume = True
+
+    async def critical(workspace_id: str | None, view: PublicProjectView) -> None:
+        nonlocal reject_resume
+        observed.append((workspace_id, view.session_title))
+        if reject_resume and view.session_title == "Existing":
+            reject_resume = False
+            raise RuntimeError("provider rejected resumed context")
+
+    unsubscribe = adapter.observe_project_context(critical)
+    proposal = confirmation.prepare(
+        action="resume",
+        workspace_display_name="alpha",
+        workspace_id=alpha.workspace_id,
+        session_title=saved.display_title,
+        session_id=saved.session_id,
+        work_order="must not reach worker",
+        origin_ref="conversation:2",
+    )
+    assert confirmation.reserve_user_item(epoch=1, item_id="confirm-resume-barrier")
+    confirmed = confirmation.accept_decision(
+        epoch=1,
+        item_id="confirm-resume-barrier",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
+    assert confirmed.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="resume-barrier")
+
+    assert (
+        await adapter.commit_confirmed(
+            confirmed.operation,
+            origin_ref="conversation:2",
+            runtime_dispatch=dispatch,
+        )
+    ).accepted
+    try:
+        result = await adapter.dispatch(
+            "project",
+            {"action": "execute_confirmed"},
+            _context(
+                clock,
+                origin_ref="conversation:2",
+                delegate_id="resume-barrier",
+                private=dispatched[0][0].private,
+            ),
+        )
+    finally:
+        unsubscribe()
+
+    assert result.content == {"op": "run", "error": "context_delivery_failed"}
+    assert len(factory.calls) == 1
+    assert store.snapshot().active_workspace_id == beta.workspace_id
+    assert store.resolve_workspace("alpha").active_session_id == other.session_id
+    assert observed == [
+        (alpha.workspace_id, "Existing"),
+        (beta.workspace_id, None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_critical_confirmed_create_failure_republishes_prior_state(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    alpha = store.create_managed("alpha")
+    confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    factory = _ProjectFactory()
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=confirmation,
+        worker_factory=factory,
+    )
+    observed: list[tuple[str | None, str | None]] = []
+    reject_create = True
+
+    async def critical(workspace_id: str | None, view: PublicProjectView) -> None:
+        nonlocal reject_create
+        observed.append((workspace_id, view.workspace_display_name))
+        if reject_create and view.workspace_display_name == "beta":
+            reject_create = False
+            raise RuntimeError("provider rejected created workspace context")
+
+    unsubscribe = adapter.observe_project_context(critical)
+    proposal = await adapter.dispatch(
+        "project",
+        {"action": "create_workspace", "workspace": "beta", "work_order": "must not run"},
+        _context(clock, origin_ref="conversation:2"),
+    )
+    assert confirmation.reserve_user_item(epoch=1, item_id="confirm-create-barrier")
+    confirmed = confirmation.accept_decision(
+        epoch=1,
+        item_id="confirm-create-barrier",
+        proposal_id=proposal.content["proposal_id"],
+        confirmed=True,
+    )
+    assert confirmed.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="create-barrier")
+
+    assert (
+        await adapter.commit_confirmed(
+            confirmed.operation,
+            origin_ref="conversation:2",
+            runtime_dispatch=dispatch,
+        )
+    ).accepted
+    try:
+        result = await adapter.dispatch(
+            "project",
+            {"action": "execute_confirmed"},
+            _context(
+                clock,
+                origin_ref="conversation:2",
+                delegate_id="create-barrier",
+                private=dispatched[0][0].private,
+            ),
+        )
+    finally:
+        unsubscribe()
+
+    assert result.content == {"op": "run", "error": "context_delivery_failed"}
+    assert factory.calls == []
+    assert [item.display_name for item in store.list_workspaces()] == ["alpha"]
+    assert store.snapshot().active_workspace_id == alpha.workspace_id
+    assert observed[-1] == (alpha.workspace_id, "alpha")
+
+
+@pytest.mark.asyncio
+async def test_committed_select_rolls_back_when_critical_context_is_busy(
     tmp_path: Path,
 ) -> None:
     adapter, store = _adapter(tmp_path)
     beta = store.create_managed("beta")
+    alpha = store.resolve_workspace("alpha")
     controller = adapter.confirmation
     proposal = controller.prepare(
         action="select",
-        workspace_display_name="beta",
-        workspace_id=beta.workspace_id,
+        workspace_display_name="alpha",
+        workspace_id=alpha.workspace_id,
         session_title=None,
         session_id=None,
         work_order=None,
@@ -1220,7 +1442,7 @@ async def test_committed_select_reports_success_despite_busy_view_refresh(
         ),
     )
 
-    assert committed == ProjectCommitResult(True, "committed")
+    assert committed == ProjectCommitResult(False, "state_busy")
     assert store.snapshot().active_workspace_id == beta.workspace_id
 
 

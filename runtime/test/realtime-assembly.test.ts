@@ -16,7 +16,7 @@ import {
 import { VirtualClock } from '../src/clock.js'
 import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
 import type {CodexAssemblyResource} from '../src/codex-factory.js'
-import type {WorkspaceRecord} from '../src/codex-project-store.js'
+import type {PublicProjectContext, WorkspaceRecord} from '../src/codex-project-store.js'
 import { settingsSchema } from '../src/config.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../src/causal-runtime.js'
 import type {
@@ -676,9 +676,11 @@ test('project adapter wiring carries one confirmed identity through the real rea
     readonly confirmationController: ProjectConfirmationController
     commitConfirmed: ProjectCodexAdapter['commitConfirmed']
     publicProjectView: ProjectCodexAdapter['publicProjectView']
+    publicProjectContext: ProjectCodexAdapter['publicProjectContext']
     initialize: ProjectCodexAdapter['initialize']
     activeCommittedWorkspace: ProjectCodexAdapter['activeCommittedWorkspace']
     observeProjectView: ProjectCodexAdapter['observeProjectView']
+    observeProjectContext: ProjectCodexAdapter['observeProjectContext']
     observeCommittedWorkspace: ProjectCodexAdapter['observeCommittedWorkspace']
     observeTerminalWorkOrder: ProjectCodexAdapter['observeTerminalWorkOrder']
     close: ProjectCodexAdapter['close']
@@ -726,6 +728,10 @@ test('project adapter wiring carries one confirmed identity through the real rea
       session_title: activeSession,
       pending_confirmation: pending,
     }),
+    publicProjectContext: pending => Object.freeze({
+      workspace_id: `host-${activeWorkspace}`,
+      view: adapterShape.publicProjectView(pending),
+    }),
     initialize: async () => {
       for (const observer of viewObservers) {
         await observer(adapterShape.publicProjectView(false))
@@ -736,6 +742,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
       viewObservers.add(observer)
       return () => { viewObservers.delete(observer) }
     },
+    observeProjectContext: () => () => undefined,
     observeCommittedWorkspace: () => () => undefined,
     observeTerminalWorkOrder: () => () => undefined,
     close: () => {
@@ -844,6 +851,9 @@ test('active project views replace one provider context without publishing histo
   })
   const provider = new WorkspaceContextProvider()
   const viewObservers = new Set<(view: ProjectConfirmationView) => void>()
+  const contextObservers = new Set<(
+    context: PublicProjectContext,
+  ) => void | Promise<void>>()
   const workspaceObservers = new Set<(event: CommittedWorkspaceEvent) => void | Promise<void>>()
   let view: ProjectConfirmationView = Object.freeze({
     workspace_display_name: 'alpha',
@@ -879,6 +889,12 @@ test('active project views replace one provider context without publishing histo
       viewObservers.add(observer)
       return () => { viewObservers.delete(observer) }
     },
+    observeProjectContext: (
+      observer: (context: PublicProjectContext) => void | Promise<void>,
+    ) => {
+      contextObservers.add(observer)
+      return () => { contextObservers.delete(observer) }
+    },
     observeCommittedWorkspace: (
       observer: (event: CommittedWorkspaceEvent) => void | Promise<void>,
     ) => {
@@ -906,6 +922,10 @@ test('active project views replace one provider context without publishing histo
   })
   await realtime.start()
   try {
+    const publishAtomicContext = async (): Promise<void> => {
+      const context = Object.freeze({workspace_id: contextWorkspaceId, view})
+      await Promise.all([...contextObservers].map(async observer => { await observer(context) }))
+    }
     assert.equal(provider.workspaceItems.length, 1)
     assert.deepEqual(provider.workspaceItems[0], {
       kind: 'workspace_context',
@@ -920,6 +940,10 @@ test('active project views replace one provider context without publishing histo
 
     view = Object.freeze({...view, session_title: 'Login fix'})
     for (const observer of viewObservers) observer(view)
+    await new Promise<void>(resolve => { setImmediate(resolve) })
+    assert.equal(provider.workspaceItems.length, 1,
+      'advisory UI observers cannot stand in for the critical provider barrier')
+    await publishAtomicContext()
     await waitNamed('active Session context replacement', () => provider.workspaceItems.length === 2)
     assert.equal(provider.workspaceItems[1]?.content, [
       '<active_project_context>',
@@ -935,7 +959,6 @@ test('active project views replace one provider context without publishing histo
     const committed = [...workspaceObservers][0]
     assert.ok(committed !== undefined)
     await committed({workspace: beta})
-    for (const observer of viewObservers) observer(view)
     await new Promise<void>(resolve => { setImmediate(resolve) })
     assert.equal(provider.workspaceItems.length, 2,
       'a new host id must not pair with the prior display view')
@@ -944,6 +967,7 @@ test('active project views replace one provider context without publishing histo
       workspace_display_name: 'beta', session_title: null, pending_confirmation: false,
     })
     for (const observer of viewObservers) observer(view)
+    await publishAtomicContext()
     await waitNamed('active workspace context replacement', () => provider.workspaceItems.length === 3)
     assert.equal(provider.workspaceItems[2]?.workspace_instance_id, 'host-beta')
     assert.equal(provider.workspaceItems[2]?.revision, 3)
@@ -963,10 +987,169 @@ test('active project views replace one provider context without publishing histo
     assert.equal(epochTwo[0]?.workspace_instance_id, 'host-beta')
     assert.equal(epochTwo[0]?.revision, 4)
     assert.equal(epochTwo[0]?.content.includes('>alpha<'), false)
+
+    view = Object.freeze({...view, session_title: 'Rejected context'})
+    provider.workspaceContextStep = () => Promise.reject(new Error('provider proof failed'))
+    await assert.rejects(publishAtomicContext(), /workspace context injection failed/u)
   } finally {
     await realtime.stop()
   }
 })
+
+test('delayed atomic view never pairs an immediate new graph with the prior workspace display',
+  async () => {
+    const clock = new VirtualClock(0)
+    const confirmation = new ProjectConfirmationController({
+      clock,
+      idFactory: () => 'atomic-graph-confirmation',
+    })
+    const provider = new WorkspaceContextProvider()
+    const contextObservers = new Set<(
+      context: PublicProjectContext,
+    ) => void | Promise<void>>()
+    const workspaceObservers = new Set<(
+      event: CommittedWorkspaceEvent,
+    ) => void | Promise<void>>()
+    const alpha: WorkspaceRecord = Object.freeze({
+      workspace_id: 'host-alpha', display_name: 'alpha', normalized_name: 'alpha',
+      canonical_path: '/safe/alpha', origin: 'registered', codex_home_key: 'host-alpha',
+      active_session_id: null, created_at: 1, last_used_at: 1,
+    })
+    const beta: WorkspaceRecord = Object.freeze({
+      workspace_id: 'host-beta', display_name: 'beta', normalized_name: 'beta',
+      canonical_path: '/safe/beta', origin: 'registered', codex_home_key: 'host-beta',
+      active_session_id: null, created_at: 2, last_used_at: 2,
+    })
+    let atomicContext: PublicProjectContext = Object.freeze({
+      workspace_id: alpha.workspace_id,
+      view: Object.freeze({
+        workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+      }),
+    })
+    const adapterShape: ExecutorAdapter & Record<string, unknown> = {
+      manifest: CODEX_PROJECT_MANIFEST,
+      confirmationController: confirmation,
+      dispatch: () => Promise.resolve({
+        outcome: 'ok', trust: 'trusted_system', content: {code: 'unused'}, refs: [],
+      }),
+      commitConfirmed: () => Promise.resolve({accepted: false, code: 'unused'}),
+      publicProjectView: () => atomicContext.view,
+      publicProjectContext: () => atomicContext,
+      initialize: () => Promise.resolve(),
+      activeCommittedWorkspace: () => Promise.resolve(alpha),
+      observeProjectView: () => () => undefined,
+      observeProjectContext: (
+        observer: (context: PublicProjectContext) => void | Promise<void>,
+      ) => {
+        contextObservers.add(observer)
+        return () => { contextObservers.delete(observer) }
+      },
+      observeCommittedWorkspace: (
+        observer: (event: CommittedWorkspaceEvent) => void | Promise<void>,
+      ) => {
+        workspaceObservers.add(observer)
+        return () => { workspaceObservers.delete(observer) }
+      },
+      observeTerminalWorkOrder: () => () => undefined,
+      close: () => Promise.resolve(),
+    }
+    const graphOpens: string[] = []
+    let graphScope = 0
+    const graph: RealtimeWorkspaceGraph = {
+      publishedSnapshot: emptyPublishedGraphSnapshot(1),
+      open: () => Promise.resolve(),
+      revokeCurrentWorkspaceScope: () => ++graphScope,
+      breakWorkspaceTransitionAdjacency: () => undefined,
+      openWorkspace: input => {
+        const suffix = input.repository_fingerprint === beta.workspace_id ? 'beta' : 'alpha'
+        graphOpens.push(input.repository_fingerprint ?? '')
+        return Promise.resolve({
+          kind: 'resolved',
+          resolution_basis: 'repository_fingerprint',
+          logical_workspace: Object.freeze({
+            logical_workspace_id: `logical-${suffix}`,
+            display_name: suffix,
+            aliases: [] as string[],
+            canonical_remote: null,
+            created_at: 1,
+            updated_at: 1,
+            revision: 1,
+          }),
+          instance: Object.freeze({
+            instance_id: `instance-${suffix}`,
+            logical_workspace_id: `logical-${suffix}`,
+            display_name: suffix,
+            path_label: suffix,
+            repository_fingerprint: input.repository_fingerprint,
+            branch: null,
+            status: 'active',
+            first_seen_at: 1,
+            last_seen_at: 1,
+            revision: 1,
+          }),
+          deltas: Object.freeze([]),
+        })
+      },
+      recordTaskCompletion: () => Promise.resolve(),
+      contextForTurn: input => Object.freeze({
+        header: `graph=${input.workspace_instance_id}`,
+        recall_pack: null,
+        omitted_preferences: 0,
+        omitted_hints: 0,
+        degraded: false,
+        diagnostic: null,
+      }),
+      close: () => Promise.resolve(),
+    }
+    const core = buildAssembly({
+      settings: settingsSchema.parse({executors: ['codex']}),
+      clock,
+      gateway: new NeverCalledGateway(),
+      searchTransport: new NeverCalledSearch(),
+      executors: [adapterShape],
+    })
+    const realtime = buildRealtimeAssembly({
+      core,
+      provider,
+      projectAdapter: adapterShape as unknown as ProjectCodexAdapter,
+      workspaceGraph: graph,
+    })
+
+    await realtime.start()
+    try {
+      const beforeSwitch = provider.workspaceItems.length
+      const committed = [...workspaceObservers][0]
+      assert.ok(committed !== undefined)
+      await committed({workspace: beta})
+      await waitNamed('immediate beta graph completion', () => graphOpens.includes(beta.workspace_id))
+      await yieldImmediate()
+      await yieldImmediate()
+      assert.equal(provider.workspaceItems.slice(beforeSwitch).some(item => (
+        item.workspace_instance_id === beta.workspace_id
+        && item.content.includes('workspace="alpha"')
+        && item.content.includes('graph=instance-beta')
+      )), false)
+
+      atomicContext = Object.freeze({
+        workspace_id: beta.workspace_id,
+        view: Object.freeze({
+          workspace_display_name: 'beta', session_title: null, pending_confirmation: false,
+        }),
+      })
+      await Promise.all([...contextObservers].map(async observer => {
+        await observer(atomicContext)
+      }))
+      await waitNamed('atomic beta graph context', () => (
+        provider.workspaceItems.at(-1)?.workspace_instance_id === beta.workspace_id
+      ))
+      const current = provider.workspaceItems.at(-1)
+      assert.ok(current !== undefined)
+      assert.equal(current.content.includes('workspace="beta"'), true)
+      assert.equal(current.content.includes('graph=instance-beta'), true)
+    } finally {
+      await realtime.stop()
+    }
+  })
 
 test('project-mode startup fails closed before core/provider work without context capability',
   async () => {
@@ -986,9 +1169,16 @@ test('project-mode startup fails closed before core/provider work without contex
       publicProjectView: () => Object.freeze({
         workspace_display_name: null, session_title: null, pending_confirmation: false,
       }),
+      publicProjectContext: () => Object.freeze({
+        workspace_id: null,
+        view: Object.freeze({
+          workspace_display_name: null, session_title: null, pending_confirmation: false,
+        }),
+      }),
       initialize: () => Promise.resolve(),
       activeCommittedWorkspace: () => Promise.resolve(null),
       observeProjectView: () => () => undefined,
+      observeProjectContext: () => () => undefined,
       observeCommittedWorkspace: () => () => undefined,
       observeTerminalWorkOrder: () => () => undefined,
       close: () => Promise.resolve(),
@@ -1041,12 +1231,19 @@ test('workspace graph opens before project initialization, injects only the curr
     publicProjectView: () => Object.freeze({
       workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
     }),
+    publicProjectContext: () => Object.freeze({
+      workspace_id: workspace.workspace_id,
+      view: Object.freeze({
+        workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+      }),
+    }),
     initialize: () => {
       actions.push('project:initialize')
       return Promise.resolve()
     },
     activeCommittedWorkspace: () => Promise.resolve(workspace),
     observeProjectView: () => () => undefined,
+    observeProjectContext: () => () => undefined,
     observeCommittedWorkspace: (observer: (event: CommittedWorkspaceEvent) => void) => {
       workspaceObservers.add(observer)
       return () => { workspaceObservers.delete(observer) }
@@ -1434,9 +1631,16 @@ test('real assembly and graph service infer only weak metadata from committed ad
     publicProjectView: () => Object.freeze({
       workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
     }),
+    publicProjectContext: () => Object.freeze({
+      workspace_id: alpha.workspace_id,
+      view: Object.freeze({
+        workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+      }),
+    }),
     initialize: () => Promise.resolve(),
     activeCommittedWorkspace: () => Promise.resolve(alpha),
     observeProjectView: () => () => undefined,
+    observeProjectContext: () => () => undefined,
     observeCommittedWorkspace: (observer: (event: CommittedWorkspaceEvent) => void) => {
       workspaceObservers.add(observer)
       return () => { workspaceObservers.delete(observer) }
@@ -1693,9 +1897,16 @@ test('never-settling initial Header delivery cannot block voice startup', async 
     publicProjectView: () => Object.freeze({
       workspace_display_name: 'header', session_title: null, pending_confirmation: false,
     }),
+    publicProjectContext: () => Object.freeze({
+      workspace_id: workspace.workspace_id,
+      view: Object.freeze({
+        workspace_display_name: 'header', session_title: null, pending_confirmation: false,
+      }),
+    }),
     initialize: () => Promise.resolve(),
     activeCommittedWorkspace: () => Promise.resolve(workspace),
     observeProjectView: () => () => undefined,
+    observeProjectContext: () => () => undefined,
     observeCommittedWorkspace: () => () => undefined,
     observeTerminalWorkOrder: () => () => undefined,
     close: () => Promise.resolve(),

@@ -65,6 +65,7 @@ export type ProjectStateCode =
   | 'state_too_large'
   | 'state_version_unsupported'
   | 'state_write_failed'
+  | 'context_delivery_failed'
   | 'managed_root_unsafe'
   | 'workspace_invalid'
   | 'workspace_not_found'
@@ -146,6 +147,18 @@ export interface PublicProjectView {
 export interface PublicProjectContext {
   readonly workspace_id: string | null
   readonly view: PublicProjectView
+}
+
+export interface SessionResumeRollback {
+  readonly previousActiveWorkspaceId: string | null
+  readonly workspaceId: string
+  readonly previousActiveSessionId: string | null
+  readonly resumedSessionId: string
+}
+
+export interface PreparedSessionResume {
+  readonly workspace: HostWorkspace
+  readonly rollback: SessionResumeRollback
 }
 
 interface MutableProjectState {
@@ -632,6 +645,15 @@ export class CodexProjectStore {
     sessionId: string,
     threadId: string,
   ): Promise<HostWorkspace> {
+    return (await this.prepareSessionResumeForRun(workspaceId, sessionId, threadId)).workspace
+  }
+
+  /** Atomically activate a resume target and capture the exact state needed to undo it. */
+  async prepareSessionResumeForRun(
+    workspaceId: string,
+    sessionId: string,
+    threadId: string,
+  ): Promise<PreparedSessionResume> {
     const expectedThread = validateThreadId(threadId)
     return await this.#transaction(async state => {
       const workspace = state.workspaces.get(workspaceId)
@@ -643,6 +665,12 @@ export class CodexProjectStore {
         session.state !== 'ready'
         || session.codex_thread_id !== expectedThread
       ) throw new ProjectStateError('session_unavailable')
+      const rollback: SessionResumeRollback = Object.freeze({
+        previousActiveWorkspaceId: state.activeWorkspaceId,
+        workspaceId,
+        previousActiveSessionId: workspace.active_session_id,
+        resumedSessionId: sessionId,
+      })
       const binding = workspace.origin === 'managed'
         ? await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
         : await validateRegisteredWorkspace(workspace.canonical_path, 'workspace_boundary_changed')
@@ -656,8 +684,40 @@ export class CodexProjectStore {
       }))
       state.activeWorkspaceId = workspaceId
       const {hostWorkspaceFromConfig} = await import('./codex-process-owner.js')
-      return [hostWorkspaceFromConfig(binding.canonical, [binding.canonical]), true]
+      return [Object.freeze({
+        workspace: hostWorkspaceFromConfig(binding.canonical, [binding.canonical]),
+        rollback,
+      }), true]
     })
+  }
+
+  /** Undo only the exact resume activation represented by the token. */
+  async rollbackSessionResume(
+    rollback: SessionResumeRollback,
+    options?: ProjectTransactionWaitOptions,
+  ): Promise<boolean> {
+    return await this.#transaction(state => {
+      const workspace = state.workspaces.get(rollback.workspaceId)
+      if (
+        workspace === undefined
+        || state.activeWorkspaceId !== rollback.workspaceId
+        || workspace.active_session_id !== rollback.resumedSessionId
+      ) return [false, false]
+      if (
+        rollback.previousActiveWorkspaceId !== null
+        && !state.workspaces.has(rollback.previousActiveWorkspaceId)
+      ) return [false, false]
+      if (rollback.previousActiveSessionId !== null) {
+        const previousSession = state.sessions.get(rollback.previousActiveSessionId)
+        if (previousSession?.workspace_id !== rollback.workspaceId) return [false, false]
+      }
+      state.workspaces.set(rollback.workspaceId, Object.freeze({
+        ...workspace,
+        active_session_id: rollback.previousActiveSessionId,
+      }))
+      state.activeWorkspaceId = rollback.previousActiveWorkspaceId
+      return [true, true]
+    }, options)
   }
 
   async resolveSession(workspaceId: string, displayTitle: string | null): Promise<ProjectSessionRecord> {

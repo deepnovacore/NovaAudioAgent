@@ -70,3 +70,78 @@ The first sandboxed Node broad attempt failed only where tests bind `127.0.0.1` 
 - No history listing is injected; only the current atomic public view and optional current graph Header reach the provider.
 
 Commit: this report is included in the single follow-up commit `fix: close active project context parity gaps`.
+
+## Residual whole-branch re-review follow-up
+
+Residual base: `0c83781bf77445a7da280a0dc79e16c1b0fbd06c`
+
+### Result
+
+1. Project mutation and provider publication now form one fail-closed barrier. Node and Python load
+   one atomic workspace-ID/view result, publish advisory UI separately from the awaited critical
+   channel, and require the selected composition's provider injection plus exact delivery proof to
+   finish before transport/worker construction. `state_busy`, provider rejection, or proof mismatch
+   rolls back a new Session, confirmed create, select, or resume; no worker/work order starts, and a
+   critical publication of the restored active state is attempted before the bounded failure returns.
+   Resume preparation also captures the previous global workspace and the target workspace's previous
+   active Session in the same transaction; conditional rollback restores both without overwriting a
+   different concurrent active binding.
+2. Node assembly identity now changes only through the atomic context channel. Committed workspace
+   events feed graph lifecycle without changing host identity; a resolved graph instance is attached
+   only when its captured host workspace ID still equals the current atomic ID. Select and resume
+   publish the atomic view before graph notification and transport, so delayed store refresh plus an
+   immediately completed graph can never produce `ID=B + view=A + graph=B`. Python has no separate
+   graph/ID channel; both Qwen and Volcengine compositions now subscribe their publisher directly to
+   the atomic critical observer instead of reconstructing identity from an advisory view callback.
+
+### Residual TDD evidence
+
+- RED publication barrier: Node's persistent-`state_busy` case completed and constructed transport;
+  Python's run and committed select likewise succeeded. Newly required critical observer methods were
+  absent, resume left the target workspace active, and confirmed-create rollback left provider state
+  on the removed workspace. Provider-composition wiring reported zero critical subscribers in both
+  Python selections.
+- RED exact resume restoration: after strengthening the resume failure fixture to give the target
+  workspace two ready Sessions, Node and Python each failed `0/1`: the global workspace returned to
+  `beta`, but `alpha.active_session_id` remained the rejected `Existing` Session instead of `Other`.
+  The transaction-bound rollback token made both exact focused commands pass `1/1` while constructing
+  no new transport/worker.
+- RED atomic scheduling: with committed-ID switching restored as the mutation, the reviewer schedule
+  (`openWorkspace` resolves immediately while the atomic view is delayed) published the forbidden
+  mixed item and failed `0/1`. Restoring the old select/resume notification order failed both ordering
+  regressions `0/2` (`committed` preceded `context`).
+- GREEN focused:
+  `node --test dist/test/{executors-codex-project-live,realtime-assembly,qwen-realtime-assembly}.test.js`
+  passed `69/69`; `uv run pytest -q tests/test_codex_project_live.py tests/test_assembly.py`
+  passed `93/93`.
+
+### Residual fresh broad verification
+
+```text
+node --test --test-reporter=dot dist/test/*.test.js
+=> 1614 passed, 0 failed (exit 0)
+
+uv run pytest -q
+=> 2904 passed (23.20 s)
+
+npm run check
+=> typecheck, ESLint, environment contract, and Node parity passed
+=> Node parity: 148 files, 212 occurrences
+
+uv run ruff check src tests
+=> All checks passed
+
+uv run ruff format --check <5 changed Python files>
+=> 5 files already formatted
+
+git diff --check
+=> clean
+```
+
+One preliminary Node broad run overlapped `npm run check`, which rebuilds `runtime/dist`, and was
+discarded after a graph worker loaded the transient migration artifacts. The isolated rerun above
+used a stable build and exited zero.
+
+The confirmation claim, private one-shot `execute_confirmed` capability, rollback fences, replaceable
+current-item semantics, no-history rule, and workspace/root safety contracts remain unchanged. This
+follow-up is included in the additional commit `fix: enforce atomic project context publication`.

@@ -406,14 +406,15 @@ def build_qwen_realtime_assembly(
         unsubscribe_project_context = None
     else:
 
-        async def publish_project_context(view: PublicProjectView) -> None:
-            await project_context_publisher.update_and_publish(
-                *project_adapter.public_project_context(
-                    pending_confirmation=view.pending_confirmation
-                )
-            )
+        async def publish_project_context(
+            workspace_id: str | None,
+            view: PublicProjectView,
+        ) -> None:
+            await project_context_publisher.update_and_publish(workspace_id, view)
 
-        unsubscribe_project_context = project_adapter.observe_project_view(publish_project_context)
+        unsubscribe_project_context = project_adapter.observe_project_context(
+            publish_project_context
+        )
     playback = PlaybackRegistry(
         id_factory=next_id,
         on_frame=on_audio_frame,
@@ -621,14 +622,15 @@ def build_volcengine_realtime_assembly(
         unsubscribe_project_context = None
     else:
 
-        async def publish_project_context(view: PublicProjectView) -> None:
-            await project_context_publisher.update_and_publish(
-                *project_adapter.public_project_context(
-                    pending_confirmation=view.pending_confirmation
-                )
-            )
+        async def publish_project_context(
+            workspace_id: str | None,
+            view: PublicProjectView,
+        ) -> None:
+            await project_context_publisher.update_and_publish(workspace_id, view)
 
-        unsubscribe_project_context = project_adapter.observe_project_view(publish_project_context)
+        unsubscribe_project_context = project_adapter.observe_project_context(
+            publish_project_context
+        )
     playback = PlaybackRegistry(
         id_factory=next_id,
         on_frame=on_audio_frame,

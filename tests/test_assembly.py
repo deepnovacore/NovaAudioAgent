@@ -172,6 +172,7 @@ async def test_volcengine_project_composition_republishes_one_current_context_pe
     )
     adapter = realtime.project_adapter
     assert isinstance(adapter, ProjectCodexAdapter)
+    assert len(adapter._project_context_observers) == 1
     workspace = adapter.store.resolve_workspace("repo")
 
     await realtime.start()
@@ -1518,6 +1519,7 @@ def test_qwen_realtime_build_exposes_the_project_adapter_handle(
 
     assert realtime.codex_live_adapter is realtime.runtime.executors["codex"]
     assert isinstance(realtime.codex_live_adapter, ProjectCodexAdapter)
+    assert len(realtime.codex_live_adapter._project_context_observers) == 1
     assert realtime.codex_prewarm is False
 
     lazy = Settings(

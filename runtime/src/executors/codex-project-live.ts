@@ -16,7 +16,9 @@ import {
   ProjectStateError,
   type CodexProjectStore,
   type ProjectSessionRecord,
+  type PublicProjectContext,
   type PublicProjectView,
+  type SessionResumeRollback,
   type WorkspaceRecord,
 } from '../codex-project-store.js'
 import type {HostCodexHome, HostWorkspace} from '../codex-process-owner.js'
@@ -90,6 +92,7 @@ export interface TerminalWorkOrderEvent {
 type CommittedWorkspaceObserver = (event: CommittedWorkspaceEvent) => void | Promise<void>
 type TerminalWorkOrderObserver = (event: TerminalWorkOrderEvent) => void | Promise<void>
 type ProjectViewObserver = (view: PublicProjectView) => void | Promise<void>
+type ProjectContextObserver = (context: PublicProjectContext) => void | Promise<void>
 
 interface ConfirmedDelegateBinding {
   readonly operation: ConfirmedProjectOperation
@@ -104,6 +107,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   readonly #confirmation: ProjectConfirmationController
   readonly #transportFactory: ProjectTransportFactory
   readonly #projectViewObservers = new Set<ProjectViewObserver>()
+  readonly #projectContextObservers = new Set<ProjectContextObserver>()
   readonly #committedWorkspaceObservers = new Set<CommittedWorkspaceObserver>()
   readonly #terminalWorkOrderObservers = new Set<TerminalWorkOrderObserver>()
   readonly #liveState: CodexAdapterSharedState = createCodexAdapterSharedState()
@@ -154,6 +158,11 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   observeProjectView(observer: ProjectViewObserver): () => void {
     this.#projectViewObservers.add(observer)
     return () => { this.#projectViewObservers.delete(observer) }
+  }
+
+  observeProjectContext(observer: ProjectContextObserver): () => void {
+    this.#projectContextObservers.add(observer)
+    return () => { this.#projectContextObservers.delete(observer) }
   }
 
   observeCommittedWorkspace(observer: CommittedWorkspaceObserver): () => void {
@@ -250,7 +259,9 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     const workOrder = operation.work_order
     if (workOrder === null) {
       let committedWorkspace: WorkspaceRecord
+      let previousWorkspace: WorkspaceRecord | null = null
       try {
+        previousWorkspace = await this.activeCommittedWorkspace()
         if (operation.action === 'create') {
           await this.#store.validateManagedCreate(operation.workspace_display_name)
           committedWorkspace = await this.#store.createManaged(operation.workspace_display_name)
@@ -265,8 +276,27 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       } catch (error) {
         return commitResult(false, projectErrorCode(error))
       }
+      try {
+        await this.#refreshProjectContextBarrier()
+      } catch (error) {
+        if (operation.action === 'create') {
+          const rolledBack = await this.#store.rollbackManagedCreate(
+            committedWorkspace.workspace_id, {wait: true},
+          ).catch(() => false)
+          if (rolledBack && previousWorkspace !== null) {
+            await this.#store.selectWorkspaceExact(
+              previousWorkspace.display_name, previousWorkspace.workspace_id,
+            ).catch(() => undefined)
+          }
+        } else if (previousWorkspace !== null) {
+          await this.#store.selectWorkspaceExact(
+            previousWorkspace.display_name, previousWorkspace.workspace_id,
+          ).catch(() => undefined)
+        }
+        await this.#refreshProjectContextBarrier().catch(() => undefined)
+        return commitResult(false, projectErrorCode(error))
+      }
       await this.#notifyCommittedWorkspace(committedWorkspace)
-      await this.#refreshProjectViewTolerant()
       return commitResult(true, 'committed')
     }
     const normalized = validateCodexRequest('project', 'project', {
@@ -494,18 +524,33 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     context: ExecutorDispatchContext,
   ): Promise<ExecutorHandoff> {
     if (operation.action === 'create') {
+      const previousWorkspace = await this.activeCommittedWorkspace()
       const workspace = await this.#store.createManaged(operation.workspace_display_name)
       let result: ExecutorHandoff
       try {
         result = await this.#runBound(workspace, null, operation.session_title, workOrder, context, true)
       } catch (error) {
-        await this.#store.rollbackManagedCreate(workspace.workspace_id, {wait: true}).catch(() => false)
-        await this.#refreshProjectViewTolerant()
+        const rolledBack = await this.#store.rollbackManagedCreate(
+          workspace.workspace_id, {wait: true},
+        ).catch(() => false)
+        if (rolledBack && previousWorkspace !== null) {
+          await this.#store.selectWorkspaceExact(
+            previousWorkspace.display_name, previousWorkspace.workspace_id,
+          ).catch(() => undefined)
+        }
+        if (rolledBack) await this.#refreshProjectContextBarrier().catch(() => undefined)
         throw error
       }
       if (result.outcome !== 'ok') {
-        await this.#store.rollbackManagedCreate(workspace.workspace_id, {wait: true}).catch(() => false)
-        await this.#refreshProjectViewTolerant()
+        const rolledBack = await this.#store.rollbackManagedCreate(
+          workspace.workspace_id, {wait: true},
+        ).catch(() => false)
+        if (rolledBack && previousWorkspace !== null) {
+          await this.#store.selectWorkspaceExact(
+            previousWorkspace.display_name, previousWorkspace.workspace_id,
+          ).catch(() => undefined)
+        }
+        if (rolledBack) await this.#refreshProjectContextBarrier().catch(() => undefined)
       }
       return result
     }
@@ -541,9 +586,9 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     let reportedThreadId: string | null = null
     let bindingMismatch = false
     let result: ExecutorHandoff | null = null
+    let resumeRollback: SessionResumeRollback | null = null
     const disposition: {value: ValidatedCodexDisposition | null} = {value: null}
     await this.#store.revalidateWorkspace(workspace.workspace_id)
-    if (!deferWorkspaceObservation) await this.#notifyCommittedWorkspace(workspace)
     const codexHome = await this.#store.persistentHome(workspace.workspace_id)
     let inner: CodexAppServerTransport
     try {
@@ -553,17 +598,23 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       }
       // Persistent-home setup and session persistence both cross await boundaries. Revalidate the
       // exact approved workspace again immediately before host process construction.
-      const approvedWorkspace = resumed === null
-        ? await this.#store.revalidateWorkspace(workspace.workspace_id)
-        : await this.#store.prepareSessionResume(
-            workspace.workspace_id,
-            resumed.session_id,
-            resumed.codex_thread_id ?? '',
-          )
+      let approvedWorkspace: HostWorkspace
+      if (resumed === null) {
+        approvedWorkspace = await this.#store.revalidateWorkspace(workspace.workspace_id)
+      } else {
+        const prepared = await this.#store.prepareSessionResumeForRun(
+          workspace.workspace_id,
+          resumed.session_id,
+          resumed.codex_thread_id ?? '',
+        )
+        approvedWorkspace = prepared.workspace
+        resumeRollback = prepared.rollback
+      }
       // The provider-facing active view must observe the exact session binding before any
       // transport can run against it. This also keeps a resumed session from inheriting the
       // prior display title during the process-construction window.
-      await this.#refreshProjectViewTolerant()
+      await this.#refreshProjectContextBarrier()
+      if (!deferWorkspaceObservation) await this.#notifyCommittedWorkspace(workspace)
       inner = this.#transportFactory.create(Object.freeze({
         workspace: approvedWorkspace,
         codexHome,
@@ -575,7 +626,13 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
           provisionalSessionId,
           {wait: true},
         ).catch(() => false)
-        await this.#refreshProjectViewTolerant()
+        await this.#refreshProjectContextBarrier().catch(() => undefined)
+      } else if (resumeRollback !== null) {
+        await this.#store.rollbackSessionResume(
+          resumeRollback,
+          {wait: true},
+        ).catch(() => false)
+        await this.#refreshProjectContextBarrier().catch(() => undefined)
       }
       throw error
     }
@@ -673,15 +730,37 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     }
   }
 
-  async #refreshProjectView(): Promise<void> {
+  async #loadProjectContext(): Promise<PublicProjectContext | null> {
     this.#refreshSequence += 1
     const sequence = this.#refreshSequence
     const context = await this.#store.publicContext(this.#confirmation.pending)
-    if (sequence !== this.#refreshSequence) return
+    if (sequence !== this.#refreshSequence) return null
     this.#publicWorkspaceId = context.workspace_id
     this.#publicView = context.view
+    return context
+  }
+
+  async #publishAdvisoryProjectView(context: PublicProjectContext): Promise<void> {
     for (const observer of this.#projectViewObservers) {
       try { await observer(context.view) } catch { /* public rendering is advisory */ }
+    }
+  }
+
+  async #refreshProjectView(): Promise<void> {
+    const context = await this.#loadProjectContext()
+    if (context !== null) await this.#publishAdvisoryProjectView(context)
+  }
+
+  async #refreshProjectContextBarrier(): Promise<void> {
+    const context = await this.#loadProjectContext()
+    if (context === null) throw new ProjectStateError('context_delivery_failed')
+    await this.#publishAdvisoryProjectView(context)
+    for (const observer of this.#projectContextObservers) {
+      try {
+        await observer(context)
+      } catch {
+        throw new ProjectStateError('context_delivery_failed')
+      }
     }
   }
 

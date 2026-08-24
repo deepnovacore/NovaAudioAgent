@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { AssemblyError, type Assembly } from './assembly.js'
 import type {CodexAssemblyResource} from './codex-factory.js'
 import { canonicalJson } from './canonical-json.js'
+import type {PublicProjectContext} from './codex-project-store.js'
 import type { JsonValue } from './events.js'
 import type {
   CommittedWorkspaceEvent,
@@ -125,6 +126,7 @@ export class RealtimeAssembly {
   readonly #projectAdapter: ProjectCodexAdapter | undefined
   readonly #codexResource: CodexAssemblyResource | undefined
   readonly #unsubscribeProjectView: (() => void) | undefined
+  readonly #unsubscribeProjectContext: (() => void) | undefined
   readonly #unsubscribeCommittedWorkspace: (() => void) | undefined
   readonly #unsubscribeTerminalWorkOrder: (() => void) | undefined
   readonly #unsubscribeProviderConnected: (() => void) | undefined
@@ -198,21 +200,18 @@ export class RealtimeAssembly {
       })
     this.#unsubscribeProjectView = input.projectAdapter === undefined
       ? undefined
-      : input.projectAdapter.observeProjectView(async view => {
-        const context = projectContextForView(
-          input.projectAdapter!, view.pending_confirmation, this.#currentHostWorkspaceId,
-        )
-        this.#latestProjectView = Object.freeze({...context.view})
-        this.#currentHostWorkspaceId = context.workspace_id
-        this.#currentWorkspaceInstanceId = context.workspace_id === null
-          ? null : this.#workspaceInstancesByHostId.get(context.workspace_id) ?? null
+      : input.projectAdapter.observeProjectView(view => {
         input.onProjectView?.(view)
-        await this.#enqueueProjectContextPublication()
+      })
+    this.#unsubscribeProjectContext = input.projectAdapter === undefined
+      ? undefined
+      : input.projectAdapter.observeProjectContext(async context => {
+        this.#acceptProjectContext(context)
+        await this.#enqueueProjectContextPublication(true)
       })
     this.#unsubscribeCommittedWorkspace = input.projectAdapter === undefined
       ? undefined
       : input.projectAdapter.observeCommittedWorkspace(event => {
-        this.#currentHostWorkspaceId = event.workspace.workspace_id
         if (input.workspaceGraph !== undefined) this.#enqueueCommittedWorkspace(event)
       })
     this.#unsubscribeTerminalWorkOrder = input.projectAdapter === undefined
@@ -301,16 +300,12 @@ export class RealtimeAssembly {
     try {
       if (this.#projectAdapter !== undefined) {
         await this.#projectAdapter.initialize()
-        const context = projectContextForView(
-          this.#projectAdapter,
+        const context = this.#projectAdapter.publicProjectContext(
           this.#projectAdapter.confirmationController.pending,
-          this.#currentHostWorkspaceId,
         )
-        this.#latestProjectView = context.view
-        this.#currentHostWorkspaceId = context.workspace_id
+        this.#acceptProjectContext(context)
         const activeWorkspace = await this.#projectAdapter.activeCommittedWorkspace()
-        if (activeWorkspace !== null) {
-          this.#currentHostWorkspaceId = activeWorkspace.workspace_id
+        if (activeWorkspace?.workspace_id === context.workspace_id) {
           if (this.#workspaceGraphOpen) {
             this.#enqueueCommittedWorkspace({workspace: activeWorkspace})
           }
@@ -391,6 +386,7 @@ export class RealtimeAssembly {
       if (firstFailure === null && project.kind === 'rejected') firstFailure = {error: project.error}
     }
     this.#unsubscribeProjectView?.()
+    this.#unsubscribeProjectContext?.()
     this.#unsubscribeCommittedWorkspace?.()
     this.#unsubscribeTerminalWorkOrder?.()
     this.#unsubscribeProviderConnected?.()
@@ -460,6 +456,7 @@ export class RealtimeAssembly {
         this.#committedWorkspaceAdmissionFailed
         || scopeGeneration !== this.#latestWorkspaceScopeGeneration
       ) return
+      if (event.workspace.workspace_id !== this.#currentHostWorkspaceId) return
       this.#currentWorkspaceInstanceId = decision.instance.instance_id
       await this.#enqueueProjectContextPublication()
     } catch {
@@ -560,11 +557,25 @@ export class RealtimeAssembly {
     return true
   }
 
-  #enqueueProjectContextPublication(): Promise<void> {
+  #acceptProjectContext(context: PublicProjectContext): void {
+    this.#latestProjectView = Object.freeze({...context.view})
+    this.#currentHostWorkspaceId = context.workspace_id
+    this.#currentWorkspaceInstanceId = context.workspace_id === null
+      ? null : this.#workspaceInstancesByHostId.get(context.workspace_id) ?? null
+  }
+
+  #enqueueProjectContextPublication(requireDelivery = false): Promise<void> {
     const view = this.#latestProjectView
     const hostWorkspaceId = this.#currentHostWorkspaceId
+    const workspaceInstanceId = hostWorkspaceId === null
+      ? null : this.#workspaceInstancesByHostId.get(hostWorkspaceId) ?? null
     const operation = this.#projectContextTail.then(async () => {
-      await this.#injectCurrentProjectContext(view, hostWorkspaceId)
+      await this.#injectCurrentProjectContext(
+        view,
+        hostWorkspaceId,
+        workspaceInstanceId,
+        requireDelivery,
+      )
     })
     this.#projectContextTail = operation.then(() => undefined, () => undefined)
     return operation
@@ -573,24 +584,32 @@ export class RealtimeAssembly {
   async #injectCurrentProjectContext(
     view: ProjectConfirmationView | null,
     hostWorkspaceId: string | null,
+    workspaceInstanceId: string | null,
+    requireDelivery: boolean,
   ): Promise<void> {
     if (
       view === null
       || hostWorkspaceId === null
-      || this.provider.injectWorkspaceContext === undefined
     ) return
+    if (this.provider.injectWorkspaceContext === undefined) {
+      if (requireDelivery) throw new AssemblyError('active project context delivery is unavailable')
+      return
+    }
     const identity = this.providerSession.identity
-    if (identity === null) return
+    if (identity === null) {
+      if (requireDelivery) throw new AssemblyError('active project context provider is disconnected')
+      return
+    }
     let graphHeader: string | null = null
     if (
       this.#workspaceGraphOpen
       && this.workspaceGraph !== undefined
-      && this.#currentWorkspaceInstanceId !== null
+      && workspaceInstanceId !== null
     ) {
       try {
         graphHeader = this.workspaceGraph.contextForTurn({
           session_epoch: identity.epoch,
-          workspace_instance_id: this.#currentWorkspaceInstanceId,
+          workspace_instance_id: workspaceInstanceId,
           utterance: '',
           preferences: [],
         })?.header ?? null
@@ -611,21 +630,17 @@ export class RealtimeAssembly {
     })
     if (contextKey === this.#lastProjectContextKey) return
     this.#projectContextRevision += 1
-    try {
-      await this.providerSession.injectWorkspaceContext({
-        kind: 'workspace_context',
-        host_item_id: this.#idFactory(),
-        event_id: this.#idFactory(),
-        content,
-        call_id: null,
-        session_epoch: identity.epoch,
-        workspace_instance_id: hostWorkspaceId,
-        revision: this.#projectContextRevision,
-      })
-      this.#lastProjectContextKey = contextKey
-    } catch {
-      this.#diagnose('workspace_graph_header_delivery_failed')
-    }
+    await this.providerSession.injectWorkspaceContext({
+      kind: 'workspace_context',
+      host_item_id: this.#idFactory(),
+      event_id: this.#idFactory(),
+      content,
+      call_id: null,
+      session_epoch: identity.epoch,
+      workspace_instance_id: hostWorkspaceId,
+      revision: this.#projectContextRevision,
+    })
+    this.#lastProjectContextKey = contextKey
   }
 
   #diagnose(code: string): void {
@@ -816,33 +831,14 @@ function asProjectAdapter(adapter: unknown): ProjectCodexAdapter {
     || !('confirmationController' in adapter)
     || !('commitConfirmed' in adapter)
     || !('publicProjectView' in adapter)
+    || !('publicProjectContext' in adapter)
     || !('activeCommittedWorkspace' in adapter)
     || !('observeProjectView' in adapter)
+    || !('observeProjectContext' in adapter)
     || !('observeCommittedWorkspace' in adapter)
     || !('observeTerminalWorkOrder' in adapter)
   ) throw new AssemblyError('project Codex resource has an invalid adapter')
   return adapter as ProjectCodexAdapter
-}
-
-function projectContextForView(
-  adapter: ProjectCodexAdapter,
-  pendingConfirmation: boolean,
-  fallbackWorkspaceId: string | null,
-): {readonly workspace_id: string | null; readonly view: ProjectConfirmationView} {
-  const candidate = adapter as ProjectCodexAdapter & {
-    publicProjectContext?: (pending: boolean) => {
-      readonly workspace_id: string | null
-      readonly view: ProjectConfirmationView
-    }
-  }
-  if (typeof candidate.publicProjectContext === 'function') {
-    const context = candidate.publicProjectContext(pendingConfirmation)
-    return Object.freeze({workspace_id: context.workspace_id, view: Object.freeze({...context.view})})
-  }
-  return Object.freeze({
-    workspace_id: fallbackWorkspaceId,
-    view: Object.freeze({...adapter.publicProjectView(pendingConfirmation)}),
-  })
 }
 
 function validateProviderToolView(

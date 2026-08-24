@@ -344,8 +344,17 @@ test('Qwen composition registers the exact project Codex resource and starts it 
       session_title: null,
       pending_confirmation: false,
     }),
+    publicProjectContext: () => ({
+      workspace_id: null,
+      view: {
+        workspace_display_name: null,
+        session_title: null,
+        pending_confirmation: false,
+      },
+    }),
     activeCommittedWorkspace: () => Promise.resolve(null),
     observeProjectView: () => () => undefined,
+    observeProjectContext: () => () => undefined,
     observeCommittedWorkspace: () => () => undefined,
     observeTerminalWorkOrder: () => () => undefined,
   }
