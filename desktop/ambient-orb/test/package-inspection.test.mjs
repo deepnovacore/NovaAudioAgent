@@ -433,6 +433,23 @@ test('real ASAR listings admit structural directories but reject an extra packag
     const valid = await packageInspection.inspectArtifactFileList(listFile, extracted)
     assert.equal(valid.runtimeIncluded, true)
 
+    await writeFile(
+      listFile,
+      JSON.stringify(listed.map(file => file.replace(/^\//u, '\\'))),
+      'utf8',
+    )
+    const windowsListed = await packageInspection.inspectArtifactFileList(listFile, extracted)
+    assert.equal(windowsListed.runtimeIncluded, true, 'Windows ASAR lists use one leading backslash')
+
+    for (const unsafe of ['//package.json', '\\\\package.json', 'C:/package.json']) {
+      await writeFile(listFile, JSON.stringify([unsafe]), 'utf8')
+      await assert.rejects(
+        packageInspection.inspectArtifactFileList(listFile, extracted),
+        error => error instanceof PackageInspectionError && /unsafe package path/u.test(error.message),
+        `must reject ${JSON.stringify(unsafe)} without stripping more than one ASAR list separator`,
+      )
+    }
+
     await mkdir(resolve(source, 'node_modules/lodash'), { recursive: true })
     const expandedArchive = resolve(root, 'expanded.asar')
     const expandedRoot = resolve(root, 'expanded')

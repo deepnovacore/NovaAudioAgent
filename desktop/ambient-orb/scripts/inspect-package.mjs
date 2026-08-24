@@ -88,6 +88,7 @@ function validateRelativeFile(path) {
   if (
     value === ''
     || value.startsWith('/')
+    || /^[a-zA-Z]:/u.test(value)
     || value.split('/').includes('..')
     || value.includes('\\')
     || value.includes('\0')
@@ -557,16 +558,15 @@ export async function inspectArtifactRoot(artifactRoot) {
 async function readArtifactFileList(path) {
   const body = await readBoundedFile(path, MAX_ARTIFACT_LIST_BYTES, 'artifact file list')
   const text = body.toString('utf8')
-  const listPath = value => value.startsWith('/') ? value.slice(1) : value
   try {
     const parsed = JSON.parse(text)
     if (!Array.isArray(parsed) || parsed.some(value => typeof value !== 'string')) {
       throw new PackageInspectionError('artifact JSON must be an array of paths')
     }
-    return parsed.map(listPath)
+    return parsed
   } catch (error) {
     if (error instanceof PackageInspectionError) throw error
-    return text.split(/\r?\n/u).filter(Boolean).map(listPath)
+    return text.split(/\r?\n/u).filter(Boolean)
   }
 }
 
@@ -584,7 +584,11 @@ async function inspectListedArtifactRoot(listed, artifactRoot, { selectedPackage
   }
   const files = []
   const directories = []
-  const listPath = value => typeof value === 'string' && value.startsWith('/') ? value.slice(1) : value
+  const listPath = value => (
+    typeof value === 'string' && (value.startsWith('/') || value.startsWith('\\'))
+      ? value.slice(1)
+      : value
+  )
   for (const entry of new Set(listed.map(listPath).map(validateRelativeFile))) {
     let status
     try {
