@@ -1111,6 +1111,49 @@ async def test_committed_select_reports_success_despite_busy_view_refresh(
     assert store.snapshot().active_workspace_id == beta.workspace_id
 
 
+@pytest.mark.parametrize("change", ("identity", "boundary"))
+@pytest.mark.asyncio
+async def test_confirmed_select_rejects_workspace_replacement(
+    tmp_path: Path,
+    change: str,
+) -> None:
+    adapter, store = _adapter(tmp_path)
+    original = store.resolve_workspace("alpha")
+    proposal = await adapter.dispatch(
+        "project",
+        {"action": "select_workspace", "workspace": "alpha"},
+        _context(VirtualClock()),
+    )
+    assert proposal.content["code"] == "confirmation_required"
+    assert adapter.confirmation.reserve_user_item(epoch=1, item_id="confirm-select")
+    confirmed = adapter.confirmation.accept_transcript(
+        epoch=1, item_id="confirm-select", text="确认"
+    )
+    assert confirmed.operation is not None
+
+    if change == "identity":
+        assert store.rollback_managed_create(original.workspace_id)
+        survivor = store.create_managed("alpha")
+    else:
+        survivor = store.create_managed("beta")
+        original_path = Path(original.canonical_path)
+        original_path.rename(tmp_path / "original-alpha")
+        replacement = tmp_path / "replacement-alpha"
+        replacement.mkdir()
+        original_path.symlink_to(replacement, target_is_directory=True)
+
+    committed = await adapter.commit_confirmed(
+        confirmed.operation,
+        origin_ref="conversation:1",
+        runtime_dispatch=lambda request, *, reason: RuntimeDispatchResult(
+            accepted=True, delegate_id="unused"
+        ),
+    )
+
+    assert committed == ProjectCommitResult(False, "workspace_boundary_changed")
+    assert store.snapshot().active_workspace_id == survivor.workspace_id
+
+
 @pytest.mark.asyncio
 async def test_session_listing_shows_the_most_recent_sessions_first(tmp_path: Path) -> None:
     clock = VirtualClock(start=1.0)

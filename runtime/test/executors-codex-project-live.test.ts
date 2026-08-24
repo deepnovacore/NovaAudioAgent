@@ -1005,6 +1005,62 @@ test('transport close rejection cannot downgrade a completed side effect into a 
   }
 })
 
+test('busy project work reports the unified project op for public and confirmed execution', async () => {
+  const value = await fixture()
+  let startedResolve!: () => void
+  let finishResolve!: (outcome: TransportOutcome) => void
+  const started = new Promise<void>(resolve => { startedResolve = resolve })
+  value.factory.onRun = startedResolve
+  value.factory.runGate = new Promise<TransportOutcome>(resolve => { finishResolve = resolve })
+  try {
+    await value.adapter.dispatch(
+      'project',
+      {action: 'create_workspace', workspace: 'beta', session: 'Initial', work_order: 'build'},
+      context('project', {}, value.clock, {originRef: 'conversation:2'}),
+    )
+    value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-busy'})
+    const confirmed = value.confirmation.acceptTranscript({
+      epoch: 1, itemId: 'confirm-busy', text: '确认',
+    })
+    assert.ok(confirmed.operation)
+    await value.adapter.commitConfirmed(
+      confirmed.operation,
+      'conversation:2',
+      () => ({accepted: true, delegate_id: 'delegate-confirmed'}),
+    )
+    const running = value.adapter.dispatch(
+      'project',
+      {action: 'start_session', work_order: 'blocking'},
+      context('project', {}, value.clock),
+    )
+    await settleWithin('busy project run start', started)
+
+    const publicBusy = await value.adapter.dispatch(
+      'project',
+      {action: 'start_session', work_order: 'overtake'},
+      context('project', {}, value.clock),
+    )
+    const confirmedBusy = await value.adapter.dispatch(
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
+        private: confirmed.operation,
+        delegateId: 'delegate-confirmed',
+        originRef: 'conversation:2',
+      }),
+    )
+
+    finishResolve(COMPLETE)
+    assert.equal((await settleWithin('busy project run completion', running)).outcome, 'ok')
+    assert.deepEqual(publicBusy.content, {error: 'busy', op: 'project'})
+    assert.deepEqual(confirmedBusy.content, {error: 'busy', op: 'project'})
+  } finally {
+    finishResolve?.(COMPLETE)
+    await value.adapter.close().catch(() => undefined)
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
 test('close joins an active project run and its durable session finalizer before closing the store', async () => {
   const value = await fixture()
   let startedResolve!: () => void

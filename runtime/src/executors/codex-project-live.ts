@@ -214,7 +214,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     context: ExecutorDispatchContext,
   ): Promise<ExecutorHandoff> {
     if (this.#closed) return failureHandoff('closed', 'project')
-    if (this.#runActive) return failureHandoff('busy', 'run')
+    if (this.#runActive) return failureHandoff('busy', 'project')
     this.#runActive = true
     const controller = new AbortController()
     const onAbort = (): void => { controller.abort() }

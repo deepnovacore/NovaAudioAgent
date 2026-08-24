@@ -471,9 +471,11 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                     await _complete_sync(
                         self.store.create_managed, operation.workspace_display_name
                     )
-                elif operation.action == "select":
+                elif operation.action == "select" and operation.workspace_id is not None:
                     await _complete_sync(
-                        self.store.select_workspace, operation.workspace_display_name
+                        self.store.select_workspace_exact,
+                        operation.workspace_display_name,
+                        operation.workspace_id,
                     )
                 else:
                     return ProjectCommitResult(False, "invalid_operation")

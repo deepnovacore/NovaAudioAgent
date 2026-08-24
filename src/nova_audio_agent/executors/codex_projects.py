@@ -392,8 +392,32 @@ class CodexProjectStore:
 
         return self._transaction(update)
 
+    def select_workspace_exact(
+        self,
+        display_name: str,
+        workspace_id: str,
+    ) -> WorkspaceRecord:
+        """Select the exact workspace confirmed by the user under one registry lock."""
+
+        _name, key = _workspace_name(display_name)
+
+        def update(state: _State) -> tuple[WorkspaceRecord, bool]:
+            found = state.workspaces.get(workspace_id)
+            if found is None or found.normalized_name != key:
+                raise ProjectStateError("workspace_boundary_changed")
+            self._revalidate_workspace_record(found)
+            record = replace(found, last_used_at=self._stamp())
+            state.workspaces[workspace_id] = record
+            state.active_workspace_id = workspace_id
+            return record, True
+
+        return self._transaction(update)
+
     def revalidate_workspace(self, workspace_id: str) -> Path:
         record = self._workspace_by_id(workspace_id)
+        return self._revalidate_workspace_record(record)
+
+    def _revalidate_workspace_record(self, record: WorkspaceRecord) -> Path:
         path = Path(record.canonical_path)
         try:
             if path.is_symlink() or not path.is_dir():
