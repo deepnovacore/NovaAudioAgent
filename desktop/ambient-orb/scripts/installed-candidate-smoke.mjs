@@ -203,6 +203,29 @@ export function classifySourceRollbackResult(result) {
   return Object.freeze({status: 'passed'})
 }
 
+export function sourceRollbackResultDiagnostic(result) {
+  const status = Number.isInteger(result?.status) && result.status >= 0 && result.status <= 255
+    ? String(result.status)
+    : 'none'
+  const presence = value => {
+    if (Buffer.isBuffer(value)) return value.length === 0 ? 'empty' : 'set'
+    if (typeof value === 'string') return value.length === 0 ? 'empty' : 'set'
+    return value === undefined || value === null ? 'empty' : 'set'
+  }
+  const stderr = Buffer.isBuffer(result?.stderr)
+    ? result.stderr.toString('utf8')
+    : typeof result?.stderr === 'string' ? result.stderr : ''
+  const stderrKind = stderr === ''
+    ? 'empty'
+    : stderr.includes('[desktop-diagnostic] source_rollback_unavailable')
+      ? 'expected'
+      : 'other'
+  return `source_rollback_result_status_${status}`
+    + `_error_${result?.error === undefined ? 'none' : 'set'}`
+    + `_signal_${result?.signal === null ? 'none' : 'set'}`
+    + `_stdout_${presence(result?.stdout)}_stderr_${stderrKind}`
+}
+
 export function canonicalSignerWorkflow(value = DEFAULT_SIGNER_WORKFLOW) {
   if (!SIGNER_WORKFLOWS.has(value)) throw new Error('installed_candidate_attestation_failed')
   return value
@@ -338,8 +361,14 @@ async function runPackagedSourceRollback({executable, environment, workspace, us
     maxBuffer: OUTPUT_LIMIT,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  return withCandidateProcessTree(result, rollbackEnvironment, () =>
-    classifySourceRollbackResult(result))
+  return withCandidateProcessTree(result, rollbackEnvironment, () => {
+    try {
+      return classifySourceRollbackResult(result)
+    } catch (error) {
+      reportInstalledSmokeStage(sourceRollbackResultDiagnostic(result))
+      throw error
+    }
+  })
 }
 
 async function runPackagedCameraCapability({executable, environment, userData}) {

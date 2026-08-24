@@ -380,7 +380,10 @@ test('installed-candidate output drain is bounded when an orphan retains the pip
 })
 
 test('installed-candidate diagnostics expose only stable failure and child codes', async () => {
-  const {installedSmokeDiagnostic} = await import('../scripts/installed-candidate-smoke.mjs')
+  const {
+    installedSmokeDiagnostic,
+    sourceRollbackResultDiagnostic,
+  } = await import('../scripts/installed-candidate-smoke.mjs')
   const operation = new Error('installed_candidate_readiness_failed')
   const cleanup = new Error('private path C:\\Users\\runneradmin\\secret')
   const failure = new Error('installed_candidate_tree_failed', {
@@ -401,6 +404,20 @@ test('installed-candidate diagnostics expose only stable failure and child codes
     exitCode: 7,
     signalCode: null,
   }), 'failure=unknown child=none state=exit_7')
+  assert.equal(sourceRollbackResultDiagnostic({
+    status: 0,
+    signal: null,
+    error: undefined,
+    stdout: '',
+    stderr: '[desktop-diagnostic] source_rollback_unavailable\r\nprivate path',
+  }), 'source_rollback_result_status_0_error_none_signal_none_stdout_empty_stderr_expected')
+  assert.equal(sourceRollbackResultDiagnostic({
+    status: null,
+    signal: null,
+    error: new Error('private path'),
+    stdout: 'private output',
+    stderr: 'private error',
+  }), 'source_rollback_result_status_none_error_set_signal_none_stdout_set_stderr_other')
 })
 
 test('failed candidate cleanup releases every parent-side child handle', async () => {
