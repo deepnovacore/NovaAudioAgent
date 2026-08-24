@@ -51,7 +51,6 @@ CORPUS = (
         {
             "action": "create_workspace",
             "workspace": "俄罗斯方块",
-            "session": "初始开发",
             "work_order": "创建一个完整的俄罗斯方块游戏",
         },
     ),
@@ -171,9 +170,7 @@ def _normalize_project_arguments(arguments: object) -> dict[str, str] | None:
         allowed.update(("workspace", "session"))
     if set(arguments) - allowed or not required[action].issubset(arguments):
         return None
-    if action == "create_workspace" and (
-        ("session" in arguments) != ("work_order" in arguments)
-    ):
+    if action == "create_workspace" and ("session" in arguments and "work_order" not in arguments):
         return None
     normalized = {"action": action}
     for name, limit in (("workspace", 80), ("session", 120), ("work_order", 4000)):

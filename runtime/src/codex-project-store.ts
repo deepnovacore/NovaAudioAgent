@@ -143,6 +143,11 @@ export interface PublicProjectView {
   readonly pending_confirmation: boolean
 }
 
+export interface PublicProjectContext {
+  readonly workspace_id: string | null
+  readonly view: PublicProjectView
+}
+
 interface MutableProjectState {
   activeWorkspaceId: string | null
   workspaces: Map<string, WorkspaceRecord>
@@ -854,6 +859,10 @@ export class CodexProjectStore {
   }
 
   async publicView(pendingConfirmation: boolean): Promise<PublicProjectView> {
+    return (await this.publicContext(pendingConfirmation)).view
+  }
+
+  async publicContext(pendingConfirmation: boolean): Promise<PublicProjectContext> {
     const state = await this.snapshot()
     const workspace = state.workspaces.find(
       record => record.workspace_id === state.active_workspace_id,
@@ -862,9 +871,12 @@ export class CodexProjectStore {
       ? undefined
       : state.sessions.find(record => record.session_id === workspace.active_session_id)
     return Object.freeze({
-      workspace_display_name: workspace?.display_name ?? null,
-      session_title: session?.display_title ?? null,
-      pending_confirmation: pendingConfirmation,
+      workspace_id: workspace?.workspace_id ?? null,
+      view: Object.freeze({
+        workspace_display_name: workspace?.display_name ?? null,
+        session_title: session?.display_title ?? null,
+        pending_confirmation: pendingConfirmation,
+      }),
     })
   }
 

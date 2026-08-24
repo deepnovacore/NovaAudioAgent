@@ -34,6 +34,8 @@ from nova_audio_agent.realtime.protocol import (
     UserSpeechStarted,
     UserTranscriptFailed,
     UserTranscriptFinal,
+    WorkspaceContextDelivery,
+    WorkspaceContextDeliveryRecord,
 )
 
 DEFAULT_CONNECT_TIMEOUT = 20.0
@@ -47,9 +49,34 @@ _NO_ACTIVE_RESPONSE_MESSAGES = frozenset(
     }
 )
 GUARD_ACTIVATION_PREFIX = "Nova Audio Agent 宿主激活事实："
+
+
+def _serialize_project_display_name(value: str | None) -> str:
+    return (
+        json.dumps(value or "", ensure_ascii=False, separators=(",", ":"))
+        .replace("&", r"\u0026")
+        .replace("<", r"\u003c")
+        .replace(">", r"\u003e")
+    )
+
+
+def render_active_project_context(
+    workspace_display_name: str | None, session_title: str | None
+) -> str:
+    return "\n".join(
+        (
+            "<active_project_context>",
+            f"workspace={_serialize_project_display_name(workspace_display_name)}",
+            f"session={_serialize_project_display_name(session_title)}",
+            "</active_project_context>",
+        )
+    )
+
+
 _PROVIDER_ERROR_PARAMS = frozenset(
     {
         "conversation.item.create",
+        "conversation.item.delete",
         "input_audio_buffer.append",
         "response.cancel",
         "response.create",
@@ -178,8 +205,14 @@ class QwenAudioRealtimeAdapter:
         self._event_queue: asyncio.Queue[RealtimeFrontBrainEvent | None] = asyncio.Queue()
         self._receiver_task: asyncio.Task[None] | None = None
         self._pending_items: dict[str, tuple[str, asyncio.Future[ItemIdentity]]] = {}
+        self._pending_deletes: dict[str, asyncio.Future[None]] = {}
         self._timed_out_item_ids: OrderedDict[str, None] = OrderedDict()
         self._pending_cancel: tuple[int, str, str] | None = None
+        self._workspace_context: (
+            tuple[HostContextItem, str, WorkspaceContextDeliveryRecord] | None
+        ) = None
+        self._workspace_context_uncertain = False
+        self._workspace_context_lock = asyncio.Lock()
 
     async def connect(self, *, tools: tuple[dict[str, Any], ...]) -> SessionIdentity:
         if self._socket is not None:
@@ -231,6 +264,8 @@ class QwenAudioRealtimeAdapter:
             await self._close_failed_socket()
             raise QwenRealtimeError("qwen realtime session identity changed during setup")
         self._epoch += 1
+        self._workspace_context = None
+        self._workspace_context_uncertain = False
         self._ready_socket = socket
         return SessionIdentity(epoch=self._epoch, provider_session_id=provider_session_id)
 
@@ -262,6 +297,8 @@ class QwenAudioRealtimeAdapter:
     ) -> ItemIdentity:
         if self._epoch < 1:
             raise QwenRealtimeError("qwen realtime is not connected")
+        if item.kind == "workspace_context":
+            raise QwenRealtimeError("workspace context requires replaceable delivery")
         if as_user_activation and item.kind not in {"progress", "final"}:
             raise ValueError("user activation requires a Guard progress or final item")
         if confirmation_timeout is None:
@@ -346,6 +383,113 @@ class QwenAudioRealtimeAdapter:
                 except asyncio.CancelledError:
                     pass
 
+    async def inject_workspace_context(
+        self,
+        item: HostContextItem,
+        *,
+        confirmation_timeout: float | None = None,
+    ) -> WorkspaceContextDeliveryRecord:
+        if item.kind != "workspace_context":
+            raise ValueError("workspace context delivery requires workspace_context")
+        if self._epoch < 1 or item.session_epoch != self._epoch:
+            raise QwenRealtimeError("workspace context session identity mismatch")
+        timeout = self._workspace_timeout(confirmation_timeout)
+        async with self._workspace_context_lock:
+            if self._workspace_context_uncertain:
+                raise QwenRealtimeError("workspace context ownership is uncertain until reconnect")
+            prior = self._workspace_context
+            if prior is not None and prior[0] == item:
+                return prior[2]
+            if (
+                prior is not None
+                and prior[0].workspace_instance_id == item.workspace_instance_id
+                and (item.revision or 0) <= (prior[0].revision or 0)
+            ):
+                raise QwenRealtimeError("workspace context revision is stale")
+            if prior is not None:
+                try:
+                    await self._delete_confirmed_item(prior[1], timeout)
+                except Exception:
+                    self._workspace_context_uncertain = True
+                    raise
+                self._workspace_context = None
+            try:
+                identity = await self._create_workspace_item(item, timeout)
+            except Exception:
+                self._workspace_context_uncertain = True
+                raise
+            delivery = WorkspaceContextDelivery(
+                capability="replace_provider_item",
+                delivered=True,
+                session_epoch=self._epoch,
+                workspace_instance_id=item.workspace_instance_id or "",
+                revision=item.revision or 0,
+                prior_provider_item_id=None if prior is None else prior[1],
+                provider_item_id=identity.provider_item_id,
+                superseded_provider_item_id=None if prior is None else prior[1],
+            )
+            record = WorkspaceContextDeliveryRecord(item=item, delivery=delivery)
+            self._workspace_context = (item, identity.provider_item_id, record)
+            self._workspace_context_uncertain = False
+            return record
+
+    def _workspace_timeout(self, confirmation_timeout: float | None) -> float:
+        if confirmation_timeout is None:
+            return self._item_confirmation_timeout
+        if (
+            type(confirmation_timeout) not in {int, float}
+            or not math.isfinite(confirmation_timeout)
+            or confirmation_timeout <= 0
+        ):
+            raise ValueError("confirmation_timeout must be positive")
+        return float(confirmation_timeout)
+
+    async def _create_workspace_item(self, item: HostContextItem, timeout: float) -> ItemIdentity:
+        provider_item_id = self._id_factory()
+        confirmation: asyncio.Future[ItemIdentity] = asyncio.get_running_loop().create_future()
+        self._pending_items[provider_item_id] = (item.host_item_id, confirmation)
+        try:
+            await self._send_json(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "id": provider_item_id,
+                        "type": "message",
+                        "role": "system",
+                        "content": [{"type": "input_text", "text": item.content}],
+                    },
+                }
+            )
+            self._ensure_receiver()
+            return await asyncio.wait_for(asyncio.shield(confirmation), timeout=timeout)
+        finally:
+            self._pending_items.pop(provider_item_id, None)
+            if confirmation.done():
+                try:
+                    confirmation.exception()
+                except asyncio.CancelledError:
+                    pass
+
+    async def _delete_confirmed_item(self, provider_item_id: str, timeout: float) -> None:
+        confirmation: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._pending_deletes[provider_item_id] = confirmation
+        try:
+            await self._send_json(
+                {
+                    "type": "conversation.item.delete",
+                    "item_id": provider_item_id,
+                }
+            )
+            self._ensure_receiver()
+            await asyncio.wait_for(asyncio.shield(confirmation), timeout=timeout)
+        finally:
+            self._pending_deletes.pop(provider_item_id, None)
+            if confirmation.done():
+                try:
+                    confirmation.exception()
+                except asyncio.CancelledError:
+                    pass
+
     async def create_response(self, intent: HostResponseIntent) -> None:
         # Qwen Audio Realtime only supports modalities and voice as
         # per-response overrides. Intent-specific behavior lives in the session
@@ -415,6 +559,17 @@ class QwenAudioRealtimeAdapter:
                     ):
                         self._confirm_item(event)
                     continue
+                if event["type"] == "conversation.item.deleted":
+                    item = event.get("item")
+                    provider_item_id = event.get("item_id")
+                    if provider_item_id is None and type(item) is dict:
+                        provider_item_id = item.get("id")
+                    pending_delete = self._pending_deletes.get(provider_item_id)
+                    if pending_delete is None:
+                        raise QwenRealtimeError("qwen realtime confirmed an unknown item deletion")
+                    if not pending_delete.done():
+                        pending_delete.set_result(None)
+                    continue
                 normalized = self._normalize_event(event, epoch=epoch)
                 if normalized is not None:
                     await self._event_queue.put(normalized)
@@ -447,6 +602,9 @@ class QwenAudioRealtimeAdapter:
             if self._owns_receiver(socket, epoch):
                 failure = QwenRealtimeError("qwen realtime item confirmation did not arrive")
                 for _host_item_id, future in self._pending_items.values():
+                    if not future.done():
+                        future.set_exception(failure)
+                for future in self._pending_deletes.values():
                     if not future.done():
                         future.set_exception(failure)
                 await self._event_queue.put(None)
@@ -655,8 +813,15 @@ class QwenAudioRealtimeAdapter:
         socket, self._socket = self._socket, None
         self._ready_socket = None
         self._pending_cancel = None
+        self._workspace_context = None
+        self._workspace_context_uncertain = False
         deadline = self._now() + self._close_timeout
         self._fail_pending_items()
+        for future in self._pending_deletes.values():
+            if not future.done():
+                future.set_exception(
+                    QwenRealtimeError("qwen realtime deletion confirmation did not arrive")
+                )
         cleanup = asyncio.create_task(self._finish_detached_cleanup(receiver, socket, deadline))
         self._observe_task_failure(cleanup)
         return await asyncio.shield(cleanup)

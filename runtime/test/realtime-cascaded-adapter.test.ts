@@ -541,28 +541,86 @@ test('host inputs and copied Responses tools preserve Python wording and caller 
   }])
 })
 
-test('cascaded adapter rejects workspace context until replacement capability is proven', async () => {
+test('cascaded adapter replaces workspace context without adding old context to LLM history', async () => {
+  const llm = new FakeLlm(
+    [
+      {kind: 'response_started', response_id: 'response-workspace-1'},
+      {kind: 'response_completed', response_id: 'response-workspace-1'},
+    ],
+    [
+      {kind: 'response_started', response_id: 'response-workspace-2'},
+      {kind: 'response_completed', response_id: 'response-workspace-2'},
+    ],
+  )
   const adapter = new CascadedRealtimeAdapter({
     endpointing: new ScriptedEndpointing(),
     asr: new FakeAsrClient(),
-    llm: new FakeLlm([]),
+    llm,
     tts: new FakeTtsClient(),
-    idFactory: ids('session-workspace', 'provider-workspace'),
+    idFactory: ids(
+      'session-workspace', 'provider-workspace-1', 'provider-fact-1',
+      'provider-workspace-2', 'provider-fact-2',
+    ),
   })
   await adapter.connect({tools: [], signal: new AbortController().signal})
 
-  await assert.rejects(adapter.injectHostItem({
+  const first = await adapter.injectWorkspaceContext({
     kind: 'workspace_context',
     host_item_id: 'workspace-header-1',
     event_id: 'workspace-event-1',
-    content: '<workspace_context kind="data">current workspace</workspace_context>',
+    content: '<active_project_context>first</active_project_context>',
     call_id: null,
     session_epoch: 1,
     workspace_instance_id: 'wi-a',
     revision: 1,
-  }, directOptions()), error => (
-    error instanceof CascadedRealtimeError && error.code === 'configuration'
-  ))
+  }, {confirmationTimeout: null, signal: new AbortController().signal})
+  assert.deepEqual(first.delivery, {
+    capability: 'replace_provider_item', delivered: true,
+    session_epoch: 1, workspace_instance_id: 'wi-a', revision: 1,
+    prior_provider_item_id: null, provider_item_id: 'provider-workspace-1',
+    superseded_provider_item_id: null,
+  })
+
+  const firstFact = hostItem('progress-workspace-1', 'first response')
+  await adapter.injectHostItem(firstFact, directOptions())
+  const watching = observe(adapter)
+  await adapter.createResponse({
+    kind: 'host_fact', item: firstFact, task_summary: null, origin_spoken: false,
+  }, new AbortController().signal)
+  await waitFor('first workspace response', () => watching.events.some(event =>
+    event.kind === 'response_terminal' && event.response_id === 'response-workspace-1'))
+
+  const second = await adapter.injectWorkspaceContext({
+    kind: 'workspace_context',
+    host_item_id: 'workspace-header-2',
+    event_id: 'workspace-event-2',
+    content: '<active_project_context>second</active_project_context>',
+    call_id: null,
+    session_epoch: 1,
+    workspace_instance_id: 'wi-a',
+    revision: 2,
+  }, {confirmationTimeout: null, signal: new AbortController().signal})
+  assert.deepEqual(second.delivery, {
+    capability: 'replace_provider_item', delivered: true,
+    session_epoch: 1, workspace_instance_id: 'wi-a', revision: 2,
+    prior_provider_item_id: 'provider-workspace-1', provider_item_id: 'provider-workspace-2',
+    superseded_provider_item_id: 'provider-workspace-1',
+  })
+
+  const secondFact = hostItem('progress-workspace-2', 'second response')
+  await adapter.injectHostItem(secondFact, directOptions())
+  await adapter.createResponse({
+    kind: 'host_fact', item: secondFact, task_summary: null, origin_spoken: false,
+  }, new AbortController().signal)
+  await waitFor('second workspace response', () => watching.events.some(event =>
+    event.kind === 'response_terminal' && event.response_id === 'response-workspace-2'))
+
+  assert.equal(llm.calls[0]?.workspaceContext,
+    '<active_project_context>first</active_project_context>')
+  assert.equal(llm.calls[1]?.workspaceContext,
+    '<active_project_context>second</active_project_context>')
+  assert.equal(JSON.stringify(llm.calls[1]).includes('>first<'), false)
+  await watching.stop()
 })
 
 test('adapter supplies semantic user text and matching structured tool results to the LLM',

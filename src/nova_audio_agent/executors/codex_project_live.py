@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -165,18 +166,23 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         store: CodexProjectStore,
         confirmation: ProjectConfirmationController,
         worker_factory: ProjectWorkerFactory,
-        on_project_view: Callable[[PublicProjectView], None] | None = None,
+        on_project_view: Callable[[PublicProjectView], Awaitable[None] | None] | None = None,
     ) -> None:
         super().__init__(_NullWorker())
         self.store = store
         self.confirmation = confirmation
         self._worker_factory = worker_factory
-        self._on_project_view = on_project_view
-        self._public_project_view = store.public_view(pending_confirmation=confirmation.pending)
+        self._project_view_observers: set[Callable[[PublicProjectView], Awaitable[None] | None]] = (
+            set()
+        )
+        if on_project_view is not None:
+            self._project_view_observers.add(on_project_view)
+        (
+            self._public_workspace_id,
+            self._public_project_view,
+        ) = store.public_context(pending_confirmation=confirmation.pending)
         self._project_view_refresh_seq = 0
-        self._confirmed_bindings: dict[
-            int, tuple[ConfirmedProjectOperation, str, str]
-        ] = {}
+        self._confirmed_bindings: dict[int, tuple[ConfirmedProjectOperation, str, str]] = {}
 
     async def dispatch(
         self,
@@ -512,14 +518,15 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     async def _refresh_project_view(self) -> None:
         self._project_view_refresh_seq += 1
         refresh_seq = self._project_view_refresh_seq
-        view = await _complete_sync(
-            self.store.public_view,
+        workspace_id, view = await _complete_sync(
+            self.store.public_context,
             pending_confirmation=self.confirmation.pending,
         )
         if refresh_seq != self._project_view_refresh_seq:
             return
+        self._public_workspace_id = workspace_id
         self._public_project_view = view
-        self._publish_project_view()
+        await self._publish_project_view()
 
     async def _refresh_project_view_tolerant(self) -> None:
         """Refresh the cached view, tolerating a transiently locked registry.
@@ -542,7 +549,11 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         mask the run failure the caller is about to report.
         """
         try:
-            await _complete_sync(self.store.rollback_managed_create, workspace_id, wait=True)
+            rolled_back = await _complete_sync(
+                self.store.rollback_managed_create, workspace_id, wait=True
+            )
+            if rolled_back:
+                await self._refresh_project_view_tolerant()
         except ProjectStateError:
             return
 
@@ -558,15 +569,29 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             pending_confirmation=pending_confirmation,
         )
 
-    def _publish_project_view(self) -> None:
-        if self._on_project_view is None:
-            return
-        try:
-            self._on_project_view(
-                self.public_project_view(pending_confirmation=self.confirmation.pending)
-            )
-        except Exception:
-            pass
+    def public_project_context(
+        self, *, pending_confirmation: bool
+    ) -> tuple[str | None, PublicProjectView]:
+        return (
+            self._public_workspace_id,
+            self.public_project_view(pending_confirmation=pending_confirmation),
+        )
+
+    def observe_project_view(
+        self, observer: Callable[[PublicProjectView], Awaitable[None] | None]
+    ) -> Callable[[], None]:
+        self._project_view_observers.add(observer)
+        return lambda: self._project_view_observers.discard(observer)
+
+    async def _publish_project_view(self) -> None:
+        view = self.public_project_view(pending_confirmation=self.confirmation.pending)
+        for observer in tuple(self._project_view_observers):
+            try:
+                result = observer(view)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                pass
 
 
 def _normalize_project_request(request: object) -> dict[str, str] | None:
@@ -596,9 +621,7 @@ def _normalize_project_request(request: object) -> dict[str, str] | None:
         allowed.update(("workspace", "session"))
     if set(request) - allowed or not expected[action].issubset(request):
         return None
-    if action == "create_workspace" and (
-        ("session" in request) != ("work_order" in request)
-    ):
+    if action == "create_workspace" and ("session" in request and "work_order" not in request):
         return None
     result = {"action": action}
     for name, limit in (

@@ -41,6 +41,8 @@ from nova_audio_agent.realtime.protocol import (
     UserSpeechEnded,
     UserSpeechStarted,
     UserTranscriptFinal,
+    WorkspaceContextDelivery,
+    WorkspaceContextDeliveryRecord,
 )
 
 
@@ -67,6 +69,8 @@ class _Provider:
         self.epoch = 0
         self.connected_tools: list[tuple[dict[str, object], ...]] = []
         self.injected: list[HostContextItem] = []
+        self.workspace_contexts: list[WorkspaceContextDeliveryRecord] = []
+        self._workspace_provider_item_id: str | None = None
 
     async def connect(self, *, tools: tuple[dict[str, object], ...]) -> SessionIdentity:
         self.epoch += 1
@@ -87,6 +91,32 @@ class _Provider:
         self.injected.append(item)
         return ItemIdentity(self.epoch, item.host_item_id, f"provider-{item.host_item_id}")
 
+    async def inject_workspace_context(
+        self,
+        item: HostContextItem,
+        *,
+        confirmation_timeout: float | None = None,
+    ) -> WorkspaceContextDeliveryRecord:
+        del confirmation_timeout
+        prior = self._workspace_provider_item_id
+        provider_item_id = f"provider-{item.host_item_id}"
+        record = WorkspaceContextDeliveryRecord(
+            item=item,
+            delivery=WorkspaceContextDelivery(
+                capability="replace_provider_item",
+                delivered=True,
+                session_epoch=self.epoch,
+                workspace_instance_id=item.workspace_instance_id or "",
+                revision=item.revision or 0,
+                prior_provider_item_id=prior,
+                provider_item_id=provider_item_id,
+                superseded_provider_item_id=prior,
+            ),
+        )
+        self._workspace_provider_item_id = provider_item_id
+        self.workspace_contexts.append(record)
+        return record
+
     async def create_response(self, intent: HostResponseIntent) -> None:
         del intent
 
@@ -94,7 +124,7 @@ class _Provider:
         del response_id
 
     async def close(self) -> None:
-        return None
+        self._workspace_provider_item_id = None
 
     async def events(self) -> AsyncIterator[RealtimeFrontBrainEvent]:
         await asyncio.Event().wait()
@@ -248,24 +278,32 @@ async def _create_harness(
     )
     proposal_id = proposal.content["proposal_id"]
     assert isinstance(proposal_id, str)
-    await realtime.service.handle_event(UserSpeechStarted(
-        session_epoch=1,
-        speech_id="speech-confirm",
-        provider_item_id="user-confirm",
-    ))
-    await realtime.service.handle_event(UserSpeechEnded(
-        session_epoch=1,
-        speech_id="speech-confirm",
-    ))
-    await realtime.service.handle_event(ResponseStarted(
-        session_epoch=1,
-        response_id="response-confirm",
-    ))
-    await realtime.service.handle_event(UserTranscriptFinal(
-        session_epoch=1,
-        item_id="user-confirm",
-        text="好，创建吧",
-    ))
+    await realtime.service.handle_event(
+        UserSpeechStarted(
+            session_epoch=1,
+            speech_id="speech-confirm",
+            provider_item_id="user-confirm",
+        )
+    )
+    await realtime.service.handle_event(
+        UserSpeechEnded(
+            session_epoch=1,
+            speech_id="speech-confirm",
+        )
+    )
+    await realtime.service.handle_event(
+        ResponseStarted(
+            session_epoch=1,
+            response_id="response-confirm",
+        )
+    )
+    await realtime.service.handle_event(
+        UserTranscriptFinal(
+            session_epoch=1,
+            item_id="user-confirm",
+            text="好，创建吧",
+        )
+    )
     return _CreateHarness(
         realtime=realtime,
         store=store,
@@ -388,9 +426,7 @@ async def test_independent_create_uses_structured_confirmation_and_starts_manage
     adapter = ProjectCodexAdapter(
         store=store,
         confirmation=confirmation,
-        worker_factory=lambda _workspace, _home, _resume, on_ready: _Worker(
-            on_ready, work_orders
-        ),
+        worker_factory=lambda _workspace, _home, _resume, on_ready: _Worker(on_ready, work_orders),
     )
     provider = _Provider()
     monkeypatch.setitem(assembly_module._EXECUTOR_FACTORIES, "codex", lambda _context: adapter)
@@ -426,7 +462,6 @@ async def test_independent_create_uses_structured_confirmation_and_starts_manage
             {
                 "action": "create_workspace",
                 "workspace": "tetris",
-                "session": "Initial build",
                 "work_order": "build the tetris game",
             },
             SimpleNamespace(
@@ -442,24 +477,32 @@ async def test_independent_create_uses_structured_confirmation_and_starts_manage
         assert proposal.content["code"] == "confirmation_required"
         assert store.snapshot().workspaces == ()
 
-        await realtime.service.handle_event(UserSpeechStarted(
-            session_epoch=1,
-            speech_id="speech-confirm",
-            provider_item_id="user-confirm",
-        ))
-        await realtime.service.handle_event(UserSpeechEnded(
-            session_epoch=1,
-            speech_id="speech-confirm",
-        ))
-        await realtime.service.handle_event(ResponseStarted(
-            session_epoch=1,
-            response_id="response-confirm",
-        ))
-        await realtime.service.handle_event(UserTranscriptFinal(
-            session_epoch=1,
-            item_id="user-confirm",
-            text="好，创建吧",
-        ))
+        await realtime.service.handle_event(
+            UserSpeechStarted(
+                session_epoch=1,
+                speech_id="speech-confirm",
+                provider_item_id="user-confirm",
+            )
+        )
+        await realtime.service.handle_event(
+            UserSpeechEnded(
+                session_epoch=1,
+                speech_id="speech-confirm",
+            )
+        )
+        await realtime.service.handle_event(
+            ResponseStarted(
+                session_epoch=1,
+                response_id="response-confirm",
+            )
+        )
+        await realtime.service.handle_event(
+            UserTranscriptFinal(
+                session_epoch=1,
+                item_id="user-confirm",
+                text="好，创建吧",
+            )
+        )
         confirmation_call = ToolCallReady(
             session_epoch=1,
             response_id="response-confirm",
@@ -485,23 +528,43 @@ async def test_independent_create_uses_structured_confirmation_and_starts_manage
         assert created.origin == "managed"
         assert Path(created.canonical_path).parent == managed_root.resolve()
         assert snapshot.active_workspace_id == created.workspace_id
-        session = next(item for item in snapshot.sessions if item.workspace_id == created.workspace_id)
-        assert session.display_title == "Initial build"
+        session = next(
+            item for item in snapshot.sessions if item.workspace_id == created.workspace_id
+        )
+        assert session.display_title == "任务 1"
         assert session.codex_thread_id == "thread-tetris"
         assert work_orders == ["build the tetris game"]
+        await _wait_until(lambda: len(provider.workspace_contexts) == 1)
+        first_context = provider.workspace_contexts[0]
+        assert first_context.item.session_epoch == 1
+        assert first_context.item.workspace_instance_id == created.workspace_id
+        assert first_context.item.content == (
+            '<active_project_context>\nworkspace="tetris"\nsession="任务 1"\n'
+            "</active_project_context>"
+        )
+
+        await realtime.service.session.reconnect(tools=tuple(realtime.tools.schemas))
+        epoch_two = [
+            record for record in provider.workspace_contexts if record.item.session_epoch == 2
+        ]
+        assert len(epoch_two) == 1
+        assert epoch_two[0].item.revision > first_context.item.revision
+        assert "Initial build" not in epoch_two[0].item.content
 
         before_replay = store.snapshot()
-        await realtime.service.handle_event(ToolCallReady(
-            session_epoch=1,
-            response_id="response-confirm",
-            call_id="confirm-replay",
-            item_id="function-replay",
-            name="codex__confirm_project_action",
-            arguments={
-                "proposal_id": proposal.content["proposal_id"],
-                "confirmed": True,
-            },
-        ))
+        await realtime.service.handle_event(
+            ToolCallReady(
+                session_epoch=1,
+                response_id="response-confirm",
+                call_id="confirm-replay",
+                item_id="function-replay",
+                name="codex__confirm_project_action",
+                arguments={
+                    "proposal_id": proposal.content["proposal_id"],
+                    "confirmed": True,
+                },
+            )
+        )
         assert store.snapshot() == before_replay
         assert work_orders == ["build the tetris game"]
     finally:
@@ -528,21 +591,23 @@ async def test_rejected_wrong_id_and_non_boolean_service_decisions_fail_closed(
     harness = await _create_harness(monkeypatch, tmp_path)
     try:
         before = harness.store.snapshot()
-        await harness.realtime.service.handle_event(ToolCallReady(
-            session_epoch=1,
-            response_id="response-confirm",
-            call_id="confirm-invalid",
-            item_id="function-invalid",
-            name="codex__confirm_project_action",
-            arguments={
-                "proposal_id": (
-                    harness.proposal_id
-                    if proposal_id_override is None
-                    else proposal_id_override
-                ),
-                "confirmed": confirmed,
-            },  # type: ignore[arg-type]
-        ))
+        await harness.realtime.service.handle_event(
+            ToolCallReady(
+                session_epoch=1,
+                response_id="response-confirm",
+                call_id="confirm-invalid",
+                item_id="function-invalid",
+                name="codex__confirm_project_action",
+                arguments={
+                    "proposal_id": (
+                        harness.proposal_id
+                        if proposal_id_override is None
+                        else proposal_id_override
+                    ),
+                    "confirmed": confirmed,
+                },  # type: ignore[arg-type]
+            )
+        )
 
         assert _confirmation_outputs(harness.provider, "confirm-invalid") == [
             {"code": output_code, "state": "refused"}
@@ -554,14 +619,16 @@ async def test_rejected_wrong_id_and_non_boolean_service_decisions_fail_closed(
         assert harness.work_orders == []
 
         followup_call_id = "confirm-valid" if expected_pending else "confirm-after-cancel"
-        await harness.realtime.service.handle_event(ToolCallReady(
-            session_epoch=1,
-            response_id="response-confirm",
-            call_id=followup_call_id,
-            item_id=f"function-{followup_call_id}",
-            name="codex__confirm_project_action",
-            arguments={"proposal_id": harness.proposal_id, "confirmed": True},
-        ))
+        await harness.realtime.service.handle_event(
+            ToolCallReady(
+                session_epoch=1,
+                response_id="response-confirm",
+                call_id=followup_call_id,
+                item_id=f"function-{followup_call_id}",
+                name="codex__confirm_project_action",
+                arguments={"proposal_id": harness.proposal_id, "confirmed": True},
+            )
+        )
         if not expected_pending:
             assert _confirmation_outputs(harness.provider, followup_call_id) == [
                 {"code": "confirmation_not_pending", "state": "refused"}
@@ -583,14 +650,16 @@ async def test_rejected_wrong_id_and_non_boolean_service_decisions_fail_closed(
         assert harness.worker_calls == ["created"]
         assert harness.work_orders == ["build the tetris game"]
 
-        await harness.realtime.service.handle_event(ToolCallReady(
-            session_epoch=1,
-            response_id="response-confirm",
-            call_id="confirm-replay",
-            item_id="function-replay",
-            name="codex__confirm_project_action",
-            arguments={"proposal_id": harness.proposal_id, "confirmed": True},
-        ))
+        await harness.realtime.service.handle_event(
+            ToolCallReady(
+                session_epoch=1,
+                response_id="response-confirm",
+                call_id="confirm-replay",
+                item_id="function-replay",
+                name="codex__confirm_project_action",
+                arguments={"proposal_id": harness.proposal_id, "confirmed": True},
+            )
+        )
         assert _confirmation_outputs(harness.provider, "confirm-replay") == [
             {"code": "confirmation_not_pending", "state": "refused"}
         ]

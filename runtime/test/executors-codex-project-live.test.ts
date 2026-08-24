@@ -291,8 +291,10 @@ class RecordingProjectTransportFactory implements ProjectTransportFactory {
   onRun: (() => void) | undefined
   closeFailures = 0
   runGate: Promise<TransportOutcome> | undefined
+  createFailure: Error | null = null
 
   create(binding: ProjectTransportBinding): CodexAppServerTransport {
+    if (this.createFailure !== null) throw this.createFailure
     const resume = binding.resumeThreadId !== null
     this.calls.push({resume})
     const transport = new ProjectTransport(
@@ -762,7 +764,7 @@ test('real external dispatch carries one opaque confirmation identity outside ev
   try {
     const proposal = await value.adapter.dispatch(
       'project',
-      {action: 'create_workspace', workspace: 'beta', session: 'Initial', work_order: 'exact work'},
+      {action: 'create_workspace', workspace: 'beta', work_order: 'exact work'},
       context('project', {}, value.clock, {originRef}),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-real'})
@@ -801,7 +803,7 @@ test('real external dispatch carries one opaque confirmation identity outside ev
       ['alpha', 'beta'],
     )
     const beta = await value.store.resolveWorkspace('beta')
-    assert.equal((await value.store.listSessions(beta))[0]?.display_title, 'Initial')
+    assert.equal((await value.store.listSessions(beta))[0]?.display_title, '任务 1')
   } finally {
     stop.abort()
     await serving
@@ -981,6 +983,70 @@ test('caller cancellation is propagated only after provisional-session rollback 
       (await value.store.listSessions(workspace)).map(session => [session.state, session.codex_thread_id]),
       [['ready', 'thread-1']],
     )
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('active Session view publishes before transport run and republishes rollback restoration', async () => {
+  const value = await fixture()
+  const views: PublicProjectView[] = []
+  let releasePublication!: () => void
+  const publicationGate = new Promise<void>(resolve => { releasePublication = resolve })
+  let publicationStarted!: () => void
+  const publicationObserved = new Promise<void>(resolve => { publicationStarted = resolve })
+  value.adapter.observeProjectView(async view => {
+    views.push(view)
+    if (view.session_title === '任务 1') {
+      publicationStarted()
+      await publicationGate
+    }
+  })
+  await value.adapter.initialize()
+  let release!: (outcome: TransportOutcome) => void
+  const gate = new Promise<TransportOutcome>(resolve => { release = resolve })
+  value.factory.runGate = gate
+  let running!: () => void
+  const started = new Promise<void>(resolve => { running = resolve })
+  let transportStarted = false
+  value.factory.onRun = () => {
+    transportStarted = true
+    running()
+  }
+  try {
+    const run = value.adapter.dispatch(
+      'project',
+      {action: 'start_session', work_order: 'publish before transport'},
+      context('project', {}, value.clock),
+    )
+    await settleWithin('provider observes active Session', publicationObserved)
+    await new Promise<void>(resolve => { setImmediate(resolve) })
+    const transportStartedEarly = transportStarted
+    releasePublication()
+    if (transportStartedEarly) {
+      release(COMPLETE)
+      await run
+    }
+    assert.equal(transportStartedEarly, false, 'transport must wait for active-context publication')
+    await settleWithin('transport starts', started)
+    const runningView = value.adapter.publicProjectView(false)
+    const publishedRunningView = views.at(-1)
+    release(COMPLETE)
+    assert.equal((await run).outcome, 'ok')
+    assert.equal(runningView.session_title, '任务 1')
+    assert.equal(publishedRunningView?.session_title, '任务 1')
+
+    value.factory.runGate = undefined
+    value.factory.onRun = undefined
+    value.factory.createFailure = new Error('construction failed')
+    await assert.rejects(value.adapter.dispatch(
+      'project',
+      {action: 'start_session', work_order: 'rollback construction'},
+      context('project', {}, value.clock),
+    ), /construction failed/u)
+    assert.equal(value.adapter.publicProjectView(false).session_title, '任务 1')
+    assert.deepEqual(views.slice(-2).map(view => view.session_title), ['任务 2', '任务 1'])
   } finally {
     await value.adapter.close()
     await rm(value.root, {recursive: true, force: true})

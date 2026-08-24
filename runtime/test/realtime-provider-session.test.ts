@@ -125,6 +125,8 @@ test('provider session requires increasing epochs and resets through one reconne
   const provider = new FakeProvider()
   provider.identities.push({epoch: 2, provider_session_id: 'session-2'})
   const session = new RealtimeProviderSession(provider)
+  const connectedEpochs: number[] = []
+  session.observeConnected(identity => { connectedEpochs.push(identity.epoch) })
 
   assert.deepEqual(await session.connect([{type: 'function', name: 'search'}]), {
     epoch: 1,
@@ -132,6 +134,7 @@ test('provider session requires increasing epochs and resets through one reconne
   })
   assert.equal(session.state, 'connected')
   assert.deepEqual(await session.reconnect(), {epoch: 2, provider_session_id: 'session-2'})
+  assert.deepEqual(connectedEpochs, [1, 2])
   assert.equal(provider.closeCount, 1)
 
   await session.close()

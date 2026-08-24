@@ -127,6 +127,7 @@ export class RealtimeAssembly {
   readonly #unsubscribeProjectView: (() => void) | undefined
   readonly #unsubscribeCommittedWorkspace: (() => void) | undefined
   readonly #unsubscribeTerminalWorkOrder: (() => void) | undefined
+  readonly #unsubscribeProviderConnected: (() => void) | undefined
   readonly #idFactory: () => string
   readonly #wallClockNow: () => number
   readonly #unbindGraphContext: (() => void) | undefined
@@ -136,6 +137,7 @@ export class RealtimeAssembly {
   #latestProjectView: ProjectConfirmationView | null = null
   #projectContextRevision = 0
   #lastProjectContextKey: string | null = null
+  #providerConnectionObserved = false
   #projectContextTail: Promise<void> = Promise.resolve()
   readonly #workspaceInstancesByHostId = new Map<string, string>()
   #graphLifecycleTail: Promise<void> = Promise.resolve()
@@ -196,10 +198,16 @@ export class RealtimeAssembly {
       })
     this.#unsubscribeProjectView = input.projectAdapter === undefined
       ? undefined
-      : input.projectAdapter.observeProjectView(view => {
-        this.#latestProjectView = Object.freeze({...view})
+      : input.projectAdapter.observeProjectView(async view => {
+        const context = projectContextForView(
+          input.projectAdapter!, view.pending_confirmation, this.#currentHostWorkspaceId,
+        )
+        this.#latestProjectView = Object.freeze({...context.view})
+        this.#currentHostWorkspaceId = context.workspace_id
+        this.#currentWorkspaceInstanceId = context.workspace_id === null
+          ? null : this.#workspaceInstancesByHostId.get(context.workspace_id) ?? null
         input.onProjectView?.(view)
-        void this.#enqueueProjectContextPublication()
+        await this.#enqueueProjectContextPublication()
       })
     this.#unsubscribeCommittedWorkspace = input.projectAdapter === undefined
       ? undefined
@@ -212,6 +220,17 @@ export class RealtimeAssembly {
       ? undefined
       : input.projectAdapter.observeTerminalWorkOrder(event => {
         this.#enqueueGraphLifecycle(() => this.#onTerminalWorkOrder(event))
+      })
+    this.#unsubscribeProviderConnected = input.projectAdapter === undefined
+      ? undefined
+      : input.providerSession.observeConnected(async () => {
+        // Initial delivery is owned by #startFresh's bounded publication step.
+        // Lifecycle observation owns only fresh reconnect epochs.
+        if (!this.#providerConnectionObserved) {
+          this.#providerConnectionObserved = true
+          return
+        }
+        await this.#enqueueProjectContextPublication()
       })
   }
 
@@ -256,6 +275,11 @@ export class RealtimeAssembly {
   }
 
   async #startFresh(): Promise<void> {
+    if (this.#projectAdapter !== undefined
+      && typeof this.provider.injectWorkspaceContext !== 'function') {
+      if (this.#state === 'starting') this.#state = 'new'
+      throw new AssemblyError('selected realtime provider cannot deliver active project context')
+    }
     if (this.workspaceGraph !== undefined) {
       const openOperation = Promise.resolve().then(async () => { await this.workspaceGraph!.open() })
       this.#graphOpenOperation = openOperation
@@ -277,9 +301,13 @@ export class RealtimeAssembly {
     try {
       if (this.#projectAdapter !== undefined) {
         await this.#projectAdapter.initialize()
-        this.#latestProjectView = this.#projectAdapter.publicProjectView(
+        const context = projectContextForView(
+          this.#projectAdapter,
           this.#projectAdapter.confirmationController.pending,
+          this.#currentHostWorkspaceId,
         )
+        this.#latestProjectView = context.view
+        this.#currentHostWorkspaceId = context.workspace_id
         const activeWorkspace = await this.#projectAdapter.activeCommittedWorkspace()
         if (activeWorkspace !== null) {
           this.#currentHostWorkspaceId = activeWorkspace.workspace_id
@@ -365,6 +393,7 @@ export class RealtimeAssembly {
     this.#unsubscribeProjectView?.()
     this.#unsubscribeCommittedWorkspace?.()
     this.#unsubscribeTerminalWorkOrder?.()
+    this.#unsubscribeProviderConnected?.()
     this.#graphHooksClosed = true
 
     if (this.workspaceGraph !== undefined) {
@@ -793,6 +822,27 @@ function asProjectAdapter(adapter: unknown): ProjectCodexAdapter {
     || !('observeTerminalWorkOrder' in adapter)
   ) throw new AssemblyError('project Codex resource has an invalid adapter')
   return adapter as ProjectCodexAdapter
+}
+
+function projectContextForView(
+  adapter: ProjectCodexAdapter,
+  pendingConfirmation: boolean,
+  fallbackWorkspaceId: string | null,
+): {readonly workspace_id: string | null; readonly view: ProjectConfirmationView} {
+  const candidate = adapter as ProjectCodexAdapter & {
+    publicProjectContext?: (pending: boolean) => {
+      readonly workspace_id: string | null
+      readonly view: ProjectConfirmationView
+    }
+  }
+  if (typeof candidate.publicProjectContext === 'function') {
+    const context = candidate.publicProjectContext(pendingConfirmation)
+    return Object.freeze({workspace_id: context.workspace_id, view: Object.freeze({...context.view})})
+  }
+  return Object.freeze({
+    workspace_id: fallbackWorkspaceId,
+    view: Object.freeze({...adapter.publicProjectView(pendingConfirmation)}),
+  })
 }
 
 function validateProviderToolView(

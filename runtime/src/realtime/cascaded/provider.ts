@@ -4,6 +4,7 @@ import type {
   JsonObject,
   RealtimeProvider,
   SessionIdentity,
+  WorkspaceContextDeliveryRecord,
 } from '../protocol.js'
 import type {RealtimeTelemetry} from '../telemetry.js'
 import {
@@ -129,6 +130,13 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
     readonly signal: AbortSignal
   }): Promise<unknown> {
     return this.#requiredAdapter().injectHostItem(item, options)
+  }
+
+  injectWorkspaceContext(item: HostContextItem, options: {
+    readonly confirmationTimeout: number | null
+    readonly signal: AbortSignal
+  }): Promise<WorkspaceContextDeliveryRecord> {
+    return this.#requiredAdapter().injectWorkspaceContext(item, options)
   }
 
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void> {

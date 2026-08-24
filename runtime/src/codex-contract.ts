@@ -213,7 +213,8 @@ function validateProjectOperation(request: Record<string, unknown>): CodexReques
   if (required[action].some(key => !Object.hasOwn(request, key)) || keys.some(key => !allowed.has(key))) {
     return failure('invalid_params', 'project')
   }
-  if (action === 'create_workspace' && Object.hasOwn(request, 'session') !== Object.hasOwn(request, 'work_order')) {
+  if (action === 'create_workspace'
+    && Object.hasOwn(request, 'session') && !Object.hasOwn(request, 'work_order')) {
     return failure('invalid_params', 'project')
   }
   const result: Record<string, unknown> = {action}

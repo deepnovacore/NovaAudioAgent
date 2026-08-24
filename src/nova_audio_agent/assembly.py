@@ -49,6 +49,8 @@ from nova_audio_agent.ports import ExecutorAdapter
 from nova_audio_agent.prompting import FASTBRAIN_LIVE_SYSTEM
 from nova_audio_agent.runtime import Runtime
 from nova_audio_agent.realtime.project_confirmation import ProjectConfirmationController
+from nova_audio_agent.realtime.protocol import HostContextItem, SessionIdentity
+from nova_audio_agent.realtime.qwen import render_active_project_context
 from nova_audio_agent.speech import SpeechSink
 from nova_audio_agent.suggestions import Suggestion
 from nova_audio_agent.tool_schema import CompiledTools, compile_tool_schema
@@ -142,6 +144,9 @@ class RealtimeAssembly:
     service: RealtimeService
     codex_live_adapter: CodexLiveAdapter | None = None
     codex_prewarm: bool = True
+    project_adapter: ProjectCodexAdapter | None = None
+    project_context_publisher: _ProjectContextPublisher | None = None
+    unsubscribe_project_context: Callable[[], None] | None = None
     _prewarm_task: asyncio.Task[None] | None = None
 
     @property
@@ -153,6 +158,17 @@ class RealtimeAssembly:
         return self.core.tools
 
     async def start(self) -> None:
+        if self.project_context_publisher is not None:
+            if not callable(getattr(self.provider, "inject_workspace_context", None)):
+                raise ConfigurationError(
+                    "selected realtime provider cannot deliver active project context"
+                )
+            assert self.project_adapter is not None
+            self.project_context_publisher.update(
+                *self.project_adapter.public_project_context(
+                    pending_confirmation=self.project_adapter.confirmation.pending
+                )
+            )
         await self.core.start()
         try:
             await self.service.start()
@@ -176,8 +192,70 @@ class RealtimeAssembly:
             try:
                 await self.core.stop()
             finally:
+                if self.unsubscribe_project_context is not None:
+                    self.unsubscribe_project_context()
+                    self.unsubscribe_project_context = None
                 if self.codex_live_adapter is not None:
                     await self.codex_live_adapter.aclose()
+
+
+class _ProjectContextPublisher:
+    def __init__(
+        self,
+        *,
+        provider: RealtimeFrontBrain,
+        id_factory: Callable[[], str],
+    ) -> None:
+        self._provider = provider
+        self._id_factory = id_factory
+        self._context: tuple[str | None, PublicProjectView] | None = None
+        self._epoch = 0
+        self._revision = 0
+        self._last_key: tuple[int, str, str] | None = None
+        self._lock = asyncio.Lock()
+
+    def update(self, workspace_id: str | None, view: PublicProjectView) -> None:
+        self._context = (workspace_id, view)
+
+    async def update_and_publish(self, workspace_id: str | None, view: PublicProjectView) -> None:
+        self.update(workspace_id, view)
+        await self._publish()
+
+    async def connected(self, identity: SessionIdentity) -> None:
+        self._epoch = identity.epoch
+        self._last_key = None
+        await self._publish()
+
+    async def _publish(self) -> None:
+        async with self._lock:
+            context = self._context
+            if context is None or context[0] is None or self._epoch < 1:
+                return
+            workspace_id, view = context
+            assert workspace_id is not None
+            content = render_active_project_context(view.workspace_display_name, view.session_title)
+            key = (self._epoch, workspace_id, content)
+            if key == self._last_key:
+                return
+            self._revision += 1
+            item = HostContextItem.workspace_context(
+                host_item_id=self._id_factory(),
+                event_id=self._id_factory(),
+                content=content,
+                session_epoch=self._epoch,
+                workspace_instance_id=workspace_id,
+                revision=self._revision,
+            )
+            record = await self._provider.inject_workspace_context(item)  # type: ignore[attr-defined]
+            if (
+                record.item != item
+                or record.delivery.delivered is not True
+                or record.delivery.session_epoch != self._epoch
+                or record.delivery.workspace_instance_id != workspace_id
+                or record.delivery.revision != self._revision
+            ):
+                raise ValueError("workspace context delivery identity mismatch")
+            self._last_key = key
 
 
 # Compatibility for callers that imported the original provider-specific name.
@@ -288,6 +366,10 @@ def build_qwen_realtime_assembly(
         if attention_outlet is not None:
             attention_outlet(decision)
 
+    def relay_project(view: PublicProjectView) -> None:
+        if on_codex_project is not None:
+            on_codex_project(view)
+
     core = _build_assembly(
         settings,
         sink=sink,
@@ -302,7 +384,7 @@ def build_qwen_realtime_assembly(
         model_api_key_override=configured_model_key or realtime_api_key,
         on_suggestion_selected=relay_suggestion,
         on_attention_decision=relay_attention,
-        on_codex_project=on_codex_project,
+        on_codex_project=relay_project,
     )
     provider_tools = core.tools if provider_tool_view is None else provider_tool_view(core.tools)
     _validate_provider_tool_view(core.tools, provider_tools)
@@ -313,6 +395,25 @@ def build_qwen_realtime_assembly(
         voice=voice,
     )
     next_id = (lambda: f"nova_{uuid4().hex}") if id_factory is None else id_factory
+    live_adapter = core.runtime.executors.get("codex")
+    project_adapter = live_adapter if isinstance(live_adapter, ProjectCodexAdapter) else None
+    project_context_publisher = (
+        None
+        if project_adapter is None
+        else _ProjectContextPublisher(provider=provider, id_factory=next_id)
+    )
+    if project_context_publisher is None or project_adapter is None:
+        unsubscribe_project_context = None
+    else:
+
+        async def publish_project_context(view: PublicProjectView) -> None:
+            await project_context_publisher.update_and_publish(
+                *project_adapter.public_project_context(
+                    pending_confirmation=view.pending_confirmation
+                )
+            )
+
+        unsubscribe_project_context = project_adapter.observe_project_view(publish_project_context)
     playback = PlaybackRegistry(
         id_factory=next_id,
         on_frame=on_audio_frame,
@@ -325,6 +426,9 @@ def build_qwen_realtime_assembly(
         id_factory=next_id,
         on_spoken=on_spoken,
         on_delivery=on_delivery,
+        on_provider_connected=(
+            None if project_context_publisher is None else project_context_publisher.connected
+        ),
         clock=core.runtime.clock,
     )
     bridge = RealtimeRuntimeBridge(
@@ -350,41 +454,41 @@ def build_qwen_realtime_assembly(
         controlled_guard_reconnect=settings.qwen_controlled_guard_reconnect,
         guard_history_recovery=settings.qwen_guard_history_recovery,
         guard_history_pairs=settings.qwen_guard_history_pairs,
-        project_confirmation=(
-            live_adapter.confirmation
-            if isinstance(live_adapter := core.runtime.executors.get("codex"), ProjectCodexAdapter)
-            else None
-        ),
+        project_confirmation=(None if project_adapter is None else project_adapter.confirmation),
         commit_project_operation=(
             (
-                lambda operation, origin_ref: live_adapter.commit_confirmed(
+                lambda operation, origin_ref: project_adapter.commit_confirmed(
                     operation,
                     origin_ref=origin_ref,
                     runtime_dispatch=core.runtime.dispatch_external,
                 )
             )
-            if isinstance(live_adapter, ProjectCodexAdapter)
+            if project_adapter is not None
             else None
         ),
         on_project_view=(
             (
-                lambda view: on_codex_project(
-                    live_adapter.public_project_view(pending_confirmation=view.pending_confirmation)
+                lambda view: relay_project(
+                    project_adapter.public_project_view(
+                        pending_confirmation=view.pending_confirmation
+                    )
                 )
             )
-            if isinstance(live_adapter, ProjectCodexAdapter) and on_codex_project is not None
+            if project_adapter is not None
             else None
         ),
     )
     suggestion_outlet = service.on_suggestion_selected
     attention_outlet = service.on_attention_decision
-    live_adapter = core.runtime.executors.get("codex")
     return RealtimeAssembly(
         core=core,
         provider=provider,
         service=service,
         codex_live_adapter=(live_adapter if isinstance(live_adapter, CodexLiveAdapter) else None),
         codex_prewarm=settings.codex_prewarm and not isinstance(live_adapter, ProjectCodexAdapter),
+        project_adapter=project_adapter,
+        project_context_publisher=project_context_publisher,
+        unsubscribe_project_context=unsubscribe_project_context,
     )
 
 
@@ -444,6 +548,10 @@ def build_volcengine_realtime_assembly(
         if attention_outlet is not None:
             attention_outlet(decision)
 
+    def relay_project(view: PublicProjectView) -> None:
+        if on_codex_project is not None:
+            on_codex_project(view)
+
     core = _build_assembly(
         settings,
         sink=sink,
@@ -460,7 +568,7 @@ def build_volcengine_realtime_assembly(
         support_model_override=(None if configured_model_key else config.ark_support_model),
         on_suggestion_selected=relay_suggestion,
         on_attention_decision=relay_attention,
-        on_codex_project=on_codex_project,
+        on_codex_project=relay_project,
     )
     provider_tools = core.tools if provider_tool_view is None else provider_tool_view(core.tools)
     _validate_provider_tool_view(core.tools, provider_tools)
@@ -502,6 +610,25 @@ def build_volcengine_realtime_assembly(
         telemetry=realtime_telemetry,
         id_factory=next_id,
     )
+    live_adapter = core.runtime.executors.get("codex")
+    project_adapter = live_adapter if isinstance(live_adapter, ProjectCodexAdapter) else None
+    project_context_publisher = (
+        None
+        if project_adapter is None
+        else _ProjectContextPublisher(provider=provider, id_factory=next_id)
+    )
+    if project_context_publisher is None or project_adapter is None:
+        unsubscribe_project_context = None
+    else:
+
+        async def publish_project_context(view: PublicProjectView) -> None:
+            await project_context_publisher.update_and_publish(
+                *project_adapter.public_project_context(
+                    pending_confirmation=view.pending_confirmation
+                )
+            )
+
+        unsubscribe_project_context = project_adapter.observe_project_view(publish_project_context)
     playback = PlaybackRegistry(
         id_factory=next_id,
         on_frame=on_audio_frame,
@@ -514,6 +641,9 @@ def build_volcengine_realtime_assembly(
         id_factory=next_id,
         on_spoken=on_spoken,
         on_delivery=on_delivery,
+        on_provider_connected=(
+            None if project_context_publisher is None else project_context_publisher.connected
+        ),
         clock=core.runtime.clock,
     )
     bridge = RealtimeRuntimeBridge(
@@ -539,41 +669,41 @@ def build_volcengine_realtime_assembly(
         controlled_guard_reconnect=False,
         guard_history_recovery="none",
         guard_history_pairs=settings.qwen_guard_history_pairs,
-        project_confirmation=(
-            live_adapter.confirmation
-            if isinstance(live_adapter := core.runtime.executors.get("codex"), ProjectCodexAdapter)
-            else None
-        ),
+        project_confirmation=(None if project_adapter is None else project_adapter.confirmation),
         commit_project_operation=(
             (
-                lambda operation, origin_ref: live_adapter.commit_confirmed(
+                lambda operation, origin_ref: project_adapter.commit_confirmed(
                     operation,
                     origin_ref=origin_ref,
                     runtime_dispatch=core.runtime.dispatch_external,
                 )
             )
-            if isinstance(live_adapter, ProjectCodexAdapter)
+            if project_adapter is not None
             else None
         ),
         on_project_view=(
             (
-                lambda view: on_codex_project(
-                    live_adapter.public_project_view(pending_confirmation=view.pending_confirmation)
+                lambda view: relay_project(
+                    project_adapter.public_project_view(
+                        pending_confirmation=view.pending_confirmation
+                    )
                 )
             )
-            if isinstance(live_adapter, ProjectCodexAdapter) and on_codex_project is not None
+            if project_adapter is not None
             else None
         ),
     )
     suggestion_outlet = service.on_suggestion_selected
     attention_outlet = service.on_attention_decision
-    live_adapter = core.runtime.executors.get("codex")
     return RealtimeAssembly(
         core=core,
         provider=provider,
         service=service,
         codex_live_adapter=(live_adapter if isinstance(live_adapter, CodexLiveAdapter) else None),
         codex_prewarm=settings.codex_prewarm and not isinstance(live_adapter, ProjectCodexAdapter),
+        project_adapter=project_adapter,
+        project_context_publisher=project_context_publisher,
+        unsubscribe_project_context=unsubscribe_project_context,
     )
 
 

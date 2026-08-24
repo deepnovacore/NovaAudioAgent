@@ -53,6 +53,9 @@ export class RealtimeProviderSession {
   #connectionAbort: AbortController | null = null
   #reading: AbortController | null = null
   #closing: Promise<void> | null = null
+  readonly #connectedObservers = new Set<(
+    identity: SessionIdentity,
+  ) => void | Promise<void>>()
 
   constructor(provider: RealtimeProvider) {
     this.#provider = provider
@@ -64,6 +67,11 @@ export class RealtimeProviderSession {
 
   get identity(): SessionIdentity | null {
     return this.#identity === null ? null : structuredClone(this.#identity)
+  }
+
+  observeConnected(observer: (identity: SessionIdentity) => void | Promise<void>): () => void {
+    this.#connectedObservers.add(observer)
+    return () => { this.#connectedObservers.delete(observer) }
   }
 
   connect(options: {
@@ -101,6 +109,9 @@ export class RealtimeProviderSession {
       this.#lastEpoch = identity.epoch
       this.#identity = Object.freeze({...identity})
       this.#state = 'connected'
+      for (const observer of [...this.#connectedObservers]) {
+        await observer(structuredClone(identity))
+      }
       return structuredClone(identity)
     } catch (error) {
       connectionAbort.abort()

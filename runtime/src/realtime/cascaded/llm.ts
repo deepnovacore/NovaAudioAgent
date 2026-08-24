@@ -28,6 +28,8 @@ export interface CascadedLlmSession {
   stream(input: {
     readonly inputs: readonly CascadedLlmInput[]
     readonly tools: readonly CascadedLlmTool[]
+    /** Replaceable provider-visible context for this request; never committed to history. */
+    readonly workspaceContext?: string | null
     readonly signal: AbortSignal
   }): AsyncIterable<CascadedLlmEvent>
   /** Discards only an unfinished response continuation, retaining completed history. */

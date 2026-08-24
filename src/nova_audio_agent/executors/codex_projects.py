@@ -587,6 +587,9 @@ class CodexProjectStore:
         return self._transaction(update)
 
     def public_view(self, *, pending_confirmation: bool) -> PublicProjectView:
+        return self.public_context(pending_confirmation=pending_confirmation)[1]
+
+    def public_context(self, *, pending_confirmation: bool) -> tuple[str | None, PublicProjectView]:
         snapshot = self.snapshot()
         workspace = next(
             (
@@ -608,10 +611,13 @@ class CodexProjectStore:
                 None,
             )
         )
-        return PublicProjectView(
-            workspace_display_name=None if workspace is None else workspace.display_name,
-            session_title=None if session is None else session.display_title,
-            pending_confirmation=pending_confirmation,
+        return (
+            None if workspace is None else workspace.workspace_id,
+            PublicProjectView(
+                workspace_display_name=None if workspace is None else workspace.display_name,
+                session_title=None if session is None else session.display_title,
+                pending_confirmation=pending_confirmation,
+            ),
         )
 
     def _workspace_by_id(self, workspace_id: str) -> WorkspaceRecord:

@@ -36,7 +36,6 @@ def test_project_routing_corpus_covers_exact_six_action_arguments_and_stages() -
     assert project_cases["create_workspace"].expected_arguments == {
         "action": "create_workspace",
         "workspace": "俄罗斯方块",
-        "session": "初始开发",
         "work_order": "创建一个完整的俄罗斯方块游戏",
     }
     assert project_cases["start_session"].expected_arguments == {

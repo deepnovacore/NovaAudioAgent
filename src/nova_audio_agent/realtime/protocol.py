@@ -9,7 +9,12 @@ from typing import Any, Literal, Protocol, TypeAlias
 from nova_audio_agent.realtime.history import MAX_PACKED_RECOVERY_CONTENT
 
 MAX_REALTIME_TEXT = 4000
-HostItemKind = Literal["progress", "final", "recovery", "dialogue_context", "tool_output"]
+HostItemKind = Literal[
+    "progress", "final", "recovery", "dialogue_context", "tool_output", "workspace_context"
+]
+WorkspaceContextDeliveryCapability = Literal[
+    "replace_provider_item", "refresh_session", "unavailable"
+]
 HostResponseKind = Literal["host_fact", "tool_result", "delegation_acknowledgement"]
 ResponseStatus = Literal["completed", "cancelled", "failed"]
 ResponseCancelRejectReason = Literal["no_active_response"]
@@ -35,6 +40,7 @@ class ItemDeliveryUncertainError(RuntimeError):
             "recovery",
             "dialogue_context",
             "tool_output",
+            "workspace_context",
         }:
             raise ValueError("unknown host item kind")
         super().__init__("host item confirmation timed out; delivery is uncertain")
@@ -76,6 +82,7 @@ class HostContextItem:
             "recovery",
             "dialogue_context",
             "tool_output",
+            "workspace_context",
         }:
             raise ValueError("unknown host item kind")
         _require_id(self.host_item_id, "host_item_id")
@@ -89,6 +96,8 @@ class HostContextItem:
             _require_id(self.call_id, "call_id")
         elif self.call_id is not None:
             raise ValueError("call_id is only valid for tool output")
+        if self.kind == "workspace_context" and not isinstance(self, WorkspaceContextItem):
+            raise ValueError("workspace context requires exact workspace identity")
 
     @classmethod
     def progress(cls, *, host_item_id: str, event_id: str, content: str) -> HostContextItem:
@@ -133,6 +142,43 @@ class HostContextItem:
             call_id=call_id,
         )
 
+    @classmethod
+    def workspace_context(
+        cls,
+        *,
+        host_item_id: str,
+        event_id: str,
+        content: str,
+        session_epoch: int,
+        workspace_instance_id: str,
+        revision: int,
+    ) -> WorkspaceContextItem:
+        return WorkspaceContextItem(
+            kind="workspace_context",
+            host_item_id=host_item_id,
+            event_id=event_id,
+            content=content,
+            session_epoch=session_epoch,
+            workspace_instance_id=workspace_instance_id,
+            revision=revision,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceContextItem(HostContextItem):
+    session_epoch: int = 0
+    workspace_instance_id: str = ""
+    revision: int = -1
+
+    def __post_init__(self) -> None:
+        HostContextItem.__post_init__(self)
+        if self.kind != "workspace_context":
+            raise ValueError("workspace identity is only valid for workspace_context")
+        _require_epoch(self.session_epoch)
+        _require_id(self.workspace_instance_id, "workspace_instance_id")
+        if type(self.revision) is not int or self.revision < 0:
+            raise ValueError("workspace context requires a non-negative revision")
+
 
 @dataclass(frozen=True, slots=True)
 class HostResponseIntent:
@@ -160,6 +206,8 @@ class HostResponseIntent:
                 raise ValueError("task_summary is only valid for delegation acknowledgement")
             if self.origin_spoken:
                 raise ValueError("origin_spoken is only valid for delegation acknowledgement")
+        if self.item.kind == "workspace_context":
+            raise ValueError("workspace context cannot create a response")
 
     @classmethod
     def host_fact(cls, item: HostContextItem) -> HostResponseIntent:
@@ -211,6 +259,79 @@ class ItemIdentity:
         _require_epoch(self.session_epoch)
         _require_id(self.host_item_id, "host_item_id")
         _require_id(self.provider_item_id, "provider_item_id")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceContextDelivery:
+    capability: WorkspaceContextDeliveryCapability
+    delivered: bool
+    session_epoch: int
+    workspace_instance_id: str
+    revision: int
+    prior_provider_item_id: str | None
+    provider_item_id: str | None = None
+    superseded_provider_item_id: str | None = None
+    refresh_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_epoch(self.session_epoch)
+        _require_id(self.workspace_instance_id, "workspace_instance_id")
+        if type(self.revision) is not int or self.revision < 0:
+            raise ValueError("revision must be a non-negative integer")
+        if self.prior_provider_item_id is not None:
+            _require_id(self.prior_provider_item_id, "prior_provider_item_id")
+        if self.capability == "replace_provider_item":
+            if self.delivered is not True or self.provider_item_id is None:
+                raise ValueError("replace delivery requires a provider item")
+            _require_id(self.provider_item_id, "provider_item_id")
+            if self.superseded_provider_item_id != self.prior_provider_item_id:
+                raise ValueError("replace delivery must supersede the prior provider item")
+            if (
+                self.prior_provider_item_id is not None
+                and self.provider_item_id == self.prior_provider_item_id
+            ):
+                raise ValueError("replace delivery requires a distinct provider item")
+            if self.refresh_id is not None:
+                raise ValueError("refresh_id is only valid for refresh_session")
+        elif self.capability == "refresh_session":
+            if self.delivered is not True or self.refresh_id is None:
+                raise ValueError("refresh delivery requires a refresh identity")
+            _require_id(self.refresh_id, "refresh_id")
+            if self.provider_item_id is not None or self.superseded_provider_item_id is not None:
+                raise ValueError("provider item fields are invalid for refresh_session")
+        elif self.capability == "unavailable":
+            if self.delivered is not False:
+                raise ValueError("unavailable delivery cannot be delivered")
+            if any(
+                value is not None
+                for value in (
+                    self.provider_item_id,
+                    self.superseded_provider_item_id,
+                    self.refresh_id,
+                )
+            ):
+                raise ValueError("unavailable delivery cannot have provider identities")
+        else:
+            raise ValueError("unknown workspace context delivery capability")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceContextDeliveryRecord:
+    item: WorkspaceContextItem
+    delivery: WorkspaceContextDelivery
+    as_user_activation: Literal[False] = False
+
+    def __post_init__(self) -> None:
+        if self.item.kind != "workspace_context":
+            raise ValueError("workspace context delivery requires workspace_context")
+        if self.as_user_activation is not False:
+            raise ValueError("workspace context cannot be user activation")
+        if (
+            self.item.session_epoch != self.delivery.session_epoch
+            or self.item.workspace_instance_id != self.delivery.workspace_instance_id
+            or self.item.revision != self.delivery.revision
+        ):
+            raise ValueError("workspace context delivery must bind exact identity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,6 +539,13 @@ class RealtimeFrontBrain(Protocol):
         confirmation_timeout: float | None = None,
         as_user_activation: bool = False,
     ) -> ItemIdentity: ...
+
+    async def inject_workspace_context(
+        self,
+        item: HostContextItem,
+        *,
+        confirmation_timeout: float | None = None,
+    ) -> WorkspaceContextDeliveryRecord: ...
 
     async def create_response(self, intent: HostResponseIntent) -> None: ...
 

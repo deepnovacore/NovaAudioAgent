@@ -8,6 +8,7 @@ import {
   hostResponseIntentSchema,
   realtimeIdentifierSchema,
   realtimeProviderEventSchema,
+  workspaceContextInjectionSchema,
   type HostContextItem,
   type HostResponseIntent,
   type ItemIdentity,
@@ -15,6 +16,7 @@ import {
   type RealtimeProvider,
   type RealtimeProviderEvent,
   type SessionIdentity,
+  type WorkspaceContextDeliveryRecord,
 } from '../protocol.js'
 import { NullTelemetry, type RealtimeTelemetry } from '../telemetry.js'
 import type {
@@ -123,6 +125,11 @@ interface EpochOwner {
   readonly pending: Map<string, PendingHostItem>
   readonly consumed: Map<string, number>
   readonly abandonedCalls: Map<string, null>
+  workspaceContext: {
+    readonly item: HostContextItem
+    readonly providerItemId: string
+    readonly record: WorkspaceContextDeliveryRecord
+  } | null
   consumptionGeneration: number
   pendingToolCallId: string | null
   responseStartBarrier: Promise<void> | null
@@ -312,6 +319,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
         pending: new Map(),
         consumed: new Map(),
         abandonedCalls: new Map(),
+        workspaceContext: null,
         consumptionGeneration: 0,
         pendingToolCallId: null,
         responseStartBarrier: null,
@@ -424,6 +432,51 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       host_item_id: item.host_item_id,
       provider_item_id: providerItemId,
     })
+  }
+
+  async injectWorkspaceContext(
+    input: HostContextItem,
+    options: {readonly confirmationTimeout: number | null; readonly signal: AbortSignal},
+  ): Promise<WorkspaceContextDeliveryRecord> {
+    void options.confirmationTimeout
+    const owner = this.#requiredOwner()
+    throwIfAborted(combineSignals(owner.controller.signal, options.signal))
+    let item: HostContextItem
+    try {
+      item = hostContextItemSchema.parse(input)
+    } catch {
+      throw new CascadedRealtimeError('configuration')
+    }
+    if (item.kind !== 'workspace_context' || item.session_epoch !== owner.epoch) {
+      throw new CascadedRealtimeError('configuration')
+    }
+    const prior = owner.workspaceContext
+    if (prior !== null && JSON.stringify(prior.item) === JSON.stringify(item)) {
+      return await Promise.resolve(structuredClone(prior.record))
+    }
+    if (prior !== null
+      && prior.item.workspace_instance_id === item.workspace_instance_id
+      && (item.revision ?? -1) <= (prior.item.revision ?? -1)) {
+      throw new CascadedRealtimeError('configuration')
+    }
+    const providerItemId = this.#freshId()
+    const record = workspaceContextInjectionSchema.parse({
+      item,
+      asUserActivation: false,
+      delivery: {
+        capability: 'replace_provider_item', delivered: true,
+        session_epoch: item.session_epoch,
+        workspace_instance_id: item.workspace_instance_id,
+        revision: item.revision,
+        prior_provider_item_id: prior?.providerItemId ?? null,
+        provider_item_id: providerItemId,
+        superseded_provider_item_id: prior?.providerItemId ?? null,
+      },
+    })
+    owner.workspaceContext = {
+      item: structuredClone(item), providerItemId, record: structuredClone(record),
+    }
+    return await Promise.resolve(structuredClone(record))
   }
 
   async createResponse(input: HostResponseIntent, signal: AbortSignal): Promise<void> {
@@ -786,6 +839,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       for await (const event of owner.llm.stream({
         inputs: inputs.map(item => structuredClone(item)),
         tools: owner.tools.map(tool => structuredClone(tool)),
+        workspaceContext: owner.workspaceContext?.item.content ?? null,
         signal,
       })) {
         throwIfAborted(signal)

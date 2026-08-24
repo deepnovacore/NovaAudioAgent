@@ -24,6 +24,8 @@ from nova_audio_agent.realtime.protocol import (
     UserTranscriptDelta,
     UserTranscriptFailed,
     UserTranscriptFinal,
+    WorkspaceContextDelivery,
+    WorkspaceContextDeliveryRecord,
 )
 
 
@@ -185,6 +187,40 @@ def test_identity_types_reject_nonpositive_session_epochs() -> None:
             session_epoch=0,
             host_item_id="host-item",
             provider_item_id="provider-item",
+        )
+
+
+def test_workspace_context_schema_binds_exact_replaceable_identity() -> None:
+    item = HostContextItem.workspace_context(
+        host_item_id="workspace-host",
+        event_id="workspace-event",
+        content="<active_project_context>current</active_project_context>",
+        session_epoch=2,
+        workspace_instance_id="workspace-instance",
+        revision=7,
+    )
+    delivery = WorkspaceContextDelivery(
+        capability="replace_provider_item",
+        delivered=True,
+        session_epoch=2,
+        workspace_instance_id="workspace-instance",
+        revision=7,
+        prior_provider_item_id="provider-old",
+        provider_item_id="provider-new",
+        superseded_provider_item_id="provider-old",
+    )
+
+    assert WorkspaceContextDeliveryRecord(item=item, delivery=delivery).item is item
+    with pytest.raises(ValueError, match="distinct"):
+        WorkspaceContextDelivery(
+            capability="replace_provider_item",
+            delivered=True,
+            session_epoch=2,
+            workspace_instance_id="workspace-instance",
+            revision=8,
+            prior_provider_item_id="provider-same",
+            provider_item_id="provider-same",
+            superseded_provider_item_id="provider-same",
         )
 
 

@@ -56,13 +56,15 @@ class Session implements CascadedLlmSession {
     this.#idleTimeoutMs = options.idleTimeoutMs ?? 30_000; this.#closeTimeoutMs = options.closeTimeoutMs ?? 1_000
     if (!Number.isFinite(this.#idleTimeoutMs) || this.#idleTimeoutMs <= 0 || !Number.isFinite(this.#closeTimeoutMs) || this.#closeTimeoutMs <= 0) throw fail('configuration')
   }
-  async *stream(input: {readonly inputs: readonly CascadedLlmInput[]; readonly tools: readonly CascadedLlmTool[]; readonly signal: AbortSignal}): AsyncIterable<CascadedLlmEvent> {
+  async *stream(input: {readonly inputs: readonly CascadedLlmInput[]; readonly tools: readonly CascadedLlmTool[]; readonly workspaceContext?: string | null; readonly signal: AbortSignal}): AsyncIterable<CascadedLlmEvent> {
     if (this.#closed) throw fail('closed'); if (input.signal.aborted) throw fail('aborted')
     const current = input.inputs.map(message), unresolved = this.#unresolved
     if (unresolved === null && input.inputs.some(item => item.kind === 'tool_result')) throw fail('protocol')
     if (unresolved !== null) this.#checkResults(input.inputs, unresolved)
     this.#trim(unresolved ?? [])
-    const messages = [{role: 'system' as const, content: this.#instructions}, ...this.#history.flat(), ...(unresolved ?? []), ...current]
+    const systemContent = input.workspaceContext == null
+      ? this.#instructions : `${this.#instructions}\n\n${input.workspaceContext}`
+    const messages = [{role: 'system' as const, content: systemContent}, ...this.#history.flat(), ...(unresolved ?? []), ...current]
     const body: Record<string, JsonValue> = {model: this.#model, messages: messages as unknown as JsonValue, stream: true, stream_options: {include_usage: true}}
     if (input.tools.length > 0) { body.tools = input.tools.map(schema); body.parallel_tool_calls = false }
     const active: Active = {controller: new AbortController(), reader: null, failureCode: null}

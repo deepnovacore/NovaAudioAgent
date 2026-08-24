@@ -131,6 +131,77 @@ def test_volcengine_realtime_assembly_wires_native_provider(
     assert assembly.runtime.surrogate._model == "doubao-seed-2-0-pro-260215"
 
 
+@pytest.mark.asyncio
+async def test_volcengine_project_composition_republishes_one_current_context_per_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeVad:
+        in_speech = False
+
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def reset(self) -> None:
+            self.in_speech = False
+
+    monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(volcengine_module, "SileroVadSegmenter", FakeVad)
+    workspace_path = tmp_path / "repo"
+    workspace_path.mkdir()
+    identifiers = iter(f"composition-{index}" for index in range(100))
+    realtime = assembly_module.build_volcengine_realtime_assembly(
+        Settings(
+            realtime_provider="volcengine",
+            ark_api_key=SecretStr("ark-secret"),
+            doubao_bigmodel_api_key=SecretStr("speech-secret"),
+            tavily_api_key=SecretStr("search-secret"),
+            executor="codex",
+            codex_workspace=workspace_path,
+            codex_managed_root=tmp_path / "managed",
+            codex_project_state_root=tmp_path / "state",
+            codex_prewarm=False,
+            _env_file=None,
+        ),
+        sink=_Sink(),
+        on_audio_frame=lambda _frame: None,
+        on_audio_clear=lambda _utterance_id, _epoch: None,
+        on_audio_terminal=lambda _utterance_id, _epoch: None,
+        on_delivery=lambda _completion: None,
+        id_factory=lambda: next(identifiers),
+    )
+    adapter = realtime.project_adapter
+    assert isinstance(adapter, ProjectCodexAdapter)
+    workspace = adapter.store.resolve_workspace("repo")
+
+    await realtime.start()
+    try:
+        current = realtime.provider._workspace_context
+        assert current is not None
+        first = current[0]
+        assert (first.session_epoch, first.workspace_instance_id, first.revision) == (
+            1,
+            workspace.workspace_id,
+            1,
+        )
+        assert first.content == (
+            '<active_project_context>\nworkspace="repo"\nsession=""\n</active_project_context>'
+        )
+
+        await realtime.service.session.reconnect(tools=tuple(realtime.tools.schemas))
+        replacement = realtime.provider._workspace_context
+        assert replacement is not None
+        second = replacement[0]
+        assert (second.session_epoch, second.workspace_instance_id, second.revision) == (
+            2,
+            workspace.workspace_id,
+            2,
+        )
+        assert second.content == first.content
+    finally:
+        await realtime.stop()
+
+
 def test_volcengine_ark_fallback_forces_all_support_models_to_an_ark_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1350,6 +1421,30 @@ class _PrewarmAdapter:
 
     async def aclose(self) -> None:
         self.aclose_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_project_realtime_start_fails_closed_before_core_for_missing_context_delivery() -> (
+    None
+):
+    core = _PrewarmCore()
+    service = _PrewarmService()
+    provider = object()
+    assembly = RealtimeAssembly(
+        core=core,  # type: ignore[arg-type]
+        provider=provider,  # type: ignore[arg-type]
+        service=service,  # type: ignore[arg-type]
+        project_context_publisher=assembly_module._ProjectContextPublisher(
+            provider=provider,  # type: ignore[arg-type]
+            id_factory=lambda: "unused",
+        ),
+    )
+
+    with pytest.raises(ConfigurationError, match="cannot deliver active project context"):
+        await assembly.start()
+
+    assert core.started is False
+    assert service.started is False
 
 
 async def test_qwen_realtime_start_schedules_prewarm_without_blocking() -> None:

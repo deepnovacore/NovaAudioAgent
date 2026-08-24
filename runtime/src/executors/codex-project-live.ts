@@ -74,7 +74,7 @@ export interface ProjectCodexAdapterOptions {
   readonly store: CodexProjectStore
   readonly confirmation: ProjectConfirmationController
   readonly transportFactory: ProjectTransportFactory
-  readonly onProjectView?: (view: PublicProjectView) => void
+  readonly onProjectView?: ProjectViewObserver
 }
 
 export interface CommittedWorkspaceEvent {
@@ -89,6 +89,7 @@ export interface TerminalWorkOrderEvent {
 
 type CommittedWorkspaceObserver = (event: CommittedWorkspaceEvent) => void | Promise<void>
 type TerminalWorkOrderObserver = (event: TerminalWorkOrderEvent) => void | Promise<void>
+type ProjectViewObserver = (view: PublicProjectView) => void | Promise<void>
 
 interface ConfirmedDelegateBinding {
   readonly operation: ConfirmedProjectOperation
@@ -102,7 +103,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   readonly #store: CodexProjectStore
   readonly #confirmation: ProjectConfirmationController
   readonly #transportFactory: ProjectTransportFactory
-  readonly #projectViewObservers = new Set<(view: PublicProjectView) => void>()
+  readonly #projectViewObservers = new Set<ProjectViewObserver>()
   readonly #committedWorkspaceObservers = new Set<CommittedWorkspaceObserver>()
   readonly #terminalWorkOrderObservers = new Set<TerminalWorkOrderObserver>()
   readonly #liveState: CodexAdapterSharedState = createCodexAdapterSharedState()
@@ -114,6 +115,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     session_title: null,
     pending_confirmation: false,
   })
+  #publicWorkspaceId: string | null = null
   #refreshSequence = 0
   #initializePromise: Promise<void> | null = null
   #runActive = false
@@ -149,7 +151,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     ) ?? null
   }
 
-  observeProjectView(observer: (view: PublicProjectView) => void): () => void {
+  observeProjectView(observer: ProjectViewObserver): () => void {
     this.#projectViewObservers.add(observer)
     return () => { this.#projectViewObservers.delete(observer) }
   }
@@ -308,6 +310,16 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
 
   publicProjectView(pendingConfirmation: boolean): PublicProjectView {
     return Object.freeze({...this.#publicView, pending_confirmation: pendingConfirmation})
+  }
+
+  publicProjectContext(pendingConfirmation: boolean): {
+    readonly workspace_id: string | null
+    readonly view: PublicProjectView
+  } {
+    return Object.freeze({
+      workspace_id: this.#publicWorkspaceId,
+      view: this.publicProjectView(pendingConfirmation),
+    })
   }
 
   close(): Promise<void> {
@@ -548,6 +560,10 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
             resumed.session_id,
             resumed.codex_thread_id ?? '',
           )
+      // The provider-facing active view must observe the exact session binding before any
+      // transport can run against it. This also keeps a resumed session from inheriting the
+      // prior display title during the process-construction window.
+      await this.#refreshProjectViewTolerant()
       inner = this.#transportFactory.create(Object.freeze({
         workspace: approvedWorkspace,
         codexHome,
@@ -559,6 +575,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
           provisionalSessionId,
           {wait: true},
         ).catch(() => false)
+        await this.#refreshProjectViewTolerant()
       }
       throw error
     }
@@ -659,11 +676,12 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   async #refreshProjectView(): Promise<void> {
     this.#refreshSequence += 1
     const sequence = this.#refreshSequence
-    const view = await this.#store.publicView(this.#confirmation.pending)
+    const context = await this.#store.publicContext(this.#confirmation.pending)
     if (sequence !== this.#refreshSequence) return
-    this.#publicView = view
+    this.#publicWorkspaceId = context.workspace_id
+    this.#publicView = context.view
     for (const observer of this.#projectViewObservers) {
-      try { observer(view) } catch { /* public rendering is advisory */ }
+      try { await observer(context.view) } catch { /* public rendering is advisory */ }
     }
   }
 

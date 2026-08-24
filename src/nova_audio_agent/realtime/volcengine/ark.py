@@ -86,10 +86,15 @@ class ArkResponsesClient:
         input_items: Sequence[dict[str, Any]],
         tools: Sequence[dict[str, Any]],
         previous_response_id: str | None,
+        workspace_context: str | None = None,
     ) -> AsyncIterator[ArkEvent]:
         kwargs: dict[str, Any] = {
             "model": self._model,
-            "instructions": self._instructions,
+            "instructions": (
+                self._instructions
+                if workspace_context is None
+                else f"{self._instructions}\n\n{workspace_context}"
+            ),
             "input": list(input_items),
             "tools": list(tools),
             "parallel_tool_calls": False,

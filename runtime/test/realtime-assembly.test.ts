@@ -306,6 +306,11 @@ class WorkspaceContextProvider extends AbortAwareProvider {
       },
     }
   }
+
+  override async close(): Promise<void> {
+    this.#providerItemId = null
+    await super.close()
+  }
 }
 
 test('one provider session supports the realtime session connect and reconnect contract', async () => {
@@ -662,7 +667,9 @@ test('project adapter wiring carries one confirmed identity through the real rea
     admission: {readonly accepted: boolean; readonly delegate_id: string | null} | null
   } = {operation: null, capability: null, context: null, origin: null, admission: null}
   let closeCalls = 0
-  const viewObservers = new Set<(view: ProjectConfirmationView) => void>()
+  const viewObservers = new Set<(
+    view: ProjectConfirmationView,
+  ) => void | Promise<void>>()
   let activeWorkspace = 'alpha'
   let activeSession = 'Task'
   const adapterShape: ExecutorAdapter & {
@@ -719,9 +726,10 @@ test('project adapter wiring carries one confirmed identity through the real rea
       session_title: activeSession,
       pending_confirmation: pending,
     }),
-    initialize: () => {
-      for (const observer of viewObservers) observer(adapterShape.publicProjectView(false))
-      return Promise.resolve()
+    initialize: async () => {
+      for (const observer of viewObservers) {
+        await observer(adapterShape.publicProjectView(false))
+      }
     },
     activeCommittedWorkspace: () => Promise.resolve(null),
     observeProjectView: observer => {
@@ -746,7 +754,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
   const views: ProjectConfirmationView[] = []
   const realtime = buildRealtimeAssembly({
     core,
-    provider: new AbortAwareProvider(),
+    provider: new WorkspaceContextProvider(),
     projectAdapter,
     onProjectView: view => { views.push(view) },
   })
@@ -842,6 +850,7 @@ test('active project views replace one provider context without publishing histo
     session_title: null,
     pending_confirmation: false,
   })
+  let contextWorkspaceId = 'host-alpha'
   const alpha: WorkspaceRecord = Object.freeze({
     workspace_id: 'host-alpha', display_name: 'alpha', normalized_name: 'alpha',
     canonical_path: '/safe/alpha', origin: 'registered', codex_home_key: 'host-alpha',
@@ -860,6 +869,7 @@ test('active project views replace one provider context without publishing histo
     }),
     commitConfirmed: () => Promise.resolve({accepted: false, code: 'not_used'}),
     publicProjectView: () => view,
+    publicProjectContext: () => Object.freeze({workspace_id: contextWorkspaceId, view}),
     initialize: () => {
       for (const observer of viewObservers) observer(view)
       return Promise.resolve()
@@ -901,7 +911,7 @@ test('active project views replace one provider context without publishing histo
       kind: 'workspace_context',
       host_item_id: 'active-context-1',
       event_id: 'active-context-2',
-      content: '<active_project_context>\nworkspace=alpha\nsession=\n</active_project_context>',
+      content: '<active_project_context>\nworkspace="alpha"\nsession=""\n</active_project_context>',
       call_id: null,
       session_epoch: 1,
       workspace_instance_id: 'host-alpha',
@@ -913,8 +923,8 @@ test('active project views replace one provider context without publishing histo
     await waitNamed('active Session context replacement', () => provider.workspaceItems.length === 2)
     assert.equal(provider.workspaceItems[1]?.content, [
       '<active_project_context>',
-      'workspace=alpha',
-      'session=Login fix',
+      'workspace="alpha"',
+      'session="Login fix"',
       '</active_project_context>',
     ].join('\n'))
     assert.equal(provider.workspaceItems[1]?.revision, 2)
@@ -925,6 +935,11 @@ test('active project views replace one provider context without publishing histo
     const committed = [...workspaceObservers][0]
     assert.ok(committed !== undefined)
     await committed({workspace: beta})
+    for (const observer of viewObservers) observer(view)
+    await new Promise<void>(resolve => { setImmediate(resolve) })
+    assert.equal(provider.workspaceItems.length, 2,
+      'a new host id must not pair with the prior display view')
+    contextWorkspaceId = 'host-beta'
     view = Object.freeze({
       workspace_display_name: 'beta', session_title: null, pending_confirmation: false,
     })
@@ -934,14 +949,68 @@ test('active project views replace one provider context without publishing histo
     assert.equal(provider.workspaceItems[2]?.revision, 3)
     assert.equal(provider.workspaceItems[2]?.content, [
       '<active_project_context>',
-      'workspace=beta',
-      'session=',
+      'workspace="beta"',
+      'session=""',
       '</active_project_context>',
     ].join('\n'))
+
+    await realtime.providerSession.reconnect(core.tools.schemas)
+    await waitNamed('active context republished after reconnect', () => (
+      provider.workspaceItems.some(item => item.session_epoch === 2)
+    ))
+    const epochTwo = provider.workspaceItems.filter(item => item.session_epoch === 2)
+    assert.equal(epochTwo.length, 1)
+    assert.equal(epochTwo[0]?.workspace_instance_id, 'host-beta')
+    assert.equal(epochTwo[0]?.revision, 4)
+    assert.equal(epochTwo[0]?.content.includes('>alpha<'), false)
   } finally {
     await realtime.stop()
   }
 })
+
+test('project-mode startup fails closed before core/provider work without context capability',
+  async () => {
+    const clock = new VirtualClock(0)
+    const confirmation = new ProjectConfirmationController({
+      clock, idFactory: () => 'unsupported-context-confirmation',
+    })
+    const frameSource = new RecordingFrameSource()
+    const provider = new AbortAwareProvider()
+    const adapterShape: ExecutorAdapter & Record<string, unknown> = {
+      manifest: CODEX_PROJECT_MANIFEST,
+      confirmationController: confirmation,
+      dispatch: () => Promise.resolve({
+        outcome: 'ok', trust: 'trusted_system', content: {code: 'unused'}, refs: [],
+      }),
+      commitConfirmed: () => Promise.resolve({accepted: false, code: 'unused'}),
+      publicProjectView: () => Object.freeze({
+        workspace_display_name: null, session_title: null, pending_confirmation: false,
+      }),
+      initialize: () => Promise.resolve(),
+      activeCommittedWorkspace: () => Promise.resolve(null),
+      observeProjectView: () => () => undefined,
+      observeCommittedWorkspace: () => () => undefined,
+      observeTerminalWorkOrder: () => () => undefined,
+      close: () => Promise.resolve(),
+    }
+    const core = buildAssembly({
+      settings: settingsSchema.parse({executors: ['codex']}),
+      clock,
+      gateway: new NeverCalledGateway(),
+      searchTransport: new NeverCalledSearch(),
+      frameSource,
+      executors: [adapterShape],
+    })
+    const realtime = buildRealtimeAssembly({
+      core,
+      provider,
+      projectAdapter: adapterShape as unknown as ProjectCodexAdapter,
+    })
+
+    await assert.rejects(realtime.start(), /cannot deliver active project context/u)
+    assert.equal(frameSource.starts, 0)
+    assert.equal(provider.connectCalls, 0)
+  })
 
 test('workspace graph opens before project initialization, injects only the current Header, and owns hooks', async () => {
   const clock = new VirtualClock(50)
@@ -1099,7 +1168,7 @@ test('workspace graph opens before project initialization, injects only the curr
     kind: 'workspace_context',
     host_item_id: 'graph-host-1',
     event_id: 'graph-host-2',
-    content: '<active_project_context>\nworkspace=alpha\nsession=\n</active_project_context>',
+    content: '<active_project_context>\nworkspace="alpha"\nsession=""\n</active_project_context>',
     call_id: null,
     session_epoch: 1,
     workspace_instance_id: 'workspace-authoritative',
@@ -1117,8 +1186,8 @@ test('workspace graph opens before project initialization, injects only the curr
     event_id: 'graph-host-4',
     content: [
       '<active_project_context>',
-      'workspace=alpha',
-      'session=',
+      'workspace="alpha"',
+      'session=""',
       '</active_project_context>',
       '<workspace_graph_context>',
       '<workspace_context kind="data">current alpha</workspace_context>',
@@ -1595,6 +1664,8 @@ test('never-settling initial Header delivery cannot block voice startup', async 
   const headerGate = deferred<void>()
   const diagnostics: string[] = []
   const provider = new WorkspaceContextProvider()
+  // Epochs are monotonic provider identities, not a promise that the first one is exactly 1.
+  provider.currentEpoch = 6
   provider.workspaceContextStep = () => headerGate.promise
   const clock = new VirtualClock(50)
   const confirmation = new ProjectConfirmationController({

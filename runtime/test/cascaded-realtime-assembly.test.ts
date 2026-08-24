@@ -651,7 +651,7 @@ test('cascaded assembly preserves one graph, shared resources, and frozen Guard 
   assert.equal(telemetryCloses, 0)
 })
 
-test('cascaded assembly owns enabled graph storage without claiming provider Header delivery',
+test('cascaded assembly owns enabled graph storage and exposes replaceable Header delivery',
   async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-cascaded-graph-')))
     await chmod(root, 0o700)
@@ -662,7 +662,7 @@ test('cascaded assembly owns enabled graph storage without claiming provider Hea
       })))
       try {
         assert.ok(enabled.workspaceGraph !== undefined)
-        assert.equal('injectWorkspaceContext' in enabled.provider, false)
+        assert.equal('injectWorkspaceContext' in enabled.provider, true)
       } finally {
         await enabled.stop()
       }

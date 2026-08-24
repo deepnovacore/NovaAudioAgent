@@ -72,6 +72,7 @@ export interface ArkStreamInput {
   readonly inputItems: readonly JsonObject[]
   readonly tools: readonly JsonObject[]
   readonly previousResponseId: string | null
+  readonly workspaceContext?: string | null
   readonly signal?: AbortSignal
 }
 
@@ -276,7 +277,8 @@ class FetchArkResponsesGateway implements ArkResponsesGateway {
     }
     const body = JSON.stringify({
       model: this.#model,
-      instructions: this.#instructions,
+      instructions: input.workspaceContext == null
+        ? this.#instructions : `${this.#instructions}\n\n${input.workspaceContext}`,
       input: inputItems,
       tools,
       parallel_tool_calls: false,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict, deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -30,6 +30,7 @@ from nova_audio_agent.realtime.protocol import (
     ResponseTerminal,
     ResponseTranscriptDelta,
     ResponseTranscriptFinal,
+    SessionIdentity,
     ToolCallReady,
     UserSpeechEnded,
     UserSpeechStarted,
@@ -132,6 +133,7 @@ class RealtimeSession:
         id_factory: Callable[[], str],
         on_spoken: Callable[[str], None] | None = None,
         on_delivery: Callable[[PlaybackCompletion], None] | None = None,
+        on_provider_connected: Callable[[SessionIdentity], Awaitable[None]] | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._provider = provider
@@ -139,6 +141,7 @@ class RealtimeSession:
         self._id_factory = id_factory
         self._on_spoken = on_spoken or (lambda _text: None)
         self._on_delivery = on_delivery or (lambda _completion: None)
+        self._on_provider_connected = on_provider_connected
         self._clock = clock or RealClock()
         self._user_hold_since: float | None = None
         self._user_input_revision = 0
@@ -259,6 +262,8 @@ class RealtimeSession:
         if identity.epoch <= self._session_epoch:
             raise ValueError("provider session epoch must increase")
         self._session_epoch = identity.epoch
+        if self._on_provider_connected is not None:
+            await self._on_provider_connected(identity)
         self._advance_snapshot()
 
     async def deliver_host_item(self, item: HostContextItem) -> bool:

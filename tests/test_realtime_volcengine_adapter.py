@@ -19,6 +19,7 @@ from nova_audio_agent.realtime.protocol import (
     UserSpeechStarted,
     UserTranscriptFailed,
     UserTranscriptFinal,
+    WorkspaceContextDeliveryRecord,
 )
 from nova_audio_agent.realtime.qwen import GUARD_ACTIVATION_PREFIX
 import nova_audio_agent.realtime.volcengine.adapter as adapter_module
@@ -213,6 +214,72 @@ class _SequencedArk(_Ark):
     def stream(self, **kwargs: Any) -> AsyncIterator[Any]:
         self.calls.append(kwargs)
         return _iterate(next(self._event_sets))
+
+
+@pytest.mark.asyncio
+async def test_workspace_context_replaces_current_ark_instructions_without_entering_history() -> (
+    None
+):
+    ark = _SequencedArk(
+        [
+            [ArkResponseStarted("response-1"), ArkResponseCompleted("response-1")],
+            [ArkResponseStarted("response-2"), ArkResponseCompleted("response-2")],
+        ]
+    )
+    id_values = iter(
+        (
+            "session",
+            "context-provider-1",
+            "fact-provider-1",
+            "context-provider-2",
+            "fact-provider-2",
+        )
+    )
+    adapter = VolcengineCascadedAdapter(
+        vad=_Vad(), asr=_Asr(), ark=ark, tts=_Tts(), id_factory=lambda: next(id_values)
+    )
+    await adapter.connect(tools=_tools())
+
+    first = await adapter.inject_workspace_context(
+        HostContextItem.workspace_context(
+            host_item_id="context-1",
+            event_id="context-event-1",
+            content="<active_project_context>first</active_project_context>",
+            session_epoch=1,
+            workspace_instance_id="wi-a",
+            revision=1,
+        )
+    )
+    fact_one = HostContextItem.progress(
+        host_item_id="fact-1", event_id="fact-event-1", content="one"
+    )
+    await adapter.inject_host_item(fact_one)
+    await adapter.create_response(HostResponseIntent.host_fact(fact_one))
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+
+    second = await adapter.inject_workspace_context(
+        HostContextItem.workspace_context(
+            host_item_id="context-2",
+            event_id="context-event-2",
+            content="<active_project_context>second</active_project_context>",
+            session_epoch=1,
+            workspace_instance_id="wi-a",
+            revision=2,
+        )
+    )
+    fact_two = HostContextItem.progress(
+        host_item_id="fact-2", event_id="fact-event-2", content="two"
+    )
+    await adapter.inject_host_item(fact_two)
+    await adapter.create_response(HostResponseIntent.host_fact(fact_two))
+    await asyncio.wait_for(_collect_until_terminal(adapter), timeout=1)
+
+    assert isinstance(first, WorkspaceContextDeliveryRecord)
+    assert first.delivery.prior_provider_item_id is None
+    assert second.delivery.prior_provider_item_id == "context-provider-1"
+    assert ark.calls[0]["workspace_context"].endswith(">first</active_project_context>")
+    assert ark.calls[1]["workspace_context"].endswith(">second</active_project_context>")
+    assert "first" not in repr(ark.calls[1])
 
 
 class _BlockingArk:
@@ -780,6 +847,7 @@ async def test_user_interrupt_carries_pending_context_and_tool_output_without_du
             ],
             "tools": adapter._tools,
             "previous_response_id": "function-response",
+            "workspace_context": None,
         }
     ]
     assert any(isinstance(event, ResponseStarted) for event in silent_events)

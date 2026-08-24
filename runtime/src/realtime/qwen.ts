@@ -48,11 +48,18 @@ export const MAX_QWEN_EVENT_QUEUE = 4_096
 
 export {GUARD_ACTIVATION_PREFIX} from './cascaded/llm.js'
 
+function serializeProjectDisplayName(value: string | null): string {
+  return JSON.stringify(value ?? '')
+    .replaceAll('&', '\\u0026')
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+}
+
 export function renderActiveProjectContext(view: ProjectConfirmationView): string {
   return [
     '<active_project_context>',
-    `workspace=${view.workspace_display_name ?? ''}`,
-    `session=${view.session_title ?? ''}`,
+    `workspace=${serializeProjectDisplayName(view.workspace_display_name)}`,
+    `session=${serializeProjectDisplayName(view.session_title)}`,
     '</active_project_context>',
   ].join('\n')
 }

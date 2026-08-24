@@ -27,6 +27,8 @@ from nova_audio_agent.realtime.protocol import (
     UserTranscriptDelta,
     UserTranscriptFailed,
     UserTranscriptFinal,
+    WorkspaceContextDelivery,
+    WorkspaceContextDeliveryRecord,
 )
 from nova_audio_agent.realtime.qwen import GUARD_ACTIVATION_PREFIX
 from nova_audio_agent.realtime.telemetry import NullTelemetry, RealtimeTelemetry
@@ -79,6 +81,9 @@ class VolcengineCascadedAdapter:
         self._session_id: str | None = None
         self._tools: tuple[dict[str, Any], ...] = ()
         self._pending_items: dict[str, tuple[HostContextItem, dict[str, Any]]] = {}
+        self._workspace_context: (
+            tuple[HostContextItem, str, WorkspaceContextDeliveryRecord] | None
+        ) = None
         self._consumed_host_items: OrderedDict[str, int] = OrderedDict()
         self._consumption_generation = 0
         self._previous_response_id: str | None = None
@@ -107,6 +112,7 @@ class VolcengineCascadedAdapter:
         self._session_id = self._id_factory()
         self._tools = tuple(responses_tool_schema(schema) for schema in tools)
         self._pending_items.clear()
+        self._workspace_context = None
         self._consumed_host_items.clear()
         self._consumption_generation = 0
         self._previous_response_id = None
@@ -155,6 +161,8 @@ class VolcengineCascadedAdapter:
         del confirmation_timeout
         if self._closed:
             raise VolcengineRealtimeError("火山实时会话未连接")
+        if item.kind == "workspace_context":
+            raise VolcengineRealtimeError("workspace context requires replaceable delivery")
         if as_user_activation and item.kind not in {"progress", "final"}:
             raise ValueError("user activation requires a progress or final item")
         if item.host_item_id in self._pending_items:
@@ -167,6 +175,39 @@ class VolcengineCascadedAdapter:
             _host_input(item, as_user_activation=as_user_activation),
         )
         return ItemIdentity(self._epoch, item.host_item_id, provider_item_id)
+
+    async def inject_workspace_context(
+        self,
+        item: HostContextItem,
+        *,
+        confirmation_timeout: float | None = None,
+    ) -> WorkspaceContextDeliveryRecord:
+        del confirmation_timeout
+        if self._closed or item.kind != "workspace_context" or item.session_epoch != self._epoch:
+            raise VolcengineRealtimeError("workspace context session identity mismatch")
+        prior = self._workspace_context
+        if prior is not None and prior[0] == item:
+            return prior[2]
+        if (
+            prior is not None
+            and prior[0].workspace_instance_id == item.workspace_instance_id
+            and (item.revision or 0) <= (prior[0].revision or 0)
+        ):
+            raise VolcengineRealtimeError("workspace context revision is stale")
+        provider_item_id = self._id_factory()
+        delivery = WorkspaceContextDelivery(
+            capability="replace_provider_item",
+            delivered=True,
+            session_epoch=self._epoch,
+            workspace_instance_id=item.workspace_instance_id or "",
+            revision=item.revision or 0,
+            prior_provider_item_id=None if prior is None else prior[1],
+            provider_item_id=provider_item_id,
+            superseded_provider_item_id=None if prior is None else prior[1],
+        )
+        record = WorkspaceContextDeliveryRecord(item=item, delivery=delivery)
+        self._workspace_context = (item, provider_item_id, record)
+        return record
 
     async def create_response(self, intent: HostResponseIntent) -> None:
         if self._closed:
@@ -219,6 +260,7 @@ class VolcengineCascadedAdapter:
         if self._closed:
             return
         self._closed = True
+        self._workspace_context = None
         tasks = tuple(
             task
             for task in (self._response_task, self._asr_task, self._tts_task)
@@ -401,6 +443,9 @@ class VolcengineCascadedAdapter:
                 input_items=input_items,
                 tools=self._tools,
                 previous_response_id=self._previous_response_id,
+                workspace_context=(
+                    None if self._workspace_context is None else self._workspace_context[0].content
+                ),
             ):
                 if isinstance(event, ArkResponseStarted):
                     response_id = event.response_id

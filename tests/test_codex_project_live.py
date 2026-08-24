@@ -19,7 +19,11 @@ from nova_audio_agent.executors.codex_project_live import (
 )
 from nova_audio_agent.executors.codex import CodexProcessStatus, CodexTransportResult
 from nova_audio_agent.executors.codex_app_server import SteerTransportResult
-from nova_audio_agent.executors.codex_projects import CodexProjectStore, ProjectStateError
+from nova_audio_agent.executors.codex_projects import (
+    CodexProjectStore,
+    ProjectStateError,
+    PublicProjectView,
+)
 from nova_audio_agent.ports import DispatchContext
 from nova_audio_agent.realtime.project_confirmation import (
     ConfirmedProjectOperation,
@@ -202,10 +206,23 @@ def test_project_mode_exposes_project_and_confirmation_tools() -> None:
         "work_order",
         "origin_ref",
     }
-    assert _normalize_project_request({
-        "action": "start_session",
-        "work_order": "fix login",
-    }) == {"action": "start_session", "work_order": "fix login"}
+    assert _normalize_project_request(
+        {
+            "action": "start_session",
+            "work_order": "fix login",
+        }
+    ) == {"action": "start_session", "work_order": "fix login"}
+    assert _normalize_project_request(
+        {
+            "action": "create_workspace",
+            "workspace": "alpha",
+            "work_order": "build with default Session",
+        }
+    ) == {
+        "action": "create_workspace",
+        "workspace": "alpha",
+        "work_order": "build with default Session",
+    }
 
 
 @pytest.mark.parametrize(
@@ -324,9 +341,7 @@ async def test_public_run_and_execute_confirmed_are_rejected(tmp_path: Path) -> 
     ctx = _context(VirtualClock())
 
     public_run = await adapter.dispatch("run", {"work_order": "forbidden"}, ctx)
-    public_confirmed = await adapter.dispatch(
-        "project", {"action": "execute_confirmed"}, ctx
-    )
+    public_confirmed = await adapter.dispatch("project", {"action": "execute_confirmed"}, ctx)
 
     assert public_run.outcome == public_confirmed.outcome == "failed"
 
@@ -444,6 +459,49 @@ async def test_plain_runs_create_distinct_sessions_in_one_persistent_home(tmp_pa
     assert {item.codex_thread_id for item in sessions} == {"thread-1", "thread-2"}
     assert factory.calls[0][1] == factory.calls[1][1] == store.codex_home(workspace)
     assert factory.calls[0][2] is factory.calls[1][2] is None
+
+
+@pytest.mark.asyncio
+async def test_active_session_view_delivery_completes_before_worker_construction(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    store.create_managed("alpha")
+    factory = _ProjectFactory()
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=factory,
+    )
+    publication_started = asyncio.Event()
+    release_publication = asyncio.Event()
+
+    def publish(view: Any) -> Any:
+        if view.session_title != "任务 1":
+            return None
+        publication_started.set()
+        return release_publication.wait()
+
+    adapter.observe_project_view(publish)
+    run = asyncio.create_task(
+        adapter.dispatch(
+            "project", {"action": "start_session", "work_order": "publish first"}, _context(clock)
+        )
+    )
+    await asyncio.wait_for(publication_started.wait(), timeout=1.0)
+    await asyncio.sleep(0)
+    constructed_early = bool(factory.calls)
+    release_publication.set()
+    result = await run
+
+    assert constructed_early is False
+    assert result.outcome == "ok"
 
 
 @pytest.mark.asyncio
@@ -1031,7 +1089,7 @@ async def test_late_public_view_refresh_cannot_overwrite_newer_workspace(
     adapter, store = _adapter(tmp_path)
     store.create_managed("beta")
     store.select_workspace("alpha")
-    original = store.public_view
+    original = store.public_context
     first_entered = threading.Event()
     release_first = threading.Event()
     calls = 0
@@ -1039,13 +1097,13 @@ async def test_late_public_view_refresh_cannot_overwrite_newer_workspace(
     def delayed_first(*, pending_confirmation: bool) -> Any:
         nonlocal calls
         calls += 1
-        view = original(pending_confirmation=pending_confirmation)
+        context = original(pending_confirmation=pending_confirmation)
         if calls == 1:
             first_entered.set()
             release_first.wait(1.0)
-        return view
+        return context
 
-    monkeypatch.setattr(store, "public_view", delayed_first)
+    monkeypatch.setattr(store, "public_context", delayed_first)
     stale = asyncio.create_task(adapter._refresh_project_view())
     while not first_entered.is_set():
         await asyncio.sleep(0)
@@ -1054,8 +1112,9 @@ async def test_late_public_view_refresh_cannot_overwrite_newer_workspace(
     release_first.set()
     await stale
 
-    view = adapter.public_project_view(pending_confirmation=False)
+    workspace_id, view = adapter.public_project_context(pending_confirmation=False)
     assert view.workspace_display_name == "beta"
+    assert workspace_id == store.resolve_workspace("beta").workspace_id
 
 
 @pytest.mark.asyncio
@@ -1086,7 +1145,7 @@ async def test_prepared_confirmation_survives_busy_view_refresh(tmp_path: Path) 
     def busy_view(*, pending_confirmation: bool) -> Any:
         raise ProjectStateError("state_busy")
 
-    store.public_view = busy_view  # type: ignore[method-assign]
+    store.public_context = busy_view  # type: ignore[method-assign]
     proposal = await adapter.dispatch(
         "project", {"action": "select_workspace", "workspace": "alpha"}, ctx
     )
@@ -1115,7 +1174,7 @@ async def test_run_tolerates_busy_view_refresh_and_keeps_session_ready(tmp_path:
     def busy_view(*, pending_confirmation: bool) -> Any:
         raise ProjectStateError("state_busy")
 
-    store.public_view = busy_view  # type: ignore[method-assign]
+    store.public_context = busy_view  # type: ignore[method-assign]
     result = await adapter.dispatch(
         "project", {"action": "start_session", "work_order": "task"}, _context(clock)
     )
@@ -1152,7 +1211,7 @@ async def test_committed_select_reports_success_despite_busy_view_refresh(
     def busy_view(*, pending_confirmation: bool) -> Any:
         raise ProjectStateError("state_busy")
 
-    store.public_view = busy_view  # type: ignore[method-assign]
+    store.public_context = busy_view  # type: ignore[method-assign]
     committed = await adapter.commit_confirmed(
         outcome.operation,
         origin_ref="conversation:1",
@@ -1271,6 +1330,8 @@ async def test_unbound_capability_is_rejected_and_failed_confirmed_create_rolls_
             resume or "missing", on_ready
         ),
     )
+    views: list[PublicProjectView] = []
+    adapter.observe_project_view(views.append)
     operation = ConfirmedProjectOperation(
         action="create",
         workspace_display_name="beta",
@@ -1330,6 +1391,11 @@ async def test_unbound_capability_is_rejected_and_failed_confirmed_create_rolls_
     snapshot = store.snapshot()
     assert [item.display_name for item in snapshot.workspaces] == ["alpha"]
     assert snapshot.active_workspace_id == alpha.workspace_id
+    assert views[-1] == PublicProjectView(
+        workspace_display_name="alpha",
+        session_title=None,
+        pending_confirmation=False,
+    )
     assert sorted(path.name for path in (tmp_path / "managed").iterdir()) == [
         Path(alpha.canonical_path).name
     ]
