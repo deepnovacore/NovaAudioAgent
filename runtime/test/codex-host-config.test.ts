@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import fs, {
-  fchmodSync,
+  fstatSync,
   renameSync,
 } from 'node:fs'
 import {
@@ -101,17 +101,25 @@ test('host resolver never chmods a replacement for a newly created private root'
   const stateRoot = join(fixture.root, 'state')
   const retainedRoot = join(fixture.root, 'state-created-away')
   const managedRoot = join(fixture.root, 'managed')
-  const originalFchmod = fchmodSync
+  const originalFstat = fstatSync
   let replaced = false
-  t.mock.method(fs, 'fchmodSync', (descriptor: number, mode: number) => {
-    if (!replaced) {
+  t.mock.method(fs, 'fstatSync', ((...args: unknown[]) => {
+    const info = Reflect.apply(originalFstat, fs, args) as ReturnType<typeof fstatSync>
+    const identity = info as unknown as {readonly dev: bigint; readonly ino: bigint}
+    const current = existsSync(stateRoot) ? lstatSync(stateRoot, {bigint: true}) : null
+    if (
+      !replaced
+      && current !== null
+      && identity.dev === current.dev
+      && identity.ino === current.ino
+    ) {
       renameSync(stateRoot, retainedRoot)
       mkdirSync(stateRoot, {mode: 0o755})
       chmodSync(stateRoot, 0o755)
       replaced = true
     }
-    originalFchmod(descriptor, mode)
-  })
+    return info
+  }) as typeof fs.fstatSync)
   syncBuiltinESMExports()
   try {
     assert.throws(
@@ -131,6 +139,61 @@ test('host resolver never chmods a replacement for a newly created private root'
     syncBuiltinESMExports()
   }
 })
+
+for (const targetKind of ['state', 'managed'] as const) {
+  test(`host resolver never chmods a ${targetKind} replacement installed before first lstat`, t => {
+    const fixture = hostFixture(t)
+    const stateRoot = join(fixture.root, 'state-before-stat')
+    const managedRoot = join(fixture.root, 'managed-before-stat')
+    const targetRoot = targetKind === 'state' ? stateRoot : managedRoot
+    const retainedRoot = `${targetRoot}-created-away`
+    const originalLstat = lstatSync
+    let observedMissing = false
+    let replaced = false
+    t.mock.method(fs, 'lstatSync', ((...args: unknown[]) => {
+      const candidate = args[0]
+      if (candidate === targetRoot && observedMissing && !replaced) {
+        renameSync(targetRoot, retainedRoot)
+        mkdirSync(targetRoot, {mode: 0o755})
+        chmodSync(targetRoot, 0o755)
+        replaced = true
+      }
+      try {
+        return Reflect.apply(originalLstat, fs, args) as ReturnType<typeof lstatSync>
+      } catch (error) {
+        if (
+          candidate === targetRoot
+          && error instanceof Error
+          && (error as NodeJS.ErrnoException).code === 'ENOENT'
+        ) observedMissing = true
+        throw error
+      }
+    }) as typeof fs.lstatSync)
+    syncBuiltinESMExports()
+    let failureCode: string | null = null
+    try {
+      try {
+        resolveCodexHostConfig(loadSettings({
+          NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+          NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
+          NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
+          NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
+        }), fixture.catalog)
+      } catch (error) {
+        failureCode = error instanceof CodexHostConfigurationError ? error.code : null
+      }
+      assert.equal(replaced, true)
+      assert.equal(lstatSync(targetRoot).mode & 0o7777, 0o755)
+      assert.equal(
+        failureCode,
+        targetKind === 'state' ? 'codex_project_state_invalid' : 'codex_managed_root_invalid',
+      )
+    } finally {
+      t.mock.restoreAll()
+      syncBuiltinESMExports()
+    }
+  })
+}
 
 test('selected Codex fails as host-unavailable when Task 8 has not supplied a catalog', t => {
   const fixture = hostFixture(t)

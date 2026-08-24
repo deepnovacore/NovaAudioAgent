@@ -66,9 +66,9 @@ def _create_private_directory(path: Path) -> None:
             not stat.S_ISDIR(opened.st_mode)
             or not _owned_by_current_user(opened)
             or not _same_file(created, opened)
+            or stat.S_IMODE(opened.st_mode) != 0o700
         ):
             raise OSError
-        os.fchmod(child_fd, 0o700)
         verified = os.fstat(child_fd)
         current = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
         parent_verified = os.fstat(parent_fd)

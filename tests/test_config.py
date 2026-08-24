@@ -159,19 +159,26 @@ def test_codex_project_root_replacement_during_creation_is_not_chmodded(
     state = tmp_path / "state"
     managed = tmp_path / "managed"
     retained = tmp_path / "state-created-away"
-    original_fchmod = os.fchmod
+    original_fstat = os.fstat
     replaced = False
 
-    def replace_before_fchmod(descriptor: int, mode: int) -> None:
+    def replace_after_child_open(descriptor: int) -> os.stat_result:
         nonlocal replaced
-        if not replaced:
+        info = original_fstat(descriptor)
+        current = os.lstat(state) if state.exists() else None
+        if (
+            not replaced
+            and current is not None
+            and info.st_dev == current.st_dev
+            and info.st_ino == current.st_ino
+        ):
             state.rename(retained)
             state.mkdir(mode=0o755)
             state.chmod(0o755)
             replaced = True
-        original_fchmod(descriptor, mode)
+        return info
 
-    monkeypatch.setattr(config_module.os, "fchmod", replace_before_fchmod)
+    monkeypatch.setattr(config_module.os, "fstat", replace_after_child_open)
 
     with pytest.raises(ConfigurationError):
         Settings(
@@ -182,6 +189,49 @@ def test_codex_project_root_replacement_during_creation_is_not_chmodded(
 
     assert replaced is True
     assert state.stat().st_mode & 0o7777 == 0o755
+
+
+@pytest.mark.parametrize("target_name", ["state", "managed"])
+def test_codex_project_root_replacement_before_first_stat_is_not_chmodded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    target_name: str,
+) -> None:
+    state = tmp_path / "state"
+    managed = tmp_path / "managed"
+    target = state if target_name == "state" else managed
+    retained = tmp_path / f"{target_name}-created-away"
+    original_stat = os.stat
+    replaced = False
+
+    def replace_before_first_child_stat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes] | int,
+        *,
+        dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> os.stat_result:
+        nonlocal replaced
+        if path == target.name and dir_fd is not None and not replaced:
+            target.rename(retained)
+            target.mkdir(mode=0o755)
+            target.chmod(0o755)
+            replaced = True
+        return original_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(config_module.os, "stat", replace_before_first_child_stat)
+    failed_closed = False
+    try:
+        Settings(
+            codex_project_state_root=state,
+            codex_managed_root=managed,
+            _env_file=None,
+        ).require_codex_projects()
+    except ConfigurationError:
+        failed_closed = True
+
+    assert replaced is True
+    assert target.stat().st_mode & 0o7777 == 0o755
+    assert failed_closed is True
 
 
 @pytest.mark.parametrize("value", [5.0, 30.0, 600.0])

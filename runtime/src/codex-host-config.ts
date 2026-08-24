@@ -1,7 +1,6 @@
 import {
   closeSync,
   constants,
-  fchmodSync,
   fstatSync,
   lstatSync,
   mkdirSync,
@@ -225,8 +224,8 @@ function createPrivateDirectory(parent: string, path: string): void {
       !opened.isDirectory()
       || !sameIdentity(created, opened)
       || !ownedByCurrentUser(opened.uid)
+      || (opened.mode & 0o7777n) !== 0o700n
     ) throw new Error('unsafe created directory')
-    fchmodSync(childDescriptor, 0o700)
     const verified = fstatSync(childDescriptor, {bigint: true})
     const current = lstatSync(path, {bigint: true})
     const verifiedParent = fstatSync(descriptor, {bigint: true})
