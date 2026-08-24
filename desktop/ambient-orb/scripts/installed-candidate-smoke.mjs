@@ -14,6 +14,7 @@ export const CAMERA_CAPABILITY_PENDING = 'camera-file-integration: chromium_code
 export const CAMERA_CAPABILITY_PASSED_EXIT_CODE = 76
 export const CAMERA_CAPABILITY_PENDING_EXIT_CODE = 75
 export const SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE = 78
+export const NATIVE_INSTALLER_SETTLE_MS = 120_000
 export const SCRATCH_REMOVAL_OPTIONS = Object.freeze({
   recursive: true,
   force: true,
@@ -68,11 +69,17 @@ export function candidateInstallPlan({target, artifact, scratch}) {
     residue = executable
   } else if (target === 'win32-x64:nsis') {
     executable = resolve(installRoot, 'Nova Audio Agent Ambient Orb.exe')
-    install = [{op: 'spawn', command: artifact, args: ['/S', `/D=${installRoot}`]}]
+    install = [{
+      op: 'spawn',
+      command: artifact,
+      args: ['/S', `/D=${installRoot}`],
+      timeoutMs: NATIVE_INSTALLER_SETTLE_MS,
+    }]
     uninstall = [{
       op: 'spawn',
       command: resolve(installRoot, 'Uninstall Nova Audio Agent Ambient Orb.exe'),
       args: ['/S'],
+      timeoutMs: NATIVE_INSTALLER_SETTLE_MS,
     }]
     residue = installRoot
   } else if (target === 'linux-x64-gnu:appimage') {
@@ -405,7 +412,7 @@ async function runActions(actions, environment) {
     const result = spawnSync(action.command, action.args, {
       ...(action.cwd === undefined ? {} : {cwd: action.cwd}),
       env: environment,
-      encoding: 'utf8', timeout: SETTLE_MS, maxBuffer: OUTPUT_LIMIT,
+      encoding: 'utf8', timeout: action.timeoutMs ?? SETTLE_MS, maxBuffer: OUTPUT_LIMIT,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     if (result.error !== undefined || result.signal !== null || result.status !== 0) {

@@ -7,6 +7,7 @@ import test from 'node:test'
 import {
   CAMERA_CAPABILITY_PASSED_EXIT_CODE,
   CAMERA_CAPABILITY_PENDING_EXIT_CODE,
+  NATIVE_INSTALLER_SETTLE_MS,
   RELEASE_SMOKE_MODE,
   SCRATCH_REMOVAL_OPTIONS,
   SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE,
@@ -77,6 +78,17 @@ test('installed candidate plans use native install or mount boundaries for every
     assert.equal(JSON.stringify(plan).includes('python'), false)
     assert.equal(Object.isFrozen(plan), true)
   }
+})
+
+test('Windows native installer actions allow enough time for cold CI extraction', () => {
+  const plan = candidateInstallPlan({
+    target: 'win32-x64:nsis',
+    artifact: '/private/candidate/nova-win32-x64.exe',
+    scratch: '/private/scratch',
+  })
+  assert.equal(NATIVE_INSTALLER_SETTLE_MS, 120_000)
+  assert.equal(plan.install[0].timeoutMs, NATIVE_INSTALLER_SETTLE_MS)
+  assert.equal(plan.uninstall[0].timeoutMs, NATIVE_INSTALLER_SETTLE_MS)
 })
 
 test('installed source rollback accepts only its stable exit code with no backend output', async () => {
