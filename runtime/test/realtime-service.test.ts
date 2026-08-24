@@ -3066,6 +3066,27 @@ async function confirmationTurn(
 ): Promise<void> {
   const itemId = input.itemId ?? 'user-item-1'
   const responseId = input.responseId ?? 'response-1'
+  await reserveConfirmationTurn(service, {
+    itemId,
+    responseId,
+    ...(input.transcript === undefined ? {} : {transcript: input.transcript}),
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: input.callId ?? 'confirm-1',
+    item_id: 'function-1',
+    response_id: responseId,
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: input.proposalId, confirmed: input.confirmed},
+  })
+}
+
+async function reserveConfirmationTurn(
+  service: RealtimeService,
+  input: {readonly itemId: string; readonly responseId: string; readonly transcript?: string},
+): Promise<void> {
+  const {itemId, responseId} = input
   await service.handleEvent({
     kind: 'user_speech_started',
     session_epoch: 1,
@@ -3078,15 +3099,6 @@ async function confirmationTurn(
     session_epoch: 1,
     item_id: itemId,
     text: input.transcript ?? '好，创建吧',
-  })
-  await service.handleEvent({
-    kind: 'tool_call_ready',
-    session_epoch: 1,
-    call_id: input.callId ?? 'confirm-1',
-    item_id: 'function-1',
-    response_id: responseId,
-    name: 'codex__confirm_project_action',
-    arguments: {proposal_id: input.proposalId, confirmed: input.confirmed},
   })
 }
 
@@ -3217,6 +3229,113 @@ test('a confirmation function from another response or epoch fails closed', asyn
   assert.equal(actions.includes('commit'), false)
   assert.equal(controller.pending, true)
   assert.match(injected.at(-1)?.content ?? '', /confirmation_not_pending/u)
+})
+
+test('a stale response start cannot bind the current reserved confirmation item', async () => {
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-current',
+    provider_item_id: 'user-current',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 2,
+    response_id: 'response-stale',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-current',
+    text: '确认',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'confirm-polluted',
+    item_id: 'function-polluted',
+    response_id: 'response-stale',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+
+  assert.equal(actions.includes('commit'), false)
+  assert.equal(controller.pending, true)
+})
+
+test('malformed confirmation arguments preserve the proposal and reservation', async () => {
+  const cases: readonly {
+    readonly name: string
+    readonly build: (proposalId: string) => Record<string, unknown>
+    readonly accessorReads?: () => number
+  }[] = (() => {
+    let reads = 0
+    const accessor = (proposalId: string): Record<string, unknown> => {
+      const value: Record<string, unknown> = {confirmed: true}
+      Object.defineProperty(value, 'proposal_id', {
+        enumerable: true,
+        get: () => {
+          reads += 1
+          return proposalId
+        },
+      })
+      return value
+    }
+    return [
+      {name: 'extra field', build: proposalId => ({proposal_id: proposalId, confirmed: true, extra: 1})},
+      {name: 'missing field', build: proposalId => ({proposal_id: proposalId})},
+      {name: 'empty id', build: () => ({proposal_id: '', confirmed: true})},
+      {name: 'overlong id', build: () => ({proposal_id: 'p'.repeat(129), confirmed: true})},
+      {name: 'boxed boolean', build: proposalId => ({
+        proposal_id: proposalId, confirmed: new Boolean(true),
+      })},
+      {name: 'accessor object', build: accessor, accessorReads: () => reads},
+    ]
+  })()
+
+  for (const [index, invalid] of cases.entries()) {
+    const {service, controller, actions, injected} = confirmationService()
+    await service.connect()
+    const proposal = propose(controller)
+    const responseId = `response-invalid-${index}`
+    await reserveConfirmationTurn(service, {
+      itemId: `user-invalid-${index}`,
+      responseId,
+    })
+    const invalidEvent = {
+      kind: 'tool_call_ready',
+      session_epoch: 1,
+      call_id: `confirm-invalid-${index}`,
+      item_id: `function-invalid-${index}`,
+      response_id: responseId,
+      name: 'codex__confirm_project_action',
+      arguments: invalid.build(proposal.proposal_id) as Readonly<Record<string, JsonValue>>,
+    } as const
+    await service.handleEvent(invalidEvent)
+    await service.handleEvent(invalidEvent)
+    assert.equal(actions.includes('commit'), false, invalid.name)
+    assert.equal(controller.pending, true, invalid.name)
+    assert.equal(
+      injected.filter(item => item.call_id === `confirm-invalid-${index}`).length,
+      1,
+      invalid.name,
+    )
+    if (invalid.accessorReads !== undefined) assert.equal(invalid.accessorReads(), 0, invalid.name)
+
+    await service.handleEvent({
+      kind: 'tool_call_ready',
+      session_epoch: 1,
+      call_id: `confirm-valid-${index}`,
+      item_id: `function-valid-${index}`,
+      response_id: responseId,
+      name: 'codex__confirm_project_action',
+      arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    })
+    assert.equal(actions.filter(action => action === 'commit').length, 1, invalid.name)
+  }
 })
 
 test('a terminal without a confirmation function releases the item for the next utterance', async () => {

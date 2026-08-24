@@ -89,6 +89,33 @@ interface BoundToolOrigin {
   readonly originRef: string | null
 }
 
+function projectConfirmationDecisionArguments(
+  value: unknown,
+): {readonly proposalId: string; readonly confirmed: boolean} | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  if (Object.getPrototypeOf(value) !== Object.prototype) return null
+  const keys = Reflect.ownKeys(value)
+  if (
+    keys.length !== 2
+    || !keys.includes('proposal_id')
+    || !keys.includes('confirmed')
+  ) return null
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  const proposal = descriptors.proposal_id
+  const confirmed = descriptors.confirmed
+  if (
+    proposal === undefined
+    || confirmed === undefined
+    || !('value' in proposal)
+    || !('value' in confirmed)
+    || typeof proposal.value !== 'string'
+    || proposal.value === ''
+    || codePointLengthLikePython(proposal.value) > 128
+    || typeof confirmed.value !== 'boolean'
+  ) return null
+  return {proposalId: proposal.value, confirmed: confirmed.value}
+}
+
 /** The runtime surface the service reads. Thirteen call sites in the oracle, mostly reads. */
 /** What the projection needs to know about one dispatched delegate. */
 export interface DelegateLike {
@@ -1774,10 +1801,14 @@ export class RealtimeService {
       && !isConfirmationDecision
     const accepted = blockedConfirmationTool ? false : await this.session.accept(event)
 
-    if (event.kind === 'response_started' && this.#projectConfirmationBlocking) {
+    if (
+      event.kind === 'response_started'
+      && event.session_epoch === this.session.sessionEpoch
+      && this.#projectConfirmationBlocking
+    ) {
       this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
       if (!this.#responseUserOriginItems.has(callKey(event.session_epoch, event.response_id))) {
-        this.#bindResponseUserOrigin(event.response_id)
+        this.#bindResponseUserOrigin(event.session_epoch, event.response_id)
       }
       // The armed fence has been spent by this response, so it no longer holds the block open.
       this.#projectConfirmationFencePending = false
@@ -1812,7 +1843,7 @@ export class RealtimeService {
       // Only for a response with no events yet: one that already has them has been bound, and
       // rebinding would take a second user turn for the same response.
       if (this.session.responseEventIds(event.response_id).length === 0) {
-        this.#bindResponseUserOrigin(event.response_id)
+        this.#bindResponseUserOrigin(event.session_epoch, event.response_id)
       }
       this.#bindRequestedSemanticAcknowledgement(event.response_id)
       this.#bindContinuation(event.response_id)
@@ -2102,12 +2133,13 @@ export class RealtimeService {
    * response that grabbed a newer item would leave the older one to be claimed by a later response
    * that did not cause it.
    */
-  #bindResponseUserOrigin(responseId: string): void {
-    if (this.#unboundUserOriginItems.length === 0) return
-    const key = callKey(this.session.sessionEpoch, responseId)
-    if (this.#responseUserOriginItems.has(key)) return
+  #bindResponseUserOrigin(epoch: number, responseId: string): boolean {
+    if (epoch !== this.session.sessionEpoch) return false
+    if (this.#unboundUserOriginItems.length === 0) return false
+    const key = callKey(epoch, responseId)
+    if (this.#responseUserOriginItems.has(key)) return false
     const itemId = this.#unboundUserOriginItems.shift()
-    if (itemId === undefined) return
+    if (itemId === undefined) return false
     this.#responseUserOriginItems.set(key, itemId)
     this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
     if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
@@ -2116,6 +2148,7 @@ export class RealtimeService {
       if (oldest.done === true) break
       this.#responseUserOriginItems.delete(oldest.value)
     }
+    return true
   }
 
   /** Record the memory ref a transcript produced, LRU by touch. */
@@ -2777,53 +2810,51 @@ export class RealtimeService {
         && event.response_id === origin.observedProviderResponseId
         && this.#isProjectConfirmationItem(event.session_epoch, itemId)
       ) {
-        this.#beginProjectConfirmationClose(event.session_epoch, itemId)
         let text: string | null = null
-        try {
-          await this.#closeConfirmationDeferredCalls(itemId)
-          const proposalId = event.arguments.proposal_id
-          const confirmed = event.arguments.confirmed
-          if (typeof proposalId !== 'string' || typeof confirmed !== 'boolean') {
-            code = 'confirmation_invalid'
-            text = '确认请求无效，操作尚未执行。'
-            controller.releaseUndecided({epoch: event.session_epoch, itemId})
-          } else {
-            const outcome = controller.acceptDecision({
-              epoch: event.session_epoch,
-              itemId,
-              proposalId,
-              confirmed,
-            })
-            code = outcome.kind === 'ignored' ? 'confirmation_not_pending' : outcome.kind
-            state = outcome.kind === 'confirmed' ? 'accepted' : 'refused'
-            text = outcome.response_text
-            if (outcome.kind === 'confirmed' && outcome.operation !== null) {
-              const callback = this.#commitProjectOperation
-              if (callback === undefined) {
-                state = 'failed'
-                text = '确认处理不可用，本次操作未执行。'
-              } else {
-                try {
-                  const result = await callback(outcome.operation, origin.originRef)
-                  state = result.accepted ? 'accepted' : 'failed'
-                  text = result.accepted
-                    ? '已确认，正在处理。'
-                    : projectCommitFailureText(result.code)
-                } catch (failure) {
-                  if (isAbort(failure)) throw failure
+        const decision = projectConfirmationDecisionArguments(event.arguments)
+        if (decision === null) {
+          code = 'confirmation_invalid'
+          text = '确认请求无效，操作尚未执行。'
+        } else {
+          const outcome = controller.acceptDecision({
+            epoch: event.session_epoch,
+            itemId,
+            proposalId: decision.proposalId,
+            confirmed: decision.confirmed,
+          })
+          code = outcome.kind === 'ignored' ? 'confirmation_not_pending' : outcome.kind
+          state = outcome.kind === 'confirmed' ? 'accepted' : 'refused'
+          text = outcome.response_text
+          if (outcome.kind !== 'invalid' && outcome.kind !== 'ignored') {
+            this.#beginProjectConfirmationClose(event.session_epoch, itemId)
+            try {
+              await this.#closeConfirmationDeferredCalls(itemId)
+              if (outcome.kind === 'confirmed' && outcome.operation !== null) {
+                const callback = this.#commitProjectOperation
+                if (callback === undefined) {
                   state = 'failed'
-                  text = '已确认，但操作未执行。'
+                  text = '确认处理不可用，本次操作未执行。'
+                } else {
+                  try {
+                    const result = await callback(outcome.operation, origin.originRef)
+                    state = result.accepted ? 'accepted' : 'failed'
+                    text = result.accepted
+                      ? '已确认，正在处理。'
+                      : projectCommitFailureText(result.code)
+                  } catch (failure) {
+                    if (isAbort(failure)) throw failure
+                    state = 'failed'
+                    text = '已确认，但操作未执行。'
+                  }
                 }
               }
-            } else if (outcome.kind === 'invalid' || outcome.kind === 'ignored') {
-              controller.releaseUndecided({epoch: event.session_epoch, itemId})
+            } finally {
+              this.#endProjectConfirmationClose(event.session_epoch, itemId)
             }
           }
-          if (text !== null && text !== '') this.#queueProjectConfirmationFact(text)
-          this.#publishProjectView()
-        } finally {
-          this.#endProjectConfirmationClose(event.session_epoch, itemId)
         }
+        if (text !== null && text !== '') this.#queueProjectConfirmationFact(text)
+        this.#publishProjectView()
       }
       const item: HostContextItem = {
         kind: 'tool_output',

@@ -672,6 +672,116 @@ async def test_confirmation_function_replay_and_other_response_fail_closed() -> 
 
 
 @pytest.mark.asyncio
+async def test_stale_response_start_cannot_bind_current_confirmation_item() -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select", workspace_display_name="alpha", workspace_id="workspace-alpha",
+        session_title=None, session_id=None, work_order=None, origin_ref="conversation:1",
+    )
+    commits: list[object] = []
+
+    async def commit(operation: object, _origin_ref: str) -> ProjectCommitResult:
+        commits.append(operation)
+        return ProjectCommitResult(accepted=True, code="committed")
+
+    service, _provider, _runtime, _frames = make_service(
+        clock=clock, id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller, commit_project_operation=commit,
+    )
+    await service.connect()
+    await service.handle_event(UserSpeechStarted(
+        session_epoch=1, speech_id="speech-current", provider_item_id="user-current"
+    ))
+    await service.handle_event(ResponseStarted(
+        session_epoch=2, response_id="response-stale"
+    ))
+    await service.handle_event(UserTranscriptFinal(
+        session_epoch=1, item_id="user-current", text="确认"
+    ))
+    await service.handle_event(ToolCallReady(
+        session_epoch=1,
+        response_id="response-stale",
+        call_id="confirm-polluted",
+        item_id="function-polluted",
+        name="codex__confirm_project_action",
+        arguments={"proposal_id": "nonce", "confirmed": True},
+    ))
+
+    assert commits == []
+    assert controller.pending is True
+
+
+class _ProposalIdEqualityImpostor:
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_arguments",
+    [
+        {"proposal_id": "nonce", "confirmed": True, "extra": 1},
+        {"proposal_id": "nonce"},
+        {"proposal_id": "", "confirmed": True},
+        {"proposal_id": "p" * 129, "confirmed": True},
+        {"proposal_id": "nonce", "confirmed": 1},
+        {"proposal_id": _ProposalIdEqualityImpostor(), "confirmed": True},
+    ],
+    ids=["extra", "missing", "empty", "overlong", "integer-bool", "equality-impostor"],
+)
+async def test_malformed_confirmation_arguments_preserve_reservation(
+    invalid_arguments: dict[object, object],
+) -> None:
+    clock = VirtualClock()
+    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    controller.prepare(
+        action="select", workspace_display_name="alpha", workspace_id="workspace-alpha",
+        session_title=None, session_id=None, work_order=None, origin_ref="conversation:1",
+    )
+    commits: list[object] = []
+
+    async def commit(operation: object, _origin_ref: str) -> ProjectCommitResult:
+        commits.append(operation)
+        return ProjectCommitResult(accepted=True, code="committed")
+
+    service, provider, _runtime, _frames = make_service(
+        clock=clock, id_factory=lambda: f"host-{next(counter)}",
+        project_confirmation=controller, commit_project_operation=commit,
+    )
+    await service.connect()
+    await service.handle_event(UserSpeechStarted(
+        session_epoch=1, speech_id="speech-1", provider_item_id="user-1"
+    ))
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="response-1"))
+    await service.handle_event(UserTranscriptFinal(
+        session_epoch=1, item_id="user-1", text="确认"
+    ))
+    invalid = ToolCallReady(
+        session_epoch=1,
+        response_id="response-1",
+        call_id="confirm-invalid",
+        item_id="function-invalid",
+        name="codex__confirm_project_action",
+        arguments=invalid_arguments,  # type: ignore[arg-type]
+    )
+    await service.handle_event(invalid)
+    await service.handle_event(invalid)
+
+    assert commits == []
+    assert controller.pending is True
+    assert sum(item.call_id == "confirm-invalid" for item in provider.injected) == 1
+
+    await service.handle_event(replace(
+        invalid,
+        call_id="confirm-valid",
+        item_id="function-valid",
+        arguments={"proposal_id": "nonce", "confirmed": True},
+    ))
+    assert len(commits) == 1
+
+
+@pytest.mark.asyncio
 async def test_confirmation_terminal_without_function_releases_for_next_item() -> None:
     clock = VirtualClock()
     controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
