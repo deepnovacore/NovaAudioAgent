@@ -53,6 +53,7 @@ const EXPECTED_BUILD_SCRIPTS = [
   'scripts/require-release-signing.mjs',
   'scripts/verify-signed-candidate.mjs',
   'scripts/prepare-release-smoke-kit.mjs',
+  'scripts/release-smoke-certificate.mjs',
   'scripts/assemble-release-artifact-root.mjs',
   'scripts/inspect-package.mjs',
   'scripts/camera-file-integration.mjs',
