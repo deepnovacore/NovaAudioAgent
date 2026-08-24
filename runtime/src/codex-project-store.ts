@@ -133,6 +133,7 @@ export interface ProjectSessionRecord {
 
 export interface ProjectSnapshot {
   readonly version: 1
+  readonly active_binding_revision: number
   readonly active_workspace_id: string | null
   readonly workspaces: readonly WorkspaceRecord[]
   readonly sessions: readonly ProjectSessionRecord[]
@@ -150,6 +151,7 @@ export interface PublicProjectContext {
 }
 
 export interface SessionResumeRollback {
+  readonly activationRevision: number
   readonly previousActiveWorkspaceId: string | null
   readonly workspaceId: string
   readonly previousActiveSessionId: string | null
@@ -162,6 +164,7 @@ export interface PreparedSessionResume {
 }
 
 interface MutableProjectState {
+  activeBindingRevision: number
   activeWorkspaceId: string | null
   workspaces: Map<string, WorkspaceRecord>
   sessions: Map<string, ProjectSessionRecord>
@@ -343,6 +346,7 @@ export class CodexProjectStore {
           this.#pinWorkspaceIdentity(existing.workspace_id, approved.identity)
           if (state.activeWorkspaceId === null) {
             state.activeWorkspaceId = existing.workspace_id
+            bumpActiveBindingRevision(state)
             return [existing, true]
           }
           return [existing, false]
@@ -354,7 +358,10 @@ export class CodexProjectStore {
         this.#pinWorkspaceIdentity(record.workspace_id, binding.identity)
         createdPin.push({workspaceId: record.workspace_id, identity: binding.identity})
         state.workspaces.set(record.workspace_id, record)
-        state.activeWorkspaceId ??= record.workspace_id
+        if (state.activeWorkspaceId === null) {
+          state.activeWorkspaceId = record.workspace_id
+          bumpActiveBindingRevision(state)
+        }
         return [record, true]
       })
     } catch (error) {
@@ -383,7 +390,10 @@ export class CodexProjectStore {
         this.#pinWorkspaceIdentity(record.workspace_id, binding.identity)
         createdPin.push({workspaceId: record.workspace_id, identity: binding.identity})
         state.workspaces.set(record.workspace_id, record)
-        state.activeWorkspaceId ??= record.workspace_id
+        if (state.activeWorkspaceId === null) {
+          state.activeWorkspaceId = record.workspace_id
+          bumpActiveBindingRevision(state)
+        }
         return [record, true]
       })
     } catch (error) {
@@ -495,6 +505,7 @@ export class CodexProjectStore {
         this.#pinWorkspaceIdentity(workspaceId, createdIdentity)
         state.workspaces.set(workspaceId, record)
         state.activeWorkspaceId = workspaceId
+        bumpActiveBindingRevision(state)
         return [record, true]
       })
     } catch (error) {
@@ -552,6 +563,7 @@ export class CodexProjectStore {
         state.workspaces.delete(workspaceId)
         if (state.activeWorkspaceId === workspaceId) {
           state.activeWorkspaceId = mostRecentlyUsed(state.workspaces.values())?.workspace_id ?? null
+          bumpActiveBindingRevision(state)
         }
         return [true, true]
       }, options)
@@ -594,6 +606,7 @@ export class CodexProjectStore {
       const record = Object.freeze({...found, last_used_at: this.#stamp()})
       state.workspaces.set(record.workspace_id, record)
       state.activeWorkspaceId = record.workspace_id
+      bumpActiveBindingRevision(state)
       return [record, true]
     })
   }
@@ -616,6 +629,7 @@ export class CodexProjectStore {
       const record = Object.freeze({...found, last_used_at: this.#stamp()})
       state.workspaces.set(record.workspace_id, record)
       state.activeWorkspaceId = record.workspace_id
+      bumpActiveBindingRevision(state)
       return [record, true]
     })
   }
@@ -665,12 +679,8 @@ export class CodexProjectStore {
         session.state !== 'ready'
         || session.codex_thread_id !== expectedThread
       ) throw new ProjectStateError('session_unavailable')
-      const rollback: SessionResumeRollback = Object.freeze({
-        previousActiveWorkspaceId: state.activeWorkspaceId,
-        workspaceId,
-        previousActiveSessionId: workspace.active_session_id,
-        resumedSessionId: sessionId,
-      })
+      const previousActiveWorkspaceId = state.activeWorkspaceId
+      const previousActiveSessionId = workspace.active_session_id
       const binding = workspace.origin === 'managed'
         ? await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
         : await validateRegisteredWorkspace(workspace.canonical_path, 'workspace_boundary_changed')
@@ -683,6 +693,14 @@ export class CodexProjectStore {
         last_used_at: stamp,
       }))
       state.activeWorkspaceId = workspaceId
+      const activationRevision = bumpActiveBindingRevision(state)
+      const rollback: SessionResumeRollback = Object.freeze({
+        activationRevision,
+        previousActiveWorkspaceId,
+        workspaceId,
+        previousActiveSessionId,
+        resumedSessionId: sessionId,
+      })
       const {hostWorkspaceFromConfig} = await import('./codex-process-owner.js')
       return [Object.freeze({
         workspace: hostWorkspaceFromConfig(binding.canonical, [binding.canonical]),
@@ -700,6 +718,7 @@ export class CodexProjectStore {
       const workspace = state.workspaces.get(rollback.workspaceId)
       if (
         workspace === undefined
+        || state.activeBindingRevision !== rollback.activationRevision
         || state.activeWorkspaceId !== rollback.workspaceId
         || workspace.active_session_id !== rollback.resumedSessionId
       ) return [false, false]
@@ -716,6 +735,7 @@ export class CodexProjectStore {
         active_session_id: rollback.previousActiveSessionId,
       }))
       state.activeWorkspaceId = rollback.previousActiveWorkspaceId
+      bumpActiveBindingRevision(state)
       return [true, true]
     }, options)
   }
@@ -764,6 +784,7 @@ export class CodexProjectStore {
         last_used_at: stamp,
       }))
       state.activeWorkspaceId = workspaceId
+      bumpActiveBindingRevision(state)
       return [session, true]
     })
   }
@@ -785,6 +806,7 @@ export class CodexProjectStore {
           ...workspace,
           active_session_id: replacement?.session_id ?? null,
         }))
+        bumpActiveBindingRevision(state)
       }
       return [true, true]
     }, options)
@@ -832,6 +854,7 @@ export class CodexProjectStore {
           ...workspace,
           active_session_id: newestReadySession(state, workspace.workspace_id)?.session_id ?? null,
         }))
+        bumpActiveBindingRevision(state)
       }
       return [unavailable, true]
     }, options)
@@ -857,6 +880,7 @@ export class CodexProjectStore {
         last_used_at: stamp,
       }))
       state.activeWorkspaceId = workspaceId
+      bumpActiveBindingRevision(state)
       return [activated, true]
     })
   }
@@ -2022,12 +2046,18 @@ function isDirectChild(parent: string, child: string): boolean {
 }
 
 function emptyState(): MutableProjectState {
-  return {activeWorkspaceId: null, workspaces: new Map(), sessions: new Map()}
+  return {
+    activeBindingRevision: 0,
+    activeWorkspaceId: null,
+    workspaces: new Map(),
+    sessions: new Map(),
+  }
 }
 
 function snapshotState(state: MutableProjectState): ProjectSnapshot {
   return Object.freeze({
     version: PROJECT_STATE_VERSION,
+    active_binding_revision: state.activeBindingRevision,
     active_workspace_id: state.activeWorkspaceId,
     workspaces: Object.freeze([...state.workspaces.values()].sort(compareCreated)),
     sessions: Object.freeze([...state.sessions.values()].sort(compareCreated)),
@@ -2187,6 +2217,7 @@ function validateThreadId(value: unknown): string {
 function encodeState(state: MutableProjectState): Readonly<Record<string, unknown>> {
   return {
     version: PROJECT_STATE_VERSION,
+    active_binding_revision: state.activeBindingRevision,
     active_workspace_id: state.activeWorkspaceId,
     workspaces: Object.fromEntries([...state.workspaces].map(([key, value]) => [key, {...value}])),
     sessions: Object.fromEntries([...state.sessions].map(([key, value]) => [key, {...value}])),
@@ -2205,13 +2236,21 @@ function projectTimestampNumber(value: number, path: CanonicalJsonPath): string 
 }
 
 function decodeState(value: unknown): MutableProjectState {
-  const root = exactRecord(value, ['version', 'active_workspace_id', 'workspaces', 'sessions'])
+  const candidate = recordValue(value)
+  const root = Object.hasOwn(candidate, 'active_binding_revision')
+    ? exactRecord(candidate, [
+        'version', 'active_binding_revision', 'active_workspace_id', 'workspaces', 'sessions',
+      ])
+    : exactRecord(candidate, ['version', 'active_workspace_id', 'workspaces', 'sessions'])
   if (root.version !== PROJECT_STATE_VERSION) throw new ProjectStateError('state_version_unsupported')
   const rawWorkspaces = recordValue(root.workspaces)
   const rawSessions = recordValue(root.sessions)
   if (Object.keys(rawWorkspaces).length > MAX_PROJECT_WORKSPACES) throw new ProjectStateError('state_corrupt')
   if (Object.keys(rawSessions).length > MAX_PROJECT_SESSIONS_TOTAL) throw new ProjectStateError('state_corrupt')
   const state = emptyState()
+  state.activeBindingRevision = Object.hasOwn(root, 'active_binding_revision')
+    ? activeBindingRevision(root.active_binding_revision)
+    : 0
   for (const [key, raw] of Object.entries(rawWorkspaces)) {
     const workspace = decodeWorkspace(raw)
     if (key !== workspace.workspace_id || state.workspaces.has(key)) throw new ProjectStateError('state_corrupt')
@@ -2291,6 +2330,7 @@ function decodeSession(value: unknown): ProjectSessionRecord {
 }
 
 function validateState(state: MutableProjectState): void {
+  activeBindingRevision(state.activeBindingRevision)
   if (state.workspaces.size > MAX_PROJECT_WORKSPACES || state.sessions.size > MAX_PROJECT_SESSIONS_TOTAL) {
     throw new ProjectStateError('state_corrupt')
   }
@@ -2340,6 +2380,22 @@ function recordValue(value: unknown): Readonly<Record<string, unknown>> {
 function storedId(value: unknown): string {
   if (typeof value !== 'string' || !STORED_ID.test(value)) throw new ProjectStateError('state_corrupt')
   return value
+}
+
+function activeBindingRevision(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new ProjectStateError('state_corrupt')
+  }
+  return value
+}
+
+function bumpActiveBindingRevision(state: MutableProjectState): number {
+  if (!Number.isSafeInteger(state.activeBindingRevision) || state.activeBindingRevision < 0
+    || state.activeBindingRevision >= Number.MAX_SAFE_INTEGER) {
+    throw new ProjectStateError('state_corrupt')
+  }
+  state.activeBindingRevision += 1
+  return state.activeBindingRevision
 }
 
 function timestamp(value: unknown): number {

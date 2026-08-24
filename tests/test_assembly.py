@@ -37,7 +37,11 @@ from nova_audio_agent.executors.codex_projects import (
 )
 from nova_audio_agent.executors.watcher import WatchAdapter
 from nova_audio_agent.ports import Delegate, SurrogateOutput
-from nova_audio_agent.realtime.protocol import SessionIdentity
+from nova_audio_agent.realtime.protocol import (
+    SessionIdentity,
+    WorkspaceContextDelivery,
+    WorkspaceContextDeliveryRecord,
+)
 from nova_audio_agent.tool_schema import CompiledTools
 from nova_audio_agent.trace import TraceWriter
 
@@ -88,6 +92,103 @@ def test_realtime_assembly_factory_selects_configured_provider(
 
 def test_qwen_realtime_assembly_remains_compatible_alias() -> None:
     assert QwenRealtimeAssembly is RealtimeAssembly
+
+
+@pytest.mark.asyncio
+async def test_project_context_publisher_forces_restoration_after_uncertain_proof() -> None:
+    class Provider:
+        def __init__(self) -> None:
+            self.mode = "exact"
+            self.items: list[object] = []
+            self.current: object | None = None
+            self.provider_item_id: str | None = None
+
+        async def inject_workspace_context(self, item: object) -> object:
+            self.items.append(item)
+            if self.mode == "reject":
+                raise RuntimeError("provider rejected replacement")
+            prior = self.provider_item_id
+            self.provider_item_id = f"provider-{len(self.items)}"
+            self.current = item
+            delivery = WorkspaceContextDelivery(
+                capability="replace_provider_item",
+                delivered=True,
+                session_epoch=item.session_epoch,  # type: ignore[attr-defined]
+                workspace_instance_id=item.workspace_instance_id,  # type: ignore[attr-defined]
+                revision=item.revision,  # type: ignore[attr-defined]
+                prior_provider_item_id=prior,
+                provider_item_id=self.provider_item_id,
+                superseded_provider_item_id=prior,
+            )
+            proof: object = WorkspaceContextDeliveryRecord(item=item, delivery=delivery)  # type: ignore[arg-type]
+            if self.mode == "mismatch":
+                proof = SimpleNamespace(
+                    item=item,
+                    as_user_activation=False,
+                    delivery=SimpleNamespace(
+                        capability=delivery.capability,
+                        delivered=delivery.delivered,
+                        session_epoch=delivery.session_epoch,
+                        workspace_instance_id=delivery.workspace_instance_id,
+                        revision=delivery.revision + 1,
+                        prior_provider_item_id=delivery.prior_provider_item_id,
+                        provider_item_id=delivery.provider_item_id,
+                        superseded_provider_item_id=delivery.superseded_provider_item_id,
+                        refresh_id=delivery.refresh_id,
+                    ),
+                )
+            elif self.mode == "timeout":
+                raise TimeoutError("provider proof timeout")
+            return proof
+
+    identifiers = iter(f"uncertain-{index}" for index in range(100))
+    provider = Provider()
+    publisher = assembly_module._ProjectContextPublisher(
+        provider=provider,  # type: ignore[arg-type]
+        id_factory=lambda: next(identifiers),
+    )
+    stable = PublicProjectView("alpha", None, False)
+    await publisher.connected(SessionIdentity(1, "provider-session"))
+    await publisher.update_and_publish("workspace-alpha", stable)
+
+    provider.mode = "mismatch"
+    with pytest.raises(ValueError, match="delivery identity mismatch"):
+        await publisher.update_and_publish(
+            "workspace-alpha", PublicProjectView("alpha", "Mismatched proof", False)
+        )
+    mismatched = provider.current
+    assert mismatched is not None
+
+    provider.mode = "exact"
+    await publisher.update_and_publish("workspace-alpha", stable)
+    assert provider.current != mismatched
+    assert provider.current.content == provider.items[0].content  # type: ignore[union-attr]
+    assert provider.current.revision > mismatched.revision  # type: ignore[union-attr]
+
+    provider.mode = "timeout"
+    with pytest.raises(TimeoutError, match="proof timeout"):
+        await publisher.update_and_publish(
+            "workspace-alpha", PublicProjectView("alpha", "Timed out proof", False)
+        )
+    timed_out = provider.current
+    assert timed_out is not None
+    provider.mode = "exact"
+    await publisher.update_and_publish("workspace-alpha", stable)
+    assert provider.current.revision > timed_out.revision  # type: ignore[union-attr]
+
+    provider.mode = "mismatch"
+    with pytest.raises(ValueError, match="delivery identity mismatch"):
+        await publisher.update_and_publish(
+            "workspace-alpha", PublicProjectView("alpha", "Rejected recovery", False)
+        )
+    uncertain = provider.current
+    provider.mode = "reject"
+    with pytest.raises(RuntimeError, match="rejected replacement"):
+        await publisher.update_and_publish("workspace-alpha", stable)
+    assert provider.current == uncertain
+    provider.mode = "exact"
+    await publisher.update_and_publish("workspace-alpha", stable)
+    assert provider.current != uncertain
 
 
 def test_volcengine_realtime_assembly_wires_native_provider(

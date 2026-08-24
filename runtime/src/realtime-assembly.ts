@@ -139,6 +139,7 @@ export class RealtimeAssembly {
   #latestProjectView: ProjectConfirmationView | null = null
   #projectContextRevision = 0
   #lastProjectContextKey: string | null = null
+  #projectContextOwnershipUncertain = false
   #providerConnectionObserved = false
   #projectContextTail: Promise<void> = Promise.resolve()
   readonly #workspaceInstancesByHostId = new Map<string, string>()
@@ -628,19 +629,26 @@ export class RealtimeAssembly {
       workspace_instance_id: hostWorkspaceId,
       content,
     })
-    if (contextKey === this.#lastProjectContextKey) return
+    if (!this.#projectContextOwnershipUncertain && contextKey === this.#lastProjectContextKey) return
     this.#projectContextRevision += 1
-    await this.providerSession.injectWorkspaceContext({
-      kind: 'workspace_context',
-      host_item_id: this.#idFactory(),
-      event_id: this.#idFactory(),
-      content,
-      call_id: null,
-      session_epoch: identity.epoch,
-      workspace_instance_id: hostWorkspaceId,
-      revision: this.#projectContextRevision,
-    })
+    try {
+      await this.providerSession.injectWorkspaceContext({
+        kind: 'workspace_context',
+        host_item_id: this.#idFactory(),
+        event_id: this.#idFactory(),
+        content,
+        call_id: null,
+        session_epoch: identity.epoch,
+        workspace_instance_id: hostWorkspaceId,
+        revision: this.#projectContextRevision,
+      })
+    } catch (error) {
+      this.#projectContextOwnershipUncertain = true
+      this.#lastProjectContextKey = null
+      throw error
+    }
     this.#lastProjectContextKey = contextKey
+    this.#projectContextOwnershipUncertain = false
   }
 
   #diagnose(code: string): void {

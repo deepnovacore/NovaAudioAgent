@@ -278,6 +278,8 @@ class AbortAwareProvider implements RealtimeProvider {
 class WorkspaceContextProvider extends AbortAwareProvider {
   readonly workspaceItems: HostContextItem[] = []
   workspaceContextStep: (() => Promise<void>) | null = null
+  workspaceContextProofStep: ((item: HostContextItem, proof: unknown) => Promise<unknown>) | null = null
+  currentWorkspaceItem: HostContextItem | null = null
   #providerItemId: string | null = null
 
   async injectWorkspaceContext(
@@ -291,7 +293,8 @@ class WorkspaceContextProvider extends AbortAwareProvider {
     const priorProviderItemId = this.#providerItemId
     const providerItemId = `provider-${item.host_item_id}`
     this.#providerItemId = providerItemId
-    return {
+    this.currentWorkspaceItem = structuredClone(item)
+    const proof = {
       item,
       asUserActivation: false,
       delivery: {
@@ -305,10 +308,12 @@ class WorkspaceContextProvider extends AbortAwareProvider {
         superseded_provider_item_id: priorProviderItemId,
       },
     }
+    return await (this.workspaceContextProofStep?.(item, proof) ?? Promise.resolve(proof))
   }
 
   override async close(): Promise<void> {
     this.#providerItemId = null
+    this.currentWorkspaceItem = null
     await super.close()
   }
 }
@@ -988,9 +993,58 @@ test('active project views replace one provider context without publishing histo
     assert.equal(epochTwo[0]?.revision, 4)
     assert.equal(epochTwo[0]?.content.includes('>alpha<'), false)
 
-    view = Object.freeze({...view, session_title: 'Rejected context'})
-    provider.workspaceContextStep = () => Promise.reject(new Error('provider proof failed'))
+    const stable = view
+    view = Object.freeze({...view, session_title: 'Mismatched proof'})
+    provider.workspaceContextProofStep = async (_item, proof) => {
+      const candidate = structuredClone(proof) as {
+        delivery: {revision: number}
+      }
+      candidate.delivery.revision += 1
+      return await Promise.resolve(candidate)
+    }
     await assert.rejects(publishAtomicContext(), /workspace context injection failed/u)
+    assert.equal(provider.currentWorkspaceItem?.content.includes('Mismatched proof'), true)
+    const mismatchedRevision = provider.currentWorkspaceItem?.revision
+
+    provider.workspaceContextProofStep = null
+    view = stable
+    await publishAtomicContext()
+    assert.equal(provider.currentWorkspaceItem?.content.includes('Mismatched proof'), false)
+    assert.equal(provider.currentWorkspaceItem?.content, epochTwo[0]?.content)
+    assert.ok((provider.currentWorkspaceItem?.revision ?? 0) > (mismatchedRevision ?? 0))
+
+    view = Object.freeze({...stable, session_title: 'Timed out proof'})
+    provider.workspaceContextProofStep = () => Promise.reject(new Error('provider proof timeout'))
+    await assert.rejects(publishAtomicContext(), /workspace context injection failed/u)
+    assert.equal(provider.currentWorkspaceItem?.content.includes('Timed out proof'), true)
+    const timedOutRevision = provider.currentWorkspaceItem?.revision
+
+    provider.workspaceContextProofStep = null
+    view = stable
+    await publishAtomicContext()
+    assert.equal(provider.currentWorkspaceItem?.content, epochTwo[0]?.content)
+    assert.ok((provider.currentWorkspaceItem?.revision ?? 0) > (timedOutRevision ?? 0))
+
+    view = Object.freeze({...stable, session_title: 'Rejected recovery'})
+    provider.workspaceContextProofStep = async (_item, proof) => {
+      const candidate = structuredClone(proof) as {
+        delivery: {workspace_instance_id: string}
+      }
+      candidate.delivery.workspace_instance_id = 'wrong-workspace'
+      return await Promise.resolve(candidate)
+    }
+    await assert.rejects(publishAtomicContext(), /workspace context injection failed/u)
+    assert.equal(provider.currentWorkspaceItem?.content.includes('Rejected recovery'), true)
+
+    provider.workspaceContextProofStep = null
+    provider.workspaceContextStep = () => Promise.reject(new Error('provider rejected replacement'))
+    view = stable
+    await assert.rejects(publishAtomicContext(), /workspace context injection failed/u)
+    assert.equal(provider.currentWorkspaceItem?.content.includes('Rejected recovery'), true)
+
+    provider.workspaceContextStep = null
+    await publishAtomicContext()
+    assert.equal(provider.currentWorkspaceItem?.content, epochTwo[0]?.content)
   } finally {
     await realtime.stop()
   }

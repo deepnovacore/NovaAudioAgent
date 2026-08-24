@@ -212,6 +212,7 @@ class _ProjectContextPublisher:
         self._epoch = 0
         self._revision = 0
         self._last_key: tuple[int, str, str] | None = None
+        self._ownership_uncertain = False
         self._lock = asyncio.Lock()
 
     def update(self, workspace_id: str | None, view: PublicProjectView) -> None:
@@ -235,7 +236,7 @@ class _ProjectContextPublisher:
             assert workspace_id is not None
             content = render_active_project_context(view.workspace_display_name, view.session_title)
             key = (self._epoch, workspace_id, content)
-            if key == self._last_key:
+            if not self._ownership_uncertain and key == self._last_key:
                 return
             self._revision += 1
             item = HostContextItem.workspace_context(
@@ -246,16 +247,22 @@ class _ProjectContextPublisher:
                 workspace_instance_id=workspace_id,
                 revision=self._revision,
             )
-            record = await self._provider.inject_workspace_context(item)  # type: ignore[attr-defined]
-            if (
-                record.item != item
-                or record.delivery.delivered is not True
-                or record.delivery.session_epoch != self._epoch
-                or record.delivery.workspace_instance_id != workspace_id
-                or record.delivery.revision != self._revision
-            ):
-                raise ValueError("workspace context delivery identity mismatch")
+            try:
+                record = await self._provider.inject_workspace_context(item)  # type: ignore[attr-defined]
+                if (
+                    record.item != item
+                    or record.delivery.delivered is not True
+                    or record.delivery.session_epoch != self._epoch
+                    or record.delivery.workspace_instance_id != workspace_id
+                    or record.delivery.revision != self._revision
+                ):
+                    raise ValueError("workspace context delivery identity mismatch")
+            except BaseException:
+                self._ownership_uncertain = True
+                self._last_key = None
+                raise
             self._last_key = key
+            self._ownership_uncertain = False
 
 
 # Compatibility for callers that imported the original provider-specific name.

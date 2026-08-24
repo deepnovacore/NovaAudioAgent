@@ -1492,8 +1492,15 @@ test('registry no-follow, owner mode, byte cap, strict decode, and corrupt-byte 
     const exactLimit = await CodexProjectStore.open(options)
     try {
       assert.deepEqual(await exactLimit.snapshot(), {
-        version: 1, active_workspace_id: null, workspaces: [], sessions: [],
+        version: 1, active_binding_revision: 0,
+        active_workspace_id: null, workspaces: [], sessions: [],
       })
+      await exactLimit.createManaged('migrated')
+      const migrated = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>
+      assert.equal(migrated.active_binding_revision, 1)
+      assert.deepEqual(Object.keys(migrated).sort(), [
+        'active_binding_revision', 'active_workspace_id', 'sessions', 'version', 'workspaces',
+      ])
     } finally {
       await exactLimit.close()
     }
@@ -2495,6 +2502,9 @@ test('project state reloads under a descriptor lock and persists ready sessions 
 
     second = await CodexProjectStore.open(options)
     const snapshot = await second.snapshot()
+    assert.ok(Number(
+      (snapshot as unknown as {active_binding_revision?: unknown}).active_binding_revision,
+    ) > 0)
     assert.equal(snapshot.active_workspace_id, workspace.workspace_id)
     assert.equal(snapshot.sessions[0]?.codex_thread_id, 'thread-exact-1')
     assert.equal(JSON.stringify(snapshot).includes(workspacePath), true)
@@ -2503,8 +2513,13 @@ test('project state reloads under a descriptor lock and persists ready sessions 
     assert.equal(publicJson.includes('thread-exact-1'), false)
     const state = JSON.parse(await readFile(join(stateRoot, 'codex-projects-v1.json'), 'utf8')) as {
       version: number
+      active_binding_revision?: number
     }
     assert.equal(state.version, 1)
+    assert.equal(
+      state.active_binding_revision,
+      (snapshot as unknown as {active_binding_revision: number}).active_binding_revision,
+    )
   } finally {
     await first?.close()
     await second?.close()

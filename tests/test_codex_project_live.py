@@ -1328,6 +1328,96 @@ async def test_critical_resume_failure_restores_previous_active_workspace_before
 
 
 @pytest.mark.asyncio
+async def test_same_id_resume_revision_prevents_older_failed_publication_aba_rollback(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    alpha = store.create_managed("alpha")
+    existing = store.begin_session(alpha.workspace_id, "Existing")
+    existing = store.mark_session_ready(existing.session_id, "thread-existing")
+    other = store.begin_session(alpha.workspace_id, "Other")
+    store.mark_session_ready(other.session_id, "thread-other")
+    store.create_managed("beta")
+    confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    factory = _ProjectFactory()
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=confirmation,
+        worker_factory=factory,
+    )
+    observed: list[tuple[str | None, str | None]] = []
+    race_injected = False
+
+    async def critical(workspace_id: str | None, view: PublicProjectView) -> None:
+        nonlocal race_injected
+        observed.append((workspace_id, view.session_title))
+        if not race_injected and view.session_title == "Existing":
+            race_injected = True
+            store.activate_session_for_resume(alpha.workspace_id, existing.session_id)
+            raise RuntimeError("older provider proof failed after same-id resume")
+
+    unsubscribe = adapter.observe_project_context(critical)
+    proposal = confirmation.prepare(
+        action="resume",
+        workspace_display_name="alpha",
+        workspace_id=alpha.workspace_id,
+        session_title=existing.display_title,
+        session_id=existing.session_id,
+        work_order="must not reach worker",
+        origin_ref="conversation:2",
+    )
+    assert confirmation.reserve_user_item(epoch=1, item_id="confirm-resume-aba")
+    confirmed = confirmation.accept_decision(
+        epoch=1,
+        item_id="confirm-resume-aba",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
+    assert confirmed.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="resume-aba")
+
+    assert (
+        await adapter.commit_confirmed(
+            confirmed.operation,
+            origin_ref="conversation:2",
+            runtime_dispatch=dispatch,
+        )
+    ).accepted
+    try:
+        result = await adapter.dispatch(
+            "project",
+            {"action": "execute_confirmed"},
+            _context(
+                clock,
+                origin_ref="conversation:2",
+                delegate_id="resume-aba",
+                private=dispatched[0][0].private,
+            ),
+        )
+    finally:
+        unsubscribe()
+
+    assert result.content == {"op": "run", "error": "context_delivery_failed"}
+    assert factory.calls == []
+    assert store.snapshot().active_workspace_id == alpha.workspace_id
+    assert store.resolve_workspace("alpha").active_session_id == existing.session_id
+    assert observed == [
+        (alpha.workspace_id, "Existing"),
+        (alpha.workspace_id, "Existing"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_critical_confirmed_create_failure_republishes_prior_state(
     tmp_path: Path,
 ) -> None:
@@ -1399,6 +1489,86 @@ async def test_critical_confirmed_create_failure_republishes_prior_state(
 
     assert result.content == {"op": "run", "error": "context_delivery_failed"}
     assert factory.calls == []
+    assert [item.display_name for item in store.list_workspaces()] == ["alpha"]
+    assert store.snapshot().active_workspace_id == alpha.workspace_id
+    assert observed[-1] == (alpha.workspace_id, "alpha")
+
+
+@pytest.mark.asyncio
+async def test_confirmed_create_restoration_failure_overrides_worker_setup_failure(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    alpha = store.create_managed("alpha")
+    confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    factory_calls = 0
+
+    def failed_factory(*_args: object) -> object:
+        nonlocal factory_calls
+        factory_calls += 1
+        raise RuntimeError("worker setup failed")
+
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=confirmation,
+        worker_factory=failed_factory,  # type: ignore[arg-type]
+    )
+    observed: list[tuple[str | None, str | None]] = []
+
+    async def critical(workspace_id: str | None, view: PublicProjectView) -> None:
+        observed.append((workspace_id, view.workspace_display_name))
+        if view.workspace_display_name == "alpha" and factory_calls > 0:
+            raise RuntimeError("provider rejected restored context")
+
+    unsubscribe = adapter.observe_project_context(critical)
+    proposal = await adapter.dispatch(
+        "project",
+        {"action": "create_workspace", "workspace": "beta", "work_order": "must stay fenced"},
+        _context(clock, origin_ref="conversation:2"),
+    )
+    assert confirmation.reserve_user_item(epoch=1, item_id="confirm-create-recovery")
+    confirmed = confirmation.accept_decision(
+        epoch=1,
+        item_id="confirm-create-recovery",
+        proposal_id=proposal.content["proposal_id"],
+        confirmed=True,
+    )
+    assert confirmed.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="create-recovery")
+
+    assert (
+        await adapter.commit_confirmed(
+            confirmed.operation,
+            origin_ref="conversation:2",
+            runtime_dispatch=dispatch,
+        )
+    ).accepted
+    try:
+        result = await adapter.dispatch(
+            "project",
+            {"action": "execute_confirmed"},
+            _context(
+                clock,
+                origin_ref="conversation:2",
+                delegate_id="create-recovery",
+                private=dispatched[0][0].private,
+            ),
+        )
+    finally:
+        unsubscribe()
+
+    assert result.content == {"op": "run", "error": "context_delivery_failed"}
+    assert factory_calls == 1
     assert [item.display_name for item in store.list_workspaces()] == ["alpha"]
     assert store.snapshot().active_workspace_id == alpha.workspace_id
     assert observed[-1] == (alpha.workspace_id, "alpha")

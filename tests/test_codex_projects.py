@@ -64,10 +64,37 @@ def test_first_enable_imports_configured_workspace_once_and_restores_active_stat
     second = store.ensure_imported("existing", workspace)
 
     assert first.workspace_id == second.workspace_id
-    assert store.snapshot().active_workspace_id == first.workspace_id
+    snapshot = store.snapshot()
+    assert snapshot.active_workspace_id == first.workspace_id
+    assert snapshot.active_binding_revision > 0
     payload = json.loads((tmp_path / "state" / "codex-projects-v1.json").read_text())
     assert payload["version"] == 1
+    assert payload["active_binding_revision"] == snapshot.active_binding_revision
     assert len(payload["workspaces"]) == 1
+
+
+def test_legacy_exact_v1_gains_revision_on_next_active_binding_mutation(
+    tmp_path: Path,
+) -> None:
+    state_root = tmp_path / "state"
+    state_root.mkdir(mode=0o700)
+    state_path = state_root / "codex-projects-v1.json"
+    state_path.write_text('{"version":1,"active_workspace_id":null,"workspaces":{},"sessions":{}}')
+    state_path.chmod(0o600)
+    store = _store(tmp_path)
+
+    assert store.snapshot().active_binding_revision == 0
+    store.create_managed("migrated")
+
+    migrated = json.loads(state_path.read_text())
+    assert migrated["active_binding_revision"] == 1
+    assert set(migrated) == {
+        "version",
+        "active_binding_revision",
+        "active_workspace_id",
+        "workspaces",
+        "sessions",
+    }
 
 
 def test_new_configured_checkout_is_registered_without_replacing_active_workspace(

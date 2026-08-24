@@ -47,6 +47,7 @@ The durable hierarchy remains:
 
 ```text
 Project store
+├── active_binding_revision
 ├── active_workspace_id
 ├── Workspace
 │   ├── canonical filesystem path
@@ -257,6 +258,9 @@ NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
 
 - Existing `codex-projects-v1.json`, workspace IDs, Session IDs, and Codex homes
   remain valid; no state-file version migration is required.
+- Active workspace/Session binding mutations persist a monotonic
+  `active_binding_revision`. Legacy exact-v1 files without that field load at revision
+  zero and gain the field on their next binding mutation.
 - Legacy `codex-workspaces` to `codex-homes` migration remains intact.
 - Existing managed workspace directories are not renamed or moved.
 - The removed environment toggle is no longer documented or emitted in config
@@ -284,4 +288,3 @@ Tests must prove:
   workspace/Session/thread binding.
 - Configuration, TypeScript/Python parity fixtures, documentation, and packaged
   client startup all pass without the project-mode toggle.
-

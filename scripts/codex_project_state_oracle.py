@@ -57,6 +57,7 @@ def _state(*, recovered: bool) -> codex_projects._State:
         active_workspace_id=workspace_id,
         workspaces={workspace_id: workspace},
         sessions={session_id: session},
+        active_binding_revision=7,
     )
 
 

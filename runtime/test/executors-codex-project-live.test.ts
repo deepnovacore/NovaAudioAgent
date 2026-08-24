@@ -1138,6 +1138,36 @@ test('critical provider publication failure rolls back before transport while UI
     }
   })
 
+test('failed restored publication overrides transport setup failure and keeps the run fenced',
+  async () => {
+    const value = await fixture()
+    value.factory.createFailure = new Error('transport setup failed')
+    const critical: (string | null)[] = []
+    const unsubscribe = observeCriticalProjectContext(value.adapter, contextValue => {
+      critical.push(contextValue.view.session_title)
+      if (contextValue.view.session_title === null) {
+        throw new Error('provider rejected restored context')
+      }
+    })
+    try {
+      const result = await value.adapter.dispatch(
+        'project',
+        {action: 'start_session', work_order: 'must remain fenced'},
+        context('project', {}, value.clock),
+      )
+
+      assert.deepEqual(result.content, {error: 'context_delivery_failed', op: 'run'})
+      assert.equal(value.factory.calls.length, 0)
+      assert.deepEqual(critical, ['任务 1', null])
+      const active = await value.store.resolveWorkspace(null)
+      assert.deepEqual(await value.store.listSessions(active), [])
+    } finally {
+      unsubscribe()
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
+
 test('critical resume publication failure restores the previously active workspace before transport',
   async () => {
     const value = await fixture({preexistingSession: true})
@@ -1200,6 +1230,82 @@ test('critical resume publication failure restores the previously active workspa
       assert.deepEqual(critical, [
         {workspace: 'alpha', session: 'Existing'},
         {workspace: 'beta', session: null},
+      ])
+    } finally {
+      unsubscribe()
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
+
+test('same-id concurrent resume revision prevents an older failed publication from ABA rollback',
+  async () => {
+    const value = await fixture({preexistingSession: true})
+    const alpha = await value.store.resolveWorkspace('alpha')
+    const existing = await value.store.resolveSession(alpha.workspace_id, 'Existing')
+    const other = await value.store.beginSession(alpha.workspace_id, 'Other')
+    await value.store.markSessionReady(other.session_id, 'thread-other')
+    await value.store.createManaged('beta')
+    const critical: {readonly workspace: string | null; readonly session: string | null}[] = []
+    let raceInjected = false
+    const unsubscribe = observeCriticalProjectContext(value.adapter, async contextValue => {
+      critical.push({
+        workspace: contextValue.view.workspace_display_name,
+        session: contextValue.view.session_title,
+      })
+      if (!raceInjected && contextValue.view.session_title === 'Existing') {
+        raceInjected = true
+        await value.store.prepareSessionResumeForRun(
+          alpha.workspace_id,
+          existing.session_id,
+          existing.codex_thread_id ?? '',
+        )
+        throw new Error('older provider proof failed after same-id resume')
+      }
+    })
+    try {
+      const proposed = await value.adapter.dispatch(
+        'project',
+        {
+          action: 'resume_session', workspace: 'alpha', session: 'Existing',
+          work_order: 'must not reach transport',
+        },
+        context('project', {}, value.clock),
+      )
+      value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-resume-aba'})
+      const confirmed = value.confirmation.acceptDecision({
+        epoch: 1,
+        itemId: 'confirm-resume-aba',
+        proposalId: proposalId(proposed.content),
+        confirmed: true,
+      })
+      assert.ok(confirmed.operation)
+      assert.equal((await value.adapter.commitConfirmed(
+        confirmed.operation,
+        'conversation:2',
+        () => ({accepted: true, delegate_id: 'delegate-resume-aba'}),
+      )).accepted, true)
+
+      const result = await value.adapter.dispatch(
+        'project',
+        {action: 'execute_confirmed'},
+        context('project', {action: 'execute_confirmed'}, value.clock, {
+          private: confirmed.operation,
+          delegateId: 'delegate-resume-aba',
+          originRef: 'conversation:2',
+        }),
+      )
+
+      assert.deepEqual(result.content, {error: 'context_delivery_failed', op: 'run'})
+      assert.equal(value.factory.calls.length, 0)
+      assert.equal((await value.store.resolveWorkspace(null)).workspace_id, alpha.workspace_id)
+      assert.equal(
+        (await value.store.resolveWorkspace('alpha')).active_session_id,
+        existing.session_id,
+      )
+      assert.deepEqual(critical, [
+        {workspace: 'alpha', session: 'Existing'},
+        {workspace: 'alpha', session: 'Existing'},
       ])
     } finally {
       unsubscribe()

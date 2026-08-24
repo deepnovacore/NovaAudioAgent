@@ -35,6 +35,7 @@ MAX_SESSION_TITLE = 120
 MAX_WORKSPACES = 100
 MAX_SESSIONS_PER_WORKSPACE = 200
 MAX_SESSIONS_TOTAL = 1000
+MAX_ACTIVE_BINDING_REVISION = 2**53 - 1
 _ID = re.compile(r"[A-Za-z0-9_-]{8,80}\Z")
 _DRIVE = re.compile(r"[A-Za-z]:")
 _DEFAULT_SESSION_TITLE = re.compile(r"任务 ([1-9][0-9]*)\Z")
@@ -76,6 +77,7 @@ class ProjectSessionRecord:
 
 @dataclass(frozen=True, slots=True)
 class SessionResumeRollback:
+    activation_revision: int
     previous_active_workspace_id: str | None
     workspace_id: str
     previous_active_session_id: str | None
@@ -85,6 +87,7 @@ class SessionResumeRollback:
 @dataclass(frozen=True, slots=True)
 class ProjectSnapshot:
     version: int
+    active_binding_revision: int
     active_workspace_id: str | None
     workspaces: tuple[WorkspaceRecord, ...]
     sessions: tuple[ProjectSessionRecord, ...]
@@ -102,6 +105,7 @@ class _State:
     active_workspace_id: str | None
     workspaces: dict[str, WorkspaceRecord]
     sessions: dict[str, ProjectSessionRecord]
+    active_binding_revision: int = 0
 
 
 class CodexProjectStore:
@@ -168,6 +172,7 @@ class CodexProjectStore:
                 if record.canonical_path == str(canonical):
                     if state.active_workspace_id is None:
                         state.active_workspace_id = record.workspace_id
+                        _bump_active_binding_revision(state)
                         return record, True
                     return record, False
             self._require_workspace_capacity(state)
@@ -182,6 +187,7 @@ class CodexProjectStore:
             state.workspaces[record.workspace_id] = record
             if state.active_workspace_id is None:
                 state.active_workspace_id = record.workspace_id
+                _bump_active_binding_revision(state)
             return record, True
 
         return self._transaction(update)
@@ -294,6 +300,7 @@ class CodexProjectStore:
             )
             state.workspaces[workspace_id] = record
             state.active_workspace_id = workspace_id
+            _bump_active_binding_revision(state)
             return record, True
 
         try:
@@ -347,6 +354,7 @@ class CodexProjectStore:
                 state.active_workspace_id = (
                     None if replacement is None else replacement.workspace_id
                 )
+                _bump_active_binding_revision(state)
             return True, True
 
         try:
@@ -377,6 +385,7 @@ class CodexProjectStore:
             state.workspaces[record.workspace_id] = record
             if state.active_workspace_id is None:
                 state.active_workspace_id = record.workspace_id
+                _bump_active_binding_revision(state)
             return record, True
 
         return self._transaction(update)
@@ -394,9 +403,9 @@ class CodexProjectStore:
             stamp = self._stamp()
             record = replace(record, last_used_at=stamp)
             state.workspaces[record.workspace_id] = record
-            changed = state.active_workspace_id != record.workspace_id
             state.active_workspace_id = record.workspace_id
-            return record, changed or True
+            _bump_active_binding_revision(state)
+            return record, True
 
         return self._transaction(update)
 
@@ -417,6 +426,7 @@ class CodexProjectStore:
             record = replace(found, last_used_at=self._stamp())
             state.workspaces[workspace_id] = record
             state.active_workspace_id = workspace_id
+            _bump_active_binding_revision(state)
             return record, True
 
         return self._transaction(update)
@@ -475,6 +485,7 @@ class CodexProjectStore:
                 last_used_at=stamp,
             )
             state.active_workspace_id = workspace_id
+            _bump_active_binding_revision(state)
             return session, True
 
         return self._transaction(update)
@@ -504,6 +515,7 @@ class CodexProjectStore:
                     workspace,
                     active_session_id=None if replacement is None else replacement.session_id,
                 )
+                _bump_active_binding_revision(state)
             return True, True
 
         return self._transaction(update, wait=wait)
@@ -562,6 +574,7 @@ class CodexProjectStore:
                     workspace,
                     active_session_id=None if replacement is None else replacement.session_id,
                 )
+                _bump_active_binding_revision(state)
                 changed = True
             return unavailable, changed
 
@@ -592,12 +605,8 @@ class CodexProjectStore:
                 raise ProjectStateError("session_workspace_mismatch")
             if session.state != "ready" or session.codex_thread_id is None:
                 raise ProjectStateError("session_unavailable")
-            rollback = SessionResumeRollback(
-                previous_active_workspace_id=state.active_workspace_id,
-                workspace_id=workspace_id,
-                previous_active_session_id=workspace.active_session_id,
-                resumed_session_id=session_id,
-            )
+            previous_active_workspace_id = state.active_workspace_id
+            previous_active_session_id = workspace.active_session_id
             stamp = self._stamp()
             state.workspaces[workspace_id] = replace(
                 workspace,
@@ -607,6 +616,14 @@ class CodexProjectStore:
             session = replace(session, last_used_at=stamp)
             state.sessions[session_id] = session
             state.active_workspace_id = workspace_id
+            activation_revision = _bump_active_binding_revision(state)
+            rollback = SessionResumeRollback(
+                activation_revision=activation_revision,
+                previous_active_workspace_id=previous_active_workspace_id,
+                workspace_id=workspace_id,
+                previous_active_session_id=previous_active_session_id,
+                resumed_session_id=session_id,
+            )
             return (session, rollback), True
 
         return self._transaction(update)
@@ -623,6 +640,7 @@ class CodexProjectStore:
             workspace = state.workspaces.get(rollback.workspace_id)
             if (
                 workspace is None
+                or state.active_binding_revision != rollback.activation_revision
                 or state.active_workspace_id != rollback.workspace_id
                 or workspace.active_session_id != rollback.resumed_session_id
             ):
@@ -644,6 +662,7 @@ class CodexProjectStore:
                 active_session_id=rollback.previous_active_session_id,
             )
             state.active_workspace_id = rollback.previous_active_workspace_id
+            _bump_active_binding_revision(state)
             return True, True
 
         return self._transaction(update, wait=wait)
@@ -1034,6 +1053,7 @@ def _snapshot(state: _State) -> ProjectSnapshot:
     sessions = tuple(sorted(state.sessions.values(), key=lambda item: item.created_at))
     return ProjectSnapshot(
         version=STATE_VERSION,
+        active_binding_revision=state.active_binding_revision,
         active_workspace_id=state.active_workspace_id,
         workspaces=workspaces,
         sessions=sessions,
@@ -1109,6 +1129,7 @@ def _thread_id(value: object) -> str:
 def _encode_state(state: _State) -> dict[str, Any]:
     return {
         "version": STATE_VERSION,
+        "active_binding_revision": state.active_binding_revision,
         "active_workspace_id": state.active_workspace_id,
         "workspaces": {
             key: {
@@ -1141,12 +1162,17 @@ def _encode_state(state: _State) -> dict[str, Any]:
 
 
 def _decode_state(value: object) -> _State:
-    if type(value) is not dict or set(value) != {
+    legacy_fields = {
         "version",
         "active_workspace_id",
         "workspaces",
         "sessions",
-    }:
+    }
+    current_fields = legacy_fields | {"active_binding_revision"}
+    if type(value) is not dict:
+        raise ValueError
+    actual_fields = set(value)
+    if actual_fields != legacy_fields and actual_fields != current_fields:
         raise ValueError
     if value["version"] != STATE_VERSION:
         raise ProjectStateError("state_version_unsupported")
@@ -1168,6 +1194,7 @@ def _decode_state(value: object) -> _State:
         if key != record.session_id or key in sessions or record.workspace_id not in workspaces:
             raise ValueError
         sessions[key] = record
+    active_binding_revision = _active_binding_revision(value.get("active_binding_revision", 0))
     active = value["active_workspace_id"]
     if active is not None and (type(active) is not str or active not in workspaces):
         raise ValueError
@@ -1189,7 +1216,12 @@ def _decode_state(value: object) -> _State:
         if title_key in seen_titles:
             raise ValueError
         seen_titles.add(title_key)
-    return _State(active_workspace_id=active, workspaces=workspaces, sessions=sessions)
+    return _State(
+        active_workspace_id=active,
+        workspaces=workspaces,
+        sessions=sessions,
+        active_binding_revision=active_binding_revision,
+    )
 
 
 def _decode_workspace(value: object) -> WorkspaceRecord:
@@ -1275,6 +1307,20 @@ def _stored_id(value: object) -> str:
     if type(value) is not str or _ID.fullmatch(value) is None:
         raise ValueError
     return value
+
+
+def _active_binding_revision(value: object) -> int:
+    if type(value) is not int or not 0 <= value <= MAX_ACTIVE_BINDING_REVISION:
+        raise ValueError
+    return value
+
+
+def _bump_active_binding_revision(state: _State) -> int:
+    revision = _active_binding_revision(state.active_binding_revision)
+    if revision >= MAX_ACTIVE_BINDING_REVISION:
+        raise ProjectStateError("state_corrupt")
+    state.active_binding_revision = revision + 1
+    return state.active_binding_revision
 
 
 def _timestamp(value: object) -> float:

@@ -394,10 +394,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                         previous.display_name,
                         previous.workspace_id,
                     )
-                    try:
-                        await self._refresh_project_context_barrier()
-                    except ProjectStateError:
-                        pass
+                    await self._refresh_project_context_barrier()
                     raise
                 return _project_ok(code="selected", workspace=selected.display_name)
             assert operation.session_id is not None
@@ -550,8 +547,8 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                     )
                 try:
                     await self._refresh_project_context_barrier()
-                except ProjectStateError:
-                    pass
+                except ProjectStateError as recovery_failure:
+                    return ProjectCommitResult(False, recovery_failure.code)
                 return ProjectCommitResult(False, failure.code)
             return ProjectCommitResult(True, "committed")
         normalized_request = _normalize_project_request(
@@ -638,26 +635,23 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         workspace_id: str,
         previous_workspace: WorkspaceRecord | None,
     ) -> None:
-        """Best-effort removal of a just-created workspace whose first run failed.
+        """Remove an empty failed create and critically publish the restored state.
 
         The store refuses to remove a workspace that gained sessions or files,
-        so this can never destroy user work; any registry error here must not
-        mask the run failure the caller is about to report.
+        so this can never destroy user work. A recovery failure must propagate
+        and keep project work fenced until provider ownership is proven again.
         """
-        try:
-            rolled_back = await _complete_sync(
-                self.store.rollback_managed_create, workspace_id, wait=True
-            )
-            if rolled_back:
-                if previous_workspace is not None:
-                    await _complete_sync(
-                        self.store.select_workspace_exact,
-                        previous_workspace.display_name,
-                        previous_workspace.workspace_id,
-                    )
-                await self._refresh_project_context_barrier()
-        except ProjectStateError:
-            return
+        rolled_back = await _complete_sync(
+            self.store.rollback_managed_create, workspace_id, wait=True
+        )
+        if rolled_back:
+            if previous_workspace is not None:
+                await _complete_sync(
+                    self.store.select_workspace_exact,
+                    previous_workspace.display_name,
+                    previous_workspace.workspace_id,
+                )
+            await self._refresh_project_context_barrier()
 
     async def aclose(self) -> None:
         try:

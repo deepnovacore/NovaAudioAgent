@@ -293,7 +293,11 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
             previousWorkspace.display_name, previousWorkspace.workspace_id,
           ).catch(() => undefined)
         }
-        await this.#refreshProjectContextBarrier().catch(() => undefined)
+        try {
+          await this.#refreshProjectContextBarrier()
+        } catch (recoveryError) {
+          return commitResult(false, projectErrorCode(recoveryError))
+        }
         return commitResult(false, projectErrorCode(error))
       }
       await this.#notifyCommittedWorkspace(committedWorkspace)
@@ -538,7 +542,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
             previousWorkspace.display_name, previousWorkspace.workspace_id,
           ).catch(() => undefined)
         }
-        if (rolledBack) await this.#refreshProjectContextBarrier().catch(() => undefined)
+        if (rolledBack) await this.#refreshProjectContextBarrier()
         throw error
       }
       if (result.outcome !== 'ok') {
@@ -550,7 +554,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
             previousWorkspace.display_name, previousWorkspace.workspace_id,
           ).catch(() => undefined)
         }
-        if (rolledBack) await this.#refreshProjectContextBarrier().catch(() => undefined)
+        if (rolledBack) await this.#refreshProjectContextBarrier()
       }
       return result
     }
@@ -626,13 +630,13 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
           provisionalSessionId,
           {wait: true},
         ).catch(() => false)
-        await this.#refreshProjectContextBarrier().catch(() => undefined)
+        await this.#refreshProjectContextBarrier()
       } else if (resumeRollback !== null) {
         await this.#store.rollbackSessionResume(
           resumeRollback,
           {wait: true},
         ).catch(() => false)
-        await this.#refreshProjectContextBarrier().catch(() => undefined)
+        await this.#refreshProjectContextBarrier()
       }
       throw error
     }

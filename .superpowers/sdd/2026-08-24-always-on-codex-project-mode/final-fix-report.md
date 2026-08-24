@@ -145,3 +145,76 @@ used a stable build and exited zero.
 The confirmation claim, private one-shot `execute_confirmed` capability, rollback fences, replaceable
 current-item semantics, no-history rule, and workspace/root safety contracts remain unchanged. This
 follow-up is included in the additional commit `fix: enforce atomic project context publication`.
+
+## Ownership-proof and resume-ABA residual follow-up
+
+Residual base: `e2d25ac47c6ba46189b065578c80149dbe3912d4`
+
+### Result
+
+1. A failed provider injection or inexact delivery proof now makes assembly ownership explicitly
+   uncertain and invalidates its successful-publication key in TypeScript and Python. Therefore an
+   atomic rollback from an accepted-but-unproven `B` item to the previously proven `A` item always
+   performs a new replacement at a higher revision and requires a new exact proof; it cannot hit the
+   old `A` dedup key. A timeout or replacement refusal remains uncertain and fail-closed. Critical
+   restoration errors are no longer swallowed by new-Session, resume, select, or confirmed-create
+   rollback paths: they override the original transport/worker failure with the stable
+   `context_delivery_failed` result, and no transport/worker is admitted.
+2. The project registry now persists a non-negative, monotonic `active_binding_revision`. Every
+   active workspace or active Session binding mutation increments it, including a same-ID select or
+   resume. A resume rollback token freezes its activation revision, previous global workspace ID,
+   target workspace ID, and prior/resumed Session IDs; rollback compares the revision and all IDs in
+   one transaction. Thus a concurrent same-ID activation defeats the older token's CAS, and the
+   adapter publishes the current atomic state instead of restoring stale state. Exact legacy v1
+   four-key files remain readable at revision zero and are canonically written with the fifth root
+   field on their next binding mutation; the shared fixture exercises nonzero revision `7` in both
+   runtimes.
+
+### TDD evidence
+
+- Ownership uncertainty RED: the Node assembly regression and Python publisher regression each
+  failed `0/1`; the provider held the unproven `B` item while restoration of `A` was skipped by the
+  stale successful key. Mismatch, proof-timeout, and replacement-refusal schedules now pass `1/1`
+  in each runtime and prove a later `A` replacement uses a greater revision.
+- Restored-publication propagation RED: Node and Python each failed `0/1` by leaking the original
+  transport/worker setup error after restored publication rejected. Both now pass `1/1`, return
+  `context_delivery_failed`, construct no transport/worker, and leave no provisional Session or
+  confirmed managed workspace.
+- Resume ABA/schema RED command: the Node selection
+  `same-id concurrent resume revision|project state reloads|registry no-follow` failed `0/3`, and
+  Python `same_id_resume_revision or first_enable or legacy_exact_v1` failed `0/3`. The same fresh
+  commands pass `3/3` in each runtime after revision-bound CAS and compatible strict decoding.
+- Fresh focused GREEN: Node store/live/assembly files pass `112/112`; Python store/live/assembly
+  files pass `139/139`; the canonical Python exporter check plus oracle tests pass `2/2`.
+
+### Fresh broad and static verification
+
+```text
+node --test --test-reporter=dot runtime/dist/test/*.test.js
+=> 1616 passed, 0 failed (exit 0)
+
+uv run pytest -q
+=> 2908 passed (18.58 s)
+
+npm run check
+=> typecheck, ESLint, environment contract, and Node parity passed
+=> Node parity: 148 files, 212 occurrences
+
+uv run ruff check src tests scripts/codex_project_state_oracle.py
+=> All checks passed
+
+uv run ruff format --check <all 7 changed Python files>
+=> 7 files already formatted
+
+uv run python scripts/codex_project_state_oracle.py check
+=> Python Codex project-state v1 bytes match
+
+git diff --check
+=> clean
+```
+
+The first static pass exposed only two `require-await` violations in the new TypeScript test doubles
+and two unformatted Python test/source files; those test-only/mechanical issues were corrected before
+the fresh broad and final static runs above. Confirmation fencing, one-shot private execution,
+current-item/no-history behavior, directory safety, and ordinary-run semantics remain unchanged.
+This follow-up is included in the additional commit `fix: prove project context recovery ownership`.
