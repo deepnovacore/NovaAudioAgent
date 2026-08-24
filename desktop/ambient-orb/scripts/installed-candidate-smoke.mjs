@@ -124,6 +124,7 @@ export function smokeEnvironment({
     NOVA_AUDIO_AGENT_EXECUTORS: 'fast_sim',
     DASHSCOPE_API_KEY: 'public-release-smoke-key',
     NOVA_AUDIO_AGENT_MODEL_API_KEY: 'public-release-smoke-key',
+    TAVILY_API_KEY: 'public-release-smoke-key',
     NOVA_ORB_OPAQUE: '1',
   })
   if (cameraFile !== undefined) env.NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE = cameraFile
@@ -609,7 +610,7 @@ export function installedSmokeDiagnostic(error, child = {}) {
   visit(error)
   const codes = []
   const stderr = typeof child.stderr === 'string' ? child.stderr : ''
-  const pattern = /\[(?:backend|runtime|realtime|desktop)-diagnostic\]\s+([a-z][a-z0-9_]*)/gu
+  const pattern = /\[(?:backend|runtime|realtime|desktop)-diagnostic\]\s+([a-z][a-z0-9_]*_[a-z0-9_]+)/gu
   for (const match of stderr.matchAll(pattern)) {
     if (!codes.includes(match[1])) codes.push(match[1])
   }

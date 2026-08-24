@@ -140,6 +140,7 @@ test('installed launch deletes backend selection and poisons every Python resolu
   }
   assert.equal(environment.NOVA_AUDIO_AGENT_RELEASE_SMOKE, RELEASE_SMOKE_MODE)
   assert.equal(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL, 'wss://127.0.0.1:49152/')
+  assert.equal(environment.TAVILY_API_KEY, 'public-release-smoke-key')
   assert.equal(environment.NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE, '/private/smoke/camera.mp4')
 })
 
