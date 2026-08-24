@@ -5,8 +5,10 @@ import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import type { JsonValue } from '../src/events.js'
 import {
+  FRONTEND_INSTRUCTIONS,
   QwenAudioRealtimeAdapter,
   QwenSocketClosedError,
+  renderActiveProjectContext,
   type QwenSocket,
 } from '../src/realtime/qwen.js'
 
@@ -122,6 +124,28 @@ test('every normalization scenario documents what it covers and is exercised', (
   }
 })
 
+test('active project context renders only the authoritative current display names', () => {
+  assert.equal(renderActiveProjectContext({
+    workspace_display_name: 'alpha',
+    session_title: 'Login fix',
+    pending_confirmation: false,
+  }), [
+    '<active_project_context>',
+    'workspace=alpha',
+    'session=Login fix',
+    '</active_project_context>',
+  ].join('\n'))
+})
+
+test('Qwen project instructions route the six actions and structured confirmation semantically', () => {
+  assert.match(FRONTEND_INSTRUCTIONS, /codex__confirm_project_action/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /list_workspaces.*list_sessions/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /独立.*create_workspace/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /当前.*start_session/su)
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /新的独立开发需求调用 codex__run/u)
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /确认语音由 host 判定/u)
+})
+
 
 test('the emitted session.update matches the Python-exported outbound payload', async () => {
   // The session instructions are model-visible behavior. Comparing the TypeScript
@@ -161,8 +185,8 @@ test('the emitted session.update matches the Python-exported outbound payload', 
   for (const required of [
     'Nova Audio Agent 任务',
     'Nova Audio Agent 宿主激活事实：',
-    'codex__run',
     'codex__project',
+    'codex__confirm_project_action',
     'guard__start',
     'watch__start',
     'memory__recall',

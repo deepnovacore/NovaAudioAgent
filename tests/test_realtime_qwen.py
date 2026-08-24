@@ -572,16 +572,33 @@ def test_frontend_instructions_preserve_the_complete_codex_work_order() -> None:
         assert phrase in FRONTEND_INSTRUCTIONS
 
 
+def test_frontend_instructions_route_project_actions_and_confirmation_semantically() -> None:
+    for phrase in (
+        "Codex 开发工作只使用 codex__project，不得调用 codex__run。",
+        "明显独立的完整产品或仓库使用 create_workspace",
+        "明确在当前项目内的新任务使用 start_session",
+        "先 list_workspaces",
+        "再 list_sessions",
+        "create_workspace、select_workspace、resume_session 返回待确认 proposal",
+        "codex__confirm_project_action",
+        "复制 proposal_id",
+        "confirmed 的 JSON boolean",
+        "语义不明确时不要调用并自然追问",
+    ):
+        assert phrase in FRONTEND_INSTRUCTIONS
+    assert "确认语音由 host 判定" not in FRONTEND_INSTRUCTIONS
+
+
 def test_frontend_instructions_clarify_only_one_uninferable_material_choice() -> None:
     for phrase in (
         "只有缺少会实质改变验收结果或验证方式",
         "最多追问一个",
         "无法从当前请求和对话安全推断",
-        "这一轮不得调用 codex__run",
+        "这一轮不得调用 codex__project",
         "可以合理默认",
         "明确交付形态只排除对交付形态的追问",
         "不排除其他符合上述条件的关键选择",
-        "不存在这类缺失时，直接调用 codex__run",
+        "不存在这类缺失时，直接调用 codex__project",
     ):
         assert phrase in FRONTEND_INSTRUCTIONS
     assert "网页还是桌面程序" not in FRONTEND_INSTRUCTIONS

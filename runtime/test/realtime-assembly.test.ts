@@ -278,6 +278,7 @@ class AbortAwareProvider implements RealtimeProvider {
 class WorkspaceContextProvider extends AbortAwareProvider {
   readonly workspaceItems: HostContextItem[] = []
   workspaceContextStep: (() => Promise<void>) | null = null
+  #providerItemId: string | null = null
 
   async injectWorkspaceContext(
     item: HostContextItem,
@@ -287,6 +288,9 @@ class WorkspaceContextProvider extends AbortAwareProvider {
     assert.equal(options.signal.aborted, false)
     this.workspaceItems.push(structuredClone(item))
     await (this.workspaceContextStep?.() ?? Promise.resolve())
+    const priorProviderItemId = this.#providerItemId
+    const providerItemId = `provider-${item.host_item_id}`
+    this.#providerItemId = providerItemId
     return {
       item,
       asUserActivation: false,
@@ -296,9 +300,9 @@ class WorkspaceContextProvider extends AbortAwareProvider {
         session_epoch: this.currentEpoch,
         workspace_instance_id: item.workspace_instance_id,
         revision: item.revision,
-        prior_provider_item_id: null,
-        provider_item_id: `provider-${item.host_item_id}`,
-        superseded_provider_item_id: null,
+        prior_provider_item_id: priorProviderItemId,
+        provider_item_id: providerItemId,
+        superseded_provider_item_id: priorProviderItemId,
       },
     }
   }
@@ -655,7 +659,8 @@ test('project adapter wiring carries one confirmed identity through the real rea
     capability: object | null
     context: ExecutorDispatchContext | null
     origin: string | null
-  } = {operation: null, capability: null, context: null, origin: null}
+    admission: {readonly accepted: boolean; readonly delegate_id: string | null} | null
+  } = {operation: null, capability: null, context: null, origin: null, admission: null}
   let closeCalls = 0
   const viewObservers = new Set<(view: ProjectConfirmationView) => void>()
   let activeWorkspace = 'alpha'
@@ -667,6 +672,8 @@ test('project adapter wiring carries one confirmed identity through the real rea
     initialize: ProjectCodexAdapter['initialize']
     activeCommittedWorkspace: ProjectCodexAdapter['activeCommittedWorkspace']
     observeProjectView: ProjectCodexAdapter['observeProjectView']
+    observeCommittedWorkspace: ProjectCodexAdapter['observeCommittedWorkspace']
+    observeTerminalWorkOrder: ProjectCodexAdapter['observeTerminalWorkOrder']
     close: ProjectCodexAdapter['close']
   } = {
     manifest: CODEX_PROJECT_MANIFEST,
@@ -690,8 +697,8 @@ test('project adapter wiring carries one confirmed identity through the real rea
       }
       const admission = runtimeDispatch({
         executor: 'codex',
-        op: 'run',
-        request: {work_order: operation.work_order ?? ''},
+        op: 'project',
+        request: {action: 'execute_confirmed'},
         origin_ref: originRef,
       }, {
         kind: 'realtime_tool',
@@ -700,6 +707,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
         origin: null,
         selected_suggestion: null,
       }, operation)
+      captured.admission = {accepted: admission.accepted, delegate_id: admission.delegate_id}
       return Promise.resolve({
         accepted: admission.accepted,
         code: admission.accepted ? 'accepted' : 'runtime_rejected',
@@ -720,6 +728,8 @@ test('project adapter wiring carries one confirmed identity through the real rea
       viewObservers.add(observer)
       return () => { viewObservers.delete(observer) }
     },
+    observeCommittedWorkspace: () => () => undefined,
+    observeTerminalWorkOrder: () => () => undefined,
     close: () => {
       closeCalls += 1
       return Promise.resolve()
@@ -758,10 +768,9 @@ test('project adapter wiring carries one confirmed identity through the real rea
       provider_item_id: 'item-confirm',
     })
     await realtime.service.handleEvent({
-      kind: 'user_speech_ended',
+      kind: 'response_started',
       session_epoch: 1,
-      speech_id: 'speech-confirm',
-      provider_item_id: 'item-confirm',
+      response_id: 'response-confirm',
     })
     await realtime.service.handleEvent({
       kind: 'user_transcript_final',
@@ -769,6 +778,29 @@ test('project adapter wiring carries one confirmed identity through the real rea
       item_id: 'item-confirm',
       text: '确认',
     })
+    await realtime.service.handleEvent({
+      kind: 'user_speech_ended',
+      session_epoch: 1,
+      speech_id: 'speech-confirm',
+      provider_item_id: 'item-confirm',
+    })
+    assert.deepEqual(realtime.service.confirmationItemsForTest, ['1:item-confirm'])
+    assert.deepEqual(realtime.service.boundOriginsForTest, [
+      ['1:response-confirm', 'item-confirm'],
+    ])
+    await realtime.service.handleEvent({
+      kind: 'tool_call_ready',
+      session_epoch: 1,
+      call_id: 'call-confirm',
+      item_id: 'function-confirm',
+      response_id: 'response-confirm',
+      name: 'codex__confirm_project_action',
+      arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+    })
+    assert.equal(confirmation.pending, false)
+    assert.equal(captured.operation?.proposal_id, proposal.proposal_id)
+    assert.equal(captured.admission?.accepted, true)
+    assert.ok(captured.admission?.delegate_id !== null)
     await waitNamed('confirmed project executor dispatch', () => captured.capability !== null)
     assert.equal(captured.operation, captured.capability)
     assert.equal(captured.operation?.nonce, proposal.nonce)
@@ -794,6 +826,121 @@ test('project adapter wiring carries one confirmed identity through the real rea
     await realtime.stop()
   }
   assert.equal(closeCalls, 1)
+})
+
+test('active project views replace one provider context without publishing history', async () => {
+  const clock = new VirtualClock(0)
+  const confirmation = new ProjectConfirmationController({
+    clock,
+    idFactory: () => 'active-context-confirmation',
+  })
+  const provider = new WorkspaceContextProvider()
+  const viewObservers = new Set<(view: ProjectConfirmationView) => void>()
+  const workspaceObservers = new Set<(event: CommittedWorkspaceEvent) => void | Promise<void>>()
+  let view: ProjectConfirmationView = Object.freeze({
+    workspace_display_name: 'alpha',
+    session_title: null,
+    pending_confirmation: false,
+  })
+  const alpha: WorkspaceRecord = Object.freeze({
+    workspace_id: 'host-alpha', display_name: 'alpha', normalized_name: 'alpha',
+    canonical_path: '/safe/alpha', origin: 'registered', codex_home_key: 'host-alpha',
+    active_session_id: null, created_at: 1, last_used_at: 1,
+  })
+  const beta: WorkspaceRecord = Object.freeze({
+    workspace_id: 'host-beta', display_name: 'beta', normalized_name: 'beta',
+    canonical_path: '/safe/beta', origin: 'registered', codex_home_key: 'host-beta',
+    active_session_id: null, created_at: 2, last_used_at: 2,
+  })
+  const adapterShape: ExecutorAdapter & Record<string, unknown> = {
+    manifest: CODEX_PROJECT_MANIFEST,
+    confirmationController: confirmation,
+    dispatch: () => Promise.resolve({
+      outcome: 'ok', trust: 'trusted_system', content: {code: 'completed'}, refs: [],
+    }),
+    commitConfirmed: () => Promise.resolve({accepted: false, code: 'not_used'}),
+    publicProjectView: () => view,
+    initialize: () => {
+      for (const observer of viewObservers) observer(view)
+      return Promise.resolve()
+    },
+    activeCommittedWorkspace: () => Promise.resolve(alpha),
+    observeProjectView: (observer: (next: ProjectConfirmationView) => void) => {
+      viewObservers.add(observer)
+      return () => { viewObservers.delete(observer) }
+    },
+    observeCommittedWorkspace: (
+      observer: (event: CommittedWorkspaceEvent) => void | Promise<void>,
+    ) => {
+      workspaceObservers.add(observer)
+      return () => { workspaceObservers.delete(observer) }
+    },
+    observeTerminalWorkOrder: () => () => undefined,
+    close: () => Promise.resolve(),
+  }
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock,
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    executors: [adapterShape],
+  })
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider,
+    projectAdapter: adapterShape as unknown as ProjectCodexAdapter,
+    idFactory: (() => {
+      let sequence = 0
+      return () => `active-context-${++sequence}`
+    })(),
+  })
+  await realtime.start()
+  try {
+    assert.equal(provider.workspaceItems.length, 1)
+    assert.deepEqual(provider.workspaceItems[0], {
+      kind: 'workspace_context',
+      host_item_id: 'active-context-1',
+      event_id: 'active-context-2',
+      content: '<active_project_context>\nworkspace=alpha\nsession=\n</active_project_context>',
+      call_id: null,
+      session_epoch: 1,
+      workspace_instance_id: 'host-alpha',
+      revision: 1,
+    })
+
+    view = Object.freeze({...view, session_title: 'Login fix'})
+    for (const observer of viewObservers) observer(view)
+    await waitNamed('active Session context replacement', () => provider.workspaceItems.length === 2)
+    assert.equal(provider.workspaceItems[1]?.content, [
+      '<active_project_context>',
+      'workspace=alpha',
+      'session=Login fix',
+      '</active_project_context>',
+    ].join('\n'))
+    assert.equal(provider.workspaceItems[1]?.revision, 2)
+    assert.equal(provider.workspaceItems[1]?.workspace_instance_id, 'host-alpha')
+    assert.equal(provider.workspaceItems[1]?.content.includes('workspaces='), false)
+    assert.equal(provider.workspaceItems[1]?.content.includes('sessions='), false)
+
+    const committed = [...workspaceObservers][0]
+    assert.ok(committed !== undefined)
+    await committed({workspace: beta})
+    view = Object.freeze({
+      workspace_display_name: 'beta', session_title: null, pending_confirmation: false,
+    })
+    for (const observer of viewObservers) observer(view)
+    await waitNamed('active workspace context replacement', () => provider.workspaceItems.length === 3)
+    assert.equal(provider.workspaceItems[2]?.workspace_instance_id, 'host-beta')
+    assert.equal(provider.workspaceItems[2]?.revision, 3)
+    assert.equal(provider.workspaceItems[2]?.content, [
+      '<active_project_context>',
+      'workspace=beta',
+      'session=',
+      '</active_project_context>',
+    ].join('\n'))
+  } finally {
+    await realtime.stop()
+  }
 })
 
 test('workspace graph opens before project initialization, injects only the current Header, and owns hooks', async () => {
@@ -947,22 +1094,40 @@ test('workspace graph opens before project initialization, injects only the curr
   ])
   assert.deepEqual(diagnostics, ['[realtime-diagnostic] workspace_graph_header_delivery_failed'])
   assert.equal(diagnostics.join('\n').includes('sensitive'), false)
-  assert.equal(provider.workspaceItems.length, 0)
-  contextFailure = false
-  const workspaceObserver = [...workspaceObservers][0]
-  assert.ok(workspaceObserver !== undefined)
-  await workspaceObserver({workspace})
-  await waitNamed('workspace Header retry', () => provider.workspaceItems.length === 1)
   assert.equal(provider.workspaceItems.length, 1)
   assert.deepEqual(provider.workspaceItems[0], {
     kind: 'workspace_context',
     host_item_id: 'graph-host-1',
     event_id: 'graph-host-2',
-    content: '<workspace_context kind="data">current alpha</workspace_context>',
+    content: '<active_project_context>\nworkspace=alpha\nsession=\n</active_project_context>',
     call_id: null,
     session_epoch: 1,
-    workspace_instance_id: 'instance-alpha',
-    revision: 7,
+    workspace_instance_id: 'workspace-authoritative',
+    revision: 1,
+  })
+  contextFailure = false
+  const workspaceObserver = [...workspaceObservers][0]
+  assert.ok(workspaceObserver !== undefined)
+  await workspaceObserver({workspace})
+  await waitNamed('workspace Header retry', () => provider.workspaceItems.length === 2)
+  assert.equal(provider.workspaceItems.length, 2)
+  assert.deepEqual(provider.workspaceItems[1], {
+    kind: 'workspace_context',
+    host_item_id: 'graph-host-3',
+    event_id: 'graph-host-4',
+    content: [
+      '<active_project_context>',
+      'workspace=alpha',
+      'session=',
+      '</active_project_context>',
+      '<workspace_graph_context>',
+      '<workspace_context kind="data">current alpha</workspace_context>',
+      '</workspace_graph_context>',
+    ].join('\n'),
+    call_id: null,
+    session_epoch: 1,
+    workspace_instance_id: 'workspace-authoritative',
+    revision: 2,
   })
   assert.deepEqual(graphCalls[0], {
     path: '/safe/alpha',
@@ -1005,7 +1170,7 @@ test('workspace graph opens before project initialization, injects only the curr
     utterance: 'a relation-shaped transcript must not inject a late Recall Pack',
     preferences: [],
   })
-  assert.equal(provider.workspaceItems.length, 1,
+  assert.equal(provider.workspaceItems.length, 2,
     'server-VAD transcript final must not inject a late workspace host item')
 
   const terminal = [...terminalObservers][0]

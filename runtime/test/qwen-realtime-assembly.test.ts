@@ -303,6 +303,12 @@ test('Qwen factory owns enabled graph storage while unsafe graph config stays vo
   }
 })
 
+test('Qwen graph preamble keeps active project state authoritative and graph advice low authority', () => {
+  assert.match(workspaceGraphFrontendInstructions, /active_project_context.*authoritative host state/su)
+  assert.match(workspaceGraphFrontendInstructions, /workspace graph.*low authority/su)
+  assert.match(workspaceGraphFrontendInstructions, /cannot authorize.*switch/su)
+})
+
 test('Qwen factory construction does not invoke an unrelated LiveKit agents loader', () => {
   const connector = recordingConnector()
   let agentsLoaderCalls = 0

@@ -27,6 +27,7 @@ import type { CodexState, GuardHistoryRecovery } from './realtime/service-state.
 import { RealtimeSession } from './realtime/session.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
+import {renderActiveProjectContext} from './realtime/qwen.js'
 import type {
   OpenWorkspaceInput,
   TaskCompletionInput,
@@ -131,6 +132,11 @@ export class RealtimeAssembly {
   readonly #unbindGraphContext: (() => void) | undefined
   #workspaceGraphOpen = false
   #currentWorkspaceInstanceId: string | null = null
+  #currentHostWorkspaceId: string | null = null
+  #latestProjectView: ProjectConfirmationView | null = null
+  #projectContextRevision = 0
+  #lastProjectContextKey: string | null = null
+  #projectContextTail: Promise<void> = Promise.resolve()
   readonly #workspaceInstancesByHostId = new Map<string, string>()
   #graphLifecycleTail: Promise<void> = Promise.resolve()
   #graphLifecyclePending = 0
@@ -188,14 +194,18 @@ export class RealtimeAssembly {
           preferences: [],
         })
       })
-    this.#unsubscribeProjectView = input.projectAdapter === undefined || input.onProjectView === undefined
+    this.#unsubscribeProjectView = input.projectAdapter === undefined
       ? undefined
-      : input.projectAdapter.observeProjectView(input.onProjectView)
+      : input.projectAdapter.observeProjectView(view => {
+        this.#latestProjectView = Object.freeze({...view})
+        input.onProjectView?.(view)
+        void this.#enqueueProjectContextPublication()
+      })
     this.#unsubscribeCommittedWorkspace = input.projectAdapter === undefined
-      || input.workspaceGraph === undefined
       ? undefined
       : input.projectAdapter.observeCommittedWorkspace(event => {
-        this.#enqueueCommittedWorkspace(event)
+        this.#currentHostWorkspaceId = event.workspace.workspace_id
+        if (input.workspaceGraph !== undefined) this.#enqueueCommittedWorkspace(event)
       })
     this.#unsubscribeTerminalWorkOrder = input.projectAdapter === undefined
       || input.workspaceGraph === undefined
@@ -267,9 +277,13 @@ export class RealtimeAssembly {
     try {
       if (this.#projectAdapter !== undefined) {
         await this.#projectAdapter.initialize()
-        if (this.#workspaceGraphOpen) {
-          const activeWorkspace = await this.#projectAdapter.activeCommittedWorkspace()
-          if (activeWorkspace !== null) {
+        this.#latestProjectView = this.#projectAdapter.publicProjectView(
+          this.#projectAdapter.confirmationController.pending,
+        )
+        const activeWorkspace = await this.#projectAdapter.activeCommittedWorkspace()
+        if (activeWorkspace !== null) {
+          this.#currentHostWorkspaceId = activeWorkspace.workspace_id
+          if (this.#workspaceGraphOpen) {
             this.#enqueueCommittedWorkspace({workspace: activeWorkspace})
           }
         }
@@ -295,7 +309,7 @@ export class RealtimeAssembly {
       throw error
     }
     await this.#cleanupWithinGrace(
-      () => this.#injectCurrentWorkspaceHeader(),
+      () => this.#enqueueProjectContextPublication(),
       'workspace_graph_header_delivery_abandoned',
     )
     if (this.#state === 'starting') {
@@ -418,7 +432,7 @@ export class RealtimeAssembly {
         || scopeGeneration !== this.#latestWorkspaceScopeGeneration
       ) return
       this.#currentWorkspaceInstanceId = decision.instance.instance_id
-      await this.#injectCurrentWorkspaceHeader()
+      await this.#enqueueProjectContextPublication()
     } catch {
       // This authoritative event was admitted but could not become graph state. The next successful
       // event may become the new anchor, but it must not bridge relation inference across this gap.
@@ -517,33 +531,69 @@ export class RealtimeAssembly {
     return true
   }
 
-  async #injectCurrentWorkspaceHeader(): Promise<void> {
+  #enqueueProjectContextPublication(): Promise<void> {
+    const view = this.#latestProjectView
+    const hostWorkspaceId = this.#currentHostWorkspaceId
+    const operation = this.#projectContextTail.then(async () => {
+      await this.#injectCurrentProjectContext(view, hostWorkspaceId)
+    })
+    this.#projectContextTail = operation.then(() => undefined, () => undefined)
+    return operation
+  }
+
+  async #injectCurrentProjectContext(
+    view: ProjectConfirmationView | null,
+    hostWorkspaceId: string | null,
+  ): Promise<void> {
     if (
-      !this.#workspaceGraphOpen
-      || this.workspaceGraph === undefined
-      || this.#currentWorkspaceInstanceId === null
+      view === null
+      || hostWorkspaceId === null
       || this.provider.injectWorkspaceContext === undefined
     ) return
     const identity = this.providerSession.identity
     if (identity === null) return
+    let graphHeader: string | null = null
+    if (
+      this.#workspaceGraphOpen
+      && this.workspaceGraph !== undefined
+      && this.#currentWorkspaceInstanceId !== null
+    ) {
+      try {
+        graphHeader = this.workspaceGraph.contextForTurn({
+          session_epoch: identity.epoch,
+          workspace_instance_id: this.#currentWorkspaceInstanceId,
+          utterance: '',
+          preferences: [],
+        })?.header ?? null
+      } catch {
+        this.#diagnose('workspace_graph_header_delivery_failed')
+      }
+    }
+    const content = [
+      renderActiveProjectContext(view),
+      graphHeader === null
+        ? null
+        : `<workspace_graph_context>\n${graphHeader}\n</workspace_graph_context>`,
+    ].filter((part): part is string => part !== null).join('\n')
+    const contextKey = canonicalJson({
+      session_epoch: identity.epoch,
+      workspace_instance_id: hostWorkspaceId,
+      content,
+    })
+    if (contextKey === this.#lastProjectContextKey) return
+    this.#projectContextRevision += 1
     try {
-      const context = this.workspaceGraph.contextForTurn({
-        session_epoch: identity.epoch,
-        workspace_instance_id: this.#currentWorkspaceInstanceId,
-        utterance: '',
-        preferences: [],
-      })
-      if (context?.header === null || context === null) return
       await this.providerSession.injectWorkspaceContext({
         kind: 'workspace_context',
         host_item_id: this.#idFactory(),
         event_id: this.#idFactory(),
-        content: context.header,
+        content,
         call_id: null,
         session_epoch: identity.epoch,
-        workspace_instance_id: this.#currentWorkspaceInstanceId,
-        revision: this.workspaceGraph.publishedSnapshot.publication_revision,
+        workspace_instance_id: hostWorkspaceId,
+        revision: this.#projectContextRevision,
       })
+      this.#lastProjectContextKey = contextKey
     } catch {
       this.#diagnose('workspace_graph_header_delivery_failed')
     }
@@ -738,6 +788,7 @@ function asProjectAdapter(adapter: unknown): ProjectCodexAdapter {
     || !('commitConfirmed' in adapter)
     || !('publicProjectView' in adapter)
     || !('activeCommittedWorkspace' in adapter)
+    || !('observeProjectView' in adapter)
     || !('observeCommittedWorkspace' in adapter)
     || !('observeTerminalWorkOrder' in adapter)
   ) throw new AssemblyError('project Codex resource has an invalid adapter')
