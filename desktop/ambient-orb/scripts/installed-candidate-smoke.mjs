@@ -4,7 +4,7 @@ import {spawn, spawnSync} from 'node:child_process'
 import {createServer as createHttpsServer} from 'node:https'
 import {copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
-import {isAbsolute, join, resolve} from 'node:path'
+import {isAbsolute, join, resolve, win32} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
 import {WebSocket, WebSocketServer} from 'ws'
@@ -545,6 +545,7 @@ function settleExit(child) {
 
 function boundedOutput(child) {
   let rejectFailure
+  let stderr = ''
   const failure = new Promise((resolveNever, reject) => { rejectFailure = reject })
   const done = new Promise(resolveOutput => {
     let size = 0
@@ -556,26 +557,73 @@ function boundedOutput(child) {
       rejectFailure(new Error('installed_candidate_output_failed'))
     }
     const finish = () => { if (--streams === 0) resolveOutput() }
-    for (const stream of [child.stdout, child.stderr]) {
+    for (const [index, stream] of [child.stdout, child.stderr].entries()) {
       stream.on('data', chunk => {
         size += Buffer.byteLength(chunk)
+        if (index === 1 && stderr.length < OUTPUT_LIMIT) {
+          stderr += chunk.toString('utf8').slice(0, OUTPUT_LIMIT - stderr.length)
+        }
         if (size > OUTPUT_LIMIT) fail()
       })
       stream.once('end', finish)
       stream.once('error', fail)
     }
   })
-  return Object.freeze({done, failure})
+  return Object.freeze({
+    done,
+    failure,
+    diagnostic: error => installedSmokeDiagnostic(error, {
+      stderr,
+      exitCode: child.exitCode,
+      signalCode: child.signalCode,
+    }),
+  })
 }
 
 export async function exerciseCandidateChild(child) {
   const output = boundedOutput(child)
-  const readiness = await Promise.race([readReadiness(child.stdio[3]), output.failure])
-  await Promise.race([authenticateAndExercise(readiness), output.failure])
-  child.stdio[4].end('quit\n')
-  const exit = await Promise.race([settleExit(child), output.failure])
-  if (exit.code !== 0 || exit.signal !== null) throw new Error('installed_candidate_launch_failed')
-  await settleCandidateOutput(output)
+  try {
+    const readiness = await Promise.race([readReadiness(child.stdio[3]), output.failure])
+    await Promise.race([authenticateAndExercise(readiness), output.failure])
+    child.stdio[4].end('quit\n')
+    const exit = await Promise.race([settleExit(child), output.failure])
+    if (exit.code !== 0 || exit.signal !== null) throw new Error('installed_candidate_launch_failed')
+    await settleCandidateOutput(output)
+  } catch (error) {
+    reportInstalledSmokeFailure(output.diagnostic(error))
+    throw error
+  }
+}
+
+export function installedSmokeDiagnostic(error, child = {}) {
+  const failures = []
+  const seen = new Set()
+  const visit = value => {
+    if (value === null || typeof value !== 'object' || seen.has(value)) return
+    seen.add(value)
+    if (typeof value.message === 'string' && /^installed_[a-z0-9_]+$/u.test(value.message)
+      && !failures.includes(value.message)) failures.push(value.message)
+    if (Array.isArray(value.errors)) for (const nested of value.errors) visit(nested)
+    visit(value.cause)
+  }
+  visit(error)
+  const codes = []
+  const stderr = typeof child.stderr === 'string' ? child.stderr : ''
+  const pattern = /\[(?:backend|runtime|realtime|desktop)-diagnostic\]\s+([a-z][a-z0-9_]*)/gu
+  for (const match of stderr.matchAll(pattern)) {
+    if (!codes.includes(match[1])) codes.push(match[1])
+  }
+  const state = Number.isInteger(child.exitCode)
+    ? `exit_${child.exitCode}`
+    : typeof child.signalCode === 'string' && /^[A-Z0-9]+$/u.test(child.signalCode)
+      ? `signal_${child.signalCode}`
+      : 'running'
+  return `failure=${failures.join('+') || 'unknown'} child=${codes.join('+') || 'none'} state=${state}`
+}
+
+function reportInstalledSmokeFailure(diagnostic) {
+  if (process.env.NOVA_RELEASE_SMOKE_DIAGNOSTICS !== '1') return
+  try { process.stderr.write(`[installed-smoke] ${diagnostic}\n`) } catch {}
 }
 
 export async function settleCandidateOutput(output, timeoutMs = OUTPUT_DRAIN_MS) {
@@ -610,6 +658,12 @@ export async function withCandidateProcessTree(child, environment, operation) {
         : new AggregateError([operationFailure, cleanupFailure]),
     })
     error.code = 'installed_candidate_tree_failed'
+    reportInstalledSmokeFailure(installedSmokeDiagnostic(error, {
+      stderr: '',
+      exitCode: child?.exitCode,
+      signalCode: child?.signalCode,
+    }))
+    releaseCandidateChildHandles(child)
     throw error
   }
   if (operationFailure !== null) throw operationFailure
@@ -618,8 +672,12 @@ export async function withCandidateProcessTree(child, environment, operation) {
 
 async function stopAndRequireTreeGone(child, environment) {
   const pid = child.pid
-  if (process.platform === 'win32') terminateWindowsTree(pid, environment)
-  else {
+  const alreadyExited = Number.isInteger(child.status)
+    || child.exitCode !== null && child.exitCode !== undefined
+    || child.signal !== null && child.signal !== undefined
+    || child.signalCode !== null && child.signalCode !== undefined
+  if (!alreadyExited && process.platform === 'win32') terminateWindowsTree(pid, environment)
+  else if (!alreadyExited) {
     try { process.kill(-pid, 'SIGKILL') } catch (error) {
       if (error?.code !== 'ESRCH') throw new Error('installed_candidate_tree_failed')
     }
@@ -637,13 +695,12 @@ async function stopAndRequireTreeGone(child, environment) {
       })
     })
   }
-  await requireTreeGone(pid, environment)
+  if (process.platform !== 'win32') await requireTreeGone(pid, environment)
 }
 
 function terminateWindowsTree(pid, environment) {
-  const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-  const script = windowsTreeScript(pid, true)
-  const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+  const plan = windowsTreeTermination(pid, environment)
+  const result = spawnSync(plan.command, plan.args, {
     env: environment,
     encoding: 'utf8', timeout: 10_000, maxBuffer: OUTPUT_LIMIT,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -653,24 +710,31 @@ function terminateWindowsTree(pid, environment) {
   }
 }
 
-async function requireTreeGone(pid, environment) {
-  if (!Number.isInteger(pid) || pid < 1) throw new Error('installed_candidate_tree_failed')
-  if (process.platform === 'win32') {
-    const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    const script = windowsTreeScript(pid, false)
-    const deadline = Date.now() + 5_000
-    while (Date.now() < deadline) {
-      const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
-        env: environment,
-        encoding: 'utf8', timeout: 10_000, maxBuffer: OUTPUT_LIMIT,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-      if (result.status === 0 && result.error === undefined && result.signal === null) return
-      if (result.error !== undefined || result.signal !== null || ![0, 1].includes(result.status)) break
-      await new Promise(resolveWait => setTimeout(resolveWait, 50))
-    }
+export function windowsTreeTermination(pid, environment) {
+  const systemRoot = environment?.SystemRoot ?? environment?.WINDIR
+  if (!Number.isInteger(pid) || pid < 1
+    || typeof systemRoot !== 'string' || !/^[A-Za-z]:\\/u.test(systemRoot)) {
     throw new Error('installed_candidate_tree_failed')
   }
+  return Object.freeze({
+    command: win32.join(systemRoot, 'System32', 'taskkill.exe'),
+    args: Object.freeze(['/PID', String(pid), '/T', '/F']),
+  })
+}
+
+export function releaseCandidateChildHandles(child) {
+  if (child === null || typeof child !== 'object') return
+  if (Array.isArray(child.stdio)) {
+    for (const stream of child.stdio) {
+      try { stream?.destroy?.() } catch {}
+      try { stream?.unref?.() } catch {}
+    }
+  }
+  try { child.unref?.() } catch {}
+}
+
+async function requireTreeGone(pid, environment) {
+  if (!Number.isInteger(pid) || pid < 1) throw new Error('installed_candidate_tree_failed')
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {
     try { process.kill(-pid, 0) } catch (error) {
@@ -680,15 +744,6 @@ async function requireTreeGone(pid, environment) {
     await new Promise(resolveWait => setTimeout(resolveWait, 50))
   }
   throw new Error('installed_candidate_tree_failed')
-}
-
-function windowsTreeScript(pid, terminate) {
-  const discover = `$root=${pid};$p=Get-CimInstance Win32_Process;`+
-    '$ids=@($root);do{$n=@($p|?{$ids -contains $_.ParentProcessId}|% ProcessId|?{$ids -notcontains $_});$ids+= $n}while($n.Count);' +
-    '$alive=@($p|?{$ids -contains $_.ProcessId});'
-  return terminate
-    ? `${discover}if($alive.Count){$alive|Sort-Object ProcessId -Descending|%{Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}}`
-    : `${discover}if($alive.Count){exit 1}`
 }
 
 function systemPath(platform, parentEnvironment) {

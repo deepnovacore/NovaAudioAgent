@@ -369,6 +369,57 @@ test('installed-candidate output drain is bounded when an orphan retains the pip
   assert.ok(Date.now() - startedAt < 1_000, 'orphan-held output must not prevent tree cleanup')
 })
 
+test('installed-candidate diagnostics expose only stable failure and child codes', async () => {
+  const {installedSmokeDiagnostic} = await import('../scripts/installed-candidate-smoke.mjs')
+  const operation = new Error('installed_candidate_readiness_failed')
+  const cleanup = new Error('private path C:\\Users\\runneradmin\\secret')
+  const failure = new Error('installed_candidate_tree_failed', {
+    cause: new AggregateError([operation, cleanup]),
+  })
+  assert.equal(installedSmokeDiagnostic(failure, {
+    stderr: [
+      '[backend-diagnostic] [runtime-diagnostic] assembly_failed',
+      'private path C:\\Users\\runneradmin\\secret',
+      '[desktop-diagnostic] source_rollback_unavailable',
+    ].join('\n'),
+    exitCode: null,
+    signalCode: null,
+  }), 'failure=installed_candidate_tree_failed+installed_candidate_readiness_failed '
+    + 'child=assembly_failed+source_rollback_unavailable state=running')
+  assert.equal(installedSmokeDiagnostic(cleanup, {
+    stderr: 'token=private-secret',
+    exitCode: 7,
+    signalCode: null,
+  }), 'failure=unknown child=none state=exit_7')
+})
+
+test('failed candidate cleanup releases every parent-side child handle', async () => {
+  const {releaseCandidateChildHandles} = await import('../scripts/installed-candidate-smoke.mjs')
+  const calls = []
+  const streams = Array.from({length: 5}, (_, index) => ({
+    destroy: () => calls.push(`destroy:${index}`),
+    unref: () => calls.push(`unref:${index}`),
+  }))
+  releaseCandidateChildHandles({
+    stdio: streams,
+    unref: () => calls.push('child:unref'),
+  })
+  assert.deepEqual(calls, [
+    'destroy:0', 'unref:0', 'destroy:1', 'unref:1', 'destroy:2', 'unref:2',
+    'destroy:3', 'unref:3', 'destroy:4', 'unref:4', 'child:unref',
+  ])
+})
+
+test('Windows cleanup uses the bounded native tree terminator without CIM discovery', async () => {
+  const {windowsTreeTermination} = await import('../scripts/installed-candidate-smoke.mjs')
+  assert.deepEqual(windowsTreeTermination(49152, {SystemRoot: 'C:\\Windows'}), {
+    command: 'C:\\Windows\\System32\\taskkill.exe',
+    args: ['/PID', '49152', '/T', '/F'],
+  })
+  assert.throws(() => windowsTreeTermination(0, {SystemRoot: 'C:\\Windows'}),
+    /installed_candidate_tree_failed/u)
+})
+
 test('provider close does not wait for the WebSocket close callback after clients terminate', async () => {
   const {closeQwenSmokeProvider} = await import('../scripts/installed-candidate-smoke.mjs')
   let terminated = 0
