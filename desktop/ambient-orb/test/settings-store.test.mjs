@@ -14,6 +14,7 @@ import {
   loadSettings,
   normalizeSettings,
   publicSettings,
+  orbSettings,
   readSecret,
   saveSettings,
   secretsPresent,
@@ -615,6 +616,15 @@ test('publicSettings never carries the secrets object', () => {
     'version',
   ])
   assert.doesNotMatch(JSON.stringify(view), /sk-visible|sealed/)
+})
+
+test('orb settings expose only renderer-owned appearance and activation fields', () => {
+  assert.deepEqual(orbSettings({
+    palette: 'graphite',
+    startListeningOnLaunch: true,
+    codexBinaryPath: 'C:\\private\\codex.exe',
+    modelBaseUrl: 'https://private.example/v1',
+  }), {palette: 'graphite', startListeningOnLaunch: true})
 })
 
 test('secretsPresent reports booleans for every key and leaks no ciphertext', () => {

@@ -376,6 +376,14 @@ export function publicSettings(settings) {
   }
 }
 
+export function orbSettings(settings) {
+  const normalized = normalizeSettings(settings)
+  return Object.freeze({
+    palette: normalized.palette,
+    startListeningOnLaunch: normalized.startListeningOnLaunch,
+  })
+}
+
 export function secretsPresent(settings) {
   const { secrets } = normalizeSettings(settings)
   const present = {}

@@ -2,6 +2,7 @@
   "schema_version": 2,
   "files": [
     "desktop/ambient-orb/src/main/app-protocol.mjs",
+    "desktop/ambient-orb/src/main/backend-supervisor.mjs",
     "desktop/ambient-orb/src/main/backend.mjs",
     "desktop/ambient-orb/src/main/camera-source.mjs",
     "desktop/ambient-orb/src/main/codex-discovery.mjs",
@@ -20,6 +21,7 @@
     "desktop/ambient-orb/src/renderer/drag-gesture.mjs",
     "desktop/ambient-orb/src/renderer/index.mjs",
     "desktop/ambient-orb/src/renderer/memory-board.mjs",
+    "desktop/ambient-orb/src/renderer/microphone-permission.mjs",
     "desktop/ambient-orb/src/renderer/orb-visual.mjs",
     "desktop/ambient-orb/src/renderer/release-camera-contract.mjs",
     "desktop/ambient-orb/src/renderer/release-camera.mjs",

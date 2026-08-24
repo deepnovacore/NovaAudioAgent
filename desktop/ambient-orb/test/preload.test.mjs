@@ -38,6 +38,16 @@ test('preload exposes a removable backend-exit listener without exposing ipcRend
   assert.equal(exposed.ipcRenderer, undefined)
 })
 
+test('preload exposes a removable backend-ready listener', async () => {
+  const { exposed, ipcRenderer } = await loadPreload()
+  const received = []
+  const unsubscribe = exposed.onBackendReady(value => received.push(value))
+  ipcRenderer.emit('nova:backend-ready', {}, {endpoint: 'ws://127.0.0.1:7/'})
+  unsubscribe()
+  ipcRenderer.emit('nova:backend-ready', {}, {endpoint: 'ignored'})
+  assert.deepEqual(received, [{endpoint: 'ws://127.0.0.1:7/'}])
+})
+
 test('preload exposes the settings bridge as invoke/invoke/removable listener', async () => {
   const { exposed, ipcRenderer, invokes } = await loadPreload()
 

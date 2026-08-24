@@ -36,6 +36,8 @@ function publicView(overrides = {}) {
     proactivity: 'balanced',
     codexHeartbeatSeconds: 30,
     pipelineMode: 'integrated',
+    startListeningOnLaunch: false,
+    backendStatus: 'ready',
     integratedProvider: 'qwen',
     integratedModel: 'qwen-realtime',
     integratedVoice: 'longanqian',
@@ -555,8 +557,8 @@ test('key usage labels are derived from public pipeline selection only', () => {
   assert.doesNotMatch(script, /\.secrets\b|ciphertext|decrypt/)
 })
 
-test('the panel states what applies now and what waits for the next launch', () => {
-  assert.match(html, /语音、主动性与 API 密钥设置将在下次启动生效/)
+test('the panel states what applies immediately and what triggers a controlled reconnect', () => {
+  assert.match(html, /运行配置保存后，后台会自动重启并重新连接/)
   assert.match(html, /配色更改立即生效/)
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
 })
@@ -580,6 +582,15 @@ test('the panel exposes packaged Codex, Projects, and model endpoint configurati
   assert.match(script, /saveText\('codexWorkspace', codexWorkspace\)/)
   assert.match(script, /saveText\('codexManagedRoot', codexManagedRoot\)/)
   assert.match(script, /saveText\('modelBaseUrl', modelBaseUrl\)/)
+})
+
+test('the panel exposes backend state and opt-in microphone activation', () => {
+  assert.match(html, /id="backend-status"/)
+  assert.match(html, /id="startListeningOnLaunch"/)
+  assert.match(html, /启动时自动开始监听/)
+  assert.match(script, /backendStatus\.textContent/)
+  assert.match(script, /startListeningOnLaunch\.checked = view\.startListeningOnLaunch === true/)
+  assert.match(script, /startListeningOnLaunch:\s*startListeningOnLaunch\.checked/)
 })
 
 test('the panel talks to main only through the settings bridge', () => {

@@ -231,3 +231,32 @@ test('main camera permission helper catches prompting or examining permissions i
     assert.deepEqual(calls, expected, name)
   }
 })
+
+test('main microphone helper asks macOS once while other platforms defer to Chromium', async () => {
+  assert.equal(typeof securityModule.requestMicrophonePermission, 'function')
+  for (const [name, platform, status, expected] of [
+    ['mac not determined', 'darwin', 'not-determined', ['status', 'ask']],
+    ['mac granted', 'darwin', 'granted', ['status']],
+    ['mac denied', 'darwin', 'denied', ['status']],
+    ['windows', 'win32', 'not-determined', []],
+    ['linux', 'linux', 'not-determined', []],
+  ]) {
+    const calls = []
+    await securityModule.requestMicrophonePermission({
+      platform,
+      systemPreferences: {
+        getMediaAccessStatus(kind) {
+          assert.equal(kind, 'microphone')
+          calls.push('status')
+          return status
+        },
+        async askForMediaAccess(kind) {
+          assert.equal(kind, 'microphone')
+          calls.push('ask')
+          return true
+        },
+      },
+    })
+    assert.deepEqual(calls, expected, name)
+  }
+})

@@ -12,6 +12,7 @@ import {
   OnsetTracker,
   PlaybackMeter,
 } from './audio.mjs'
+import { preflightMicrophone } from './microphone-permission.mjs'
 import {
   RendererCameraController,
   RendererSocketRouter,
@@ -87,6 +88,7 @@ const axes = {
 }
 
 let socket
+let activeConnection = null
 let context
 let media
 let processor
@@ -555,24 +557,52 @@ function handleBackendExit() {
   render()
 }
 
+function connectBackend(connection) {
+  if (!connection || typeof connection.endpoint !== 'string' || typeof connection.token !== 'string') {
+    return handleBackendExit()
+  }
+  try {
+    activeConnection?.close(false)
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
+    const nextSocket = new WebSocket(connection.endpoint)
+    const nextConnection = socketRouter.connect(nextSocket)
+    activeConnection = nextConnection
+    socket = nextSocket
+    nextSocket.binaryType = 'arraybuffer'
+    nextSocket.onopen = () => {
+      if (!nextConnection.isCurrent()) return
+      nextConnection.delivery.sendText(JSON.stringify({ type: 'hello', token: connection.token }))
+      axes.connected = true
+      axes.error = ''
+      render()
+    }
+    nextSocket.onmessage = nextConnection.onMessage
+    nextSocket.onclose = () => { nextConnection.close() }
+    nextSocket.onerror = () => {
+      if (!nextConnection.isCurrent()) return
+      axes.error = 'connection'
+      render()
+    }
+  } catch {
+    handleBackendExit()
+  }
+}
+
 async function boot() {
-  let bootConnection = null
-  let bootSocket = null
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
     cameraController.setSourceMode(bootstrap.cameraSource)
     axes.audioMode = bootstrap.audioMode
     axes.platform = bootstrap.platform
-    // bootstrap.settings does not exist yet (it lands with the settings task);
-    // the optional chain reads as undefined today, and setPalette already
-    // falls back to 'ember' for anything that isn't a known palette name.
+    // Only the renderer-owned subset reaches the orb; credentials, executable
+    // paths, and service endpoints stay in the main process/settings panel.
     visual.setPalette(bootstrap.settings?.palette)
     if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
     window.novaAudioAgentDesktop.onBackendExit(handleBackendExit)
-    // Same guard for the live-push side: window.novaAudioAgentDesktop.settings
-    // is not exposed by the preload script until that same future task, so
-    // this must not throw in the meantime.
+    window.novaAudioAgentDesktop.onBackendReady(connectBackend)
+    // Palette updates are the only live renderer setting. Runtime settings
+    // trigger a supervised backend restart in main.
     window.novaAudioAgentDesktop.settings?.onChanged?.(next => visual.setPalette(next.palette))
     window.novaAudioAgentDesktop.memoryBoard.onFetch(requestId => {
       send({ type: 'memory.board.request', request_id: requestId })
@@ -611,32 +641,15 @@ async function boot() {
         void fallBackAfterNativeFailure()
       }
     })
-    const nextSocket = new WebSocket(bootstrap.endpoint)
-    const connection = socketRouter.connect(nextSocket)
-    bootConnection = connection
-    bootSocket = nextSocket
-    socket = nextSocket
-    nextSocket.binaryType = 'arraybuffer'
-    nextSocket.onopen = () => {
-      if (!connection.isCurrent()) return
-      connection.delivery.sendText(JSON.stringify({ type: 'hello', token: bootstrap.token }))
-    }
-    nextSocket.onmessage = connection.onMessage
-    nextSocket.onclose = () => { connection.close() }
-    nextSocket.onerror = () => {
-      if (!connection.isCurrent()) return
-      axes.error = 'connection'
-      render()
-    }
-    axes.connected = true
     axes.booting = false
-    // Applied after the optimistic connect, which would otherwise overwrite it: the
-    // backend may have died before this renderer existed, in which case its exit was
-    // never pushed here and only the bootstrap reply above knows about it.
-    if (bootstrap.backendExited === true) handleBackendExit()
+    if (bootstrap.backend) connectBackend(bootstrap.backend)
+    else handleBackendExit()
+    const microphone = await preflightMicrophone({ mediaDevices: navigator.mediaDevices })
+    axes.permission = microphone.status === 'granted' ? 'granted' : 'denied'
+    if (microphone.status === 'granted' && bootstrap.settings?.startListeningOnLaunch === true) {
+      await activateCapture()
+    }
   } catch {
-    bootConnection?.close(false)
-    if (socket === bootSocket) socket = undefined
     axes.booting = false
     axes.error = 'bootstrap'
   }

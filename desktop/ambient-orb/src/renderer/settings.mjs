@@ -33,6 +33,8 @@ const SECRET_LABELS = {
 const secretRevisions = createSecretRevisions(SECRET_KEYS)
 
 const statusLabel = document.querySelector('#status')
+const backendStatus = document.querySelector('#backend-status')
+const startListeningOnLaunch = document.querySelector('#startListeningOnLaunch')
 const warning = document.querySelector('#keyring-warning')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
 const proactivityInputs = [...document.querySelectorAll('input[name="proactivity"]')]
@@ -143,6 +145,10 @@ function renderCodexStatus(view) {
 
 function render(view, drafts) {
   if (!view) return
+  const backendReady = view.backendStatus === 'ready'
+  backendStatus.textContent = backendReady ? 'NovaAudioAgent 已连接' : 'NovaAudioAgent 正在重连…'
+  backendStatus.dataset.ready = backendReady ? '1' : '0'
+  startListeningOnLaunch.checked = view.startListeningOnLaunch === true
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
   for (const input of pipelineModeInputs) input.checked = input.value === view.pipelineMode
@@ -288,6 +294,10 @@ for (const input of paletteInputs) {
     void push({ palette: input.value }, '配色已更新')
   })
 }
+startListeningOnLaunch.addEventListener('change', () => {
+  controller.applyLocal({ startListeningOnLaunch: startListeningOnLaunch.checked })
+  void push({ startListeningOnLaunch: startListeningOnLaunch.checked }, '麦克风启动设置已保存')
+})
 for (const input of proactivityInputs) {
   input.addEventListener('change', () => {
     controller.applyLocal({ proactivity: input.value })

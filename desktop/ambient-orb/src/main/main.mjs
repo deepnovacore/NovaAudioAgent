@@ -32,6 +32,7 @@ import {
   venvPython,
   watchBackendExit,
 } from './backend.mjs'
+import { createBackendSupervisor } from './backend-supervisor.mjs'
 import { installAppProtocol, loadAppWindow } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
@@ -50,6 +51,7 @@ import {
   createSettingsWriter,
   hasPlaintextSecret,
   loadSettings,
+  orbSettings,
   publicSettings,
   readSecret,
   saveSettings,
@@ -70,6 +72,7 @@ import {
   configureWindowSecurity,
   createBootstrapAccess,
   requestLocalCameraPermission,
+  requestMicrophonePermission,
   settingsWindowOptions,
   validateBootstrap,
 } from './security.mjs'
@@ -107,6 +110,8 @@ const RELEASE_CAMERA_PENDING_EXIT_CODE = 75
 const opaque = process.env.NOVA_ORB_OPAQUE === '1'
 
 let backend = null
+let backendSupervisor = null
+let backendStatus = Object.freeze({state: 'idle', connection: null, retryInMs: null})
 let mainWindow = null
 let boardWindow = null
 let settingsWindow = null
@@ -122,11 +127,6 @@ let currentSettings = null
 let desktopConfig = null
 let codexStatus = Object.freeze({status: 'missing', path: null, source: null, version: null})
 const secretCodec = createSafeStorageCodec(safeStorage)
-// Sticky: the backend can die in the window between its handshake and the orb's
-// first paint, when there is no renderer to tell. The flag is what the bootstrap
-// reply reports and what the post-load push replays, so that death is delivered
-// rather than lost.
-let backendExited = false
 const pendingBoardRequests = new Map()
 let pendingGraphBoardRequest = null
 
@@ -140,8 +140,16 @@ function pythonExecutable() {
 // 'closed' handler because it is not meant to close before the app quits — so a send after
 // the window is gone would throw "Object has been destroyed" out of whatever callback made
 // it, uncaught, in the main process. One guard, one place.
+function sendToWindow(window, channel, ...args) {
+  if (window && !window.isDestroyed()) window.webContents.send(channel, ...args)
+}
+
 function sendToOrb(channel, ...args) {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
+  sendToWindow(mainWindow, channel, ...args)
+}
+
+function sendToSettings(channel, ...args) {
+  sendToWindow(settingsWindow, channel, ...args)
 }
 
 function windowPositionFile() {
@@ -162,6 +170,7 @@ function settingsView() {
   return {
     ...publicSettings(currentSettings),
     codexStatus,
+    backendStatus: backendStatus.state,
     effectivePaths: desktopConfig ? Object.freeze({
       stateRoot: desktopConfig.stateRoot,
       managedRoot: desktopConfig.managedRoot,
@@ -378,15 +387,16 @@ async function refreshDesktopConfiguration() {
   codexStatus = prepared.codexStatus
 }
 
-async function launchBackend(cameraSource, backendKind, smokeChannel) {
+async function launchBackend(backendKind, smokeChannel, onExit) {
   const token = randomBytes(16).toString('hex')
   const workspace = desktopConfig?.workspace || process.cwd()
+  let spawnedBackend = null
   // The listener owns the handshake, so it must be bound before the backend can
   // dial it; the readiness timeout still kills a backend that never arrives.
   const listener = createReadinessListener({
     token,
     onTimeout: () => {
-      if (backend) void shutdownBackend(backend)
+      if (spawnedBackend) void shutdownBackend(spawnedBackend)
     },
   })
   let ready
@@ -412,23 +422,24 @@ async function launchBackend(cameraSource, backendKind, smokeChannel) {
       resolvedConfig: desktopConfig,
     })
     if (spec.kind === 'node') {
-      backend = utilityProcess.fork(spec.entry, spec.argv, {
+      spawnedBackend = utilityProcess.fork(spec.entry, spec.argv, {
         cwd: workspace,
         env: spec.env,
         stdio: spec.stdio,
         serviceName: 'Nova Audio Agent Runtime',
       })
     } else {
-      backend = spawn(spec.command, spec.argv, {
+      spawnedBackend = spawn(spec.command, spec.argv, {
         cwd: workspace,
         env: spec.env,
         stdio: spec.stdio,
       })
     }
-    backend.stderr?.on('data', chunk => {
+    backend = spawnedBackend
+    spawnedBackend.stderr?.on('data', chunk => {
       console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
     })
-    backend.stdout?.on('data', chunk => {
+    spawnedBackend.stdout?.on('data', chunk => {
       console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
     })
     // Covers both deaths: the child that exits, and the child that never started
@@ -436,12 +447,12 @@ async function launchBackend(cameraSource, backendKind, smokeChannel) {
     // would be thrown into this process). Either way the handshake is failed now
     // instead of waiting out the timeout, and `launchBackend` rejects, which the
     // whenReady().catch() below turns into a quit exactly as a timeout does.
-    watchBackendExit(backend, {
+    watchBackendExit(spawnedBackend, {
       closeReadiness: listener.close,
       onExit: reason => {
-        backendExited = true
+        if (backend === spawnedBackend) backend = null
         console.error(`[backend-diagnostic] ${reason}`)
-        if (!app.isQuitting) sendToOrb('nova:backend-exit')
+        onExit(reason)
       },
     })
     ready = await listener.readiness
@@ -450,6 +461,10 @@ async function launchBackend(cameraSource, backendKind, smokeChannel) {
   }
   const validated = validateBootstrap({ endpoint: ready.endpoint, token })
   smokeChannel?.ready({endpoint: validated.endpoint, token: validated.token})
+  return Object.freeze({backend: spawnedBackend, connection: validated})
+}
+
+function initializeDesktopBootstrap(cameraSource) {
   nativeBinary = app.isPackaged
     ? resolve(process.resourcesPath, 'native/macos_voice_io')
     : resolve(packageRoot, 'build/macos_voice_io')
@@ -459,20 +474,19 @@ async function launchBackend(cameraSource, backendKind, smokeChannel) {
     onEvent: event => sendToOrb('nova:native-audio:event', event),
   }) : null
   bootstrap = Object.freeze({
-    ...validated,
     audioMode: 'inactive',
     nativeAvailable,
     platform: process.platform,
     opaque,
     cameraSource,
-    settings: publicSettings(currentSettings),
+    settings: orbSettings(currentSettings),
   })
 }
 
 async function startSelectedCamera(camera, backendKind, smokeChannel) {
   currentSettings = await loadSettings(settingsFile())
   await refreshDesktopConfiguration()
-  await launchBackend(camera.source, backendKind, smokeChannel)
+  initializeDesktopBootstrap(camera.source)
   const launchId = randomBytes(8).toString('hex')
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
@@ -579,6 +593,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       throw new Error('Codex rescan rejected')
     }
     await refreshDesktopConfiguration()
+    void backendSupervisor?.restart()
     return settingsView()
   })
   ipcMain.handle('nova:settings:set', async (event, patch) => {
@@ -602,8 +617,12 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       return { ...settingsView(), saved: false, rejectedSecrets: [] }
     }
     // Only the palette is live; pipeline, providers, models, voices,
-    // proactivity, and keys are read at launch.
-    sendToOrb('nova:settings:changed', publicSettings(currentSettings))
+    // proactivity, and keys are applied by a controlled backend restart.
+    sendToOrb('nova:settings:changed', orbSettings(currentSettings))
+    void refreshDesktopConfiguration().then(
+      () => backendSupervisor?.restart(),
+      error => console.error(`[desktop-diagnostic] settings_apply_failure type=${error.name}`),
+    )
     return { ...settingsView(), saved: true, rejectedSecrets }
   })
   ipcMain.handle('nova:bootstrap', event => {
@@ -611,7 +630,11 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     // sent before then has nobody to reach. Riding the verdict on the very payload the
     // renderer is already awaiting removes the ordering question entirely. Read here, at
     // invoke time — the frozen startup payload predates every death it would have to report.
-    return { ...readBootstrap(event.sender), backendExited }
+    return {
+      ...readBootstrap(event.sender),
+      backend: backendStatus.connection,
+      backendStatus: backendStatus.state,
+    }
   })
   ipcMain.handle('nova:native-audio:capture', async (event, enabled) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
@@ -678,11 +701,9 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     cameraFile: camera.source === 'file' ? camera.file : undefined,
     fetchCameraFile: (url, init) => net.fetch(url, init),
   }).then(() => {
-    // Belt-and-braces only. The renderer binds its listener from boot(), after its own
-    // bootstrap round-trip, so this push may still arrive before anything is listening —
-    // which is why the bootstrap reply above carries `backendExited` as the real fix.
-    // This covers the ordinary case where boot() finished long before the load settled.
-    if (backendExited) sendToOrb('nova:backend-exit')
+    if (backendStatus.state === 'ready' && backendStatus.connection) {
+      sendToOrb('nova:backend-ready', backendStatus.connection)
+    } else if (backendStatus.state !== 'starting') sendToOrb('nova:backend-exit')
   }).catch(() => {
     console.error('Ambient Orb renderer failed to load')
     app.quit()
@@ -696,6 +717,23 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   if (!shortcutRegistered) {
     console.warn('[ambient-orb] global shortcut unavailable on this session')
   }
+  backendSupervisor = createBackendSupervisor({
+    start: onExit => launchBackend(backendKind, smokeChannel, onExit),
+    stopBackend: async child => {
+      await shutdownBackend(child)
+      if (backend === child) backend = null
+    },
+    onStatus: status => {
+      backendStatus = status
+      sendToSettings('nova:settings:changed', settingsView())
+      if (status.state === 'ready' && status.connection) {
+        sendToOrb('nova:backend-ready', status.connection)
+      } else if (status.state === 'disconnected' || status.state === 'retry_wait') {
+        sendToOrb('nova:backend-exit')
+      }
+    },
+  })
+  void backendSupervisor.start()
 }
 
 async function start() {
@@ -705,6 +743,7 @@ async function start() {
     isPackaged: app.isPackaged,
     onQuit: () => app.quit(),
   })
+  await requestMicrophonePermission({ platform: process.platform, systemPreferences })
   return startWithSelectedCamera({
     environment: process.env,
     requestPermission: source => requestLocalCameraPermission(source, {
@@ -805,13 +844,16 @@ app.on('before-quit', event => {
   releaseSmokeChannel?.close()
   globalShortcut.unregisterAll()
   void nativeAudio?.deactivate()
-  if (!backend) return
+  if (!backendSupervisor && !backend) return
   // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
   // kill would cut the session off mid-teardown, and on Windows there is no
   // graceful signal at all. Later passes keep holding; the first pass exits.
   event.preventDefault()
   if (quitDrain) return
-  quitDrain = shutdownBackend(backend).then(() => app.exit(0), () => app.exit(0))
+  const drain = backendSupervisor
+    ? backendSupervisor.stop()
+    : shutdownBackend(backend)
+  quitDrain = drain.then(() => app.exit(0), () => app.exit(0))
 })
 
 app.on('window-all-closed', event => event.preventDefault?.())

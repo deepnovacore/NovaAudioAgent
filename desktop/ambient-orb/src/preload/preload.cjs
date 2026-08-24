@@ -8,6 +8,12 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     ipcRenderer.on('nova:backend-exit', listener)
     return () => ipcRenderer.removeListener('nova:backend-exit', listener)
   },
+  onBackendReady: callback => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = (_event, connection) => callback(connection)
+    ipcRenderer.on('nova:backend-ready', listener)
+    return () => ipcRenderer.removeListener('nova:backend-ready', listener)
+  },
   orbMenu: Object.freeze({
     show: () => ipcRenderer.send('nova:orb-menu:show'),
   }),

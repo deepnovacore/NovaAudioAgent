@@ -19,6 +19,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
   const channels = [...source.matchAll(/['"](nova:[^'"]+)['"]/g)].map(match => match[1])
   assert.deepEqual([...new Set(channels)].sort(), [
     'nova:backend-exit',
+    'nova:backend-ready',
     'nova:bootstrap',
     'nova:codex:rescan',
     'nova:memory-board:data',
@@ -121,7 +122,7 @@ test('settings IPC is sender-validated and answers from main without an orb rela
 
   assert.match(source, /ipcMain\.handle\('nova:settings:get', event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
   assert.match(source, /ipcMain\.handle\('nova:settings:set', async \(event, patch\) => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
-  assert.match(source, /sendToOrb\('nova:settings:changed', publicSettings\(currentSettings\)\)/)
+  assert.match(source, /sendToOrb\('nova:settings:changed', orbSettings\(currentSettings\)\)/)
   // No requestId machinery: settings live in main, so nothing round-trips
   // through the orb renderer the way the memory board has to.
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
@@ -213,7 +214,7 @@ test('readSecret is wired at the spawn site, decrypting only what backendLaunchS
   // Now consciously wired: the pin from before Task 20 (`doesNotMatch(/readSecret/)`)
   // is gone, because secrets must reach the spawned backend somehow.
   const readSecretSite = source.indexOf('readSecret(')
-  const spawnSite = source.indexOf('backend = spawn(')
+  const spawnSite = source.indexOf('spawnedBackend = spawn(')
   assert.ok(readSecretSite >= 0, 'readSecret must be wired now that spawn needs decrypted secrets')
   assert.ok(spawnSite >= 0, 'the backend is still spawned here')
   assert.ok(readSecretSite < spawnSite, 'secrets are decrypted before the backend is spawned')
@@ -229,11 +230,11 @@ test('readSecret is wired at the spawn site, decrypting only what backendLaunchS
   assert.doesNotMatch(source, /\b(?:let|var)\s+decryptedSecrets\b/)
 })
 
-test('the bootstrap payload carries the non-secret settings for the orb', async () => {
+test('the bootstrap payload carries only orb-owned settings', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
   const assignment = source.slice(source.indexOf('bootstrap = Object.freeze({'))
-  assert.match(assignment.slice(0, assignment.indexOf('})')), /settings: publicSettings\(currentSettings\)/)
+  assert.match(assignment.slice(0, assignment.indexOf('})')), /settings: orbSettings\(currentSettings\)/)
   assert.match(source, /currentSettings = await loadSettings\(settingsFile\(\)\)/)
 })
 
@@ -251,8 +252,8 @@ test('quitting drains the backend on the stdin sentinel instead of killing it', 
 test('a backend that fails to spawn is handled rather than thrown at the main process', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
-  const spawnSite = source.indexOf('backend = spawn(')
-  const watchSite = source.indexOf('watchBackendExit(backend')
+  const spawnSite = source.indexOf('spawnedBackend = spawn(')
+  const watchSite = source.indexOf('watchBackendExit(spawnedBackend')
   assert.ok(spawnSite >= 0, 'the backend is still spawned here')
   assert.ok(watchSite > spawnSite, "the death hooks must be registered right after spawn")
   // ENOENT emits 'error' *instead of* 'exit', so an exit-only hook is the bug:
@@ -261,35 +262,34 @@ test('a backend that fails to spawn is handled rather than thrown at the main pr
   assert.doesNotMatch(source, /backend\.on\('error'/)
 })
 
-test('a backend that died before the window exists replays its exit to the new renderer', async () => {
+test('backend status survives startup races and is replayed after renderer load', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
-  assert.match(source, /let backendExited = false/)
-  assert.match(source, /backendExited = true/)
-  // Belt: the push replay still fires once the renderer has loaded.
+  assert.match(source, /let backendStatus = Object\.freeze/)
+  assert.match(source, /backendStatus = status/)
   const load = source.slice(source.indexOf('loadAppWindow(mainWindow'))
-  assert.match(load.slice(0, 900), /if \(backendExited\) sendToOrb\('nova:backend-exit'\)/)
+  assert.match(load.slice(0, 1100), /sendToOrb\('nova:backend-ready', backendStatus\.connection\)/)
 })
 
-test('the bootstrap answer carries the backend-exit verdict read at invoke time', async () => {
+test('the bootstrap answer carries the current supervised connection at invoke time', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
   // Braces: the renderer already awaits this reply, so a verdict carried on it cannot
   // lose the race against its own listener bind the way a push can.
   const handler = source.slice(source.indexOf("ipcMain.handle('nova:bootstrap'"))
-  assert.match(handler.slice(0, handler.indexOf('})')), /backendExited/)
-  // Read per invoke, never baked into the payload frozen before any backend could die.
+  assert.match(handler.slice(0, handler.indexOf('})')), /backendStatus\.connection/)
   const frozen = source.slice(source.indexOf('bootstrap = Object.freeze({'))
-  assert.doesNotMatch(frozen.slice(0, frozen.indexOf('})')), /backendExited/)
+  assert.doesNotMatch(frozen.slice(0, frozen.indexOf('})')), /backendStatus/)
 })
 
-test('renderer applies a backend that died before its exit listener was bound', async () => {
+test('renderer accepts both supervised disconnect and reconnect events', async () => {
   const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
-  // One handler, two doors into it: the pushed event and the bootstrap verdict.
   assert.match(source, /function handleBackendExit\(\)/)
+  assert.match(source, /function connectBackend\(connection\)/)
   assert.match(source, /onBackendExit\(handleBackendExit\)/)
-  assert.match(source, /if \(bootstrap\.backendExited === true\) handleBackendExit\(\)/)
+  assert.match(source, /onBackendReady\(connectBackend\)/)
+  assert.match(source, /if \(bootstrap\.backend\) connectBackend\(bootstrap\.backend\)/)
 })
 
 test('every renderer push is guarded against a destroyed orb window', async () => {
@@ -297,10 +297,18 @@ test('every renderer push is guarded against a destroyed orb window', async () =
 
   // `mainWindow` is never nulled on close, so an unguarded send throws
   // "Object has been destroyed" into the main process. One guard, one place.
-  assert.match(source, /function sendToOrb\(channel, \.\.\.args\) \{/)
-  assert.match(source, /if \(mainWindow && !mainWindow\.isDestroyed\(\)\)/)
+  assert.match(source, /function sendToWindow\(window, channel, \.\.\.args\) \{/)
+  assert.match(source, /if \(window && !window\.isDestroyed\(\)\)/)
+  assert.match(source, /sendToWindow\(mainWindow, channel, \.\.\.args\)/)
+  assert.match(source, /sendToWindow\(settingsWindow, channel, \.\.\.args\)/)
   const sends = source.match(/webContents\.send\(/g) || []
-  assert.equal(sends.length, 1, 'the only raw send is the guarded one inside sendToOrb')
+  assert.equal(sends.length, 1, 'the only raw send is the shared guarded helper')
+})
+
+test('supervisor publishes live connection state to an open settings panel', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const statusHandler = source.slice(source.indexOf('onStatus: status => {'))
+  assert.match(statusHandler.slice(0, statusHandler.indexOf('\n    },')), /sendToSettings\('nova:settings:changed', settingsView\(\)\)/)
 })
 
 test('native VoiceProcessingIO starts only after explicit capture activation', async () => {
@@ -405,7 +413,7 @@ test('camera bootstrap and protocol wiring catch canonical path disclosure or re
 
   const boot = renderer.slice(renderer.indexOf('async function boot()'))
   const mode = boot.indexOf('cameraController.setSourceMode(bootstrap.cameraSource)')
-  const socket = boot.indexOf('new WebSocket(bootstrap.endpoint)')
+  const socket = boot.indexOf('connectBackend(bootstrap.backend)')
   assert.ok(mode >= 0 && socket > mode, 'immutable mode is installed before any host request can arrive')
   assert.doesNotMatch(boot.slice(0, socket), /cameraPath|camera\.file|NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE/u)
 })
