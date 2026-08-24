@@ -1,8 +1,9 @@
 name: CI
 
+# Temporary manual-only debugging mode. Restore automatic triggers only after
+# cross-platform CI is explicitly re-enabled.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
