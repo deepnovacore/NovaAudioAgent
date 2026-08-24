@@ -15,6 +15,7 @@ from nova_audio_agent.executors.codex_project_live import (
     CODEX_PROJECT_LIVE_MANIFEST,
     ProjectCodexAdapter,
     ProjectCommitResult,
+    _normalize_project_request,
 )
 from nova_audio_agent.executors.codex import CodexProcessStatus, CodexTransportResult
 from nova_audio_agent.executors.codex_app_server import SteerTransportResult
@@ -164,14 +165,19 @@ class _ResumeUnavailableWorker(_ProjectWorker):
         )
 
 
-def test_project_mode_exposes_one_additional_flat_tool() -> None:
+def test_project_mode_exposes_project_and_confirmation_tools() -> None:
     tools = compile_tool_schema((CODEX_PROJECT_LIVE_MANIFEST,))
     names = [
         item["function"]["name"]
         for item in tools.schemas
         if item["function"]["name"].startswith("codex__")
     ]
-    assert names == ["codex__run", "codex__project", "codex__steer", "codex__status"]
+    assert names == [
+        "codex__project",
+        "codex__confirm_project_action",
+        "codex__steer",
+        "codex__status",
+    ]
     project = next(
         item["function"] for item in tools.schemas if item["function"]["name"] == "codex__project"
     )
@@ -182,6 +188,10 @@ def test_project_mode_exposes_one_additional_flat_tool() -> None:
         "work_order",
         "origin_ref",
     }
+    assert _normalize_project_request({
+        "action": "start_session",
+        "work_order": "fix login",
+    }) == {"action": "start_session", "work_order": "fix login"}
 
 
 @pytest.mark.asyncio
@@ -205,7 +215,12 @@ async def test_project_action_validation_and_proposal_only_dispatch(tmp_path: Pa
     before = store.snapshot()
     proposal = await adapter.dispatch(
         "project",
-        {"action": "create", "workspace": "beta", "work_order": "build it"},
+        {
+            "action": "create_workspace",
+            "workspace": "beta",
+            "session": "Initial",
+            "work_order": "build it",
+        },
         ctx,
     )
     assert proposal.outcome == "ok"
@@ -214,7 +229,7 @@ async def test_project_action_validation_and_proposal_only_dispatch(tmp_path: Pa
         "code": "confirmation_required",
         "action": "create",
         "workspace": "beta",
-        "session": None,
+        "session": "Initial",
         "confirmation_prompt": "准备创建工作区beta，并在其中开始任务，请确认或取消。",
     }
     assert store.snapshot() == before
@@ -226,12 +241,12 @@ async def test_invalid_create_is_rejected_before_confirmation(tmp_path: Path) ->
 
     invalid = await adapter.dispatch(
         "project",
-        {"action": "create", "workspace": "../etc"},
+        {"action": "create_workspace", "workspace": "../etc"},
         _context(VirtualClock()),
     )
     conflict = await adapter.dispatch(
         "project",
-        {"action": "create", "workspace": "alpha"},
+        {"action": "create_workspace", "workspace": "alpha"},
         _context(VirtualClock()),
     )
 
@@ -259,7 +274,7 @@ async def test_project_proposal_schedules_expiry_on_the_event_loop(tmp_path: Pat
 
     result = await adapter.dispatch(
         "project",
-        {"action": "select", "workspace": "alpha"},
+        {"action": "select_workspace", "workspace": "alpha"},
         _context(clock),
     )
     await asyncio.sleep(0)
@@ -275,8 +290,8 @@ async def test_lists_are_public_and_exact_names_are_required(tmp_path: Path) -> 
     store.create_managed("beta")
     store.select_workspace("alpha")
 
-    listed = await adapter.dispatch("project", {"action": "list"}, ctx)
-    current_sessions = await adapter.dispatch("project", {"action": "sessions"}, ctx)
+    listed = await adapter.dispatch("project", {"action": "list_workspaces"}, ctx)
+    current_sessions = await adapter.dispatch("project", {"action": "list_sessions"}, ctx)
     assert listed.outcome == "ok"
     assert listed.content == {
         "op": "project",
@@ -297,7 +312,9 @@ async def test_lists_are_public_and_exact_names_are_required(tmp_path: Path) -> 
         "sessions": [],
     }
 
-    missing = await adapter.dispatch("project", {"action": "select", "workspace": "alp"}, ctx)
+    missing = await adapter.dispatch(
+        "project", {"action": "select_workspace", "workspace": "alp"}, ctx
+    )
     assert missing.outcome == "failed"
     assert missing.content == {
         "op": "project",
@@ -318,8 +335,12 @@ async def test_plain_runs_create_distinct_sessions_in_one_persistent_home(tmp_pa
     factory = _ProjectFactory()
     adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
 
-    first = await adapter.dispatch("run", {"work_order": "first"}, _context(clock))
-    second = await adapter.dispatch("run", {"work_order": "second"}, _context(clock))
+    first = await adapter.dispatch(
+        "project", {"action": "start_session", "work_order": "first"}, _context(clock)
+    )
+    second = await adapter.dispatch(
+        "project", {"action": "start_session", "work_order": "second"}, _context(clock)
+    )
 
     assert first.outcome == second.outcome == "ok"
     sessions = store.list_sessions(workspace)
@@ -346,9 +367,13 @@ async def test_two_workspaces_use_different_codex_homes(tmp_path: Path) -> None:
     )
 
     store.select_workspace("alpha")
-    await adapter.dispatch("run", {"work_order": "alpha task"}, _context(clock))
+    await adapter.dispatch(
+        "project", {"action": "start_session", "work_order": "alpha task"}, _context(clock)
+    )
     store.select_workspace("beta")
-    await adapter.dispatch("run", {"work_order": "beta task"}, _context(clock))
+    await adapter.dispatch(
+        "project", {"action": "start_session", "work_order": "beta task"}, _context(clock)
+    )
 
     assert factory.calls[0][1] == store.codex_home(alpha)
     assert factory.calls[1][1] == store.codex_home(beta)
@@ -366,7 +391,11 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
     confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
     factory = _ProjectFactory()
     adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
-    await adapter.dispatch("run", {"work_order": "first", "session": "Task One"}, _context(clock))
+    await adapter.dispatch(
+        "project",
+        {"action": "start_session", "work_order": "first", "session": "Task One"},
+        _context(clock),
+    )
     saved = store.resolve_session(workspace.workspace_id, "Task One")
     confirmation.prepare(
         action="resume",
@@ -390,8 +419,8 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
         outcome.operation, origin_ref="conversation:1", runtime_dispatch=dispatch
     )
     resumed = await adapter.dispatch(
-        "run",
-        {"work_order": "continue it"},
+        "project",
+        {"action": "start_session", "work_order": "continue it"},
         _context(
             clock,
             delegate_id="delegate-resume",
@@ -400,7 +429,7 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
     )
 
     assert committed.accepted is True
-    assert dispatched[0][0].request == {"work_order": "continue it"}
+    assert dispatched[0][0].request == {"action": "start_session", "work_order": "continue it"}
     assert resumed.outcome == "ok"
     assert factory.calls[-1][2] == saved.codex_thread_id
     assert len(factory.calls) == 2
@@ -422,7 +451,11 @@ async def test_confirmed_resume_revalidates_ready_state_at_execution_time(
     confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
     factory = _ProjectFactory()
     adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
-    await adapter.dispatch("run", {"work_order": "first", "session": "Task One"}, _context(clock))
+    await adapter.dispatch(
+        "project",
+        {"action": "start_session", "work_order": "first", "session": "Task One"},
+        _context(clock),
+    )
     saved = store.resolve_session(workspace.workspace_id, "Task One")
     confirmation.prepare(
         action="resume",
@@ -447,8 +480,8 @@ async def test_confirmed_resume_revalidates_ready_state_at_execution_time(
         outcome.operation, origin_ref="conversation:1", runtime_dispatch=dispatch
     )
     resumed = await adapter.dispatch(
-        "run",
-        {"work_order": "continue it"},
+        "project",
+        {"action": "start_session", "work_order": "continue it"},
         _context(
             clock,
             delegate_id="delegate-resume",
@@ -492,13 +525,13 @@ async def test_confirmed_dispatch_reserves_global_slot_and_exact_work_order(tmp_
         runtime_dispatch=dispatch,
     )
     unrelated = await adapter.dispatch(
-        "run",
-        {"work_order": "overtake"},
+        "project",
+        {"action": "start_session", "work_order": "overtake"},
         _context(clock, origin_ref="conversation:3"),
     )
     mismatched = await adapter.dispatch(
-        "run",
-        {"work_order": "wrong work"},
+        "project",
+        {"action": "start_session", "work_order": "wrong work"},
         _context(
             clock,
             origin_ref="conversation:2",
@@ -509,8 +542,8 @@ async def test_confirmed_dispatch_reserves_global_slot_and_exact_work_order(tmp_
 
     assert committed.accepted is True
     assert dispatched[0][0].private is outcome.operation
-    assert unrelated.content != {"error": "busy", "op": "run"}
-    assert mismatched.content == {"error": "confirmation_binding_mismatch", "op": "run"}
+    assert unrelated.content != {"error": "busy", "op": "project"}
+    assert mismatched.content == {"error": "confirmation_binding_mismatch", "op": "project"}
 
 
 @pytest.mark.asyncio
@@ -522,8 +555,9 @@ async def test_confirmed_work_order_is_normalized_once_before_runtime_dispatch(
     proposal = await adapter.dispatch(
         "project",
         {
-            "action": "create",
+            "action": "create_workspace",
             "workspace": "beta",
+            "session": "Initial",
             "work_order": "  host work\n",
         },
         _context(VirtualClock(), origin_ref="conversation:2"),
@@ -544,7 +578,7 @@ async def test_confirmed_work_order_is_normalized_once_before_runtime_dispatch(
         runtime_dispatch=dispatch,
     )
     result = await adapter.dispatch(
-        "run",
+        "project",
         dispatched[0][0].request,
         _context(
             VirtualClock(),
@@ -555,8 +589,8 @@ async def test_confirmed_work_order_is_normalized_once_before_runtime_dispatch(
     )
 
     assert committed.accepted is True
-    assert dispatched[0][0].request == {"work_order": "host work"}
-    assert result.content != {"error": "confirmation_binding_mismatch", "op": "run"}
+    assert dispatched[0][0].request == {"action": "start_session", "work_order": "host work"}
+    assert result.content != {"error": "confirmation_binding_mismatch", "op": "project"}
 
 
 @pytest.mark.asyncio
@@ -585,13 +619,13 @@ async def test_dropped_confirmed_delegate_cannot_make_later_run_busy(tmp_path: P
     )
 
     later = await adapter.dispatch(
-        "run",
-        {"work_order": "later"},
+        "project",
+        {"action": "start_session", "work_order": "later"},
         _context(VirtualClock(), delegate_id="later-delegate"),
     )
 
     assert committed.accepted is True
-    assert later.content != {"error": "busy", "op": "run"}
+    assert later.content != {"error": "busy", "op": "project"}
 
 
 @pytest.mark.asyncio
@@ -610,7 +644,11 @@ async def test_transient_resume_transport_failure_preserves_ready_session(
     confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
     factory = _ProjectFactory()
     adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
-    await adapter.dispatch("run", {"work_order": "first", "session": "Task One"}, _context(clock))
+    await adapter.dispatch(
+        "project",
+        {"action": "start_session", "work_order": "first", "session": "Task One"},
+        _context(clock),
+    )
     saved = store.resolve_session(workspace.workspace_id, "Task One")
     adapter._worker_factory = lambda _workspace, _home, resume, on_ready: _NeverReadyWorker(
         resume or "missing", on_ready
@@ -640,8 +678,8 @@ async def test_transient_resume_transport_failure_preserves_ready_session(
     )
 
     result = await adapter.dispatch(
-        "run",
-        {"work_order": "continue"},
+        "project",
+        {"action": "start_session", "work_order": "continue"},
         _context(
             clock,
             origin_ref="conversation:2",
@@ -668,7 +706,11 @@ async def test_resume_history_rejection_marks_session_unavailable(tmp_path: Path
     confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
     factory = _ProjectFactory()
     adapter = ProjectCodexAdapter(store=store, confirmation=confirmation, worker_factory=factory)
-    await adapter.dispatch("run", {"work_order": "first", "session": "Task One"}, _context(clock))
+    await adapter.dispatch(
+        "project",
+        {"action": "start_session", "work_order": "first", "session": "Task One"},
+        _context(clock),
+    )
     saved = store.resolve_session(workspace.workspace_id, "Task One")
     adapter._worker_factory = lambda _workspace, _home, resume, on_ready: _ResumeUnavailableWorker(
         resume or "missing", on_ready
@@ -697,8 +739,8 @@ async def test_resume_history_rejection_marks_session_unavailable(tmp_path: Path
         runtime_dispatch=dispatch,
     )
     result = await adapter.dispatch(
-        "run",
-        {"work_order": "continue"},
+        "project",
+        {"action": "start_session", "work_order": "continue"},
         _context(
             clock,
             origin_ref="conversation:2",
@@ -730,7 +772,9 @@ async def test_failed_new_run_rolls_back_provisional_session(tmp_path: Path) -> 
         ),
     )
 
-    result = await adapter.dispatch("run", {"work_order": "first"}, _context(clock))
+    result = await adapter.dispatch(
+        "project", {"action": "start_session", "work_order": "first"}, _context(clock)
+    )
 
     assert result.outcome == "failed"
     assert store.list_sessions(workspace) == ()
@@ -781,7 +825,9 @@ async def test_failed_new_run_waits_for_contended_rollback_off_event_loop(
     timer.start()
     ticker_task = asyncio.create_task(ticker())
     try:
-        result = await adapter.dispatch("run", {"work_order": "first"}, _context(clock))
+        result = await adapter.dispatch(
+            "project", {"action": "start_session", "work_order": "first"}, _context(clock)
+        )
     finally:
         finished = True
         await ticker_task
@@ -823,7 +869,9 @@ async def test_project_registry_io_does_not_block_the_event_loop(
     timer.start()
     ticker_task = asyncio.create_task(ticker())
     try:
-        result = await adapter.dispatch("project", {"action": "list"}, _context(VirtualClock()))
+        result = await adapter.dispatch(
+            "project", {"action": "list_workspaces"}, _context(VirtualClock())
+        )
     finally:
         finished = True
         await ticker_task
@@ -877,9 +925,9 @@ async def test_locked_registry_yields_bounded_state_busy_not_an_exception(tmp_pa
     with open(store.lock_path, "rb") as holder:
         fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
         try:
-            listed = await adapter.dispatch("project", {"action": "list"}, ctx)
+            listed = await adapter.dispatch("project", {"action": "list_workspaces"}, ctx)
             proposal = await adapter.dispatch(
-                "project", {"action": "select", "workspace": "alpha"}, ctx
+                "project", {"action": "select_workspace", "workspace": "alpha"}, ctx
             )
         finally:
             fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
@@ -898,7 +946,9 @@ async def test_prepared_confirmation_survives_busy_view_refresh(tmp_path: Path) 
         raise ProjectStateError("state_busy")
 
     store.public_view = busy_view  # type: ignore[method-assign]
-    proposal = await adapter.dispatch("project", {"action": "select", "workspace": "alpha"}, ctx)
+    proposal = await adapter.dispatch(
+        "project", {"action": "select_workspace", "workspace": "alpha"}, ctx
+    )
 
     assert proposal.outcome == "ok"
     assert proposal.content["code"] == "confirmation_required"
@@ -925,7 +975,9 @@ async def test_run_tolerates_busy_view_refresh_and_keeps_session_ready(tmp_path:
         raise ProjectStateError("state_busy")
 
     store.public_view = busy_view  # type: ignore[method-assign]
-    result = await adapter.dispatch("run", {"work_order": "task"}, _context(clock))
+    result = await adapter.dispatch(
+        "project", {"action": "start_session", "work_order": "task"}, _context(clock)
+    )
 
     assert result.outcome == "ok"
     assert [item.state for item in store.list_sessions(workspace)] == ["ready"]
@@ -987,7 +1039,7 @@ async def test_session_listing_shows_the_most_recent_sessions_first(tmp_path: Pa
         session = store.begin_session(workspace.workspace_id, f"task-{index:02d}")
         store.mark_session_ready(session.session_id, f"thread-{index:02d}")
 
-    listed = await adapter.dispatch("project", {"action": "sessions"}, _context(clock))
+    listed = await adapter.dispatch("project", {"action": "list_sessions"}, _context(clock))
 
     titles = [item["session"] for item in listed.content["sessions"]]
     assert len(titles) == 20
@@ -1026,7 +1078,9 @@ async def test_failed_confirmed_create_rolls_back_workspace_and_active_pointer(
     )
 
     result = await adapter.dispatch(
-        "run", {"work_order": "build it"}, _context(clock, private=operation)
+        "project",
+        {"action": "start_session", "work_order": "build it"},
+        _context(clock, private=operation),
     )
 
     assert result.outcome == "failed"

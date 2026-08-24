@@ -188,14 +188,11 @@ class OpSpec:
     # Top-level request fields that must not be copied into durable deadline
     # evidence. The executor still receives the original request.
     sensitive_params: tuple[str, ...] = ()
-    # R105: fast readonly ops opt into a real synchronous tool result instead of a
-    # delegation acknowledgement. An explicit manifest flag, never derived from
-    # readonly or typical_latency.
+    # R105: operations opt into a real synchronous tool result instead of a
+    # delegation acknowledgement. This is independent from mutability.
     sync_result: bool = False
 
     def __post_init__(self) -> None:
-        if self.sync_result and not self.readonly:
-            raise ValueError("sync_result 仅允许用于 readonly 操作")
         if type(self.sensitive_params) is not tuple:
             raise ValueError("sensitive_params 必须是 tuple")
         properties = self.params.get("properties")

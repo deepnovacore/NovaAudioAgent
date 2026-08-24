@@ -67,7 +67,9 @@ function replaceFinalText(value: Record<string, unknown>, text: string): void {
 test('base, live, and project manifests pin exact immutable public operations and policy', () => {
   assert.deepEqual(CODEX_BASE_MANIFEST.ops.map(op => op.name), ['run', 'status'])
   assert.deepEqual(CODEX_LIVE_MANIFEST.ops.map(op => op.name), ['run', 'steer', 'status'])
-  assert.deepEqual(CODEX_PROJECT_MANIFEST.ops.map(op => op.name), ['run', 'project', 'steer', 'status'])
+  assert.deepEqual(CODEX_PROJECT_MANIFEST.ops.map(op => op.name), [
+    'project', 'confirm_project_action', 'steer', 'status',
+  ])
   for (const manifest of [CODEX_BASE_MANIFEST, CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST]) {
     assert.equal(manifest.name, 'codex')
     assert.deepEqual(manifest.policy, {
@@ -98,70 +100,19 @@ test('the runtime package root adds adapters without exposing process authority'
   }
 })
 
-test('compileToolSchema emits exact Codex names, descriptions, deadlines, and bindings', () => {
+test('project mode exposes project-only public tools and the confirmation schema', () => {
   const compiled = compileToolSchema([CODEX_PROJECT_MANIFEST])
-  assert.deepEqual([...compiled.bindings.keys()], [
-    'update_intent', 'update_goal', 'update_authorization',
-    'codex__run', 'codex__project', 'codex__steer', 'codex__status',
+  const codexBindings = [...compiled.bindings.keys()].filter(name => name.startsWith('codex__'))
+  assert.deepEqual(codexBindings, [
+    'codex__project', 'codex__confirm_project_action', 'codex__steer', 'codex__status',
   ])
-  const codexSchemas = compiled.schemas.slice(3)
-  assert.deepEqual(codexSchemas, [
-    {type: 'function', function: {
-      name: 'codex__run',
-      description: '在当前工作区启动一个新的 Codex Session 执行工作单',
-      parameters: {
-        type: 'object',
-        properties: {
-          work_order: {type: 'string', minLength: 1, maxLength: 4000},
-          session: {type: 'string', minLength: 1, maxLength: 120},
-          origin_ref: {type: 'string', description: '当前 ContextView 中、这次动作所回答内容的 ref'},
-        },
-        required: ['work_order', 'origin_ref'],
-        additionalProperties: false,
-      },
-    }},
-    {type: 'function', function: {
-      name: 'codex__project',
-      description: '列出、创建或切换工作区，以及列出或继续其中的 Session',
-      parameters: {
-        type: 'object',
-        properties: {
-          action: {type: 'string', enum: ['list', 'create', 'select', 'sessions', 'resume']},
-          workspace: {type: 'string', minLength: 1, maxLength: 80},
-          session: {type: 'string', minLength: 1, maxLength: 120},
-          work_order: {type: 'string', minLength: 1, maxLength: 4000},
-          origin_ref: {type: 'string', description: '当前 ContextView 中、这次动作所回答内容的 ref'},
-        },
-        required: ['action', 'origin_ref'],
-        additionalProperties: false,
-      },
-    }},
-    {type: 'function', function: {
-      name: 'codex__steer',
-      description: '向当前仍在执行的 Codex turn 追加约束；不终止、不重启、不创建下一轮。',
-      parameters: {
-        type: 'object',
-        properties: {
-          instruction: {type: 'string', minLength: 1, maxLength: 2000},
-          origin_ref: {type: 'string', description: '当前 ContextView 中、这次动作所回答内容的 ref'},
-        },
-        required: ['instruction', 'origin_ref'],
-        additionalProperties: false,
-      },
-    }},
-    {type: 'function', function: {
-      name: 'codex__status',
-      description: '读取当前或最近一次 Codex 运行的进程状态',
-      parameters: {
-        type: 'object',
-        properties: {
-          origin_ref: {type: 'string', description: '当前 ContextView 中、这次动作所回答内容的 ref'},
-        },
-        additionalProperties: false,
-        required: ['origin_ref'],
-      },
-    }},
-  ])
+  assert.equal(compiled.bindings.has('codex__run'), false)
+  assert.deepEqual(validateCodexRequest('project', 'confirm_project_action', {
+    proposal_id: 'proposal-1', confirmed: true,
+  }), {ok: true, value: {proposal_id: 'proposal-1', confirmed: true}})
+  assert.equal(validateCodexRequest('project', 'confirm_project_action', {
+    proposal_id: 'proposal-1', confirmed: 'true',
+  }).ok, false)
   assert.equal(CODEX_PROJECT_MANIFEST.ops[0]?.deadline_budget, 600)
   assert.equal(CODEX_PROJECT_MANIFEST.ops[1]?.deadline_budget, 10)
   assert.equal(CODEX_PROJECT_MANIFEST.ops[2]?.deadline_budget, 30)
@@ -191,23 +142,27 @@ test('base and live request validators use primitive strings, Python strip, and 
 })
 
 test('project request validator enforces action-specific exact keys and bounds', () => {
-  assert.deepEqual(validateCodexRequest('project', 'run', {
-    work_order: ' build ', session: ' sprint ',
-  }), {ok: true, value: {work_order: 'build', session: 'sprint'}})
-  assert.deepEqual(validateCodexRequest('project', 'project', {action: 'list'}), {
-    ok: true, value: {action: 'list'},
-  })
-  assert.equal(validateCodexRequest('project', 'project', {action: 'list', workspace: 'x'}).ok, false)
-  assert.equal(validateCodexRequest('project', 'project', {action: 'create'}).ok, false)
+  const accepted = [
+    {action: 'list_workspaces'},
+    {action: 'list_sessions'},
+    {action: 'list_sessions', workspace: 'alpha'},
+    {action: 'create_workspace', workspace: 'alpha'},
+    {action: 'create_workspace', workspace: 'alpha', session: 'Initial', work_order: 'build it'},
+    {action: 'select_workspace', workspace: 'alpha'},
+    {action: 'start_session', session: 'Fix login', work_order: 'fix login'},
+    {action: 'resume_session', work_order: 'continue'},
+    {action: 'resume_session', workspace: 'alpha', session: 'Fix login', work_order: 'continue'},
+  ] as const
+  for (const request of accepted) {
+    assert.equal(validateCodexRequest('project', 'project', request).ok, true)
+  }
   assert.equal(validateCodexRequest('project', 'project', {
-    action: 'create', workspace: '新'.repeat(80), work_order: 'do',
-  }).ok, true)
-  assert.equal(validateCodexRequest('project', 'project', {
-    action: 'create', workspace: '😀'.repeat(81),
+    action: 'start_session', workspace: 'alpha', work_order: 'x',
   }).ok, false)
   assert.equal(validateCodexRequest('project', 'project', {
-    action: 'resume', work_order: 'continue', session: 's'.repeat(121),
+    action: 'create_workspace', workspace: 'alpha', session: 'Initial',
   }).ok, false)
+  assert.equal(validateCodexRequest('project', 'run', {work_order: 'x'}).ok, false)
   assert.equal(validateCodexRequest('live', 'project', {action: 'list'}).ok, false)
 })
 

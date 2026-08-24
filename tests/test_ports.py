@@ -190,8 +190,8 @@ def test_op_spec_accepts_only_declared_unique_exact_sensitive_parameter_names() 
             )
 
 
-def test_op_spec_sync_result_is_explicit_and_requires_readonly() -> None:
-    """R105: sync_result is an explicit manifest flag, never derived, and only for readonly ops."""
+def test_op_spec_sync_result_is_explicit_for_readonly_and_write_operations() -> None:
+    """R105: sync_result is explicit and does not misclassify a confirmed write as readonly."""
     params: dict[str, object] = {"type": "object", "properties": {}}
 
     plain = OpSpec(name="probe", description="a probe", params=params)
@@ -206,8 +206,14 @@ def test_op_spec_sync_result_is_explicit_and_requires_readonly() -> None:
     )
     assert sync.sync_result is True
 
-    with pytest.raises(ValueError, match="sync_result"):
-        OpSpec(name="probe", description="a probe", params=params, sync_result=True)
+    confirmed_write = OpSpec(
+        name="confirm_project_action",
+        description="confirm a pending project action",
+        params=params,
+        sync_result=True,
+    )
+    assert confirmed_write.readonly is False
+    assert confirmed_write.sync_result is True
 
     assert SEARCH.sync_result is True
 

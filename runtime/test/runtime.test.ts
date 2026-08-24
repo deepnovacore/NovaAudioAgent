@@ -108,6 +108,16 @@ test('sensitive parameters must name declared request properties', () => {
   }))
 })
 
+test('sync results may return a confirmed write without misclassifying it as readonly', () => {
+  assert.doesNotThrow(() => opSpecSchema.parse({
+    name: 'confirm_project_action',
+    description: 'confirm a pending project action',
+    params: {type: 'object', properties: {}},
+    readonly: false,
+    sync_result: true,
+  }))
+})
+
 function dispatchedRuntime(): CoreRuntime {
   const runtime = new CoreRuntime({
     manifests: [manifest],

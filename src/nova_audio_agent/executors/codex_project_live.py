@@ -6,10 +6,10 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from nova_audio_agent.events import WakeReason
-from nova_audio_agent.executors.codex import CODEX_POLICY, _failure, _normalize_run_request
+from nova_audio_agent.executors.codex import CODEX_POLICY, _failure
 from nova_audio_agent.executors.codex_live import STATUS, STEER, CodexLiveAdapter, CodexLiveWorker
 from nova_audio_agent.executors.codex_projects import (
     CodexProjectStore,
@@ -30,23 +30,6 @@ from nova_audio_agent.realtime.project_confirmation import (
     ProjectConfirmationController,
 )
 
-PROJECT_RUN = OpSpec(
-    name="run",
-    description="在当前工作区启动一个新的 Codex Session 执行工作单",
-    params={
-        "type": "object",
-        "properties": {
-            "work_order": {"type": "string", "minLength": 1, "maxLength": 4000},
-            "session": {"type": "string", "minLength": 1, "maxLength": 120},
-        },
-        "required": ["work_order"],
-        "additionalProperties": False,
-    },
-    readonly=False,
-    deadline_budget=600.0,
-    sensitive_params=("work_order",),
-)
-
 PROJECT = OpSpec(
     name="project",
     description="列出、创建或切换工作区，以及列出或继续其中的 Session",
@@ -55,7 +38,14 @@ PROJECT = OpSpec(
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["list", "create", "select", "sessions", "resume"],
+                "enum": [
+                    "list_workspaces",
+                    "create_workspace",
+                    "select_workspace",
+                    "list_sessions",
+                    "start_session",
+                    "resume_session",
+                ],
             },
             "workspace": {"type": "string", "minLength": 1, "maxLength": 80},
             "session": {"type": "string", "minLength": 1, "maxLength": 120},
@@ -65,13 +55,34 @@ PROJECT = OpSpec(
         "additionalProperties": False,
     },
     readonly=False,
-    deadline_budget=10.0,
+    deadline_budget=600.0,
     sensitive_params=("work_order",),
+)
+
+# Compatibility for Python importers; the project manifest no longer exposes
+# a standalone run tool.
+PROJECT_RUN = PROJECT
+
+CONFIRM_PROJECT_ACTION = OpSpec(
+    name="confirm_project_action",
+    description="根据用户当前自然语言回答确认或取消正在等待的项目操作",
+    params={
+        "type": "object",
+        "properties": {
+            "proposal_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "confirmed": {"type": "boolean"},
+        },
+        "required": ["proposal_id", "confirmed"],
+        "additionalProperties": False,
+    },
+    readonly=False,
+    deadline_budget=10.0,
+    sync_result=True,
 )
 
 CODEX_PROJECT_LIVE_MANIFEST = ExecutorManifest(
     name="codex",
-    ops=(PROJECT_RUN, PROJECT, STEER, STATUS),
+    ops=(PROJECT, CONFIRM_PROJECT_ACTION, STEER, STATUS),
     policy=CODEX_POLICY,
 )
 
@@ -170,39 +181,42 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         request: dict[str, Any],
         ctx: DispatchContext,
     ) -> Handoff:
-        if op == "project":
-            result = await self._dispatch_project(request, ctx)
-            await self._refresh_project_view_tolerant()
-            return result
-        if op != "run":
+        if op != "project":
             return await super().dispatch(op, request, ctx)
-        normalized = _normalize_project_run(request)
-        if normalized is None:
-            return _failure("invalid_params", op)
+        result = await self._dispatch_project(request, ctx)
+        await self._refresh_project_view_tolerant()
+        return result
+
+    async def _dispatch_start_session(
+        self, work_order: str, session_title: str | None, ctx: DispatchContext
+    ) -> Handoff:
         private = getattr(ctx.delegate, "private", None)
         if private is not None and type(private) is not ConfirmedProjectOperation:
-            return _failure("confirmation_binding_mismatch", op)
+            return _failure("confirmation_binding_mismatch", "project")
         confirmed = private if type(private) is ConfirmedProjectOperation else None
-        if confirmed is not None and normalized[0] != confirmed.work_order:
-            return _failure("confirmation_binding_mismatch", op)
+        if confirmed is not None and work_order != confirmed.work_order:
+            return _failure("confirmation_binding_mismatch", "project")
         if self._run_lock.locked():
-            return _failure("busy", op)
+            return _failure("busy", "project")
         await self._run_lock.acquire()
         try:
             if confirmed is not None:
                 assert confirmed.work_order is not None
                 return await self._run_confirmed(confirmed, confirmed.work_order, ctx)
-            return await self._run_new(normalized[0], normalized[1], ctx)
+            return await self._run_new(work_order, session_title, ctx)
         finally:
             self._run_lock.release()
 
     async def _dispatch_project(self, request: dict[str, Any], ctx: DispatchContext) -> Handoff:
-        parsed = _parse_project_request(request)
-        if parsed is None:
+        normalized = _normalize_project_request(request)
+        if normalized is None:
             return _failure("invalid_params", "project")
-        action, workspace_name, session_title, work_order = parsed
+        action = normalized["action"]
+        workspace_name = normalized.get("workspace")
+        session_title = normalized.get("session")
+        work_order = normalized.get("work_order")
         try:
-            if action == "list":
+            if action == "list_workspaces":
                 snapshot = await _complete_sync(self.store.snapshot)
                 return _project_ok(
                     code="listed",
@@ -214,7 +228,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                         for item in _most_recent(snapshot.workspaces)
                     ],
                 )
-            if action == "sessions":
+            if action == "list_sessions":
                 workspace = await _complete_sync(self.store.resolve_workspace, workspace_name)
                 sessions = await _complete_sync(self.store.list_sessions, workspace)
                 return _project_ok(
@@ -229,7 +243,10 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                         for item in _most_recent(sessions)
                     ],
                 )
-            if action == "create":
+            if action == "start_session":
+                assert work_order is not None
+                return await self._dispatch_start_session(work_order, session_title, ctx)
+            if action == "create_workspace":
                 assert workspace_name is not None
                 workspace_name = await _complete_sync(
                     self.store.validate_managed_create, workspace_name
@@ -244,13 +261,17 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                         workspace.workspace_id,
                         session_title,
                     )
-                    if action == "resume"
+                    if action == "resume_session"
                     else None
                 )
                 if resolved_session is not None and resolved_session.state != "ready":
                     raise ProjectStateError("session_unavailable")
             proposal = self.confirmation.prepare(
-                action=action,
+                action={
+                    "create_workspace": "create",
+                    "select_workspace": "select",
+                    "resume_session": "resume",
+                }[action],
                 workspace_display_name=(
                     workspace_name if workspace is None else workspace.display_name
                 ),
@@ -438,16 +459,18 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                 return ProjectCommitResult(False, failure.code)
             await self._refresh_project_view_tolerant()
             return ProjectCommitResult(True, "committed")
-        normalized_work_order = _normalize_run_request({"work_order": work_order})
-        if normalized_work_order is None or normalized_work_order != work_order:
+        normalized_request = _normalize_project_request(
+            {"action": "start_session", "work_order": work_order}
+        )
+        if normalized_request is None or normalized_request["work_order"] != work_order:
             return ProjectCommitResult(False, "invalid_operation")
         if self._run_lock.locked():
             return ProjectCommitResult(False, "busy")
         admission = runtime_dispatch(
             DelegateRequest(
                 executor="codex",
-                op="run",
-                request={"work_order": work_order},
+                op="project",
+                request={"action": "start_session", "work_order": work_order},
                 origin_ref=origin_ref,
                 private=operation,
             ),
@@ -517,31 +540,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             pass
 
 
-def _normalize_project_run(request: object) -> tuple[str, str | None] | None:
-    if type(request) is not dict or not set(request).issubset({"work_order", "session"}):
-        return None
-    work_order = _normalize_run_request({"work_order": request.get("work_order")})
-    session = request.get("session")
-    if work_order is None:
-        return None
-    if session is not None and (
-        type(session) is not str or not session.strip() or len(session) > 120
-    ):
-        return None
-    return work_order, None if session is None else session.strip()
-
-
-def _parse_project_request(
-    request: object,
-) -> (
-    tuple[
-        Literal["list", "create", "select", "sessions", "resume"],
-        str | None,
-        str | None,
-        str | None,
-    ]
-    | None
-):
+def _normalize_project_request(request: object) -> dict[str, str] | None:
     if type(request) is not dict or not set(request).issubset(
         {"action", "workspace", "session", "work_order"}
     ):
@@ -551,34 +550,41 @@ def _parse_project_request(
     session = request.get("session")
     work_order = request.get("work_order")
     expected = {
-        "list": {"action"},
-        "create": {"action", "workspace"},
-        "select": {"action", "workspace"},
-        "sessions": {"action"},
-        "resume": {"action", "work_order"},
+        "list_workspaces": {"action"},
+        "create_workspace": {"action", "workspace"},
+        "select_workspace": {"action", "workspace"},
+        "list_sessions": {"action"},
+        "start_session": {"action", "work_order"},
+        "resume_session": {"action", "work_order"},
     }
     if action not in expected:
         return None
     allowed = set(expected[action])
-    if action == "create":
-        allowed.add("work_order")
-    elif action == "sessions":
+    if action == "create_workspace":
+        allowed.update(("session", "work_order"))
+    elif action == "list_sessions":
         allowed.add("workspace")
-    elif action == "resume":
+    elif action == "start_session":
+        allowed.add("session")
+    elif action == "resume_session":
         allowed.update(("workspace", "session"))
     if set(request) - allowed or not expected[action].issubset(request):
         return None
-    for value, limit in ((workspace, 80), (session, 120), (work_order, 4000)):
+    if action == "create_workspace" and (session is None) != (work_order is None):
+        return None
+    result = {"action": action}
+    for name, value, limit in (
+        ("workspace", workspace, 80),
+        ("session", session, 120),
+        ("work_order", work_order, 4000),
+    ):
         if value is not None and (
             type(value) is not str or not value.strip() or len(value) > limit
         ):
             return None
-    return (
-        action,
-        None if workspace is None else workspace.strip(),
-        None if session is None else session.strip(),
-        None if work_order is None else work_order.strip(),
-    )
+        if value is not None:
+            result[name] = value.strip()
+    return result
 
 
 def _most_recent(items: Any) -> list[Any]:

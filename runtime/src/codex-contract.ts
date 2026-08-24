@@ -38,20 +38,6 @@ const RUN: OpSpec = {
   sync_result: false,
 }
 
-const PROJECT_RUN: OpSpec = {
-  ...RUN,
-  description: '在当前工作区启动一个新的 Codex Session 执行工作单',
-  params: {
-    type: 'object',
-    properties: {
-      work_order: {type: 'string', minLength: 1, maxLength: 4000},
-      session: {type: 'string', minLength: 1, maxLength: 120},
-    },
-    required: ['work_order'],
-    additionalProperties: false,
-  },
-}
-
 const STATUS: OpSpec = {
   name: 'status',
   description: '读取当前或最近一次 Codex 运行的进程状态',
@@ -87,7 +73,13 @@ const PROJECT: OpSpec = {
   params: {
     type: 'object',
     properties: {
-      action: {type: 'string', enum: ['list', 'create', 'select', 'sessions', 'resume']},
+      action: {
+        type: 'string',
+        enum: [
+          'list_workspaces', 'create_workspace', 'select_workspace',
+          'list_sessions', 'start_session', 'resume_session',
+        ],
+      },
       workspace: {type: 'string', minLength: 1, maxLength: 80},
       session: {type: 'string', minLength: 1, maxLength: 120},
       work_order: {type: 'string', minLength: 1, maxLength: 4000},
@@ -97,10 +89,30 @@ const PROJECT: OpSpec = {
   },
   readonly: false,
   confirm: false,
-  deadline_budget: 10,
+  deadline_budget: 600,
   verifies: [],
   sensitive_params: ['work_order'],
   sync_result: false,
+}
+
+const CONFIRM_PROJECT_ACTION: OpSpec = {
+  name: 'confirm_project_action',
+  description: '根据用户当前自然语言回答确认或取消正在等待的项目操作',
+  params: {
+    type: 'object',
+    properties: {
+      proposal_id: {type: 'string', minLength: 1, maxLength: 128},
+      confirmed: {type: 'boolean'},
+    },
+    required: ['proposal_id', 'confirmed'],
+    additionalProperties: false,
+  },
+  readonly: false,
+  confirm: false,
+  deadline_budget: 10,
+  verifies: [],
+  sensitive_params: [],
+  sync_result: true,
 }
 
 function manifest(ops: readonly OpSpec[]): ExecutorManifest {
@@ -109,7 +121,7 @@ function manifest(ops: readonly OpSpec[]): ExecutorManifest {
 
 export const CODEX_BASE_MANIFEST = manifest([RUN, STATUS])
 export const CODEX_LIVE_MANIFEST = manifest([RUN, STEER, STATUS])
-export const CODEX_PROJECT_MANIFEST = manifest([PROJECT_RUN, PROJECT, STEER, STATUS])
+export const CODEX_PROJECT_MANIFEST = manifest([PROJECT, CONFIRM_PROJECT_ACTION, STEER, STATUS])
 
 export type CodexVariant = 'base' | 'live' | 'project'
 export type CodexRequestValidation =
@@ -137,7 +149,7 @@ function validateCodexRequestChecked(
     ? new Set(['run', 'status'])
     : variant === 'live'
       ? new Set(['run', 'steer', 'status'])
-      : new Set(['run', 'project', 'steer', 'status'])
+      : new Set(['project', 'confirm_project_action', 'steer', 'status'])
   if (!operations.has(op)) return failure('unknown_op', op)
   const requestSnapshot = snapshotJsonRecord(request)
   if (op === 'status') {
@@ -152,54 +164,56 @@ function validateCodexRequestChecked(
       : success({instruction})
   }
   if (op === 'run') {
-    if (variant === 'project') return validateProjectRun(requestSnapshot)
     const workOrder = exactBoundedString(requestSnapshot, 'work_order', 4000)
     return workOrder === null
       ? failure('invalid_params', op)
       : success({work_order: workOrder})
   }
+  if (op === 'confirm_project_action') return validateProjectConfirmation(requestSnapshot)
   return validateProjectOperation(requestSnapshot)
 }
 
-function validateProjectRun(request: Record<string, unknown>): CodexRequestValidation {
-  const keys = Object.keys(request)
-  if (!keys.includes('work_order') || keys.some(key => key !== 'work_order' && key !== 'session')) {
-    return failure('invalid_params', 'run')
+function validateProjectConfirmation(request: Record<string, unknown>): CodexRequestValidation {
+  const proposalId = normalizedString(request.proposal_id, 128)
+  if (proposalId === null || Object.keys(request).length !== 2 || typeof request.confirmed !== 'boolean') {
+    return failure('invalid_params', 'confirm_project_action')
   }
-  const workOrder = normalizedString(request.work_order, 4000)
-  if (workOrder === null) return failure('invalid_params', 'run')
-  if (!Object.hasOwn(request, 'session')) return success({work_order: workOrder})
-  const session = normalizedStringOriginalBound(request.session, 120)
-  return session === null
-    ? failure('invalid_params', 'run')
-    : success({work_order: workOrder, session})
+  return success({proposal_id: proposalId, confirmed: request.confirmed})
 }
 
 function validateProjectOperation(request: Record<string, unknown>): CodexRequestValidation {
   const action = request.action
   if (
-    action !== 'list'
-    && action !== 'create'
-    && action !== 'select'
-    && action !== 'sessions'
-    && action !== 'resume'
+    action !== 'list_workspaces'
+    && action !== 'create_workspace'
+    && action !== 'select_workspace'
+    && action !== 'list_sessions'
+    && action !== 'start_session'
+    && action !== 'resume_session'
   ) return failure('invalid_params', 'project')
   const required: Readonly<Record<typeof action, readonly string[]>> = {
-    list: ['action'],
-    create: ['action', 'workspace'],
-    select: ['action', 'workspace'],
-    sessions: ['action'],
-    resume: ['action', 'work_order'],
+    list_workspaces: ['action'],
+    create_workspace: ['action', 'workspace'],
+    select_workspace: ['action', 'workspace'],
+    list_sessions: ['action'],
+    start_session: ['action', 'work_order'],
+    resume_session: ['action', 'work_order'],
   }
   const allowed = new Set(required[action])
-  if (action === 'create') allowed.add('work_order')
-  else if (action === 'sessions') allowed.add('workspace')
-  else if (action === 'resume') {
+  if (action === 'create_workspace') {
+    allowed.add('session')
+    allowed.add('work_order')
+  } else if (action === 'list_sessions') allowed.add('workspace')
+  else if (action === 'start_session') allowed.add('session')
+  else if (action === 'resume_session') {
     allowed.add('workspace')
     allowed.add('session')
   }
   const keys = Object.keys(request)
   if (required[action].some(key => !Object.hasOwn(request, key)) || keys.some(key => !allowed.has(key))) {
+    return failure('invalid_params', 'project')
+  }
+  if (action === 'create_workspace' && Object.hasOwn(request, 'session') !== Object.hasOwn(request, 'work_order')) {
     return failure('invalid_params', 'project')
   }
   const result: Record<string, unknown> = {action}

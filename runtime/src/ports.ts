@@ -100,9 +100,6 @@ export const opSpecSchema = z.object({
   sensitive_params: z.array(z.string()).default([]),
   sync_result: z.boolean().default(false),
 }).strict().superRefine((value, context) => {
-  if (value.sync_result && !value.readonly) {
-    context.addIssue({code: 'custom', message: 'sync_result requires readonly'})
-  }
   if (new Set(value.sensitive_params).size !== value.sensitive_params.length) {
     context.addIssue({code: 'custom', message: 'sensitive_params must be unique'})
   }
