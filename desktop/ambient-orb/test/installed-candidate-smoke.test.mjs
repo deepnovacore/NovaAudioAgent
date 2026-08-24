@@ -7,12 +7,23 @@ import test from 'node:test'
 import {
   CAMERA_CAPABILITY_PENDING,
   RELEASE_SMOKE_MODE,
+  SCRATCH_REMOVAL_OPTIONS,
   candidateInstallPlan,
   classifyCameraCapability,
   smokeEnvironment,
 } from '../scripts/installed-candidate-smoke.mjs'
 
 const processTreeFixture = resolve(import.meta.dirname, 'fixtures/windows-guardian-target.cjs')
+
+test('installed scratch cleanup retries transient Windows file locks', () => {
+  assert.deepEqual(SCRATCH_REMOVAL_OPTIONS, {
+    recursive: true,
+    force: true,
+    maxRetries: 100,
+    retryDelay: 50,
+  })
+  assert.equal(Object.isFrozen(SCRATCH_REMOVAL_OPTIONS), true)
+})
 
 function spawnSmokeFixture(mode) {
   return spawn(process.execPath, [processTreeFixture, mode], {

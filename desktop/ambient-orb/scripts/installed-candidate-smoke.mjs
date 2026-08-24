@@ -11,6 +11,12 @@ import {WebSocket, WebSocketServer} from 'ws'
 
 export const RELEASE_SMOKE_MODE = 'installed-candidate-v1'
 export const CAMERA_CAPABILITY_PENDING = 'camera-file-integration: chromium_codec_unavailable'
+export const SCRATCH_REMOVAL_OPTIONS = Object.freeze({
+  recursive: true,
+  force: true,
+  maxRetries: 100,
+  retryDelay: 50,
+})
 
 const DEFAULT_SIGNER_WORKFLOW = 'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml'
 const SIGNER_WORKFLOWS = new Set([
@@ -311,7 +317,7 @@ async function runInstalledCandidate({
         }
       }
       try {
-        await rm(scratch, {recursive: true, force: true})
+        await rm(scratch, SCRATCH_REMOVAL_OPTIONS)
         reportInstalledSmokeStage('cleanup_complete')
       } catch {
         failure ??= new Error('installed_candidate_residue')

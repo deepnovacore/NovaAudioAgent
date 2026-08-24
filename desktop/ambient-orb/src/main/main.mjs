@@ -724,8 +724,15 @@ function finishInstalledFileCameraSmoke(result) {
 
 const installedFileCameraSmoke = app.isPackaged
   && process.env.NOVA_AUDIO_AGENT_RELEASE_CAMERA_SMOKE === RELEASE_CAMERA_SMOKE_MODE
+const packagedSourceRollbackUnavailable = app.isPackaged
+  && process.env.NOVA_AUDIO_AGENT_BACKEND === 'python'
 
-if (!app.requestSingleInstanceLock()) {
+if (packagedSourceRollbackUnavailable) {
+  process.stderr.write(
+    '[desktop-diagnostic] source_rollback_unavailable\n',
+    () => app.exit(0),
+  )
+} else if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else if (installedFileCameraSmoke) {
   app.whenReady().then(runInstalledFileCameraSmoke).then(
@@ -734,16 +741,7 @@ if (!app.requestSingleInstanceLock()) {
   )
 } else {
   app.on('second-instance', () => mainWindow?.show())
-  app.whenReady().then(start).catch(error => {
-    if (error?.code === 'source_rollback_unavailable') {
-      process.stderr.write(
-        '[desktop-diagnostic] source_rollback_unavailable\n',
-        () => app.quit(),
-      )
-      return
-    }
-    app.quit()
-  })
+  app.whenReady().then(start).catch(() => app.quit())
 }
 
 app.on('before-quit', event => {

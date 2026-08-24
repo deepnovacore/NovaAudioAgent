@@ -353,8 +353,10 @@ test('backend mode is admitted before camera selection or permission work', asyn
   assert.match(body, /start: camera => startSelectedCamera\(camera, backendKind, releaseSmokeChannel\)/u)
   assert.match(
     source,
-    /process\.stderr\.write\(\s*'\[desktop-diagnostic\] source_rollback_unavailable\\n',\s*\(\) => app\.quit\(\),?\s*\)/u,
+    /process\.stderr\.write\(\s*'\[desktop-diagnostic\] source_rollback_unavailable\\n',\s*\(\) => app\.exit\(0\),?\s*\)/u,
   )
+  const rollbackPreflight = source.indexOf("process.env.NOVA_AUDIO_AGENT_BACKEND === 'python'")
+  assert.ok(rollbackPreflight >= 0 && rollbackPreflight < source.indexOf('app.requestSingleInstanceLock()'))
 })
 
 test('packaged smoke readiness is private, post-backend, and closed by every quit', async () => {
