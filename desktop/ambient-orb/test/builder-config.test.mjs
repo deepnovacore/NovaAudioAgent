@@ -487,7 +487,8 @@ test('unsigned Windows workflow closes the native package through digest-bound i
   assert.equal(smokeJob.steps.some(step => step.uses === 'actions/checkout@v4'), false)
   assert.ok(smokeJob.steps.some(step => step.uses === 'actions/download-artifact@v4'))
   const smokeStep = smokeJob.steps.find(step => step.run?.includes('run-unsigned-installed-smoke.mjs'))
-  assert.equal(smokeStep.env, undefined)
+  assert.deepEqual(smokeStep.env, {NOVA_RELEASE_SMOKE_DIAGNOSTICS: '1'})
+  assert.equal(smokeStep['timeout-minutes'], '10')
   for (const argument of [
     '--sha256-file candidate/release-digests/${{ matrix.filename }}.sha256',
     '--camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4',

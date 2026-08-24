@@ -369,6 +369,45 @@ test('installed-candidate output drain is bounded when an orphan retains the pip
   assert.ok(Date.now() - startedAt < 1_000, 'orphan-held output must not prevent tree cleanup')
 })
 
+test('provider close does not wait for the WebSocket close callback after clients terminate', async () => {
+  const {closeQwenSmokeProvider} = await import('../scripts/installed-candidate-smoke.mjs')
+  let terminated = 0
+  let socketCloseStarted = 0
+  let connectionsClosed = 0
+  await closeQwenSmokeProvider({
+    sockets: {
+      clients: new Set([{terminate: () => { terminated += 1 }}]),
+      close: () => { socketCloseStarted += 1 },
+    },
+    server: {
+      close: callback => queueMicrotask(() => callback()),
+      closeAllConnections: () => { connectionsClosed += 1 },
+      closeIdleConnections: () => {},
+      unref: () => {},
+    },
+  }, 50)
+  assert.equal(terminated, 1)
+  assert.equal(socketCloseStarted, 1)
+  assert.equal(connectionsClosed, 1)
+})
+
+test('provider close is bounded and force-unrefs a server whose close callback never arrives', async () => {
+  const {closeQwenSmokeProvider} = await import('../scripts/installed-candidate-smoke.mjs')
+  let unref = 0
+  const startedAt = Date.now()
+  await assert.rejects(closeQwenSmokeProvider({
+    sockets: {clients: new Set(), close: () => {}},
+    server: {
+      close: () => {},
+      closeAllConnections: () => {},
+      closeIdleConnections: () => {},
+      unref: () => { unref += 1 },
+    },
+  }, 25), /installed_candidate_provider_failed/u)
+  assert.ok(Date.now() - startedAt < 1_000)
+  assert.equal(unref, 1)
+})
+
 test('release workflow downloads exact candidates into checkout-free smoke jobs', async () => {
   const workflow = await readFile(new URL('../../../.github/workflows/release-candidate.yml', import.meta.url), 'utf8')
   assert.match(workflow, /installed-candidate-smoke/u)

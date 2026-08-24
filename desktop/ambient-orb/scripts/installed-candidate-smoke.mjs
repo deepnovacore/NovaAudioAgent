@@ -223,6 +223,7 @@ async function runInstalledCandidate({
   const candidate = await exactCandidate(artifact, expectedSha256)
   if (trustMode === 'attested') requireCandidateAttestation(candidate, commit, signerWorkflow)
   else if (trustMode !== 'workflow-artifact') throw new Error('installed_candidate_attestation_failed')
+  reportInstalledSmokeStage('candidate_verified')
   const scratch = await realpath(await mkdtemp(join(tmpdir(), 'nova-installed-candidate-')))
   const plan = candidateInstallPlan({target, artifact: candidate, scratch})
   const poisonPath = resolve(scratch, 'poison-path')
@@ -243,11 +244,13 @@ async function runInstalledCandidate({
     path: systemPath(process.platform, process.env),
   })
   const provider = await createQwenSmokeProvider()
+  reportInstalledSmokeStage('provider_ready')
   let failure = null
   let cameraCapability = null
   let cleanupSafe = true
   try {
     await runActions(plan.install, systemEnvironment)
+    reportInstalledSmokeStage('install_complete')
     const executable = await realpath(plan.executable)
     const status = await lstat(executable)
     assert.ok(status.isFile() && !status.isSymbolicLink(), 'installed_candidate_invalid')
@@ -268,28 +271,37 @@ async function runInstalledCandidate({
       stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
     })
     await withCandidateProcessTree(child, environment, () => exerciseCandidateChild(child))
+    reportInstalledSmokeStage('launch_complete')
     await runPackagedSourceRollback({
       executable,
       environment,
       workspace,
       userData: resolve(scratch, 'rollback-user-data'),
     })
+    reportInstalledSmokeStage('source_rollback_complete')
     if (cameraFile !== undefined) {
       cameraCapability = await runPackagedCameraCapability({
         executable,
         environment,
         userData,
       })
+      reportInstalledSmokeStage('camera_complete')
     }
   } catch (error) {
     failure = error
     if (error?.code === 'installed_candidate_tree_failed') cleanupSafe = false
   } finally {
-    try { await provider.close() } catch {
+    try {
+      await provider.close()
+      reportInstalledSmokeStage('provider_closed')
+    } catch {
       failure ??= new Error('installed_candidate_provider_failed')
     }
     if (cleanupSafe) {
-      try { await runActions(plan.uninstall, systemEnvironment) } catch {
+      try {
+        await runActions(plan.uninstall, systemEnvironment)
+        reportInstalledSmokeStage('uninstall_complete')
+      } catch {
         failure ??= new Error('installed_candidate_uninstall_failed')
       }
       for (const residue of plan.residue) {
@@ -297,7 +309,10 @@ async function runInstalledCandidate({
           failure ??= new Error('installed_candidate_residue')
         }
       }
-      try { await rm(scratch, {recursive: true, force: true}) } catch {
+      try {
+        await rm(scratch, {recursive: true, force: true})
+        reportInstalledSmokeStage('cleanup_complete')
+      } catch {
         failure ??= new Error('installed_candidate_residue')
       }
     }
@@ -395,11 +410,61 @@ async function createQwenSmokeProvider() {
   return {
     certificate,
     endpoint: `wss://127.0.0.1:${address.port}/`,
-    close: () => new Promise(resolveClose => {
-      for (const socket of sockets.clients) socket.terminate()
-      sockets.close(() => server.close(() => resolveClose()))
-    }),
+    close: () => closeQwenSmokeProvider({server, sockets}),
   }
+}
+
+export function closeQwenSmokeProvider({server, sockets}, timeoutMs = 5_000) {
+  if (server === null || typeof server !== 'object' || typeof server.close !== 'function'
+    || sockets === null || typeof sockets !== 'object' || typeof sockets.close !== 'function'
+    || sockets.clients === null || sockets.clients === undefined
+    || typeof sockets.clients[Symbol.iterator] !== 'function'
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) {
+    return Promise.reject(new Error('installed_candidate_provider_failed'))
+  }
+  return new Promise((resolveClose, rejectClose) => {
+    let settled = false
+    const finish = error => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (error === undefined) resolveClose()
+      else rejectClose(new Error('installed_candidate_provider_failed'))
+    }
+    const forceClose = () => {
+      try {
+        for (const socket of sockets.clients) socket.terminate()
+      } catch {}
+      try { server.closeAllConnections?.() } catch {}
+      try { server.closeIdleConnections?.() } catch {}
+      try { server.unref?.() } catch {}
+    }
+    const timer = setTimeout(() => {
+      forceClose()
+      finish(new Error('installed_candidate_provider_failed'))
+    }, timeoutMs)
+    try {
+      for (const socket of sockets.clients) socket.terminate()
+      // ws may withhold its callback while an upgraded socket is unwinding.
+      // HTTP server closure is the owned-handle boundary, so do not chain it
+      // behind that callback.
+      sockets.close()
+      server.close(error => {
+        if (error) forceClose()
+        finish(error)
+      })
+      server.closeAllConnections?.()
+      server.closeIdleConnections?.()
+    } catch (error) {
+      forceClose()
+      finish(error)
+    }
+  })
+}
+
+function reportInstalledSmokeStage(stage) {
+  if (process.env.NOVA_RELEASE_SMOKE_DIAGNOSTICS !== '1') return
+  try { process.stderr.write(`[installed-smoke] ${stage}\n`) } catch {}
 }
 
 function readReadiness(stream) {
