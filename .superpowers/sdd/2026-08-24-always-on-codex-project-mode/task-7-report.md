@@ -39,3 +39,20 @@
   `codex__run` tests and ordinary session transcript processing remain intentionally intact.
 
 The Nova desktop client was not restarted; the integration owner will do that after branch review.
+
+## Review follow-up
+
+- Finding 1: replaced the three direct-controller fail-closed cases with fresh assembly/service
+  scenarios. RED was 3/3 because the direct path emitted no realtime tool output. GREEN routes false,
+  wrong-ID, and non-boolean arguments through the same provider epoch, response, and reserved user
+  item as success; it asserts registry/active state, tool output, commit count, worker construction,
+  and work orders. Wrong-ID/non-boolean keep the proposal usable for a valid confirmation; replay is
+  single-use. Focused E2E passes 7/7.
+- Finding 2: English and Chinese README/getting-started guidance plus the handoff guide now say each
+  realtime turn receives only the active Workspace/Session, historical candidates are on demand,
+  and always-on applies only to the realtime project surface. Ordinary non-realtime `codex__run`
+  retains its existing semantics and is absent from the realtime provider surface.
+- Finding 3 disposition: retained the scoped Ambient Orb wrapper change because the committed
+  baseline test requires `./scripts/start_ambient_orb.sh`; no other Orb changes were added.
+- Finding 4 disposition: no client restart was performed. The integration owner will restart only
+  Nova after full-branch review and integration into the actual checkout.

@@ -156,9 +156,10 @@ macOS 提供原生 Ambient Orb 音频采集；Windows 与 Linux 使用 Chromium 
 
 ### 命名 Codex 工作区与持久 Session
 
-实时 Codex project mode 始终开启，不提供 feature toggle。**Workspace** 是隔离的文件系统/Git
-项目；**Session** 是某个 Workspace 内可持久化、可恢复的 Codex thread。可选的启动 workspace
-用于导入已有仓库：
+实时 Codex project surface 始终开启，不提供 feature toggle；这只适用于 realtime。普通非实时
+Codex 仍保留 `codex__run` 及原有语义，realtime provider 不提供 `codex__run`。**Workspace** 是隔离
+的文件系统/Git 项目；**Session** 是某个 Workspace 内可持久化、可恢复的 Codex thread。可选的启动
+workspace 用于导入已有仓库：
 
 ```bash
 NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
@@ -166,8 +167,9 @@ NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces
 NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
 ```
 
-Workspace 与 Session 候选项只在用户要求时列出；Nova 不会在每轮都注入完整历史列表。create、
-switch、resume 都先生成提案，把用户下一轮绑定到该提案，再解释成专用 structured confirmation：
+每个 realtime turn 只注入 active Workspace 及其 active Session（如果存在）。Workspace 与 Session
+候选项只在用户要求时列出；历史候选项不会进入每轮常驻上下文。create、switch、resume 都先生成
+提案，把用户下一轮绑定到该提案，再解释成专用 structured confirmation：
 必须携带完全匹配的 proposal ID 与 JSON boolean。拒绝、错误 ID 或重放都会 fail closed。切换采用
 分阶段流程：先确认 Workspace，再在该 Workspace 中列出或恢复 Session。普通任务每次创建新的持久
 Session；继续任务会用保存的 Codex thread 启动一个新的 app-server 进程。不同 Workspace 使用不同

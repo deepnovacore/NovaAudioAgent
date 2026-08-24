@@ -1,6 +1,8 @@
 # Multi-project Workspace handoff
 
-Realtime Codex project mode is always on. There is no project-mode toggle.
+The realtime Codex project surface is always on. There is no project-mode toggle. This boundary does
+not change ordinary non-realtime Codex: it retains `codex__run` and its existing semantics, while the
+realtime provider does not expose `codex__run`.
 
 ## Workspace and Session boundary
 
@@ -15,9 +17,10 @@ replacing the current active Workspace.
 
 ## On-demand discovery and structured confirmation
 
-Nova lists Workspace or Session candidates only when requested. It does not inject the full
-historical registry into every realtime turn. Public results contain speakable labels, not paths,
-thread IDs, registry keys, or Codex-home locations.
+Every realtime turn receives only the active Workspace and its active Session, if any. Nova lists
+Workspace or Session candidates only when requested and never injects historical candidates into the
+standing turn context. Public results contain speakable labels, not paths, thread IDs, registry keys,
+or Codex-home locations.
 
 Create, switch, and resume are proposals, not immediate mutations. The host binds the next user turn
 to the proposal's epoch, item, and response. Only the dedicated confirmation function can commit it,

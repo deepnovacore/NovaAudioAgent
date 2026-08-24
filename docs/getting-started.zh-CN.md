@@ -42,13 +42,15 @@ npm run start:client
 
 ## 始终开启的 Codex project mode
 
-Codex project mode 没有启用/禁用 toggle。Workspace 是文件系统/Git 项目；Session 是该 Workspace
-内可恢复的 Codex thread。托管 Workspace 默认位于 `~/.nova-audio-agent/workspaces`，注册表默认是
+实时 Codex project surface 没有启用/禁用 toggle。普通非实时 Codex 保留 `codex__run` 及原有语义；
+realtime provider 不暴露 `codex__run`。Workspace 是文件系统/Git 项目；Session 是该 Workspace 内
+可恢复的 Codex thread。托管 Workspace 默认位于 `~/.nova-audio-agent/workspaces`，注册表默认是
 `~/.nova-audio-agent/codex-projects-v1.json`，各 Workspace 的 Codex home 默认位于
 `~/.nova-audio-agent/codex-homes`。`NOVA_AUDIO_AGENT_CODEX_WORKSPACE` 可在启动时导入已有仓库。
 
-Nova 只在请求时列出 Workspace 或 Session 候选项，不会每轮注入完整历史。create、switch、resume
-采用分阶段提案：用户下一轮会成为专用 structured confirmation，携带完全匹配的 proposal ID 和 JSON
+每个 realtime turn 只注入 active Workspace 及其 active Session（如果存在）。Nova 只在请求时列出
+Workspace 或 Session 候选项，历史候选项不会进入每轮常驻上下文。create、switch、resume 采用
+分阶段提案：用户下一轮会成为专用 structured confirmation，携带完全匹配的 proposal ID 和 JSON
 boolean。false、错误 ID 或重放均不改变状态。切换 Workspace 后，再请求列出或恢复其中的 Session。
 持久化与恢复细节见[多项目 Workspace 交接](multi-project-workspace-handoff.md)。
 

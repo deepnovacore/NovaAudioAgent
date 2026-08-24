@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import dataclass
 from itertools import count
 import json
 from pathlib import Path
@@ -13,15 +14,22 @@ import pytest
 
 import nova_audio_agent.assembly as assembly_module
 import nova_audio_agent.realtime.qwen as qwen_module
-from nova_audio_agent.assembly import build_qwen_realtime_assembly
+from nova_audio_agent.assembly import RealtimeAssembly, build_qwen_realtime_assembly
 from nova_audio_agent.clock import VirtualClock
 from nova_audio_agent.config import Settings
 from nova_audio_agent.executors.codex import CodexProcessStatus, CodexTransportResult
 from nova_audio_agent.executors.codex_app_server import SteerTransportResult
-from nova_audio_agent.executors.codex_project_live import ProjectCodexAdapter
+from nova_audio_agent.executors.codex_project_live import (
+    ProjectCodexAdapter,
+    ProjectCommitResult,
+    RuntimeDispatch,
+)
 from nova_audio_agent.executors.codex_projects import CodexProjectStore, ProjectStateError
 from nova_audio_agent.realtime.desktop import codex_project_message
-from nova_audio_agent.realtime.project_confirmation import ProjectConfirmationController
+from nova_audio_agent.realtime.project_confirmation import (
+    ConfirmedProjectOperation,
+    ProjectConfirmationController,
+)
 from nova_audio_agent.realtime.protocol import (
     HostContextItem,
     HostResponseIntent,
@@ -131,6 +139,151 @@ class _Worker:
 
     async def aclose(self) -> None:
         return None
+
+
+class _CountingProjectCodexAdapter(ProjectCodexAdapter):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.commit_calls = 0
+
+    async def commit_confirmed(
+        self,
+        operation: ConfirmedProjectOperation,
+        *,
+        origin_ref: str,
+        runtime_dispatch: RuntimeDispatch,
+    ) -> ProjectCommitResult:
+        self.commit_calls += 1
+        return await super().commit_confirmed(
+            operation,
+            origin_ref=origin_ref,
+            runtime_dispatch=runtime_dispatch,
+        )
+
+
+@dataclass(slots=True)
+class _CreateHarness:
+    realtime: RealtimeAssembly
+    store: CodexProjectStore
+    confirmation: ProjectConfirmationController
+    adapter: _CountingProjectCodexAdapter
+    provider: _Provider
+    proposal_id: str
+    worker_calls: list[str]
+    work_orders: list[str]
+
+
+async def _create_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> _CreateHarness:
+    clock = VirtualClock(start=10.0)
+    managed_root = tmp_path / "managed"
+    store = _store(tmp_path, ["workspace-tetris", "session-tetris"], clock)
+    confirmation = ProjectConfirmationController(
+        clock=clock,
+        id_factory=lambda: "proposal-create-tetris",
+    )
+    worker_calls: list[str] = []
+    work_orders: list[str] = []
+
+    def worker_factory(
+        _workspace: Path,
+        _home: Path,
+        _resume: str | None,
+        on_ready: Callable[[str], None],
+    ) -> _Worker:
+        worker_calls.append("created")
+        return _Worker(on_ready, work_orders)
+
+    adapter = _CountingProjectCodexAdapter(
+        store=store,
+        confirmation=confirmation,
+        worker_factory=worker_factory,
+    )
+    provider = _Provider()
+    monkeypatch.setitem(assembly_module._EXECUTOR_FACTORIES, "codex", lambda _context: adapter)
+    monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **_kwargs: object())
+    monkeypatch.setattr(qwen_module, "QwenAudioRealtimeAdapter", lambda **_kwargs: provider)
+    initial = tmp_path / "initial"
+    initial.mkdir()
+    service_ids = count(1)
+    realtime = build_qwen_realtime_assembly(
+        Settings(
+            model_api_key=SecretStr("model-secret"),
+            dashscope_api_key=SecretStr("realtime-secret"),
+            tavily_api_key=SecretStr("search-secret"),
+            executor="codex",
+            codex_workspace=initial,
+            codex_managed_root=managed_root,
+            codex_project_state_root=tmp_path / "unused-state",
+            codex_prewarm=False,
+            _env_file=None,
+        ),
+        sink=_Sink(),
+        on_audio_frame=lambda _frame: None,
+        on_audio_clear=lambda _utterance_id, _epoch: None,
+        on_audio_terminal=lambda _utterance_id, _epoch: None,
+        on_delivery=lambda _completion: None,
+        id_factory=lambda: f"e2e-{next(service_ids)}",
+    )
+    await realtime.start()
+    proposal = await adapter.dispatch(
+        "project",
+        {
+            "action": "create_workspace",
+            "workspace": "tetris",
+            "session": "Initial build",
+            "work_order": "build the tetris game",
+        },
+        SimpleNamespace(
+            clock=clock,
+            progress=None,
+            delegate=SimpleNamespace(
+                origin_ref="conversation:request",
+                delegate_id="delegate-proposal",
+                private=None,
+            ),
+        ),
+    )
+    proposal_id = proposal.content["proposal_id"]
+    assert isinstance(proposal_id, str)
+    await realtime.service.handle_event(UserSpeechStarted(
+        session_epoch=1,
+        speech_id="speech-confirm",
+        provider_item_id="user-confirm",
+    ))
+    await realtime.service.handle_event(UserSpeechEnded(
+        session_epoch=1,
+        speech_id="speech-confirm",
+    ))
+    await realtime.service.handle_event(ResponseStarted(
+        session_epoch=1,
+        response_id="response-confirm",
+    ))
+    await realtime.service.handle_event(UserTranscriptFinal(
+        session_epoch=1,
+        item_id="user-confirm",
+        text="好，创建吧",
+    ))
+    return _CreateHarness(
+        realtime=realtime,
+        store=store,
+        confirmation=confirmation,
+        adapter=adapter,
+        provider=provider,
+        proposal_id=proposal_id,
+        worker_calls=worker_calls,
+        work_orders=work_orders,
+    )
+
+
+def _confirmation_outputs(provider: _Provider, call_id: str) -> list[dict[str, object]]:
+    return [
+        json.loads(item.content)
+        for item in provider.injected
+        if item.kind == "tool_output" and item.call_id == call_id
+    ]
 
 
 async def _wait_until(predicate: Callable[[], bool]) -> None:
@@ -356,41 +509,94 @@ async def test_independent_create_uses_structured_confirmation_and_starts_manage
 
 
 @pytest.mark.parametrize(
-    ("proposal_id", "confirmed", "expected_kind", "expected_pending"),
+    ("proposal_id_override", "confirmed", "output_code", "expected_pending"),
     [
-        ("proposal-create", False, "cancelled", False),
+        (None, False, "cancelled", False),
         ("proposal-wrong", True, "invalid", True),
-        ("proposal-create", "true", "invalid", True),
+        (None, "true", "confirmation_invalid", True),
     ],
 )
-def test_rejected_wrong_id_and_non_boolean_decisions_have_zero_side_effects(
+@pytest.mark.asyncio
+async def test_rejected_wrong_id_and_non_boolean_service_decisions_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    proposal_id: str,
+    proposal_id_override: str | None,
     confirmed: object,
-    expected_kind: str,
+    output_code: str,
     expected_pending: bool,
 ) -> None:
-    clock = VirtualClock(start=10.0)
-    store = _store(tmp_path, ["unused-workspace"], clock)
-    controller = ProjectConfirmationController(clock=clock, id_factory=lambda: "proposal-create")
-    controller.prepare(
-        action="create",
-        workspace_display_name="tetris",
-        workspace_id=None,
-        session_title=None,
-        session_id=None,
-        work_order="build",
-        origin_ref="conversation:1",
-    )
-    assert controller.reserve_user_item(epoch=1, item_id="user-confirm")
-    outcome = controller.accept_decision(
-        epoch=1,
-        item_id="user-confirm",
-        proposal_id=proposal_id,
-        confirmed=confirmed,  # type: ignore[arg-type]
-    )
+    harness = await _create_harness(monkeypatch, tmp_path)
+    try:
+        before = harness.store.snapshot()
+        await harness.realtime.service.handle_event(ToolCallReady(
+            session_epoch=1,
+            response_id="response-confirm",
+            call_id="confirm-invalid",
+            item_id="function-invalid",
+            name="codex__confirm_project_action",
+            arguments={
+                "proposal_id": (
+                    harness.proposal_id
+                    if proposal_id_override is None
+                    else proposal_id_override
+                ),
+                "confirmed": confirmed,
+            },  # type: ignore[arg-type]
+        ))
 
-    assert outcome.kind == expected_kind
-    assert outcome.operation is None
-    assert controller.pending is expected_pending
-    assert store.snapshot().workspaces == ()
+        assert _confirmation_outputs(harness.provider, "confirm-invalid") == [
+            {"code": output_code, "state": "refused"}
+        ]
+        assert harness.store.snapshot() == before
+        assert harness.confirmation.pending is expected_pending
+        assert harness.adapter.commit_calls == 0
+        assert harness.worker_calls == []
+        assert harness.work_orders == []
+
+        followup_call_id = "confirm-valid" if expected_pending else "confirm-after-cancel"
+        await harness.realtime.service.handle_event(ToolCallReady(
+            session_epoch=1,
+            response_id="response-confirm",
+            call_id=followup_call_id,
+            item_id=f"function-{followup_call_id}",
+            name="codex__confirm_project_action",
+            arguments={"proposal_id": harness.proposal_id, "confirmed": True},
+        ))
+        if not expected_pending:
+            assert _confirmation_outputs(harness.provider, followup_call_id) == [
+                {"code": "confirmation_not_pending", "state": "refused"}
+            ]
+            assert harness.store.snapshot() == before
+            assert harness.adapter.commit_calls == 0
+            assert harness.worker_calls == []
+            assert harness.work_orders == []
+            return
+
+        assert _confirmation_outputs(harness.provider, followup_call_id) == [
+            {"code": "confirmed", "state": "accepted"}
+        ]
+        await _wait_until(lambda: len(harness.store.snapshot().sessions) == 1)
+        committed = harness.store.snapshot()
+        assert len(committed.workspaces) == 1
+        assert committed.active_workspace_id == committed.workspaces[0].workspace_id
+        assert harness.adapter.commit_calls == 1
+        assert harness.worker_calls == ["created"]
+        assert harness.work_orders == ["build the tetris game"]
+
+        await harness.realtime.service.handle_event(ToolCallReady(
+            session_epoch=1,
+            response_id="response-confirm",
+            call_id="confirm-replay",
+            item_id="function-replay",
+            name="codex__confirm_project_action",
+            arguments={"proposal_id": harness.proposal_id, "confirmed": True},
+        ))
+        assert _confirmation_outputs(harness.provider, "confirm-replay") == [
+            {"code": "confirmation_not_pending", "state": "refused"}
+        ]
+        assert harness.store.snapshot() == committed
+        assert harness.adapter.commit_calls == 1
+        assert harness.worker_calls == ["created"]
+        assert harness.work_orders == ["build the tetris game"]
+    finally:
+        await harness.realtime.stop()

@@ -175,9 +175,11 @@ build and validation state; this documentation does not claim native CI has pass
 
 ### Named Codex workspaces and Sessions
 
-Realtime Codex project mode is always on and has no feature toggle. A **Workspace** is an isolated
-filesystem/Git project; a **Session** is a persistent, resumable Codex thread inside one Workspace.
-The optional startup workspace imports an existing repository:
+The realtime Codex project surface is always on and has no feature toggle. This applies only to
+realtime: ordinary non-realtime Codex retains `codex__run` and its existing semantics, while
+`codex__run` is not available to the realtime provider. A **Workspace** is an isolated filesystem/Git
+project; a **Session** is a persistent, resumable Codex thread inside one Workspace. The optional
+startup workspace imports an existing repository:
 
 ```bash
 NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
@@ -185,8 +187,9 @@ NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces
 NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
 ```
 
-Workspace and Session candidates are listed only when requested; Nova does not inject the full
-historical registry into every model turn. Create, switch, and resume first produce a proposal.
+On every realtime turn, Nova injects only the active Workspace and its active Session, if any.
+Workspace and Session candidates are listed only when requested; Nova never injects historical
+candidates as part of the standing turn context. Create, switch, and resume first produce a proposal.
 The user's next turn is bound to that proposal and interpreted as a dedicated structured
 confirmation with the exact proposal ID and a JSON boolean. Rejection, a mismatched ID, or replay
 fails closed. Switching is staged: first confirm the Workspace, then list or resume a Session in
