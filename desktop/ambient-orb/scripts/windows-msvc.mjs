@@ -10,6 +10,8 @@ const WINDOWS_HARDENING = Object.freeze([
   '/CETCOMPAT',
   '/HIGHENTROPYVA',
 ])
+const WINDOWS_VCVARS_ENV = 'NOVA_AUDIO_AGENT_VCVARS'
+const WINDOWS_VCVARS_STATUS_ENV = 'NOVA_AUDIO_AGENT_VCVARS_STATUS'
 
 async function existing(path) {
   try {
@@ -34,6 +36,52 @@ function parseEnvironment(output) {
   return environment
 }
 
+export function windowsDeveloperEnvironmentInput() {
+  return [
+    '@set "ERRORLEVEL="',
+    `@call "%${WINDOWS_VCVARS_ENV}%" >nul`,
+    `@set "${WINDOWS_VCVARS_STATUS_ENV}=%ERRORLEVEL%"`,
+    `@if not "%${WINDOWS_VCVARS_STATUS_ENV}%"=="0" @exit /b %${WINDOWS_VCVARS_STATUS_ENV}%`,
+    `@set "${WINDOWS_VCVARS_ENV}="`,
+    `@set "${WINDOWS_VCVARS_STATUS_ENV}="`,
+    '@set',
+    '@exit /b 0',
+    '',
+  ].join('\r\n')
+}
+
+export function captureWindowsDeveloperEnvironment({
+  vcvars,
+  inherited = process.env,
+  comSpec = inherited.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe',
+}) {
+  const environment = {...inherited}
+  for (const name of Object.keys(environment)) {
+    const normalized = name.toUpperCase()
+    if (
+      normalized === 'ERRORLEVEL'
+      || normalized === WINDOWS_VCVARS_ENV
+      || normalized === WINDOWS_VCVARS_STATUS_ENV
+    ) delete environment[name]
+  }
+  environment[WINDOWS_VCVARS_ENV] = vcvars
+  const command = windowsDeveloperEnvironmentInput()
+  const configured = spawnSync(comSpec, ['/d', '/q', '/u'], {
+    encoding: 'utf16le',
+    env: environment,
+    input: Buffer.from(command, 'ascii'),
+    windowsHide: true,
+  })
+  assert.equal(
+    configured.status,
+    0,
+    configured.stderr || configured.error?.message || configured.stdout || 'windows_msvc_unavailable',
+  )
+  const captured = parseEnvironment(configured.stdout)
+  assert.ok(captured.INCLUDE && captured.LIB && captured.PATH, 'windows_msvc_unavailable')
+  return captured
+}
+
 async function visualStudioEnvironment() {
   const inherited = {...process.env}
   if (typeof inherited.INCLUDE === 'string' && typeof inherited.LIB === 'string') return inherited
@@ -42,6 +90,7 @@ async function visualStudioEnvironment() {
   const vswhere = resolve(programFiles, 'Microsoft Visual Studio/Installer/vswhere.exe')
   assert.equal(await existing(vswhere), true, 'windows_msvc_unavailable')
   const located = spawnSync(vswhere, [
+    '-utf8',
     '-latest',
     '-products', '*',
     '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
@@ -52,14 +101,7 @@ async function visualStudioEnvironment() {
   assert.ok(installation.length > 0, 'windows_msvc_unavailable')
   const vcvars = resolve(installation, 'VC/Auxiliary/Build/vcvars64.bat')
   assert.equal(await existing(vcvars), true, 'windows_msvc_unavailable')
-  const command = `call "${vcvars}" >nul && set`
-  const configured = spawnSync(inherited.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe', [
-    '/d', '/c', command,
-  ], {encoding: 'utf8', env: inherited, windowsHide: true})
-  assert.equal(configured.status, 0, 'windows_msvc_unavailable')
-  const environment = parseEnvironment(configured.stdout)
-  assert.ok(environment.INCLUDE && environment.LIB && environment.PATH, 'windows_msvc_unavailable')
-  return environment
+  return captureWindowsDeveloperEnvironment({vcvars, inherited})
 }
 
 export async function compileWindowsNative({

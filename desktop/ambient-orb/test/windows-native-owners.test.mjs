@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
-import {readFile} from 'node:fs/promises'
+import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
 import {resolve} from 'node:path'
 import test from 'node:test'
 
 import {buildWindowsJobGuardian} from '../scripts/build-windows-job-guardian.mjs'
+import {
+  captureWindowsDeveloperEnvironment,
+  windowsDeveloperEnvironmentInput,
+} from '../scripts/windows-msvc.mjs'
 
 const packageRoot = resolve(import.meta.dirname, '..')
 
@@ -107,8 +112,66 @@ test('Windows native builders select audited sources and MSVC hardening', async 
   assert.match(project, /\/DELAYLOAD:NODE\.EXE/u)
   assert.match(project, /Delayimp\.lib/u)
   assert.match(compiler, /lib\.exe/u)
-  assert.match(compiler, /\[\s*'\/d', '\/c', command,\s*\]/u)
-  assert.doesNotMatch(compiler, /\['\/d', '\/s', '\/c', command\]/u)
+  assert.match(compiler, /'-utf8'/u)
+  assert.match(compiler, /spawnSync\(comSpec, \['\/d', '\/q', '\/u'\],/u)
+  assert.match(compiler, /Buffer\.from\(command, 'ascii'\)/u)
+  assert.match(compiler, /encoding: 'utf16le'/u)
+  assert.doesNotMatch(compiler, /['"]\/c['"]/u)
   assert.match(probe, /codex_sandbox_probe_windows\.c/u)
   assert.match(guardian, /windows_job_guardian\.c/u)
+})
+
+test('Windows MSVC bootstrap streams a batch program without cmd /c quote parsing', () => {
+  const vcvars = 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat'
+  const command = windowsDeveloperEnvironmentInput()
+  assert.equal(command, [
+    '@set "ERRORLEVEL="',
+    '@call "%NOVA_AUDIO_AGENT_VCVARS%" >nul',
+    '@set "NOVA_AUDIO_AGENT_VCVARS_STATUS=%ERRORLEVEL%"',
+    '@if not "%NOVA_AUDIO_AGENT_VCVARS_STATUS%"=="0" @exit /b %NOVA_AUDIO_AGENT_VCVARS_STATUS%',
+    '@set "NOVA_AUDIO_AGENT_VCVARS="',
+    '@set "NOVA_AUDIO_AGENT_VCVARS_STATUS="',
+    '@set',
+    '@exit /b 0',
+    '',
+  ].join('\r\n'))
+  assert.equal(command.includes(vcvars), false)
+  assert.equal(Buffer.from(command, 'ascii').toString('ascii'), command)
+})
+
+test('Windows MSVC bootstrap preserves Unicode paths and the exact batch status', {
+  skip: process.platform !== 'win32',
+}, async t => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-msvc-'))
+  t.after(async () => await rm(root, {recursive: true, force: true}))
+  const unicodeRoot = resolve(root, '工具链')
+  await mkdir(unicodeRoot)
+
+  const success = resolve(unicodeRoot, 'success.cmd')
+  await writeFile(success, [
+    '@set "INCLUDE=nova-include"',
+    '@set "LIB=nova-lib"',
+    '@set "PATH=nova-path;%PATH%"',
+    '@exit /b 0',
+    '',
+  ].join('\r\n'), 'ascii')
+  const environment = captureWindowsDeveloperEnvironment({
+    vcvars: success,
+    inherited: {...process.env, ERRORLEVEL: '91'},
+  })
+  assert.equal(environment.INCLUDE, 'nova-include')
+  assert.equal(environment.LIB, 'nova-lib')
+  assert.match(environment.PATH, /^nova-path;/u)
+  assert.equal(environment.NOVA_AUDIO_AGENT_VCVARS, undefined)
+  assert.equal(environment.NOVA_AUDIO_AGENT_VCVARS_STATUS, undefined)
+
+  const failure = resolve(unicodeRoot, 'failure.cmd')
+  await writeFile(failure, '@exit /b 37\r\n', 'ascii')
+  assert.throws(
+    () => captureWindowsDeveloperEnvironment({
+      vcvars: failure,
+      inherited: {...process.env, errorlevel: '0'},
+    }),
+    error => error?.actual === 37 && error?.expected === 0,
+  )
 })
