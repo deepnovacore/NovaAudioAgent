@@ -117,6 +117,22 @@ def test_project_routing_rejects_extra_missing_null_and_wrong_action_values() ->
         assert evaluate_project_routing(wrong).passed is False
 
 
+def test_project_routing_scores_every_string_argument_by_exact_value() -> None:
+    perfect = perfect_predictions()
+    for case in CORPUS:
+        if case.expected_tool != "codex__project":
+            continue
+        for field, value in case.expected_arguments.items():
+            if field == "action" or type(value) is not str:
+                continue
+            altered = dict(case.expected_arguments)
+            altered[field] = f" {value} "
+            wrong = dict(perfect)
+            wrong[case.case_id] = ("codex__project", altered)
+            report = evaluate_project_routing(wrong)
+            assert report.passed is False, (case.case_id, field)
+
+
 def test_project_routing_scores_confirmation_by_structured_id_and_native_boolean() -> None:
     perfect = perfect_predictions()
     for malformed in (
@@ -131,6 +147,13 @@ def test_project_routing_scores_confirmation_by_structured_id_and_native_boolean
         report = evaluate_project_routing(wrong)
         assert report.passed is False
         assert report.mismatches[0].case_id == "confirm-yes"
+
+    whitespace_id = dict(perfect)
+    whitespace_id["confirm-yes"] = (
+        "codex__confirm_project_action",
+        {"proposal_id": " proposal-live ", "confirmed": True},
+    )
+    assert evaluate_project_routing(whitespace_id).passed is False
 
 
 def test_eval_codex_projects_cli_forwards_complete_tool_arguments() -> None:

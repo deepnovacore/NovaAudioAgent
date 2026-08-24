@@ -182,7 +182,7 @@ def _normalize_project_arguments(arguments: object) -> dict[str, str] | None:
         value = arguments[name]
         if type(value) is not str or not value.strip() or len(value) > limit:
             return None
-        normalized[name] = value.strip()
+        normalized[name] = value
     return normalized
 
 
@@ -198,7 +198,7 @@ def _normalize_confirmation_arguments(arguments: object) -> dict[str, object] | 
         or type(confirmed) is not bool
     ):
         return None
-    return {"proposal_id": proposal_id.strip(), "confirmed": confirmed}
+    return {"proposal_id": proposal_id, "confirmed": confirmed}
 
 
 def _canonical(value: Mapping[str, object]) -> str:
