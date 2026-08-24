@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 from nova_audio_agent.clock import VirtualClock
 from nova_audio_agent.realtime.project_confirmation import (
     ConfirmedProjectOperation,
     ProjectConfirmationController,
-    classify_confirmation,
 )
 
 
@@ -17,7 +17,7 @@ class _Ids:
 
     def __call__(self) -> str:
         self.value += 1
-        return f"nonce-{self.value}"
+        return f"proposal-{self.value}"
 
 
 def _controller(
@@ -66,140 +66,197 @@ async def test_proposal_expiry_is_clock_scheduled_and_published() -> None:
     assert changes[-1].pending_confirmation is False
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "确认",
-        "确认执行",
-        "嗯，确认执行！",
-        "好的，可以",
-        "那就按这个来呀",
-        "同意。",
-        "没问题",
-        "开始吧",
-        "执行吧",
-        "做吧",
-    ],
-)
-def test_affirmative_grammar_accepts_only_bounded_whole_utterances(text: str) -> None:
-    assert classify_confirmation(text) == "confirm"
-
-
-@pytest.mark.parametrize(
-    "text",
-    ["取消", "不确认", "不要", "不行", "先不要", "先别", "算了", "停止"],
-)
-def test_negative_grammar_cancels(text: str) -> None:
-    assert classify_confirmation(text) == "cancel"
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "确认但不要执行",
-        "可以，不过先别",
-        "可以顺便删除旧项目",
-        "请确认",
-        "大概可以",
-        "确认一下",
-        "嗯",
-        "",
-    ],
-)
-def test_mixed_negation_extra_objectives_and_unapproved_wrappers_never_confirm(
-    text: str,
-) -> None:
-    assert classify_confirmation(text) != "confirm"
-
-
-def test_proposal_has_no_commit_authority_until_matching_asr_confirms() -> None:
+def test_matching_structured_true_decision_grants_one_shot_identity_authority() -> None:
     controller = _controller()
     proposal = _prepare_select(controller)
 
-    assert proposal.nonce == "nonce-1"
-    assert controller.view.pending_confirmation is True
-    assert controller.claim_confirmed(ConfirmedProjectOperation.from_proposal(proposal)) is False
-    assert controller.reserve_user_item(epoch=3, item_id="u1") is True
-    assert controller.accept_transcript(epoch=3, item_id="other", text="确认").kind == "ignored"
-
-    outcome = controller.accept_transcript(epoch=3, item_id="u1", text="确认")
-
-    assert outcome.kind == "confirmed"
-    assert outcome.operation is not None
-    assert controller.view.pending_confirmation is False
-    assert controller.claim_confirmed(outcome.operation) is True
-    assert controller.claim_confirmed(outcome.operation) is False
-
-
-def test_reconstructed_operation_cannot_claim_the_single_use_authority() -> None:
-    controller = _controller()
-    _prepare_select(controller)
-    controller.reserve_user_item(epoch=1, item_id="u")
-    outcome = controller.accept_transcript(epoch=1, item_id="u", text="可以")
-    assert outcome.operation is not None
-    copied = ConfirmedProjectOperation.from_proposal(outcome.operation)
-
-    assert controller.claim_confirmed(copied) is False
-    assert controller.claim_confirmed(outcome.operation) is True
-
-
-def test_first_short_unknown_retries_and_second_unknown_cancels() -> None:
-    controller = _controller()
-    _prepare_select(controller)
-    controller.reserve_user_item(epoch=1, item_id="u1")
-
-    retry = controller.accept_transcript(epoch=1, item_id="u1", text="行吗")
-    assert retry.kind == "retry"
-    assert controller.view.pending_confirmation is True
-    assert controller.reserve_user_item(epoch=1, item_id="u2") is True
-
-    cancelled = controller.accept_transcript(epoch=1, item_id="u2", text="你看着办")
-    assert cancelled.kind == "cancelled"
-    assert controller.view.pending_confirmation is False
-
-
-def test_long_unrecognized_reply_cancels_without_retry() -> None:
-    controller = _controller()
-    _prepare_select(controller)
-    controller.reserve_user_item(epoch=1, item_id="u")
-
-    outcome = controller.accept_transcript(
+    assert proposal.proposal_id == "proposal-1"
+    assert controller.reserve_user_item(epoch=1, item_id="user-1") is True
+    accepted = controller.accept_decision(
         epoch=1,
-        item_id="u",
-        text="我现在想换一个完全不同的新任务请先不要处理刚才那个提议",
+        item_id="user-1",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
     )
 
-    assert outcome.kind == "cancelled"
-    assert controller.view.pending_confirmation is False
+    assert accepted.kind == "confirmed"
+    assert accepted.operation is not None
+    assert accepted.operation.proposal_id == proposal.proposal_id
+    assert controller.pending is False
+    assert controller.claim_confirmed(accepted.operation) is True
+    assert controller.claim_confirmed(accepted.operation) is False
 
 
-def test_expired_proposal_never_confirms() -> None:
+def test_reconstructed_operation_cannot_claim_identity_authority() -> None:
+    controller = _controller()
+    proposal = _prepare_select(controller)
+    controller.reserve_user_item(epoch=1, item_id="user-1")
+    accepted = controller.accept_decision(
+        epoch=1,
+        item_id="user-1",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
+    assert accepted.operation is not None
+    copied = ConfirmedProjectOperation.from_proposal(accepted.operation)
+
+    assert controller.claim_confirmed(copied) is False
+    assert controller.claim_confirmed(accepted.operation) is True
+
+
+def test_matching_structured_false_decision_cancels_without_authority() -> None:
+    controller = _controller()
+    proposal = _prepare_select(controller)
+    controller.reserve_user_item(epoch=2, item_id="user-2")
+
+    cancelled = controller.accept_decision(
+        epoch=2,
+        item_id="user-2",
+        proposal_id=proposal.proposal_id,
+        confirmed=False,
+    )
+
+    assert cancelled.kind == "cancelled"
+    assert cancelled.operation is None
+    assert cancelled.response_text == "已取消。"
+    assert controller.pending is False
+
+
+def test_wrong_proposal_id_and_non_boolean_decisions_are_invalid() -> None:
+    controller = _controller()
+    proposal = _prepare_select(controller)
+    controller.reserve_user_item(epoch=3, item_id="user-3")
+
+    invalid_inputs = [
+        ("proposal-other", True),
+        (7, True),
+        (proposal.proposal_id, "true"),
+        (proposal.proposal_id, 1),
+    ]
+    for proposal_id, confirmed in invalid_inputs:
+        invalid = controller.accept_decision(
+            epoch=3,
+            item_id="user-3",
+            proposal_id=proposal_id,  # type: ignore[arg-type]
+            confirmed=confirmed,  # type: ignore[arg-type]
+        )
+        assert invalid.kind == "invalid"
+        assert invalid.operation is None
+        assert controller.pending is True
+
+    accepted = controller.accept_decision(
+        epoch=3,
+        item_id="user-3",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
+    assert accepted.operation is not None
+    assert controller.claim_confirmed(accepted.operation) is True
+
+
+def test_wrong_epoch_or_item_is_ignored_without_moving_reservation() -> None:
+    controller = _controller()
+    proposal = _prepare_select(controller)
+    controller.reserve_user_item(epoch=4, item_id="reserved")
+
+    for epoch, item_id in [(5, "reserved"), (4, "other"), (True, "reserved"), (4, 7)]:
+        ignored = controller.accept_decision(
+            epoch=epoch,  # type: ignore[arg-type]
+            item_id=item_id,  # type: ignore[arg-type]
+            proposal_id=proposal.proposal_id,
+            confirmed=True,
+        )
+        assert ignored.kind == "ignored"
+        assert ignored.operation is None
+
+    assert controller.accept_decision(
+        epoch=4,
+        item_id="reserved",
+        proposal_id=proposal.proposal_id,
+        confirmed=False,
+    ).kind == "cancelled"
+
+
+def test_expired_decision_clears_proposal_and_notifies_without_committing() -> None:
     clock = VirtualClock(start=1.0)
     controller = _controller(clock)
-    _prepare_select(controller)
-    controller.reserve_user_item(epoch=1, item_id="u")
-    clock.advance_to(91.1)
-
-    outcome = controller.accept_transcript(epoch=1, item_id="u", text="确认")
-
-    assert outcome.kind == "expired"
-    assert controller.view.pending_confirmation is False
-
-
-def test_expired_confirmation_view_suppresses_stale_public_labels_immediately() -> None:
-    clock = VirtualClock(start=1.0)
-    controller = _controller(clock)
-    _prepare_select(controller)
-
+    expiries: list[bool] = []
+    proposal = _prepare_select(controller)
+    controller.observe_expiry(lambda: expiries.append(True))
+    controller.reserve_user_item(epoch=1, item_id="user-1")
     clock.advance_to(91.0)
-    view = controller.view
 
-    assert view.pending_confirmation is False
-    assert view.workspace_display_name is None
-    assert view.session_title is None
+    expired = controller.accept_decision(
+        epoch=1,
+        item_id="user-1",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
+
+    assert expired.kind == "expired"
+    assert expired.operation is None
+    assert controller.pending is False
+    assert expiries == [True]
 
 
-def test_newer_proposal_replaces_old_nonce_and_reservation() -> None:
+def test_release_undecided_releases_only_matching_reservation() -> None:
+    controller = _controller()
+    proposal = _prepare_select(controller)
+    controller.reserve_user_item(epoch=1, item_id="first")
+
+    assert controller.release_undecided(epoch=2, item_id="first") is False
+    assert controller.release_undecided(epoch=1, item_id="other") is False
+    assert controller.release_undecided(epoch=1, item_id="first") is True
+    assert controller.release_undecided(epoch=1, item_id="first") is False
+    assert controller.pending is True
+    assert controller.reserve_user_item(epoch=1, item_id="second") is True
+    assert controller.accept_decision(
+        epoch=1,
+        item_id="second",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    ).kind == "confirmed"
+
+
+def test_released_proposal_remains_live_only_until_original_expiry() -> None:
+    clock = VirtualClock(start=10.0)
+    controller = _controller(clock)
+    _prepare_select(controller)
+    controller.reserve_user_item(epoch=1, item_id="first")
+    assert controller.release_undecided(epoch=1, item_id="first") is True
+
+    clock.advance_to(99.9)
+    assert controller.pending is True
+    clock.advance_to(100.0)
+    assert controller.pending is False
+    assert controller.reserve_user_item(epoch=1, item_id="late") is False
+
+
+def test_duplicate_and_replayed_decisions_fail_closed() -> None:
+    controller = _controller()
+    proposal = _prepare_select(controller)
+    controller.reserve_user_item(epoch=1, item_id="user-1")
+    accepted = controller.accept_decision(
+        epoch=1,
+        item_id="user-1",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
+    assert accepted.operation is not None
+
+    replay = controller.accept_decision(
+        epoch=1,
+        item_id="user-1",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
+    assert replay.kind == "ignored"
+    assert replay.operation is None
+    assert controller.claim_confirmed(accepted.operation) is True
+    assert controller.claim_confirmed(accepted.operation) is False
+
+
+def test_replacement_proposal_invalidates_old_reservation_and_id() -> None:
     controller = _controller()
     first = _prepare_select(controller)
     controller.reserve_user_item(epoch=1, item_id="old")
@@ -213,24 +270,36 @@ def test_newer_proposal_replaces_old_nonce_and_reservation() -> None:
         origin_ref="user:2",
     )
 
-    assert first.nonce != second.nonce
-    assert controller.accept_transcript(epoch=1, item_id="old", text="确认").kind == "ignored"
-    assert controller.reserve_user_item(epoch=2, item_id="new") is True
+    assert first.proposal_id != second.proposal_id
+    assert controller.accept_decision(
+        epoch=1,
+        item_id="old",
+        proposal_id=first.proposal_id,
+        confirmed=True,
+    ).kind == "ignored"
 
 
-def test_asr_failure_and_provider_replacement_clear_every_private_authority() -> None:
+def test_provider_invalidation_clears_proposal_and_unspent_authority() -> None:
     controller = _controller()
-    _prepare_select(controller)
-    controller.reserve_user_item(epoch=1, item_id="u")
-
-    assert controller.fail_transcript(epoch=1, item_id="u").kind == "cancelled"
-    assert controller.view.pending_confirmation is False
-    _prepare_select(controller)
+    proposal = _prepare_select(controller)
+    controller.reserve_user_item(epoch=1, item_id="user-1")
     assert controller.invalidate("provider_replaced") is True
-    assert controller.view.pending_confirmation is False
+    assert controller.pending is False
+
+    proposal = _prepare_select(controller)
+    controller.reserve_user_item(epoch=2, item_id="user-2")
+    accepted = controller.accept_decision(
+        epoch=2,
+        item_id="user-2",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
+    assert accepted.operation is not None
+    assert controller.invalidate("provider_replaced") is True
+    assert controller.claim_confirmed(accepted.operation) is False
 
 
-def test_public_view_and_prompt_contain_names_but_no_private_bindings() -> None:
+def test_public_view_and_prompt_contain_no_private_bindings() -> None:
     changes: list[object] = []
     controller = _controller(changes=changes)
     proposal = controller.prepare(
@@ -244,12 +313,24 @@ def test_public_view_and_prompt_contain_names_but_no_private_bindings() -> None:
     )
 
     rendered = repr(controller.view)
-    assert controller.view.workspace_display_name == "天气看板"
-    assert controller.view.session_title == "登录修复"
-    assert proposal.confirmation_prompt == (
-        "准备切换到天气看板，并继续 Session“登录修复”，请确认或取消。"
-    )
-    for private in ("workspace-secret", "session-secret", "nonce-1", "user:1", "继续修复"):
+    assert proposal.confirmation_prompt == "准备切换到天气看板，并继续 Session“登录修复”，请确认或取消。"
+    for private in (
+        "workspace-secret",
+        "session-secret",
+        proposal.proposal_id,
+        "user:1",
+        "继续修复",
+    ):
         assert private not in rendered
         assert private not in proposal.confirmation_prompt
     assert changes[-1] == controller.view
+
+
+@pytest.mark.parametrize("proposal_id", ["", "x" * 129])
+def test_invalid_proposal_ids_are_rejected(proposal_id: str) -> None:
+    controller = ProjectConfirmationController(
+        clock=VirtualClock(),
+        id_factory=lambda: proposal_id,
+    )
+    with pytest.raises(ValueError, match="invalid confirmation proposal id"):
+        _prepare_select(controller)

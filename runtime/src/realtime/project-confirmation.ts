@@ -3,74 +3,17 @@
  *
  * Ported from `src/nova_audio_agent/realtime/project_confirmation.py`. Changing which workspace or
  * Session the agent is operating in is not something a model may do on its own say-so, so the host
- * proposes, the *user* confirms out loud, and only then is there authority to commit. Everything
- * here exists to make that authority unforgeable: one proposal at a time, one reserved transcript
- * item that may answer it, one retry, and a commit token that can be claimed exactly once.
- *
- * The matching is deliberately narrow. A confirmation has to be one of a closed set of phrases,
- * optionally wrapped in a listed filler word -- not anything a classifier judges affirmative --
- * because the failure mode to avoid is acting on speech that merely sounded like agreement.
- * Normalization runs through the pinned Unicode pipeline for the same reason recall does: the two
- * runtimes must agree on what a user said.
+ * proposes, the *user* makes a structured decision, and only then is there authority to commit.
+ * Everything here exists to make that authority unforgeable: one proposal at a time, one reserved
+ * user item that may answer it, and a commit token that can be claimed exactly once. Transcript
+ * meaning is deliberately outside this controller.
  */
 
 import type { Clock } from '../clock.js'
-import {codePointLengthLikePython, isPythonSpace} from '../python-text.js'
-import { isOtherCategory, isPunctuationCategory } from '../unicode-tables.js'
-import { normalizeNfkcPinned } from '../unicode-normalize.js'
+import {codePointLengthLikePython} from '../python-text.js'
 
 export type ProjectAction = 'create' | 'select' | 'resume'
-export type ConfirmationClass = 'confirm' | 'cancel' | 'unknown'
-export type ConfirmationKind = 'confirmed' | 'cancelled' | 'retry' | 'expired' | 'ignored'
-
-/**
- * The closed set of confirmations, and of cancellations.
- *
- * Confirmations must match exactly (after filler removal); cancellations match as a *substring*,
- * because a user who says anything containing "取消" is cancelling and the cost of over-cancelling
- * is far lower than the cost of over-confirming.
- */
-/**
- * Exported so a test can assert the property the check order relies on, rather than restating the
- * lists and testing its own copy. The safety of `classifyConfirmation` rests on these sets not
- * intersecting; a phrase added here that contains a refusal would make the order load-bearing.
- */
-export const CONFIRMATION_POSITIVE: ReadonlySet<string> = new Set([
-  '确认',
-  '确认执行',
-  '可以',
-  '可以执行',
-  '同意',
-  '没问题',
-  '就这么做',
-  '按这个来',
-  '开始吧',
-  '执行吧',
-  '做吧',
-])
-
-export const CONFIRMATION_NEGATIVE: readonly string[] = [
-  '取消',
-  '不确认',
-  '不要',
-  '不行',
-  '先不要',
-  '先别',
-  '算了',
-  '停止',
-]
-
-/**
- * Filler that may wrap a confirmation, longest first.
- *
- * Longest-first matters: "好的" has to be stripped as one token rather than leaving "的" behind,
- * which would then fail the exact match.
- */
-export const CONFIRMATION_LEADING: readonly string[] = ['嗯嗯', '好的', '那就', '嗯', '好', '那']
-export const CONFIRMATION_TRAILING: readonly string[] = ['啊', '呀', '哦', '啦']
-
-/** Past this, an unrecognised utterance is a cancellation rather than a request to repeat. */
-const MAX_RETRY_CHARS = 24
+export type ConfirmationKind = 'confirmed' | 'cancelled' | 'invalid' | 'expired' | 'ignored'
 const EXPIRY_SECONDS = 90
 
 export interface ProjectProposal {
@@ -81,6 +24,8 @@ export interface ProjectProposal {
   readonly session_id: string | null
   readonly work_order: string | null
   readonly origin_ref: string
+  readonly proposal_id: string
+  /** Compatibility alias for callers migrated in Task 4 and later. */
   readonly nonce: string
   readonly expires_at: number
   readonly confirmation_prompt: string
@@ -95,6 +40,8 @@ export interface ConfirmedProjectOperation {
   readonly session_id: string | null
   readonly work_order: string | null
   readonly origin_ref: string
+  readonly proposal_id: string
+  /** Compatibility alias for callers migrated in Task 4 and later. */
   readonly nonce: string
 }
 
@@ -124,9 +71,8 @@ export class ProjectConfirmationController {
   readonly #expiryObservers: (() => void)[] = []
 
   #proposal: ProjectProposal | null = null
-  /** The one transcript item allowed to answer the proposal, as `epoch:itemId`. */
+  /** The one user item allowed to answer the proposal, as `epoch:itemId`. */
   #reserved: string | null = null
-  #retryCount = 0
   #commitAuthority: ConfirmedProjectOperation | null = null
   #expiryAbort: AbortController | null = null
 
@@ -166,13 +112,18 @@ export class ProjectConfirmationController {
     readonly origin_ref: string
   }): ProjectProposal {
     validatePrepared(input)
-    const nonce = this.#idFactory()
-    if (typeof nonce !== 'string' || nonce === '' || codePointLengthLikePython(nonce) > 128) {
-      throw new TypeError('invalid confirmation nonce')
+    const proposalId = this.#idFactory()
+    if (
+      typeof proposalId !== 'string'
+      || proposalId === ''
+      || codePointLengthLikePython(proposalId) > 128
+    ) {
+      throw new TypeError('invalid confirmation proposal id')
     }
     const proposal: ProjectProposal = Object.freeze({
       ...input,
-      nonce,
+      proposal_id: proposalId,
+      nonce: proposalId,
       expires_at: this.#clock.now() + EXPIRY_SECONDS,
       confirmation_prompt: confirmationPrompt(
         input.action,
@@ -183,7 +134,6 @@ export class ProjectConfirmationController {
     })
     this.#proposal = proposal
     this.#reserved = null
-    this.#retryCount = 0
     this.#commitAuthority = null
     this.#scheduleExpiry(proposal)
     this.#publish()
@@ -227,16 +177,12 @@ export class ProjectConfirmationController {
     return true
   }
 
-  /**
-   * Judge the reserved item's transcript.
-   *
-   * `ignored` means this transcript is not the answer to anything, which is different from not
-   * understanding it: an unreserved item must leave the proposal exactly as it was.
-   */
-  acceptTranscript(input: {
+  /** Accept only a structured decision bound to the reserved user item and current proposal ID. */
+  acceptDecision(input: {
     readonly epoch: number
     readonly itemId: string
-    readonly text: string
+    readonly proposalId: string
+    readonly confirmed: boolean
   }): ConfirmationOutcome {
     const proposal = this.#proposal
     if (proposal === null || !this.#isReserved(input.epoch, input.itemId)) {
@@ -248,36 +194,40 @@ export class ProjectConfirmationController {
       this.#publishExpiry()
       return outcome('expired', {responseText: '确认已过期，本次操作已取消。'})
     }
-    const classification = classifyConfirmation(input.text)
-    if (classification === 'confirm') {
-      const operation = confirmedFrom(proposal)
-      this.#proposal = null
-      this.#reserved = null
-      this.#retryCount = 0
-      // Deliberately not `clearAll`: this is where commit authority is *granted*.
-      this.#commitAuthority = operation
-      this.#publish()
-      return outcome('confirmed', {operation})
+    if (input.proposalId !== proposal.proposal_id || typeof input.confirmed !== 'boolean') {
+      return outcome('invalid', {responseText: '确认请求无效，操作尚未执行。'})
     }
-    if (classification === 'cancel') {
+    if (!input.confirmed) {
       this.#clearAll()
       this.#publish()
       return outcome('cancelled', {responseText: '已取消。'})
     }
-    // One retry, and only for something short. A long unrecognised utterance is the user talking
-    // about something else, so treating it as a mishearing would keep a boundary change alive that
-    // nobody is attending to.
-    const normalized = normalizedUtterance(input.text)
-    if (this.#retryCount === 0 && [...normalized].length <= MAX_RETRY_CHARS) {
-      this.#retryCount = 1
-      this.#reserved = null
-      return outcome('retry', {
-        responseText: '没有听清，请说“确认”“可以”，或者说“取消”。',
-      })
-    }
-    this.#clearAll()
+    const operation = confirmedFrom(proposal)
+    this.#proposal = null
+    this.#reserved = null
+    // Deliberately not `clearAll`: this is where commit authority is *granted*.
+    this.#commitAuthority = operation
     this.#publish()
-    return outcome('cancelled', {responseText: '未收到明确确认，已取消。'})
+    return outcome('confirmed', {operation})
+  }
+
+  /** Release an undecided item without extending or discarding the proposal. */
+  releaseUndecided(input: {readonly epoch: number; readonly itemId: string}): boolean {
+    if (this.#proposal === null || !this.#isReserved(input.epoch, input.itemId)) return false
+    this.#reserved = null
+    return true
+  }
+
+  /**
+   * Fail-closed compatibility for callers replaced by the realtime function handler in Task 4.
+   * Transcript contents are intentionally ignored and can never grant authority.
+   */
+  acceptTranscript(_input: {
+    readonly epoch: number
+    readonly itemId: string
+    readonly text: string
+  }): ConfirmationOutcome {
+    return outcome('ignored')
   }
 
   /**
@@ -350,7 +300,6 @@ export class ProjectConfirmationController {
   #clearAll(): void {
     this.#proposal = null
     this.#reserved = null
-    this.#retryCount = 0
     this.#commitAuthority = null
     const abort = this.#expiryAbort
     this.#expiryAbort = null
@@ -438,63 +387,9 @@ function confirmedFrom(proposal: ProjectProposal): ConfirmedProjectOperation {
     session_id: proposal.session_id,
     work_order: proposal.work_order,
     origin_ref: proposal.origin_ref,
+    proposal_id: proposal.proposal_id,
     nonce: proposal.nonce,
   })
-}
-
-/**
- * Classify one utterance as confirmation, cancellation, or neither.
- *
- * Cancellation is checked first, and as a substring, so anything containing a refusal cancels --
- * "可以取消吗" must never confirm. Confirmation is checked as an exact match against a closed set,
- * then again after stripping one leading and one trailing filler token. Everything else is
- * `unknown`, which the caller turns into a retry or a cancellation.
- *
- * With today's sets the order is not observable, because no confirmable phrase contains a refusal.
- * That is a property of the *sets*, not of this function, and it is the property the safety actually
- * rests on -- so a test asserts it directly over the exported lists rather than over a copy. Add a
- * phrase that breaks it and that test fails, which is the moment the order here becomes real.
- */
-export function classifyConfirmation(text: unknown): ConfirmationClass {
-  const normalized = normalizedUtterance(text)
-  if (normalized === '') return 'unknown'
-  if (CONFIRMATION_NEGATIVE.some(negative => normalized.includes(negative))) return 'cancel'
-  if (CONFIRMATION_POSITIVE.has(normalized)) return 'confirm'
-  let core = normalized
-  for (const token of CONFIRMATION_LEADING) {
-    if (core.startsWith(token)) {
-      core = core.slice(token.length)
-      break
-    }
-  }
-  for (const token of CONFIRMATION_TRAILING) {
-    if (core.endsWith(token)) {
-      core = core.slice(0, core.length - token.length)
-      break
-    }
-  }
-  return CONFIRMATION_POSITIVE.has(core) ? 'confirm' : 'unknown'
-}
-
-/**
- * Reduce an utterance to the characters that carry meaning.
- *
- * Whitespace, punctuation, and control characters all go: a user saying "确认。" or "确 认" has
- * confirmed. Classification runs on the pinned Unicode tables rather than the host's, so the two
- * runtimes agree on what was said -- a code point assigned after the pin would otherwise be
- * punctuation to one and a letter to the other.
- */
-function normalizedUtterance(text: unknown): string {
-  if (typeof text !== 'string') return ''
-  let result = ''
-  for (const character of normalizeNfkcPinned(text)) {
-    if (isPythonSpace(character)) continue
-    const codePoint = character.codePointAt(0)
-    if (codePoint === undefined) continue
-    if (isPunctuationCategory(codePoint) || isOtherCategory(codePoint)) continue
-    result += character
-  }
-  return result
 }
 
 function validatePrepared(input: {

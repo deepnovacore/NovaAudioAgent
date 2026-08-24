@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -11,28 +10,7 @@ from typing import Literal, Protocol
 from nova_audio_agent.clock import Clock
 
 ProjectAction = Literal["create", "select", "resume"]
-ConfirmationClass = Literal["confirm", "cancel", "unknown"]
-ConfirmationKind = Literal["confirmed", "cancelled", "retry", "expired", "ignored"]
-
-_POSITIVE = frozenset(
-    {
-        "确认",
-        "确认执行",
-        "可以",
-        "可以执行",
-        "同意",
-        "没问题",
-        "就这么做",
-        "按这个来",
-        "开始吧",
-        "执行吧",
-        "做吧",
-    }
-)
-_NEGATIVE = frozenset({"取消", "不确认", "不要", "不行", "先不要", "先别", "算了", "停止"})
-_LEADING = tuple(sorted(("嗯", "嗯嗯", "好", "好的", "那", "那就"), key=len, reverse=True))
-_TRAILING = tuple(sorted(("啊", "呀", "哦", "啦"), key=len, reverse=True))
-_MAX_RETRY_CHARS = 24
+ConfirmationKind = Literal["confirmed", "cancelled", "invalid", "expired", "ignored"]
 _EXPIRY_SECONDS = 90.0
 
 
@@ -45,6 +23,8 @@ class ProjectProposal:
     session_id: str | None
     work_order: str | None
     origin_ref: str
+    proposal_id: str
+    # Compatibility alias for callers migrated in Task 4 and later.
     nonce: str
     expires_at: float
     confirmation_prompt: str
@@ -58,6 +38,7 @@ class _ProposalLike(Protocol):
     session_id: str | None
     work_order: str | None
     origin_ref: str
+    proposal_id: str
     nonce: str
 
 
@@ -70,6 +51,8 @@ class ConfirmedProjectOperation:
     session_id: str | None
     work_order: str | None
     origin_ref: str
+    proposal_id: str
+    # Compatibility alias for callers migrated in Task 4 and later.
     nonce: str
 
     @classmethod
@@ -82,6 +65,7 @@ class ConfirmedProjectOperation:
             session_id=proposal.session_id,
             work_order=proposal.work_order,
             origin_ref=proposal.origin_ref,
+            proposal_id=proposal.proposal_id,
             nonce=proposal.nonce,
         )
 
@@ -115,7 +99,6 @@ class ProjectConfirmationController:
         self._on_change = on_change
         self._proposal: ProjectProposal | None = None
         self._reserved: tuple[int, str] | None = None
-        self._retry_count = 0
         self._commit_authority: ConfirmedProjectOperation | None = None
         self._expiry_task: asyncio.Task[None] | None = None
         self._expiry_observers: list[Callable[[], None]] = []
@@ -153,9 +136,9 @@ class ProjectConfirmationController:
             work_order=work_order,
             origin_ref=origin_ref,
         )
-        nonce = self._id_factory()
-        if type(nonce) is not str or not nonce or len(nonce) > 128:
-            raise ValueError("invalid confirmation nonce")
+        proposal_id = self._id_factory()
+        if type(proposal_id) is not str or not proposal_id or len(proposal_id) > 128:
+            raise ValueError("invalid confirmation proposal id")
         proposal = ProjectProposal(
             action=action,
             workspace_display_name=workspace_display_name,
@@ -164,7 +147,8 @@ class ProjectConfirmationController:
             session_id=session_id,
             work_order=work_order,
             origin_ref=origin_ref,
-            nonce=nonce,
+            proposal_id=proposal_id,
+            nonce=proposal_id,
             expires_at=self._clock.now() + _EXPIRY_SECONDS,
             confirmation_prompt=_confirmation_prompt(
                 action,
@@ -175,7 +159,6 @@ class ProjectConfirmationController:
         )
         self._proposal = proposal
         self._reserved = None
-        self._retry_count = 0
         self._commit_authority = None
         self._schedule_expiry(proposal)
         self._publish()
@@ -206,9 +189,16 @@ class ProjectConfirmationController:
         self._reserved = (epoch, item_id)
         return True
 
-    def accept_transcript(self, *, epoch: int, item_id: str, text: str) -> ConfirmationOutcome:
+    def accept_decision(
+        self,
+        *,
+        epoch: int,
+        item_id: str,
+        proposal_id: str,
+        confirmed: bool,
+    ) -> ConfirmationOutcome:
         proposal = self._proposal
-        if proposal is None or self._reserved != (epoch, item_id):
+        if proposal is None or not self._is_reserved(epoch, item_id):
             return ConfirmationOutcome(kind="ignored")
         if self._is_expired(proposal):
             self._clear_all()
@@ -218,30 +208,32 @@ class ProjectConfirmationController:
                 kind="expired",
                 response_text="确认已过期，本次操作已取消。",
             )
-        classification = classify_confirmation(text)
-        if classification == "confirm":
-            operation = ConfirmedProjectOperation.from_proposal(proposal)
-            self._proposal = None
-            self._reserved = None
-            self._retry_count = 0
-            self._commit_authority = operation
-            self._publish()
-            return ConfirmationOutcome(kind="confirmed", operation=operation)
-        if classification == "cancel":
+        if proposal_id != proposal.proposal_id or type(confirmed) is not bool:
+            return ConfirmationOutcome(
+                kind="invalid",
+                response_text="确认请求无效，操作尚未执行。",
+            )
+        if confirmed is False:
             self._clear_all()
             self._publish()
             return ConfirmationOutcome(kind="cancelled", response_text="已取消。")
-        normalized = _normalized_utterance(text)
-        if self._retry_count == 0 and len(normalized) <= _MAX_RETRY_CHARS:
-            self._retry_count = 1
-            self._reserved = None
-            return ConfirmationOutcome(
-                kind="retry",
-                response_text="没有听清，请说“确认”“可以”，或者说“取消”。",
-            )
-        self._clear_all()
+        operation = ConfirmedProjectOperation.from_proposal(proposal)
+        self._proposal = None
+        self._reserved = None
+        self._commit_authority = operation
         self._publish()
-        return ConfirmationOutcome(kind="cancelled", response_text="未收到明确确认，已取消。")
+        return ConfirmationOutcome(kind="confirmed", operation=operation)
+
+    def release_undecided(self, *, epoch: int, item_id: str) -> bool:
+        if self._proposal is None or not self._is_reserved(epoch, item_id):
+            return False
+        self._reserved = None
+        return True
+
+    def accept_transcript(self, *, epoch: int, item_id: str, text: str) -> ConfirmationOutcome:
+        """Fail closed until Task 4 replaces transcript callers with structured decisions."""
+        del epoch, item_id, text
+        return ConfirmationOutcome(kind="ignored")
 
     def claim_confirmed(self, operation: ConfirmedProjectOperation) -> bool:
         if operation is not self._commit_authority:
@@ -276,13 +268,17 @@ class ProjectConfirmationController:
         self._publish()
         return True
 
+    def _is_reserved(self, epoch: object, item_id: object) -> bool:
+        if type(epoch) is not int or type(item_id) is not str:
+            return False
+        return self._reserved == (epoch, item_id)
+
     def _is_expired(self, proposal: ProjectProposal) -> bool:
         return self._clock.now() >= proposal.expires_at
 
     def _clear_all(self) -> None:
         self._proposal = None
         self._reserved = None
-        self._retry_count = 0
         self._commit_authority = None
         task, self._expiry_task = self._expiry_task, None
         try:
@@ -327,38 +323,6 @@ class ProjectConfirmationController:
             self._on_change(self.view)
         except Exception:
             pass
-
-
-def classify_confirmation(text: object) -> ConfirmationClass:
-    normalized = _normalized_utterance(text)
-    if not normalized:
-        return "unknown"
-    if any(negative in normalized for negative in _NEGATIVE):
-        return "cancel"
-    if normalized in _POSITIVE:
-        return "confirm"
-    core = normalized
-    for token in _LEADING:
-        if core.startswith(token):
-            core = core[len(token) :]
-            break
-    for token in _TRAILING:
-        if core.endswith(token):
-            core = core[: -len(token)]
-            break
-    return "confirm" if core in _POSITIVE else "unknown"
-
-
-def _normalized_utterance(text: object) -> str:
-    if type(text) is not str:
-        return ""
-    return "".join(
-        character
-        for character in unicodedata.normalize("NFKC", text)
-        if not character.isspace()
-        and not unicodedata.category(character).startswith("P")
-        and not unicodedata.category(character).startswith("C")
-    )
 
 
 def _validate_prepared(
@@ -408,5 +372,4 @@ __all__ = [
     "ProjectConfirmationController",
     "ProjectConfirmationView",
     "ProjectProposal",
-    "classify_confirmation",
 ]
