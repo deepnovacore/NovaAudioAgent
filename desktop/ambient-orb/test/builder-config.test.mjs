@@ -12,6 +12,7 @@ import test from 'node:test'
 
 const CONFIG_PATH = resolve(import.meta.dirname, '../electron-builder.yml')
 const PACKAGE_JSON_PATH = resolve(import.meta.dirname, '../package.json')
+const CI_WORKFLOW_PATH = resolve(import.meta.dirname, '../../../.github/workflows/ci.yml')
 const UNSIGNED_WORKFLOW_PATH = resolve(import.meta.dirname, '../../../.github/workflows/unsigned-packages.yml')
 const ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.plist')
 const INHERIT_ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.inherit.plist')
@@ -405,10 +406,27 @@ test('every package: script disables publishing explicitly', async () => {
   }
 })
 
-test('unsigned cross-platform workflow closes native packages through attested installed smoke', async () => {
+test('automatic CI is temporarily Windows-only while cross-platform runners are paused', async () => {
+  const text = await readFile(CI_WORKFLOW_PATH, 'utf8')
+  const workflow = parseYaml(text)
+
+  assert.deepEqual(workflow.jobs.python.strategy.matrix.os, ['windows-latest'])
+  assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, ['windows-latest'])
+  assert.deepEqual(workflow.jobs.package.strategy.matrix.include, [
+    {
+      os: 'windows-latest',
+      script: 'package:win',
+      artifact: 'ambient-orb-win',
+    },
+  ])
+  assert.doesNotMatch(text, /(?:ubuntu|macos)-/u)
+})
+
+test('unsigned Windows workflow closes the native package through attested installed smoke', async () => {
   const text = await readFile(UNSIGNED_WORKFLOW_PATH, 'utf8')
   const workflow = parseYaml(text)
 
+  assert.equal(workflow.name, 'Unsigned Windows packages')
   assert.deepEqual(Object.keys(workflow.on).sort(), ['push', 'workflow_dispatch'])
   assert.deepEqual(workflow.on.push.branches, ['main'])
   assert.deepEqual(workflow.permissions, {contents: 'read'})
@@ -425,12 +443,6 @@ test('unsigned cross-platform workflow closes native packages through attested i
       target_id: 'win32-x64',
       package_script: 'package:win',
       artifact_name: 'unsigned-win32-x64',
-    },
-    {
-      os: 'ubuntu-latest',
-      target_id: 'linux-x64-gnu',
-      package_script: 'package:linux',
-      artifact_name: 'unsigned-linux-x64-gnu',
     },
   ])
 
@@ -475,21 +487,8 @@ test('unsigned cross-platform workflow closes native packages through attested i
       filename: 'nova-win32-x64.exe',
       command: 'node',
     },
-    {
-      os: 'ubuntu-latest',
-      target: 'linux-x64-gnu:appimage',
-      artifact_name: 'unsigned-linux-x64-gnu',
-      filename: 'nova-linux-x64.AppImage',
-      command: 'xvfb-run -a node',
-    },
-    {
-      os: 'ubuntu-latest',
-      target: 'linux-x64-gnu:deb',
-      artifact_name: 'unsigned-linux-x64-gnu',
-      filename: 'nova-linux-x64.deb',
-      command: 'xvfb-run -a node',
-    },
   ])
+  assert.doesNotMatch(text, /(?:ubuntu|macos)-/u)
   assert.equal(smokeJob.steps.some(step => step.uses === 'actions/checkout@v4'), false)
   assert.ok(smokeJob.steps.some(step => step.uses === 'actions/download-artifact@v4'))
   const smokeStep = smokeJob.steps.find(step => step.run?.includes('run-unsigned-installed-smoke.mjs'))

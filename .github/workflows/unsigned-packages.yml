@@ -1,4 +1,4 @@
-name: Unsigned Windows and Ubuntu packages
+name: Unsigned Windows packages
 
 on:
   workflow_dispatch:
@@ -19,16 +19,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Temporary Windows-only debugging mode. Restore Linux only after
+          # cross-platform CI is explicitly re-enabled.
           # Pin the audited VS2022 toolchain; windows-latest now rolls to
           # Visual Studio 2026 and is not a reproducible native build input.
           - os: windows-2022
             target_id: win32-x64
             package_script: package:win
             artifact_name: unsigned-win32-x64
-          - os: ubuntu-latest
-            target_id: linux-x64-gnu
-            package_script: package:linux
-            artifact_name: unsigned-linux-x64-gnu
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -89,16 +87,6 @@ jobs:
             artifact_name: unsigned-win32-x64
             filename: nova-win32-x64.exe
             command: node
-          - os: ubuntu-latest
-            target: linux-x64-gnu:appimage
-            artifact_name: unsigned-linux-x64-gnu
-            filename: nova-linux-x64.AppImage
-            command: xvfb-run -a node
-          - os: ubuntu-latest
-            target: linux-x64-gnu:deb
-            artifact_name: unsigned-linux-x64-gnu
-            filename: nova-linux-x64.deb
-            command: xvfb-run -a node
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/setup-node@v4

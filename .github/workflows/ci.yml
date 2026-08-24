@@ -11,8 +11,10 @@ jobs:
   python:
     strategy:
       fail-fast: false
+      # Temporary Windows-only debugging mode. Restore the other runners only
+      # after cross-platform CI is explicitly re-enabled.
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -39,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -62,12 +64,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            script: package:mac:candidate
-            artifact: ambient-orb-mac
-          - os: ubuntu-latest
-            script: package:linux
-            artifact: ambient-orb-linux
           - os: windows-latest
             script: package:win
             artifact: ambient-orb-win
