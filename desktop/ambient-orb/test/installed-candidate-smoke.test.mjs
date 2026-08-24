@@ -76,6 +76,14 @@ test('installed source rollback accepts only the stable diagnostic with no readi
     stderr: '[desktop-diagnostic] source_rollback_unavailable\n',
     readiness: Buffer.alloc(0),
   }), {status: 'passed'})
+  assert.deepEqual(classifySourceRollbackResult({
+    status: 0,
+    signal: null,
+    error: undefined,
+    stdout: '',
+    stderr: '[desktop-diagnostic] source_rollback_unavailable\r\n',
+    readiness: Buffer.alloc(0),
+  }), {status: 'passed'})
   for (const result of [
     {status: 1, signal: null, stdout: '', stderr: '[desktop-diagnostic] source_rollback_unavailable\n', readiness: Buffer.alloc(0)},
     {status: 0, signal: null, stdout: 'private', stderr: '[desktop-diagnostic] source_rollback_unavailable\n', readiness: Buffer.alloc(0)},

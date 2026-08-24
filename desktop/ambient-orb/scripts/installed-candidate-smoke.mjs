@@ -199,7 +199,7 @@ export function classifySourceRollbackResult(result) {
     : Buffer.from(result?.readiness ?? '')
   if (result?.error !== undefined || result?.signal !== null || result?.status !== 0
     || stdout !== ''
-    || stderr !== '[desktop-diagnostic] source_rollback_unavailable\n'
+    || !/^\[desktop-diagnostic\] source_rollback_unavailable\r?\n$/u.test(stderr)
     || readiness.length !== 0) {
     throw new Error('installed_source_rollback_failed')
   }
@@ -318,7 +318,10 @@ async function runInstalledCandidate({
       }
     }
   }
-  if (failure !== null) throw failure
+  if (failure !== null) {
+    reportInstalledSmokeFailure(installedSmokeDiagnostic(failure))
+    throw failure
+  }
   return cameraCapability
 }
 
