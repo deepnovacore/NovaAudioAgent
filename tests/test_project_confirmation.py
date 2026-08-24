@@ -129,7 +129,6 @@ def test_wrong_proposal_id_and_non_boolean_decisions_are_invalid() -> None:
 
     invalid_inputs = [
         ("proposal-other", True),
-        (7, True),
         (proposal.proposal_id, "true"),
         (proposal.proposal_id, 1),
     ]
@@ -154,6 +153,45 @@ def test_wrong_proposal_id_and_non_boolean_decisions_are_invalid() -> None:
     assert controller.claim_confirmed(accepted.operation) is True
 
 
+class _EqualToEveryProposalId:
+    def __eq__(self, other: object) -> bool:
+        return True
+
+
+class _ProposalIdSubclass(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    "impostor",
+    [7, _EqualToEveryProposalId(), _ProposalIdSubclass("proposal-1")],
+    ids=["non-string", "adversarial-equality", "str-subclass"],
+)
+def test_non_exact_string_proposal_ids_are_ignored_without_moving_state(
+    impostor: object,
+) -> None:
+    controller = _controller()
+    proposal = _prepare_select(controller)
+    controller.reserve_user_item(epoch=3, item_id="user-3")
+
+    ignored = controller.accept_decision(
+        epoch=3,
+        item_id="user-3",
+        proposal_id=impostor,  # type: ignore[arg-type]
+        confirmed=True,
+    )
+
+    assert ignored.kind == "ignored"
+    assert ignored.operation is None
+    assert controller.pending is True
+    assert controller.accept_decision(
+        epoch=3,
+        item_id="user-3",
+        proposal_id=proposal.proposal_id,
+        confirmed=False,
+    ).kind == "cancelled"
+
+
 def test_wrong_epoch_or_item_is_ignored_without_moving_reservation() -> None:
     controller = _controller()
     proposal = _prepare_select(controller)
@@ -175,6 +213,19 @@ def test_wrong_epoch_or_item_is_ignored_without_moving_reservation() -> None:
         proposal_id=proposal.proposal_id,
         confirmed=False,
     ).kind == "cancelled"
+
+
+def test_fail_transcript_rejects_boolean_epoch_without_moving_reservation() -> None:
+    controller = _controller()
+    _prepare_select(controller)
+    controller.reserve_user_item(epoch=1, item_id="reserved")
+
+    ignored = controller.fail_transcript(epoch=True, item_id="reserved")
+
+    assert ignored.kind == "ignored"
+    assert controller.pending is True
+    assert controller.fail_transcript(epoch=1, item_id="reserved").kind == "cancelled"
+    assert controller.pending is False
 
 
 def test_expired_decision_clears_proposal_and_notifies_without_committing() -> None:

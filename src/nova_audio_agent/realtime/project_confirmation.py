@@ -208,6 +208,8 @@ class ProjectConfirmationController:
                 kind="expired",
                 response_text="确认已过期，本次操作已取消。",
             )
+        if type(proposal_id) is not str:
+            return ConfirmationOutcome(kind="ignored")
         if proposal_id != proposal.proposal_id or type(confirmed) is not bool:
             return ConfirmationOutcome(
                 kind="invalid",
@@ -242,7 +244,7 @@ class ProjectConfirmationController:
         return True
 
     def fail_transcript(self, *, epoch: int, item_id: str) -> ConfirmationOutcome:
-        if self._proposal is None or self._reserved != (epoch, item_id):
+        if self._proposal is None or not self._is_reserved(epoch, item_id):
             return ConfirmationOutcome(kind="ignored")
         self._clear_all()
         self._publish()
