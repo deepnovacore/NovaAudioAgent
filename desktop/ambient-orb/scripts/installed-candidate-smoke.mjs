@@ -11,6 +11,7 @@ import {WebSocket, WebSocketServer} from 'ws'
 
 export const RELEASE_SMOKE_MODE = 'installed-candidate-v1'
 export const CAMERA_CAPABILITY_PENDING = 'camera-file-integration: chromium_codec_unavailable'
+export const SOURCE_ROLLBACK_UNAVAILABLE_RESULT = '{"type":"source_rollback_unavailable"}\n'
 export const SCRATCH_REMOVAL_OPTIONS = Object.freeze({
   recursive: true,
   force: true,
@@ -197,16 +198,12 @@ export function classifySourceRollbackResult(result) {
   const stdout = Buffer.isBuffer(result?.stdout)
     ? result.stdout.toString('utf8')
     : result?.stdout
-  const stderr = Buffer.isBuffer(result?.stderr)
-    ? result.stderr.toString('utf8')
-    : result?.stderr
   const readiness = Buffer.isBuffer(result?.readiness)
     ? result.readiness
     : Buffer.from(result?.readiness ?? '')
   if (result?.error !== undefined || result?.signal !== null || result?.status !== 0
     || stdout !== ''
-    || !/^\[desktop-diagnostic\] source_rollback_unavailable\r?\n$/u.test(stderr)
-    || readiness.length !== 0) {
+    || readiness.toString('utf8') !== SOURCE_ROLLBACK_UNAVAILABLE_RESULT) {
     throw new Error('installed_source_rollback_failed')
   }
   return Object.freeze({status: 'passed'})

@@ -4,10 +4,33 @@ import test from 'node:test'
 
 import {
   RELEASE_SMOKE_MODE,
+  SOURCE_ROLLBACK_UNAVAILABLE_RESULT,
   createReleaseSmokeChannel,
+  writeReleaseSmokeSourceRollback,
 } from '../src/main/release-smoke-channel.mjs'
 
 const TOKEN = '0123456789abcdef0123456789abcdef'
+
+test('release smoke source rollback uses the private result pipe before exit', async () => {
+  const output = new PassThrough()
+  let written = ''
+  let completed = 0
+  output.on('data', chunk => { written += chunk.toString('utf8') })
+  assert.equal(writeReleaseSmokeSourceRollback({
+    environment: {NOVA_AUDIO_AGENT_RELEASE_SMOKE: RELEASE_SMOKE_MODE},
+    isPackaged: true,
+    openOutput: () => output,
+    onDone: () => { completed += 1 },
+  }), true)
+  await new Promise(resolve => output.once('finish', resolve))
+  assert.equal(written, SOURCE_ROLLBACK_UNAVAILABLE_RESULT)
+  assert.equal(completed, 1)
+  assert.equal(writeReleaseSmokeSourceRollback({
+    environment: {},
+    isPackaged: true,
+    onDone: () => assert.fail('inert rollback smoke must not exit'),
+  }), false)
+})
 
 test('release smoke control is packaged-only and inert during ordinary source launches', () => {
   let opened = 0

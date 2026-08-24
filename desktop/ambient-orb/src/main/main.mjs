@@ -35,7 +35,10 @@ import { installAppProtocol, loadAppWindow } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
-import { createReleaseSmokeChannel } from './release-smoke-channel.mjs'
+import {
+  createReleaseSmokeChannel,
+  writeReleaseSmokeSourceRollback,
+} from './release-smoke-channel.mjs'
 import {
   createSafeStorageCodec,
   createSettingsWriter,
@@ -728,10 +731,16 @@ const packagedSourceRollbackUnavailable = app.isPackaged
   && process.env.NOVA_AUDIO_AGENT_BACKEND === 'python'
 
 if (packagedSourceRollbackUnavailable) {
-  process.stderr.write(
-    '[desktop-diagnostic] source_rollback_unavailable\n',
-    () => app.exit(0),
-  )
+  if (!writeReleaseSmokeSourceRollback({
+    environment: process.env,
+    isPackaged: app.isPackaged,
+    onDone: () => app.exit(0),
+  })) {
+    process.stderr.write(
+      '[desktop-diagnostic] source_rollback_unavailable\n',
+      () => app.exit(0),
+    )
+  }
 } else if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else if (installedFileCameraSmoke) {

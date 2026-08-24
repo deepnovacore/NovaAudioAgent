@@ -8,6 +8,7 @@ import {
   CAMERA_CAPABILITY_PENDING,
   RELEASE_SMOKE_MODE,
   SCRATCH_REMOVAL_OPTIONS,
+  SOURCE_ROLLBACK_UNAVAILABLE_RESULT,
   candidateInstallPlan,
   classifyCameraCapability,
   smokeEnvironment,
@@ -77,29 +78,21 @@ test('installed candidate plans use native install or mount boundaries for every
   }
 })
 
-test('installed source rollback accepts only the stable diagnostic with no readiness or backend output', async () => {
+test('installed source rollback accepts only the private result with no backend output', async () => {
   const {classifySourceRollbackResult} = await import('../scripts/installed-candidate-smoke.mjs')
   assert.deepEqual(classifySourceRollbackResult({
     status: 0,
     signal: null,
     error: undefined,
     stdout: '',
-    stderr: '[desktop-diagnostic] source_rollback_unavailable\n',
-    readiness: Buffer.alloc(0),
-  }), {status: 'passed'})
-  assert.deepEqual(classifySourceRollbackResult({
-    status: 0,
-    signal: null,
-    error: undefined,
-    stdout: '',
-    stderr: '[desktop-diagnostic] source_rollback_unavailable\r\n',
-    readiness: Buffer.alloc(0),
+    stderr: '[electron] platform diagnostic\r\n',
+    readiness: Buffer.from(SOURCE_ROLLBACK_UNAVAILABLE_RESULT),
   }), {status: 'passed'})
   for (const result of [
-    {status: 1, signal: null, stdout: '', stderr: '[desktop-diagnostic] source_rollback_unavailable\n', readiness: Buffer.alloc(0)},
-    {status: 0, signal: null, stdout: 'private', stderr: '[desktop-diagnostic] source_rollback_unavailable\n', readiness: Buffer.alloc(0)},
-    {status: 0, signal: null, stdout: '', stderr: '[desktop-diagnostic] source_rollback_unavailable\nprivate', readiness: Buffer.alloc(0)},
-    {status: 0, signal: null, stdout: '', stderr: '[desktop-diagnostic] source_rollback_unavailable\n', readiness: Buffer.from('ready')},
+    {status: 1, signal: null, stdout: '', stderr: '', readiness: Buffer.from(SOURCE_ROLLBACK_UNAVAILABLE_RESULT)},
+    {status: 0, signal: null, stdout: 'private', stderr: '', readiness: Buffer.from(SOURCE_ROLLBACK_UNAVAILABLE_RESULT)},
+    {status: 0, signal: null, stdout: '', stderr: '', readiness: Buffer.alloc(0)},
+    {status: 0, signal: null, stdout: '', stderr: '', readiness: Buffer.from('ready\n')},
   ]) {
     assert.throws(() => classifySourceRollbackResult(result), /installed_source_rollback_failed/u)
   }
