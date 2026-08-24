@@ -103,41 +103,24 @@ void (async () => {
     throw new Error('packaged_project_start_rejected')
   }
 
-  stage = 'settings_live'
-  const liveSettings = configModule.loadSettings({
-    ...baseEnvironment,
-    NOVA_AUDIO_AGENT_CODEX_PREWARM: 'true',
-  })
-  stage = 'host_live'
-  const liveHost = productionHostModule.createProductionCodexHost(liveSettings)
-  const liveConfig = hostConfigModule.resolveCodexHostConfig(liveSettings, liveHost.catalog)
-  assert.notEqual(liveConfig, null, 'packaged_codex_config_unavailable')
-  stage = 'resource_live'
-  const liveResource = await factoryModule.createCodexAssemblyResource({
-    config: liveConfig,
-    composition: 'realtime',
-    transportFactory: liveHost.transportFactory,
-    clock: new clockModule.RealClock(),
-    idFactory: () => randomUUID().replaceAll('-', ''),
-  })
-  assert.equal(liveResource.mode, 'live', 'packaged_codex_transport_unavailable')
-  let liveStartRejected = false
+  stage = 'resource_without_project_host'
+  let unsupportedCode = null
   try {
-    stage = 'start_live'
-    await liveResource.start()
+    await factoryModule.createCodexAssemblyResource({
+      config: projectConfig,
+      composition: 'realtime',
+      transportFactory: projectHost.transportFactory,
+      clock: new clockModule.RealClock(),
+      idFactory: () => randomUUID().replaceAll('-', ''),
+    })
   } catch (error) {
-    liveStartRejected = SAFE_PREFLIGHT_CODES.has(error?.code) ? error.code : true
+    unsupportedCode = error?.code ?? null
   }
-  stage = 'close_live'
-  try { await liveResource.close() } catch {
-    if (!liveStartRejected) throw new Error('packaged_live_close_rejected')
-  }
-  if (liveStartRejected) {
-    stage = typeof liveStartRejected === 'string'
-      ? `start_live_${liveStartRejected}`
-      : 'start_live'
-    throw new Error('packaged_live_start_rejected')
-  }
+  assert.equal(
+    unsupportedCode,
+    'codex_project_host_unsupported',
+    'packaged_project_missing_host_did_not_fail_closed',
+  )
   process.stdout.write('packaged production Codex composition passed\n')
 })().catch(() => {
   process.stderr.write(`packaged production Codex composition rejected stage=${stage}\n`)

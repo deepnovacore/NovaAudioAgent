@@ -1,5 +1,15 @@
-import {chmodSync, lstatSync, mkdirSync, realpathSync} from 'node:fs'
-import {isAbsolute, join, resolve} from 'node:path'
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+} from 'node:fs'
+import {getuid} from 'node:process'
+import {basename, dirname, isAbsolute, join, resolve} from 'node:path'
 
 import {
   hostBinaryFromConfig,
@@ -179,10 +189,72 @@ function ensurePrivateDirectory(path: string): string {
     lstatSync(path)
   } catch (error) {
     if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    mkdirSync(path, {recursive: true, mode: 0o700})
-    chmodSync(path, 0o700)
+    const parent = dirname(path)
+    const name = basename(path)
+    if (parent === path || name === '' || name === '.' || name === '..') throw error
+    ensurePrivateDirectory(parent)
+    createPrivateDirectory(parent, path)
   }
   return path
+}
+
+function createPrivateDirectory(parent: string, path: string): void {
+  const descriptor = openSync(
+    parent,
+    constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
+  )
+  let childDescriptor: number | null = null
+  try {
+    const retainedParent = fstatSync(descriptor, {bigint: true})
+    const currentParent = lstatSync(parent, {bigint: true})
+    if (
+      !retainedParent.isDirectory()
+      || !sameIdentity(retainedParent, currentParent)
+      || !ownedByCurrentUser(retainedParent.uid)
+      || (retainedParent.mode & 0o7022n) !== 0n
+      || realpathSync(parent) !== resolve(parent)
+    ) throw new Error('unsafe parent')
+    mkdirSync(path, {mode: 0o700})
+    const created = lstatSync(path, {bigint: true})
+    childDescriptor = openSync(
+      path,
+      constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
+    )
+    const opened = fstatSync(childDescriptor, {bigint: true})
+    if (
+      !opened.isDirectory()
+      || !sameIdentity(created, opened)
+      || !ownedByCurrentUser(opened.uid)
+    ) throw new Error('unsafe created directory')
+    fchmodSync(childDescriptor, 0o700)
+    const verified = fstatSync(childDescriptor, {bigint: true})
+    const current = lstatSync(path, {bigint: true})
+    const verifiedParent = fstatSync(descriptor, {bigint: true})
+    const currentParentAfterCreate = lstatSync(parent, {bigint: true})
+    if (
+      !sameIdentity(opened, verified)
+      || !sameIdentity(opened, current)
+      || !sameIdentity(retainedParent, verifiedParent)
+      || !sameIdentity(retainedParent, currentParentAfterCreate)
+      || (verified.mode & 0o7777n) !== 0o700n
+      || realpathSync(path) !== resolve(path)
+      || dirname(realpathSync(path)) !== realpathSync(parent)
+    ) throw new Error('created directory replaced')
+  } finally {
+    if (childDescriptor !== null) closeSync(childDescriptor)
+    closeSync(descriptor)
+  }
+}
+
+function sameIdentity(
+  left: {readonly dev: bigint; readonly ino: bigint},
+  right: {readonly dev: bigint; readonly ino: bigint},
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+function ownedByCurrentUser(uid: bigint): boolean {
+  return typeof getuid !== 'function' || uid === BigInt(getuid())
 }
 
 function hasRejectedScriptSuffix(path: string): boolean {

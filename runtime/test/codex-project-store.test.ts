@@ -587,7 +587,7 @@ test('durability and native locking source retain the audited no-fallback primit
   assert.doesNotMatch(storeSource, /\.trim\(/u)
   assert.match(storeSource, /\(info\.mode & 0o7777\) !== 0o700/u)
   assert.match(storeSource, /\(info\.mode & 0o7777\) !== 0o600/u)
-  assert.match(storeSource, /return \(mode & 0o022\) !== 0/u)
+  assert.match(storeSource, /return \(mode & 0o7022\) !== 0/u)
   assert.match(nativeSource, /acquire\(descriptor: number\)/u)
   assert.doesNotMatch(nativeSource, /acquire\(descriptor: number\).*Promise/u)
   assert.doesNotMatch(storeSource, /await this\.#nativeLocks\.acquire/u)
@@ -1584,7 +1584,7 @@ test('an owner-controlled 0750 managed root is accepted while group-writable roo
       await accepted.close()
     }
 
-    for (const unsafeMode of [0o770]) {
+    for (const unsafeMode of [0o770, 0o1750]) {
       await chmod(managedRoot, unsafeMode)
       assert.throws(
         () => hostManagedProjectRootForTest(realpathSync(managedRoot)),

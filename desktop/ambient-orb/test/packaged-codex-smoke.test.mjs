@@ -57,6 +57,15 @@ test('packaged Codex failures expose only one closed stage code', () => {
   ]) assert.equal(parsePackagedCodexFailure(value), 'unknown')
 })
 
+test('packaged Codex smoke proves missing project-native authority fails closed', async () => {
+  const source = await readFile(
+    resolve(import.meta.dirname, '../scripts/packaged-production-codex-smoke.cjs'),
+    'utf8',
+  )
+  assert.match(source, /codex_project_host_unsupported/u)
+  assert.doesNotMatch(source, /assert\.equal\(liveResource\.mode, 'live'/u)
+})
+
 test('local release Codex smoke uses the fixed repository root without caller paths', () => {
   const workspace = releaseCandidateWorkspace({})
   assert.equal(workspace, new URL('../../..', import.meta.url).pathname.replace(/\/$/u, ''))

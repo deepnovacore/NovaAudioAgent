@@ -1910,7 +1910,7 @@ function stateRootMatches(
 }
 
 function unsafeManagedMode(mode: number): boolean {
-  return (mode & 0o022) !== 0
+  return (mode & 0o7022) !== 0
 }
 
 function readClock(clock: Clock): number {

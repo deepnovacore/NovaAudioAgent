@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from dataclasses import dataclass
 from math import isfinite
 from pathlib import Path
@@ -18,19 +19,111 @@ class ConfigurationError(RuntimeError):
     """A safe startup error that never contains credential values."""
 
 
-def _safe_project_root(value: Path, variable: str) -> Path:
+def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+def _owned_by_current_user(info: os.stat_result) -> bool:
+    getuid = getattr(os, "getuid", None)
+    return getuid is None or info.st_uid == getuid()
+
+
+def _open_directory(path: Path) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return os.open(path, flags)
+
+
+def _create_private_directory(path: Path) -> None:
+    parent = path.parent
+    if parent == path or path.name in {"", ".", ".."}:
+        raise OSError
+    try:
+        os.lstat(parent)
+    except FileNotFoundError:
+        _create_private_directory(parent)
+
+    parent_fd = _open_directory(parent)
+    child_fd: int | None = None
+    try:
+        parent_info = os.fstat(parent_fd)
+        parent_link = os.lstat(parent)
+        if (
+            not stat.S_ISDIR(parent_info.st_mode)
+            or not _owned_by_current_user(parent_info)
+            or not _same_file(parent_info, parent_link)
+            or bool(stat.S_IMODE(parent_info.st_mode) & 0o7022)
+            or Path(os.path.realpath(parent)) != parent
+        ):
+            raise OSError
+        os.mkdir(path.name, mode=0o700, dir_fd=parent_fd)
+        created = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        child_fd = os.open(path.name, flags, dir_fd=parent_fd)
+        opened = os.fstat(child_fd)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or not _owned_by_current_user(opened)
+            or not _same_file(created, opened)
+        ):
+            raise OSError
+        os.fchmod(child_fd, 0o700)
+        verified = os.fstat(child_fd)
+        current = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        parent_verified = os.fstat(parent_fd)
+        current_path = os.lstat(path)
+        current_parent = os.lstat(parent)
+        if (
+            not _same_file(opened, verified)
+            or not _same_file(opened, current)
+            or not _same_file(opened, current_path)
+            or not _same_file(parent_info, parent_verified)
+            or not _same_file(parent_info, current_parent)
+            or stat.S_IMODE(verified.st_mode) != 0o700
+            or Path(os.path.realpath(path)) != path
+            or Path(os.path.realpath(parent)) != parent
+        ):
+            raise OSError
+    finally:
+        if child_fd is not None:
+            os.close(child_fd)
+        os.close(parent_fd)
+
+
+def _safe_project_root(value: Path, variable: str, *, managed: bool = False) -> Path:
+    descriptor: int | None = None
     try:
         expanded = value.expanduser().absolute()
-        if expanded.is_symlink() or (expanded.exists() and not expanded.is_dir()):
+        try:
+            os.lstat(expanded)
+        except FileNotFoundError:
+            _create_private_directory(expanded)
+        descriptor = _open_directory(expanded)
+        info = os.fstat(descriptor)
+        current = os.lstat(expanded)
+        mode = stat.S_IMODE(info.st_mode)
+        unsafe_mode = bool(mode & 0o7022) if managed else mode != 0o700
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or not _owned_by_current_user(info)
+            or not _same_file(info, current)
+            or unsafe_mode
+        ):
             raise OSError
-        if not expanded.exists():
-            expanded.mkdir(parents=True, mode=0o700)
-            expanded.chmod(0o700)
-        resolved = expanded.resolve(strict=False)
-        if expanded.exists() and resolved != expanded:
+        resolved = expanded.resolve(strict=True)
+        verified = os.fstat(descriptor)
+        if (
+            resolved != expanded
+            or not _same_file(info, verified)
+            or not _same_file(info, os.lstat(expanded))
+        ):
             raise OSError
     except (OSError, RuntimeError):
         raise ConfigurationError(f"{variable} 必须是安全的目录") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     return resolved
 
 
@@ -375,6 +468,7 @@ class Settings(BaseSettings):
         managed_root = _safe_project_root(
             self.codex_managed_root,
             "NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT",
+            managed=True,
         )
         return managed_root, state_root
 

@@ -69,7 +69,6 @@ def test_settings_have_stage_c_defaults(monkeypatch: pytest.MonkeyPatch) -> None
 def test_project_settings_read_prefixed_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED", "false")
     monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT", str(tmp_path / "managed"))
     monkeypatch.setenv("NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT", str(tmp_path / "state"))
 

@@ -261,7 +261,6 @@ test('selected Codex settings preserve the established host environment defaults
     NOVA_AUDIO_AGENT_CODEX_BIN: '\u001c/private/bin/codex\u0085',
     NOVA_AUDIO_AGENT_CODEX_API_KEY: '\u001csecret\u0085',
     NOVA_AUDIO_AGENT_CODEX_PREWARM: 'false',
-    NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'false',
     NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: '\u001c/private/managed\u0085',
     NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '\u001c/private/state\u0085',
   }) as unknown as Record<string, unknown>

@@ -11,9 +11,8 @@ const PREFLIGHT_FAILURES = [
 const FAILURE_STAGES = new Set([
   'load_runtime', 'settings_project', 'host_project', 'host_project_transport',
   'host_project_native', 'host_project_config', 'resource_project',
-  'start_project', 'close_project', 'settings_live', 'host_live',
-  'resource_live', 'start_live', 'close_live',
-  ...PREFLIGHT_FAILURES.flatMap(code => [`start_project_${code}`, `start_live_${code}`]),
+  'start_project', 'close_project', 'resource_without_project_host',
+  ...PREFLIGHT_FAILURES.map(code => `start_project_${code}`),
 ])
 
 export function parsePackagedCodexFailure(stderr) {

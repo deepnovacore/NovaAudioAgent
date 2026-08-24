@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict'
+import fs, {
+  fchmodSync,
+  renameSync,
+} from 'node:fs'
 import {
   chmodSync,
   existsSync,
@@ -9,6 +13,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import {syncBuiltinESMExports} from 'node:module'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {test, type TestContext} from 'node:test'
@@ -89,6 +94,42 @@ test('host resolver expands a leading tilde in the selected Codex workspace', t 
 
   assert.ok(resolved !== null)
   assert.equal(hostWorkspacePath(resolved.workspace), fixture.workspace)
+})
+
+test('host resolver never chmods a replacement for a newly created private root', t => {
+  const fixture = hostFixture(t)
+  const stateRoot = join(fixture.root, 'state')
+  const retainedRoot = join(fixture.root, 'state-created-away')
+  const managedRoot = join(fixture.root, 'managed')
+  const originalFchmod = fchmodSync
+  let replaced = false
+  t.mock.method(fs, 'fchmodSync', (descriptor: number, mode: number) => {
+    if (!replaced) {
+      renameSync(stateRoot, retainedRoot)
+      mkdirSync(stateRoot, {mode: 0o755})
+      chmodSync(stateRoot, 0o755)
+      replaced = true
+    }
+    originalFchmod(descriptor, mode)
+  })
+  syncBuiltinESMExports()
+  try {
+    assert.throws(
+      () => resolveCodexHostConfig(loadSettings({
+        NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+        NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
+        NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
+        NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
+      }), fixture.catalog),
+      error => error instanceof CodexHostConfigurationError
+        && error.code === 'codex_project_state_invalid',
+    )
+    assert.equal(replaced, true)
+    assert.equal(lstatSync(stateRoot).mode & 0o7777, 0o755)
+  } finally {
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  }
 })
 
 test('selected Codex fails as host-unavailable when Task 8 has not supplied a catalog', t => {

@@ -400,6 +400,7 @@ def build_volcengine_realtime_assembly(
     on_codex_state: Callable[[CodexState], None] | None = None,
     on_spoken: Callable[[str], None] | None = None,
     on_caption: Callable[[CaptionFrame], None] | None = None,
+    on_codex_project: Callable[[PublicProjectView], None] | None = None,
     realtime_telemetry: RealtimeTelemetry | None = None,
     id_factory: Callable[[], str] | None = None,
     camera_source: CameraSourceName = "auto",
@@ -459,6 +460,7 @@ def build_volcengine_realtime_assembly(
         support_model_override=(None if configured_model_key else config.ark_support_model),
         on_suggestion_selected=relay_suggestion,
         on_attention_decision=relay_attention,
+        on_codex_project=on_codex_project,
     )
     provider_tools = core.tools if provider_tool_view is None else provider_tool_view(core.tools)
     _validate_provider_tool_view(core.tools, provider_tools)
@@ -537,6 +539,31 @@ def build_volcengine_realtime_assembly(
         controlled_guard_reconnect=False,
         guard_history_recovery="none",
         guard_history_pairs=settings.qwen_guard_history_pairs,
+        project_confirmation=(
+            live_adapter.confirmation
+            if isinstance(live_adapter := core.runtime.executors.get("codex"), ProjectCodexAdapter)
+            else None
+        ),
+        commit_project_operation=(
+            (
+                lambda operation, origin_ref: live_adapter.commit_confirmed(
+                    operation,
+                    origin_ref=origin_ref,
+                    runtime_dispatch=core.runtime.dispatch_external,
+                )
+            )
+            if isinstance(live_adapter, ProjectCodexAdapter)
+            else None
+        ),
+        on_project_view=(
+            (
+                lambda view: on_codex_project(
+                    live_adapter.public_project_view(pending_confirmation=view.pending_confirmation)
+                )
+            )
+            if isinstance(live_adapter, ProjectCodexAdapter) and on_codex_project is not None
+            else None
+        ),
     )
     suggestion_outlet = service.on_suggestion_selected
     attention_outlet = service.on_attention_decision
@@ -546,7 +573,7 @@ def build_volcengine_realtime_assembly(
         provider=provider,
         service=service,
         codex_live_adapter=(live_adapter if isinstance(live_adapter, CodexLiveAdapter) else None),
-        codex_prewarm=settings.codex_prewarm,
+        codex_prewarm=settings.codex_prewarm and not isinstance(live_adapter, ProjectCodexAdapter),
     )
 
 
@@ -562,6 +589,7 @@ def build_realtime_assembly(
     on_codex_state: Callable[[CodexState], None] | None = None,
     on_spoken: Callable[[str], None] | None = None,
     on_caption: Callable[[CaptionFrame], None] | None = None,
+    on_codex_project: Callable[[PublicProjectView], None] | None = None,
     realtime_telemetry: RealtimeTelemetry | None = None,
     id_factory: Callable[[], str] | None = None,
     camera_source: CameraSourceName = "auto",
@@ -589,6 +617,7 @@ def build_realtime_assembly(
         on_codex_state=on_codex_state,
         on_spoken=on_spoken,
         on_caption=on_caption,
+        on_codex_project=on_codex_project,
         realtime_telemetry=realtime_telemetry,
         id_factory=id_factory,
         camera_source=camera_source,
@@ -654,9 +683,7 @@ def _build_codex(context: _ExecutorBuildContext) -> ExecutorAdapter:
             # fail with state_busy although nothing is running.
             if store is not None:
                 store.close()
-            raise ConfigurationError(
-                f"Codex project state unavailable: {failure.code}"
-            ) from None
+            raise ConfigurationError(f"Codex project state unavailable: {failure.code}") from None
         confirmation = ProjectConfirmationController(
             clock=context.clock,
             id_factory=lambda: uuid4().hex,

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from pydantic import ValidationError
 import pytest
 
-from nova_audio_agent.config import ProactivityParams, Settings, resolve_proactivity
+import nova_audio_agent.config as config_module
+from nova_audio_agent.config import (
+    ConfigurationError,
+    ProactivityParams,
+    Settings,
+    resolve_proactivity,
+)
 
 
 @pytest.mark.parametrize(
@@ -117,6 +124,64 @@ def test_codex_projects_are_unconditional_and_default_to_private_home_storage() 
     assert not hasattr(settings, "codex_projects_enabled")
     assert settings.codex_managed_root == Path("~/.nova-audio-agent/workspaces")
     assert settings.codex_project_state_root == Path("~/.nova-audio-agent")
+
+
+@pytest.mark.parametrize(
+    ("root_name", "unsafe_mode"),
+    [("state", 0o777), ("managed", 0o777), ("state", 0o1700), ("managed", 0o1700)],
+)
+def test_codex_project_roots_reject_existing_unsafe_permissions(
+    tmp_path: Path,
+    root_name: str,
+    unsafe_mode: int,
+) -> None:
+    state = tmp_path / "state"
+    managed = tmp_path / "managed"
+    state.mkdir(mode=0o700)
+    managed.mkdir(mode=0o700)
+    selected = state if root_name == "state" else managed
+    selected.chmod(unsafe_mode)
+
+    with pytest.raises(ConfigurationError):
+        Settings(
+            codex_project_state_root=state,
+            codex_managed_root=managed,
+            _env_file=None,
+        ).require_codex_projects()
+
+    assert selected.stat().st_mode & 0o7777 == unsafe_mode
+
+
+def test_codex_project_root_replacement_during_creation_is_not_chmodded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    managed = tmp_path / "managed"
+    retained = tmp_path / "state-created-away"
+    original_fchmod = os.fchmod
+    replaced = False
+
+    def replace_before_fchmod(descriptor: int, mode: int) -> None:
+        nonlocal replaced
+        if not replaced:
+            state.rename(retained)
+            state.mkdir(mode=0o755)
+            state.chmod(0o755)
+            replaced = True
+        original_fchmod(descriptor, mode)
+
+    monkeypatch.setattr(config_module.os, "fchmod", replace_before_fchmod)
+
+    with pytest.raises(ConfigurationError):
+        Settings(
+            codex_project_state_root=state,
+            codex_managed_root=managed,
+            _env_file=None,
+        ).require_codex_projects()
+
+    assert replaced is True
+    assert state.stat().st_mode & 0o7777 == 0o755
 
 
 @pytest.mark.parametrize("value", [5.0, 30.0, 600.0])

@@ -33,6 +33,7 @@ from nova_audio_agent.executors.codex_project_live import ProjectCodexAdapter
 from nova_audio_agent.executors.codex_projects import (
     CodexProjectStore,
     ProjectStateError,
+    PublicProjectView,
 )
 from nova_audio_agent.executors.watcher import WatchAdapter
 from nova_audio_agent.ports import Delegate, SurrogateOutput
@@ -165,6 +166,116 @@ def test_volcengine_ark_fallback_forces_all_support_models_to_an_ark_model(
     assert assembly.runtime.executors["guard"]._model == expected
     assert assembly.runtime.surrogate._model == expected
     assert assembly.runtime.compressor._model == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("project_request", "expected_action"),
+    [
+        ({"action": "create_workspace", "workspace": "beta"}, "create_workspace"),
+        ({"action": "select_workspace", "workspace": "beta"}, "select_workspace"),
+        (
+            {
+                "action": "resume_session",
+                "workspace": "repo",
+                "session": "Existing",
+                "work_order": "continue exactly",
+            },
+            "resume_session",
+        ),
+    ],
+)
+async def test_volcengine_codex_project_actions_publish_structured_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    project_request: dict[str, str],
+    expected_action: str,
+) -> None:
+    class FakeVad:
+        def __init__(self, _config: object) -> None:
+            pass
+
+    monkeypatch.setattr(assembly_module, "AsyncOpenAI", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(volcengine_module, "SileroVadSegmenter", FakeVad)
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    views: list[PublicProjectView] = []
+    realtime = assembly_module.build_volcengine_realtime_assembly(
+        Settings(
+            realtime_provider="volcengine",
+            ark_api_key=SecretStr("ark-secret"),
+            doubao_bigmodel_api_key=SecretStr("speech-secret"),
+            tavily_api_key=SecretStr("search-secret"),
+            executor="codex",
+            codex_workspace=workspace,
+            codex_managed_root=tmp_path / "managed",
+            codex_project_state_root=tmp_path / "state",
+            codex_prewarm=False,
+            _env_file=None,
+        ),
+        sink=_Sink(),
+        on_audio_frame=lambda _frame: None,
+        on_audio_clear=lambda _utterance_id, _epoch: None,
+        on_audio_terminal=lambda _utterance_id, _epoch: None,
+        on_delivery=lambda _completion: None,
+        on_codex_project=views.append,
+    )
+    adapter = realtime.codex_live_adapter
+    assert isinstance(adapter, ProjectCodexAdapter)
+    if expected_action == "select_workspace":
+        adapter.store.create_managed("beta")
+        adapter.store.select_workspace("repo")
+    elif expected_action == "resume_session":
+        selected = adapter.store.resolve_workspace("repo")
+        session = adapter.store.begin_session(selected.workspace_id, "Existing")
+        adapter.store.mark_session_ready(session.session_id, "thread-existing")
+
+    result = await adapter.dispatch(
+        "project",
+        project_request,
+        SimpleNamespace(
+            clock=realtime.runtime.clock,
+            progress=None,
+            delegate=SimpleNamespace(
+                origin_ref="conversation:volcengine",
+                delegate_id="delegate-volcengine",
+                private=None,
+            ),
+        ),
+    )
+
+    assert result.outcome == "ok"
+    assert result.content["code"] == "confirmation_required"
+    assert result.content["action"] == expected_action
+    assert isinstance(result.content["proposal_id"], str)
+    assert isinstance(result.content["confirmation_prompt"], str)
+    assert realtime.service._project_confirmation is adapter.confirmation
+    assert views and views[-1].pending_confirmation is True
+    assert adapter.confirmation.reserve_user_item(epoch=1, item_id="user-volcengine") is True
+    decision = adapter.confirmation.accept_decision(
+        epoch=1,
+        item_id="user-volcengine",
+        proposal_id=result.content["proposal_id"],
+        confirmed=True,
+    )
+    assert decision.kind == "confirmed"
+    assert decision.operation is not None
+    if expected_action == "resume_session":
+        monkeypatch.setattr(
+            realtime.runtime,
+            "dispatch_external",
+            lambda *_args, **_kwargs: SimpleNamespace(
+                accepted=True,
+                delegate_id="delegate-confirmed",
+            ),
+        )
+    commit = realtime.service._commit_project_operation
+    assert commit is not None
+    committed = await commit(decision.operation, "conversation:volcengine")
+    assert committed.accepted is True
+    realtime.service._on_project_view(adapter.confirmation.view)
+    assert views[-1].pending_confirmation is False
+    await adapter.aclose()
 
 
 @pytest.mark.parametrize(
@@ -958,14 +1069,16 @@ def test_codex_live_assembly_threads_working_interval_into_the_protocol_transpor
 
     assert len(transport_calls) == 1
     assert callable(transport_calls[0].pop("on_thread_ready"))
-    assert transport_calls == [{
-        "binary": "/opt/tools/codex",
-        "workspace": tmp_path.resolve(),
-        "api_key": None,
-        "codex_home": tmp_path / "codex-home",
-        "resume_thread_id": "thread-1",
-        "working_interval": 45.5,
-    }]
+    assert transport_calls == [
+        {
+            "binary": "/opt/tools/codex",
+            "workspace": tmp_path.resolve(),
+            "api_key": None,
+            "codex_home": tmp_path / "codex-home",
+            "resume_thread_id": "thread-1",
+            "working_interval": 45.5,
+        }
+    ]
 
 
 def test_build_assembly_threads_proactivity_preset_into_runtime_pacing(
