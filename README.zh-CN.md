@@ -156,20 +156,22 @@ macOS 提供原生 Ambient Orb 音频采集；Windows 与 Linux 使用 Chromium 
 
 ### 命名 Codex 工作区与持久 Session
 
-实时 Codex 可以显式开启相互隔离的命名工作区与可恢复 Session；project mode 默认关闭：
+实时 Codex project mode 始终开启，不提供 feature toggle。**Workspace** 是隔离的文件系统/Git
+项目；**Session** 是某个 Workspace 内可持久化、可恢复的 Codex thread。可选的启动 workspace
+用于导入已有仓库：
 
 ```bash
-NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED=true
 NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
-NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/NovaWorkspaces
+NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces
 NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
-
 ```
 
-语音可以列出、创建或选择工作区，也可以列出或继续已有 Session。create、select、resume
-只会先生成提案，必须由下一条真实 ASR 明确确认；Qwen 的工具调用本身不能确认。普通任务每次创建
-新的持久 Session；继续任务会用保存的 Codex thread 启动一个新的 app-server 进程。不同工作区使用
-不同的 `CODEX_HOME`，但 Codex 仍有意保持全局同时只执行一个任务。Orb 只显示公开的工作区名和
+Workspace 与 Session 候选项只在用户要求时列出；Nova 不会在每轮都注入完整历史列表。create、
+switch、resume 都先生成提案，把用户下一轮绑定到该提案，再解释成专用 structured confirmation：
+必须携带完全匹配的 proposal ID 与 JSON boolean。拒绝、错误 ID 或重放都会 fail closed。切换采用
+分阶段流程：先确认 Workspace，再在该 Workspace 中列出或恢复 Session。普通任务每次创建新的持久
+Session；继续任务会用保存的 Codex thread 启动一个新的 app-server 进程。不同 Workspace 使用不同
+的 `CODEX_HOME`，但 Codex 仍有意保持全局同时只执行一个任务。Orb 只显示公开的 Workspace 名和
 Session 标题，不显示路径、thread ID 或 registry key。
 
 启动时，如果 `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` 的规范路径尚未登记，就会导入为新工作区；
@@ -179,9 +181,12 @@ Session 标题，不显示路径、thread ID 或 registry key。
 Session 始终受保护。若受保护记录已经占满配额，创建返回 `session_limit`；锁竞争则立即返回
 `state_busy`，不会阻塞实时事件循环。
 
-project mode 下每个工作单都会启动新的 app-server 进程，因此有意禁用 Codex prewarm。持久
+实时 project mode 下每个工作单都会启动新的 app-server 进程，因此有意禁用 Codex prewarm。持久
 workspace home 会在宿主登录凭据变化时用 owner-only 的原子文件刷新；如果只更新了 workspace
 home 内的凭据，而宿主源没有变化，这次 destination-only 更新会被保留。
+
+完整的发现、确认、切换、持久化与恢复约定见
+[多项目 Workspace 交接](docs/multi-project-workspace-handoff.md)。
 
 ### Workspace 记忆图谱与可选 MyContext 证据
 
@@ -250,11 +255,12 @@ provider 或打开设备。
 
 ## 5. Ambient Orb
 
-Ambient Orb 是本地语音界面。填写 `.env` 后，一条命令会安装缺失的锁定依赖、构建运行时与
-桌面端，并启动 Node 客户端：
+Ambient Orb 是本地语音界面。填写 `.env` 后，先安装 vision 开发依赖，再通过仓库 wrapper
+启动源码客户端：
 
 ```bash
-npm run start:client
+uv sync --extra vision --dev
+./scripts/start_ambient_orb.sh
 ```
 
 启动器固定使用 Node 运行时，并拉起带上下文隔离、沙箱与窄 preload 桥的 Electron 渲染器。它需要

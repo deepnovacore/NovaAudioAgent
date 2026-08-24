@@ -175,11 +175,13 @@ function compileOp(manifest: ExecutorManifest, op: OpSpec): {
   if ('origin_ref' in properties) {
     throw new ToolSchemaError(`${manifest.name}.${op.name} 的 params 保留字冲突：origin_ref`)
   }
-  const withOrigin: Record<string, JsonValue> = {...properties, origin_ref: {...ORIGIN_REF}}
-  parameters.properties = withOrigin
   const declared = parameters.required
   const required = Array.isArray(declared) ? [...declared] : []
-  if (!required.includes('origin_ref')) required.push('origin_ref')
+  const hostHandledConfirmation = manifest.name === 'codex' && op.name === 'confirm_project_action'
+  if (!hostHandledConfirmation) {
+    parameters.properties = {...properties, origin_ref: {...ORIGIN_REF}}
+    if (!required.includes('origin_ref')) required.push('origin_ref')
+  }
   parameters.required = required
   // Python's setdefault: an explicit value in the manifest wins.
   if (!('additionalProperties' in parameters)) parameters.additionalProperties = false

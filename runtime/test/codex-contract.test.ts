@@ -107,6 +107,28 @@ test('project mode exposes project-only public tools and the confirmation schema
     'codex__project', 'codex__confirm_project_action', 'codex__steer', 'codex__status',
   ])
   assert.equal(compiled.bindings.has('codex__run'), false)
+  const confirmationSchema = compiled.schemas.find(schema => {
+    const declaration = schema.function
+    return typeof declaration === 'object'
+      && declaration !== null
+      && !Array.isArray(declaration)
+      && declaration.name === 'codex__confirm_project_action'
+  })
+  const confirmationDeclaration = confirmationSchema?.function
+  assert.ok(
+    typeof confirmationDeclaration === 'object'
+      && confirmationDeclaration !== null
+      && !Array.isArray(confirmationDeclaration),
+  )
+  assert.deepEqual(confirmationDeclaration.parameters, {
+    type: 'object',
+    properties: {
+      proposal_id: {type: 'string', minLength: 1, maxLength: 128},
+      confirmed: {type: 'boolean'},
+    },
+    required: ['proposal_id', 'confirmed'],
+    additionalProperties: false,
+  })
   assert.deepEqual(validateCodexRequest('project', 'confirm_project_action', {
     proposal_id: 'proposal-1', confirmed: true,
   }), {ok: true, value: {proposal_id: 'proposal-1', confirmed: true}})

@@ -359,11 +359,11 @@ diverging step and field.
 
 ## The Confirmation Family
 
-`fixtures/realtime/confirmation/v1/` pins two surfaces through
-`scripts/project_confirmation_oracle.py`. The classifier's verdict for each of 52 phrasings is a
-security boundary: it decides whether a spoken sentence authorized changing which workspace the agent
-operates in. The controller's sequence of outcomes over 12 scripted conversations is what stops a
-confirmation being replayed or answered by the wrong utterance.
+`fixtures/realtime/confirmation/v1/` pins the structured confirmation controller through
+`scripts/project_confirmation_oracle.py`. Its nine scripted conversations exercise exact proposal-ID
+matching, strict JSON booleans, cancellation, expiry, reservation identity, and single-use commit
+authority. Together those outcomes stop a confirmation from being replayed or answered by the wrong
+turn or response.
 
 Two things the scenarios deliberately do *not* pin, because pinning them would measure the harness
 rather than the controller:
@@ -374,11 +374,6 @@ rather than the controller:
 - **`claim_confirmed(None)`.** Passing a null operation matches the controller's own null authority and
   reports success. That cannot happen in production, where the one caller is typed to a real operation,
   so the harness refuses it rather than encoding the artefact in a golden.
-
-The check order in `classify_confirmation` is also unobservable, and that is recorded rather than
-worked around: no confirmable phrase contains a refusal, so swapping the two checks changes nothing.
-The safety rests on that property of the *sets*, so both legs assert it over the module's own exported
-lists. Adding a phrase that breaks it fails those tests, which is the moment the order becomes real.
 
 ## The Bridge Family
 

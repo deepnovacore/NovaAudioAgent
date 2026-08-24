@@ -178,6 +178,20 @@ def test_project_mode_exposes_project_and_confirmation_tools() -> None:
         "codex__steer",
         "codex__status",
     ]
+    confirmation = next(
+        item["function"]
+        for item in tools.schemas
+        if item["function"]["name"] == "codex__confirm_project_action"
+    )
+    assert confirmation["parameters"] == {
+        "type": "object",
+        "properties": {
+            "proposal_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "confirmed": {"type": "boolean"},
+        },
+        "required": ["proposal_id", "confirmed"],
+        "additionalProperties": False,
+    }
     project = next(
         item["function"] for item in tools.schemas if item["function"]["name"] == "codex__project"
     )
@@ -479,7 +493,7 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
         _context(clock),
     )
     saved = store.resolve_session(workspace.workspace_id, "Task One")
-    confirmation.prepare(
+    proposal = confirmation.prepare(
         action="resume",
         workspace_display_name="alpha",
         workspace_id=workspace.workspace_id,
@@ -489,7 +503,12 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
         origin_ref="conversation:1",
     )
     assert confirmation.reserve_user_item(epoch=1, item_id="user-2")
-    outcome = confirmation.accept_transcript(epoch=1, item_id="user-2", text="确认")
+    outcome = confirmation.accept_decision(
+        epoch=1,
+        item_id="user-2",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
     assert outcome.operation is not None
     dispatched: list[Any] = []
 
@@ -549,7 +568,7 @@ async def test_confirmed_resume_revalidates_ready_state_at_execution_time(
         _context(clock),
     )
     saved = store.resolve_session(workspace.workspace_id, "Task One")
-    confirmation.prepare(
+    proposal = confirmation.prepare(
         action="resume",
         workspace_display_name="alpha",
         workspace_id=workspace.workspace_id,
@@ -559,7 +578,12 @@ async def test_confirmed_resume_revalidates_ready_state_at_execution_time(
         origin_ref="conversation:1",
     )
     assert confirmation.reserve_user_item(epoch=1, item_id="user-2")
-    outcome = confirmation.accept_transcript(epoch=1, item_id="user-2", text="确认")
+    outcome = confirmation.accept_decision(
+        epoch=1,
+        item_id="user-2",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
     assert outcome.operation is not None
     store.mark_session_unavailable(saved.session_id)
     dispatched: list[Any] = []
@@ -592,7 +616,7 @@ async def test_confirmed_dispatch_reserves_global_slot_and_exact_work_order(tmp_
     adapter, store = _adapter(tmp_path)
     clock = VirtualClock()
     controller = adapter.confirmation
-    controller.prepare(
+    proposal = controller.prepare(
         action="create",
         workspace_display_name="beta",
         workspace_id=None,
@@ -602,7 +626,12 @@ async def test_confirmed_dispatch_reserves_global_slot_and_exact_work_order(tmp_
         origin_ref="conversation:2",
     )
     assert controller.reserve_user_item(epoch=1, item_id="user-confirm")
-    outcome = controller.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    outcome = controller.accept_decision(
+        epoch=1,
+        item_id="user-confirm",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
     assert outcome.operation is not None
 
     dispatched: list[Any] = []
@@ -656,7 +685,12 @@ async def test_confirmed_work_order_is_normalized_once_before_runtime_dispatch(
     )
     assert proposal.content["code"] == "confirmation_required"
     assert controller.reserve_user_item(epoch=1, item_id="user-confirm")
-    outcome = controller.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    outcome = controller.accept_decision(
+        epoch=1,
+        item_id="user-confirm",
+        proposal_id=proposal.content["proposal_id"],
+        confirmed=True,
+    )
     assert outcome.operation is not None
     dispatched: list[Any] = []
 
@@ -689,7 +723,7 @@ async def test_confirmed_work_order_is_normalized_once_before_runtime_dispatch(
 async def test_dropped_confirmed_delegate_cannot_make_later_run_busy(tmp_path: Path) -> None:
     adapter, _store = _adapter(tmp_path)
     controller = adapter.confirmation
-    controller.prepare(
+    proposal = controller.prepare(
         action="create",
         workspace_display_name="beta",
         workspace_id=None,
@@ -699,7 +733,12 @@ async def test_dropped_confirmed_delegate_cannot_make_later_run_busy(tmp_path: P
         origin_ref="conversation:2",
     )
     assert controller.reserve_user_item(epoch=1, item_id="user-confirm")
-    outcome = controller.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    outcome = controller.accept_decision(
+        epoch=1,
+        item_id="user-confirm",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
     assert outcome.operation is not None
     committed = await adapter.commit_confirmed(
         outcome.operation,
@@ -745,7 +784,7 @@ async def test_transient_resume_transport_failure_preserves_ready_session(
     adapter._worker_factory = lambda _workspace, _home, resume, on_ready: _NeverReadyWorker(
         resume or "missing", on_ready
     )
-    confirmation.prepare(
+    proposal = confirmation.prepare(
         action="resume",
         workspace_display_name="alpha",
         workspace_id=workspace.workspace_id,
@@ -755,7 +794,12 @@ async def test_transient_resume_transport_failure_preserves_ready_session(
         origin_ref="conversation:2",
     )
     confirmation.reserve_user_item(epoch=1, item_id="user-confirm")
-    outcome = confirmation.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    outcome = confirmation.accept_decision(
+        epoch=1,
+        item_id="user-confirm",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
     assert outcome.operation is not None
     dispatched: list[Any] = []
 
@@ -807,7 +851,7 @@ async def test_resume_history_rejection_marks_session_unavailable(tmp_path: Path
     adapter._worker_factory = lambda _workspace, _home, resume, on_ready: _ResumeUnavailableWorker(
         resume or "missing", on_ready
     )
-    confirmation.prepare(
+    proposal = confirmation.prepare(
         action="resume",
         workspace_display_name="alpha",
         workspace_id=workspace.workspace_id,
@@ -817,7 +861,12 @@ async def test_resume_history_rejection_marks_session_unavailable(tmp_path: Path
         origin_ref="conversation:2",
     )
     confirmation.reserve_user_item(epoch=1, item_id="user-confirm")
-    outcome = confirmation.accept_transcript(epoch=1, item_id="user-confirm", text="确认")
+    outcome = confirmation.accept_decision(
+        epoch=1,
+        item_id="user-confirm",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
     assert outcome.operation is not None
     dispatched: list[Any] = []
 
@@ -1082,7 +1131,7 @@ async def test_committed_select_reports_success_despite_busy_view_refresh(
     adapter, store = _adapter(tmp_path)
     beta = store.create_managed("beta")
     controller = adapter.confirmation
-    controller.prepare(
+    proposal = controller.prepare(
         action="select",
         workspace_display_name="beta",
         workspace_id=beta.workspace_id,
@@ -1092,7 +1141,12 @@ async def test_committed_select_reports_success_despite_busy_view_refresh(
         origin_ref="conversation:1",
     )
     assert controller.reserve_user_item(epoch=1, item_id="user-1")
-    outcome = controller.accept_transcript(epoch=1, item_id="user-1", text="确认")
+    outcome = controller.accept_decision(
+        epoch=1,
+        item_id="user-1",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
+    )
     assert outcome.operation is not None
 
     def busy_view(*, pending_confirmation: bool) -> Any:
@@ -1126,8 +1180,11 @@ async def test_confirmed_select_rejects_workspace_replacement(
     )
     assert proposal.content["code"] == "confirmation_required"
     assert adapter.confirmation.reserve_user_item(epoch=1, item_id="confirm-select")
-    confirmed = adapter.confirmation.accept_transcript(
-        epoch=1, item_id="confirm-select", text="确认"
+    confirmed = adapter.confirmation.accept_decision(
+        epoch=1,
+        item_id="confirm-select",
+        proposal_id=proposal.content["proposal_id"],
+        confirmed=True,
     )
     assert confirmed.operation is not None
 
@@ -1222,6 +1279,7 @@ async def test_unbound_capability_is_rejected_and_failed_confirmed_create_rolls_
         session_id=None,
         work_order="build it",
         origin_ref="conversation:1",
+        proposal_id="nonce",
         nonce="nonce",
     )
 
@@ -1233,7 +1291,7 @@ async def test_unbound_capability_is_rejected_and_failed_confirmed_create_rolls_
 
     assert result.outcome == "failed"
     assert result.content == {"error": "confirmation_binding_mismatch", "op": "project"}
-    adapter.confirmation.prepare(
+    proposal = adapter.confirmation.prepare(
         action="create",
         workspace_display_name="beta",
         workspace_id=None,
@@ -1243,8 +1301,11 @@ async def test_unbound_capability_is_rejected_and_failed_confirmed_create_rolls_
         origin_ref="conversation:1",
     )
     assert adapter.confirmation.reserve_user_item(epoch=1, item_id="confirm-create")
-    confirmed = adapter.confirmation.accept_transcript(
-        epoch=1, item_id="confirm-create", text="确认"
+    confirmed = adapter.confirmation.accept_decision(
+        epoch=1,
+        item_id="confirm-create",
+        proposal_id=proposal.proposal_id,
+        confirmed=True,
     )
     assert confirmed.operation is not None
     dispatched: list[Any] = []

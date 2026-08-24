@@ -23,42 +23,23 @@ def test_every_scenario_declares_what_it_covers() -> None:
         assert scenario["steps"], scenario["name"]
 
 
-def test_the_classifier_set_exercises_all_three_verdicts() -> None:
-    # A set of only positives would prove nothing. What matters is that speech which merely sounds
-    # affirmative does not confirm, so all three verdicts have to be represented.
-    golden = json.loads(EXPECTED.read_text(encoding="utf-8"))
-    verdicts = {entry["verdict"] for entry in golden["classifier"]}
-    assert verdicts == {"confirm", "cancel", "unknown"}
-
-
-def test_a_confirmable_phrase_never_contains_a_refusal() -> None:
-    # The property the check order rests on, asserted against the module's own lists. If a phrase is
-    # ever added that satisfies both, the order in `classify_confirmation` becomes load-bearing and
-    # this fails rather than the safety silently depending on it.
-    from nova_audio_agent.realtime.project_confirmation import (
-        _LEADING,
-        _NEGATIVE,
-        _POSITIVE,
-        _TRAILING,
-    )
-
-    confirmable = set(_POSITIVE)
-    for positive in _POSITIVE:
-        for filler in _LEADING:
-            confirmable.add(filler + positive)
-        for filler in _TRAILING:
-            confirmable.add(positive + filler)
-        for before in _LEADING:
-            for after in _TRAILING:
-                confirmable.add(before + positive + after)
-    unsafe = sorted(
-        phrase for phrase in confirmable if any(negative in phrase for negative in _NEGATIVE)
-    )
-    assert unsafe == []
+def test_structured_cases_cover_confirmation_rejection_and_fail_closed_inputs() -> None:
+    document = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    covers = {
+        item
+        for scenario in document["controller"]
+        for item in scenario["covers"]
+    }
+    assert {
+        "confirmation.structured_confirm",
+        "confirmation.structured_cancel",
+        "confirmation.proposal_id_exact",
+        "confirmation.boolean_exact",
+        "confirmation.commit_authority_single_use",
+    } <= covers
 
 
 def test_the_golden_is_recomputed_rather_than_trusted() -> None:
     produced = run_all(json.loads(FIXTURE.read_text(encoding="utf-8")))
     committed = json.loads(EXPECTED.read_text(encoding="utf-8"))
-    assert produced["classifier"] == committed["classifier"]
     assert produced["controller"] == committed["controller"]

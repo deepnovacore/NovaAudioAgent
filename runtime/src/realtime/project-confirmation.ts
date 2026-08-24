@@ -219,19 +219,6 @@ export class ProjectConfirmationController {
   }
 
   /**
-   * Fail-closed compatibility for callers replaced by the realtime function handler in Task 4.
-   * Transcript contents are intentionally ignored and can never grant authority.
-   */
-  acceptTranscript(_input: {
-    readonly epoch: number
-    readonly itemId: string
-    readonly text: string
-  }): ConfirmationOutcome {
-    void _input
-    return outcome('ignored')
-  }
-
-  /**
    * Spend the commit authority for exactly this operation.
    *
    * Identity, not equality: the caller has to be holding the object the controller handed out, so a

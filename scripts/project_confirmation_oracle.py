@@ -6,11 +6,9 @@ behavioral changes stay visible in review.
     uv run python scripts/project_confirmation_oracle.py check
     uv run python scripts/project_confirmation_oracle.py export
 
-Two surfaces are pinned, for different reasons. The **classifier** decides whether a spoken sentence
-authorizes a workspace change, so its answer for every phrasing is a security boundary rather than a
-convenience. The **controller** owns the reservation and the single-use commit authority, so its
-sequence of outcomes over a scripted conversation is what stops a confirmation being replayed or
-answered by the wrong utterance.
+The controller owns the turn reservation and single-use commit authority. Its sequence of outcomes
+over structured ``proposal_id`` plus ``confirmed`` decisions is what stops a confirmation being
+replayed, forged, or answered by the wrong utterance.
 """
 
 from __future__ import annotations
@@ -33,7 +31,6 @@ from nova_audio_agent.canonical_json import canonical_json  # noqa: E402
 from nova_audio_agent.clock import VirtualClock  # noqa: E402
 from nova_audio_agent.realtime.project_confirmation import (  # noqa: E402
     ProjectConfirmationController,
-    classify_confirmation,
 )
 
 FIXTURE = REPOSITORY_ROOT / "fixtures" / "realtime" / "confirmation" / "v1" / "scenarios.json"
@@ -51,7 +48,7 @@ def _ids(values: Sequence[str]) -> Any:
         try:
             return next(iterator)
         except StopIteration as error:
-            raise FixtureError("nonce sequence exhausted") from error
+            raise FixtureError("proposal ID sequence exhausted") from error
 
     return factory
 
@@ -62,7 +59,9 @@ async def run_controller(spec: Mapping[str, Any]) -> dict[str, Any]:
     expiries: list[int] = []
     controller = ProjectConfirmationController(
         clock=clock,
-        id_factory=_ids(spec.get("nonces", ["nonce-1", "nonce-2", "nonce-3"])),
+        id_factory=_ids(
+            spec.get("proposal_ids", ["proposal-1", "proposal-2", "proposal-3"])
+        ),
         on_change=lambda view: views.append(asdict(view)),
     )
     controller.observe_expiry(lambda: expiries.append(len(views)))
@@ -89,8 +88,11 @@ async def run_controller(spec: Mapping[str, Any]) -> dict[str, Any]:
             elif kind == "reserve":
                 result = controller.reserve_user_item(epoch=step["epoch"], item_id=step["item_id"])
             elif kind == "accept":
-                out = controller.accept_transcript(
-                    epoch=step["epoch"], item_id=step["item_id"], text=step["text"]
+                out = controller.accept_decision(
+                    epoch=step["epoch"],
+                    item_id=step["item_id"],
+                    proposal_id=step["proposal_id"],
+                    confirmed=step["confirmed"],
                 )
                 if out.operation is not None:
                     held = out.operation
@@ -149,17 +151,11 @@ async def run_controller(spec: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def run_all(document: Mapping[str, Any]) -> dict[str, Any]:
-    classifier = document["classifier"]
     names = [scenario["name"] for scenario in document["controller"]]
     if len(set(names)) != len(names):
         raise FixtureError("controller scenario names must be unique")
-    if len(set(classifier)) != len(classifier):
-        raise FixtureError("classifier inputs must be unique")
     return {
-        "schema_version": 1,
-        "classifier": [
-            {"text": text, "verdict": classify_confirmation(text)} for text in classifier
-        ],
+        "schema_version": 2,
         "controller": [
             asyncio.run(run_controller(scenario)) for scenario in document["controller"]
         ],
@@ -168,7 +164,7 @@ def run_all(document: Mapping[str, Any]) -> dict[str, Any]:
 
 def load_document() -> dict[str, Any]:
     document = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    if document.get("schema_version") != 1:
+    if document.get("schema_version") != 2:
         raise FixtureError("unknown confirmation fixture schema version")
     return document
 
@@ -181,7 +177,7 @@ def check() -> int:
     committed = json.loads(EXPECTED.read_text(encoding="utf-8"))
     if canonical_json(produced) == canonical_json(committed):
         print(
-            f"Python confirmation parity passed: {len(produced['classifier'])} phrase(s), "
+            f"Python structured confirmation parity passed: "
             f"{len(produced['controller'])} scenario(s)"
         )
         return 0

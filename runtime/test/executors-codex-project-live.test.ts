@@ -69,6 +69,12 @@ const COMPLETE: TransportOutcome = Object.freeze({
   completion: {status: 'completed' as const, final_text: 'done', internal_activity: 1},
 })
 
+function proposalId(content: {readonly proposal_id?: unknown}): string {
+  const value = content.proposal_id
+  if (typeof value !== 'string') assert.fail('proposal_id must be a string')
+  return value
+}
+
 async function settleWithin<T>(name: string, work: Promise<T>, milliseconds = 2_000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -681,8 +687,8 @@ test('confirmed resume binds one exact capability, delegate, origin, work order,
     )
     assert.equal(proposed.content.code, 'confirmation_required')
     assert.equal(value.confirmation.reserveUserItem({epoch: 1, itemId: 'user-confirm'}), true)
-    const confirmed = value.confirmation.acceptTranscript({
-      epoch: 1, itemId: 'user-confirm', text: '确认',
+    const confirmed = value.confirmation.acceptDecision({
+      epoch: 1, itemId: 'user-confirm', proposalId: proposalId(proposed.content), confirmed: true,
     })
     assert.ok(confirmed.operation)
     let delegated: DelegateRequest | null = null
@@ -754,16 +760,17 @@ test('real external dispatch carries one opaque confirmation identity outside ev
   const stop = new AbortController()
   const serving = runtime.serve(stop.signal)
   try {
-    await value.adapter.dispatch(
+    const proposal = await value.adapter.dispatch(
       'project',
       {action: 'create_workspace', workspace: 'beta', session: 'Initial', work_order: 'exact work'},
       context('project', {}, value.clock, {originRef}),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-real'})
-    const confirmed = value.confirmation.acceptTranscript({
+    const confirmed = value.confirmation.acceptDecision({
       epoch: 1,
       itemId: 'confirm-real',
-      text: '确认',
+      proposalId: proposalId(proposal.content),
+      confirmed: true,
     })
     assert.ok(confirmed.operation)
     const handoff = new Promise<void>(resolve => {
@@ -813,7 +820,9 @@ test('wrong delegate, origin, copied capability, rejection, and replay have zero
     )
     assert.equal(proposal.content.code, 'confirmation_required')
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm'})
-    const outcome = value.confirmation.acceptTranscript({epoch: 1, itemId: 'confirm', text: '确认'})
+    const outcome = value.confirmation.acceptDecision({
+      epoch: 1, itemId: 'confirm', proposalId: proposalId(proposal.content), confirmed: true,
+    })
     assert.ok(outcome.operation)
     const rejected = await value.adapter.commitConfirmed(
       outcome.operation,
@@ -844,7 +853,9 @@ test('wrong delegate, origin, copied capability, rejection, and replay have zero
     )
     assert.equal(secondProposal.content.code, 'confirmation_required')
     value.confirmation.reserveUserItem({epoch: 2, itemId: 'confirm-2'})
-    const second = value.confirmation.acceptTranscript({epoch: 2, itemId: 'confirm-2', text: '确认'})
+    const second = value.confirmation.acceptDecision({
+      epoch: 2, itemId: 'confirm-2', proposalId: proposalId(secondProposal.content), confirmed: true,
+    })
     assert.ok(second.operation)
     await value.adapter.commitConfirmed(
       second.operation,
@@ -905,13 +916,15 @@ test('new-run missing thread rolls back provisional session and failed confirmed
     const alpha = await value.store.resolveWorkspace('alpha')
     assert.deepEqual(await value.store.listSessions(alpha), [])
 
-    await value.adapter.dispatch(
+    const proposal = await value.adapter.dispatch(
       'project',
       {action: 'create_workspace', workspace: 'beta', session: 'Initial', work_order: 'cannot bind'},
       context('project', {}, value.clock),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm'})
-    const outcome = value.confirmation.acceptTranscript({epoch: 1, itemId: 'confirm', text: '确认'})
+    const outcome = value.confirmation.acceptDecision({
+      epoch: 1, itemId: 'confirm', proposalId: proposalId(proposal.content), confirmed: true,
+    })
     assert.ok(outcome.operation)
     await value.adapter.commitConfirmed(
       outcome.operation,
@@ -1013,14 +1026,14 @@ test('busy project work reports the unified project op for public and confirmed 
   value.factory.onRun = startedResolve
   value.factory.runGate = new Promise<TransportOutcome>(resolve => { finishResolve = resolve })
   try {
-    await value.adapter.dispatch(
+    const proposal = await value.adapter.dispatch(
       'project',
       {action: 'create_workspace', workspace: 'beta', session: 'Initial', work_order: 'build'},
       context('project', {}, value.clock, {originRef: 'conversation:2'}),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-busy'})
-    const confirmed = value.confirmation.acceptTranscript({
-      epoch: 1, itemId: 'confirm-busy', text: '确认',
+    const confirmed = value.confirmation.acceptDecision({
+      epoch: 1, itemId: 'confirm-busy', proposalId: proposalId(proposal.content), confirmed: true,
     })
     assert.ok(confirmed.operation)
     await value.adapter.commitConfirmed(
@@ -1164,14 +1177,16 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
     const session = await value.store.resolveSession(workspace.workspace_id, 'Task')
 
     const proposeAndCommit = async (delegateId: string): Promise<object> => {
-      await value.adapter.dispatch(
+      const proposal = await value.adapter.dispatch(
         'project',
         {action: 'resume_session', workspace: 'alpha', session: 'Task', work_order: 'continue'},
         context('project', {}, value.clock),
       )
       const epoch = delegateId === 'delegate-transient' ? 1 : 2
       value.confirmation.reserveUserItem({epoch, itemId: delegateId})
-      const confirmed = value.confirmation.acceptTranscript({epoch, itemId: delegateId, text: '确认'})
+      const confirmed = value.confirmation.acceptDecision({
+        epoch, itemId: delegateId, proposalId: proposalId(proposal.content), confirmed: true,
+      })
       assert.ok(confirmed.operation)
       await value.adapter.commitConfirmed(
         confirmed.operation,
@@ -1228,14 +1243,15 @@ test('private resume-unavailable disposition marks the exact stored session unav
       context('project', {}, value.clock),
     )
     const workspace = await value.store.resolveWorkspace('alpha')
-    await value.adapter.dispatch(
+    const proposal = await value.adapter.dispatch(
       'project',
       {action: 'resume_session', workspace: 'alpha', session: 'Task', work_order: 'continue'},
       context('project', {}, value.clock),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-unavailable'})
-    const confirmed = value.confirmation.acceptTranscript({
-      epoch: 1, itemId: 'confirm-unavailable', text: '确认',
+    const confirmed = value.confirmation.acceptDecision({
+      epoch: 1, itemId: 'confirm-unavailable',
+      proposalId: proposalId(proposal.content), confirmed: true,
     })
     assert.ok(confirmed.operation)
     await value.adapter.commitConfirmed(
@@ -1279,14 +1295,15 @@ test('resume state changed after persistent-home setup is rejected before transp
     )
     const workspace = await value.store.resolveWorkspace('alpha')
     const session = await value.store.resolveSession(workspace.workspace_id, 'Task')
-    await value.adapter.dispatch(
+    const proposal = await value.adapter.dispatch(
       'project',
       {action: 'resume_session', workspace: 'alpha', session: 'Task', work_order: 'continue'},
       context('project', {}, value.clock),
     )
     value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-late-state'})
-    const confirmed = value.confirmation.acceptTranscript({
-      epoch: 1, itemId: 'confirm-late-state', text: '确认',
+    const confirmed = value.confirmation.acceptDecision({
+      epoch: 1, itemId: 'confirm-late-state',
+      proposalId: proposalId(proposal.content), confirmed: true,
     })
     assert.ok(confirmed.operation)
     await value.adapter.commitConfirmed(

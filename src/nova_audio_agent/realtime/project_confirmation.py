@@ -232,11 +232,6 @@ class ProjectConfirmationController:
         self._reserved = None
         return True
 
-    def accept_transcript(self, *, epoch: int, item_id: str, text: str) -> ConfirmationOutcome:
-        """Fail closed until Task 4 replaces transcript callers with structured decisions."""
-        del epoch, item_id, text
-        return ConfirmationOutcome(kind="ignored")
-
     def claim_confirmed(self, operation: ConfirmedProjectOperation) -> bool:
         if operation is not self._commit_authority:
             return False

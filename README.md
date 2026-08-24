@@ -175,23 +175,25 @@ build and validation state; this documentation does not claim native CI has pass
 
 ### Named Codex workspaces and Sessions
 
-Realtime Codex can opt into isolated named workspaces and persistent Sessions. Project mode is
-off by default:
+Realtime Codex project mode is always on and has no feature toggle. A **Workspace** is an isolated
+filesystem/Git project; a **Session** is a persistent, resumable Codex thread inside one Workspace.
+The optional startup workspace imports an existing repository:
 
 ```bash
-NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED=true
 NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
-NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/NovaWorkspaces
+NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces
 NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
-
 ```
 
-Voice requests may list, create, or select a workspace and list or resume a Session. Create,
-select, and resume are proposals until a following ASR utterance explicitly confirms them; Qwen's
-tool calls cannot confirm them. Each normal task creates a new persistent Session, while resume
-starts a new app-server process on the saved Codex thread. Workspaces have separate `CODEX_HOME`
-directories, but Codex execution intentionally remains one global task at a time. The Orb displays
-only public workspace and Session labels—never paths, thread IDs, or registry keys.
+Workspace and Session candidates are listed only when requested; Nova does not inject the full
+historical registry into every model turn. Create, switch, and resume first produce a proposal.
+The user's next turn is bound to that proposal and interpreted as a dedicated structured
+confirmation with the exact proposal ID and a JSON boolean. Rejection, a mismatched ID, or replay
+fails closed. Switching is staged: first confirm the Workspace, then list or resume a Session in
+that Workspace. Each normal task creates a new persistent Session, while resume starts a new
+app-server process on the saved Codex thread. Workspaces have separate `CODEX_HOME` directories,
+but Codex execution intentionally remains one global task at a time. The Orb displays only public
+Workspace and Session labels—never paths, thread IDs, or registry keys.
 Project mode intentionally permits only one live Orb owner for a registry. A second Orb fails
 startup with `state_busy`; after the owner exits, the next Orb recovers any interrupted `starting`
 Session before accepting work. Registry updates use a short metadata lock and never claim live
@@ -205,10 +207,13 @@ are pruned first, then inactive ready Sessions, while starting and active Sessio
 If protected records fill the limit, creation returns `session_limit`; lock contention returns
 `state_busy` immediately.
 
-Each project work order starts a fresh app-server process, so project mode intentionally disables
+Each realtime project work order starts a fresh app-server process, so project mode intentionally disables
 Codex prewarm. A persistent workspace home refreshes its saved login when the host credential
 changes, using owner-only atomic files; a destination-only credential refresh is preserved while
 the host source is unchanged.
+
+See [Multi-project Workspace handoff](docs/multi-project-workspace-handoff.md) for the complete
+discovery, confirmation, switching, persistence, and recovery contract.
 
 ### Workspace memory graph and optional MyContext evidence
 
@@ -286,11 +291,12 @@ per-integration setup, cautions, and the full variable reference are in
 
 ## 5. Ambient Orb
 
-The Ambient Orb is the local voice interface. After filling `.env`, one command installs missing
-locked dependencies, builds the runtime and desktop, and launches the Node client:
+The Ambient Orb is the local voice interface. After filling `.env`, install the vision development
+dependencies, then launch the source client through the repository wrapper:
 
 ```bash
-npm run start:client
+uv sync --extra vision --dev
+./scripts/start_ambient_orb.sh
 ```
 
 The launcher always starts the Node runtime and Electron renderer with context isolation,

@@ -13,6 +13,7 @@ import type {
 import {RealClock} from '../src/clock.js'
 import {settingsSchema} from '../src/config.js'
 import {CodexAdapter} from '../src/executors/codex.js'
+import {ProjectCodexAdapter} from '../src/executors/codex-project-live.js'
 import type {EventRecord} from '../src/events.js'
 import type {SearchTransport} from '../src/executors/search.js'
 import type {
@@ -114,16 +115,11 @@ class NeverCalledSearch implements SearchTransport {
 
 class IdleProvider implements RealtimeProvider {
   #epoch = 0
+  readonly connectedTools: (readonly JsonObject[])[] = []
 
   connect(options: {readonly tools: readonly JsonObject[]; readonly signal: AbortSignal}): Promise<unknown> {
     assert.equal(options.signal.aborted, false)
-    assert.ok(options.tools.some(schema => {
-      const functionSchema = schema.function
-      return typeof functionSchema === 'object'
-        && functionSchema !== null
-        && !Array.isArray(functionSchema)
-        && functionSchema.name === 'codex__run'
-    }))
+    this.connectedTools.push(structuredClone(options.tools))
     this.#epoch += 1
     return Promise.resolve({epoch: this.#epoch, provider_session_id: `provider-${this.#epoch}`})
   }
@@ -163,6 +159,60 @@ class IdleProvider implements RealtimeProvider {
 
   close(): Promise<void> { return Promise.resolve() }
 }
+
+test('connected realtime provider exposes only the project Codex public surface', async () => {
+  // This fails if ordinary run leaks into realtime, a project action disappears, or structured
+  // confirmation stops requiring one exact ID plus a JSON boolean.
+  const adapter = new ProjectCodexAdapter({} as never)
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock: new RealClock(),
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    executors: [adapter],
+  })
+  const provider = new IdleProvider()
+  const realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+  await realtime.start()
+  try {
+    const codexTools = provider.connectedTools[0]?.filter(schema => {
+      const declaration = schema.function
+      return typeof declaration === 'object'
+        && declaration !== null
+        && !Array.isArray(declaration)
+        && typeof declaration.name === 'string'
+        && declaration.name.startsWith('codex__')
+    }) ?? []
+    const declarations = codexTools.map(schema => schema.function as Record<string, unknown>)
+    assert.deepEqual(declarations.map(declaration => declaration.name), [
+      'codex__project',
+      'codex__confirm_project_action',
+      'codex__steer',
+      'codex__status',
+    ])
+    assert.equal(declarations.some(declaration => declaration.name === 'codex__run'), false)
+
+    const project = declarations[0]?.parameters as Record<string, unknown>
+    const projectProperties = project.properties as Record<string, Record<string, unknown>>
+    assert.deepEqual(projectProperties.action?.enum, [
+      'list_workspaces', 'create_workspace', 'select_workspace',
+      'list_sessions', 'start_session', 'resume_session',
+    ])
+
+    const confirmation = declarations[1]?.parameters as Record<string, unknown>
+    assert.deepEqual(confirmation, {
+      type: 'object',
+      properties: {
+        proposal_id: {type: 'string', minLength: 1, maxLength: 128},
+        confirmed: {type: 'boolean'},
+      },
+      required: ['proposal_id', 'confirmed'],
+      additionalProperties: false,
+    })
+  } finally {
+    await realtime.stop()
+  }
+})
 
 async function waitNamed(name: string, condition: () => boolean, timeoutMs = 1_500): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined

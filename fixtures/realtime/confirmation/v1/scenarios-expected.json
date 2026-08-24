@@ -1,215 +1,5 @@
 {
-  "schema_version": 1,
-  "classifier": [
-    {
-      "text": "确认",
-      "verdict": "confirm"
-    },
-    {
-      "text": "确认执行",
-      "verdict": "confirm"
-    },
-    {
-      "text": "可以",
-      "verdict": "confirm"
-    },
-    {
-      "text": "可以执行",
-      "verdict": "confirm"
-    },
-    {
-      "text": "同意",
-      "verdict": "confirm"
-    },
-    {
-      "text": "没问题",
-      "verdict": "confirm"
-    },
-    {
-      "text": "就这么做",
-      "verdict": "confirm"
-    },
-    {
-      "text": "按这个来",
-      "verdict": "confirm"
-    },
-    {
-      "text": "开始吧",
-      "verdict": "confirm"
-    },
-    {
-      "text": "执行吧",
-      "verdict": "confirm"
-    },
-    {
-      "text": "做吧",
-      "verdict": "confirm"
-    },
-    {
-      "text": "好的确认",
-      "verdict": "confirm"
-    },
-    {
-      "text": "嗯确认",
-      "verdict": "confirm"
-    },
-    {
-      "text": "嗯嗯可以",
-      "verdict": "confirm"
-    },
-    {
-      "text": "那就执行吧",
-      "verdict": "confirm"
-    },
-    {
-      "text": "确认啊",
-      "verdict": "confirm"
-    },
-    {
-      "text": "可以呀",
-      "verdict": "confirm"
-    },
-    {
-      "text": "好确认哦",
-      "verdict": "confirm"
-    },
-    {
-      "text": "那可以啦",
-      "verdict": "confirm"
-    },
-    {
-      "text": "确认。",
-      "verdict": "confirm"
-    },
-    {
-      "text": "确 认",
-      "verdict": "confirm"
-    },
-    {
-      "text": "「确认」",
-      "verdict": "confirm"
-    },
-    {
-      "text": "确认！！！",
-      "verdict": "confirm"
-    },
-    {
-      "text": "  可以  ",
-      "verdict": "confirm"
-    },
-    {
-      "text": "ｃａｎｃｅｌ",
-      "verdict": "unknown"
-    },
-    {
-      "text": "确认①",
-      "verdict": "unknown"
-    },
-    {
-      "text": "【确认】",
-      "verdict": "confirm"
-    },
-    {
-      "text": "取消",
-      "verdict": "cancel"
-    },
-    {
-      "text": "不确认",
-      "verdict": "cancel"
-    },
-    {
-      "text": "不要",
-      "verdict": "cancel"
-    },
-    {
-      "text": "不行",
-      "verdict": "cancel"
-    },
-    {
-      "text": "先不要",
-      "verdict": "cancel"
-    },
-    {
-      "text": "先别",
-      "verdict": "cancel"
-    },
-    {
-      "text": "算了",
-      "verdict": "cancel"
-    },
-    {
-      "text": "停止",
-      "verdict": "cancel"
-    },
-    {
-      "text": "算了取消吧",
-      "verdict": "cancel"
-    },
-    {
-      "text": "我想想还是取消",
-      "verdict": "cancel"
-    },
-    {
-      "text": "可以取消吗",
-      "verdict": "cancel"
-    },
-    {
-      "text": "不可以",
-      "verdict": "unknown"
-    },
-    {
-      "text": "我觉得可以但是等一下",
-      "verdict": "unknown"
-    },
-    {
-      "text": "确认一下这个是什么",
-      "verdict": "unknown"
-    },
-    {
-      "text": "嗯嗯嗯可以",
-      "verdict": "unknown"
-    },
-    {
-      "text": "好的好的确认",
-      "verdict": "unknown"
-    },
-    {
-      "text": "确认啊啊",
-      "verdict": "unknown"
-    },
-    {
-      "text": "𜳰确认𜳱",
-      "verdict": "confirm"
-    },
-    {
-      "text": "确认𜳰",
-      "verdict": "confirm"
-    },
-    {
-      "text": "𐵐确认",
-      "verdict": "confirm"
-    },
-    {
-      "text": "",
-      "verdict": "unknown"
-    },
-    {
-      "text": "   ",
-      "verdict": "unknown"
-    },
-    {
-      "text": "。。。",
-      "verdict": "unknown"
-    },
-    {
-      "text": "今天天气不错",
-      "verdict": "unknown"
-    },
-    {
-      "text": "帮我编译一下",
-      "verdict": "unknown"
-    }
-  ],
+  "schema_version": 2,
   "controller": [
     {
       "name": "confirm-then-claim-once",
@@ -223,11 +13,12 @@
             "workspace_id": null,
             "session_title": null,
             "session_id": null,
-            "work_order": null,
+            "work_order": "开始实现",
             "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
+            "proposal_id": "proposal-1",
+            "nonce": "proposal-1",
             "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
+            "confirmation_prompt": "准备创建工作区研究项目，并在其中开始任务，请确认或取消。"
           },
           "views": [
             {
@@ -274,9 +65,10 @@
               "workspace_id": null,
               "session_title": null,
               "session_id": null,
-              "work_order": null,
+              "work_order": "开始实现",
               "origin_ref": "conversation:1",
-              "nonce": "nonce-1"
+              "proposal_id": "proposal-1",
+              "nonce": "proposal-1"
             },
             "response_text": null
           },
@@ -346,7 +138,8 @@
             "session_id": null,
             "work_order": null,
             "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
+            "proposal_id": "proposal-1",
+            "nonce": "proposal-1",
             "expires_at": 90.0,
             "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
           },
@@ -397,7 +190,8 @@
               "session_id": null,
               "work_order": null,
               "origin_ref": "conversation:1",
-              "nonce": "nonce-1"
+              "proposal_id": "proposal-1",
+              "nonce": "proposal-1"
             },
             "response_text": null
           },
@@ -454,27 +248,28 @@
       ]
     },
     {
-      "name": "only-the-reserved-item-may-answer",
+      "name": "wrong-turn-and-wrong-id-fail-closed",
       "steps": [
         {
           "step": 0,
           "kind": "prepare",
           "result": {
-            "action": "create",
-            "workspace_display_name": "研究项目",
-            "workspace_id": null,
+            "action": "select",
+            "workspace_display_name": "alpha",
+            "workspace_id": "workspace-alpha",
             "session_title": null,
             "session_id": null,
             "work_order": null,
             "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
+            "proposal_id": "proposal-1",
+            "nonce": "proposal-1",
             "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
+            "confirmation_prompt": "准备切换到工作区alpha，请确认或取消。"
           },
           "views": [
             {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             }
           ],
@@ -483,7 +278,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -499,7 +294,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -507,15 +302,19 @@
         },
         {
           "step": 2,
-          "kind": "reserve",
-          "result": true,
+          "kind": "accept",
+          "result": {
+            "kind": "ignored",
+            "operation": null,
+            "response_text": null
+          },
           "views": [],
           "expiry_notifications": 0,
           "state": {
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -523,15 +322,19 @@
         },
         {
           "step": 3,
-          "kind": "reserve",
-          "result": false,
+          "kind": "accept",
+          "result": {
+            "kind": "invalid",
+            "operation": null,
+            "response_text": "确认请求无效，操作尚未执行。"
+          },
           "views": [],
           "expiry_notifications": 0,
           "state": {
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -539,58 +342,19 @@
         },
         {
           "step": 4,
-          "kind": "accept",
-          "result": {
-            "kind": "ignored",
-            "operation": null,
-            "response_text": null
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 5,
-          "kind": "accept",
-          "result": {
-            "kind": "ignored",
-            "operation": null,
-            "response_text": null
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 6,
           "kind": "accept",
           "result": {
             "kind": "confirmed",
             "operation": {
-              "action": "create",
-              "workspace_display_name": "研究项目",
-              "workspace_id": null,
+              "action": "select",
+              "workspace_display_name": "alpha",
+              "workspace_id": "workspace-alpha",
               "session_title": null,
               "session_id": null,
               "work_order": null,
               "origin_ref": "conversation:1",
-              "nonce": "nonce-1"
+              "proposal_id": "proposal-1",
+              "nonce": "proposal-1"
             },
             "response_text": null
           },
@@ -615,27 +379,28 @@
       ]
     },
     {
-      "name": "one-retry-then-cancel",
+      "name": "strict-false-cancels",
       "steps": [
         {
           "step": 0,
           "kind": "prepare",
           "result": {
-            "action": "create",
-            "workspace_display_name": "研究项目",
-            "workspace_id": null,
+            "action": "select",
+            "workspace_display_name": "alpha",
+            "workspace_id": "workspace-alpha",
             "session_title": null,
             "session_id": null,
             "work_order": null,
             "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
+            "proposal_id": "proposal-1",
+            "nonce": "proposal-1",
             "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
+            "confirmation_prompt": "准备切换到工作区alpha，请确认或取消。"
           },
           "views": [
             {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             }
           ],
@@ -644,7 +409,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -660,203 +425,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 2,
-          "kind": "accept",
-          "result": {
-            "kind": "retry",
-            "operation": null,
-            "response_text": "没有听清，请说“确认”“可以”，或者说“取消”。"
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 3,
-          "kind": "reserve",
-          "result": true,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 4,
-          "kind": "accept",
-          "result": {
-            "kind": "cancelled",
-            "operation": null,
-            "response_text": "未收到明确确认，已取消。"
-          },
-          "views": [
-            {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            }
-          ],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        }
-      ]
-    },
-    {
-      "name": "a-long-unrecognised-utterance-cancels-without-a-retry",
-      "steps": [
-        {
-          "step": 0,
-          "kind": "prepare",
-          "result": {
-            "action": "create",
-            "workspace_display_name": "研究项目",
-            "workspace_id": null,
-            "session_title": null,
-            "session_id": null,
-            "work_order": null,
-            "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
-            "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
-          },
-          "views": [
-            {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            }
-          ],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 1,
-          "kind": "reserve",
-          "result": true,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 2,
-          "kind": "accept",
-          "result": {
-            "kind": "cancelled",
-            "operation": null,
-            "response_text": "已取消。"
-          },
-          "views": [
-            {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            }
-          ],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        }
-      ]
-    },
-    {
-      "name": "cancellation-clears-everything",
-      "steps": [
-        {
-          "step": 0,
-          "kind": "prepare",
-          "result": {
-            "action": "create",
-            "workspace_display_name": "研究项目",
-            "workspace_id": null,
-            "session_title": null,
-            "session_id": null,
-            "work_order": null,
-            "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
-            "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
-          },
-          "views": [
-            {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            }
-          ],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 1,
-          "kind": "reserve",
-          "result": true,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -907,27 +476,28 @@
       ]
     },
     {
-      "name": "failed-transcription-cancels",
+      "name": "non-boolean-never-confirms",
       "steps": [
         {
           "step": 0,
           "kind": "prepare",
           "result": {
             "action": "create",
-            "workspace_display_name": "研究项目",
+            "workspace_display_name": "beta",
             "workspace_id": null,
             "session_title": null,
             "session_id": null,
             "work_order": null,
             "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
+            "proposal_id": "proposal-1",
+            "nonce": "proposal-1",
             "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
+            "confirmation_prompt": "准备创建并切换到工作区beta，请确认或取消。"
           },
           "views": [
             {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "beta",
               "session_title": null
             }
           ],
@@ -936,7 +506,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "beta",
               "session_title": null
             },
             "clock": 0.0
@@ -952,7 +522,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "beta",
               "session_title": null
             },
             "clock": 0.0
@@ -960,11 +530,11 @@
         },
         {
           "step": 2,
-          "kind": "fail",
+          "kind": "accept",
           "result": {
-            "kind": "ignored",
+            "kind": "invalid",
             "operation": null,
-            "response_text": null
+            "response_text": "确认请求无效，操作尚未执行。"
           },
           "views": [],
           "expiry_notifications": 0,
@@ -972,7 +542,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "beta",
               "session_title": null
             },
             "clock": 0.0
@@ -980,6 +550,97 @@
         },
         {
           "step": 3,
+          "kind": "accept",
+          "result": {
+            "kind": "confirmed",
+            "operation": {
+              "action": "create",
+              "workspace_display_name": "beta",
+              "workspace_id": null,
+              "session_title": null,
+              "session_id": null,
+              "work_order": null,
+              "origin_ref": "conversation:1",
+              "proposal_id": "proposal-1",
+              "nonce": "proposal-1"
+            },
+            "response_text": null
+          },
+          "views": [
+            {
+              "pending_confirmation": false,
+              "workspace_display_name": null,
+              "session_title": null
+            }
+          ],
+          "expiry_notifications": 0,
+          "state": {
+            "pending": false,
+            "view": {
+              "pending_confirmation": false,
+              "workspace_display_name": null,
+              "session_title": null
+            },
+            "clock": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "name": "failed-transcription-cancels",
+      "steps": [
+        {
+          "step": 0,
+          "kind": "prepare",
+          "result": {
+            "action": "create",
+            "workspace_display_name": "beta",
+            "workspace_id": null,
+            "session_title": null,
+            "session_id": null,
+            "work_order": null,
+            "origin_ref": "conversation:1",
+            "proposal_id": "proposal-1",
+            "nonce": "proposal-1",
+            "expires_at": 90.0,
+            "confirmation_prompt": "准备创建并切换到工作区beta，请确认或取消。"
+          },
+          "views": [
+            {
+              "pending_confirmation": true,
+              "workspace_display_name": "beta",
+              "session_title": null
+            }
+          ],
+          "expiry_notifications": 0,
+          "state": {
+            "pending": true,
+            "view": {
+              "pending_confirmation": true,
+              "workspace_display_name": "beta",
+              "session_title": null
+            },
+            "clock": 0.0
+          }
+        },
+        {
+          "step": 1,
+          "kind": "reserve",
+          "result": true,
+          "views": [],
+          "expiry_notifications": 0,
+          "state": {
+            "pending": true,
+            "view": {
+              "pending_confirmation": true,
+              "workspace_display_name": "beta",
+              "session_title": null
+            },
+            "clock": 0.0
+          }
+        },
+        {
+          "step": 2,
           "kind": "fail",
           "result": {
             "kind": "cancelled",
@@ -1003,31 +664,48 @@
             },
             "clock": 0.0
           }
+        },
+        {
+          "step": 3,
+          "kind": "claim",
+          "result": false,
+          "views": [],
+          "expiry_notifications": 0,
+          "state": {
+            "pending": false,
+            "view": {
+              "pending_confirmation": false,
+              "workspace_display_name": null,
+              "session_title": null
+            },
+            "clock": 0.0
+          }
         }
       ]
     },
     {
-      "name": "expiry-is-refused-before-the-deadline-and-notifies-after",
+      "name": "expired-proposal-never-confirms",
       "steps": [
         {
           "step": 0,
           "kind": "prepare",
           "result": {
             "action": "create",
-            "workspace_display_name": "研究项目",
+            "workspace_display_name": "beta",
             "workspace_id": null,
             "session_title": null,
             "session_id": null,
             "work_order": null,
             "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
+            "proposal_id": "proposal-1",
+            "nonce": "proposal-1",
             "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
+            "confirmation_prompt": "准备创建并切换到工作区beta，请确认或取消。"
           },
           "views": [
             {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "beta",
               "session_title": null
             }
           ],
@@ -1036,7 +714,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "beta",
               "session_title": null
             },
             "clock": 0.0
@@ -1052,7 +730,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "beta",
               "session_title": null
             },
             "clock": 0.0
@@ -1065,273 +743,17 @@
           "views": [],
           "expiry_notifications": 0,
           "state": {
-            "pending": true,
+            "pending": false,
             "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "pending_confirmation": false,
+              "workspace_display_name": null,
               "session_title": null
             },
-            "clock": 89.0
+            "clock": 100
           }
         },
         {
           "step": 3,
-          "kind": "expire",
-          "result": false,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 89.0
-          }
-        },
-        {
-          "step": 4,
-          "kind": "view",
-          "result": {
-            "pending_confirmation": true,
-            "workspace_display_name": "研究项目",
-            "session_title": null
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 89.0
-          }
-        },
-        {
-          "step": 5,
-          "kind": "set_clock",
-          "result": null,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 90.0
-          }
-        },
-        {
-          "step": 6,
-          "kind": "expire",
-          "result": true,
-          "views": [
-            {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            }
-          ],
-          "expiry_notifications": 1,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 90.0
-          }
-        },
-        {
-          "step": 7,
-          "kind": "expire",
-          "result": false,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 90.0
-          }
-        },
-        {
-          "step": 8,
-          "kind": "view",
-          "result": {
-            "pending_confirmation": false,
-            "workspace_display_name": null,
-            "session_title": null
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 90.0
-          }
-        },
-        {
-          "step": 9,
-          "kind": "accept",
-          "result": {
-            "kind": "ignored",
-            "operation": null,
-            "response_text": null
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 90.0
-          }
-        }
-      ]
-    },
-    {
-      "name": "an-expired-proposal-cannot-be-confirmed-even-before-it-is-collected",
-      "steps": [
-        {
-          "step": 0,
-          "kind": "prepare",
-          "result": {
-            "action": "create",
-            "workspace_display_name": "研究项目",
-            "workspace_id": null,
-            "session_title": null,
-            "session_id": null,
-            "work_order": null,
-            "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
-            "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
-          },
-          "views": [
-            {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            }
-          ],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 1,
-          "kind": "reserve",
-          "result": true,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 2,
-          "kind": "set_clock",
-          "result": null,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 89.999
-          }
-        },
-        {
-          "step": 3,
-          "kind": "view",
-          "result": {
-            "pending_confirmation": true,
-            "workspace_display_name": "研究项目",
-            "session_title": null
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 89.999
-          }
-        },
-        {
-          "step": 4,
-          "kind": "set_clock",
-          "result": null,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 90.0
-          }
-        },
-        {
-          "step": 5,
-          "kind": "view",
-          "result": {
-            "pending_confirmation": false,
-            "workspace_display_name": null,
-            "session_title": null
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 90.0
-          }
-        },
-        {
-          "step": 6,
           "kind": "accept",
           "result": {
             "kind": "expired",
@@ -1353,11 +775,11 @@
               "workspace_display_name": null,
               "session_title": null
             },
-            "clock": 90.0
+            "clock": 100
           }
         },
         {
-          "step": 7,
+          "step": 4,
           "kind": "claim",
           "result": false,
           "views": [],
@@ -1369,7 +791,7 @@
               "workspace_display_name": null,
               "session_title": null
             },
-            "clock": 90.0
+            "clock": 100
           }
         }
       ]
@@ -1382,20 +804,21 @@
           "kind": "prepare",
           "result": {
             "action": "create",
-            "workspace_display_name": "第一个",
+            "workspace_display_name": "alpha",
             "workspace_id": null,
             "session_title": null,
             "session_id": null,
             "work_order": null,
             "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
+            "proposal_id": "proposal-1",
+            "nonce": "proposal-1",
             "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区第一个，请确认或取消。"
+            "confirmation_prompt": "准备创建并切换到工作区alpha，请确认或取消。"
           },
           "views": [
             {
               "pending_confirmation": true,
-              "workspace_display_name": "第一个",
+              "workspace_display_name": "alpha",
               "session_title": null
             }
           ],
@@ -1404,7 +827,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "第一个",
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -1420,7 +843,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "第一个",
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -1431,20 +854,21 @@
           "kind": "prepare",
           "result": {
             "action": "create",
-            "workspace_display_name": "第二个",
+            "workspace_display_name": "beta",
             "workspace_id": null,
             "session_title": null,
             "session_id": null,
             "work_order": null,
-            "origin_ref": "conversation:1",
-            "nonce": "nonce-2",
+            "origin_ref": "conversation:2",
+            "proposal_id": "proposal-2",
+            "nonce": "proposal-2",
             "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区第二个，请确认或取消。"
+            "confirmation_prompt": "准备创建并切换到工作区beta，请确认或取消。"
           },
           "views": [
             {
               "pending_confirmation": true,
-              "workspace_display_name": "第二个",
+              "workspace_display_name": "beta",
               "session_title": null
             }
           ],
@@ -1453,7 +877,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "第二个",
+              "workspace_display_name": "beta",
               "session_title": null
             },
             "clock": 0.0
@@ -1473,7 +897,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "第二个",
+              "workspace_display_name": "beta",
               "session_title": null
             },
             "clock": 0.0
@@ -1489,7 +913,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "第二个",
+              "workspace_display_name": "beta",
               "session_title": null
             },
             "clock": 0.0
@@ -1502,13 +926,14 @@
             "kind": "confirmed",
             "operation": {
               "action": "create",
-              "workspace_display_name": "第二个",
+              "workspace_display_name": "beta",
               "workspace_id": null,
               "session_title": null,
               "session_id": null,
               "work_order": null,
-              "origin_ref": "conversation:1",
-              "nonce": "nonce-2"
+              "origin_ref": "conversation:2",
+              "proposal_id": "proposal-2",
+              "nonce": "proposal-2"
             },
             "response_text": null
           },
@@ -1533,27 +958,28 @@
       ]
     },
     {
-      "name": "invalidation-drops-unspent-authority",
+      "name": "each-action-validates-resolved-boundaries",
       "steps": [
         {
           "step": 0,
           "kind": "prepare",
           "result": {
             "action": "create",
-            "workspace_display_name": "研究项目",
+            "workspace_display_name": "alpha",
             "workspace_id": null,
             "session_title": null,
             "session_id": null,
             "work_order": null,
             "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
+            "proposal_id": "proposal-1",
+            "nonce": "proposal-1",
             "expires_at": 90.0,
-            "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
+            "confirmation_prompt": "准备创建并切换到工作区alpha，请确认或取消。"
           },
           "views": [
             {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             }
           ],
@@ -1562,135 +988,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 1,
-          "kind": "reserve",
-          "result": true,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 2,
-          "kind": "accept",
-          "result": {
-            "kind": "confirmed",
-            "operation": {
-              "action": "create",
-              "workspace_display_name": "研究项目",
-              "workspace_id": null,
-              "session_title": null,
-              "session_id": null,
-              "work_order": null,
-              "origin_ref": "conversation:1",
-              "nonce": "nonce-1"
-            },
-            "response_text": null
-          },
-          "views": [
-            {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            }
-          ],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 3,
-          "kind": "invalidate",
-          "result": true,
-          "views": [
-            {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            }
-          ],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 4,
-          "kind": "claim",
-          "result": false,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 5,
-          "kind": "invalidate",
-          "result": false,
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        }
-      ]
-    },
-    {
-      "name": "each-action-states-what-it-needs-resolved",
-      "steps": [
-        {
-          "step": 0,
-          "kind": "prepare",
-          "result": {
-            "error": "select requires a resolved workspace"
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": false,
-            "view": {
-              "pending_confirmation": false,
-              "workspace_display_name": null,
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -1701,20 +999,21 @@
           "kind": "prepare",
           "result": {
             "action": "select",
-            "workspace_display_name": "研究项目",
-            "workspace_id": "ws-1",
+            "workspace_display_name": "alpha",
+            "workspace_id": "workspace-alpha",
             "session_title": null,
             "session_id": null,
             "work_order": null,
-            "origin_ref": "conversation:1",
-            "nonce": "nonce-1",
+            "origin_ref": "conversation:2",
+            "proposal_id": "proposal-2",
+            "nonce": "proposal-2",
             "expires_at": 90.0,
-            "confirmation_prompt": "准备切换到工作区研究项目，请确认或取消。"
+            "confirmation_prompt": "准备切换到工作区alpha，请确认或取消。"
           },
           "views": [
             {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             }
           ],
@@ -1723,7 +1022,7 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
+              "workspace_display_name": "alpha",
               "session_title": null
             },
             "clock": 0.0
@@ -1731,6 +1030,58 @@
         },
         {
           "step": 2,
+          "kind": "prepare",
+          "result": {
+            "action": "resume",
+            "workspace_display_name": "alpha",
+            "workspace_id": "workspace-alpha",
+            "session_title": "Task 1",
+            "session_id": "session-1",
+            "work_order": "continue",
+            "origin_ref": "conversation:3",
+            "proposal_id": "proposal-3",
+            "nonce": "proposal-3",
+            "expires_at": 90.0,
+            "confirmation_prompt": "准备切换到alpha，并继续 Session“Task 1”，请确认或取消。"
+          },
+          "views": [
+            {
+              "pending_confirmation": true,
+              "workspace_display_name": "alpha",
+              "session_title": "Task 1"
+            }
+          ],
+          "expiry_notifications": 0,
+          "state": {
+            "pending": true,
+            "view": {
+              "pending_confirmation": true,
+              "workspace_display_name": "alpha",
+              "session_title": "Task 1"
+            },
+            "clock": 0.0
+          }
+        },
+        {
+          "step": 3,
+          "kind": "prepare",
+          "result": {
+            "error": "select requires a resolved workspace"
+          },
+          "views": [],
+          "expiry_notifications": 0,
+          "state": {
+            "pending": true,
+            "view": {
+              "pending_confirmation": true,
+              "workspace_display_name": "alpha",
+              "session_title": "Task 1"
+            },
+            "clock": 0.0
+          }
+        },
+        {
+          "step": 4,
           "kind": "prepare",
           "result": {
             "error": "resume requires resolved workspace, Session, and work order"
@@ -1741,146 +1092,8 @@
             "pending": true,
             "view": {
               "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 3,
-          "kind": "prepare",
-          "result": {
-            "action": "resume",
-            "workspace_display_name": "研究项目",
-            "workspace_id": "ws-1",
-            "session_title": "上次的会话",
-            "session_id": "s-1",
-            "work_order": "继续跑测试",
-            "origin_ref": "conversation:1",
-            "nonce": "nonce-2",
-            "expires_at": 90.0,
-            "confirmation_prompt": "准备切换到研究项目，并继续 Session“上次的会话”，请确认或取消。"
-          },
-          "views": [
-            {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": "上次的会话"
-            }
-          ],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": "上次的会话"
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 4,
-          "kind": "prepare",
-          "result": {
-            "action": "create",
-            "workspace_display_name": "研究项目",
-            "workspace_id": null,
-            "session_title": null,
-            "session_id": null,
-            "work_order": "先建好再开始",
-            "origin_ref": "conversation:1",
-            "nonce": "nonce-3",
-            "expires_at": 90.0,
-            "confirmation_prompt": "准备创建工作区研究项目，并在其中开始任务，请确认或取消。"
-          },
-          "views": [
-            {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            }
-          ],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 5,
-          "kind": "prepare",
-          "result": {
-            "error": "workspace display name is required"
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 6,
-          "kind": "prepare",
-          "result": {
-            "error": "origin ref is required"
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 7,
-          "kind": "prepare",
-          "result": {
-            "error": "invalid project action"
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
-            },
-            "clock": 0.0
-          }
-        },
-        {
-          "step": 8,
-          "kind": "prepare",
-          "result": {
-            "error": "invalid project proposal field"
-          },
-          "views": [],
-          "expiry_notifications": 0,
-          "state": {
-            "pending": true,
-            "view": {
-              "pending_confirmation": true,
-              "workspace_display_name": "研究项目",
-              "session_title": null
+              "workspace_display_name": "alpha",
+              "session_title": "Task 1"
             },
             "clock": 0.0
           }

@@ -44,6 +44,21 @@ For integrated-Qwen source startup, `DASHSCOPE_API_KEY` is the normal realtime c
 generic key a Qwen realtime credential. When both credentials are set, `DASHSCOPE_API_KEY` takes
 precedence.
 
+## Always-on Codex project mode
+
+Codex project mode has no enable/disable toggle. A Workspace is a filesystem/Git project; a
+Session is a resumable Codex thread within one Workspace. Managed Workspaces default to
+`~/.nova-audio-agent/workspaces`, the registry to
+`~/.nova-audio-agent/codex-projects-v1.json`, and per-Workspace Codex homes to
+`~/.nova-audio-agent/codex-homes`. `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` optionally imports an existing
+repository at startup.
+
+Nova lists Workspace or Session candidates only on demand and does not inject the full history into
+every turn. Create, switch, and resume are staged proposals: the next user turn becomes a dedicated
+structured confirmation carrying the exact proposal ID and a JSON boolean. False, a wrong ID, or a
+replay makes no state change. After switching Workspace, ask to list or resume Sessions there. See
+[Multi-project Workspace handoff](multi-project-workspace-handoff.md) for persistence and recovery.
+
 ## Unsigned Windows and Ubuntu development candidates
 
 The GitHub Actions workflow **Unsigned Windows and Ubuntu packages** produces unsigned development

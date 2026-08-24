@@ -24,6 +24,7 @@
     "desktop/ambient-orb/src/renderer/settings-controller.mjs",
     "desktop/ambient-orb/src/renderer/settings.mjs",
     "desktop/ambient-orb/src/renderer/state.mjs",
+    "desktop/ambient-orb/src/renderer/voice-choice.mjs",
     "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
     "runtime/src/assembly.ts",
     "runtime/src/calls.ts",
@@ -1165,34 +1166,7 @@
       "snippet_sha256": "afc9b31d9f3f3645ae563606e1ddbe4b0e72b247e3bc9dff6251f5ee8961ae48",
       "disposition": "wire_json",
       "test": "runtime/test/realtime-project-confirmation.test.ts",
-      "behavior": "every classifier phrase gets the verdict the oracle gives it"
-    },
-    {
-      "file": "runtime/src/realtime/project-confirmation.ts",
-      "kind": "string_length",
-      "occurrence_index": 1,
-      "snippet_sha256": "63e32b6d2176db0cfa648a316770d4b39e31bb92bc929ce68e070428d0afe115",
-      "disposition": "intentional_utf16",
-      "test": "runtime/test/realtime-project-confirmation.test.ts",
-      "behavior": "every classifier phrase gets the verdict the oracle gives it"
-    },
-    {
-      "file": "runtime/src/realtime/project-confirmation.ts",
-      "kind": "string_length",
-      "occurrence_index": 2,
-      "snippet_sha256": "ff4878df7ace1d24747fed7306db6de4b137e836f0adab873a1778b995326b77",
-      "disposition": "intentional_utf16",
-      "test": "runtime/test/realtime-project-confirmation.test.ts",
-      "behavior": "every classifier phrase gets the verdict the oracle gives it"
-    },
-    {
-      "file": "runtime/src/realtime/project-confirmation.ts",
-      "kind": "string_length",
-      "occurrence_index": 3,
-      "snippet_sha256": "63e32b6d2176db0cfa648a316770d4b39e31bb92bc929ce68e070428d0afe115",
-      "disposition": "intentional_utf16",
-      "test": "runtime/test/realtime-project-confirmation.test.ts",
-      "behavior": "every classifier phrase gets the verdict the oracle gives it"
+      "behavior": "wrong epoch or item is ignored without moving the reservation"
     },
     {
       "file": "runtime/src/realtime/protocol.ts",

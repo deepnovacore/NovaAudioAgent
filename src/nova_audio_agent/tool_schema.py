@@ -152,10 +152,12 @@ def _compile_op(manifest: ExecutorManifest, op: OpSpec) -> tuple[str, dict[str, 
     properties = parameters["properties"]
     if "origin_ref" in properties:
         raise ValueError(f"{manifest.name}.{op.name} 的 params 保留字冲突：origin_ref")
-    properties["origin_ref"] = dict(_ORIGIN_REF)
     required = list(parameters.get("required", ()))
-    if "origin_ref" not in required:
-        required.append("origin_ref")
+    host_handled_confirmation = manifest.name == "codex" and op.name == "confirm_project_action"
+    if not host_handled_confirmation:
+        properties["origin_ref"] = dict(_ORIGIN_REF)
+        if "origin_ref" not in required:
+            required.append("origin_ref")
     parameters["required"] = required
     parameters.setdefault("additionalProperties", False)
 

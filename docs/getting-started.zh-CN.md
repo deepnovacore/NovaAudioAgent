@@ -40,6 +40,18 @@ npm run start:client
 `NOVA_AUDIO_AGENT_MODEL_API_KEY`；不同地址不会让通用密钥成为 Qwen realtime 凭据。两种凭据同时设置时，
 `DASHSCOPE_API_KEY` 优先。
 
+## 始终开启的 Codex project mode
+
+Codex project mode 没有启用/禁用 toggle。Workspace 是文件系统/Git 项目；Session 是该 Workspace
+内可恢复的 Codex thread。托管 Workspace 默认位于 `~/.nova-audio-agent/workspaces`，注册表默认是
+`~/.nova-audio-agent/codex-projects-v1.json`，各 Workspace 的 Codex home 默认位于
+`~/.nova-audio-agent/codex-homes`。`NOVA_AUDIO_AGENT_CODEX_WORKSPACE` 可在启动时导入已有仓库。
+
+Nova 只在请求时列出 Workspace 或 Session 候选项，不会每轮注入完整历史。create、switch、resume
+采用分阶段提案：用户下一轮会成为专用 structured confirmation，携带完全匹配的 proposal ID 和 JSON
+boolean。false、错误 ID 或重放均不改变状态。切换 Workspace 后，再请求列出或恢复其中的 Session。
+持久化与恢复细节见[多项目 Workspace 交接](multi-project-workspace-handoff.md)。
+
 ## 未签名 Windows 与 Ubuntu 开发候选包
 
 GitHub Actions 工作流 **Unsigned Windows and Ubuntu packages** 产出的是未签名开发候选包，而非
