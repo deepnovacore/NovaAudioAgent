@@ -17,6 +17,47 @@
     </header>
     <main>
       <section class="setting-section">
+        <h2>Codex 与 Projects</h2>
+        <p id="codex-status" class="connection-status" aria-live="polite">正在检查 Codex…</p>
+        <fieldset class="segmented compact-segmented">
+          <legend>Codex CLI</legend>
+          <label class="choice">
+            <input type="radio" name="codexBinaryMode" value="auto">
+            <span class="option"><span class="option-name">自动发现</span></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="codexBinaryMode" value="manual">
+            <span class="option"><span class="option-name">手动路径</span></span>
+          </label>
+        </fieldset>
+        <div class="field">
+          <label for="codexBinaryPath">Codex 原生可执行文件</label>
+          <input type="text" id="codexBinaryPath" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="自动发现，或输入绝对路径">
+          <button type="button" id="codex-rescan">重新扫描</button>
+        </div>
+        <label class="toggle-row" for="codexProjectsEnabled">
+          <input type="checkbox" id="codexProjectsEnabled">
+          <span>启用 Codex Projects</span>
+        </label>
+        <div class="field">
+          <label for="codexWorkspace">当前 workspace</label>
+          <input type="text" id="codexWorkspace" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="默认 ~/.nova-audio-agent/workspaces/default">
+          <small>当前有效值：<code id="effective-workspace"></code></small>
+        </div>
+        <div class="field">
+          <label for="codexManagedRoot">托管 workspace 根目录</label>
+          <input type="text" id="codexManagedRoot" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="默认 ~/.nova-audio-agent/workspaces">
+          <small>当前有效值：<code id="effective-managed-root"></code></small>
+        </div>
+      </section>
+      <section class="setting-section">
+        <h2>模型连接</h2>
+        <div class="field">
+          <label for="modelBaseUrl">兼容模型 Base URL</label>
+          <input type="url" id="modelBaseUrl" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="HTTPS，或本机 loopback HTTP">
+        </div>
+      </section>
+      <section class="setting-section">
         <h2>外观</h2>
         <fieldset id="palette" class="segmented segmented-palette">
           <legend>光球配色</legend>

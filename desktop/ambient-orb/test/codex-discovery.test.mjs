@@ -2,10 +2,9 @@ import assert from 'node:assert/strict'
 import { posix, win32 } from 'node:path'
 import test from 'node:test'
 
-import {
-  codexCandidates,
-  discoverCodex,
-} from '../src/main/codex-discovery.mjs'
+import * as codexDiscovery from '../src/main/codex-discovery.mjs'
+
+const { codexCandidates, discoverCodex } = codexDiscovery
 
 test('Windows candidates include PATH executables and npm native package layouts', () => {
   const candidates = codexCandidates({
@@ -83,4 +82,28 @@ test('discovery rejects malformed probes without exposing their content', async 
 
   assert.deepEqual(missing, { status: 'missing', path: null, source: null, version: null })
   assert.doesNotMatch(JSON.stringify(missing), /private|secret/)
+})
+
+test('desktop Codex resolution probes only the manual override and clears an invalid path', async () => {
+  const inspected = []
+  const result = await codexDiscovery.resolveDesktopCodex({
+    config: {
+      codexBinaryMode: 'manual',
+      codexBinaryPath: '/manual/codex',
+      workspace: '/workspace',
+    },
+    automaticCandidates: [{ path: '/automatic/codex', source: 'path' }],
+    canonicalize: path => path,
+    inspect: async path => {
+      inspected.push(path)
+      return { version: 'private malformed\nversion' }
+    },
+  })
+
+  assert.deepEqual(inspected, ['/manual/codex'])
+  assert.equal(result.config.codexBinaryPath, '')
+  assert.equal(result.config.workspace, '/workspace')
+  assert.deepEqual(result.status, {
+    status: 'missing', path: null, source: null, version: null,
+  })
 })

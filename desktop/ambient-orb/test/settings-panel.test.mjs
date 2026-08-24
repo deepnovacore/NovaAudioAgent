@@ -561,6 +561,27 @@ test('the panel states what applies now and what waits for the next launch', () 
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
 })
 
+test('the panel exposes packaged Codex, Projects, and model endpoint configuration', () => {
+  for (const id of [
+    'codex-status',
+    'codexBinaryPath',
+    'codex-rescan',
+    'codexProjectsEnabled',
+    'codexWorkspace',
+    'codexManagedRoot',
+    'modelBaseUrl',
+    'effective-workspace',
+    'effective-managed-root',
+  ]) assert.match(html, new RegExp(`id="${id}"`))
+  assert.match(html, /name="codexBinaryMode" value="auto"/)
+  assert.match(html, /name="codexBinaryMode" value="manual"/)
+  assert.match(script, /api\.rescanCodex\(\)/)
+  assert.match(script, /codexProjectsEnabled:\s*codexProjectsEnabled\.checked/)
+  assert.match(script, /saveText\('codexWorkspace', codexWorkspace\)/)
+  assert.match(script, /saveText\('codexManagedRoot', codexManagedRoot\)/)
+  assert.match(script, /saveText\('modelBaseUrl', modelBaseUrl\)/)
+})
+
 test('the panel talks to main only through the settings bridge', () => {
   assert.match(script, /window\.novaAudioAgentDesktop\.settings/)
   assert.doesNotMatch(script, /fetch\(|WebSocket|memoryBoard|bootstrap/)

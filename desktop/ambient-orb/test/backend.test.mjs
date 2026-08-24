@@ -3,6 +3,7 @@ import net from 'node:net'
 import test from 'node:test'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { resolve } from 'node:path'
 
 import {
   BACKEND_DRAIN_GRACE_MS,
@@ -204,17 +205,70 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
   }), /absolute Node resource root/)
 })
 
+test('resolved desktop settings override inherited Codex and model configuration', () => {
+  const spec = backendLaunchSpec({
+    backend: 'node',
+    nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
+    nodeResourcesPath: '/repo/desktop/ambient-orb/build',
+    workspace: '/environment/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {
+      NOVA_AUDIO_AGENT_CODEX_BIN: '/environment/codex',
+      NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'false',
+      NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: '/environment/managed',
+      NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://environment.example/v1',
+    },
+    resolvedConfig: {
+      workspace: '/settings/workspace',
+      codexBinaryPath: '/settings/codex',
+      codexProjectsEnabled: true,
+      managedRoot: '/settings/managed',
+      modelBaseUrl: 'https://settings.example/v1',
+    },
+  })
+
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/settings/workspace')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_BIN, '/settings/codex')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED, 'true')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT, '/settings/managed')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_MODEL_BASE_URL, 'https://settings.example/v1')
+})
+
+test('resolved desktop configuration removes an invalid inherited Codex binary', () => {
+  const spec = backendLaunchSpec({
+    backend: 'node',
+    nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
+    nodeResourcesPath: '/repo/desktop/ambient-orb/build',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: { NOVA_AUDIO_AGENT_CODEX_BIN: '/private/invalid-codex' },
+    resolvedConfig: {
+      workspace: '/workspace',
+      codexBinaryPath: '',
+      codexProjectsEnabled: false,
+      managedRoot: '/managed',
+      modelBaseUrl: '',
+    },
+  })
+
+  assert.equal('NOVA_AUDIO_AGENT_CODEX_BIN' in spec.env, false)
+})
+
 test('runtime entry resolves inside the workspace for dev and the asar for packages', () => {
+  const developmentPackage = resolve('/repo/desktop/ambient-orb')
   assert.equal(nodeRuntimeEntry({
     isPackaged: false,
-    appPath: '/repo/desktop/ambient-orb',
-    packageRoot: '/repo/desktop/ambient-orb',
-  }), '/repo/runtime/dist/src/desktop-entry.js')
+    appPath: developmentPackage,
+    packageRoot: developmentPackage,
+  }), resolve(developmentPackage, '../../runtime/dist/src/desktop-entry.js'))
+  const packagedApp = resolve('/Applications/Nova.app/Contents/Resources/app.asar')
   assert.equal(nodeRuntimeEntry({
     isPackaged: true,
-    appPath: '/Applications/Nova.app/Contents/Resources/app.asar',
+    appPath: packagedApp,
     packageRoot: '/unused/desktop',
-  }), '/Applications/Nova.app/Contents/Resources/app.asar/node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js')
+  }), resolve(packagedApp, 'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js'))
 })
 
 test('launch spec strips a stale inherited readiness pipe', () => {

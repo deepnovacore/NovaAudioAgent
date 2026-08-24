@@ -20,6 +20,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
   assert.deepEqual([...new Set(channels)].sort(), [
     'nova:backend-exit',
     'nova:bootstrap',
+    'nova:codex:rescan',
     'nova:memory-board:data',
     'nova:memory-board:export',
     'nova:memory-board:fetch',
@@ -125,6 +126,16 @@ test('settings IPC is sender-validated and answers from main without an orb rela
   // through the orb renderer the way the memory board has to.
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
   assert.doesNotMatch(set.slice(0, set.indexOf('\n  })')), /requestId|pendingBoardRequests/)
+})
+
+test('Codex rescan is restricted to the settings window sender', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  assert.match(
+    source,
+    /ipcMain\.handle\('nova:codex:rescan', async event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/,
+  )
+  assert.match(source, /await refreshDesktopConfiguration\(\)/)
 })
 
 test('no decrypted secret can reach the renderer or a log line', async () => {

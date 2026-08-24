@@ -41,14 +41,16 @@ test('preload exposes a removable backend-exit listener without exposing ipcRend
 test('preload exposes the settings bridge as invoke/invoke/removable listener', async () => {
   const { exposed, ipcRenderer, invokes } = await loadPreload()
 
-  assert.deepEqual(Object.keys(exposed.settings).sort(), ['get', 'onChanged', 'set'])
+  assert.deepEqual(Object.keys(exposed.settings).sort(), ['get', 'onChanged', 'rescanCodex', 'set'])
   assert.ok(Object.isFrozen(exposed.settings))
 
   await exposed.settings.get()
   await exposed.settings.set({ palette: 'graphite' })
+  await exposed.settings.rescanCodex()
   assert.deepEqual(invokes, [
     { channel: 'nova:settings:get', payload: undefined },
     { channel: 'nova:settings:set', payload: { palette: 'graphite' } },
+    { channel: 'nova:codex:rescan', payload: undefined },
   ])
 
   const seen = []

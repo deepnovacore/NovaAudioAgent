@@ -79,3 +79,25 @@ export async function discoverCodex({ candidates, canonicalize, inspect }) {
   }
   return missing()
 }
+
+export async function resolveDesktopCodex({
+  config,
+  automaticCandidates,
+  canonicalize,
+  inspect,
+}) {
+  const manual = config?.codexBinaryMode === 'manual'
+    && typeof config.codexBinaryPath === 'string'
+    && config.codexBinaryPath !== ''
+  const candidates = manual
+    ? [Object.freeze({ path: config.codexBinaryPath, source: 'manual' })]
+    : automaticCandidates
+  const status = await discoverCodex({ candidates, canonicalize, inspect })
+  return Object.freeze({
+    config: Object.freeze({
+      ...config,
+      codexBinaryPath: status.status === 'ready' ? status.path : '',
+    }),
+    status,
+  })
+}

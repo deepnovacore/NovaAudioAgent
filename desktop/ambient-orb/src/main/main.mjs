@@ -15,10 +15,11 @@ import {
   utilityProcess,
 } from 'electron'
 import { randomBytes } from 'node:crypto'
-import { rename, unlink, writeFile } from 'node:fs/promises'
-import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { spawn, spawnSync } from 'node:child_process'
+import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import path, { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
@@ -34,6 +35,11 @@ import {
 import { installAppProtocol, loadAppWindow } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
+import {
+  canonicalInstalledExecutable,
+  inspectCodexVersion,
+  prepareDesktopStartup,
+} from './desktop-startup.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
 import {
   createReleaseSmokeChannel,
@@ -113,6 +119,8 @@ let releaseSmokeChannel = null
 // Settings are main-owned: the panel asks main directly, so unlike the memory
 // board there is no relay through the orb renderer and no requestId to match.
 let currentSettings = null
+let desktopConfig = null
+let codexStatus = Object.freeze({status: 'missing', path: null, source: null, version: null})
 const secretCodec = createSafeStorageCodec(safeStorage)
 // Sticky: the backend can die in the window between its handshake and the orb's
 // first paint, when there is no renderer to tell. The flag is what the bootstrap
@@ -153,6 +161,12 @@ function settingsFile() {
 function settingsView() {
   return {
     ...publicSettings(currentSettings),
+    codexStatus,
+    effectivePaths: desktopConfig ? Object.freeze({
+      stateRoot: desktopConfig.stateRoot,
+      managedRoot: desktopConfig.managedRoot,
+      workspace: desktopConfig.workspace,
+    }) : null,
     secretsPresent: secretsPresent(currentSettings),
     keyringAvailable: secretCodec.available() && !hasPlaintextSecret(currentSettings),
   }
@@ -339,9 +353,34 @@ function decryptSecretsForSpawn(settings, codec) {
   return decrypted
 }
 
+async function refreshDesktopConfiguration() {
+  const prepared = await prepareDesktopStartup({
+    settings: currentSettings,
+    environment: process.env,
+    home: homedir(),
+    platform: process.platform,
+    arch: process.arch,
+    pathApi: path,
+    canonicalizePath: value => resolve(value),
+    canonicalizeExecutable: value => canonicalInstalledExecutable(value, {
+      platform: process.platform,
+      realpath: realpathSync,
+      stat: statSync,
+      access: executable => accessSync(executable, constants.X_OK),
+    }),
+    mkdir,
+    inspectCodex: binary => inspectCodexVersion(binary, {
+      environment: process.env,
+      run: spawnSync,
+    }),
+  })
+  desktopConfig = prepared.config
+  codexStatus = prepared.codexStatus
+}
+
 async function launchBackend(cameraSource, backendKind, smokeChannel) {
   const token = randomBytes(16).toString('hex')
-  const workspace = process.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || process.cwd()
+  const workspace = desktopConfig?.workspace || process.cwd()
   // The listener owns the handshake, so it must be bound before the backend can
   // dial it; the readiness timeout still kills a backend that never arrives.
   const listener = createReadinessListener({
@@ -370,6 +409,7 @@ async function launchBackend(cameraSource, backendKind, smokeChannel) {
       parentEnv: process.env,
       settings: currentSettings,
       decryptedSecrets,
+      resolvedConfig: desktopConfig,
     })
     if (spec.kind === 'node') {
       backend = utilityProcess.fork(spec.entry, spec.argv, {
@@ -431,6 +471,7 @@ async function launchBackend(cameraSource, backendKind, smokeChannel) {
 
 async function startSelectedCamera(camera, backendKind, smokeChannel) {
   currentSettings = await loadSettings(settingsFile())
+  await refreshDesktopConfiguration()
   await launchBackend(camera.source, backendKind, smokeChannel)
   const launchId = randomBytes(8).toString('hex')
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
@@ -531,6 +572,13 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings request rejected')
     }
+    return settingsView()
+  })
+  ipcMain.handle('nova:codex:rescan', async event => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+      throw new Error('Codex rescan rejected')
+    }
+    await refreshDesktopConfiguration()
     return settingsView()
   })
   ipcMain.handle('nova:settings:set', async (event, patch) => {

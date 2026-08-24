@@ -59,3 +59,20 @@ export function resolveDesktopConfig({
     startListeningOnLaunch: settings.startListeningOnLaunch === true,
   })
 }
+
+export async function ensureProductDirectories(config, { mkdir, pathApi }) {
+  const directories = [config.root, config.stateRoot, config.managedRoot]
+  const relativeWorkspace = pathApi.relative(config.managedRoot, config.workspace)
+  if (
+    relativeWorkspace !== ''
+    && relativeWorkspace !== '..'
+    && !relativeWorkspace.startsWith(`..${pathApi.sep}`)
+    && !pathApi.isAbsolute(relativeWorkspace)
+  ) {
+    directories.push(config.workspace)
+  }
+  for (const directory of directories) {
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+  }
+  return config
+}

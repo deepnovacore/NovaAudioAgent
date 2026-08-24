@@ -2,10 +2,9 @@ import assert from 'node:assert/strict'
 import { posix, win32 } from 'node:path'
 import test from 'node:test'
 
-import {
-  productPaths,
-  resolveDesktopConfig,
-} from '../src/main/platform-config.mjs'
+import * as platformConfig from '../src/main/platform-config.mjs'
+
+const { productPaths, resolveDesktopConfig } = platformConfig
 
 test('product paths use the hidden Nova root on Windows and POSIX', () => {
   assert.deepEqual(productPaths({ home: 'C:\\Users\\nova', pathApi: win32 }), {
@@ -88,4 +87,29 @@ test('empty desktop settings admit environment and hidden-root defaults', () => 
   assert.equal(resolved.managedRoot, '/home/nova/.nova-audio-agent/workspaces')
   assert.equal(resolved.workspace, '/home/nova/.nova-audio-agent/workspaces/default')
   assert.equal(resolved.startListeningOnLaunch, false)
+})
+
+test('startup creates every application-owned default directory before spawn', async () => {
+  const created = []
+  const config = resolveDesktopConfig({
+    settings: {},
+    environment: {},
+    home: '/home/nova',
+    platform: 'linux',
+    pathApi: posix,
+    canonicalize: value => value,
+  })
+
+  const result = await platformConfig.ensureProductDirectories(config, {
+    mkdir: async (path, options) => created.push({ path, options }),
+    pathApi: posix,
+  })
+
+  assert.equal(result, config)
+  assert.deepEqual(created, [
+    { path: '/home/nova/.nova-audio-agent', options: { recursive: true, mode: 0o700 } },
+    { path: '/home/nova/.nova-audio-agent/state', options: { recursive: true, mode: 0o700 } },
+    { path: '/home/nova/.nova-audio-agent/workspaces', options: { recursive: true, mode: 0o700 } },
+    { path: '/home/nova/.nova-audio-agent/workspaces/default', options: { recursive: true, mode: 0o700 } },
+  ])
 })

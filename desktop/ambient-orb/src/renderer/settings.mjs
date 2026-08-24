@@ -39,6 +39,15 @@ const proactivityInputs = [...document.querySelectorAll('input[name="proactivity
 const pipelineModeInputs = [...document.querySelectorAll('input[name="pipelineMode"]')]
 const heartbeat = document.querySelector('#heartbeat')
 const heartbeatValue = document.querySelector('#heartbeat-value')
+const codexModeInputs = [...document.querySelectorAll('input[name="codexBinaryMode"]')]
+const codexBinaryPath = document.querySelector('#codexBinaryPath')
+const codexStatus = document.querySelector('#codex-status')
+const codexProjectsEnabled = document.querySelector('#codexProjectsEnabled')
+const codexWorkspace = document.querySelector('#codexWorkspace')
+const codexManagedRoot = document.querySelector('#codexManagedRoot')
+const modelBaseUrl = document.querySelector('#modelBaseUrl')
+const effectiveWorkspace = document.querySelector('#effective-workspace')
+const effectiveManagedRoot = document.querySelector('#effective-managed-root')
 const integratedSection = document.querySelector('#integrated-pipeline')
 const cascadedSection = document.querySelector('#cascaded-pipeline')
 const integratedProvider = document.querySelector('#integratedProvider')
@@ -121,6 +130,17 @@ function llmDraftKey(provider) {
   return `cascadedLlmModel:${provider}`
 }
 
+function renderCodexStatus(view) {
+  const status = view.codexStatus
+  if (status?.status !== 'ready') {
+    codexStatus.textContent = '未找到可用的 Codex CLI；可重新扫描或指定原生可执行文件。'
+    codexStatus.dataset.ready = '0'
+    return
+  }
+  codexStatus.textContent = `已连接 ${status.version} · ${status.path}`
+  codexStatus.dataset.ready = '1'
+}
+
 function render(view, drafts) {
   if (!view) return
   for (const input of paletteInputs) input.checked = input.value === view.palette
@@ -128,6 +148,16 @@ function render(view, drafts) {
   for (const input of pipelineModeInputs) input.checked = input.value === view.pipelineMode
   heartbeat.value = String(view.codexHeartbeatSeconds)
   heartbeatValue.textContent = `${view.codexHeartbeatSeconds} 秒`
+  for (const input of codexModeInputs) input.checked = input.value === view.codexBinaryMode
+  codexBinaryPath.disabled = view.codexBinaryMode !== 'manual'
+  renderText(codexBinaryPath, 'codexBinaryPath', view.codexBinaryPath, drafts)
+  codexProjectsEnabled.checked = view.codexProjectsEnabled === true
+  renderText(codexWorkspace, 'codexWorkspace', view.codexWorkspace, drafts)
+  renderText(codexManagedRoot, 'codexManagedRoot', view.codexManagedRoot, drafts)
+  renderText(modelBaseUrl, 'modelBaseUrl', view.modelBaseUrl, drafts)
+  effectiveWorkspace.textContent = view.effectivePaths?.workspace ?? ''
+  effectiveManagedRoot.textContent = view.effectivePaths?.managedRoot ?? ''
+  renderCodexStatus(view)
   integratedSection.hidden = view.pipelineMode !== 'integrated'
   cascadedSection.hidden = view.pipelineMode !== 'cascaded'
   integratedProvider.value = view.integratedProvider
@@ -277,6 +307,37 @@ heartbeat.addEventListener('change', () => {
   const value = Number(heartbeat.value)
   controller.applyLocal({ codexHeartbeatSeconds: value })
   void push({ codexHeartbeatSeconds: value }, '已保存')
+})
+for (const input of codexModeInputs) {
+  input.addEventListener('change', () => {
+    controller.applyLocal({ codexBinaryMode: input.value })
+    void push({ codexBinaryMode: input.value }, 'Codex 发现方式已保存')
+  })
+}
+codexBinaryPath.addEventListener('input', () => { recordDraft(codexBinaryPath) })
+codexBinaryPath.addEventListener('change', () => {
+  void saveText('codexBinaryPath', codexBinaryPath)
+})
+codexProjectsEnabled.addEventListener('change', () => {
+  controller.applyLocal({ codexProjectsEnabled: codexProjectsEnabled.checked })
+  void push({ codexProjectsEnabled: codexProjectsEnabled.checked }, 'Projects 设置已保存')
+})
+codexWorkspace.addEventListener('input', () => { recordDraft(codexWorkspace) })
+codexWorkspace.addEventListener('change', () => { void saveText('codexWorkspace', codexWorkspace) })
+codexManagedRoot.addEventListener('input', () => { recordDraft(codexManagedRoot) })
+codexManagedRoot.addEventListener('change', () => {
+  void saveText('codexManagedRoot', codexManagedRoot)
+})
+modelBaseUrl.addEventListener('input', () => { recordDraft(modelBaseUrl) })
+modelBaseUrl.addEventListener('change', () => { void saveText('modelBaseUrl', modelBaseUrl) })
+document.querySelector('#codex-rescan').addEventListener('click', async () => {
+  statusLabel.textContent = '正在扫描 Codex…'
+  try {
+    controller.setView(await api.rescanCodex())
+    statusLabel.textContent = 'Codex 扫描完成'
+  } catch {
+    statusLabel.textContent = 'Codex 扫描失败'
+  }
 })
 integratedProvider.addEventListener('change', () => {
   controller.applyLocal({ integratedProvider: integratedProvider.value })
