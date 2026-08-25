@@ -456,7 +456,7 @@ test('returned results, arrays, and nested refs are deeply immutable', async () 
   assert.equal(Object.isFrozen(result.evidence[0]?.source_ref), true)
 })
 
-test('English and Chinese setup docs state the exact optional boundary and licensing review', async () => {
+test('English and Chinese docs state the optional boundary and keep exact details in setup guides', async () => {
   const [english, chinese, englishReference, chineseReference] = await Promise.all([
     readFile(new URL('../../../README.md', import.meta.url), 'utf8'),
     readFile(new URL('../../../README.zh-CN.md', import.meta.url), 'utf8'),
@@ -465,31 +465,34 @@ test('English and Chinese setup docs state the exact optional boundary and licen
   ])
   const englishNormalized = english.replace(/\s+/gu, ' ')
   const chineseNormalized = chinese.replace(/\s+/gu, ' ')
+  const englishCorpus = `${englishNormalized} ${englishReference.replace(/\s+/gu, ' ')}`
+  const chineseCorpus = `${chineseNormalized} ${chineseReference.replace(/\s+/gu, ' ')}`
   for (const required of [
     'NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED',
     'NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL',
     'Nova-compatible read-only adapter',
     'raw upstream MyContext `/capabilities` v2 is not accepted',
-    'Installing MyContext alone does not enable Nova enrichment',
+    'installing MyContext alone does not enable enrichment',
     'explicit evidence recall',
     'untrusted, non-persistent, and non-proactive',
     'Elastic License 2.0',
     'distribution review',
     'does not copy or bundle MyContext code or runtime',
-  ]) assert.match(englishNormalized, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
+  ]) assert.match(englishCorpus, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
 
   for (const required of [
     'NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED',
     'NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL',
     'Nova 兼容的只读 adapter',
-    '上游 MyContext 原始 `/capabilities` v2 不兼容',
-    '只安装 MyContext 不会启用 Nova enrichment',
+    '上游 MyContext 原始 `/capabilities` v2 不被接受',
+    '只安装 MyContext 不会',
+    '启用 enrichment',
     '显式证据召回',
     '不受信任、不持久化且不主动',
     'Elastic License 2.0',
     '分发审查',
     '不复制或捆绑 MyContext 代码及运行时',
-  ]) assert.match(chineseNormalized, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
+  ]) assert.match(chineseCorpus, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
   assert.match(englishReference, /Nova-compatible read-only MyContext adapter base URL/u)
   assert.match(chineseReference, /Nova 兼容的只读 MyContext adapter base URL/u)
 })

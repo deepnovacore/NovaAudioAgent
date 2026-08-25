@@ -189,11 +189,11 @@ def test_conda_environment_provisions_uv() -> None:
 @pytest.mark.parametrize(
     ("readme", "section_heading", "next_heading"),
     (
-        (Path("README.md"), "## 5. Ambient Orb", "## 6. Repository layout"),
-        (Path("README.zh-CN.md"), "## 5. Ambient Orb", "## 6. 仓库布局"),
+        (Path("README.md"), "## 6. Ambient Orb", "## 7. Repository layout"),
+        (Path("README.zh-CN.md"), "## 6. Ambient Orb", "## 7. 仓库布局"),
     ),
 )
-def test_ambient_orb_readme_installs_vision_before_launch(
+def test_ambient_orb_readme_uses_current_client_launcher(
     readme: Path,
     section_heading: str,
     next_heading: str,
@@ -201,9 +201,8 @@ def test_ambient_orb_readme_installs_vision_before_launch(
     document = readme.read_text(encoding="utf-8")
     section = document.split(section_heading, 1)[1].split(next_heading, 1)[0]
 
-    assert section.index("uv sync --extra vision --dev") < section.index(
-        "./scripts/start_ambient_orb.sh"
-    )
+    assert "npm run start:client" in section
+    assert "./scripts/start_ambient_orb.sh" not in section
 
 
 def test_conda_backend_bootstrap_installs_vision_extra() -> None:
