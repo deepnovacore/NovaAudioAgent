@@ -56,6 +56,7 @@ export async function prepareDesktopStartup({
   canonicalizeExecutable,
   mkdir,
   inspectCodex,
+  ensureDirectories = config => ensureProductDirectories(config, { mkdir, pathApi }),
 }) {
   const config = resolveDesktopConfig({
     settings,
@@ -65,7 +66,7 @@ export async function prepareDesktopStartup({
     pathApi,
     canonicalize: canonicalizePath,
   })
-  await ensureProductDirectories(config, { mkdir, pathApi })
+  await ensureDirectories(config)
   const { config: resolved, status } = await resolveDesktopCodex({
     config,
     automaticCandidates: codexCandidates({

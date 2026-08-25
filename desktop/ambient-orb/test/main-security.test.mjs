@@ -32,6 +32,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:native-audio:play',
     'nova:native-audio:terminal',
     'nova:orb-menu:show',
+    'nova:projects:repair',
     'nova:release-camera:result',
     'nova:settings:changed',
     'nova:settings:get',

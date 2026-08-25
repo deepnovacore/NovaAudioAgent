@@ -577,6 +577,8 @@ test('the panel exposes packaged Codex, Projects, and model endpoint configurati
   ]) assert.match(html, new RegExp(`id="${id}"`))
   assert.match(html, /name="codexBinaryMode" value="auto"/)
   assert.match(html, /name="codexBinaryMode" value="manual"/)
+  assert.match(html, /id="projects-repair"/)
+  assert.match(script, /api\.repairProjects\(root\)/)
   assert.match(script, /api\.rescanCodex\(\)/)
   assert.match(script, /codexProjectsEnabled:\s*codexProjectsEnabled\.checked/)
   assert.match(script, /saveText\('codexWorkspace', codexWorkspace\)/)

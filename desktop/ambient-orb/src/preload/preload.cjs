@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
   settings: Object.freeze({
     get: () => ipcRenderer.invoke('nova:settings:get'),
     rescanCodex: () => ipcRenderer.invoke('nova:codex:rescan'),
+    repairProjects: root => ipcRenderer.invoke('nova:projects:repair', root),
     // The payload may carry plaintext key values on their way *into* main; the
     // reply never carries any back out.
     set: patch => ipcRenderer.invoke('nova:settings:set', patch),

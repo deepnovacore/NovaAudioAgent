@@ -14,8 +14,9 @@ import {
   Tray,
   utilityProcess,
 } from 'electron'
+import { loadProjectNativeHostFromResources } from '@nova-audio-agent/runtime/desktop'
 import { randomBytes } from 'node:crypto'
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, open, rename, unlink, writeFile } from 'node:fs/promises'
 import { spawn, spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -42,6 +43,10 @@ import {
   prepareDesktopStartup,
 } from './desktop-startup.mjs'
 import { createNativeAudioManager } from './native-audio.mjs'
+import {
+  ensurePrivateProjectDirectories,
+  repairProjectDirectory,
+} from './project-directories.mjs'
 import {
   createReleaseSmokeChannel,
   releaseSmokeSourceRollbackExitCode,
@@ -119,6 +124,7 @@ let tray = null
 let bootstrap = null
 let nativeAudio = null
 let nativeBinary = null
+let projectNativeHost
 let quitDrain = null
 let releaseSmokeChannel = null
 // Settings are main-owned: the panel asks main directly, so unlike the memory
@@ -363,6 +369,14 @@ function decryptSecretsForSpawn(settings, codec) {
 }
 
 async function refreshDesktopConfiguration() {
+  if (projectNativeHost === undefined) {
+    projectNativeHost = loadProjectNativeHostFromResources({
+      resourcesPath: app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'build'),
+      platform: process.platform,
+      arch: process.arch,
+      electronAbi: process.versions.modules,
+    })
+  }
   const prepared = await prepareDesktopStartup({
     settings: currentSettings,
     environment: process.env,
@@ -381,6 +395,15 @@ async function refreshDesktopConfiguration() {
     inspectCodex: binary => inspectCodexVersion(binary, {
       environment: process.env,
       run: spawnSync,
+    }),
+    ensureDirectories: config => ensurePrivateProjectDirectories({
+      config,
+      home: homedir(),
+      platform: process.platform,
+      nativeHost: projectNativeHost,
+      pathApi: path,
+      openDirectory: target => open(target, constants.O_RDONLY),
+      mkdir,
     }),
   })
   desktopConfig = prepared.config
@@ -595,6 +618,18 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     await refreshDesktopConfiguration()
     void backendSupervisor?.restart()
     return settingsView()
+  })
+  ipcMain.handle('nova:projects:repair', async (event, root) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+      throw new Error('Projects repair rejected')
+    }
+    return repairProjectDirectory({
+      root,
+      config: desktopConfig,
+      nativeHost: projectNativeHost,
+      pathApi: path,
+      openDirectory: target => open(target, constants.O_RDONLY),
+    })
   })
   ipcMain.handle('nova:settings:set', async (event, patch) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {

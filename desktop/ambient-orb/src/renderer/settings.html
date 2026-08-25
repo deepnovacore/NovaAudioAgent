@@ -58,6 +58,8 @@
           <input type="text" id="codexManagedRoot" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="默认 ~/.nova-audio-agent/workspaces">
           <small>当前有效值：<code id="effective-managed-root"></code></small>
         </div>
+        <button type="button" id="projects-repair">修复 Projects 目录权限</button>
+        <small>仅修复当前设置对应的 state、托管根目录和 workspace，不接受任意路径。</small>
       </section>
       <section class="setting-section">
         <h2>模型连接</h2>

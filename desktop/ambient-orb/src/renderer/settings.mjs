@@ -349,6 +349,19 @@ document.querySelector('#codex-rescan').addEventListener('click', async () => {
     statusLabel.textContent = 'Codex 扫描失败'
   }
 })
+document.querySelector('#projects-repair').addEventListener('click', async () => {
+  statusLabel.textContent = '正在修复 Projects 目录权限…'
+  try {
+    const results = await Promise.all(
+      ['state', 'managed', 'workspace'].map(root => api.repairProjects(root)),
+    )
+    statusLabel.textContent = results.every(result => result?.status === 'ok')
+      ? 'Projects 目录权限已修复'
+      : '部分 Projects 目录无法修复，请检查路径是否存在'
+  } catch {
+    statusLabel.textContent = 'Projects 目录权限修复失败'
+  }
+})
 integratedProvider.addEventListener('change', () => {
   controller.applyLocal({ integratedProvider: integratedProvider.value })
   void push({ integratedProvider: integratedProvider.value }, '已保存')
