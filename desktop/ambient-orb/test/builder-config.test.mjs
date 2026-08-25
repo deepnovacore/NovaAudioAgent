@@ -407,10 +407,11 @@ test('every package: script disables publishing explicitly', async () => {
   }
 })
 
-test('automatic CI is temporarily Windows-only while cross-platform runners are paused', async () => {
+test('CI is manual-only while automatic runners are paused', async () => {
   const text = await readFile(CI_WORKFLOW_PATH, 'utf8')
   const workflow = parseYaml(text)
 
+  assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch'])
   assert.deepEqual(workflow.jobs.python.strategy.matrix.os, ['windows-latest'])
   assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, ['windows-latest'])
   assert.deepEqual(workflow.jobs.package.strategy.matrix.include, [
@@ -428,8 +429,7 @@ test('unsigned Windows workflow closes the native package through digest-bound i
   const workflow = parseYaml(text)
 
   assert.equal(workflow.name, 'Unsigned Windows packages')
-  assert.deepEqual(Object.keys(workflow.on).sort(), ['push', 'workflow_dispatch'])
-  assert.deepEqual(workflow.on.push.branches, ['main'])
+  assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch'])
   assert.deepEqual(workflow.permissions, {contents: 'read'})
 
   const packageJob = workflow.jobs.package

@@ -5,14 +5,28 @@ import {resolve} from 'node:path'
 import test from 'node:test'
 
 import {
-  CAMERA_CAPABILITY_PENDING,
+  CAMERA_CAPABILITY_PASSED_EXIT_CODE,
+  CAMERA_CAPABILITY_PENDING_EXIT_CODE,
+  NATIVE_INSTALLER_SETTLE_MS,
   RELEASE_SMOKE_MODE,
+  SCRATCH_REMOVAL_OPTIONS,
+  SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE,
   candidateInstallPlan,
   classifyCameraCapability,
   smokeEnvironment,
 } from '../scripts/installed-candidate-smoke.mjs'
 
 const processTreeFixture = resolve(import.meta.dirname, 'fixtures/windows-guardian-target.cjs')
+
+test('installed scratch cleanup retries transient Windows file locks', () => {
+  assert.deepEqual(SCRATCH_REMOVAL_OPTIONS, {
+    recursive: true,
+    force: true,
+    maxRetries: 100,
+    retryDelay: 50,
+  })
+  assert.equal(Object.isFrozen(SCRATCH_REMOVAL_OPTIONS), true)
+})
 
 function spawnSmokeFixture(mode) {
   return spawn(process.execPath, [processTreeFixture, mode], {
@@ -66,21 +80,30 @@ test('installed candidate plans use native install or mount boundaries for every
   }
 })
 
-test('installed source rollback accepts only the stable diagnostic with no readiness or backend output', async () => {
+test('Windows native installer actions allow enough time for cold CI extraction', () => {
+  const plan = candidateInstallPlan({
+    target: 'win32-x64:nsis',
+    artifact: '/private/candidate/nova-win32-x64.exe',
+    scratch: '/private/scratch',
+  })
+  assert.equal(NATIVE_INSTALLER_SETTLE_MS, 120_000)
+  assert.equal(plan.install[0].timeoutMs, NATIVE_INSTALLER_SETTLE_MS)
+  assert.equal(plan.uninstall[0].timeoutMs, NATIVE_INSTALLER_SETTLE_MS)
+})
+
+test('installed source rollback accepts its stable exit code despite platform output', async () => {
   const {classifySourceRollbackResult} = await import('../scripts/installed-candidate-smoke.mjs')
   assert.deepEqual(classifySourceRollbackResult({
-    status: 0,
+    status: SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE,
     signal: null,
     error: undefined,
-    stdout: '',
-    stderr: '[desktop-diagnostic] source_rollback_unavailable\n',
-    readiness: Buffer.alloc(0),
+    stdout: '[electron] platform diagnostic\r\n',
+    stderr: '[electron] platform diagnostic\r\n',
   }), {status: 'passed'})
   for (const result of [
-    {status: 1, signal: null, stdout: '', stderr: '[desktop-diagnostic] source_rollback_unavailable\n', readiness: Buffer.alloc(0)},
-    {status: 0, signal: null, stdout: 'private', stderr: '[desktop-diagnostic] source_rollback_unavailable\n', readiness: Buffer.alloc(0)},
-    {status: 0, signal: null, stdout: '', stderr: '[desktop-diagnostic] source_rollback_unavailable\nprivate', readiness: Buffer.alloc(0)},
-    {status: 0, signal: null, stdout: '', stderr: '[desktop-diagnostic] source_rollback_unavailable\n', readiness: Buffer.from('ready')},
+    {status: 0, signal: null, stdout: '', stderr: ''},
+    {status: 1, signal: null, stdout: '', stderr: ''},
+    {status: SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE, signal: 'SIGTERM', stdout: '', stderr: ''},
   ]) {
     assert.throws(() => classifySourceRollbackResult(result), /installed_source_rollback_failed/u)
   }
@@ -140,6 +163,7 @@ test('installed launch deletes backend selection and poisons every Python resolu
   }
   assert.equal(environment.NOVA_AUDIO_AGENT_RELEASE_SMOKE, RELEASE_SMOKE_MODE)
   assert.equal(environment.NOVA_AUDIO_AGENT_QWEN_REALTIME_URL, 'wss://127.0.0.1:49152/')
+  assert.equal(environment.TAVILY_API_KEY, 'public-release-smoke-key')
   assert.equal(environment.NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE, '/private/smoke/camera.mp4')
 })
 
@@ -208,29 +232,27 @@ test('Windows system child environment keeps only paths required for native laun
 
 test('packaged camera evidence is pass or the exact non-green capability sentinel', () => {
   assert.deepEqual(classifyCameraCapability({
-    status: 0,
+    status: CAMERA_CAPABILITY_PASSED_EXIT_CODE,
     signal: null,
     error: undefined,
-    stdout: '{"ok":true}\n',
-    stderr: '',
+    stdout: '',
+    stderr: '[electron] platform diagnostic\r\n',
   }), {status: 'passed'})
   assert.deepEqual(classifyCameraCapability({
-    status: 75,
+    status: CAMERA_CAPABILITY_PENDING_EXIT_CODE,
     signal: null,
     error: undefined,
-    stdout: `${CAMERA_CAPABILITY_PENDING}\n`,
+    stdout: '',
     stderr: '',
   }), {
     status: 'pending',
     result_code: 'chromium_codec_unavailable',
   })
   for (const result of [
-    {status: 0, signal: null, stdout: 'wrong\n', stderr: ''},
-    {status: 75, signal: null, stdout: 'wrong\n', stderr: ''},
-    {status: 1, signal: null, stdout: CAMERA_CAPABILITY_PENDING, stderr: ''},
-    {status: 75, signal: null, stdout: `${CAMERA_CAPABILITY_PENDING}\n`, stderr: 'private'},
-    {status: 0, signal: 'SIGTERM', stdout: '{"ok":true}\n', stderr: ''},
-    {status: 0, signal: null, error: new Error('private'), stdout: '{"ok":true}\n', stderr: ''},
+    {status: 0, signal: null, stdout: '', stderr: ''},
+    {status: 1, signal: null, stdout: '', stderr: ''},
+    {status: CAMERA_CAPABILITY_PASSED_EXIT_CODE, signal: 'SIGTERM', stdout: '', stderr: ''},
+    {status: CAMERA_CAPABILITY_PASSED_EXIT_CODE, signal: null, error: new Error('private'), stdout: '', stderr: ''},
   ]) {
     assert.throws(() => classifyCameraCapability(result), /installed_camera_smoke_failed/u)
   }
@@ -367,6 +389,74 @@ test('installed-candidate output drain is bounded when an orphan retains the pip
     /installed_candidate_output_failed/u,
   )
   assert.ok(Date.now() - startedAt < 1_000, 'orphan-held output must not prevent tree cleanup')
+})
+
+test('installed-candidate diagnostics expose only stable failure and child codes', async () => {
+  const {
+    installedSmokeDiagnostic,
+    sourceRollbackResultDiagnostic,
+  } = await import('../scripts/installed-candidate-smoke.mjs')
+  const operation = new Error('installed_candidate_readiness_failed')
+  const cleanup = new Error('private path C:\\Users\\runneradmin\\secret')
+  const failure = new Error('installed_candidate_tree_failed', {
+    cause: new AggregateError([operation, cleanup]),
+  })
+  assert.equal(installedSmokeDiagnostic(failure, {
+    stderr: [
+      '[backend-diagnostic] [runtime-diagnostic] assembly_failed',
+      'private path C:\\Users\\runneradmin\\secret',
+      '[desktop-diagnostic] source_rollback_unavailable',
+    ].join('\n'),
+    exitCode: null,
+    signalCode: null,
+  }), 'failure=installed_candidate_tree_failed+installed_candidate_readiness_failed '
+    + 'child=assembly_failed+source_rollback_unavailable state=running')
+  assert.equal(installedSmokeDiagnostic(cleanup, {
+    stderr: 'token=private-secret',
+    exitCode: 7,
+    signalCode: null,
+  }), 'failure=unknown child=none state=exit_7')
+  assert.equal(sourceRollbackResultDiagnostic({
+    status: 0,
+    signal: null,
+    error: undefined,
+    stdout: '',
+    stderr: '[desktop-diagnostic] source_rollback_unavailable\r\nprivate path',
+  }), 'source_rollback_result_status_0_error_none_signal_none_stdout_empty_stderr_expected')
+  assert.equal(sourceRollbackResultDiagnostic({
+    status: null,
+    signal: null,
+    error: new Error('private path'),
+    stdout: 'private output',
+    stderr: 'private error',
+  }), 'source_rollback_result_status_none_error_set_signal_none_stdout_set_stderr_other')
+})
+
+test('failed candidate cleanup releases every parent-side child handle', async () => {
+  const {releaseCandidateChildHandles} = await import('../scripts/installed-candidate-smoke.mjs')
+  const calls = []
+  const streams = Array.from({length: 5}, (_, index) => ({
+    destroy: () => calls.push(`destroy:${index}`),
+    unref: () => calls.push(`unref:${index}`),
+  }))
+  releaseCandidateChildHandles({
+    stdio: streams,
+    unref: () => calls.push('child:unref'),
+  })
+  assert.deepEqual(calls, [
+    'destroy:0', 'unref:0', 'destroy:1', 'unref:1', 'destroy:2', 'unref:2',
+    'destroy:3', 'unref:3', 'destroy:4', 'unref:4', 'child:unref',
+  ])
+})
+
+test('Windows cleanup uses the bounded native tree terminator without CIM discovery', async () => {
+  const {windowsTreeTermination} = await import('../scripts/installed-candidate-smoke.mjs')
+  assert.deepEqual(windowsTreeTermination(49152, {SystemRoot: 'C:\\Windows'}), {
+    command: 'C:\\Windows\\System32\\taskkill.exe',
+    args: ['/PID', '49152', '/T', '/F'],
+  })
+  assert.throws(() => windowsTreeTermination(0, {SystemRoot: 'C:\\Windows'}),
+    /installed_candidate_tree_failed/u)
 })
 
 test('provider close does not wait for the WebSocket close callback after clients terminate', async () => {

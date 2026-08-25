@@ -4,10 +4,23 @@ import test from 'node:test'
 
 import {
   RELEASE_SMOKE_MODE,
+  SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE,
   createReleaseSmokeChannel,
+  releaseSmokeSourceRollbackExitCode,
 } from '../src/main/release-smoke-channel.mjs'
 
 const TOKEN = '0123456789abcdef0123456789abcdef'
+
+test('release smoke source rollback uses an exact packaged-only exit code', () => {
+  assert.equal(releaseSmokeSourceRollbackExitCode({
+    environment: {NOVA_AUDIO_AGENT_RELEASE_SMOKE: RELEASE_SMOKE_MODE},
+    isPackaged: true,
+  }), SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE)
+  assert.equal(releaseSmokeSourceRollbackExitCode({
+    environment: {},
+    isPackaged: true,
+  }), null)
+})
 
 test('release smoke control is packaged-only and inert during ordinary source launches', () => {
   let opened = 0

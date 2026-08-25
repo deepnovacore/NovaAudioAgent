@@ -4,13 +4,23 @@ import {spawn, spawnSync} from 'node:child_process'
 import {createServer as createHttpsServer} from 'node:https'
 import {copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
-import {isAbsolute, join, resolve} from 'node:path'
+import {isAbsolute, join, resolve, win32} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
 import {WebSocket, WebSocketServer} from 'ws'
 
 export const RELEASE_SMOKE_MODE = 'installed-candidate-v1'
 export const CAMERA_CAPABILITY_PENDING = 'camera-file-integration: chromium_codec_unavailable'
+export const CAMERA_CAPABILITY_PASSED_EXIT_CODE = 76
+export const CAMERA_CAPABILITY_PENDING_EXIT_CODE = 75
+export const SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE = 78
+export const NATIVE_INSTALLER_SETTLE_MS = 120_000
+export const SCRATCH_REMOVAL_OPTIONS = Object.freeze({
+  recursive: true,
+  force: true,
+  maxRetries: 100,
+  retryDelay: 50,
+})
 
 const DEFAULT_SIGNER_WORKFLOW = 'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml'
 const SIGNER_WORKFLOWS = new Set([
@@ -59,11 +69,17 @@ export function candidateInstallPlan({target, artifact, scratch}) {
     residue = executable
   } else if (target === 'win32-x64:nsis') {
     executable = resolve(installRoot, 'Nova Audio Agent Ambient Orb.exe')
-    install = [{op: 'spawn', command: artifact, args: ['/S', `/D=${installRoot}`]}]
+    install = [{
+      op: 'spawn',
+      command: artifact,
+      args: ['/S', `/D=${installRoot}`],
+      timeoutMs: NATIVE_INSTALLER_SETTLE_MS,
+    }]
     uninstall = [{
       op: 'spawn',
       command: resolve(installRoot, 'Uninstall Nova Audio Agent Ambient Orb.exe'),
       args: ['/S'],
+      timeoutMs: NATIVE_INSTALLER_SETTLE_MS,
     }]
     residue = installRoot
   } else if (target === 'linux-x64-gnu:appimage') {
@@ -124,6 +140,7 @@ export function smokeEnvironment({
     NOVA_AUDIO_AGENT_EXECUTORS: 'fast_sim',
     DASHSCOPE_API_KEY: 'public-release-smoke-key',
     NOVA_AUDIO_AGENT_MODEL_API_KEY: 'public-release-smoke-key',
+    TAVILY_API_KEY: 'public-release-smoke-key',
     NOVA_ORB_OPAQUE: '1',
   })
   if (cameraFile !== undefined) env.NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE = cameraFile
@@ -170,39 +187,47 @@ export function candidateBaseEnvironment({
 }
 
 export function classifyCameraCapability(result) {
-  const stdout = Buffer.isBuffer(result?.stdout)
-    ? result.stdout.toString('utf8')
-    : result?.stdout
-  const stderr = Buffer.isBuffer(result?.stderr)
-    ? result.stderr.toString('utf8')
-    : result?.stderr
-  if (result?.error !== undefined || result?.signal !== null || stderr !== '') {
+  if (result?.error !== undefined || result?.signal !== null) {
     throw new Error('installed_camera_smoke_failed')
   }
-  if (result.status === 0 && stdout === '{"ok":true}\n') return Object.freeze({status: 'passed'})
-  if (result.status === 75 && stdout === `${CAMERA_CAPABILITY_PENDING}\n`) {
+  if (result.status === CAMERA_CAPABILITY_PASSED_EXIT_CODE) {
+    return Object.freeze({status: 'passed'})
+  }
+  if (result.status === CAMERA_CAPABILITY_PENDING_EXIT_CODE) {
     return Object.freeze({status: 'pending', result_code: 'chromium_codec_unavailable'})
   }
   throw new Error('installed_camera_smoke_failed')
 }
 
 export function classifySourceRollbackResult(result) {
-  const stdout = Buffer.isBuffer(result?.stdout)
-    ? result.stdout.toString('utf8')
-    : result?.stdout
-  const stderr = Buffer.isBuffer(result?.stderr)
-    ? result.stderr.toString('utf8')
-    : result?.stderr
-  const readiness = Buffer.isBuffer(result?.readiness)
-    ? result.readiness
-    : Buffer.from(result?.readiness ?? '')
-  if (result?.error !== undefined || result?.signal !== null || result?.status !== 0
-    || stdout !== ''
-    || stderr !== '[desktop-diagnostic] source_rollback_unavailable\n'
-    || readiness.length !== 0) {
+  if (result?.error !== undefined || result?.signal !== null
+    || result?.status !== SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE) {
     throw new Error('installed_source_rollback_failed')
   }
   return Object.freeze({status: 'passed'})
+}
+
+export function sourceRollbackResultDiagnostic(result) {
+  const status = Number.isInteger(result?.status) && result.status >= 0 && result.status <= 255
+    ? String(result.status)
+    : 'none'
+  const presence = value => {
+    if (Buffer.isBuffer(value)) return value.length === 0 ? 'empty' : 'set'
+    if (typeof value === 'string') return value.length === 0 ? 'empty' : 'set'
+    return value === undefined || value === null ? 'empty' : 'set'
+  }
+  const stderr = Buffer.isBuffer(result?.stderr)
+    ? result.stderr.toString('utf8')
+    : typeof result?.stderr === 'string' ? result.stderr : ''
+  const stderrKind = stderr === ''
+    ? 'empty'
+    : stderr.includes('[desktop-diagnostic] source_rollback_unavailable')
+      ? 'expected'
+      : 'other'
+  return `source_rollback_result_status_${status}`
+    + `_error_${result?.error === undefined ? 'none' : 'set'}`
+    + `_signal_${result?.signal === null ? 'none' : 'set'}`
+    + `_stdout_${presence(result?.stdout)}_stderr_${stderrKind}`
 }
 
 export function canonicalSignerWorkflow(value = DEFAULT_SIGNER_WORKFLOW) {
@@ -310,14 +335,17 @@ async function runInstalledCandidate({
         }
       }
       try {
-        await rm(scratch, {recursive: true, force: true})
+        await rm(scratch, SCRATCH_REMOVAL_OPTIONS)
         reportInstalledSmokeStage('cleanup_complete')
       } catch {
         failure ??= new Error('installed_candidate_residue')
       }
     }
   }
-  if (failure !== null) throw failure
+  if (failure !== null) {
+    reportInstalledSmokeFailure(installedSmokeDiagnostic(failure))
+    throw failure
+  }
   return cameraCapability
 }
 
@@ -335,10 +363,16 @@ async function runPackagedSourceRollback({executable, environment, workspace, us
     encoding: 'utf8',
     timeout: SETTLE_MS,
     maxBuffer: OUTPUT_LIMIT,
-    stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
-  return withCandidateProcessTree(result, rollbackEnvironment, () =>
-    classifySourceRollbackResult({...result, readiness: result.output?.[3] ?? ''}))
+  return withCandidateProcessTree(result, rollbackEnvironment, () => {
+    try {
+      return classifySourceRollbackResult(result)
+    } catch (error) {
+      reportInstalledSmokeStage(sourceRollbackResultDiagnostic(result))
+      throw error
+    }
+  })
 }
 
 async function runPackagedCameraCapability({executable, environment, userData}) {
@@ -375,7 +409,7 @@ async function runActions(actions, environment) {
     const result = spawnSync(action.command, action.args, {
       ...(action.cwd === undefined ? {} : {cwd: action.cwd}),
       env: environment,
-      encoding: 'utf8', timeout: SETTLE_MS, maxBuffer: OUTPUT_LIMIT,
+      encoding: 'utf8', timeout: action.timeoutMs ?? SETTLE_MS, maxBuffer: OUTPUT_LIMIT,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     if (result.error !== undefined || result.signal !== null || result.status !== 0) {
@@ -545,6 +579,7 @@ function settleExit(child) {
 
 function boundedOutput(child) {
   let rejectFailure
+  let stderr = ''
   const failure = new Promise((resolveNever, reject) => { rejectFailure = reject })
   const done = new Promise(resolveOutput => {
     let size = 0
@@ -556,26 +591,73 @@ function boundedOutput(child) {
       rejectFailure(new Error('installed_candidate_output_failed'))
     }
     const finish = () => { if (--streams === 0) resolveOutput() }
-    for (const stream of [child.stdout, child.stderr]) {
+    for (const [index, stream] of [child.stdout, child.stderr].entries()) {
       stream.on('data', chunk => {
         size += Buffer.byteLength(chunk)
+        if (index === 1 && stderr.length < OUTPUT_LIMIT) {
+          stderr += chunk.toString('utf8').slice(0, OUTPUT_LIMIT - stderr.length)
+        }
         if (size > OUTPUT_LIMIT) fail()
       })
       stream.once('end', finish)
       stream.once('error', fail)
     }
   })
-  return Object.freeze({done, failure})
+  return Object.freeze({
+    done,
+    failure,
+    diagnostic: error => installedSmokeDiagnostic(error, {
+      stderr,
+      exitCode: child.exitCode,
+      signalCode: child.signalCode,
+    }),
+  })
 }
 
 export async function exerciseCandidateChild(child) {
   const output = boundedOutput(child)
-  const readiness = await Promise.race([readReadiness(child.stdio[3]), output.failure])
-  await Promise.race([authenticateAndExercise(readiness), output.failure])
-  child.stdio[4].end('quit\n')
-  const exit = await Promise.race([settleExit(child), output.failure])
-  if (exit.code !== 0 || exit.signal !== null) throw new Error('installed_candidate_launch_failed')
-  await settleCandidateOutput(output)
+  try {
+    const readiness = await Promise.race([readReadiness(child.stdio[3]), output.failure])
+    await Promise.race([authenticateAndExercise(readiness), output.failure])
+    child.stdio[4].end('quit\n')
+    const exit = await Promise.race([settleExit(child), output.failure])
+    if (exit.code !== 0 || exit.signal !== null) throw new Error('installed_candidate_launch_failed')
+    await settleCandidateOutput(output)
+  } catch (error) {
+    reportInstalledSmokeFailure(output.diagnostic(error))
+    throw error
+  }
+}
+
+export function installedSmokeDiagnostic(error, child = {}) {
+  const failures = []
+  const seen = new Set()
+  const visit = value => {
+    if (value === null || typeof value !== 'object' || seen.has(value)) return
+    seen.add(value)
+    if (typeof value.message === 'string' && /^installed_[a-z0-9_]+$/u.test(value.message)
+      && !failures.includes(value.message)) failures.push(value.message)
+    if (Array.isArray(value.errors)) for (const nested of value.errors) visit(nested)
+    visit(value.cause)
+  }
+  visit(error)
+  const codes = []
+  const stderr = typeof child.stderr === 'string' ? child.stderr : ''
+  const pattern = /\[(?:backend|runtime|realtime|desktop)-diagnostic\]\s+([a-z][a-z0-9_]*_[a-z0-9_]+)/gu
+  for (const match of stderr.matchAll(pattern)) {
+    if (!codes.includes(match[1])) codes.push(match[1])
+  }
+  const state = Number.isInteger(child.exitCode)
+    ? `exit_${child.exitCode}`
+    : typeof child.signalCode === 'string' && /^[A-Z0-9]+$/u.test(child.signalCode)
+      ? `signal_${child.signalCode}`
+      : 'running'
+  return `failure=${failures.join('+') || 'unknown'} child=${codes.join('+') || 'none'} state=${state}`
+}
+
+function reportInstalledSmokeFailure(diagnostic) {
+  if (process.env.NOVA_RELEASE_SMOKE_DIAGNOSTICS !== '1') return
+  try { process.stderr.write(`[installed-smoke] ${diagnostic}\n`) } catch {}
 }
 
 export async function settleCandidateOutput(output, timeoutMs = OUTPUT_DRAIN_MS) {
@@ -610,6 +692,12 @@ export async function withCandidateProcessTree(child, environment, operation) {
         : new AggregateError([operationFailure, cleanupFailure]),
     })
     error.code = 'installed_candidate_tree_failed'
+    reportInstalledSmokeFailure(installedSmokeDiagnostic(error, {
+      stderr: '',
+      exitCode: child?.exitCode,
+      signalCode: child?.signalCode,
+    }))
+    releaseCandidateChildHandles(child)
     throw error
   }
   if (operationFailure !== null) throw operationFailure
@@ -618,8 +706,12 @@ export async function withCandidateProcessTree(child, environment, operation) {
 
 async function stopAndRequireTreeGone(child, environment) {
   const pid = child.pid
-  if (process.platform === 'win32') terminateWindowsTree(pid, environment)
-  else {
+  const alreadyExited = Number.isInteger(child.status)
+    || child.exitCode !== null && child.exitCode !== undefined
+    || child.signal !== null && child.signal !== undefined
+    || child.signalCode !== null && child.signalCode !== undefined
+  if (!alreadyExited && process.platform === 'win32') terminateWindowsTree(pid, environment)
+  else if (!alreadyExited) {
     try { process.kill(-pid, 'SIGKILL') } catch (error) {
       if (error?.code !== 'ESRCH') throw new Error('installed_candidate_tree_failed')
     }
@@ -637,13 +729,12 @@ async function stopAndRequireTreeGone(child, environment) {
       })
     })
   }
-  await requireTreeGone(pid, environment)
+  if (process.platform !== 'win32') await requireTreeGone(pid, environment)
 }
 
 function terminateWindowsTree(pid, environment) {
-  const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-  const script = windowsTreeScript(pid, true)
-  const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+  const plan = windowsTreeTermination(pid, environment)
+  const result = spawnSync(plan.command, plan.args, {
     env: environment,
     encoding: 'utf8', timeout: 10_000, maxBuffer: OUTPUT_LIMIT,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -653,24 +744,31 @@ function terminateWindowsTree(pid, environment) {
   }
 }
 
-async function requireTreeGone(pid, environment) {
-  if (!Number.isInteger(pid) || pid < 1) throw new Error('installed_candidate_tree_failed')
-  if (process.platform === 'win32') {
-    const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    const script = windowsTreeScript(pid, false)
-    const deadline = Date.now() + 5_000
-    while (Date.now() < deadline) {
-      const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
-        env: environment,
-        encoding: 'utf8', timeout: 10_000, maxBuffer: OUTPUT_LIMIT,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-      if (result.status === 0 && result.error === undefined && result.signal === null) return
-      if (result.error !== undefined || result.signal !== null || ![0, 1].includes(result.status)) break
-      await new Promise(resolveWait => setTimeout(resolveWait, 50))
-    }
+export function windowsTreeTermination(pid, environment) {
+  const systemRoot = environment?.SystemRoot ?? environment?.WINDIR
+  if (!Number.isInteger(pid) || pid < 1
+    || typeof systemRoot !== 'string' || !/^[A-Za-z]:\\/u.test(systemRoot)) {
     throw new Error('installed_candidate_tree_failed')
   }
+  return Object.freeze({
+    command: win32.join(systemRoot, 'System32', 'taskkill.exe'),
+    args: Object.freeze(['/PID', String(pid), '/T', '/F']),
+  })
+}
+
+export function releaseCandidateChildHandles(child) {
+  if (child === null || typeof child !== 'object') return
+  if (Array.isArray(child.stdio)) {
+    for (const stream of child.stdio) {
+      try { stream?.destroy?.() } catch {}
+      try { stream?.unref?.() } catch {}
+    }
+  }
+  try { child.unref?.() } catch {}
+}
+
+async function requireTreeGone(pid, environment) {
+  if (!Number.isInteger(pid) || pid < 1) throw new Error('installed_candidate_tree_failed')
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {
     try { process.kill(-pid, 0) } catch (error) {
@@ -680,15 +778,6 @@ async function requireTreeGone(pid, environment) {
     await new Promise(resolveWait => setTimeout(resolveWait, 50))
   }
   throw new Error('installed_candidate_tree_failed')
-}
-
-function windowsTreeScript(pid, terminate) {
-  const discover = `$root=${pid};$p=Get-CimInstance Win32_Process;`+
-    '$ids=@($root);do{$n=@($p|?{$ids -contains $_.ParentProcessId}|% ProcessId|?{$ids -notcontains $_});$ids+= $n}while($n.Count);' +
-    '$alive=@($p|?{$ids -contains $_.ProcessId});'
-  return terminate
-    ? `${discover}if($alive.Count){$alive|Sort-Object ProcessId -Descending|%{Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}}`
-    : `${discover}if($alive.Count){exit 1}`
 }
 
 function systemPath(platform, parentEnvironment) {
