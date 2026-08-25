@@ -232,23 +232,26 @@ test('main camera permission helper catches prompting or examining permissions i
   }
 })
 
-test('main microphone helper asks macOS once while other platforms defer to Chromium', async () => {
-  assert.equal(typeof securityModule.requestMicrophonePermission, 'function')
-  for (const [name, platform, status, expected] of [
-    ['mac not determined', 'darwin', 'not-determined', ['status', 'ask']],
-    ['mac granted', 'darwin', 'granted', ['status']],
-    ['mac denied', 'darwin', 'denied', ['status']],
-    ['windows', 'win32', 'not-determined', []],
-    ['linux', 'linux', 'not-determined', []],
+test('main microphone helper resolves macOS TCC only when the renderer requests it', async () => {
+  assert.equal(typeof securityModule.resolveMicrophonePermission, 'function')
+  for (const [name, platform, statuses, expectedCalls, expectedStatus] of [
+    ['mac not determined then granted', 'darwin', ['not-determined', 'granted'], ['status', 'ask', 'status'], 'granted'],
+    ['mac not determined then denied', 'darwin', ['not-determined', 'denied'], ['status', 'ask', 'status'], 'denied'],
+    ['mac granted', 'darwin', ['granted'], ['status'], 'granted'],
+    ['mac denied', 'darwin', ['denied'], ['status'], 'denied'],
+    ['mac restricted', 'darwin', ['restricted'], ['status'], 'restricted'],
+    ['windows', 'win32', ['not-determined'], [], 'unknown'],
+    ['linux', 'linux', ['not-determined'], [], 'unknown'],
   ]) {
     const calls = []
-    await securityModule.requestMicrophonePermission({
+    let index = 0
+    const result = await securityModule.resolveMicrophonePermission({
       platform,
       systemPreferences: {
         getMediaAccessStatus(kind) {
           assert.equal(kind, 'microphone')
           calls.push('status')
-          return status
+          return statuses[Math.min(index++, statuses.length - 1)]
         },
         async askForMediaAccess(kind) {
           assert.equal(kind, 'microphone')
@@ -257,6 +260,7 @@ test('main microphone helper asks macOS once while other platforms defer to Chro
         },
       },
     })
-    assert.deepEqual(calls, expected, name)
+    assert.deepEqual(calls, expectedCalls, name)
+    assert.deepEqual(result, { status: expectedStatus }, name)
   }
 })

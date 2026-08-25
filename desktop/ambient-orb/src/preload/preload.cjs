@@ -26,6 +26,16 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
   releaseCamera: Object.freeze({
     report: result => ipcRenderer.send('nova:release-camera:result', result),
   }),
+  microphone: Object.freeze({
+    requestPermission: () => ipcRenderer.invoke('nova:microphone:permission'),
+    report: status => ipcRenderer.send('nova:microphone:status', status),
+    onRetry: callback => {
+      if (typeof callback !== 'function') return () => {}
+      const listener = () => callback()
+      ipcRenderer.on('nova:microphone:retry', listener)
+      return () => ipcRenderer.removeListener('nova:microphone:retry', listener)
+    },
+  }),
   memoryBoard: Object.freeze({
     request: () => ipcRenderer.invoke('nova:memory-board:request'),
     export: payload => ipcRenderer.invoke('nova:memory-board:export', payload),
@@ -82,6 +92,7 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     get: () => ipcRenderer.invoke('nova:settings:get'),
     rescanCodex: () => ipcRenderer.invoke('nova:codex:rescan'),
     retryBackend: () => ipcRenderer.invoke('nova:backend:retry'),
+    retryMicrophone: () => ipcRenderer.invoke('nova:microphone:retry'),
     repairProjects: root => ipcRenderer.invoke('nova:projects:repair', root),
     // The payload may carry plaintext key values on their way *into* main; the
     // reply never carries any back out.

@@ -82,7 +82,7 @@ import {
   configureWindowSecurity,
   createBootstrapAccess,
   requestLocalCameraPermission,
-  requestMicrophonePermission,
+  resolveMicrophonePermission,
   settingsWindowOptions,
   validateBootstrap,
 } from './security.mjs'
@@ -145,6 +145,17 @@ let codexStatus = Object.freeze({
 const secretCodec = createSafeStorageCodec(safeStorage)
 const pendingBoardRequests = new Map()
 let pendingGraphBoardRequest = null
+let microphoneStatus = 'checking'
+let microphoneSystemStatus = 'unknown'
+const MICROPHONE_STATUSES = new Set([
+  'granted',
+  'permission_denied',
+  'restricted',
+  'no_input_device',
+  'device_busy',
+  'capture_unavailable',
+  'audio_pipeline_error',
+])
 
 function pythonExecutable() {
   if (process.env.NOVA_AUDIO_AGENT_PYTHON) return process.env.NOVA_AUDIO_AGENT_PYTHON
@@ -189,6 +200,7 @@ function settingsView() {
     backendStatus: backendStatus.state,
     backendDiagnostic: backendStatus.diagnostic,
     backendRetryInMs: backendStatus.retryInMs,
+    microphoneStatus,
     effectivePaths: desktopConfig ? Object.freeze({
       stateRoot: desktopConfig.stateRoot,
       managedRoot: desktopConfig.managedRoot,
@@ -554,6 +566,28 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     clamp: clampToNearestWorkArea,
   })
   const readBootstrap = createBootstrapAccess(bootstrap, mainWindow.webContents)
+  ipcMain.handle('nova:microphone:permission', async event => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('microphone permission request rejected')
+    }
+    if (['granted', 'denied', 'restricted'].includes(microphoneSystemStatus)) {
+      return Object.freeze({ status: microphoneSystemStatus })
+    }
+    const result = await resolveMicrophonePermission({
+      platform: process.platform,
+      systemPreferences,
+    })
+    if (['granted', 'denied', 'restricted'].includes(result.status)) {
+      microphoneSystemStatus = result.status
+    }
+    return result
+  })
+  ipcMain.on('nova:microphone:status', (event, status) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return
+    if (!MICROPHONE_STATUSES.has(status)) return
+    microphoneStatus = status
+    sendToSettings('nova:settings:changed', settingsView())
+  })
   ipcMain.on('nova:orb-menu:show', event => {
     if (mainWindow && event.sender === mainWindow.webContents) showOrbMenu(launchId)
   })
@@ -655,6 +689,14 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       throw new Error('backend retry rejected')
     }
     await backendSupervisor?.retry()
+    return settingsView()
+  })
+  ipcMain.handle('nova:microphone:retry', event => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+      throw new Error('microphone retry rejected')
+    }
+    microphoneStatus = 'checking'
+    sendToOrb('nova:microphone:retry')
     return settingsView()
   })
   ipcMain.handle('nova:projects:repair', async (event, root) => {
@@ -817,7 +859,6 @@ async function start() {
     isPackaged: app.isPackaged,
     onQuit: () => app.quit(),
   })
-  await requestMicrophonePermission({ platform: process.platform, systemPreferences })
   return startWithSelectedCamera({
     environment: process.env,
     requestPermission: source => requestLocalCameraPermission(source, {

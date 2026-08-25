@@ -179,11 +179,18 @@ export async function requestLocalCameraPermission(source, { platform, systemPre
   }
 }
 
-export async function requestMicrophonePermission({ platform, systemPreferences }) {
+export async function resolveMicrophonePermission({ platform, systemPreferences }) {
   // Chromium's getUserMedia owns the prompt on Windows and Linux. macOS also
   // requires the application-level TCC grant, which Electron exposes here.
-  if (platform !== 'darwin') return
-  if (systemPreferences.getMediaAccessStatus('microphone') === 'not-determined') {
+  if (platform !== 'darwin') return Object.freeze({ status: 'unknown' })
+  let status = systemPreferences.getMediaAccessStatus('microphone')
+  if (status === 'not-determined') {
     await systemPreferences.askForMediaAccess('microphone')
+    status = systemPreferences.getMediaAccessStatus('microphone')
   }
+  return Object.freeze({
+    status: status === 'granted' || status === 'denied' || status === 'restricted'
+      ? status
+      : 'unknown',
+  })
 }

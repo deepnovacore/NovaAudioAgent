@@ -137,6 +137,14 @@ body[data-opaque="1"] {
      the flat black/white disc this media query already draws. */
   [data-state="disconnected"] #orb::after,
   [data-state="error"] #orb::after,
+  [data-state="configuration-required"] #orb::after,
+  [data-state="authentication-failed"] #orb::after,
+  [data-state="backend-unavailable"] #orb::after,
+  [data-state="microphone-restricted"] #orb::after,
+  [data-state="microphone-no-device"] #orb::after,
+  [data-state="microphone-busy"] #orb::after,
+  [data-state="microphone-unavailable"] #orb::after,
+  [data-state="audio-pipeline-error"] #orb::after,
   [data-state="permission-denied"] #orb::after { background: #ff3b30; }
   .capture-indicator { z-index: 1; }
   #state-label, #codex-label, #aec-label { color: white; text-shadow: none; }

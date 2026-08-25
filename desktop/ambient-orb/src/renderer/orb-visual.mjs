@@ -243,12 +243,29 @@ export const STATE_PARAMS = Object.freeze({
   // A dropped backend: the widest, sparsest, slowest ring — the field simply
   // stopped where it was.
   disconnected: collapseParams({ ringRadius: RING_RADIUS, countRatio: 0.5, orbitSpeed: 0.03 }),
+  reconnecting: stateParams({
+    convergence: 0.45,
+    orbitSpeed: 0.18,
+    jitter: 0.15,
+    pulseGain: 0,
+    alpha: 0.65,
+    countRatio: 0.6,
+    tone: 'alert',
+  }),
+  'configuration-required': collapseParams({ ringRadius: 34, countRatio: 0.55, orbitSpeed: 0.02 }),
+  'authentication-failed': collapseParams({ ringRadius: 30, countRatio: 0.45, orbitSpeed: 0.02 }),
+  'backend-unavailable': collapseParams({ ringRadius: 44, countRatio: 0.45, orbitSpeed: 0.02 }),
   // A failure is restless: a tighter ring, denser, drifting faster and
   // trembling, so "something went wrong" reads differently from "nothing is
   // there" even with the colour thrown away.
   error: collapseParams({ ringRadius: 38, countRatio: 0.75, orbitSpeed: 0.06, jitter: 0.06 }),
   // A refusal is small and closed: the tightest, sparsest, near-still ring.
   'permission-denied': collapseParams({ ringRadius: 28, countRatio: 0.35, orbitSpeed: 0.02 }),
+  'microphone-restricted': collapseParams({ ringRadius: 28, countRatio: 0.35, orbitSpeed: 0.02 }),
+  'microphone-no-device': collapseParams({ ringRadius: 46, countRatio: 0.35, orbitSpeed: 0.02 }),
+  'microphone-busy': collapseParams({ ringRadius: 34, countRatio: 0.55, orbitSpeed: 0.06 }),
+  'microphone-unavailable': collapseParams({ ringRadius: 42, countRatio: 0.4, orbitSpeed: 0.02 }),
+  'audio-pipeline-error': collapseParams({ ringRadius: 38, countRatio: 0.7, orbitSpeed: 0.06, jitter: 0.06 }),
 })
 
 // Tick tiers. A resting orb sits in the menu bar for hours, so it must not pay
@@ -263,8 +280,17 @@ export const STATE_FPS = Object.freeze({
   idle: 15,
   inactive: 0,
   disconnected: 0,
+  reconnecting: 30,
+  'configuration-required': 0,
+  'authentication-failed': 0,
+  'backend-unavailable': 0,
   error: 0,
   'permission-denied': 0,
+  'microphone-restricted': 0,
+  'microphone-no-device': 0,
+  'microphone-busy': 0,
+  'microphone-unavailable': 0,
+  'audio-pipeline-error': 0,
 })
 
 const DEFAULT_STATE = 'booting'

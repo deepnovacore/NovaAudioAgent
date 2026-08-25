@@ -12,7 +12,10 @@ import {
   OnsetTracker,
   PlaybackMeter,
 } from './audio.mjs'
-import { preflightMicrophone } from './microphone-permission.mjs'
+import {
+  classifyMicrophoneFailure,
+  preflightMicrophone,
+} from './microphone-permission.mjs'
 import {
   RendererCameraController,
   RendererSocketRouter,
@@ -80,7 +83,7 @@ const axes = {
   pendingConfirmation: false,
   connected: false,
   backendState: 'stopped',
-  permission: 'unknown',
+  microphone: 'checking',
   error: '',
   shellExpanded: false,
   audioMode: 'inactive',
@@ -97,6 +100,7 @@ let source
 let workletLoaded = false
 let nativeAvailable = false
 let nativeReady = false
+let microphoneSystemStatus = 'unknown'
 let playbackCursor = 0
 const playingSources = new Set()
 const nativeFrames = new Map()
@@ -291,11 +295,14 @@ async function activateCapture() {
     })
     axes.audioMode = result.audioMode
     axes.activated = true
-    axes.permission = 'granted'
+    axes.microphone = 'granted'
+    window.novaAudioAgentDesktop.microphone.report(axes.microphone)
     axes.error = ''
-  } catch {
+  } catch (error) {
     nativeReady = false
-    axes.permission = 'denied'
+    axes.microphone = error?.novaMicrophoneStatus
+      ?? classifyMicrophoneFailure(error, microphoneSystemStatus)
+    window.novaAudioAgentDesktop.microphone.report(axes.microphone)
   } finally {
     axes.activationPending = false
   }
@@ -303,11 +310,11 @@ async function activateCapture() {
 }
 
 async function startBrowserCapture() {
-  await ensurePlaybackContext()
   const nextMedia = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   })
   try {
+    await ensurePlaybackContext()
     if (!workletLoaded) {
       await context.audioWorklet.addModule('nova://orb/capture-worklet.mjs')
       workletLoaded = true
@@ -329,7 +336,9 @@ async function startBrowserCapture() {
     processor = nextProcessor
   } catch (error) {
     nextMedia.getTracks().forEach(track => track.stop())
-    throw error
+    const pipelineError = new Error('audio pipeline unavailable')
+    pipelineError.novaMicrophoneStatus = 'audio_pipeline_error'
+    throw pipelineError
   }
   return Object.freeze({ audioMode: 'browser_aec' })
 }
@@ -360,7 +369,6 @@ function stopCurrentNativePlayback() {
 async function deactivateCapture() {
   if (axes.activationPending) {
     axes.activated = false
-    axes.permission = 'unknown'
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     onsetTracker.reset()
@@ -377,7 +385,6 @@ async function deactivateCapture() {
     releaseBrowserCapture()
     onsetTracker.reset()
     axes.activated = false
-    axes.permission = 'unknown'
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     axes.activationPending = false
@@ -398,12 +405,14 @@ async function fallBackAfterNativeFailure() {
     })
     if (!result) return render()
     axes.audioMode = result.audioMode
-    axes.permission = 'granted'
+    axes.microphone = 'granted'
+    window.novaAudioAgentDesktop.microphone.report(axes.microphone)
     axes.error = ''
-  } catch {
+  } catch (error) {
     if (axes.activated) {
-      axes.permission = 'denied'
-      axes.error = 'native-audio'
+      axes.microphone = error?.novaMicrophoneStatus
+        ?? classifyMicrophoneFailure(error, microphoneSystemStatus)
+      window.novaAudioAgentDesktop.microphone.report(axes.microphone)
     }
   }
   render()
@@ -590,6 +599,25 @@ function connectBackend(connection) {
   }
 }
 
+async function refreshMicrophonePermission() {
+  axes.microphone = 'checking'
+  render()
+  try {
+    const system = await window.novaAudioAgentDesktop.microphone.requestPermission()
+    microphoneSystemStatus = system?.status ?? 'unknown'
+    const result = await preflightMicrophone({
+      mediaDevices: navigator.mediaDevices,
+      systemStatus: microphoneSystemStatus,
+    })
+    axes.microphone = result.status
+  } catch {
+    axes.microphone = 'capture_unavailable'
+  }
+  window.novaAudioAgentDesktop.microphone.report(axes.microphone)
+  render()
+  return axes.microphone
+}
+
 async function boot() {
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
@@ -610,6 +638,9 @@ async function boot() {
       if (!status || typeof status.state !== 'string') return
       axes.backendState = status.state
       render()
+    })
+    window.novaAudioAgentDesktop.microphone.onRetry(() => {
+      void refreshMicrophonePermission()
     })
     // Palette updates are the only live renderer setting. Runtime settings
     // trigger a supervised backend restart in main.
@@ -654,9 +685,8 @@ async function boot() {
     axes.booting = false
     if (bootstrap.backend) connectBackend(bootstrap.backend)
     else handleBackendExit()
-    const microphone = await preflightMicrophone({ mediaDevices: navigator.mediaDevices })
-    axes.permission = microphone.status === 'granted' ? 'granted' : 'denied'
-    if (microphone.status === 'granted' && bootstrap.settings?.startListeningOnLaunch === true) {
+    const microphone = await refreshMicrophonePermission()
+    if (microphone === 'granted' && bootstrap.settings?.startListeningOnLaunch === true) {
       await activateCapture()
     }
   } catch {

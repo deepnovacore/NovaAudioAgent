@@ -35,6 +35,8 @@ const secretRevisions = createSecretRevisions(SECRET_KEYS)
 const statusLabel = document.querySelector('#status')
 const backendStatus = document.querySelector('#backend-status')
 const backendRetry = document.querySelector('#backend-retry')
+const microphoneStatus = document.querySelector('#microphone-status')
+const microphoneRetry = document.querySelector('#microphone-retry')
 const startListeningOnLaunch = document.querySelector('#startListeningOnLaunch')
 const warning = document.querySelector('#keyring-warning')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
@@ -161,6 +163,20 @@ function render(view, drafts) {
   backendRetry.hidden = ![
     'configuration_required', 'authentication_failed', 'unavailable', 'stopped',
   ].includes(view.backendStatus)
+  const microphoneCopy = {
+    checking: '正在检查麦克风权限与输入设备…',
+    granted: '麦克风可用；检测已释放设备，不会持续监听。',
+    permission_denied: '麦克风权限被拒绝；请在系统隐私设置中允许 Nova Audio Agent，然后重启应用。',
+    restricted: '麦克风被系统策略限制；请联系设备管理员或检查家长控制。',
+    no_input_device: '未检测到麦克风；请连接或启用输入设备后重新检测。',
+    device_busy: '麦克风正被其他应用独占；关闭占用程序后重新检测。',
+    capture_unavailable: '当前环境无法启动麦克风采集；请检查音频驱动与系统服务。',
+    audio_pipeline_error: '麦克风已打开，但音频处理管线启动失败；请重新检测或重启应用。',
+  }
+  microphoneStatus.textContent = microphoneCopy[view.microphoneStatus]
+    ?? '尚未收到麦克风检测结果。'
+  microphoneStatus.dataset.ready = view.microphoneStatus === 'granted' ? '1' : '0'
+  microphoneRetry.hidden = ['checking', 'granted'].includes(view.microphoneStatus)
   startListeningOnLaunch.checked = view.startListeningOnLaunch === true
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
@@ -369,6 +385,15 @@ backendRetry.addEventListener('click', async () => {
     statusLabel.textContent = '已发起后台重试'
   } catch {
     statusLabel.textContent = '后台重试失败'
+  }
+})
+microphoneRetry.addEventListener('click', async () => {
+  statusLabel.textContent = '正在重新检测麦克风…'
+  try {
+    controller.setView(await api.retryMicrophone())
+    statusLabel.textContent = '已发起麦克风检测'
+  } catch {
+    statusLabel.textContent = '麦克风检测失败'
   }
 })
 document.querySelector('#projects-repair').addEventListener('click', async () => {

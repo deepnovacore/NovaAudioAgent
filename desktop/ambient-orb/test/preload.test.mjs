@@ -63,7 +63,7 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   const { exposed, ipcRenderer, invokes } = await loadPreload()
 
   assert.deepEqual(Object.keys(exposed.settings).sort(), [
-    'get', 'onChanged', 'repairProjects', 'rescanCodex', 'retryBackend', 'set',
+    'get', 'onChanged', 'repairProjects', 'rescanCodex', 'retryBackend', 'retryMicrophone', 'set',
   ])
   assert.ok(Object.isFrozen(exposed.settings))
 
@@ -71,11 +71,13 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   await exposed.settings.set({ palette: 'graphite' })
   await exposed.settings.rescanCodex()
   await exposed.settings.repairProjects('state')
+  await exposed.settings.retryMicrophone()
   assert.deepEqual(invokes, [
     { channel: 'nova:settings:get', payload: undefined },
     { channel: 'nova:settings:set', payload: { palette: 'graphite' } },
     { channel: 'nova:codex:rescan', payload: undefined },
     { channel: 'nova:projects:repair', payload: 'state' },
+    { channel: 'nova:microphone:retry', payload: undefined },
   ])
 
   const seen = []
@@ -87,6 +89,23 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   assert.deepEqual(seen, [{ palette: 'graphite' }])
   // A non-function argument must not throw into the renderer.
   assert.equal(typeof exposed.settings.onChanged(null), 'function')
+})
+
+test('preload exposes a bounded microphone permission lifecycle', async () => {
+  const { exposed, ipcRenderer, invokes, sends } = await loadPreload()
+
+  assert.deepEqual(Object.keys(exposed.microphone).sort(), ['onRetry', 'report', 'requestPermission'])
+  await exposed.microphone.requestPermission()
+  exposed.microphone.report('device_busy')
+  const retries = []
+  const unsubscribe = exposed.microphone.onRetry(() => retries.push('retry'))
+  ipcRenderer.emit('nova:microphone:retry', {})
+  unsubscribe()
+  ipcRenderer.emit('nova:microphone:retry', {})
+
+  assert.deepEqual(invokes, [{ channel: 'nova:microphone:permission', payload: undefined }])
+  assert.deepEqual(sends, [{ channel: 'nova:microphone:status', payload: 'device_busy' }])
+  assert.deepEqual(retries, ['retry'])
 })
 
 test('preload exposes a distinct read-only workspace graph board relay', async () => {
@@ -115,7 +134,7 @@ test('preload exposes a distinct read-only workspace graph board relay', async (
 test('preload declares each bridge namespace exactly once', async () => {
   const { source } = await loadPreload()
 
-  for (const namespace of ['orbMenu', 'releaseCamera', 'memoryBoard', 'graphBoard', 'nativeAudio', 'windowDrag', 'settings']) {
+  for (const namespace of ['orbMenu', 'releaseCamera', 'microphone', 'memoryBoard', 'graphBoard', 'nativeAudio', 'windowDrag', 'settings']) {
     const declarations = source.match(new RegExp(`^  ${namespace}: `, 'gm')) || []
     assert.equal(declarations.length, 1, `${namespace} is declared once`)
   }

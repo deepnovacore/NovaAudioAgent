@@ -47,6 +47,21 @@ test('provides stable accessible labels for permission disconnect and interrupti
   assert.ok(deriveOrbState({ ...base, playback: 'speaking' }).label)
 })
 
+test('keeps microphone recovery states distinct and actionable', () => {
+  for (const [microphone, name, copy] of [
+    ['permission_denied', 'permission-denied', /权限被拒绝/],
+    ['restricted', 'microphone-restricted', /系统策略/],
+    ['no_input_device', 'microphone-no-device', /未检测到/],
+    ['device_busy', 'microphone-busy', /占用/],
+    ['capture_unavailable', 'microphone-unavailable', /不可用/],
+    ['audio_pipeline_error', 'audio-pipeline-error', /音频管线/],
+  ]) {
+    const state = deriveOrbState({ ...base, microphone })
+    assert.equal(state.name, name, microphone)
+    assert.match(state.label, copy, microphone)
+  }
+})
+
 test('shows booting until the first connection instead of an immediate disconnect', () => {
   // The renderer's axes start out booting with connected=false, so a plain
   // "disconnected wins" precedence made 'booting' unreachable: the very first

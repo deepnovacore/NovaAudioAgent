@@ -28,6 +28,9 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:memory-board:export',
     'nova:memory-board:fetch',
     'nova:memory-board:request',
+    'nova:microphone:permission',
+    'nova:microphone:retry',
+    'nova:microphone:status',
     'nova:native-audio:capture',
     'nova:native-audio:clear',
     'nova:native-audio:event',
@@ -47,6 +50,23 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:workspace-graph-board:request',
   ])
   assert.doesNotMatch(source, /sendSync/)
+})
+
+test('microphone permission starts from the ready orb and every IPC edge is sender-bound', async () => {
+  const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const preload = await readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8')
+  const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  const start = main.slice(main.indexOf('async function start()'))
+  assert.doesNotMatch(start.slice(0, start.indexOf('\n}')), /resolveMicrophonePermission/)
+  assert.match(main, /ipcMain\.handle\('nova:microphone:permission', async event => \{\n\s*if \(!mainWindow \|\| event\.sender !== mainWindow\.webContents\)/)
+  assert.match(main, /resolveMicrophonePermission\(\{\s*platform: process\.platform,\s*systemPreferences,?\s*\}\)/)
+  assert.match(main, /ipcMain\.on\('nova:microphone:status', \(event, status\) => \{\n\s*if \(!mainWindow \|\| event\.sender !== mainWindow\.webContents\) return/)
+  assert.match(main, /ipcMain\.handle\('nova:microphone:retry', event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
+  assert.match(preload, /requestPermission: \(\) => ipcRenderer\.invoke\('nova:microphone:permission'\)/)
+  assert.match(preload, /report: status => ipcRenderer\.send\('nova:microphone:status', status\)/)
+  assert.match(renderer, /await window\.novaAudioAgentDesktop\.microphone\.requestPermission\(\)/)
+  assert.match(renderer, /preflightMicrophone\(\{[\s\S]*systemStatus:/)
 })
 
 test('main owns the fixed orb menu and validates every menu and board sender', async () => {
