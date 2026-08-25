@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { deriveOrbState } from '../src/renderer/state.mjs'
+import * as orbState from '../src/renderer/state.mjs'
+
+const { compactOrbLabel, deriveOrbState, ORB_STATE_NAMES } = orbState
 
 const base = {
   booting: false,
@@ -48,6 +50,51 @@ test('projects voice and Codex state into one compact visible line', () => {
 
   const waiting = deriveOrbState({ ...base, pendingConfirmation: true })
   assert.equal(waiting.statusLine, '待命 · Codex 等待确认')
+})
+
+test('explains incomplete configuration on the visible status line', () => {
+  const state = deriveOrbState({ ...base, backendState: 'configuration_required' })
+
+  assert.equal(state.statusLine, '配置不完整 · Codex 空闲')
+})
+
+test('uses a readable fallback instead of leaking undefined for a future state', () => {
+  assert.equal(compactOrbLabel('future-state'), '状态异常')
+})
+
+// The compact line is the only status text the transparent orb still shows, so
+// every state in the `data-state` vocabulary needs its own compact label.
+test('every orb state carries a compact label on the one visible status line', () => {
+  const inputs = {
+    booting: { ...base, booting: true, connected: false },
+    inactive: { ...base, activated: false },
+    idle: base,
+    candidate: { ...base, capture: 'candidate' },
+    listening: { ...base, capture: 'listening' },
+    speaking: { ...base, playback: 'speaking' },
+    interrupted: { ...base, playback: 'interrupted' },
+    muted: { ...base, muted: true },
+    'permission-denied': { ...base, microphone: 'permission_denied' },
+    'microphone-restricted': { ...base, microphone: 'restricted' },
+    'microphone-no-device': { ...base, microphone: 'no_input_device' },
+    'microphone-busy': { ...base, microphone: 'device_busy' },
+    'microphone-unavailable': { ...base, microphone: 'capture_unavailable' },
+    'audio-pipeline-error': { ...base, microphone: 'audio_pipeline_error' },
+    disconnected: { ...base, connected: false },
+    reconnecting: { ...base, backendState: 'reconnecting' },
+    'configuration-required': { ...base, backendState: 'configuration_required' },
+    'authentication-failed': { ...base, backendState: 'authentication_failed' },
+    'backend-unavailable': { ...base, backendState: 'unavailable' },
+    error: { ...base, error: 'boom' },
+  }
+
+  assert.deepEqual(Object.keys(inputs).sort(), [...ORB_STATE_NAMES].sort())
+  for (const name of ORB_STATE_NAMES) {
+    const state = deriveOrbState(inputs[name])
+    assert.equal(state.name, name, `${name} must be reachable`)
+    assert.doesNotMatch(state.statusLine, /undefined/u, `${name} needs a compact label`)
+    assert.match(state.statusLine, /^\S.* · Codex /u, `${name} statusLine shape`)
+  }
 })
 
 test('labels the browser AEC path without implying it is a fallback', () => {
@@ -102,6 +149,20 @@ test('derives candidate from the onset attack window', () => {
   assert.match(candidate.label, /检测到可能的语音/)
   // A confirmed onset outranks the attack window it grew out of.
   assert.equal(deriveOrbState({ ...base, capture: 'listening' }).name, 'listening')
+})
+
+test('muted outranks capture and playback but never faults', () => {
+  // The mic being off is the state the user acted on: it wins over anything
+  // the (now silent) capture or the still-audible playback would show.
+  assert.equal(deriveOrbState({ ...base, muted: true }).name, 'muted')
+  assert.equal(deriveOrbState({ ...base, muted: true, capture: 'listening' }).name, 'muted')
+  assert.equal(deriveOrbState({ ...base, muted: true, playback: 'speaking' }).name, 'muted')
+  assert.match(deriveOrbState({ ...base, muted: true }).label, /已闭麦/)
+  // Faults and errors still outrank a deliberate mute; inactive means there is
+  // nothing to mute.
+  assert.equal(deriveOrbState({ ...base, muted: true, error: 'boom' }).name, 'error')
+  assert.equal(deriveOrbState({ ...base, muted: true, connected: false }).name, 'disconnected')
+  assert.equal(deriveOrbState({ ...base, muted: true, activated: false }).name, 'inactive')
 })
 
 test('does not claim an AEC implementation before microphone activation', () => {

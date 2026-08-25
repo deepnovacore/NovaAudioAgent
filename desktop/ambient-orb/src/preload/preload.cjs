@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
   },
   orbMenu: Object.freeze({
     show: () => ipcRenderer.send('nova:orb-menu:show'),
+    openSettings: () => ipcRenderer.send('nova:settings:open'),
   }),
   releaseCamera: Object.freeze({
     report: result => ipcRenderer.send('nova:release-camera:result', result),

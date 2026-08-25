@@ -26,6 +26,8 @@ import { deriveOrbState } from './state.mjs'
 
 const shell = document.querySelector('#shell')
 const orb = document.querySelector('#orb')
+const muteToggle = document.querySelector('#mute-toggle')
+const openSettingsButton = document.querySelector('#open-settings')
 const stateLabel = document.querySelector('#state-label')
 const codexLabel = document.querySelector('#codex-label')
 const aecLabel = document.querySelector('#aec-label')
@@ -75,6 +77,7 @@ const visual = createOrbVisualSafe(document.querySelector('.orb-canvas'), {
 const axes = {
   booting: true,
   activated: false,
+  muted: false,
   capture: 'idle',
   playback: 'idle',
   codex: 'idle',
@@ -152,6 +155,9 @@ function render() {
   aecLabel.textContent = state.aecLabel
   orb.setAttribute('aria-label', `${state.label}；${state.codexLabel}`)
   orb.setAttribute('aria-pressed', String(axes.activated))
+  muteToggle.disabled = !axes.activated
+  muteToggle.setAttribute('aria-pressed', String(axes.muted))
+  muteToggle.setAttribute('aria-label', axes.muted ? '取消闭麦' : '闭麦')
   visual.setState(state.name, { codexWorking: axes.codex === 'working' })
 }
 
@@ -279,6 +285,34 @@ function scheduleNativeFrames() {
   }
 }
 
+// Soft mute: the capture device stays hot (both paths keep producing frames)
+// and the backend session stays up; the two ingress gates simply drop every
+// frame, so nothing reaches the socket, the onset tracker, or the orb level.
+//
+// The gates check at delivery time, but capture batches are ~10-20 ms (512
+// samples) and can straddle the unmute click — or arrive late out of a
+// stalled event queue — so audio captured while muted could otherwise slip
+// through right after unmute. Ingress therefore stays closed for a short
+// drain window after unmute; mute itself still lands instantly.
+const UNMUTE_DRAIN_MS = 120
+let muteDrainUntil = 0
+
+function microphoneGated() {
+  return axes.muted || performance.now() < muteDrainUntil
+}
+
+function toggleMute() {
+  if (!axes.activated) return
+  axes.muted = !axes.muted
+  if (axes.muted) {
+    onsetTracker.reset()
+    axes.capture = 'idle'
+  } else {
+    muteDrainUntil = performance.now() + UNMUTE_DRAIN_MS
+  }
+  render()
+}
+
 async function activateCapture() {
   if (axes.activated) return deactivateCapture()
   if (axes.activationPending) return
@@ -322,7 +356,7 @@ async function startBrowserCapture() {
     const nextSource = context.createMediaStreamSource(nextMedia)
     const nextProcessor = new AudioWorkletNode(context, 'nova-capture')
     nextProcessor.port.onmessage = event => {
-      if (!axes.activated || socket?.readyState !== WebSocket.OPEN) return
+      if (!axes.activated || microphoneGated() || socket?.readyState !== WebSocket.OPEN) return
       const samples = event.data
       if (!(samples instanceof Float32Array) || !samples.length) return
       const pcm = floatToPcm16(samples, context.sampleRate)
@@ -369,6 +403,7 @@ function stopCurrentNativePlayback() {
 async function deactivateCapture() {
   if (axes.activationPending) {
     axes.activated = false
+    axes.muted = false
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     onsetTracker.reset()
@@ -385,6 +420,7 @@ async function deactivateCapture() {
     releaseBrowserCapture()
     onsetTracker.reset()
     axes.activated = false
+    axes.muted = false
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     axes.activationPending = false
@@ -653,7 +689,7 @@ async function boot() {
     })
     window.novaAudioAgentDesktop.nativeAudio.onEvent(event => {
       if (event.type === 'audio') {
-        if (!nativeReady) return
+        if (!nativeReady || microphoneGated()) return
         const pcm = new Uint8Array(event.pcm)
         detectLocalOnset(pcm)
         if (socket?.readyState === WebSocket.OPEN) socket.send(pcm)
@@ -731,6 +767,8 @@ orb.addEventListener('contextmenu', event => {
   event.preventDefault()
   window.novaAudioAgentDesktop.orbMenu.show()
 })
+muteToggle.addEventListener('click', () => toggleMute())
+openSettingsButton.addEventListener('click', () => window.novaAudioAgentDesktop.orbMenu.openSettings?.())
 window.addEventListener('beforeunload', () => {
   socketRouter.dispose()
   cameraController.dispose()

@@ -134,12 +134,12 @@ function mediaStub() {
 }
 
 // The atlas layout, mirrored from orb-visual.mjs, which keeps these private: four
-// sprite sizes across, seven colour tiers down, each row SPRITE_MAX tall, and the
+// sprite sizes across, nine colour tiers down, each row SPRITE_MAX tall, and the
 // plate region below all of them. Used only to reason about the atlas geometry —
 // nothing here asserts a particular sprite size.
 const SPRITE_COLUMNS = 4
 const SPRITE_MAX = 15
-const ROW_COUNT = 7
+const ROW_COUNT = 9
 
 // Particle blits only. The plate is blitted from the same atlas at the top of
 // every frame, under 'source-over', so the additive operation is what separates
@@ -202,7 +202,7 @@ test('STATE_PARAMS carries the specified per-state behaviour values', () => {
     ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
       key => STATE_PARAMS.inactive[key],
     ),
-    [0.1, 0.02, 0.02, 0, 0.35, 0.4],
+    [0.1, 0.02, 0.02, 0, 0.5, 0.45],
   )
   assert.deepEqual(
     ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
@@ -220,7 +220,7 @@ test('STATE_PARAMS carries the specified per-state behaviour values', () => {
     ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
       key => STATE_PARAMS.listening[key],
     ),
-    [0.8, 0.1, 0.1, 0.6, 1, 1],
+    [0.8, 0.1, 0.1, 0.45, 1, 1],
   )
   assert.deepEqual(
     ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
@@ -248,7 +248,7 @@ test('the three terminal states share the alert language but not the behaviour',
   for (const name of ['disconnected', 'error', 'permission-denied']) {
     const params = STATE_PARAMS[name]
     assert.equal(params.convergence, 0.9, `${name}.convergence`)
-    assert.equal(params.alpha, 0.5, `${name}.alpha`)
+    assert.equal(params.alpha, 0.6, `${name}.alpha`)
     assert.equal(params.pulseGain, 0, `${name}.pulseGain`)
     assert.equal(params.tone, 'alert', `${name}.tone`)
     assert.ok(params.ringRadius > 0, `${name} collapses onto a ring`)
@@ -269,6 +269,17 @@ test('the three terminal states share the alert language but not the behaviour',
       key => STATE_PARAMS['permission-denied'][key],
     ),
     [28, 0.35, 0.02, 0.04],
+  )
+})
+
+test('muted is a deliberate dim ring, not an alert', () => {
+  const params = STATE_PARAMS.muted
+  assert.equal(params.tone, 'dim', 'user action, not an error')
+  assert.deepEqual(
+    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'ringRadius'].map(
+      key => params[key],
+    ),
+    [0.75, 0.03, 0.04, 0, 0.6, 0.6, 32],
   )
 })
 
@@ -331,7 +342,10 @@ test('paletteColors returns the exact ember table', () => {
     ring: 'rgba(255, 214, 156, .22)',
     codexBand: '#FFD9A0',
     error: '#FF5A5A',
-    inactive: '#6E6A63',
+    errorDeep: '#A8434F',
+    inactive: '#938878',
+    inactiveDeep: '#57524A',
+    ringAlert: 'rgba(255, 106, 106, .3)',
   })
   // The haze list and its entries are frozen too: the plate is built from this
   // table on every atlas rebuild, so a mutable entry would let one palette swap
@@ -362,6 +376,10 @@ test('paletteColors returns the exact graphite table', () => {
     ring: 'rgba(232, 236, 242, .18)',
     accent: '#FFC978',
     error: '#FF6B6B',
+    errorDeep: '#9E4757',
+    inactive: '#98A0AB',
+    inactiveDeep: '#5E6774',
+    ringAlert: 'rgba(255, 128, 128, .26)',
   })
   assert.ok(Object.isFrozen(graphite.haze))
   for (const cloud of graphite.haze) assert.ok(Object.isFrozen(cloud))
@@ -454,7 +472,7 @@ test('the plate is composited into the atlas once, then only blitted per frame',
   assert.equal(mounted.offscreen.length, 1, 'still a single offscreen texture')
   const atlas = mounted.offscreen[0]
   const gradientsAfterInit = atlas.calls.gradients
-  // Four sprite sizes across seven tiers, plus the plate's own base, haze, and
+  // Four sprite sizes across nine tiers, plus the plate's own base, haze, and
   // vignette gradients: the plate's share is what the sprite grid cannot explain.
   assert.ok(
     gradientsAfterInit > SPRITE_COLUMNS * ROW_COUNT,
@@ -981,6 +999,21 @@ test('the orb markup hosts the particle canvas instead of gradient spans', async
   assert.match(html, /id="state-label"/)
 })
 
+test('the orb rail carries the mute toggle and settings buttons', async () => {
+  const html = await readFile(new URL('../src/renderer/index.html', import.meta.url), 'utf8')
+  assert.match(html, /<nav id="orb-rail" aria-label="快捷操作">/)
+  assert.match(html, /<button id="mute-toggle" type="button" aria-label="闭麦" aria-pressed="false" disabled>/)
+  assert.match(html, /<button id="open-settings" type="button" aria-label="设置">/)
+
+  const css = await readFile(new URL('../src/renderer/index.css', import.meta.url), 'utf8')
+  assert.match(css, /#orb-rail \{/)
+  // Keyboard focus keeps the rail open; plain click focus must not, or one
+  // click would pin the rail visible after the pointer leaves.
+  assert.match(css, /body:hover #orb-rail,\n#orb-rail:has\(:focus-visible\) \{/)
+  const fixture = await readFile(new URL('./fixtures/orb-transparency.html', import.meta.url), 'utf8')
+  assert.match(fixture, /id="orb-rail"/)
+})
+
 test('the stylesheet drops the gradient sphere but keeps the accessibility overrides', async () => {
   const css = await readFile(new URL('../src/renderer/index.css', import.meta.url), 'utf8')
 
@@ -1050,6 +1083,7 @@ test('STATE_FPS covers every orb state and tiers them by how much they move', ()
     idle: 15,
     // Zero means one static frame and no loop at all.
     inactive: 0,
+    muted: 0,
     disconnected: 0,
     'configuration-required': 0,
     'authentication-failed': 0,
@@ -1151,11 +1185,13 @@ test('a hidden document stops the loop and becoming visible resumes it', () => {
   assert.equal(listeners.has('visibilitychange'), false, 'destroy unhooks the document')
 })
 
-// The envelope is exponential with a 40 ms attack and a 220 ms decay time
-// constant: one constant covers 1 - e^-1 = 63.2% of the remaining distance.
-test('the level envelope attacks over 40 ms and decays over 220 ms', () => {
+// The speaking envelope is exponential with a 40 ms attack and a 220 ms decay
+// time constant: one constant covers 1 - e^-1 = 63.2% of the remaining
+// distance. Without an injected playback meter, speaking falls back to the mic
+// level, which is what lets setLevel drive this test.
+test('the speaking level envelope attacks over 40 ms and decays over 220 ms', () => {
   const mounted = mount()
-  mounted.visual.setState('listening')
+  mounted.visual.setState('speaking')
   mounted.step()
   assert.equal(mounted.visual.smoothedLevel, 0)
 
@@ -1181,6 +1217,96 @@ test('the level envelope attacks over 40 ms and decays over 220 ms', () => {
   mounted.visual.destroy()
 })
 
+// Listening is an acknowledgment, not a meter: its envelope is deliberately
+// slower (140 ms attack, 480 ms decay), so the field holds a gentle
+// contraction across word gaps instead of releasing at syllable rate.
+test('the listening envelope is calmer: 140 ms attack, 480 ms decay', () => {
+  const mounted = mount()
+  mounted.visual.setState('listening')
+  mounted.step()
+  assert.equal(mounted.visual.smoothedLevel, 0)
+
+  // Each step stays under the 50 ms per-frame budget; the totals land exactly
+  // on one time constant each.
+  mounted.visual.setLevel(1)
+  for (let index = 0; index < 4; index += 1) mounted.step(35)
+  assert.ok(
+    Math.abs(mounted.visual.smoothedLevel - 0.6321) < 0.005,
+    `attack reaches 63% in 140 ms, got ${mounted.visual.smoothedLevel}`,
+  )
+
+  mounted.visual.setLevel(0)
+  for (let index = 0; index < 12; index += 1) mounted.step(40)
+  assert.ok(
+    Math.abs(mounted.visual.smoothedLevel - 0.2325) < 0.005,
+    `decay falls to 36.8% after 480 ms, got ${mounted.visual.smoothedLevel}`,
+  )
+
+  // A single 40 ms step must not land the syllable the way speaking's attack
+  // does: listening climbs only about a quarter of the remaining distance.
+  mounted.visual.setLevel(1)
+  mounted.step(40)
+  assert.ok(
+    mounted.visual.smoothedLevel < 0.45,
+    `listening must not attack at speaking speed, got ${mounted.visual.smoothedLevel}`,
+  )
+  mounted.visual.destroy()
+})
+
+// A direction change is a crossfade, not a switch: the envelope pair follows
+// the *rendered* pulse, which eases between directions over PARAM_TAU. After
+// speaking→listening the residual outward pulse (~210 ms of easing) must
+// drain at speaking's 220 ms decay — holding outward energy under the calm
+// 480 ms constant would push the field the wrong way. Only once the pulse
+// actually points inward does listening's decay take over.
+test('a speaking-to-listening switch drains outward energy fast, then decays calm', () => {
+  const mounted = mount()
+  mounted.visual.setState('speaking')
+  mounted.step()
+  mounted.visual.setLevel(1)
+  // 900 ms: the pulse eases to ~+1 and the level saturates.
+  for (let index = 0; index < 20; index += 1) mounted.step(45)
+
+  mounted.visual.setState('listening')
+  mounted.visual.setLevel(0)
+  // First 200 ms: the smoothed pulse is still outward (zero-crossing ~210 ms),
+  // so every step here must decay at speaking's 220 ms constant.
+  for (let index = 0; index < 4; index += 1) mounted.step(50)
+  assert.ok(
+    Math.abs(mounted.visual.smoothedLevel - 0.4029) < 0.005,
+    `outward residue drains at speaking speed, got ${mounted.visual.smoothedLevel}`,
+  )
+
+  // Next 400 ms: the pulse has crossed inward, so the 480 ms decay owns the
+  // release from here on.
+  for (let index = 0; index < 8; index += 1) mounted.step(50)
+  assert.ok(
+    Math.abs(mounted.visual.smoothedLevel - 0.1751) < 0.005,
+    `once inward the calm decay owns the release, got ${mounted.visual.smoothedLevel}`,
+  )
+  mounted.visual.destroy()
+})
+
+// The normal onset path is idle → candidate → listening, with the microphone
+// already hot during candidate. Zero-pulse states absorb no amplitude, so the
+// calm 140 ms attack actually plays from zero instead of arriving saturated.
+test('candidate does not precharge the envelope: listening attacks calm from zero', () => {
+  const mounted = mount()
+  mounted.visual.setState('candidate')
+  mounted.step()
+  mounted.visual.setLevel(1)
+  for (let index = 0; index < 6; index += 1) mounted.step(50)
+  assert.equal(mounted.visual.smoothedLevel, 0, 'a pulseless state absorbs nothing')
+
+  mounted.visual.setState('listening')
+  for (let index = 0; index < 4; index += 1) mounted.step(35)
+  assert.ok(
+    Math.abs(mounted.visual.smoothedLevel - 0.6321) < 0.005,
+    `listening attacks from zero over 140 ms, got ${mounted.visual.smoothedLevel}`,
+  )
+  mounted.visual.destroy()
+})
+
 test('while speaking the level is pulled from the injected playback source', () => {
   let playbackLevel = 0
   const mounted = mount({ getSpeakingLevel: () => playbackLevel })
@@ -1196,10 +1322,11 @@ test('while speaking the level is pulled from the injected playback source', () 
   )
   assert.equal(mounted.visual.level, 0, 'the microphone level is untouched by the pull')
 
-  // Listening reads the microphone instead: the playback meter must not leak in.
+  // Listening reads the microphone instead: the playback meter must not leak
+  // in. Its decay constant is 480 ms, so draining takes more frames here.
   mounted.visual.setState('listening')
   mounted.visual.setLevel(0)
-  for (let index = 0; index < 20; index += 1) mounted.step(44)
+  for (let index = 0; index < 40; index += 1) mounted.step(44)
 
   assert.ok(
     mounted.visual.smoothedLevel < 0.05,

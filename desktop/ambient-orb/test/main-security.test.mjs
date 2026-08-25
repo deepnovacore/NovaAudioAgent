@@ -41,6 +41,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:release-camera:result',
     'nova:settings:changed',
     'nova:settings:get',
+    'nova:settings:open',
     'nova:settings:set',
     'nova:window-drag:end',
     'nova:window-drag:move',
@@ -105,6 +106,17 @@ test('registers the orb context-menu channel exactly once', async () => {
 
   const registrations = source.match(/ipcMain\.on\(\s*'nova:orb-menu:show'/g) || []
   assert.equal(registrations.length, 1)
+})
+
+test('registers the settings-open channel exactly once and sender-bound', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  const registrations = source.match(/ipcMain\.on\(\s*'nova:settings:open'/g) || []
+  assert.equal(registrations.length, 1)
+  assert.match(
+    source,
+    /ipcMain\.on\('nova:settings:open', event => \{\n    if \(mainWindow && event\.sender === mainWindow\.webContents\) openSettingsWindow\(launchId\)\n  \}\)/,
+  )
 })
 
 test('the orb menu opens the settings panel above the quit separator', async () => {
@@ -511,4 +523,22 @@ test('drag and orb menu paths stay sender validated and bounded', async () => {
   assert.match(rendererSource, /dragGesture\.consumeClick\(\)/)
   assert.match(rendererSource, /event\.preventDefault\(\)/)
   assert.match(rendererSource, /window\.novaAudioAgentDesktop\.orbMenu\.show\(\)/)
+})
+
+test('the mute toggle drops microphone input at both ingress points', async () => {
+  const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  // Both PCM ingress gates consult the mute gate before anything is consumed.
+  assert.match(renderer, /if \(!axes\.activated \|\| microphoneGated\(\) \|\| socket\?\.readyState !== WebSocket\.OPEN\) return/)
+  assert.match(renderer, /if \(!nativeReady \|\| microphoneGated\(\)\) return/)
+  // The gate covers mute itself plus a drain window after unmute, so capture
+  // batches that straddle the unmute click (or arrive late from a stalled
+  // queue) never leak audio that was recorded while muted.
+  assert.match(renderer, /return axes\.muted \|\| performance\.now\(\) < muteDrainUntil/)
+  assert.match(renderer, /const UNMUTE_DRAIN_MS = 120/)
+  assert.match(renderer, /muteDrainUntil = performance\.now\(\) \+ UNMUTE_DRAIN_MS/)
+  // Deactivation discards the session's mute, and the rail buttons are wired.
+  assert.match(renderer, /axes\.muted = false/)
+  assert.match(renderer, /muteToggle\.addEventListener\('click', \(\) => toggleMute\(\)\)/)
+  assert.match(renderer, /openSettingsButton\.addEventListener\('click', \(\) => window\.novaAudioAgentDesktop\.orbMenu\.openSettings\?\.\(\)\)/)
 })

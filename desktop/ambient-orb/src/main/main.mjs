@@ -601,6 +601,9 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   ipcMain.on('nova:orb-menu:show', event => {
     if (mainWindow && event.sender === mainWindow.webContents) showOrbMenu(launchId)
   })
+  ipcMain.on('nova:settings:open', event => {
+    if (mainWindow && event.sender === mainWindow.webContents) openSettingsWindow(launchId)
+  })
   ipcMain.handle('nova:memory-board:request', event => {
     if (!boardWindow || event.sender !== boardWindow.webContents) {
       throw new Error('memory board request rejected')

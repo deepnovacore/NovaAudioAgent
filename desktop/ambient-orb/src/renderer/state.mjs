@@ -6,6 +6,7 @@ const LABELS = Object.freeze({
   listening: '正在聆听',
   speaking: 'Nova Audio Agent 正在说话',
   interrupted: '播放已中断，正在聆听',
+  muted: '已闭麦，暂停接收麦克风输入',
   'permission-denied': '麦克风权限被拒绝',
   'microphone-restricted': '麦克风被系统策略限制',
   'microphone-no-device': '未检测到麦克风输入设备',
@@ -20,6 +21,9 @@ const LABELS = Object.freeze({
   error: 'Nova Audio Agent 发生错误',
 })
 
+// The compact line is the only status text the transparent orb still shows, so
+// keep its expected states concise and fall back to readable copy if a future
+// state reaches the renderer before this table is extended.
 const COMPACT_LABELS = Object.freeze({
   booting: '启动中',
   inactive: '未启用',
@@ -28,10 +32,26 @@ const COMPACT_LABELS = Object.freeze({
   listening: '聆听中',
   speaking: '回复中',
   interrupted: '聆听中',
+  muted: '已闭麦',
   'permission-denied': '麦克风未授权',
+  'microphone-restricted': '麦克风被限制',
+  'microphone-no-device': '无麦克风',
+  'microphone-busy': '麦克风被占用',
+  'microphone-unavailable': '麦克风不可用',
+  'audio-pipeline-error': '音频管线错误',
   disconnected: '已断开',
+  reconnecting: '重连中',
+  'configuration-required': '配置不完整',
+  'authentication-failed': '鉴权失败',
+  'backend-unavailable': '后台不可用',
   error: '出错',
 })
+
+export function compactOrbLabel(name) {
+  return typeof name === 'string' && Object.hasOwn(COMPACT_LABELS, name)
+    ? COMPACT_LABELS[name]
+    : '状态异常'
+}
 
 // The single source of truth for the `data-state` vocabulary: the visual layer
 // derives its per-state parameters from this list rather than restating it.
@@ -65,6 +85,9 @@ export function deriveOrbState(input) {
   else if (microphone === 'audio_pipeline_error') name = 'audio-pipeline-error'
   else if (input.booting) name = 'booting'
   else if (!input.activated) name = 'inactive'
+  // A deliberate mute outranks capture and playback: the mic being off is the
+  // state the user acted on, and playback stays audible while it shows.
+  else if (input.muted) name = 'muted'
   else if (input.capture === 'listening') name = 'listening'
   else if (input.capture === 'candidate') name = 'candidate'
   else if (input.playback === 'interrupted') name = 'interrupted'
@@ -87,7 +110,7 @@ export function deriveOrbState(input) {
   return Object.freeze({
     name,
     label,
-    statusLine: `${COMPACT_LABELS[name]} · ${compactCodexStatus}`,
+    statusLine: `${compactOrbLabel(name)} · ${compactCodexStatus}`,
     codexLabel: [...project, codexStatus].join(' · '),
     aecLabel: input.audioMode === 'voice_processing_io'
       ? '系统级 AEC'

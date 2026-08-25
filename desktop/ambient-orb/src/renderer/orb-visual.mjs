@@ -41,12 +41,17 @@ const SCATTER_PX = 16
 const PARAM_TAU = 180
 const SCATTER_TAU = 260
 
-// Amplitude envelope: a syllable has to land on the field immediately, but the
-// field must not flicker back to nothing between two of them. Both numbers are
+// Amplitude envelopes, one pair per pulse direction. All four numbers are
 // exponential time constants — one constant covers 1 - e^-1 = 63.2% of the
-// remaining distance — so the attack is fast and the release is slow.
+// remaining distance. Speaking (outward) keeps the fast pair: a syllable has
+// to land on the field immediately, but must not flicker back to nothing
+// before the next one. Listening (inward) is an acknowledgment, not a meter:
+// the slow pair holds a gentle contraction across word gaps (200-400 ms)
+// instead of releasing at syllable rate, and relaxes over ~1.5 s of silence.
 const LEVEL_ATTACK_MS = 40
 const LEVEL_DECAY_MS = 220
+const LISTEN_ATTACK_MS = 140
+const LISTEN_DECAY_MS = 480
 
 const MAX_FRAME_MS = 50
 const FIRST_FRAME_MS = 16
@@ -71,7 +76,9 @@ const ROW_DUST = 3
 const ROW_CODEX = 4
 const ROW_ALERT = 5
 const ROW_DIM = 6
-const ROW_COUNT = 7
+const ROW_ALERT_DEEP = 7
+const ROW_DIM_DEEP = 8
+const ROW_COUNT = 9
 
 // Plate composition. The plate used to be one flat translucent fill, which read
 // as a coin: a disc of uniform brightness carries no depth cue at all, so the
@@ -106,7 +113,10 @@ const EMBER = Object.freeze({
   ring: 'rgba(255, 214, 156, .22)',
   codexBand: '#FFD9A0',
   error: '#FF5A5A',
-  inactive: '#6E6A63',
+  errorDeep: '#A8434F',
+  inactive: '#938878',
+  inactiveDeep: '#57524A',
+  ringAlert: 'rgba(255, 106, 106, .3)',
 })
 
 const GRAPHITE = Object.freeze({
@@ -127,6 +137,10 @@ const GRAPHITE = Object.freeze({
   ring: 'rgba(232, 236, 242, .18)',
   accent: '#FFC978',
   error: '#FF6B6B',
+  errorDeep: '#9E4757',
+  inactive: '#98A0AB',
+  inactiveDeep: '#5E6774',
+  ringAlert: 'rgba(255, 128, 128, .26)',
 })
 
 const PALETTES = Object.freeze({ ember: EMBER, graphite: GRAPHITE })
@@ -165,7 +179,7 @@ const LISTENING = stateParams({
   convergence: 0.8,
   orbitSpeed: 0.1,
   jitter: 0.1,
-  pulseGain: 0.6,
+  pulseGain: 0.45,
   pulseDirection: -1,
   alpha: 1,
   countRatio: 1,
@@ -183,7 +197,7 @@ function collapseParams({ ringRadius, countRatio, orbitSpeed, jitter = 0.04 }) {
     orbitSpeed,
     jitter,
     pulseGain: 0,
-    alpha: 0.5,
+    alpha: 0.6,
     countRatio,
     ringRadius,
     tone: 'alert',
@@ -204,8 +218,10 @@ export const STATE_PARAMS = Object.freeze({
     orbitSpeed: 0.02,
     jitter: 0.02,
     pulseGain: 0,
-    alpha: 0.35,
-    countRatio: 0.4,
+    alpha: 0.5,
+    // Must stay below 0.5: the resting field is defined as visibly thinner
+    // than half of idle's.
+    countRatio: 0.45,
     tone: 'dim',
   }),
   idle: stateParams({
@@ -240,6 +256,19 @@ export const STATE_PARAMS = Object.freeze({
   // without the microphone taking over — and owns the impulse size that
   // interrupt() reuses for a barge-in over any other state.
   interrupted: Object.freeze({ ...LISTENING, scatter: 1 }),
+  // A deliberate mute: collapsed like the terminal family so it reads as
+  // "not receiving", but dim-toned and mid-sized — the user chose this, so it
+  // must not borrow the alert red. Static (0 fps): nothing it shows moves.
+  muted: stateParams({
+    convergence: 0.75,
+    orbitSpeed: 0.03,
+    jitter: 0.04,
+    pulseGain: 0,
+    alpha: 0.6,
+    countRatio: 0.6,
+    ringRadius: 32,
+    tone: 'dim',
+  }),
   // A dropped backend: the widest, sparsest, slowest ring — the field simply
   // stopped where it was.
   disconnected: collapseParams({ ringRadius: RING_RADIUS, countRatio: 0.5, orbitSpeed: 0.03 }),
@@ -279,6 +308,7 @@ export const STATE_FPS = Object.freeze({
   booting: 30,
   idle: 15,
   inactive: 0,
+  muted: 0,
   disconnected: 0,
   reconnecting: 30,
   'configuration-required': 0,
@@ -348,14 +378,13 @@ function spriteRows(name) {
       [colors.shadow, 0.25],
       [colors.accent, 1],
       [colors.error, 1],
-      // ROW_DIM (the 'inactive' tone) used to bake `shadow` (#3A404A, a dark
-      // blue-grey) at full row alpha, then let the state's own 0.35 alpha and
-      // 'lighter' compositing crush it further: over the dark plate that was
-      // reliably unreadable. The exported GRAPHITE hex table stays untouched;
-      // only this row swaps to the mid tone at a reduced baked alpha, closer
-      // to how EMBER's own dim tier (`inactive`, a mid-brightness brown-grey)
-      // already reads at the same state alpha.
-      [colors.mid, 0.6],
+      // Toned states draw from explicit dim/alert hexes in two depth tiers
+      // (ROW_ALERT/ROW_DIM plus the _DEEP rows): the hexes are picked bright
+      // enough to survive the state's own alpha over the dark plate, and the
+      // deep tier keeps the far field from collapsing into one flat colour.
+      [colors.inactive, 1],
+      [colors.errorDeep, 1],
+      [colors.inactiveDeep, 1],
     ]
   }
   return [
@@ -366,6 +395,8 @@ function spriteRows(name) {
     [colors.codexBand, 1],
     [colors.error, 1],
     [colors.inactive, 1],
+    [colors.errorDeep, 1],
+    [colors.inactiveDeep, 1],
   ]
 }
 
@@ -706,12 +737,25 @@ export function createOrbVisual(canvas, options = {}) {
     targetRadius = approach(targetRadius, params.ringRadius || CORE_RADIUS, elapsedMs, PARAM_TAU)
     ringOpacity = approach(ringOpacity, params.ringRadius ? 1 : 0, elapsedMs, PARAM_TAU)
     pulse = approach(pulse, params.pulseGain * params.pulseDirection, elapsedMs, PARAM_TAU)
-    const nextLevel = levelTarget()
+    // States without a pulse absorb no amplitude: while idle/candidate watch
+    // the microphone the envelope drains instead of precharging at speaking
+    // speed, so listening's calm attack actually plays on the normal onset
+    // path (idle → candidate → listening) rather than starting saturated.
+    const nextLevel = params.pulseGain === 0 ? 0 : levelTarget()
+    // Inward pulses (listening, and interrupted which spreads it) take the
+    // calm envelope; outward (speaking) keeps the fast one. Keyed off the
+    // *smoothed* pulse, not the target state: during a speaking→listening
+    // transition the rendered pulse stays outward for ~200 ms, and leftover
+    // outward energy must drain at speaking speed rather than be held by the
+    // slow envelope in the wrong direction.
+    const calm = pulse < 0
     levelSmoothed = approach(
       levelSmoothed,
       nextLevel,
       elapsedMs,
-      nextLevel > levelSmoothed ? LEVEL_ATTACK_MS : LEVEL_DECAY_MS,
+      nextLevel > levelSmoothed
+        ? (calm ? LISTEN_ATTACK_MS : LEVEL_ATTACK_MS)
+        : (calm ? LISTEN_DECAY_MS : LEVEL_DECAY_MS),
     )
     scatter *= Math.exp(-elapsedMs / SCATTER_TAU)
     if (scatter < 0.001) scatter = 0
@@ -766,7 +810,7 @@ export function createOrbVisual(canvas, options = {}) {
 
     if (ringOpacity > 0.01) {
       context.globalAlpha = ringOpacity
-      context.strokeStyle = colors.ring
+      context.strokeStyle = params.tone === 'alert' ? colors.ringAlert : colors.ring
       context.lineWidth = 1.5
       context.beginPath()
       // The smoothed target radius, not a constant: each terminal state
@@ -780,7 +824,10 @@ export function createOrbVisual(canvas, options = {}) {
     context.globalCompositeOperation = 'lighter'
 
     const tone = params.tone
+    // A toned state (alert/dim) keeps a near/far split instead of one flat
+    // colour: the far field (homeRadius past 0.55) drops to the deep tier.
     const overrideRow = tone === 'alert' ? ROW_ALERT : tone === 'dim' ? ROW_DIM : -1
+    const overrideDeepRow = tone === 'alert' ? ROW_ALERT_DEEP : tone === 'dim' ? ROW_DIM_DEEP : -1
     const active = Math.max(0, Math.min(activeMax, Math.round(total * countRatio)))
     const pulseOffset = levelSmoothed * pulse * PULSE_PX
 
@@ -808,7 +855,9 @@ export function createOrbVisual(canvas, options = {}) {
       const floor = 0.78 - 0.36 * depth
       const swing = 0.2 + 0.32 * depth
       blit(
-        overrideRow >= 0 ? overrideRow : tierRow[index],
+        overrideRow >= 0
+          ? (homeRadius[index] > 0.55 ? overrideDeepRow : overrideRow)
+          : tierRow[index],
         sizeIndex[index],
         CENTER + Math.cos(heading) * radius,
         CENTER + Math.sin(heading) * radius,

@@ -24,6 +24,7 @@ body[data-opaque="1"] {
 }
 
 #shell {
+  position: relative;
   width: 100%;
   height: 100%;
   display: grid;
@@ -79,6 +80,66 @@ body[data-opaque="1"] {
 }
 
 [aria-pressed="true"] .capture-indicator { background: #43f1a6; }
+
+/* The hover rail: quick actions live on the window's right-edge slack (34px
+   between the disc and the window edge), revealed by hovering the window or
+   focusing a rail button. Icons are inline SVG because the CSP (img-src
+   'none') and the nova:// asset allowlist rule out every image path. */
+#orb-rail {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+
+/* Keyboard focus (:focus-visible) keeps the rail open; plain click focus must
+   not, or one click would pin the rail visible after the pointer leaves. */
+body:hover #orb-rail,
+#orb-rail:has(:focus-visible) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#orb-rail button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 50%;
+  background: rgba(7, 6, 11, .82);
+  color: rgba(244, 248, 255, .8);
+  cursor: pointer;
+}
+
+#orb-rail button:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, .28);
+  color: #fff;
+}
+
+#orb-rail button:disabled { opacity: .4; cursor: default; }
+
+#orb-rail svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  pointer-events: none;
+}
+
+#mute-toggle .icon-mic-off { display: none; }
+#mute-toggle[aria-pressed="true"] .icon-mic { display: none; }
+#mute-toggle[aria-pressed="true"] .icon-mic-off { display: block; }
+#mute-toggle[aria-pressed="true"] {
+  border-color: rgba(255, 106, 106, .4);
+  color: #ff6a6a;
+}
 
 #state-label, #codex-label, #aec-label {
   max-width: 172px;
@@ -149,4 +210,6 @@ body[data-opaque="1"] {
   [data-state="permission-denied"] #orb::after { background: #ff3b30; }
   .capture-indicator { z-index: 1; }
   #state-label, #codex-label, #aec-label { color: white; text-shadow: none; }
+  #orb-rail button { border: 2px solid white; background: black; color: white; }
+  #mute-toggle[aria-pressed="true"] { color: #ff3b30; border-color: #ff3b30; }
 }
