@@ -2,9 +2,9 @@
 
 const assert = require('node:assert/strict')
 const {closeSync, mkdirSync, mkdtempSync, openSync, rmSync} = require('node:fs')
-const {tmpdir} = require('node:os')
+const {homedir} = require('node:os')
 const {join} = require('node:path')
-const {spawn} = require('node:child_process')
+const {spawn, spawnSync} = require('node:child_process')
 
 const addonPath = process.argv[2]
 if (addonPath === undefined) process.exit(0)
@@ -23,6 +23,15 @@ function openDirectory(path) {
   return openSync(path, process.platform === 'darwin' ? 0x100000 : 0)
 }
 
+function openNativeDirectory(path) {
+  const opened = addon.openDirectory(path)
+  assert.equal(opened.status, 'ok', JSON.stringify(opened))
+  assert.equal(Number.isInteger(opened.descriptor), true)
+  assert.equal(opened.descriptor >= 0, true)
+  assert.equal(typeof opened.close, 'function')
+  return opened
+}
+
 if (mode === 'hold') {
   const descriptor = openSync(lockPath, 'r+')
   const held = addon.acquire(descriptor)
@@ -30,13 +39,23 @@ if (mode === 'hold') {
   closeSync(descriptor)
   process.stdout.write('locked\n')
   setInterval(() => {}, 1_000)
+} else if (mode === 'open-path') {
+  const handle = openNativeDirectory(lockPath)
+  handle.close()
+  process.stdout.write('project native open passed\n')
 } else {
   void (async () => {
-    const container = mkdtempSync(join(tmpdir(), 'nova-project-native-behavior-'))
+    const homeHandle = openNativeDirectory(homedir())
+    assert.equal(homeHandle.close(), undefined)
+    assert.equal(homeHandle.close(), undefined)
+
+    const container = mkdtempSync(join(process.cwd(), 'build', 'nova-project-native-behavior-'))
     const root = join(container, 'root')
     mkdirSync(root)
-    const containerDescriptor = openDirectory(container)
-    const rootDescriptor = openDirectory(root)
+    const containerHandle = openNativeDirectory(container)
+    const rootHandle = openNativeDirectory(root)
+    const containerDescriptor = containerHandle.descriptor
+    const rootDescriptor = rootHandle.descriptor
     let lockChild = null
     try {
       const bootstrapDirectory = addon.mkdirPrivateAt(rootDescriptor, 'bootstrap-root')
@@ -84,6 +103,27 @@ if (mode === 'hold') {
         )
       } finally {
         closeSync(repairDescriptor)
+      }
+
+      if (process.platform === 'win32') {
+        const readonlyDirectory = join(root, 'repair-readonly')
+        mkdirSync(readonlyDirectory)
+        const restricted = spawnSync('icacls.exe', [
+          readonlyDirectory,
+          '/inheritance:r',
+          '/grant:r',
+          `${process.env.USERNAME}:(OI)(CI)(RX)`,
+        ], {encoding: 'utf8', windowsHide: true})
+        assert.equal(restricted.status, 0, restricted.stderr || restricted.stdout)
+        const readonlyHandle = openNativeDirectory(readonlyDirectory)
+        try {
+          assert.deepEqual(
+            addon.protectAt(rootDescriptor, 'repair-readonly', readonlyHandle.descriptor),
+            {status: 'ok'},
+          )
+        } finally {
+          readonlyHandle.close()
+        }
       }
 
       const directory = addon.mkdirAt(rootDescriptor, 'workspace-01')
@@ -141,8 +181,8 @@ if (mode === 'hold') {
           delay(1_000),
         ])
       }
-      closeSync(rootDescriptor)
-      closeSync(containerDescriptor)
+      assert.equal(rootHandle.close(), undefined)
+      assert.equal(containerHandle.close(), undefined)
       rmSync(container, {recursive: true, force: true})
     }
     process.stdout.write('project native behavior passed\n')

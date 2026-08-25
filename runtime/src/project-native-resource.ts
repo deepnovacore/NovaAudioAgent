@@ -28,13 +28,21 @@ const PROJECT_ADDON_ID = 'project_native_addon'
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
-  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'probe', 'protectAt',
-  'renameAt', 'unlinkAt',
+  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'openDirectory',
+  'probe', 'protectAt', 'renameAt', 'unlinkAt',
 ])
+
+export interface ProjectDirectoryHandle {
+  readonly fd: number
+  close(): void
+}
 
 export interface ProjectNativeHost {
   readonly nativeLocks: NativeFileLockAuthority
   readonly rootFiles: ProjectRootFileAuthority
+  readonly directoryHandles: Readonly<{
+    open(path: string): ProjectDirectoryHandle
+  }>
   /** Protects a retained child selected descriptor-relatively by the host. */
   protectDirectoryAt(root: number, name: string, child: number): boolean
   /** Creates a protected private child below an owned, not-yet-private parent. */
@@ -49,16 +57,13 @@ export function protectDefaultProjectDirectories(
     managedRoot: string | null
     workspace: string | null
     pathApi?: PlatformPath
-    directoryHandles?: Readonly<{
-      open(path: string): number
-      close(descriptor: number): void
-    }>
+    directoryHandles?: Readonly<{open(path: string): ProjectDirectoryHandle}>
   }>,
 ): boolean {
   const joinPath = (...parts: string[]): string => paths.pathApi?.join(...parts) ?? join(...parts)
   const dirnamePath = (path: string): string => paths.pathApi?.dirname(path) ?? dirname(path)
   const basenamePath = (path: string): string => paths.pathApi?.basename(path) ?? basename(path)
-  const handles = paths.directoryHandles ?? defaultProjectDirectoryHandles
+  const handles = paths.directoryHandles ?? host.directoryHandles
   const productRoot = joinPath(paths.homeDirectory, '.nova-audio-agent')
   const defaults = new Set([
     joinPath(productRoot, 'state'),
@@ -77,46 +82,33 @@ export function protectDefaultProjectDirectories(
   return true
 }
 
-const defaultProjectDirectoryHandles = Object.freeze({
-  open: (path: string): number => openSync(
-    path,
-    fsConstants.O_RDONLY
-      | (fsConstants.O_DIRECTORY ?? 0)
-      | (fsConstants.O_NOFOLLOW ?? 0),
-  ),
-  close: (descriptor: number): void => { closeSync(descriptor) },
-})
-
 function protectDefaultDirectory(
   host: ProjectNativeHost,
   parentPath: string,
   name: string,
   path: string,
-  handles: Readonly<{
-    open(path: string): number
-    close(descriptor: number): void
-  }>,
+  handles: Readonly<{open(path: string): ProjectDirectoryHandle}>,
 ): boolean {
-  let parent: number | null = null
-  let child: number | null = null
+  let parent: ProjectDirectoryHandle | null = null
+  let child: ProjectDirectoryHandle | null = null
   let protectedDirectory = false
   let closed = true
   try {
     parent = handles.open(parentPath)
     child = handles.open(path)
     if (
-      !Number.isSafeInteger(parent) || parent < 0
-      || !Number.isSafeInteger(child) || child < 0
+      !Number.isSafeInteger(parent.fd) || parent.fd < 0
+      || !Number.isSafeInteger(child.fd) || child.fd < 0
     ) return false
-    protectedDirectory = host.protectDirectoryAt(parent, name, child)
+    protectedDirectory = host.protectDirectoryAt(parent.fd, name, child.fd)
   } catch {
     protectedDirectory = false
   } finally {
-    if (child !== null && Number.isSafeInteger(child) && child >= 0) {
-      try { handles.close(child) } catch { closed = false }
+    if (child !== null) {
+      try { child.close() } catch { closed = false }
     }
-    if (parent !== null && Number.isSafeInteger(parent) && parent >= 0) {
-      try { handles.close(parent) } catch { closed = false }
+    if (parent !== null) {
+      try { parent.close() } catch { closed = false }
     }
   }
   return protectedDirectory && closed
@@ -186,6 +178,9 @@ export function loadProjectNativeHostFromResources(
     const nativeLocks: NativeFileLockAuthority = Object.freeze({
       acquire: (descriptor: number) => addon.acquire(descriptor),
     })
+    const directoryHandles = Object.freeze({
+      open: (path: string): ProjectDirectoryHandle => projectDirectoryHandle(addon.openDirectory(path)),
+    })
     const rootFiles: ProjectRootFileAuthority = Object.freeze({
       probe: (descriptor: number) => addon.probe(descriptor),
       matchesAt: (root: number, name: string, child: number) => addon.matchesAt(root, name, child),
@@ -207,6 +202,7 @@ export function loadProjectNativeHostFromResources(
     return Object.freeze({
       nativeLocks,
       rootFiles,
+      directoryHandles,
       protectDirectoryAt: (root: number, name: string, child: number) => {
         const result: unknown = addon.protectAt(root, name, child)
         return isStatus(result, 'ok')
@@ -384,8 +380,37 @@ function validBinary(bytes: Buffer, platform: string, arch: string): boolean {
 }
 
 interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {
+  openDirectory(path: string): unknown
   protectAt(root: number, name: string, child: number): ProjectRootFileResult
   mkdirPrivateAt(root: number, name: string): ProjectRootFileCreateResult
+}
+
+function projectDirectoryHandle(value: unknown): ProjectDirectoryHandle {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('project_directory_open_failed')
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  if (Object.keys(descriptors).sort().join('\0') !== 'close\0descriptor\0status') {
+    throw new Error('project_directory_open_failed')
+  }
+  const status = descriptors.status
+  const descriptor = descriptors.descriptor
+  const close = descriptors.close
+  if (
+    !status?.enumerable || !Object.hasOwn(status, 'value') || status.value !== 'ok'
+    || !descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
+    || !Number.isSafeInteger(descriptor.value) || descriptor.value < 0
+    || !close?.enumerable || !Object.hasOwn(close, 'value') || typeof close.value !== 'function'
+  ) throw new Error('project_directory_open_failed')
+  let closed = false
+  return Object.freeze({
+    fd: descriptor.value as number,
+    close: (): void => {
+      if (closed) return
+      closed = true
+      Reflect.apply(close.value as (...args: never[]) => unknown, value, [])
+    },
+  })
 }
 
 function isStatus(value: unknown, status: string): boolean {

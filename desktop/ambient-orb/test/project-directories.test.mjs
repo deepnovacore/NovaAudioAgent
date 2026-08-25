@@ -34,6 +34,12 @@ function fixture() {
       protects.push([rootFd, name, childFd])
       return true
     },
+    directoryHandles: {
+      open: target => ({
+        fd: fds.get(target),
+        close: () => { closes.push(target) },
+      }),
+    },
   }
   return {
     root,
@@ -41,10 +47,6 @@ function fixture() {
     protects,
     closes,
     nativeHost,
-    openDirectory: async target => ({
-      fd: fds.get(target),
-      close: async () => { closes.push(target) },
-    }),
   }
 }
 
@@ -62,7 +64,6 @@ test('Windows creates and verifies every default directory descriptor-relatively
     platform: 'win32',
     nativeHost: value.nativeHost,
     pathApi: path.win32,
-    openDirectory: value.openDirectory,
     mkdir: async () => { throw new Error('path mkdir must not create defaults') },
   })
   assert.deepEqual(value.creates, [
@@ -88,11 +89,37 @@ test('repair selects a configured root enum and never consumes a renderer path',
   }
   assert.deepEqual(await repairProjectDirectory({
     root: 'state', config, nativeHost: value.nativeHost,
-    pathApi: path.win32, openDirectory: value.openDirectory,
+    pathApi: path.win32,
   }), {status: 'ok', code: null})
   assert.deepEqual(value.protects, [[2, 'state', 3]])
   assert.deepEqual(await repairProjectDirectory({
     root: 'C:\\attacker', config, nativeHost: value.nativeHost,
-    pathApi: path.win32, openDirectory: value.openDirectory,
+    pathApi: path.win32,
   }), {status: 'failed', code: 'invalid_target'})
+})
+
+test('Windows directory bootstrap identifies the failed stage without disclosing its path', async () => {
+  const value = fixture()
+  const config = {
+    root: value.root,
+    stateRoot: `${value.root}\\state`,
+    managedRoot: `${value.root}\\workspaces`,
+    workspace: `${value.root}\\workspaces\\default`,
+  }
+  const originalOpen = value.nativeHost.directoryHandles.open
+  value.nativeHost.directoryHandles.open = target => {
+    if (target === value.root) throw new Error('private native detail')
+    return originalOpen(target)
+  }
+  await assert.rejects(
+    ensurePrivateProjectDirectories({
+      config,
+      home: 'C:\\Users\\nova',
+      platform: 'win32',
+      nativeHost: value.nativeHost,
+      pathApi: path.win32,
+      mkdir: async () => undefined,
+    }),
+    error => error?.message === 'project_directory_open_failed_root',
+  )
 })

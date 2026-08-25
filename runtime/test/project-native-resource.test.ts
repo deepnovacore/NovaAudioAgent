@@ -24,6 +24,7 @@ function fakeMachAddon(): Buffer {
 function fakeAddon(): Record<string, (...args: readonly unknown[]) => unknown> {
   return {
     acquire: () => ({status: 'busy'}),
+    openDirectory: () => ({status: 'ok', descriptor: 41, close: () => undefined}),
     probe: () => ({status: 'ok'}),
     protectAt: () => ({status: 'ok'}),
     matchesAt: () => ({status: 'ok'}),
@@ -78,6 +79,9 @@ test('project native host loads only one fixed manifest-bound addon for the exac
     assert.equal(loads, 1)
     assert.deepEqual(loaded?.nativeLocks.acquire(7), {status: 'busy'})
     assert.deepEqual(loaded?.rootFiles.probe(8), {status: 'ok'})
+    const directory = loaded?.directoryHandles.open('/home/nova')
+    assert.equal(directory?.fd, 41)
+    assert.equal(directory?.close(), undefined)
     assert.equal(Object.hasOwn(loaded ?? {}, 'protectDirectory'), false)
     assert.equal(loaded?.protectDirectoryAt(8, 'state', 9), true)
     assert.deepEqual(loaded?.mkdirPrivateAt(8, 'state'), {
@@ -182,9 +186,8 @@ test('default project directories are protected while custom roots are only vali
         opened.push(path)
         const descriptor = descriptors.get(path)
         if (descriptor === undefined) throw new Error('unexpected test path')
-        return descriptor
+        return {fd: descriptor, close: () => { closed.push(descriptor) }}
       },
-      close: (descriptor: number) => { closed.push(descriptor) },
     },
   }
   assert.equal(protectDefaultProjectDirectories(host, configuredDefaults), false)
@@ -228,9 +231,8 @@ test('default project protection fails closed and closes a retained parent when 
     directoryHandles: {
       open: (path: string) => {
         if (path.endsWith('state')) throw new Error('private open detail')
-        return 21
+        return {fd: 21, close: () => { closed.push(21) }}
       },
-      close: (descriptor: number) => { closed.push(descriptor) },
     },
   }
   const host = {

@@ -24,6 +24,10 @@ typedef struct {
   int descriptor;
 } nova_lock_handle;
 
+typedef struct {
+  int descriptor;
+} nova_directory_handle;
+
 static napi_value nova_status(napi_env env, const char* status) {
   napi_value result;
   napi_value value;
@@ -118,6 +122,107 @@ static void nova_lock_finalize(napi_env env, void* data, void* hint) {
   nova_lock_handle* handle = (nova_lock_handle*)data;
   nova_release_lock(handle);
   free(handle);
+}
+
+static void nova_release_directory(nova_directory_handle* directory) {
+  if (directory == NULL || directory->descriptor < 0) return;
+  int descriptor = directory->descriptor;
+  directory->descriptor = -1;
+  (void)close(descriptor);
+}
+
+static void nova_directory_finalize(napi_env env, void* data, void* hint) {
+  (void)env;
+  (void)hint;
+  nova_directory_handle* directory = (nova_directory_handle*)data;
+  nova_release_directory(directory);
+  free(directory);
+}
+
+static napi_value nova_directory_close(napi_env env, napi_callback_info info) {
+  void* data = NULL;
+  size_t count = 0;
+  if (napi_get_cb_info(env, info, &count, NULL, NULL, &data) == napi_ok) {
+    nova_release_directory((nova_directory_handle*)data);
+  }
+  napi_value undefined;
+  if (napi_get_undefined(env, &undefined) != napi_ok) return NULL;
+  return undefined;
+}
+
+static char* nova_absolute_path(napi_env env, napi_value value) {
+  size_t length = 0;
+  if (napi_get_value_string_utf8(env, value, NULL, 0, &length) != napi_ok ||
+      length == 0 || length > 32767) return NULL;
+  char* path = (char*)calloc(length + 1, 1);
+  if (path == NULL ||
+      napi_get_value_string_utf8(env, value, path, length + 1, &length) != napi_ok) {
+    free(path);
+    return NULL;
+  }
+  if (path[0] != '/' || memchr(path, '\0', length) != NULL) {
+    free(path);
+    return NULL;
+  }
+  char* canonical = realpath(path, NULL);
+  size_t input_length = strlen(path);
+  while (input_length > 1 && path[input_length - 1] == '/') input_length -= 1;
+  size_t canonical_length = canonical == NULL ? 0 : strlen(canonical);
+  int same = canonical != NULL && input_length == canonical_length &&
+      strncmp(path, canonical, input_length) == 0;
+  free(path);
+  if (!same) {
+    free(canonical);
+    return NULL;
+  }
+  return canonical;
+}
+
+static napi_value nova_open_directory(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  if (!nova_args(env, info, 1, args)) return nova_status(env, "failed");
+  char* path = nova_absolute_path(env, args[0]);
+  if (path == NULL) return nova_status(env, "failed");
+  struct stat expected;
+  int descriptor = lstat(path, &expected) == 0
+      ? open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+      : -1;
+  struct stat actual;
+  int valid = descriptor >= 0 && fstat(descriptor, &actual) == 0 &&
+      S_ISDIR(expected.st_mode) && S_ISDIR(actual.st_mode) &&
+      expected.st_dev == actual.st_dev && expected.st_ino == actual.st_ino &&
+      actual.st_uid == geteuid();
+  free(path);
+  if (!valid) {
+    if (descriptor >= 0) (void)close(descriptor);
+    return nova_status(env, "failed");
+  }
+  nova_directory_handle* directory = (nova_directory_handle*)calloc(1, sizeof(*directory));
+  if (directory == NULL) {
+    (void)close(descriptor);
+    return nova_status(env, "failed");
+  }
+  directory->descriptor = descriptor;
+  napi_value result = nova_status(env, "ok");
+  napi_value descriptor_value;
+  napi_value close_value;
+  napi_value owner;
+  if (result == NULL ||
+      napi_create_int32(env, descriptor, &descriptor_value) != napi_ok ||
+      napi_create_function(env, "close", NAPI_AUTO_LENGTH, nova_directory_close,
+                           directory, &close_value) != napi_ok ||
+      napi_create_external(env, directory, nova_directory_finalize, NULL, &owner) != napi_ok) {
+    nova_release_directory(directory);
+    free(directory);
+    return nova_status(env, "failed");
+  }
+  if (napi_set_named_property(env, close_value, "__nova_directory_owner", owner) != napi_ok ||
+      napi_set_named_property(env, result, "descriptor", descriptor_value) != napi_ok ||
+      napi_set_named_property(env, result, "close", close_value) != napi_ok) {
+    nova_release_directory(directory);
+    return NULL;
+  }
+  return result;
 }
 
 static napi_value nova_lock_release(napi_env env, napi_callback_info info) {
@@ -380,6 +485,7 @@ static int nova_export(napi_env env, napi_value exports, const char* name, napi_
 
 NAPI_MODULE_INIT() {
   if (!nova_export(env, exports, "acquire", nova_acquire) ||
+      !nova_export(env, exports, "openDirectory", nova_open_directory) ||
       !nova_export(env, exports, "probe", nova_probe) ||
       !nova_export(env, exports, "matchesAt", nova_matches_at) ||
       !nova_export(env, exports, "lookupAt", nova_lookup_at) ||
