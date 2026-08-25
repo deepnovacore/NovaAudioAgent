@@ -7,7 +7,6 @@
 > **An always-on voice agent with restrained proactivity — always working, speaking only when
 > it's worth the floor.**
 
-[![CI](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
 [![Architecture](https://img.shields.io/badge/Arch-Control%20Plane-7B2CBF.svg)](#3-architecture)
@@ -20,7 +19,10 @@ or complete longer tasks in the background.
 This is not a chatbot framework and not a workflow engine. It focuses on a different problem:
 **how an agent decides when to speak, when to dispatch work, and when to stay silent while several
 things are happening at once.** It is an experimental system for development and evaluation rather
-than a turnkey consumer assistant.
+than a turnkey consumer assistant. Nova is built to be a user-level assistant rather than a
+per-project tool: one always-on voice entry point that can create, switch between, and resume work
+across many named workspaces — a Workspace is the filesystem isolation boundary between projects,
+and each task runs as its own resumable Session inside one.
 
 Our closest neighbor is [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) — we
 adapted its macOS voice-capture helper (see [NOTICE](NOTICE)) and read its progress-reporting
@@ -56,6 +58,12 @@ jump to [Quickstart](#4-quickstart) to run it.
   `codex app-server` (JSON-RPC `turn/start`, `turn/steer`): a new user constraint joins the
   in-flight turn instead of restarting it, under the eval-gated contract
   `run < turn_start < steer ≤ accept < completion`.
+- **One voice entry point for many workspaces.** Named Codex Workspaces with isolated Codex homes
+  and persistent, resumable Sessions; voice-driven create, switch, and resume all pass through a
+  fail-closed propose-and-confirm step. (Voice creates new managed directories; importing an
+  existing repository goes through the `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` startup setting.)
+- **Token discipline by design.** Codex receives one bounded work order, never conversation
+  history, and its progress returns summarized rather than streamed raw (see §3.3 below).
 
 [![Nova Audio Agent runtime architecture on a chalkboard](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)
 
@@ -140,6 +148,26 @@ and another when useful work returns, and the executor never gains a direct rout
 speakers. The longer rationale is in [Design essence](docs/essence.md) and the
 [v3 design series](docs/archs/v3/00-overview.md).
 
+### 3.3 Fast and slow brains: token discipline by design
+
+The realtime front brain (a cloud realtime model; the text path uses a lightweight cloud model)
+owns the conversation, and Codex is the slow work brain, behind a deliberately narrow boundary:
+
+- The front brain asks at most one short clarifying question, then consolidates the request into
+  a single bounded work order — the work order, never conversation history, is all that crosses
+  to Codex.
+- Codex progress returns as memory events, summarized at the Codex projection boundary and passed
+  through the Surrogate attention policy before it can reach the floor.
+- The conversation channel compresses at a fixed watermark; `codex__steer` appends a new
+  constraint to the in-flight turn rather than re-dispatching with re-sent context.
+- Workspace-graph context enters model calls only through fixed budgets, and workspace/session
+  candidates are listed only on demand.
+
+These bounds govern what crosses the boundary and what returns to the conversation — a resumed
+Session still restores its saved Codex thread, whose accumulated context sits outside them. They
+are structural bounds, not measured savings: no token or cost benchmarks are published, and both
+brains are cloud models.
+
 ## 4. Quickstart
 
 Requirements: Node.js 22+, npm, Git, a logged-in `codex` executable, and a supported desktop
@@ -152,112 +180,22 @@ Chromium's audio stack.
 > JSONL exists only for historical parser fixtures. Signed three-platform candidates,
 > clean-machine runs, hardware validation, and publication evidence remain pending.
 
-### Unsigned Windows and Ubuntu development candidates
+### Platform support and packaging status
 
-The GitHub Actions workflow **Unsigned Windows and Ubuntu packages** produces unsigned development
-candidates, not signed releases. Its workflow artifacts are `unsigned-win32-x64` and
-`unsigned-linux-x64-gnu`; look inside them for `nova-win32-x64.exe`,
-`nova-linux-x64.AppImage`, and `nova-linux-x64.deb`. Treat each download as a development
-candidate and verify that it came from the intended workflow run before using it.
+The runtime and desktop client carry win32, darwin, and linux code paths, and the repository
+defines packaging targets for macOS, Windows (NSIS), and Linux (AppImage and deb). Validation is
+uneven, and this section states it plainly:
 
-Windows may show a SmartScreen warning because `nova-win32-x64.exe` is unsigned. Keep SmartScreen
-and other Windows security protections enabled; verify the workflow run and file before deciding
-whether to use the candidate. On Linux, make the AppImage executable and run it directly:
-
-```bash
-chmod u+x nova-linux-x64.AppImage
-./nova-linux-x64.AppImage
-```
-
-Install `nova-linux-x64.deb` with the system package manager (on Ubuntu, for example,
-`sudo apt install ./nova-linux-x64.deb`). The workflow is the record for an individual candidate's
-build and validation state; this documentation does not claim native CI has passed.
-
-### Named Codex workspaces and Sessions
-
-The realtime Codex project surface is always on and has no feature toggle. This applies only to
-realtime: ordinary non-realtime Codex retains `codex__run` and its existing semantics, while
-`codex__run` is not available to the realtime provider. A **Workspace** is an isolated filesystem/Git
-project; a **Session** is a persistent, resumable Codex thread inside one Workspace. The optional
-startup workspace imports an existing repository:
-
-```bash
-NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
-NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces
-NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
-```
-
-On every realtime turn, Nova injects only the active Workspace and its active Session, if any.
-Workspace and Session candidates are listed only when requested; Nova never injects historical
-candidates as part of the standing turn context. Create, switch, and resume first produce a proposal.
-The user's next turn is bound to that proposal and interpreted as a dedicated structured
-confirmation with the exact proposal ID and a JSON boolean. Rejection, a mismatched ID, or replay
-fails closed. Switching is staged: first confirm the Workspace, then list or resume a Session in
-that Workspace. Each normal task creates a new persistent Session, while resume starts a new
-app-server process on the saved Codex thread. Workspaces have separate `CODEX_HOME` directories,
-but Codex execution intentionally remains one global task at a time. The Orb displays only public
-Workspace and Session labels—never paths, thread IDs, or registry keys.
-Project mode intentionally permits only one live Orb owner for a registry. A second Orb fails
-startup with `state_busy`; after the owner exits, the next Orb recovers any interrupted `starting`
-Session before accepting work. Registry updates use a short metadata lock and never claim live
-execution ownership.
-
-At startup, the configured `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` is imported if its canonical path is
-new; changing that setting registers another workspace with a deterministic suffix without
-replacing the current active workspace. Untitled Sessions use speakable `任务 N` labels. Registry
-retention is bounded to 200 Sessions per workspace and 1000 globally: oldest unavailable Sessions
-are pruned first, then inactive ready Sessions, while starting and active Sessions are protected.
-If protected records fill the limit, creation returns `session_limit`; lock contention returns
-`state_busy` immediately.
-
-Each realtime project work order starts a fresh app-server process, so project mode intentionally disables
-Codex prewarm. A persistent workspace home refreshes its saved login when the host credential
-changes, using owner-only atomic files; a destination-only credential refresh is preserved while
-the host source is unchanged.
-
-See [Multi-project Workspace handoff](docs/multi-project-workspace-handoff.md) for the complete
-discovery, confirmation, switching, persistence, and recovery contract.
-
-### Workspace memory graph and optional MyContext evidence
-
-The Node runtime has an opt-in workspace memory graph. Nova's graph is project-wide and
-lightweight: it maintains workspace identity from Nova's confirmed lifecycle and can record an
-adjacent committed A-to-B transition as weak `discussed_with` metadata. That relation is a bounded
-map cue, not a conclusion from model or work-order prose: Nova reads neither workspace, keeps it
-below the proactive threshold, and ages unrefreshed relations to stale after 90 days. Typed task
-events may contribute separately authorized evidence. Committed switches revoke the previous graph
-scope immediately and retain admitted A-to-B-to-C order; an uncommittable event breaks adjacency
-instead of bridging the gap. All durable graph times use Unix seconds. Nova does not copy
-repository-native engineering instructions or automatically inspect another workspace.
-
-```bash
-NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true
-NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH=~/.nova-audio-agent/workspace-graph.sqlite
-
-# Optional. This must be a separately supplied Nova-compatible read-only adapter base URL.
-NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
-```
-
-The optional MyContext boundary adds a different, person-wide source: multi-source evidence from
-chats, documents, meetings, and people. Nova may request it only for explicit evidence recall
-about the same authoritative current workspace—for example, a user asking "why?" or asking for a
-source. It never participates in startup, workspace open/switch, default recall, the Context
-Header, Recall Pack, proactive confidence, tool routing, or actions. Returned text is local,
-read-only, source-labelled, untrusted, non-persistent, and non-proactive; it cannot mutate Nova's
-graph, workspace identity, task state, or another workspace.
-
-The URL must serve Nova's strict `nova_workspace_evidence` schema-version-1 capability and lookup
-contract. The raw upstream MyContext `/capabilities` v2 is not accepted: it exposes general query
-commands but does not attest exact Nova workspace scope. Nova does not ship an adapter executable
-and does not guess compatibility from `/ask` results. Installing MyContext alone does not enable Nova enrichment;
-the local Nova-compatible read-only adapter handshake must succeed, and an
-explicit evidence-recall caller must request the data. Provider failure is a visible degraded
-empty result and never blocks ordinary voice or project work.
-
-This integration is an HTTP client boundary and does not copy or bundle MyContext code or runtime.
-Upstream MyContext is licensed under the Elastic License 2.0. A separate legal and distribution
-review is required before reusing, bundling, or shipping any upstream MyContext code or runtime;
-configuring this client is not such distribution approval.
+- Native echo-cancelled audio capture (VoiceProcessingIO) is macOS-only; Windows and Linux use
+  Chromium's audio stack, including its echo cancellation.
+- CI currently runs only on manual dispatch and only on Windows runners; there is no automatic
+  cross-platform CI signal today, and signed candidates, clean-machine runs, and hardware
+  validation remain pending.
+- The **Unsigned Windows packages** workflow builds a Windows artifact only (`unsigned-win32-x64`;
+  expect a SmartScreen warning for the unsigned executable, keep protections enabled, and verify
+  the workflow run before use). Linux AppImage/deb exist as local packaging scripts
+  (`npm run package:linux`) and as legs of the manual-dispatch release-candidate workflow, whose
+  macOS and Windows legs are signing-gated while Linux artifacts are format-checked, not signed.
 
 Clone and install the locked Node dependencies:
 
@@ -292,17 +230,68 @@ through environment variables;
 per-integration setup, cautions, and the full variable reference are in
 [Getting started](docs/getting-started.md).
 
-## 5. Ambient Orb
+## 5. One assistant, many workspaces
 
-The Ambient Orb is the local voice interface. After filling `.env`, install the vision development
-dependencies, then launch the source client through the repository wrapper:
+One Nova instance is meant to be the single voice entry point across every project a user works
+in.
+
+### Named Codex workspaces and Sessions
+
+A **Workspace** is an isolated filesystem/Git project with its own `CODEX_HOME`; a **Session** is
+a persistent, resumable Codex thread inside one Workspace. The realtime project surface is always
+on, and the optional startup workspace imports an existing repository:
 
 ```bash
-uv sync --extra vision --dev
-./scripts/start_ambient_orb.sh
+NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
+NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces
+NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
 ```
 
-The launcher always starts the Node runtime and Electron renderer with context isolation,
+Each realtime turn sees only the active Workspace and Session; candidates are listed on demand,
+never injected as standing context. Create, switch, and resume first produce a proposal, and only
+a dedicated structured confirmation with the exact proposal ID commits it — rejection, a
+mismatched ID, or replay fails closed. Switching is staged (confirm the Workspace, then list or
+resume its Sessions), Codex execution stays one global task at a time, a registry admits one live
+Orb owner (a second fails with `state_busy`), and the Orb displays only public labels — never
+paths, thread IDs, or registry keys. The complete discovery, confirmation, persistence, and
+recovery contract is in
+[Multi-project Workspace handoff](docs/multi-project-workspace-handoff.md); retention limits and
+credential handling are in [Getting started](docs/getting-started.md).
+
+### Workspace memory graph and optional MyContext evidence
+
+The Node runtime has an opt-in workspace memory graph: it maintains workspace identity from
+Nova's confirmed lifecycle and records adjacent committed transitions as weak `discussed_with`
+map cues — bounded, low-authority, below the proactive threshold, and stale after 90 days without
+refresh. Nova reads neither workspace and never inspects another workspace automatically; the
+memory layering rationale is in the [v3 memory volume](docs/archs/v3/02-memory.md).
+
+```bash
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH=~/.nova-audio-agent/workspace-graph.sqlite
+
+# Optional. This must be a separately supplied Nova-compatible read-only adapter base URL.
+NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
+```
+
+The optional MyContext boundary adds a person-wide evidence source (chats, documents, meetings,
+people) that Nova may consult only for explicit evidence recall about the current workspace; the
+result is read-only, untrusted, and non-proactive. It requires a separately supplied
+Nova-compatible read-only adapter — none ships in this repository, so the integration is not yet
+functional end to end. Upstream MyContext is licensed under the Elastic License 2.0, and a
+separate legal and distribution review is required before reusing, bundling, or shipping any of
+its code or runtime. The strict handshake contract and participation limits are in
+[Getting started](docs/getting-started.md).
+
+## 6. Ambient Orb
+
+The Ambient Orb is the local voice interface. After filling `.env`, launch the source client:
+
+```bash
+npm run start:client
+```
+
+The client launcher starts the Node runtime and the Electron renderer with context isolation,
 sandboxing, and a narrow preload bridge. It requires Node.js, the `codex` executable, microphone
 permission, and `TAVILY_API_KEY` in `.env` or the invoking shell; shell variables take precedence
 over `.env`. `DASHSCOPE_API_KEY` is required only for integrated Qwen and cascaded Qwen. For
@@ -348,7 +337,7 @@ proactivity preset, Codex progress cadence, voice, and API keys (encrypted throu
 Provider events are correlated with host response and delegate identities, and playback
 acknowledgements fence audio clearing and completion.
 
-## 6. Repository layout
+## 7. Repository layout
 
 ```text
 runtime/src/                    Runtime spine, memory, executors, providers, CLI, and desktop entry
@@ -358,7 +347,7 @@ docs/                           Public architecture, rationale, guides, status, 
 resources/                      Local raw and edited media; intentionally ignored by Git
 ```
 
-## 7. Documentation
+## 8. Documentation
 
 | Read this | For |
 |---|---|
@@ -367,11 +356,27 @@ resources/                      Local raw and edited media; intentionally ignore
 | [Glossary and invariants](docs/glossary.md) | Vocabulary and rules |
 | [Getting started](docs/getting-started.md) | Setup and integrations |
 | [Project status](docs/status.md) | What works, what's experimental |
+| [Multi-project Workspace handoff](docs/multi-project-workspace-handoff.md) | The complete Workspace/Session contract |
+| [A2A](docs/a2a.md) | Agent-to-agent boundaries |
+| [Node runtime migration notes](docs/releases/node-runtime-migration-unreleased.md) | The migration's de-facto changelog |
 | [v3 design series](docs/archs/v3/00-overview.md) | The detailed design argument |
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | The design-space essay |
 | [Downstream reimplementation guide](docs/guides/downstream-reimplementation.md) | Rebuilding it elsewhere |
 
-## 8. Development and verification
+## 9. Roadmap
+
+1. **MyContext end to end.** Only the strict loopback-only, read-only client boundary ships
+   today; the plan is a Nova-compatible read-only adapter — after the Elastic License 2.0
+   review — so explicit evidence recall works against a real MyContext installation.
+2. **Workspace memory graph on by default, with episodic memory.** The graph is implemented but
+   opt-in, and session-level episodic summaries are not built; the plan is default-on once soak
+   evidence justifies it, plus bounded episodic summaries as a new memory layer.
+3. **More coding-agent providers through the executor port.** Codex over `codex app-server` is
+   the only coding-agent backend today; the `ExecutorAdapter` port is the seam for adding
+   providers over ACP or their native protocols. (Distinct from the voice/realtime provider
+   abstraction, which already offers real choices.)
+
+## 10. Development and verification
 
 ```bash
 npm ci
@@ -385,7 +390,7 @@ for the deterministic tests, and their outputs belong in ignored local artifact 
 Report security issues privately via [SECURITY.md](SECURITY.md); contribution guidelines,
 including the invariants every change must preserve, are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## 9. License
+## 11. License
 
 Copyright 2026 DeepNovaCore. Licensed under the [Apache License 2.0](LICENSE).
 Third-party attribution is recorded in [NOTICE](NOTICE) and the desktop

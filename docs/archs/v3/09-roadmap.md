@@ -1,7 +1,8 @@
 # 9. Roadmap
 
 The current foundation includes the runtime spine, bounded memory views, executor ports, search,
-Home Assistant, Codex, vision, Qwen realtime voice, Ambient Orb, and experimental AutoGLM support.
+Codex with named Workspaces and Sessions, vision, integrated and cascaded realtime voice, the
+opt-in workspace memory graph, and the Ambient Orb.
 
 Near-term work is limited to evidence-backed improvements:
 
@@ -13,3 +14,6 @@ Near-term work is limited to evidence-backed improvements:
 
 New core abstractions are not roadmap items by themselves. They require a demonstrated boundary that
 the current architecture cannot express safely.
+
+Product-level direction lives in the README Roadmap section; the items here remain evidence-backed
+engineering improvements.

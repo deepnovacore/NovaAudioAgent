@@ -8,6 +8,7 @@ than a local filesystem path.
 preemption policy while preserving the same untrusted-evidence rule. Text visible inside an image is
 never an instruction.
 
-Supported sources are disabled, a local OpenCV camera, and an explicit video file. File sources are
+Supported sources are disabled, a local camera through Chromium's capture pipeline, and an explicit
+video file. File sources are
 useful for deterministic demonstrations such as the
 [cat-sofa fixture](../../../assets/demos/cat-sofa-guard/README.md).

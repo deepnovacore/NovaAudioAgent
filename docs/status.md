@@ -12,7 +12,11 @@ implementation does not imply a finished signed distribution.
 | Codex | Node production architecture is app-server-only; JSONL is fixture-parser-only |
 | Audio pipelines | Integrated Qwen is default; cascaded defaults to Volcengine ASR -> Qwen `qwen-flash` -> Volcengine TTS, with Ark an explicit cascaded LLM |
 | HA/AutoGLM | Retired; legacy settings fail safely before construction |
-| Desktop | Node runtime wired through the authenticated Electron bridge |
+| Desktop | Node runtime wired through the authenticated Electron bridge; packaged builds refuse the Python backend |
+| Platforms and packaging | win32/darwin/linux code paths and macOS/NSIS/AppImage+deb targets exist; CI is manual-dispatch and temporarily Windows-only; the unsigned workflow ships a Windows artifact only; the manual release-candidate workflow spans macOS/Windows/Ubuntu with signing gates on its macOS and Windows legs (Linux artifacts are format-checked, not signed) |
+| Codex Workspaces and Sessions | Two-level Workspace/Session store, per-workspace Codex homes, and the voice propose-and-confirm surface implemented; desktop settings expose a single startup path; voice creates managed directories only |
+| Workspace memory graph | Implemented and opt-in (disabled by default), Node runtime only; episodic session summaries not built |
+| MyContext provider | Loopback-only read-only client boundary only; no Nova-compatible adapter exists, so enrichment is not yet functional end to end |
 
 Repository commands for configuration fixtures, product fixtures, deterministic demos, scorecard,
 and offline diagnostics are documented in the [getting-started guide](getting-started.md).

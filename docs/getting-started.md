@@ -1,3 +1,5 @@
+<!-- Keep in sync with docs/getting-started.zh-CN.md -->
+
 # Getting Started
 
 ## Current release boundary
@@ -44,6 +46,16 @@ For integrated-Qwen source startup, `DASHSCOPE_API_KEY` is the normal realtime c
 generic key a Qwen realtime credential. When both credentials are set, `DASHSCOPE_API_KEY` takes
 precedence.
 
+### Co-maintained Python backend (development only)
+
+The Python backend (`src/nova_audio_agent`) is co-maintained and remains the default backend when
+the unpackaged Electron app is launched without `NOVA_AUDIO_AGENT_BACKEND`; `npm run start:client`
+pins the Node backend explicitly, and packaged builds refuse the Python backend. Developers
+working on the Python backend can launch it with `./scripts/start_ambient_orb.sh` (it requires a
+Python environment that can `import nova_audio_agent`). The Python CLI also provides
+`nova-audio-agent workspace register` for registering an existing directory as a Workspace; the
+Node CLI has no workspace subcommand yet.
+
 ## Always-on Codex project mode
 
 The realtime Codex project surface has no enable/disable toggle. Ordinary non-realtime Codex keeps
@@ -53,7 +65,9 @@ Managed Workspaces default to
 `~/.nova-audio-agent/workspaces`, the registry to
 `~/.nova-audio-agent/codex-projects-v1.json`, and per-Workspace Codex homes to
 `~/.nova-audio-agent/codex-homes`. `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` optionally imports an existing
-repository at startup.
+repository at startup. The desktop Settings Panel currently exposes a single startup workspace
+path field; registering an arbitrary existing directory goes through
+`NOVA_AUDIO_AGENT_CODEX_WORKSPACE`, while voice can create new managed directories only.
 
 Each realtime turn receives only the active Workspace and its active Session, if any. Nova lists
 Workspace or Session candidates only on demand and never injects historical candidates into the
@@ -62,25 +76,31 @@ dedicated structured confirmation carrying the exact proposal ID and a JSON bool
 ID, or a replay makes no state change. After switching Workspace, ask to list or resume Sessions there. See
 [Multi-project Workspace handoff](multi-project-workspace-handoff.md) for persistence and recovery.
 
-## Unsigned Windows and Ubuntu development candidates
+Registry retention is bounded to 200 Sessions per Workspace and 1000 globally: oldest unavailable
+Sessions are pruned first, then inactive ready Sessions, while starting and active Sessions are
+protected. If protected records fill the limit, creation returns `session_limit`; lock contention
+returns `state_busy` immediately. Changing `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` later registers
+another workspace with a deterministic suffix without replacing the current active Workspace, and
+untitled Sessions use speakable `任务 N` labels. Each project work order starts a fresh app-server
+process, so project mode intentionally disables Codex prewarm. A persistent workspace home
+refreshes its saved login when the host credential changes, using owner-only atomic files; a
+destination-only credential refresh is preserved while the host source is unchanged.
 
-The GitHub Actions workflow **Unsigned Windows and Ubuntu packages** produces unsigned development
-candidates, not signed releases. Download its `unsigned-win32-x64` or
-`unsigned-linux-x64-gnu` workflow artifact and use the stable file names inside it:
-`nova-win32-x64.exe`, `nova-linux-x64.AppImage`, and `nova-linux-x64.deb`. Verify that a download
-came from the intended workflow run before using it.
+## Unsigned Windows development candidates
+
+The GitHub Actions workflow **Unsigned Windows packages** produces unsigned development
+candidates, not signed releases, and currently builds a Windows artifact only: download the
+`unsigned-win32-x64` workflow artifact and use the stable `nova-win32-x64.exe` inside it. Its
+Linux leg is temporarily disabled pending cross-platform CI restoration. Linux AppImage and deb
+targets exist as local packaging scripts (`npm run package:linux`) and as legs of the
+manual-dispatch release-candidate workflow (macOS, Windows, and Ubuntu legs; signing is required
+for macOS and Windows, while Linux artifacts are format-checked, not signed); the unsigned
+workflow does not currently publish Linux artifacts. Verify that a download came from the
+intended workflow run before using it.
 
 Windows may show a SmartScreen warning for the unsigned `nova-win32-x64.exe`. Keep SmartScreen and
 other Windows security protections enabled; verify the workflow run and file before deciding
-whether to use the candidate. On Linux, make the AppImage executable and run it directly:
-
-```bash
-chmod u+x nova-linux-x64.AppImage
-./nova-linux-x64.AppImage
-```
-
-Install `nova-linux-x64.deb` through the system package manager (on Ubuntu, for example,
-`sudo apt install ./nova-linux-x64.deb`). The workflow records an individual candidate's build and
+whether to use the candidate. The workflow records an individual candidate's build and
 validation state; this guide does not claim native CI has passed.
 
 The repository-owned Node checks are offline and deterministic:
@@ -136,6 +156,44 @@ recorded here as having run or passed. With an intentionally supplied DashScope 
 ```bash
 DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
 ```
+
+## Workspace memory graph and MyContext provider
+
+The Node runtime's opt-in workspace memory graph is configured with:
+
+```bash
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH=~/.nova-audio-agent/workspace-graph.sqlite
+
+# Optional. This must be a separately supplied Nova-compatible read-only adapter base URL.
+NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
+```
+
+The graph maintains workspace identity from Nova's confirmed lifecycle and records an adjacent
+committed A-to-B transition as weak `discussed_with` metadata — a bounded map cue, not a
+conclusion from model or work-order prose. Nova reads neither workspace, keeps the relation below
+the proactive threshold, and ages unrefreshed relations to stale after 90 days. Committed switches
+revoke the previous graph scope immediately and retain admitted A-to-B-to-C order; an
+uncommittable event breaks adjacency instead of bridging the gap. All durable graph times use
+Unix seconds. Nova does not copy repository-native engineering instructions or automatically
+inspect another workspace.
+
+The optional MyContext provider may be consulted only for explicit evidence recall about the same
+authoritative current workspace — for example, a user asking "why?" or asking for a source. It
+never participates in startup, workspace open/switch, default recall, the Context Header, Recall
+Pack, proactive confidence, tool routing, or actions. Returned text is local, read-only,
+source-labelled, untrusted, non-persistent, and non-proactive; it cannot mutate Nova's graph,
+workspace identity, task state, or another workspace. Provider failure is a visible degraded
+empty result and never blocks ordinary voice or project work.
+
+The URL must serve Nova's strict `nova_workspace_evidence` schema-version-1 capability and lookup
+contract; the raw upstream MyContext `/capabilities` v2 is not accepted, because it does not
+attest exact Nova workspace scope. Nova does not ship an adapter executable and does not guess
+compatibility from `/ask` results — installing MyContext alone does not enable enrichment. The
+integration is an HTTP client boundary and does not copy or bundle MyContext code or runtime;
+upstream MyContext is licensed under the Elastic License 2.0, and a separate legal and
+distribution review is required before reusing, bundling, or shipping any upstream MyContext code
+or runtime.
 
 ## Public environment reference
 

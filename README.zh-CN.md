@@ -6,7 +6,6 @@
 
 > **手中事不辍，口中言有度。**
 
-[![CI](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/deepnovacore/NovaAudioAgent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
 [![Architecture](https://img.shields.io/badge/Arch-Control%20Plane-7B2CBF.svg)](#3-架构)
@@ -17,7 +16,9 @@ Nova Audio Agent 是一个**常驻、通用语音 agent 的运行骨架（harnes
 
 这不是一个聊天机器人框架，也不是工作流引擎。它关注的是另一个问题：
 **当多件事同时发生时，agent 如何决定何时开口、何时派活、何时保持沉默。**
-它是面向开发与评测的实验系统，而非开箱即用的消费级助手。
+它是面向开发与评测的实验系统，而非开箱即用的消费级助手。小诺的定位是用户级助理，而不是绑定
+在单个项目里的工具：一个常驻的语音入口，可以在多个命名工作区之间创建、切换与续作——
+Workspace 是项目之间的文件系统隔离边界，每个任务则是其中一条可续接的 Session。
 
 离我们最近的邻居是 [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent)——我们改编
 了它的 macOS 语音采集 helper（见 [NOTICE](NOTICE)），也细读过它的进度播报设计。它把*如何让
@@ -48,11 +49,16 @@ agent 一边干活一边说话*回答得很好；而萦绕我们的，是镜像�
   于 `codex app-server` 之后（JSON-RPC `turn/start`、`turn/steer`）：用户新增的约束追加进正在
   执行的同一个 turn 而非推倒重来，受评测把关的契约为
   `run < turn_start < steer ≤ accept < completion`。
+- **一个语音入口，服务多个工作区。** 命名的 Codex Workspace 各自拥有隔离的 Codex home 与可
+  持久恢复的 Session；语音驱动的创建、切换、续作全部经过 fail-closed 的提案—确认两步。
+  （语音只能创建新的托管目录；导入已有仓库走启动配置 `NOVA_AUDIO_AGENT_CODEX_WORKSPACE`。）
+- **靠结构省 token。** Codex 收到的是一份长度受限的 work order、从不包含对话历史，进度也先经
+  摘要返回、不整段外流（见下文 3.3 节）。
 
-[![原始设计黑板上的 v3 运行时](assets/ideas/v3/nova-brain-v3-chalkboard-v3.png)](assets/ideas/v3/nova-brain-v3-chalkboard-v3.png)
+[![设计黑板上的 Nova Audio Agent 运行时架构](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)
 
-*原始设计黑板上的 v3 运行时：一个事件循环，两个模型端口共读一份 ContextView，Memory 作共享
-黑板，Floor 守着唯一的说话路径。*
+*设计黑板上的运行时：一个事件循环，两个模型端口共读一份 ContextView，Memory 作共享黑板，
+Floor 守着唯一的说话路径。*
 
 > 📝 **设计文章**：
 > [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md)
@@ -124,106 +130,46 @@ executor 的完成并不待在一个回合制的 `reason → act → observe` �
 扬声器的路径。更完整的论证见[设计要义](docs/essence.md)与
 [v3 设计系列](docs/archs/v3/00-overview.md)。
 
+### 3.3 快慢脑分工：靠结构省 token
+
+实时前脑（云端实时模型；文本路径使用轻量云端模型）负责对话，Codex 是慢速工作脑，二者之间的
+边界刻意收窄：
+
+- 前脑最多追问一个简短问题，然后把需求合并为一份长度受限的 work order——跨越边界交给 Codex
+  的只有这份 work order，从不包含对话历史。
+- Codex 进度以记忆事件返回，在 Codex 投影边界生成摘要，再经 Surrogate 注意力策略筛选才可能
+  触达说话权。
+- 对话通道到达固定水位后自动压缩；`codex__steer` 把新约束追加进正在执行的 turn，而不是携带
+  重发上下文重新派单。
+- 工作区图谱上下文只能经固定预算进入模型调用；Workspace/Session 候选只在请求时列出。
+
+这些边界约束的是跨界载荷与回流对话的内容——续接的 Session 仍会恢复其保存的 Codex thread，
+线程自身累积的上下文不在其内。它们是结构性上界，不是实测节省数字：本仓库不发布 token 或
+成本基准，两个「脑」都是云端模型。
+
 ## 4. 快速开始
-
-> **发布状态：** Node.js 与 TypeScript 是当前主运行时。Codex 只使用 app-server；JSONL 仅保留
-> 历史 parser fixture。三平台签名候选、clean-machine、硬件和正式发布证据仍待完成。
-
-### 未签名 Windows 与 Ubuntu 开发候选包
-
-GitHub Actions 工作流 **Unsigned Windows and Ubuntu packages** 产出的是未签名开发候选包，不是
-已签名发布版。其工作流 artifacts 分别为 `unsigned-win32-x64` 和
-`unsigned-linux-x64-gnu`，其中包含 `nova-win32-x64.exe`、`nova-linux-x64.AppImage` 与
-`nova-linux-x64.deb`。每个下载都应视为开发候选包，使用前先确认它来自预期的工作流运行。
-
-由于 `nova-win32-x64.exe` 未签名，Windows 可能显示 SmartScreen 警告。请保持 SmartScreen 和其他
-Windows 安全防护开启；先核验工作流运行和文件，再决定是否使用该候选包。Linux 上，请先为 AppImage
-添加可执行权限并直接运行：
-
-```bash
-chmod u+x nova-linux-x64.AppImage
-./nova-linux-x64.AppImage
-```
-
-请通过系统包管理器安装 `nova-linux-x64.deb`（例如 Ubuntu 可运行
-`sudo apt install ./nova-linux-x64.deb`）。每个候选包的构建和验证状态以对应工作流为准；本文不声称
-原生 CI 已通过。
 
 环境要求：Node.js 22+、npm、Git、已登录的 `codex` 可执行文件，以及受支持的桌面会话。构建原生
 helper 还需要：macOS 安装 Xcode Command Line Tools，Linux 在 `/usr/bin/cc` 提供 C 编译器，
 Windows 安装 Visual Studio Build Tools 并勾选 **Desktop development with C++** 工作负载。
 macOS 提供原生 Ambient Orb 音频采集；Windows 与 Linux 使用 Chromium 音频栈。
 
-### 命名 Codex 工作区与持久 Session
+> **发布状态：** Node.js 与 TypeScript 是当前主运行时。Codex 只使用 app-server；JSONL 仅保留
+> 历史 parser fixture。三平台签名候选、clean-machine、硬件和正式发布证据仍待完成。
 
-实时 Codex project surface 始终开启，不提供 feature toggle；这只适用于 realtime。普通非实时
-Codex 仍保留 `codex__run` 及原有语义，realtime provider 不提供 `codex__run`。**Workspace** 是隔离
-的文件系统/Git 项目；**Session** 是某个 Workspace 内可持久化、可恢复的 Codex thread。可选的启动
-workspace 用于导入已有仓库：
+### 平台支持与打包状态
 
-```bash
-NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
-NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces
-NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
-```
+运行时与桌面客户端包含 win32、darwin、linux 三套代码路径，仓库定义了 macOS、Windows（NSIS）
+与 Linux（AppImage 与 deb）打包目标。各平台验证程度不同，这里如实说明：
 
-每个 realtime turn 只注入 active Workspace 及其 active Session（如果存在）。Workspace 与 Session
-候选项只在用户要求时列出；历史候选项不会进入每轮常驻上下文。create、switch、resume 都先生成
-提案，把用户下一轮绑定到该提案，再解释成专用 structured confirmation：
-必须携带完全匹配的 proposal ID 与 JSON boolean。拒绝、错误 ID 或重放都会 fail closed。切换采用
-分阶段流程：先确认 Workspace，再在该 Workspace 中列出或恢复 Session。普通任务每次创建新的持久
-Session；继续任务会用保存的 Codex thread 启动一个新的 app-server 进程。不同 Workspace 使用不同
-的 `CODEX_HOME`，但 Codex 仍有意保持全局同时只执行一个任务。Orb 只显示公开的 Workspace 名和
-Session 标题，不显示路径、thread ID 或 registry key。
-
-启动时，如果 `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` 的规范路径尚未登记，就会导入为新工作区；
-之后修改这个配置会用确定性的数字后缀登记另一个工作区，不会覆盖当前 active workspace。
-未命名 Session 使用便于朗读的“任务 N”。注册表每个工作区最多保留 200 个 Session、全局最多
-1000 个：先清理最旧的 unavailable Session，再清理非 active 的 ready Session；starting 和 active
-Session 始终受保护。若受保护记录已经占满配额，创建返回 `session_limit`；锁竞争则立即返回
-`state_busy`，不会阻塞实时事件循环。
-
-实时 project mode 下每个工作单都会启动新的 app-server 进程，因此有意禁用 Codex prewarm。持久
-workspace home 会在宿主登录凭据变化时用 owner-only 的原子文件刷新；如果只更新了 workspace
-home 内的凭据，而宿主源没有变化，这次 destination-only 更新会被保留。
-
-完整的发现、确认、切换、持久化与恢复约定见
-[多项目 Workspace 交接](docs/multi-project-workspace-handoff.md)。
-
-### Workspace 记忆图谱与可选 MyContext 证据
-
-Node runtime 提供一套 opt-in 的 workspace 记忆图谱。Nova 图谱是面向项目全景且轻量的：它根据
-Nova 已确认的生命周期维护 workspace 身份，并可把相邻、已提交的 A→B workspace 转换记录成弱
-`discussed_with` 元数据。该关系只是有界的地图线索，不是从模型或 work-order 自由文本推导的工程
-结论：Nova 不读取任一 workspace，关系低于主动建议阈值，90 天未刷新后转为 stale。类型化任务
-事件可贡献其他经过授权的证据。已提交的切换会立即撤销旧图谱 scope，并保留已接收的 A→B→C
-顺序；无法提交的事件会打断相邻关系，不能跨缺口连边。所有持久图谱时间统一使用 Unix 秒。Nova
-不会复制仓库内的工程指令，也不会自动检查另一个 workspace。
-
-```bash
-NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true
-NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH=~/.nova-audio-agent/workspace-graph.sqlite
-
-# 可选；必须指向另行提供的 Nova 兼容的只读 adapter base URL。
-NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
-```
-
-可选的 MyContext 边界补充的是另一种、以人为中心的全景来源：来自聊天、文档、会议和人物的多源
-证据。Nova 只能在同一个权威当前 workspace 中，为显式证据召回而请求它，例如用户追问“为什么”
-或要求查看来源。它不参与启动、workspace 打开/切换、默认召回、Context Header、Recall Pack、
-主动建议置信度、工具路由或任何 action。返回文本留在本地，只读且带来源标签，同时被视为
-不受信任、不持久化且不主动；它不能修改 Nova 图谱、workspace 身份、任务状态或另一个 workspace。
-
-该 URL 必须提供 Nova `nova_workspace_evidence` schema version 1 的严格能力握手和查询契约。
-上游 MyContext 原始 `/capabilities` v2 不兼容：它公开的是通用查询命令，不能证明 Nova 所要求的
-精确 workspace scope。Nova 当前不提供 adapter 可执行文件，也不会根据 `/ask` 结果猜测兼容。
-只安装 MyContext 不会启用 Nova enrichment；本地 Nova 兼容的只读 adapter 必须先成功握手，并由
-显式证据召回的调用方真正发起请求。provider 故障只返回可见的降级空结果，不阻塞普通语音或
-项目工作。
-
-这项集成只是 HTTP client 边界，不复制或捆绑 MyContext 代码及运行时。上游 MyContext 采用
-Elastic License 2.0；未来复用、捆绑或随产品交付任何上游 MyContext 代码或运行时之前，必须另行
-完成法律与分发审查。配置这个 client 本身不代表已经获得分发批准。
+- 原生回声消除音频采集（VoiceProcessingIO）仅限 macOS；Windows 与 Linux 使用 Chromium 音频栈
+  （含其回声消除）。
+- CI 目前只能手动触发，且只在 Windows runner 上运行；今天不存在自动化的跨平台 CI 信号，签名
+  候选、clean-machine 与硬件验证也仍未完成。
+- **Unsigned Windows packages** 工作流目前只构建 Windows artifact（`unsigned-win32-x64`；未签名
+  可执行文件可能触发 SmartScreen 警告，请保持防护开启，使用前核验工作流运行）。Linux
+  AppImage/deb 仍以本地打包脚本（`npm run package:linux`）和仅手动触发的 release-candidate
+  工作流形式存在——其 macOS 与 Windows 腿有签名门控，Linux artifact 仅做格式校验、不签名。
 
 克隆仓库并安装锁定的 Node 依赖：
 
@@ -255,20 +201,64 @@ provider 或打开设备。
 集成或级联实时语音；
 逐项安装、注意事项与完整变量参考见[上手指南](docs/getting-started.zh-CN.md)。
 
-## 5. Ambient Orb
+## 5. 一个助理，多个工作区
 
-Ambient Orb 是本地语音界面。填写 `.env` 后，先安装 vision 开发依赖，再通过仓库 wrapper
-启动源码客户端：
+一个 Nova 实例的定位，是用户手上所有项目共用的同一个语音入口。
+
+### 命名 Codex 工作区与持久 Session
+
+**Workspace** 是隔离的文件系统/Git 项目，拥有自己的 `CODEX_HOME`；**Session** 是某个 Workspace
+内可持久化、可恢复的 Codex thread。实时 project surface 始终开启，可选的启动 workspace 用于
+导入已有仓库：
 
 ```bash
-uv sync --extra vision --dev
-./scripts/start_ambient_orb.sh
+NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
+NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces
+NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent
 ```
 
-启动器固定使用 Node 运行时，并拉起带上下文隔离、沙箱与窄 preload 桥的 Electron 渲染器。它需要
-Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或启动 shell 中的 `TAVILY_API_KEY`；shell
-变量优先于 `.env`。`DASHSCOPE_API_KEY` 只在集成 Qwen 和级联 Qwen 时必需。对于集成 Qwen 的源码
-启动，只有当 `NOVA_AUDIO_AGENT_MODEL_BASE_URL` **完全等于**
+每个 realtime turn 只看到 active Workspace 与 Session；候选项按需列出，绝不注入常驻上下文。
+create、switch、resume 都先生成提案，只有携带完全匹配 proposal ID 的专用 structured
+confirmation 才能提交——拒绝、错误 ID 或重放都会 fail closed。切换分阶段进行（先确认
+Workspace，再列出或恢复其中的 Session）；Codex 保持全局同时只执行一个任务；registry 只允许
+一个 Orb 运行属主（第二个以 `state_busy` 失败）；Orb 只显示公开标签，不显示路径、thread ID
+或 registry key。完整的发现、确认、持久化与恢复约定见
+[多项目 Workspace 交接](docs/multi-project-workspace-handoff.md)；保留上限与凭据处理见
+[上手指南](docs/getting-started.zh-CN.md)。
+
+### Workspace 记忆图谱与可选 MyContext 证据
+
+Node runtime 提供一套 opt-in 的 workspace 记忆图谱：它根据 Nova 已确认的生命周期维护
+workspace 身份，并把相邻的已提交转换记录成弱 `discussed_with` 地图线索——有界、低权威、低于
+主动建议阈值，90 天未刷新即转 stale。Nova 不读取任一 workspace，也绝不自动检查另一个
+workspace；记忆分层的论证见 [v3 记忆卷](docs/archs/v3/02-memory.md)。
+
+```bash
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH=~/.nova-audio-agent/workspace-graph.sqlite
+
+# 可选；必须指向另行提供的 Nova 兼容的只读 adapter base URL。
+NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
+```
+
+可选的 MyContext 边界补充以人为中心的证据来源（聊天、文档、会议、人物），Nova 只能为当前
+workspace 的显式证据召回而请求它；结果只读、不受信任、不主动。它需要另行提供的 Nova 兼容
+只读 adapter——本仓库不提供，因此该集成尚不能端到端工作。上游 MyContext 采用 Elastic
+License 2.0，复用、捆绑或随产品交付其任何代码或运行时之前，必须另行完成法律与分发审查。
+严格握手契约与参与限制清单见[上手指南](docs/getting-started.zh-CN.md)。
+
+## 6. Ambient Orb
+
+Ambient Orb 是本地语音界面。填写 `.env` 后，启动源码客户端：
+
+```bash
+npm run start:client
+```
+
+该启动命令固定使用 Node 运行时，并拉起带上下文隔离、沙箱与窄 preload 桥的 Electron 渲染器。
+它需要 Node.js、`codex` 可执行文件、麦克风权限，以及 `.env` 或启动 shell 中的
+`TAVILY_API_KEY`；shell 变量优先于 `.env`。`DASHSCOPE_API_KEY` 只在集成 Qwen 和级联 Qwen 时
+必需。对于集成 Qwen 的源码启动，只有当 `NOVA_AUDIO_AGENT_MODEL_BASE_URL` **完全等于**
 `https://dashscope.aliyuncs.com/compatible-mode/v1` 时，`NOVA_AUDIO_AGENT_MODEL_API_KEY` 才可替代
 它；其他地址不会让通用密钥成为 Qwen realtime 凭据。同时设置两种凭据时，`DASHSCOPE_API_KEY` 优先。
 级联 Ark 的 LLM 需要 `ARK_API_KEY`，并为火山
@@ -302,7 +292,7 @@ Codex delegate 工作时外侧有一圈轨道带环绕——可选暖焰琥珀�
 系统钥匙串加密保存）。provider 事件与宿主的响应及 delegate 身份逐一关联，播放确认为音频清除
 与完成加上围栏。
 
-## 6. 仓库布局
+## 7. 仓库布局
 
 ```text
 runtime/src/                    运行时脊柱、记忆、执行器、provider、CLI 与桌面入口
@@ -312,22 +302,36 @@ docs/                           公开的架构、论证、指南、状态与设
 resources/                      本地原始与剪辑媒体；有意被 Git 忽略
 ```
 
-## 7. 文档
+## 8. 文档
 
-以下文档均为英文。
+除上手指南提供中文版外，以下文档为英文。
 
 | 读这篇 | 为了 |
 |---|---|
 | [设计要义](docs/essence.md) | 立场与非目标 |
 | [架构](docs/architecture.md) | 模块与边界 |
 | [术语与不变量](docs/glossary.md) | 词汇与规则 |
-| [上手指南](docs/getting-started.md) | 安装与集成 |
+| [上手指南](docs/getting-started.zh-CN.md) | 安装与集成 |
 | [项目状态](docs/status.md) | 什么可用、什么仍在实验 |
+| [多项目 Workspace 交接](docs/multi-project-workspace-handoff.md) | 完整的 Workspace/Session 契约 |
+| [A2A](docs/a2a.md) | agent 之间的边界 |
+| [Node 运行时迁移记录](docs/releases/node-runtime-migration-unreleased.md) | 迁移的事实变更日志 |
 | [v3 设计系列](docs/archs/v3/00-overview.md) | 详细设计论证 |
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 设计空间随笔 |
 | [下游重实现指南](docs/guides/downstream-reimplementation.md) | 在别处重建这套架构 |
 
-## 8. 开发与验证
+## 9. 路线图
+
+1. **MyContext 端到端打通。** 目前只提供严格 loopback、只读的 client 边界；计划在完成
+   Elastic License 2.0 审查后交付 Nova 兼容的只读 adapter，让显式证据召回能对接真实的
+   MyContext 安装。
+2. **工作区记忆图谱默认开启，并补齐情景记忆。** 图谱已实现但默认关闭，会话级情景摘要尚未
+   实现；计划在浸泡证据足够后默认开启，并把有界的会话情景摘要作为新的记忆层。
+3. **经由 executor 端口接入更多 coding agent。** 今天唯一的 coding-agent 后端是
+   `codex app-server` 上的 Codex；`ExecutorAdapter` 端口是经 ACP 或各家原生协议接入其他
+   provider 的接缝。（这与语音/实时 provider 抽象是两回事——后者今天已有真实选择。）
+
+## 10. 开发与验证
 
 ```bash
 npm ci
@@ -340,7 +344,7 @@ npm test
 安全问题请按 [SECURITY.md](SECURITY.md) 私下报告；贡献指南（含每次改动必须守住的不变量）见
 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 9. 许可证
+## 11. 许可证
 
 版权所有 2026 DeepNovaCore，以 [Apache License 2.0](LICENSE) 授权。第三方署名记录于
 [NOTICE](NOTICE) 与桌面端[第三方声明](desktop/ambient-orb/THIRD_PARTY_NOTICES.md)。

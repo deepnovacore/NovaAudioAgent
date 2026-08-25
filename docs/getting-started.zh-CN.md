@@ -1,3 +1,5 @@
+<!-- Keep in sync with docs/getting-started.md -->
+
 # 上手指南
 
 ## 当前发布边界
@@ -40,6 +42,15 @@ npm run start:client
 `NOVA_AUDIO_AGENT_MODEL_API_KEY`；不同地址不会让通用密钥成为 Qwen realtime 凭据。两种凭据同时设置时，
 `DASHSCOPE_API_KEY` 优先。
 
+### 并行维护的 Python 后端（仅开发用）
+
+Python 后端（`src/nova_audio_agent`）处于并行维护状态：未打包的 Electron 应用在未设置
+`NOVA_AUDIO_AGENT_BACKEND` 时仍默认使用它；`npm run start:client` 会显式钉住 Node 后端，
+打包版则拒绝 Python 后端。开发 Python 后端的人可以用 `./scripts/start_ambient_orb.sh` 启动
+（需要一个可以 `import nova_audio_agent` 的 Python 环境）。Python CLI 另提供
+`nova-audio-agent workspace register`，用于把已有目录注册为 Workspace；Node CLI 目前还没有
+workspace 子命令。
+
 ## 始终开启的 Codex project mode
 
 实时 Codex project surface 没有启用/禁用 toggle。普通非实时 Codex 保留 `codex__run` 及原有语义；
@@ -47,6 +58,8 @@ realtime provider 不暴露 `codex__run`。Workspace 是文件系统/Git 项目�
 可恢复的 Codex thread。托管 Workspace 默认位于 `~/.nova-audio-agent/workspaces`，注册表默认是
 `~/.nova-audio-agent/codex-projects-v1.json`，各 Workspace 的 Codex home 默认位于
 `~/.nova-audio-agent/codex-homes`。`NOVA_AUDIO_AGENT_CODEX_WORKSPACE` 可在启动时导入已有仓库。
+桌面设置面板目前只暴露单个启动 workspace 路径字段；注册任意已有目录须使用
+`NOVA_AUDIO_AGENT_CODEX_WORKSPACE`，语音只能创建新的托管目录。
 
 每个 realtime turn 只注入 active Workspace 及其 active Session（如果存在）。Nova 只在请求时列出
 Workspace 或 Session 候选项，历史候选项不会进入每轮常驻上下文。create、switch、resume 采用
@@ -54,25 +67,27 @@ Workspace 或 Session 候选项，历史候选项不会进入每轮常驻上下�
 boolean。false、错误 ID 或重放均不改变状态。切换 Workspace 后，再请求列出或恢复其中的 Session。
 持久化与恢复细节见[多项目 Workspace 交接](multi-project-workspace-handoff.md)。
 
-## 未签名 Windows 与 Ubuntu 开发候选包
+注册表每个 Workspace 最多保留 200 个 Session、全局最多 1000 个：先清理最旧的 unavailable
+Session，再清理非 active 的 ready Session；starting 和 active Session 始终受保护。若受保护记录
+已经占满配额，创建返回 `session_limit`；锁竞争则立即返回 `state_busy`。之后修改
+`NOVA_AUDIO_AGENT_CODEX_WORKSPACE` 会用确定性后缀登记另一个工作区，不会覆盖当前 active
+Workspace；未命名 Session 使用便于朗读的“任务 N”。每个工作单都会启动新的 app-server 进程，
+因此 project mode 有意禁用 Codex prewarm。持久 workspace home 会在宿主登录凭据变化时用
+owner-only 的原子文件刷新；如果只更新了 workspace home 内的凭据而宿主源没有变化，这次
+destination-only 更新会被保留。
 
-GitHub Actions 工作流 **Unsigned Windows and Ubuntu packages** 产出的是未签名开发候选包，而非
-已签名发布版。请下载其 `unsigned-win32-x64` 或 `unsigned-linux-x64-gnu` 工作流 artifact，并使用其中
-稳定的文件名：`nova-win32-x64.exe`、`nova-linux-x64.AppImage` 与 `nova-linux-x64.deb`。使用前先确认
-下载来自预期的工作流运行。
+## 未签名 Windows 开发候选包
+
+GitHub Actions 工作流 **Unsigned Windows packages** 产出的是未签名开发候选包，而非已签名
+发布版，且目前只构建 Windows artifact：请下载 `unsigned-win32-x64` 工作流 artifact，并使用其中
+稳定的 `nova-win32-x64.exe`。其 Linux 分支在跨平台 CI 恢复之前暂时停用。Linux AppImage 与 deb
+仍以本地打包脚本（`npm run package:linux`）和仅手动触发的 release-candidate 工作流（macOS、
+Windows、Ubuntu 三平台；macOS 与 Windows 腿要求签名，Linux artifact 仅做格式校验、不签名）
+形式存在；unsigned 工作流目前不发布 Linux artifact。使用前先确认下载来自预期的工作流运行。
 
 未签名的 `nova-win32-x64.exe` 在 Windows 上可能触发 SmartScreen 警告。请保持 SmartScreen 和其他
-Windows 安全防护开启；先核验工作流运行和文件，再决定是否使用该候选包。Linux 上，请先为 AppImage
-添加可执行权限并直接运行：
-
-```bash
-chmod u+x nova-linux-x64.AppImage
-./nova-linux-x64.AppImage
-```
-
-请通过系统包管理器安装 `nova-linux-x64.deb`（例如 Ubuntu 可运行
-`sudo apt install ./nova-linux-x64.deb`）。每个候选包的构建和验证状态以对应工作流为准；本指南不声称
-原生 CI 已通过。
+Windows 安全防护开启；先核验工作流运行和文件，再决定是否使用该候选包。每个候选包的构建和验证
+状态以对应工作流为准；本指南不声称原生 CI 已通过。
 
 仓库内 Node 检查均可离线、确定性运行：
 
@@ -123,6 +138,38 @@ clean-machine installer、签名和发布仍是 pending external evidence。
 ```bash
 DASHSCOPE_API_KEY=replace-with-your-qwen-key npm run runtime:smoke:qwen
 ```
+
+## Workspace 记忆图谱与 MyContext provider
+
+Node runtime 的 opt-in workspace 记忆图谱通过以下变量配置：
+
+```bash
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true
+NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_PATH=~/.nova-audio-agent/workspace-graph.sqlite
+
+# 可选；必须指向另行提供的 Nova 兼容的只读 adapter base URL。
+NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
+```
+
+图谱根据 Nova 已确认的生命周期维护 workspace 身份，并把相邻、已提交的 A→B 转换记录成弱
+`discussed_with` 元数据——这只是有界的地图线索，不是从模型或 work-order 自由文本推导的结论。
+Nova 不读取任一 workspace，关系低于主动建议阈值，90 天未刷新后转为 stale。已提交的切换会立即
+撤销旧图谱 scope，并保留已接收的 A→B→C 顺序；无法提交的事件会打断相邻关系，不能跨缺口连边。
+所有持久图谱时间统一使用 Unix 秒。Nova 不会复制仓库内的工程指令，也不会自动检查另一个
+workspace。
+
+可选的 MyContext provider 只能在同一个权威当前 workspace 中、为显式证据召回而被请求，例如用户
+追问“为什么”或要求查看来源。它不参与启动、workspace 打开/切换、默认召回、Context Header、
+Recall Pack、主动建议置信度、工具路由或任何 action。返回文本留在本地，只读且带来源标签，同时
+被视为不受信任、不持久化且不主动；它不能修改 Nova 图谱、workspace 身份、任务状态或另一个
+workspace。provider 故障只返回可见的降级空结果，不阻塞普通语音或项目工作。
+
+该 URL 必须提供 Nova `nova_workspace_evidence` schema version 1 的严格能力握手和查询契约；
+上游 MyContext 原始 `/capabilities` v2 不被接受，因为它不能证明 Nova 所要求的精确 workspace
+scope。Nova 不提供 adapter 可执行文件，也不会根据 `/ask` 结果猜测兼容——只安装 MyContext 不会
+启用 enrichment。这项集成只是 HTTP client 边界，不复制或捆绑 MyContext 代码及运行时；上游
+MyContext 采用 Elastic License 2.0，复用、捆绑或随产品交付任何上游 MyContext 代码或运行时之前，
+必须另行完成法律与分发审查。
 
 ## 公共环境变量参考
 

@@ -11,9 +11,11 @@ mistaken for CI evidence.
 The public verification commands are:
 
 ```bash
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run pytest -q
-uv build
-(cd desktop/ambient-orb && npm ci && npm test && npm run build)
+npm ci
+npm run check
+npm run build
+npm test
 ```
+
+The co-maintained Python backend keeps its own `uv`-driven suite (ruff, pytest); it is exercised
+separately and is not the public verification gate for changes to this repository.

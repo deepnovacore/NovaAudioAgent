@@ -23,6 +23,15 @@
 | Steering | Appending a new instruction to an in-flight Codex turn (`codex.steer` over the app-server transport) without terminating or restarting it |
 | App-server | The native `codex app-server` JSON-RPC process driven by the live Codex backend (`turn/start`, `turn/steer`) |
 | Wake reason | Causal metadata describing why a model slot should run |
+| Workspace | One isolated filesystem/Git project with its own Codex home; a Session never leaves its Workspace |
+| Session | One durable, resumable Codex thread inside exactly one Workspace |
+| Proposal / structured confirmation | Create, switch, and resume first produce a proposal; only the dedicated confirmation call with the exact proposal ID and a JSON boolean commits it — rejection, mismatch, or replay fails closed |
+| Work order | The single consolidated, bounded task statement handed to Codex; conversation history never crosses that boundary |
+| Pipeline mode | The top-level realtime shape: `integrated` (one realtime model) or `cascaded` (endpointing → ASR → LLM → TTS) |
+| Endpointing | The cascaded stage deciding when an utterance has ended (semantic turn detector or bounded silence) |
+| Workspace memory graph | The opt-in durable SQLite graph of workspaces and weak relations; feeds only bounded, suggestion-only context |
+| Graph board | The read-only desktop projection of the published graph snapshot; never model context |
+| MyContext adapter | An optional loopback-only, read-only evidence provider behind Nova's strict capability handshake; no adapter ships in this repository |
 
 ## Invariants
 

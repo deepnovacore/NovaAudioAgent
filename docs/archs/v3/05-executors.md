@@ -1,7 +1,7 @@
 # 5. Executors
 
-Nova Audio Agent ships deterministic simulators plus adapters for search, Home Assistant, Codex,
-AutoGLM, camera snapshots, Watch, and Guard. Assembly exposes only selected manifests.
+Nova Audio Agent ships deterministic simulators plus adapters for search, Codex (app-server),
+camera snapshots, Watch, and Guard. Assembly exposes only selected manifests.
 
 Adapter-local responsibilities include:
 

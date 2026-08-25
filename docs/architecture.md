@@ -24,15 +24,16 @@ flowchart TB
 
 | Module | Responsibility |
 |---|---|
-| `runtime.py` | Event application, dispatch, wake routing, and lifecycle coordination |
-| `slots.py` | Single-flight scheduling for model and executor work |
-| `delegates.py` | Identity, deadlines, and terminal state for dispatched work |
-| `memory/` | Append-only channel memory plus structured intent, goal, and authorization |
-| `context_view.py` | The bounded model-facing view of current state |
-| `floor.py` | Exclusive ownership of the user-facing speaking path |
-| `ports.py` | Executor manifests, operation contracts, requests, and typed handoffs |
-| `assembly.py` | Configuration-driven construction of runtime and executor graphs |
-| `realtime/` | Qwen transport, correlation, playback fencing, recovery, and telemetry |
+| `runtime/src/causal-runtime.ts` | Event application, dispatch, single-flight slots, wake routing, delegate identity/deadline/terminal state, and the `ExecutorAdapter` port |
+| `runtime/src/memory.ts` | Append-only channel memory plus structured intent, goal, and authorization |
+| `runtime/src/context-view.ts` | The bounded model-facing view of current state |
+| `runtime/src/floor.ts` | Exclusive ownership of the user-facing speaking path |
+| `runtime/src/ports.ts` | Executor manifests, operation contracts, requests, and typed handoffs |
+| `runtime/src/assembly.ts`, `production-realtime-assembly.ts` | Configuration-driven construction of runtime, executor, and realtime graphs; dispatches `integrated` vs `cascaded` |
+| `runtime/src/realtime/` | Provider transports, correlation, playback fencing, recovery, and telemetry |
+| `runtime/src/codex-*.ts` | Codex app-server transport and contract, plus the Workspace/Session project store (`codex-project-store.ts`) |
+| `runtime/src/workspace-graph/` | Opt-in durable workspace memory graph: store worker, identity, projector, recall, context budgeter, provider seam |
+| `runtime/src/executors/` | Deterministic simulators and adapter implementations |
 
 ## Executor boundary
 
@@ -58,12 +59,48 @@ Guard) actually cancel in-flight speech, and a hit never interrupts the user. A 
 is not dropped: it lands in the suggestion pool, where a fired entry cools down and re-arms only
 when new evidence arrives on its channel.
 
+## Workspaces and Sessions
+
+The Codex project surface is a two-level durable store (`runtime/src/codex-project-store.ts`): a
+Workspace is an isolated filesystem/Git project with its own `CODEX_HOME`, and a Session is a
+resumable Codex thread bound to exactly one Workspace. Voice-driven create, switch, and resume are
+staged propose-and-confirm mutations that fail closed on rejection, ID mismatch, or replay, and a
+registry admits only one live Orb owner at a time (a second Orb fails with `state_busy`). The
+complete discovery, confirmation, switching, persistence, and recovery contract is in
+[Multi-project Workspace handoff](multi-project-workspace-handoff.md).
+
+## Workspace memory graph (opt-in)
+
+The Node runtime carries an opt-in durable workspace memory graph
+(`runtime/src/workspace-graph/`): a SQLite store on a worker thread, identity resolution for
+spoken workspace names, deterministic projection of confirmed lifecycle events into weak relation
+cards, and bounded recall. Graph context reaches model calls only through fixed budgets — a
+bounded header and a recall pack of at most two hints — and is marked low-authority: it can never
+authorize a workspace switch. The memory layering rationale is in the
+[v3 memory volume](archs/v3/02-memory.md) and the context rules in the
+[context-view volume](archs/v3/03-context-view.md).
+
+## Platform notes
+
+The runtime and desktop client carry win32, darwin, and linux code paths, with per-platform
+packaging targets (macOS, Windows NSIS, Linux AppImage/deb). Native echo-cancelled audio capture
+(VoiceProcessingIO) exists on macOS only; Windows and Linux use Chromium's audio stack, and both
+camera paths use Chromium's capture pipeline on every platform. Cross-platform CI and hardware
+validation status is tracked honestly in [Project status](status.md).
+
 ## Realtime path
 
 The realtime service translates provider events into host events while preserving provider response
 identity, playback generation, and delegate identity. Renderer acknowledgements fence audio clear
 and completion. Recovery injects bounded host-owned facts rather than replaying arbitrary provider
 state.
+
+The top-level pipeline shape is selected by `production-realtime-assembly.ts` from
+`pipeline_mode`. `integrated` (the default) runs one realtime speech-to-speech model — today Qwen
+realtime only. `cascaded` composes injectable endpointing, ASR, LLM, and TTS ports; today's
+provider matrix is Volcengine ASR, a Qwen (`qwen-flash`) or Ark LLM, Volcengine TTS, and an `auto`
+endpointing stage that probes a LiveKit-style v1-mini turn detector with a bounded-silence
+fallback. There is no automatic provider failover.
 
 Two assembly differences distinguish this path from the text CLI. First, there is no separate
 FastBrain model call: the realtime provider model itself fills the FastBrain role (the code calls
@@ -78,7 +115,7 @@ Neither is exposed by the text CLI; steering is also reachable through the expli
 - Configuration errors never echo secret values.
 - External search and visual content are evidence, never instructions.
 - Desktop renderers use context isolation, sandboxing, and a narrow preload bridge.
-- Codex workspaces and AutoGLM endpoints are validated before use.
+- Codex workspaces are validated before use.
 - Local recordings, runtime data, caches, and credentials are excluded from Git.
 
 The design rationale is expanded in the [v3 series](archs/v3/00-overview.md).

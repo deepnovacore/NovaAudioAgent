@@ -34,7 +34,10 @@ deterministic tests; keep their outputs in ignored local artifact directories, a
 credentials, recordings, or runtime traces.
 
 The README ships in two languages — [README.md](README.md) and
-[README.zh-CN.md](README.zh-CN.md). A change to either must be mirrored in the other.
+[README.zh-CN.md](README.zh-CN.md) — and so does the getting-started guide —
+[docs/getting-started.md](docs/getting-started.md) and
+[docs/getting-started.zh-CN.md](docs/getting-started.zh-CN.md). A change to either file of a pair
+must be mirrored in the other.
 
 ## What a change must preserve
 
