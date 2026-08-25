@@ -196,8 +196,18 @@ def test_project_mode_exposes_project_and_confirmation_tools() -> None:
         "required": ["proposal_id", "confirmed"],
         "additionalProperties": False,
     }
+    assert "明确同意或明确拒绝都必须调用" in confirmation["description"]
+    assert "confirmed=false" in confirmation["description"]
     project = next(
         item["function"] for item in tools.schemas if item["function"]["name"] == "codex__project"
+    )
+    assert "start_session 只能在当前 Workspace" in project["description"]
+    assert "start_session 和 resume_session 都必须传完整 work_order" in project["description"]
+    assert project["parameters"]["properties"]["workspace"]["description"] == (
+        "create/select 必填；list_sessions/resume 可选；start_session 必须省略"
+    )
+    assert project["parameters"]["properties"]["work_order"]["description"] == (
+        "start_session 和 resume_session 必填；create_workspace 可选"
     )
     assert set(project["parameters"]["properties"]) == {
         "action",
@@ -206,6 +216,51 @@ def test_project_mode_exposes_project_and_confirmation_tools() -> None:
         "work_order",
         "origin_ref",
     }
+    variants = [
+        (
+            branch["properties"]["action"]["enum"][0],
+            frozenset(branch["properties"]),
+            frozenset(branch["required"]),
+        )
+        for branch in project["parameters"]["oneOf"]
+    ]
+    assert variants == [
+        (
+            "list_workspaces",
+            frozenset({"action", "origin_ref"}),
+            frozenset({"action", "origin_ref"}),
+        ),
+        (
+            "create_workspace",
+            frozenset({"action", "workspace", "origin_ref"}),
+            frozenset({"action", "workspace", "origin_ref"}),
+        ),
+        (
+            "create_workspace",
+            frozenset({"action", "workspace", "session", "work_order", "origin_ref"}),
+            frozenset({"action", "workspace", "work_order", "origin_ref"}),
+        ),
+        (
+            "select_workspace",
+            frozenset({"action", "workspace", "origin_ref"}),
+            frozenset({"action", "workspace", "origin_ref"}),
+        ),
+        (
+            "list_sessions",
+            frozenset({"action", "workspace", "origin_ref"}),
+            frozenset({"action", "origin_ref"}),
+        ),
+        (
+            "start_session",
+            frozenset({"action", "session", "work_order", "origin_ref"}),
+            frozenset({"action", "work_order", "origin_ref"}),
+        ),
+        (
+            "resume_session",
+            frozenset({"action", "workspace", "session", "work_order", "origin_ref"}),
+            frozenset({"action", "work_order", "origin_ref"}),
+        ),
+    ]
     assert _normalize_project_request(
         {
             "action": "start_session",

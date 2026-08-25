@@ -682,6 +682,12 @@ def test_frontend_instructions_route_project_actions_and_confirmation_semantical
         "复制 proposal_id",
         "confirmed 的 JSON boolean",
         "语义不明确时不要调用并自然追问",
+        "只提到当前项目中的历史任务或命名 Session",
+        "先 list_sessions，不要 list_workspaces",
+        "目标项目身份未知",
+        "明确同意、拒绝、取消或暂缓都必须调用",
+        "不得只做口头回应",
+        "拒绝、取消或暂缓用 confirmed=false",
     ):
         assert phrase in FRONTEND_INSTRUCTIONS
     assert "codex__run" not in FRONTEND_INSTRUCTIONS

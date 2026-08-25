@@ -107,6 +107,62 @@ test('project mode exposes project-only public tools and the confirmation schema
     'codex__project', 'codex__confirm_project_action', 'codex__steer', 'codex__status',
   ])
   assert.equal(compiled.bindings.has('codex__run'), false)
+  const projectSchema = compiled.schemas.find(schema => {
+    const declaration = schema.function
+    return typeof declaration === 'object'
+      && declaration !== null
+      && !Array.isArray(declaration)
+      && declaration.name === 'codex__project'
+  })
+  const projectDeclaration = record(projectSchema?.function)
+  assert.match(String(projectDeclaration.description), /start_session 只能在当前 Workspace/u)
+  assert.match(
+    String(projectDeclaration.description),
+    /start_session 和 resume_session 都必须传完整 work_order/u,
+  )
+  const projectParameters = record(projectDeclaration.parameters)
+  const projectProperties = record(projectParameters.properties)
+  assert.equal(
+    record(projectProperties.workspace).description,
+    'create/select 必填；list_sessions/resume 可选；start_session 必须省略',
+  )
+  assert.equal(
+    record(projectProperties.work_order).description,
+    'start_session 和 resume_session 必填；create_workspace 可选',
+  )
+  const projectVariants = (projectParameters.oneOf as unknown[]).map(rawBranch => {
+    const branch = record(rawBranch)
+    const properties = record(branch.properties)
+    return [
+      (record(properties.action).enum as unknown[])[0],
+      Object.keys(properties).sort(),
+      [...branch.required as string[]].sort(),
+    ]
+  })
+  assert.deepEqual(projectVariants, [
+    ['list_workspaces', ['action', 'origin_ref'], ['action', 'origin_ref']],
+    [
+      'create_workspace', ['action', 'origin_ref', 'workspace'],
+      ['action', 'origin_ref', 'workspace'],
+    ],
+    [
+      'create_workspace', ['action', 'origin_ref', 'session', 'work_order', 'workspace'],
+      ['action', 'origin_ref', 'work_order', 'workspace'],
+    ],
+    [
+      'select_workspace', ['action', 'origin_ref', 'workspace'],
+      ['action', 'origin_ref', 'workspace'],
+    ],
+    ['list_sessions', ['action', 'origin_ref', 'workspace'], ['action', 'origin_ref']],
+    [
+      'start_session', ['action', 'origin_ref', 'session', 'work_order'],
+      ['action', 'origin_ref', 'work_order'],
+    ],
+    [
+      'resume_session', ['action', 'origin_ref', 'session', 'work_order', 'workspace'],
+      ['action', 'origin_ref', 'work_order'],
+    ],
+  ])
   const confirmationSchema = compiled.schemas.find(schema => {
     const declaration = schema.function
     return typeof declaration === 'object'
@@ -129,6 +185,10 @@ test('project mode exposes project-only public tools and the confirmation schema
     required: ['proposal_id', 'confirmed'],
     additionalProperties: false,
   })
+  const confirmationDescription = confirmationDeclaration.description
+  assert.ok(typeof confirmationDescription === 'string')
+  assert.match(confirmationDescription, /明确同意或明确拒绝都必须调用/u)
+  assert.match(confirmationDescription, /confirmed=false/u)
   assert.deepEqual(validateCodexRequest('project', 'confirm_project_action', {
     proposal_id: 'proposal-1', confirmed: true,
   }), {ok: true, value: {proposal_id: 'proposal-1', confirmed: true}})

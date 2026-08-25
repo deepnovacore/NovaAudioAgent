@@ -31,9 +31,46 @@ from nova_audio_agent.realtime.project_confirmation import (
     ProjectConfirmationController,
 )
 
+
+_PROJECT_FIELDS = {
+    "workspace": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "description": "create/select 必填；list_sessions/resume 可选；start_session 必须省略",
+    },
+    "session": {"type": "string", "minLength": 1, "maxLength": 120},
+    "work_order": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4000,
+        "description": "start_session 和 resume_session 必填；create_workspace 可选",
+    },
+}
+
+
+def _project_variant(
+    action: str,
+    fields: tuple[str, ...],
+    required: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": [action]},
+            **{name: _PROJECT_FIELDS[name] for name in fields},
+        },
+        "required": ["action", *required],
+        "additionalProperties": False,
+    }
+
 PROJECT = OpSpec(
     name="project",
-    description="列出、创建或切换工作区，以及列出或继续其中的 Session",
+    description=(
+        "管理 Workspace 和 Session。严格按 action 选择字段：start_session 只能在当前 "
+        "Workspace 运行且不得传 workspace；start_session 和 resume_session 都必须传完整 "
+        "work_order。"
+    ),
     params={
         "type": "object",
         "properties": {
@@ -48,12 +85,27 @@ PROJECT = OpSpec(
                     "resume_session",
                 ],
             },
-            "workspace": {"type": "string", "minLength": 1, "maxLength": 80},
-            "session": {"type": "string", "minLength": 1, "maxLength": 120},
-            "work_order": {"type": "string", "minLength": 1, "maxLength": 4000},
+            **_PROJECT_FIELDS,
         },
         "required": ["action"],
         "additionalProperties": False,
+        "oneOf": [
+            _project_variant("list_workspaces", ()),
+            _project_variant("create_workspace", ("workspace",), ("workspace",)),
+            _project_variant(
+                "create_workspace",
+                ("workspace", "session", "work_order"),
+                ("workspace", "work_order"),
+            ),
+            _project_variant("select_workspace", ("workspace",), ("workspace",)),
+            _project_variant("list_sessions", ("workspace",)),
+            _project_variant("start_session", ("session", "work_order"), ("work_order",)),
+            _project_variant(
+                "resume_session",
+                ("workspace", "session", "work_order"),
+                ("work_order",),
+            ),
+        ],
     },
     readonly=False,
     deadline_budget=600.0,
@@ -66,7 +118,10 @@ PROJECT_RUN = PROJECT
 
 CONFIRM_PROJECT_ACTION = OpSpec(
     name="confirm_project_action",
-    description="根据用户当前自然语言回答确认或取消正在等待的项目操作",
+    description=(
+        "当前有待确认项目操作时，用户明确同意或明确拒绝都必须调用；同意传 "
+        "confirmed=true，拒绝、取消或暂缓传 confirmed=false，不得只口头回应"
+    ),
     params={
         "type": "object",
         "properties": {
