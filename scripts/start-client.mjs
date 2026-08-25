@@ -121,6 +121,7 @@ export function planClientLaunch({
   codexBinary,
   envFileExists,
   dependenciesInstalled,
+  homeDirectory,
 }) {
   if (!Array.isArray(argv) || argv.length !== 0) {
     throw new Error('this launcher does not accept arguments')
@@ -136,11 +137,29 @@ export function planClientLaunch({
 
   const npm = args => ({command: nodeExecutable, args: [npmCli, ...args]})
   const configuredEnv = parseClientEnvironment({contents: envFileContents, shellEnv: env})
+  const workspace = expandHomePath(
+    configuredEnv.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || rootDir,
+    homeDirectory,
+    pathApi,
+  )
   const clientEnv = {
     ...configuredEnv,
     NOVA_AUDIO_AGENT_BACKEND: 'node',
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE:
-      configuredEnv.NOVA_AUDIO_AGENT_CODEX_WORKSPACE || rootDir,
+    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
+    ...(configuredEnv.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT === undefined
+      ? {}
+      : {NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: expandHomePath(
+          configuredEnv.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT,
+          homeDirectory,
+          pathApi,
+        )}),
+    ...(configuredEnv.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT === undefined
+      ? {}
+      : {NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: expandHomePath(
+          configuredEnv.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT,
+          homeDirectory,
+          pathApi,
+        )}),
     ...(hasCodexBinary ? { NOVA_AUDIO_AGENT_CODEX_BIN: codexBinary } : {}),
     ...(envFileExists ? { NOVA_AUDIO_AGENT_ENV_FILE: pathApi.join(rootDir, '.env') } : {}),
   }
@@ -168,6 +187,14 @@ export function planClientLaunch({
     env: clientEnv,
   })
   return Object.freeze(steps.map(step => Object.freeze(step)))
+}
+
+function expandHomePath(value, homeDirectory, pathApi) {
+  if (value !== '~' && !value.startsWith('~/')) return value
+  if (typeof homeDirectory !== 'string' || !pathApi.isAbsolute(homeDirectory)) {
+    throw new Error('home directory unavailable for Codex path expansion')
+  }
+  return value === '~' ? homeDirectory : pathApi.join(homeDirectory, value.slice(2))
 }
 
 function runStep(step) {
@@ -236,6 +263,7 @@ export async function main({
     }),
     envFileExists,
     dependenciesInstalled: existsSync(electronExecutablePath(rootDir, platform)),
+    homeDirectory: homedir(),
   })
   for (const step of plan) await runStep(step)
 }

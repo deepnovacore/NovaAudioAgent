@@ -143,10 +143,13 @@ test('client launch plan installs when needed, builds once, and forces the Node 
     envFileContents: [
       'TAVILY_API_KEY=from-file',
       'KEEP_ME=from-file',
-      'NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/configured/workspace',
+      'NOVA_AUDIO_AGENT_CODEX_WORKSPACE=~/configured/workspace',
+      'NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT=~/.nova-audio-agent/workspaces',
+      'NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT=~/.nova-audio-agent',
       '',
     ].join('\n'),
     platform: 'darwin',
+    homeDirectory: '/Users/example',
     rootDir: '/repo',
     nodeExecutable: '/opt/node',
     npmCli: '/opt/npm/bin/npm-cli.js',
@@ -177,7 +180,15 @@ test('client launch plan installs when needed, builds once, and forces the Node 
   assert.equal(plan[3].env.TAVILY_API_KEY, 'from-file')
   assert.equal(plan[3].env.NOVA_AUDIO_AGENT_BACKEND, 'node')
   assert.equal(plan[3].env.NOVA_AUDIO_AGENT_CODEX_BIN, '/opt/codex/bin/codex')
-  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/configured/workspace')
+  assert.equal(plan[3].env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/Users/example/configured/workspace')
+  assert.equal(
+    plan[3].env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT,
+    '/Users/example/.nova-audio-agent/workspaces',
+  )
+  assert.equal(
+    plan[3].env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT,
+    '/Users/example/.nova-audio-agent',
+  )
   assert.equal(plan[3].env.NOVA_AUDIO_AGENT_ENV_FILE, '/repo/.env')
 })
 
