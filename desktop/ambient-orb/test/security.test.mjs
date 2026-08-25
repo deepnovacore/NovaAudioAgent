@@ -134,7 +134,14 @@ test('media request policy catches lookalike origins, panels, and invalid media 
     ['credential host', { ...base, origin: 'nova://orb@evil', mediaTypes: ['video'] }],
     ['different host', { ...base, origin: 'nova://other', mediaTypes: ['video'] }],
     ['path lookalike', { ...base, origin: 'nova://orb/index.html', mediaTypes: ['video'] }],
+    ['dot path lookalike', { ...base, origin: 'nova://orb/.', mediaTypes: ['video'] }],
+    ['normalized path lookalike', { ...base, origin: 'nova://orb/foo/..', mediaTypes: ['video'] }],
+    ['encoded dot path lookalike', { ...base, origin: 'nova://orb/%2e%2e', mediaTypes: ['video'] }],
     ['query lookalike', { ...base, origin: 'nova://orb?source=video', mediaTypes: ['video'] }],
+    ['empty query lookalike', { ...base, origin: 'nova://orb/?', mediaTypes: ['video'] }],
+    ['empty fragment lookalike', { ...base, origin: 'nova://orb/#', mediaTypes: ['video'] }],
+    ['empty credential lookalike', { ...base, origin: 'nova://@orb/', mediaTypes: ['video'] }],
+    ['empty port lookalike', { ...base, origin: 'nova://orb:/', mediaTypes: ['video'] }],
     ['wrong permission', { ...base, permission: 'display-capture', mediaTypes: ['video'] }],
     ['missing media types', base],
     ['empty media types', { ...base, mediaTypes: [] }],
@@ -147,7 +154,7 @@ test('media request policy catches lookalike origins, panels, and invalid media 
   }
 })
 
-test('media check policy catches weakening exact origin or renderer identity', () => {
+test('media check policy accepts Electron custom-scheme roots without weakening renderer identity', () => {
   assert.equal(typeof securityModule.allowsOrbMediaCheck, 'function')
   const renderer = {}
   const base = {
@@ -157,9 +164,15 @@ test('media check policy catches weakening exact origin or renderer identity', (
     origin: 'nova://orb',
   }
   assert.equal(securityModule.allowsOrbMediaCheck(base), true)
+  assert.equal(securityModule.allowsOrbMediaCheck({ ...base, origin: 'nova://orb/' }), true)
+  assert.equal(securityModule.allowsOrbMediaCheck({
+    ...base,
+    origin: '',
+    mediaType: 'audio',
+  }), true)
   assert.equal(securityModule.allowsOrbMediaCheck({ ...base, contents: {} }), false)
   assert.equal(securityModule.allowsOrbMediaCheck({ ...base, permission: 'camera' }), false)
-  assert.equal(securityModule.allowsOrbMediaCheck({ ...base, origin: 'nova://orb/' }), false)
+  assert.equal(securityModule.allowsOrbMediaCheck({ ...base, origin: '', mediaType: 'screen' }), false)
   assert.equal(securityModule.allowsOrbMediaCheck({ ...base, origin: 'nova://orb.evil' }), false)
 })
 
@@ -188,10 +201,21 @@ test('window security installs one policy pair and invokes each request callback
   assert.equal(checkInstalls, 1)
   assert.equal(requestInstalls, 1)
   assert.equal(checkHandler(renderer, 'media', 'nova://orb', {}), true)
+  assert.equal(
+    checkHandler(renderer, 'media', '', { mediaType: 'audio' }),
+    true,
+    'Electron custom-scheme audio preflight is allowed',
+  )
   assert.equal(checkHandler({}, 'media', 'nova://orb', {}), false, 'a panel is denied')
+  assert.equal(
+    checkHandler({}, 'media', '', { mediaType: 'audio' }),
+    false,
+    'an empty-origin panel is denied',
+  )
 
   for (const [name, contents, details, expected] of [
     ['main video', renderer, { securityOrigin: 'nova://orb', mediaTypes: ['video'] }, true],
+    ['normalized main audio', renderer, { securityOrigin: 'nova://orb/', mediaTypes: ['audio'] }, true],
     ['main audio/video', renderer, { securityOrigin: 'nova://orb', mediaTypes: ['audio', 'video'] }, true],
     ['panel video', {}, { securityOrigin: 'nova://orb', mediaTypes: ['video'] }, false],
     ['missing security origin', renderer, { mediaTypes: ['video'] }, false],

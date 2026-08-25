@@ -115,26 +115,13 @@ export function allowRendererNavigation(url) {
 }
 
 function isExactOrbOrigin(origin) {
-  if (typeof origin !== 'string') return false
-  try {
-    const parsed = new URL(origin)
-    return parsed.protocol === 'nova:'
-      && parsed.hostname === 'orb'
-      && parsed.username === ''
-      && parsed.password === ''
-      && parsed.port === ''
-      && parsed.pathname === ''
-      && parsed.search === ''
-      && parsed.hash === ''
-  } catch {
-    return false
-  }
+  return origin === 'nova://orb' || origin === 'nova://orb/'
 }
 
-export function allowsOrbMediaCheck({ contents, renderer, permission, origin }) {
-  return contents === renderer
-    && permission === 'media'
-    && isExactOrbOrigin(origin)
+export function allowsOrbMediaCheck({ contents, renderer, permission, origin, mediaType }) {
+  if (contents !== renderer || permission !== 'media') return false
+  if (origin === '') return mediaType === 'audio' || mediaType === 'video'
+  return isExactOrbOrigin(origin)
 }
 
 export function allowsOrbMediaRequest({
@@ -158,8 +145,14 @@ export function configureWindowSecurity(window) {
     if (!allowRendererNavigation(url)) event.preventDefault()
   })
   const electronSession = renderer.session
-  electronSession.setPermissionCheckHandler((contents, permission, origin) => (
-    allowsOrbMediaCheck({ contents, renderer, permission, origin })
+  electronSession.setPermissionCheckHandler((contents, permission, origin, details) => (
+    allowsOrbMediaCheck({
+      contents,
+      renderer,
+      permission,
+      origin,
+      mediaType: details?.mediaType,
+    })
   ))
   electronSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     callback(allowsOrbMediaRequest({
