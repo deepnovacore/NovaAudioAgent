@@ -160,7 +160,7 @@ test('Qwen project instructions route the six actions and structured confirmatio
   assert.match(FRONTEND_INSTRUCTIONS, /Session 候选上下文.*resume_session/su)
   assert.match(FRONTEND_INSTRUCTIONS, /独立.*create_workspace/su)
   assert.match(FRONTEND_INSTRUCTIONS, /当前.*start_session/su)
-  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /新的独立开发需求调用 codex__run/u)
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /codex__run/u)
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /确认语音由 host 判定/u)
 })
 

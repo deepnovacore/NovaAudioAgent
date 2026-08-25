@@ -371,7 +371,7 @@ def test_proposal_has_zero_mutation_and_public_projection_has_no_private_values(
         origin_ref="conversation:1",
     )
 
-    assert proposal.nonce == "private-nonce"
+    assert proposal.proposal_id == "private-nonce"
     assert proposal.expires_at == 100.0
     assert store.snapshot() == before
     public = codex_project_message(store.public_view(pending_confirmation=True))

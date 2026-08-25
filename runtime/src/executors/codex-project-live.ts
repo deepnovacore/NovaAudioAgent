@@ -474,7 +474,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
         origin_ref: context.delegate.origin_ref,
       })
       return projectHandoff('confirmation_required', {
-        proposal_id: proposal.nonce,
+        proposal_id: proposal.proposal_id,
         expires_at: proposal.expires_at,
         action,
         workspace: proposal.workspace_display_name,

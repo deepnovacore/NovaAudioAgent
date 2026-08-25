@@ -55,6 +55,16 @@
       ]
     },
     {
+      "name": "non-string-proposal-id-is-ignored",
+      "covers": ["confirmation.proposal_id_type_exact"],
+      "steps": [
+        {"kind": "prepare", "action": "create", "workspace_display_name": "beta", "origin_ref": "conversation:1"},
+        {"kind": "reserve", "epoch": 1, "item_id": "item-a"},
+        {"kind": "accept", "epoch": 1, "item_id": "item-a", "proposal_id": 7, "confirmed": true},
+        {"kind": "accept", "epoch": 1, "item_id": "item-a", "proposal_id": "proposal-1", "confirmed": true}
+      ]
+    },
+    {
       "name": "failed-transcription-cancels",
       "covers": ["confirmation.transcript_failure"],
       "steps": [

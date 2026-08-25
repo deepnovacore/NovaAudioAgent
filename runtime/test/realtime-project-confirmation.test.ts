@@ -36,6 +36,7 @@ test('a matching structured true decision grants one-shot identity authority', (
   const proposal = prepareSelect(controller)
 
   assert.equal(proposal.proposal_id, 'proposal-1')
+  assert.equal('nonce' in proposal, false)
   assert.equal(controller.reserveUserItem({epoch: 1, itemId: 'user-1'}), true)
   const accepted = controller.acceptDecision({
     epoch: 1,
@@ -47,6 +48,7 @@ test('a matching structured true decision grants one-shot identity authority', (
   assert.equal(accepted.kind, 'confirmed')
   assert.ok(accepted.operation)
   assert.equal(accepted.operation.proposal_id, proposal.proposal_id)
+  assert.equal('nonce' in accepted.operation, false)
   assert.equal(Object.isFrozen(accepted.operation), true)
   assert.equal(controller.pending, false)
   assert.equal(controller.claimConfirmed(accepted.operation), true)
@@ -94,7 +96,6 @@ test('wrong proposal ID and non-boolean decisions are invalid and never commit',
 
   for (const input of [
     {proposalId: 'proposal-other', confirmed: true},
-    {proposalId: 7 as unknown as string, confirmed: true},
     {proposalId: proposal.proposal_id, confirmed: 'true' as unknown as boolean},
     {proposalId: proposal.proposal_id, confirmed: 1 as unknown as boolean},
   ]) {
@@ -112,6 +113,29 @@ test('wrong proposal ID and non-boolean decisions are invalid and never commit',
   })
   assert.ok(accepted.operation)
   assert.equal(controller.claimConfirmed(accepted.operation), true)
+})
+
+test('a non-string proposal ID is ignored without moving state', () => {
+  const controller = createController()
+  const proposal = prepareSelect(controller)
+  controller.reserveUserItem({epoch: 3, itemId: 'user-3'})
+
+  const ignored = controller.acceptDecision({
+    epoch: 3,
+    itemId: 'user-3',
+    proposalId: 7 as unknown as string,
+    confirmed: true,
+  })
+
+  assert.equal(ignored.kind, 'ignored')
+  assert.equal(ignored.operation, null)
+  assert.equal(controller.pending, true)
+  assert.equal(controller.acceptDecision({
+    epoch: 3,
+    itemId: 'user-3',
+    proposalId: proposal.proposal_id,
+    confirmed: false,
+  }).kind, 'cancelled')
 })
 
 test('wrong epoch or item is ignored without moving the reservation', () => {

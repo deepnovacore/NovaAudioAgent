@@ -823,7 +823,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
     assert.ok(captured.admission?.delegate_id !== null)
     await waitNamed('confirmed project executor dispatch', () => captured.capability !== null)
     assert.equal(captured.operation, captured.capability)
-    assert.equal(captured.operation?.nonce, proposal.nonce)
+    assert.equal(captured.operation?.proposal_id, proposal.proposal_id)
     assert.equal(captured.context?.delegate.origin_ref, captured.origin)
     assert.equal(captured.context?.delegate.routing_class, 'user_awaited')
     assert.deepEqual(views.at(-1), {

@@ -1733,7 +1733,6 @@ async def test_unbound_capability_is_rejected_and_failed_confirmed_create_rolls_
         work_order="build it",
         origin_ref="conversation:1",
         proposal_id="nonce",
-        nonce="nonce",
     )
 
     result = await adapter.dispatch(

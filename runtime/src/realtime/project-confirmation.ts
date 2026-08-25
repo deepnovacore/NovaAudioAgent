@@ -25,8 +25,6 @@ export interface ProjectProposal {
   readonly work_order: string | null
   readonly origin_ref: string
   readonly proposal_id: string
-  /** Compatibility alias for callers migrated in Task 4 and later. */
-  readonly nonce: string
   readonly expires_at: number
   readonly confirmation_prompt: string
 }
@@ -41,8 +39,6 @@ export interface ConfirmedProjectOperation {
   readonly work_order: string | null
   readonly origin_ref: string
   readonly proposal_id: string
-  /** Compatibility alias for callers migrated in Task 4 and later. */
-  readonly nonce: string
 }
 
 export interface ProjectConfirmationView {
@@ -123,7 +119,6 @@ export class ProjectConfirmationController {
     const proposal: ProjectProposal = Object.freeze({
       ...input,
       proposal_id: proposalId,
-      nonce: proposalId,
       expires_at: this.#clock.now() + EXPIRY_SECONDS,
       confirmation_prompt: confirmationPrompt(
         input.action,
@@ -194,6 +189,7 @@ export class ProjectConfirmationController {
       this.#publishExpiry()
       return outcome('expired', {responseText: '确认已过期，本次操作已取消。'})
     }
+    if (typeof input.proposalId !== 'string') return outcome('ignored')
     if (input.proposalId !== proposal.proposal_id || typeof input.confirmed !== 'boolean') {
       return outcome('invalid', {responseText: '确认请求无效，操作尚未执行。'})
     }
@@ -376,7 +372,6 @@ function confirmedFrom(proposal: ProjectProposal): ConfirmedProjectOperation {
     work_order: proposal.work_order,
     origin_ref: proposal.origin_ref,
     proposal_id: proposal.proposal_id,
-    nonce: proposal.nonce,
   })
 }
 

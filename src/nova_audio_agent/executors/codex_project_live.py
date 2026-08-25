@@ -314,7 +314,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             return await self._lookup_failure(failure.code)
         return _project_ok(
             code="confirmation_required",
-            proposal_id=proposal.nonce,
+            proposal_id=proposal.proposal_id,
             expires_at=proposal.expires_at,
             action=action,
             workspace=proposal.workspace_display_name,

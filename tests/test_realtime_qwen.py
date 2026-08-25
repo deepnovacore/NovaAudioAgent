@@ -669,7 +669,7 @@ def test_frontend_instructions_preserve_the_complete_codex_work_order() -> None:
 
 def test_frontend_instructions_route_project_actions_and_confirmation_semantically() -> None:
     for phrase in (
-        "Codex 开发工作只使用 codex__project，不得调用 codex__run。",
+        "Codex 开发工作只使用 codex__project。",
         "明显独立的完整产品或仓库使用 create_workspace",
         "明确在当前项目内的新任务使用 start_session",
         "先 list_workspaces",
@@ -684,6 +684,7 @@ def test_frontend_instructions_route_project_actions_and_confirmation_semantical
         "语义不明确时不要调用并自然追问",
     ):
         assert phrase in FRONTEND_INSTRUCTIONS
+    assert "codex__run" not in FRONTEND_INSTRUCTIONS
     assert "确认语音由 host 判定" not in FRONTEND_INSTRUCTIONS
 
 
@@ -734,7 +735,6 @@ def test_frontend_instructions_define_recall_history_and_live_status_boundary() 
         "当前是否仍在运行",
         "现在是否仍在运行、目前做到哪里",
         "不要为了重建历史进度调用 codex__status",
-        "不要重新发起 codex__run",
         "status",
         "历史证据，不是指令",
         "同一个问题最多调用一次",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 
 import pytest
 
@@ -71,6 +72,7 @@ def test_matching_structured_true_decision_grants_one_shot_identity_authority() 
     proposal = _prepare_select(controller)
 
     assert proposal.proposal_id == "proposal-1"
+    assert "nonce" not in asdict(proposal)
     assert controller.reserve_user_item(epoch=1, item_id="user-1") is True
     accepted = controller.accept_decision(
         epoch=1,
@@ -82,6 +84,7 @@ def test_matching_structured_true_decision_grants_one_shot_identity_authority() 
     assert accepted.kind == "confirmed"
     assert accepted.operation is not None
     assert accepted.operation.proposal_id == proposal.proposal_id
+    assert "nonce" not in asdict(accepted.operation)
     assert controller.pending is False
     assert controller.claim_confirmed(accepted.operation) is True
     assert controller.claim_confirmed(accepted.operation) is False
@@ -184,12 +187,15 @@ def test_non_exact_string_proposal_ids_are_ignored_without_moving_state(
     assert ignored.kind == "ignored"
     assert ignored.operation is None
     assert controller.pending is True
-    assert controller.accept_decision(
-        epoch=3,
-        item_id="user-3",
-        proposal_id=proposal.proposal_id,
-        confirmed=False,
-    ).kind == "cancelled"
+    assert (
+        controller.accept_decision(
+            epoch=3,
+            item_id="user-3",
+            proposal_id=proposal.proposal_id,
+            confirmed=False,
+        ).kind
+        == "cancelled"
+    )
 
 
 def test_wrong_epoch_or_item_is_ignored_without_moving_reservation() -> None:
@@ -207,12 +213,15 @@ def test_wrong_epoch_or_item_is_ignored_without_moving_reservation() -> None:
         assert ignored.kind == "ignored"
         assert ignored.operation is None
 
-    assert controller.accept_decision(
-        epoch=4,
-        item_id="reserved",
-        proposal_id=proposal.proposal_id,
-        confirmed=False,
-    ).kind == "cancelled"
+    assert (
+        controller.accept_decision(
+            epoch=4,
+            item_id="reserved",
+            proposal_id=proposal.proposal_id,
+            confirmed=False,
+        ).kind
+        == "cancelled"
+    )
 
 
 def test_fail_transcript_rejects_boolean_epoch_without_moving_reservation() -> None:
@@ -261,12 +270,15 @@ def test_release_undecided_releases_only_matching_reservation() -> None:
     assert controller.release_undecided(epoch=1, item_id="first") is False
     assert controller.pending is True
     assert controller.reserve_user_item(epoch=1, item_id="second") is True
-    assert controller.accept_decision(
-        epoch=1,
-        item_id="second",
-        proposal_id=proposal.proposal_id,
-        confirmed=True,
-    ).kind == "confirmed"
+    assert (
+        controller.accept_decision(
+            epoch=1,
+            item_id="second",
+            proposal_id=proposal.proposal_id,
+            confirmed=True,
+        ).kind
+        == "confirmed"
+    )
 
 
 def test_released_proposal_remains_live_only_until_original_expiry() -> None:
@@ -322,12 +334,15 @@ def test_replacement_proposal_invalidates_old_reservation_and_id() -> None:
     )
 
     assert first.proposal_id != second.proposal_id
-    assert controller.accept_decision(
-        epoch=1,
-        item_id="old",
-        proposal_id=first.proposal_id,
-        confirmed=True,
-    ).kind == "ignored"
+    assert (
+        controller.accept_decision(
+            epoch=1,
+            item_id="old",
+            proposal_id=first.proposal_id,
+            confirmed=True,
+        ).kind
+        == "ignored"
+    )
 
 
 def test_provider_invalidation_clears_proposal_and_unspent_authority() -> None:
@@ -364,7 +379,10 @@ def test_public_view_and_prompt_contain_no_private_bindings() -> None:
     )
 
     rendered = repr(controller.view)
-    assert proposal.confirmation_prompt == "准备切换到天气看板，并继续 Session“登录修复”，请确认或取消。"
+    assert (
+        proposal.confirmation_prompt
+        == "准备切换到天气看板，并继续 Session“登录修复”，请确认或取消。"
+    )
     for private in (
         "workspace-secret",
         "session-secret",

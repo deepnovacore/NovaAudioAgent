@@ -25,15 +25,12 @@ def test_every_scenario_declares_what_it_covers() -> None:
 
 def test_structured_cases_cover_confirmation_rejection_and_fail_closed_inputs() -> None:
     document = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    covers = {
-        item
-        for scenario in document["controller"]
-        for item in scenario["covers"]
-    }
+    covers = {item for scenario in document["controller"] for item in scenario["covers"]}
     assert {
         "confirmation.structured_confirm",
         "confirmation.structured_cancel",
         "confirmation.proposal_id_exact",
+        "confirmation.proposal_id_type_exact",
         "confirmation.boolean_exact",
         "confirmation.commit_authority_single_use",
     } <= covers

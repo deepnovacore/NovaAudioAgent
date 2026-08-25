@@ -811,7 +811,7 @@ test('real external dispatch carries one opaque confirmation identity outside ev
     assert.ok(delegate)
     assert.equal(Object.hasOwn(delegate, 'private'), false)
     assert.equal(Object.hasOwn(delegate, 'hostCapability'), false)
-    assert.equal(JSON.stringify(delegate).includes(confirmed.operation.nonce), false)
+    assert.equal(JSON.stringify(delegate).includes(confirmed.operation.proposal_id), false)
     await settleWithin('real confirmed adapter handoff', handoff)
     assert.deepEqual(
       (await value.store.listWorkspaces()).map(workspace => workspace.display_name).sort(),

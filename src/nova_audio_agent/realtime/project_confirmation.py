@@ -24,8 +24,6 @@ class ProjectProposal:
     work_order: str | None
     origin_ref: str
     proposal_id: str
-    # Compatibility alias for callers migrated in Task 4 and later.
-    nonce: str
     expires_at: float
     confirmation_prompt: str
 
@@ -39,7 +37,6 @@ class _ProposalLike(Protocol):
     work_order: str | None
     origin_ref: str
     proposal_id: str
-    nonce: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +49,6 @@ class ConfirmedProjectOperation:
     work_order: str | None
     origin_ref: str
     proposal_id: str
-    # Compatibility alias for callers migrated in Task 4 and later.
-    nonce: str
 
     @classmethod
     def from_proposal(cls, proposal: _ProposalLike) -> ConfirmedProjectOperation:
@@ -66,7 +61,6 @@ class ConfirmedProjectOperation:
             work_order=proposal.work_order,
             origin_ref=proposal.origin_ref,
             proposal_id=proposal.proposal_id,
-            nonce=proposal.nonce,
         )
 
 
@@ -148,7 +142,6 @@ class ProjectConfirmationController:
             work_order=work_order,
             origin_ref=origin_ref,
             proposal_id=proposal_id,
-            nonce=proposal_id,
             expires_at=self._clock.now() + _EXPIRY_SECONDS,
             confirmation_prompt=_confirmation_prompt(
                 action,
