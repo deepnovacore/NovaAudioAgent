@@ -719,6 +719,31 @@ def test_frontend_instructions_merge_clarification_into_one_work_order() -> None
         assert phrase in FRONTEND_INSTRUCTIONS
 
 
+def test_frontend_instructions_treat_contextual_deliverable_phrases_as_creation_requests() -> None:
+    for phrase in (
+        "有什么可以帮你",
+        "俄罗斯方块的小游戏",
+        "明确交付物名词短语",
+        "create_workspace",
+        "不要改写成问句复述",
+        "普通澄清后的明确肯定",
+        "只发起一次",
+    ):
+        assert phrase in FRONTEND_INSTRUCTIONS
+
+
+def test_frontend_instructions_separate_dispatch_from_thread_ready_fact() -> None:
+    for phrase in (
+        "已提交、正在启动",
+        "已开始处理",
+        "host 生命周期事实",
+        "没有工具事件或 host 事实",
+        "不得声称已经提交",
+        "启动失败",
+    ):
+        assert phrase in FRONTEND_INSTRUCTIONS
+
+
 def test_frontend_instructions_route_progress_questions_to_codex_status() -> None:
     """#54: the status-question doctrine finally reaches the realtime front
     brain — ask codex__status, paraphrase only, never re-query in the turn."""

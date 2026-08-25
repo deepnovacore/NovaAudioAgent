@@ -23,6 +23,7 @@ import type {
   TransportObserver,
   TransportOutcome,
 } from '../src/codex-app-server-transport.js'
+import {CodexTransportError} from '../src/codex-app-server-transport.js'
 import {CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
 import {
   CodexProjectStore,
@@ -32,7 +33,11 @@ import {
   type PublicProjectView,
 } from '../src/codex-project-store.js'
 import {hostWorkspaceForTest} from '../src/codex-process-owner.js'
-import {CausalRuntime, type ExecutorDispatchContext} from '../src/causal-runtime.js'
+import {
+  CausalRuntime,
+  type ExecutorDispatchContext,
+  type ExecutorHandoff,
+} from '../src/causal-runtime.js'
 import {VirtualClock} from '../src/clock.js'
 import {
   ProjectCodexAdapter,
@@ -286,11 +291,16 @@ class ProjectTransport implements CodexAppServerTransport {
     readonly onRun?: () => void,
     closeFailures = 0,
     readonly runGate?: Promise<TransportOutcome>,
+    readonly preflightError?: Error,
   ) {
     this.#remainingCloseFailures = closeFailures
   }
 
-  preflight(): Promise<SafePreflightReport> { return Promise.resolve(PREFLIGHT) }
+  preflight(): Promise<SafePreflightReport> {
+    return this.preflightError === undefined
+      ? Promise.resolve(PREFLIGHT)
+      : Promise.reject(this.preflightError)
+  }
   prewarm(): Promise<SafePreflightReport | null> { return Promise.resolve(PREFLIGHT) }
 
   run(
@@ -332,6 +342,7 @@ class RecordingProjectTransportFactory implements ProjectTransportFactory {
   closeFailures = 0
   runGate: Promise<TransportOutcome> | undefined
   createFailure: Error | null = null
+  preflightError: Error | undefined
 
   create(binding: ProjectTransportBinding): CodexAppServerTransport {
     if (this.createFailure !== null) throw this.createFailure
@@ -344,6 +355,7 @@ class RecordingProjectTransportFactory implements ProjectTransportFactory {
       this.onRun,
       this.closeFailures,
       this.runGate,
+      this.preflightError,
     )
     this.transports.push(transport)
     return transport
@@ -954,7 +966,7 @@ test('new-run missing thread rolls back provisional session and failed confirmed
       {action: 'start_session', work_order: 'cannot bind'},
       context('project', {}, value.clock),
     )
-    assert.deepEqual(failed.content, {error: 'thread_id_invalid', op: 'run'})
+    assert.deepEqual(failed.content, {error: 'thread_id_invalid', op: 'run', stage: 'thread_start'})
     const alpha = await value.store.resolveWorkspace('alpha')
     assert.deepEqual(await value.store.listSessions(alpha), [])
 
@@ -997,6 +1009,88 @@ test('new-run missing thread rolls back provisional session and failed confirmed
     ])
     assert.equal(JSON.stringify(publicView).includes('thread'), false)
     assert.equal(JSON.stringify(publicView).includes('nonce'), false)
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('threadless preflight failures preserve their safe category, stage, rollback, and terminal observation', async () => {
+  for (const [code, stage] of [
+    ['preflight_failed', 'preflight'],
+    ['credential_missing', 'credential'],
+  ] as const) {
+    const value = await fixture()
+    try {
+      const terminals: ExecutorHandoff[] = []
+      value.adapter.observeTerminalWorkOrder(event => { terminals.push(event.handoff) })
+      value.factory.preflightError = new CodexTransportError(code)
+
+      const failed = await value.adapter.dispatch(
+        'project',
+        {action: 'start_session', work_order: `fail at ${stage}`},
+        context('project', {}, value.clock),
+      )
+
+      assert.equal(failed.outcome, 'failed')
+      assert.equal(failed.content.code, code)
+      assert.equal(failed.content.stage, stage)
+      assert.equal(failed.content.error, undefined)
+      const alpha = await value.store.resolveWorkspace('alpha')
+      assert.deepEqual(await value.store.listSessions(alpha), [])
+      assert.deepEqual(terminals, [failed])
+    } finally {
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  }
+})
+
+test('threadless transport refusal stays the real failure instead of becoming thread_id_invalid', async () => {
+  const value = await fixture()
+  try {
+    const terminals: ExecutorHandoff[] = []
+    value.adapter.observeTerminalWorkOrder(event => { terminals.push(event.handoff) })
+    value.factory.reportThread = false
+    value.factory.nextOutcome = {
+      classification: 'refused', code: 'server_rejected', turnStartWritten: false, completion: null,
+    }
+
+    const failed = await value.adapter.dispatch(
+      'project',
+      {action: 'start_session', work_order: 'fail during thread start'},
+      context('project', {}, value.clock),
+    )
+
+    assert.equal(failed.outcome, 'failed')
+    assert.equal(failed.content.code, 'worker_refused')
+    assert.equal(failed.content.stage, 'thread_start')
+    const alpha = await value.store.resolveWorkspace('alpha')
+    assert.deepEqual(await value.store.listSessions(alpha), [])
+    assert.deepEqual(terminals, [failed])
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('spawn failure returns a safe staged terminal and rolls back the provisional Session', async () => {
+  const value = await fixture()
+  try {
+    const terminals: ExecutorHandoff[] = []
+    value.adapter.observeTerminalWorkOrder(event => { terminals.push(event.handoff) })
+    value.factory.createFailure = new CodexTransportError('spawn_failed')
+
+    const failed = await value.adapter.dispatch(
+      'project',
+      {action: 'start_session', work_order: 'fail while spawning'},
+      context('project', {}, value.clock),
+    )
+
+    assert.deepEqual(failed.content, {error: 'spawn_failed', op: 'run', stage: 'spawn'})
+    const alpha = await value.store.resolveWorkspace('alpha')
+    assert.deepEqual(await value.store.listSessions(alpha), [])
+    assert.deepEqual(terminals, [failed])
   } finally {
     await value.adapter.close()
     await rm(value.root, {recursive: true, force: true})
@@ -1733,7 +1827,9 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
         originRef: 'conversation:2',
       }),
     )
-    assert.deepEqual(mismatch.content, {error: 'session_thread_mismatch', op: 'run'})
+    assert.deepEqual(mismatch.content, {
+      error: 'session_thread_mismatch', op: 'run', stage: 'thread_start',
+    })
     assert.equal((await value.store.resolveSession(workspace.workspace_id, session.display_title)).state, 'unavailable')
   } finally {
     await value.adapter.close()

@@ -55,6 +55,38 @@ CORPUS = (
         },
     ),
     ProjectRoutingCase(
+        "elliptical-after-help",
+        "俄罗斯方块的小游戏",
+        "codex__project",
+        {
+            "action": "create_workspace",
+            "workspace": "俄罗斯方块",
+            "work_order": "开发一个可运行并经过验证的俄罗斯方块小游戏",
+        },
+        "assistant: 有什么可以帮你的吗？",
+    ),
+    ProjectRoutingCase(
+        "explicit-develop",
+        "我要开发俄罗斯方块游戏",
+        "codex__project",
+        {
+            "action": "create_workspace",
+            "workspace": "俄罗斯方块",
+            "work_order": "开发一个可运行并经过验证的俄罗斯方块小游戏",
+        },
+    ),
+    ProjectRoutingCase(
+        "clarified-yes",
+        "对呀",
+        "codex__project",
+        {
+            "action": "create_workspace",
+            "workspace": "俄罗斯方块",
+            "work_order": "开发一个可运行并经过验证的俄罗斯方块小游戏",
+        },
+        "普通澄清；原始目标=俄罗斯方块的小游戏；当前没有待确认 proposal。",
+    ),
+    ProjectRoutingCase(
         "current",
         "在当前项目里修复登录 bug",
         "codex__project",
@@ -108,6 +140,11 @@ CORPUS = (
         "当前待确认 proposal_id=proposal-live。",
     ),
     ProjectRoutingCase("ambiguous", "换个项目吧", "none"),
+    ProjectRoutingCase(
+        "material-choice-missing",
+        "把登录方式改成只保留短信验证码或硬件密钥，但我还没决定选哪个",
+        "none",
+    ),
     ProjectRoutingCase("negated", "不要切换工作区", "none"),
     ProjectRoutingCase("unrelated", "今天天气怎么样", "none"),
 )

@@ -1235,7 +1235,7 @@ class RealtimeService:
                                         state = "accepted" if accepted else "failed"
                                         result_code = getattr(result, "code", "commit_failed")
                                         text = (
-                                            "已确认，正在处理。"
+                                            "已确认，已提交并正在启动。"
                                             if accepted
                                             else _project_commit_failure_text(result_code)
                                         )
@@ -2372,7 +2372,7 @@ class RealtimeService:
                     event_id=acknowledgement.event_id,
                     content=(
                         f"{self._executor_display_name(acknowledgement.channel, manifest=manifest)} "
-                        f"已接手开始处理：{acknowledgement.summary}"
+                        f"已提交，正在启动：{acknowledgement.summary}"
                     ),
                 )
             ),
@@ -2566,14 +2566,6 @@ class RealtimeService:
             )
             self._publish_codex_state()
             if manifest.policy.progress_via_surrogate and event.phase == "working":
-                return
-            has_realtime_acknowledgement = (
-                f"background:{event.delegate_id}" in self._semantic_acknowledgements
-            )
-            if event.phase == "started" and has_realtime_acknowledgement:
-                # #49: the delegation acknowledgement continuation already told
-                # the user the task was accepted; a spoken started fact would
-                # repeat it. Delegate state registration above still happens.
                 return
             if event.phase == "started":
                 content = f"{display_name} 已开始处理这个任务。"

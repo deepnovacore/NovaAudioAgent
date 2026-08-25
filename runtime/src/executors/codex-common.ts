@@ -89,6 +89,8 @@ export interface CodexAdapterScheduler {
   readonly lifecycleClock?: Clock
 }
 
+export type CodexFailureStage = 'preflight' | 'credential' | 'spawn' | 'thread_start'
+
 const DEFAULT_LIFECYCLE_CLOCK = new RealClock()
 const DEFAULT_SCHEDULER: CodexAdapterScheduler = {
   wallNowMilliseconds: () => Date.now(),
@@ -268,7 +270,9 @@ export class CodexAdapterCore {
         const code = error instanceof InvalidPreflightError
           ? 'invalid_preflight_report'
           : safePreflightExceptionCode(error, this.#live ? 'transport_failure' : 'worker_exception_before_start')
-        return createRunHandoff('failed', 'trusted_system', code, preflight)
+        return createRunHandoff(
+          'failed', 'trusted_system', code, preflight, failureStage(code, 'preflight'),
+        )
       }
 
       let rawOutcome: TransportOutcome
@@ -303,6 +307,7 @@ export class CodexAdapterCore {
           afterStart ? 'untrusted_external' : 'trusted_system',
           code,
           preflight,
+          failureStage(code, 'thread_start'),
         )
       }
 
@@ -338,6 +343,7 @@ export class CodexAdapterCore {
           sideEffectSeen ? 'untrusted_external' : 'trusted_system',
           'invalid_worker_result',
           preflight,
+          'thread_start',
         )
       }
       if (admitted.classification === 'refused') {
@@ -346,10 +352,13 @@ export class CodexAdapterCore {
           'trusted_system',
           this.#live && PREFLIGHT_CODES.has(admitted.code) ? admitted.code : 'worker_refused',
           preflight,
+          failureStage(admitted.code, 'thread_start'),
         )
       }
       if (admitted.classification === 'uncertain') {
-        return createRunHandoff('unknown', 'untrusted_external', admitted.code, preflight)
+        return createRunHandoff(
+          'unknown', 'untrusted_external', admitted.code, preflight, 'thread_start',
+        )
       }
       if (evidence === null || !admitted.turnStartWritten) {
         return createRunHandoff(
@@ -357,9 +366,12 @@ export class CodexAdapterCore {
           admitted.turnStartWritten ? 'untrusted_external' : 'trusted_system',
           'invalid_worker_result',
           preflight,
+          'thread_start',
         )
       }
-      return createRunHandoff('ok', 'untrusted_external', 'completed', preflight, evidence)
+      return createRunHandoff(
+        'ok', 'untrusted_external', 'completed', preflight, undefined, evidence,
+      )
     } finally {
       observerOpen = false
       deadline.detach()
@@ -435,12 +447,23 @@ export class CodexAdapterCore {
   }
 }
 
-export function failureHandoff(error: string, op: string): ExecutorHandoff {
+export function failureHandoff(
+  error: string,
+  op: string,
+  stage?: CodexFailureStage,
+): ExecutorHandoff {
   return {
     outcome: 'failed',
     trust: 'trusted_system',
-    content: requireJsonRecord({error, op}),
+    content: requireJsonRecord({error, op, ...(stage === undefined ? {} : {stage})}),
   }
+}
+
+export function failureStage(code: string, fallback: CodexFailureStage): CodexFailureStage {
+  if (code === 'credential_missing') return 'credential'
+  if (code === 'spawn_failed') return 'spawn'
+  if (PREFLIGHT_CODES.has(code) || code === 'invalid_preflight_report') return 'preflight'
+  return fallback
 }
 
 export function createOperationDeadline(
@@ -696,12 +719,13 @@ function createRunHandoff(
   trust: ExecutorHandoff['trust'],
   code: unknown,
   preflight: Readonly<Record<string, unknown>>,
+  stage?: CodexFailureStage,
   evidence?: Readonly<Record<string, unknown>>,
 ): ExecutorHandoff {
   return {
     outcome,
     trust,
-    content: requireJsonRecord(createCodexRunEnvelope(code, preflight, evidence)),
+    content: requireJsonRecord(createCodexRunEnvelope(code, preflight, evidence, stage)),
   }
 }
 

@@ -542,7 +542,7 @@ async def test_confirmation_function_commits_while_transcript_only_records_origi
     assert len(commits) == 1
     assert commits[0][1] == "conversation:1"
     assert "cancel:response-confirm" in provider.actions
-    assert any(item.content == "已确认，正在处理。" for item in provider.injected)
+    assert any(item.content == "已确认，已提交并正在启动。" for item in provider.injected)
     blocked_outputs = {
         item.call_id
         for item in provider.injected
@@ -7997,7 +7997,7 @@ async def test_watch_ack_uses_manifest_identity_and_priority_not_tool_prefix() -
     )
 
     queued = service._host_items[0]
-    assert queued.intent.item.content == "water-scout 已接手开始处理：出现水杯"
+    assert queued.intent.item.content == "water-scout 已提交，正在启动：出现水杯"
     assert "后台" not in queued.intent.item.content
     assert queued.priority == 73
 
@@ -8875,7 +8875,7 @@ async def test_tool_ready_and_barge_in_preserve_dispatched_delegate_without_cont
     queued = service._host_items[0].intent
     assert queued.kind == "host_fact"
     assert queued.item.kind == "progress"
-    assert queued.item.content == "Codex 已接手开始处理：实现俄罗斯方块"
+    assert queued.item.content == "Codex 已提交，正在启动：实现俄罗斯方块"
     assert service._tool_calls[(1, "call-1")].continuation == "abandoned"
 
 
@@ -10582,7 +10582,7 @@ async def test_reconnect_reconciles_unheard_delegate_acknowledgement(
         for item, epoch in zip(provider.injected, provider.injected_epochs, strict=True)
         if epoch == 2
         and item.kind == "progress"
-        and item.content == "Codex 已接手开始处理：实现俄罗斯方块"
+        and item.content == "Codex 已提交，正在启动：实现俄罗斯方块"
     ]
     assert len(background_items) == 1
     assert background_items[0].event_id == "background:d-1"
