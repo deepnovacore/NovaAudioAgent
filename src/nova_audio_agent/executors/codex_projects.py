@@ -29,6 +29,8 @@ STATE_VERSION = 1
 STATE_FILE = "codex-projects-v1.json"
 LOCK_FILE = "codex-projects-v1.lock"
 OWNER_LOCK_FILE = "codex-projects-v1.owner.lock"
+CODEX_HOMES_DIRECTORY = "codex-homes"
+LEGACY_CODEX_HOMES_DIRECTORY = "codex-workspaces"
 MAX_STATE_BYTES = 1024 * 1024
 MAX_WORKSPACE_NAME = 80
 MAX_SESSION_TITLE = 120
@@ -161,7 +163,39 @@ class CodexProjectStore:
 
     def codex_home(self, workspace: WorkspaceRecord | str) -> Path:
         record = self._workspace_by_id(workspace) if isinstance(workspace, str) else workspace
-        return self.state_root / "codex-workspaces" / record.codex_home_key
+        self._migrate_legacy_codex_homes()
+        return self.state_root / CODEX_HOMES_DIRECTORY / record.codex_home_key
+
+    def _migrate_legacy_codex_homes(self) -> None:
+        current = self.state_root / CODEX_HOMES_DIRECTORY
+        legacy = self.state_root / LEGACY_CODEX_HOMES_DIRECTORY
+        if current.exists() or not legacy.exists():
+            return
+        self._ensure_state_root()
+        try:
+            if legacy.is_symlink():
+                raise OSError
+            info = legacy.stat()
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != _uid()
+                or stat.S_IMODE(info.st_mode) != 0o700
+                or legacy.resolve(strict=True) != legacy
+            ):
+                raise OSError
+            legacy.rename(current)
+            migrated = current.stat()
+            if (
+                not stat.S_ISDIR(migrated.st_mode)
+                or migrated.st_uid != info.st_uid
+                or migrated.st_dev != info.st_dev
+                or migrated.st_ino != info.st_ino
+                or current.resolve(strict=True) != current
+                or legacy.exists()
+            ):
+                raise OSError
+        except OSError:
+            raise ProjectStateError("state_permissions") from None
 
     def ensure_imported(self, display_name: str, path: Path) -> WorkspaceRecord:
         name, key = _workspace_name(display_name)

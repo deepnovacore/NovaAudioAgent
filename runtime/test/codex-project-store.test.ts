@@ -2651,6 +2651,67 @@ test('persistent homes are private, stable per workspace, and distinct across wo
   }
 })
 
+test('opening the live project store migrates legacy codex-workspaces to codex-homes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-home-migration-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const canonicalStateRoot = await realpath(stateRoot)
+  const legacyRoot = join(canonicalStateRoot, 'codex-workspaces')
+  const legacyHome = join(legacyRoot, 'home-workspace-0001')
+  await mkdir(legacyRoot, {mode: 0o700})
+  await mkdir(legacyHome, {mode: 0o700})
+  await writeFile(join(legacyHome, 'migration-marker'), 'preserved', {mode: 0o600})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(canonicalStateRoot),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    idFactory: () => 'workspace-0001',
+    live: true,
+  })
+  try {
+    const migratedRoot = join(canonicalStateRoot, 'codex-homes')
+    assert.equal(await readFile(join(migratedRoot, 'home-workspace-0001', 'migration-marker'), 'utf8'), 'preserved')
+    await assert.rejects(lstat(legacyRoot), (error: unknown) => isErrno(error, 'ENOENT'))
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('a rejected legacy home migration releases the live owner lock for retry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-home-migration-retry-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  const legacyRoot = join(stateRoot, 'codex-workspaces')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(legacyRoot, {mode: 0o755})
+  await chmod(legacyRoot, 0o755)
+  const nativeLocks = new DescriptorLockAuthority()
+  const options = {
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks,
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    live: true,
+  }
+  try {
+    await assert.rejects(
+      CodexProjectStore.open(options),
+      (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
+    )
+    await chmod(legacyRoot, 0o700)
+    const retried = await CodexProjectStore.open(options)
+    await retried.close()
+    assert.equal((await lstat(join(stateRoot, 'codex-homes'))).isDirectory(), true)
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('persistent home rejects an immediate mkdir replacement before chmod or adoption', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-home-race-'))
   const stateRoot = join(root, 'state')

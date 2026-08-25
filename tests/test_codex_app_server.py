@@ -504,7 +504,7 @@ async def test_persistent_new_session_uses_non_ephemeral_start_and_retains_home(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    codex_home = tmp_path / "state" / "codex-workspaces" / "home-a"
+    codex_home = tmp_path / "state" / "codex-homes" / "home-a"
     peer = _Peer(workspace)
     factory = _Factory(peer)
     ready: list[str] = []

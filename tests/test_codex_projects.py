@@ -203,6 +203,22 @@ def test_managed_creation_uses_one_real_direct_child_and_distinct_home_key(
     assert workspace.codex_home_key.startswith("home-")
 
 
+def test_codex_home_migrates_legacy_directory_without_losing_data(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    workspace = store.create_managed("managed")
+    legacy_root = tmp_path / "state" / "codex-workspaces"
+    legacy_home = legacy_root / workspace.codex_home_key
+    legacy_root.mkdir(mode=0o700)
+    legacy_home.mkdir(mode=0o700)
+    legacy_home.joinpath("migration-marker").write_text("preserved")
+
+    home = store.codex_home(workspace)
+
+    assert home == tmp_path / "state" / "codex-homes" / workspace.codex_home_key
+    assert home.joinpath("migration-marker").read_text() == "preserved"
+    assert not legacy_root.exists()
+
+
 def test_managed_name_collision_uses_nfkc_casefold_exact_key(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.create_managed("Ａlpha")

@@ -39,6 +39,8 @@ export const PROJECT_STATE_VERSION = 1
 export const PROJECT_STATE_FILE = 'codex-projects-v1.json'
 export const PROJECT_TRANSACTION_LOCK_FILE = 'codex-projects-v1.lock'
 export const PROJECT_OWNER_LOCK_FILE = 'codex-projects-v1.owner.lock'
+const PROJECT_CODEX_HOMES_DIRECTORY = 'codex-homes'
+const LEGACY_PROJECT_CODEX_HOMES_DIRECTORY = 'codex-workspaces'
 export const MAX_PROJECT_STATE_BYTES = 1024 * 1024
 export const MAX_PROJECT_WORKSPACES = 100
 export const MAX_PROJECT_SESSIONS_PER_WORKSPACE = 200
@@ -285,9 +287,17 @@ export class CodexProjectStore {
       store.#probeRootFileAuthority()
       if (store.#recoverStarting) {
         store.#ownerLock = await store.#openAndAcquireLock(PROJECT_OWNER_LOCK_FILE)
+        await store.#revalidateStateRoot()
+        await store.#migrateLegacyCodexHomes(store.#requireStateRootHandle())
       }
       return store
     } catch (error) {
+      const owner = store.#ownerLock
+      store.#ownerLock = null
+      if (owner !== null) {
+        await Promise.resolve(owner.release()).catch(() => undefined)
+        await owner.file.close().catch(() => undefined)
+      }
       await store.#stateRootHandle?.close().catch(() => undefined)
       await store.#managedRootHandle?.close().catch(() => undefined)
       store.#stateRootHandle = null
@@ -909,7 +919,8 @@ export class CodexProjectStore {
       if (workspace === undefined) throw new ProjectStateError('workspace_not_found')
       await this.#revalidateStateRoot()
       const stateRoot = this.#requireStateRootHandle()
-      const homesRoot = join(this.#stateRoot, 'codex-workspaces')
+      await this.#migrateLegacyCodexHomes(stateRoot)
+      const homesRoot = join(this.#stateRoot, PROJECT_CODEX_HOMES_DIRECTORY)
       const home = join(homesRoot, workspace.codex_home_key)
       if (!isDirectChild(homesRoot, home)) throw new ProjectStateError('workspace_boundary_changed')
       let homes: {readonly file: FileHandle; readonly binding: DirectoryBinding} | null = null
@@ -918,7 +929,7 @@ export class CodexProjectStore {
         homes = await this.#ensurePrivateDirectoryAt(
           stateRoot,
           this.#stateRoot,
-          'codex-workspaces',
+          PROJECT_CODEX_HOMES_DIRECTORY,
         )
         workspaceHome = await this.#ensurePrivateDirectoryAt(
           homes.file,
@@ -932,7 +943,7 @@ export class CodexProjectStore {
         await this.#revalidateStateRoot()
         this.#requireMatchesAt(
           stateRoot,
-          'codex-workspaces',
+          PROJECT_CODEX_HOMES_DIRECTORY,
           homes.file,
           'state_permissions',
         )
@@ -1336,6 +1347,66 @@ export class CodexProjectStore {
     requireProjectBasename(to, 'state_write_failed')
     const result = this.#callRootFile(() => this.#rootFiles.renameAt(root.fd, from, to))
     if (result.status !== 'ok') throw new ProjectStateError('state_write_failed')
+  }
+
+  async #migrateLegacyCodexHomes(root: FileHandle): Promise<void> {
+    const current = this.#lookupAt(root, PROJECT_CODEX_HOMES_DIRECTORY, 'state_permissions')
+    if (current.status === 'ok') return
+    if (current.status !== 'missing') throw new ProjectStateError('state_permissions')
+    const legacy = this.#lookupAt(
+      root,
+      LEGACY_PROJECT_CODEX_HOMES_DIRECTORY,
+      'state_permissions',
+    )
+    if (legacy.status === 'missing') return
+    if (legacy.status !== 'ok') throw new ProjectStateError('state_permissions')
+
+    let legacyDirectory: {readonly file: FileHandle; readonly binding: DirectoryBinding} | null = null
+    try {
+      legacyDirectory = await this.#ensurePrivateDirectoryAt(
+        root,
+        this.#stateRoot,
+        LEGACY_PROJECT_CODEX_HOMES_DIRECTORY,
+      )
+      if (!sameFileIdentity(legacy.identity, legacyDirectory.binding.identity)) {
+        throw new ProjectStateError('state_permissions')
+      }
+      const currentAgain = this.#lookupAt(
+        root,
+        PROJECT_CODEX_HOMES_DIRECTORY,
+        'state_permissions',
+      )
+      if (currentAgain.status === 'ok') return
+      if (currentAgain.status !== 'missing') throw new ProjectStateError('state_permissions')
+      await this.#revalidateStateRoot()
+      this.#requireMatchesAt(
+        root,
+        LEGACY_PROJECT_CODEX_HOMES_DIRECTORY,
+        legacyDirectory.file,
+        'state_permissions',
+      )
+      const renamed = this.#callRootFile(() => this.#rootFiles.renameAt(
+        root.fd,
+        LEGACY_PROJECT_CODEX_HOMES_DIRECTORY,
+        PROJECT_CODEX_HOMES_DIRECTORY,
+      ))
+      if (renamed.status !== 'ok') throw new ProjectStateError('state_permissions')
+      this.#requireMatchesAt(
+        root,
+        PROJECT_CODEX_HOMES_DIRECTORY,
+        legacyDirectory.file,
+        'state_permissions',
+      )
+      const legacyAfter = this.#lookupAt(
+        root,
+        LEGACY_PROJECT_CODEX_HOMES_DIRECTORY,
+        'state_permissions',
+      )
+      if (legacyAfter.status !== 'missing') throw new ProjectStateError('state_permissions')
+      await this.#revalidateStateRoot()
+    } finally {
+      await legacyDirectory?.file.close().catch(() => undefined)
+    }
   }
 
   #unlinkAt(
