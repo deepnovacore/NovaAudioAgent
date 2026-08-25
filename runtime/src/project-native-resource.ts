@@ -23,7 +23,7 @@ const PROJECT_ADDON_ID = 'project_native_addon'
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
-  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'probe', 'protectDirectory',
+  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'probe', 'protectAt', 'protectDirectory',
   'renameAt', 'unlinkAt',
 ])
 
@@ -32,6 +32,10 @@ export interface ProjectNativeHost {
   readonly rootFiles: ProjectRootFileAuthority
   /** Protects only a host-selected canonical application directory. */
   protectDirectory(path: string): boolean
+  /** Protects a retained child selected descriptor-relatively by the host. */
+  protectDirectoryAt(root: number, name: string, child: number): boolean
+  /** Creates a protected private child below an owned, not-yet-private parent. */
+  mkdirPrivateAt(root: number, name: string): unknown
 }
 
 export function protectDefaultProjectDirectories(
@@ -144,6 +148,11 @@ export function loadProjectNativeHostFromResources(
         const result: unknown = addon.protectDirectory(path)
         return isStatus(result, 'ok')
       },
+      protectDirectoryAt: (root: number, name: string, child: number) => {
+        const result: unknown = addon.protectAt(root, name, child)
+        return isStatus(result, 'ok')
+      },
+      mkdirPrivateAt: (root: number, name: string) => addon.mkdirPrivateAt(root, name),
     })
   } catch {
     return null
@@ -317,6 +326,8 @@ function validBinary(bytes: Buffer, platform: string, arch: string): boolean {
 
 interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {
   protectDirectory(path: string): unknown
+  protectAt(root: number, name: string, child: number): unknown
+  mkdirPrivateAt(root: number, name: string): unknown
 }
 
 function isStatus(value: unknown, status: string): boolean {

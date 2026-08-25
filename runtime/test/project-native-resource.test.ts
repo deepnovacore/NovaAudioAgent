@@ -26,10 +26,12 @@ function fakeAddon(): Record<string, (...args: readonly unknown[]) => unknown> {
     acquire: () => ({status: 'busy'}),
     probe: () => ({status: 'ok'}),
     protectDirectory: () => ({status: 'ok'}),
+    protectAt: () => ({status: 'ok'}),
     matchesAt: () => ({status: 'ok'}),
     lookupAt: () => ({status: 'missing'}),
     createFileAt: () => ({status: 'exists'}),
     mkdirAt: () => ({status: 'exists'}),
+    mkdirPrivateAt: () => ({status: 'ok', identity: {device: 1n, inode: 2n}}),
     renameAt: () => ({status: 'ok'}),
     unlinkAt: () => ({status: 'ok'}),
   }
@@ -78,6 +80,10 @@ test('project native host loads only one fixed manifest-bound addon for the exac
     assert.deepEqual(loaded?.nativeLocks.acquire(7), {status: 'busy'})
     assert.deepEqual(loaded?.rootFiles.probe(8), {status: 'ok'})
     assert.equal(loaded?.protectDirectory('/host-owned/default'), true)
+    assert.equal(loaded?.protectDirectoryAt(8, 'state', 9), true)
+    assert.deepEqual(loaded?.mkdirPrivateAt(8, 'state'), {
+      status: 'ok', identity: {device: 1n, inode: 2n},
+    })
 
     const swappedDuringLoad = loadProjectNativeHostFromResources({
       resourcesPath: root,

@@ -1,7 +1,7 @@
 'use strict'
 
 const assert = require('node:assert/strict')
-const {closeSync, mkdtempSync, openSync, rmSync} = require('node:fs')
+const {closeSync, mkdirSync, mkdtempSync, openSync, rmSync} = require('node:fs')
 const {tmpdir} = require('node:os')
 const {join} = require('node:path')
 const {spawn} = require('node:child_process')
@@ -36,6 +36,8 @@ if (mode === 'hold') {
     const rootDescriptor = openDirectory(root)
     let lockChild = null
     try {
+      const bootstrapDirectory = addon.mkdirPrivateAt(rootDescriptor, 'bootstrap-root')
+      assert.equal(bootstrapDirectory.status, 'ok')
       assert.deepEqual(addon.protectDirectory(root), {status: 'ok'})
       assert.deepEqual(addon.probe(rootDescriptor), {status: 'ok'})
       assert.deepEqual(addon.lookupAt(rootDescriptor, '../escape'), {status: 'failed'})
@@ -50,6 +52,7 @@ if (mode === 'hold') {
 
       let childDescriptor = openSync(join(root, 'state.tmp'), 'r+')
       try {
+        assert.deepEqual(addon.protectAt(rootDescriptor, 'state.tmp', childDescriptor), {status: 'failed'})
         assert.deepEqual(addon.matchesAt(rootDescriptor, 'state.tmp', childDescriptor), {status: 'ok'})
         if (process.platform === 'win32') {
           closeSync(childDescriptor)
@@ -68,10 +71,25 @@ if (mode === 'hold') {
         if (childDescriptor !== null) closeSync(childDescriptor)
       }
 
+      mkdirSync(join(root, 'repair-me'))
+      const repairDescriptor = openDirectory(join(root, 'repair-me'))
+      try {
+        assert.deepEqual(
+          addon.protectAt(rootDescriptor, 'repair-me', repairDescriptor),
+          {status: 'ok'},
+        )
+      } finally {
+        closeSync(repairDescriptor)
+      }
+
       const directory = addon.mkdirAt(rootDescriptor, 'workspace-01')
       assert.equal(directory.status, 'ok')
       assert.deepEqual(
         addon.unlinkAt(rootDescriptor, 'workspace-01', directory.identity, 'directory'),
+        {status: 'ok'},
+      )
+      assert.deepEqual(
+        addon.unlinkAt(rootDescriptor, 'bootstrap-root', bootstrapDirectory.identity, 'directory'),
         {status: 'ok'},
       )
 

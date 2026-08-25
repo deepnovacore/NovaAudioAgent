@@ -40,7 +40,7 @@ test('Windows project authority owns nonblocking locks and handle-relative proje
   assert.match(body, /const PfnDliHook __pfnDliNotifyHook2 = nova_delay_load_hook;/u)
   assert.doesNotMatch(body, /\nPfnDliHook __pfnDliNotifyHook2/u)
   for (const exported of [
-    'acquire', 'probe', 'protectDirectory', 'matchesAt', 'lookupAt', 'createFileAt', 'mkdirAt',
+    'acquire', 'probe', 'protectDirectory', 'protectAt', 'matchesAt', 'lookupAt', 'createFileAt', 'mkdirAt', 'mkdirPrivateAt',
     'renameAt', 'unlinkAt',
   ]) assert.match(body, new RegExp(`"${exported}"`, 'u'))
   assert.equal(body.match(/CreateFileW\s*\(/gu)?.length, 1)

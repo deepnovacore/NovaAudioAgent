@@ -179,6 +179,43 @@ static napi_value nova_probe(napi_env env, napi_callback_info info) {
   return nova_status(env, "ok");
 }
 
+static int nova_protect_descriptor(int descriptor) {
+  struct stat before;
+  int valid = fstat(descriptor, &before) == 0 && S_ISDIR(before.st_mode) &&
+      before.st_uid == geteuid() && fchmod(descriptor, 0700) == 0;
+  struct stat after;
+  valid = valid && fstat(descriptor, &after) == 0 && S_ISDIR(after.st_mode) &&
+      after.st_dev == before.st_dev && after.st_ino == before.st_ino &&
+      after.st_uid == geteuid() && (after.st_mode & 0777) == 0700;
+  return valid;
+}
+
+static napi_value nova_protect_at(napi_env env, napi_callback_info info) {
+  napi_value args[3];
+  int root_descriptor;
+  int child_descriptor;
+  char name[256];
+  struct stat root;
+  struct stat expected;
+  if (!nova_args(env, info, 3, args) ||
+      !nova_descriptor(env, args[0], &root_descriptor) ||
+      fstat(root_descriptor, &root) != 0 || !S_ISDIR(root.st_mode) ||
+      root.st_uid != geteuid() ||
+      !nova_basename(env, args[1], name) ||
+      !nova_descriptor(env, args[2], &child_descriptor) ||
+      fstat(child_descriptor, &expected) != 0 || !S_ISDIR(expected.st_mode) ||
+      expected.st_uid != geteuid()) return nova_status(env, "failed");
+  int opened = openat(root_descriptor, name,
+                      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (opened < 0) return nova_status(env, "failed");
+  struct stat actual;
+  int valid = fstat(opened, &actual) == 0 && S_ISDIR(actual.st_mode) &&
+      actual.st_dev == expected.st_dev && actual.st_ino == expected.st_ino &&
+      nova_protect_descriptor(opened);
+  (void)close(opened);
+  return nova_status(env, valid ? "ok" : "failed");
+}
+
 static napi_value nova_protect_directory(napi_env env, napi_callback_info info) {
   napi_value args[1];
   size_t length = 0;
@@ -194,13 +231,7 @@ static napi_value nova_protect_directory(napi_env env, napi_callback_info info) 
   int descriptor = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   free(path);
   if (descriptor < 0) return nova_status(env, "failed");
-  struct stat before;
-  int valid = fstat(descriptor, &before) == 0 && S_ISDIR(before.st_mode) &&
-      before.st_uid == geteuid() && fchmod(descriptor, 0700) == 0;
-  struct stat after;
-  valid = valid && fstat(descriptor, &after) == 0 && S_ISDIR(after.st_mode) &&
-      after.st_dev == before.st_dev && after.st_ino == before.st_ino &&
-      after.st_uid == geteuid() && (after.st_mode & 0777) == 0700;
+  int valid = nova_protect_descriptor(descriptor);
   (void)close(descriptor);
   return nova_status(env, valid ? "ok" : "failed");
 }
@@ -291,6 +322,29 @@ static napi_value nova_mkdir_at(napi_env env, napi_callback_info info) {
   return nova_identity_result(env, "ok", &actual);
 }
 
+static napi_value nova_mkdir_private_at(napi_env env, napi_callback_info info) {
+  napi_value args[2];
+  int root_descriptor;
+  char name[256];
+  struct stat root;
+  if (!nova_args(env, info, 2, args) ||
+      !nova_descriptor(env, args[0], &root_descriptor) ||
+      fstat(root_descriptor, &root) != 0 || !S_ISDIR(root.st_mode) ||
+      root.st_uid != geteuid() ||
+      !nova_basename(env, args[1], name)) return nova_status(env, "failed");
+  if (mkdirat(root_descriptor, name, 0700) != 0) {
+    return nova_status(env, errno == EEXIST ? "exists" : "failed");
+  }
+  struct stat actual;
+  if (fstatat(root_descriptor, name, &actual, AT_SYMLINK_NOFOLLOW) != 0 ||
+      !S_ISDIR(actual.st_mode) || actual.st_uid != geteuid() ||
+      (actual.st_mode & 0777) != 0700) {
+    (void)unlinkat(root_descriptor, name, AT_REMOVEDIR);
+    return nova_status(env, "failed");
+  }
+  return nova_identity_result(env, "ok", &actual);
+}
+
 static napi_value nova_rename_at(napi_env env, napi_callback_info info) {
   napi_value args[3];
   int root_descriptor;
@@ -351,6 +405,8 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "lookupAt", nova_lookup_at) ||
       !nova_export(env, exports, "createFileAt", nova_create_file_at) ||
       !nova_export(env, exports, "mkdirAt", nova_mkdir_at) ||
+      !nova_export(env, exports, "mkdirPrivateAt", nova_mkdir_private_at) ||
+      !nova_export(env, exports, "protectAt", nova_protect_at) ||
       !nova_export(env, exports, "protectDirectory", nova_protect_directory) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
       !nova_export(env, exports, "unlinkAt", nova_unlink_at)) return NULL;
