@@ -79,6 +79,7 @@ const axes = {
   session: '',
   pendingConfirmation: false,
   connected: false,
+  backendState: 'stopped',
   permission: 'unknown',
   error: '',
   shellExpanded: false,
@@ -551,7 +552,7 @@ async function handleSocketMessage(event) {
 // 'nova:backend-exit' event and the verdict carried on the bootstrap reply — land here.
 function handleBackendExit() {
   axes.connected = false
-  axes.error = 'backend-exit'
+  axes.error = ''
   alertTone.stop()
   playback.stopAll()
   render()
@@ -573,6 +574,7 @@ function connectBackend(connection) {
       if (!nextConnection.isCurrent()) return
       nextConnection.delivery.sendText(JSON.stringify({ type: 'hello', token: connection.token }))
       axes.connected = true
+      axes.backendState = 'connected'
       axes.error = ''
       render()
     }
@@ -594,6 +596,9 @@ async function boot() {
     cameraController.setSourceMode(bootstrap.cameraSource)
     axes.audioMode = bootstrap.audioMode
     axes.platform = bootstrap.platform
+    axes.backendState = typeof bootstrap.backendStatus === 'string'
+      ? bootstrap.backendStatus
+      : 'stopped'
     // Only the renderer-owned subset reaches the orb; credentials, executable
     // paths, and service endpoints stay in the main process/settings panel.
     visual.setPalette(bootstrap.settings?.palette)
@@ -601,6 +606,11 @@ async function boot() {
     nativeAvailable = bootstrap.nativeAvailable === true
     window.novaAudioAgentDesktop.onBackendExit(handleBackendExit)
     window.novaAudioAgentDesktop.onBackendReady(connectBackend)
+    window.novaAudioAgentDesktop.onBackendStatus?.(status => {
+      if (!status || typeof status.state !== 'string') return
+      axes.backendState = status.state
+      render()
+    })
     // Palette updates are the only live renderer setting. Runtime settings
     // trigger a supervised backend restart in main.
     window.novaAudioAgentDesktop.settings?.onChanged?.(next => visual.setPalette(next.palette))

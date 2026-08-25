@@ -8,6 +8,10 @@ const LABELS = Object.freeze({
   interrupted: '播放已中断，正在聆听',
   'permission-denied': '麦克风权限被拒绝',
   disconnected: 'Nova Audio Agent 已断开',
+  reconnecting: 'Nova Audio Agent 正在重新连接',
+  'configuration-required': 'Nova Audio Agent 需要补全配置',
+  'authentication-failed': 'Nova Audio Agent 鉴权失败',
+  'backend-unavailable': 'Nova Audio Agent 后台不可用',
   error: 'Nova Audio Agent 发生错误',
 })
 
@@ -28,6 +32,10 @@ export function deriveOrbState(input) {
   // either, so plain "disconnected wins" made 'booting' unreachable at the one
   // moment it describes. Booting only shields the socket axis: an error still
   // outranks it, and a disconnect that lands after boot still collapses.
+  else if (input.backendState === 'configuration_required') name = 'configuration-required'
+  else if (input.backendState === 'authentication_failed') name = 'authentication-failed'
+  else if (input.backendState === 'unavailable') name = 'backend-unavailable'
+  else if (input.backendState === 'reconnecting') name = 'reconnecting'
   else if (!input.connected && !input.booting) name = 'disconnected'
   else if (input.permission === 'denied') name = 'permission-denied'
   else if (input.booting) name = 'booting'

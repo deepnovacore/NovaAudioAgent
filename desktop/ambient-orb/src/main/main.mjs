@@ -33,6 +33,10 @@ import {
   venvPython,
   watchBackendExit,
 } from './backend.mjs'
+import {
+  classifyBackendFailure,
+  createBackendDiagnosticCollector,
+} from './backend-diagnostics.mjs'
 import { createBackendSupervisor } from './backend-supervisor.mjs'
 import { installAppProtocol, loadAppWindow } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
@@ -117,7 +121,9 @@ const opaque = process.env.NOVA_ORB_OPAQUE === '1'
 
 let backend = null
 let backendSupervisor = null
-let backendStatus = Object.freeze({state: 'idle', connection: null, retryInMs: null})
+let backendStatus = Object.freeze({
+  state: 'stopped', connection: null, retryInMs: null, diagnostic: null,
+})
 let mainWindow = null
 let boardWindow = null
 let settingsWindow = null
@@ -132,7 +138,10 @@ let releaseSmokeChannel = null
 // board there is no relay through the orb renderer and no requestId to match.
 let currentSettings = null
 let desktopConfig = null
-let codexStatus = Object.freeze({status: 'missing', path: null, source: null, version: null})
+let codexStatus = Object.freeze({
+  status: 'missing', invocation: null, path: null, prefixArgs: null,
+  source: null, version: null,
+})
 const secretCodec = createSafeStorageCodec(safeStorage)
 const pendingBoardRequests = new Map()
 let pendingGraphBoardRequest = null
@@ -178,6 +187,8 @@ function settingsView() {
     ...publicSettings(currentSettings),
     codexStatus,
     backendStatus: backendStatus.state,
+    backendDiagnostic: backendStatus.diagnostic,
+    backendRetryInMs: backendStatus.retryInMs,
     effectivePaths: desktopConfig ? Object.freeze({
       stateRoot: desktopConfig.stateRoot,
       managedRoot: desktopConfig.managedRoot,
@@ -420,6 +431,10 @@ async function refreshDesktopConfiguration() {
 }
 
 async function launchBackend(backendKind, smokeChannel, onExit) {
+  const configurationCode = desktopConfig?.codexConfigurationError
+    ?? desktopConfig?.modelConfigurationError
+  if (configurationCode) throw classifyBackendFailure(configurationCode)
+  if (codexStatus.status !== 'ready') throw classifyBackendFailure('codex_unavailable')
   const token = randomBytes(16).toString('hex')
   const workspace = desktopConfig?.workspace || process.cwd()
   let spawnedBackend = null
@@ -432,6 +447,7 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
     },
   })
   let ready
+  const diagnostic = createBackendDiagnosticCollector()
   try {
     const decryptedSecrets = decryptSecretsForSpawn(currentSettings, secretCodec)
     const spec = backendLaunchSpec({
@@ -469,10 +485,12 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
     }
     backend = spawnedBackend
     spawnedBackend.stderr?.on('data', chunk => {
-      console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
+      const code = diagnostic.push(chunk.toString('utf8'))
+      if (code) console.error(`[backend-diagnostic] ${code}`)
     })
     spawnedBackend.stdout?.on('data', chunk => {
-      console.error(`[backend-diagnostic] ${chunk.toString('utf8').trim()}`)
+      const code = diagnostic.push(chunk.toString('utf8'))
+      if (code) console.error(`[backend-diagnostic] ${code}`)
     })
     // Covers both deaths: the child that exits, and the child that never started
     // at all (a missing interpreter emits 'error' and no 'exit' — unlistened, it
@@ -483,11 +501,15 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       closeReadiness: listener.close,
       onExit: reason => {
         if (backend === spawnedBackend) backend = null
-        console.error(`[backend-diagnostic] ${reason}`)
-        onExit(reason)
+        void reason
+        onExit(diagnostic.failure())
       },
     })
-    ready = await listener.readiness
+    try {
+      ready = await listener.readiness
+    } catch {
+      throw diagnostic.failure('backend_unavailable')
+    }
   } finally {
     listener.close()
   }
@@ -628,6 +650,13 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     void backendSupervisor?.restart()
     return settingsView()
   })
+  ipcMain.handle('nova:backend:retry', async event => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+      throw new Error('backend retry rejected')
+    }
+    await backendSupervisor?.retry()
+    return settingsView()
+  })
   ipcMain.handle('nova:projects:repair', async (event, root) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('Projects repair rejected')
@@ -745,7 +774,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     cameraFile: camera.source === 'file' ? camera.file : undefined,
     fetchCameraFile: (url, init) => net.fetch(url, init),
   }).then(() => {
-    if (backendStatus.state === 'ready' && backendStatus.connection) {
+    if (backendStatus.state === 'connected' && backendStatus.connection) {
       sendToOrb('nova:backend-ready', backendStatus.connection)
     } else if (backendStatus.state !== 'starting') sendToOrb('nova:backend-exit')
   }).catch(() => {
@@ -770,9 +799,10 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     onStatus: status => {
       backendStatus = status
       sendToSettings('nova:settings:changed', settingsView())
-      if (status.state === 'ready' && status.connection) {
+      sendToOrb('nova:backend-status', status)
+      if (status.state === 'connected' && status.connection) {
         sendToOrb('nova:backend-ready', status.connection)
-      } else if (status.state === 'disconnected' || status.state === 'retry_wait') {
+      } else if (status.state !== 'starting' && status.state !== 'stopped') {
         sendToOrb('nova:backend-exit')
       }
     },

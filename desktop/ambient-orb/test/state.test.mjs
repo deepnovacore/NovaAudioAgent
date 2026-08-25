@@ -83,6 +83,18 @@ test('does not claim an AEC implementation before microphone activation', () => 
   assert.equal(state.aecLabel, 'AEC 未启用')
 })
 
+test('backend terminal and reconnecting states remain distinguishable', () => {
+  const base = {
+    booting: false, connected: false, permission: 'granted', activated: false,
+    capture: 'idle', playback: 'idle', codex: 'idle', workspace: '', session: '',
+    pendingConfirmation: false, error: '', audioMode: 'inactive', shellExpanded: false,
+  }
+  assert.equal(deriveOrbState({...base, backendState: 'reconnecting'}).name, 'reconnecting')
+  assert.equal(deriveOrbState({...base, backendState: 'configuration_required'}).name, 'configuration-required')
+  assert.equal(deriveOrbState({...base, backendState: 'authentication_failed'}).name, 'authentication-failed')
+  assert.equal(deriveOrbState({...base, backendState: 'unavailable'}).name, 'backend-unavailable')
+})
+
 test('projects only public workspace session and confirmation into the Codex label', () => {
   const state = deriveOrbState({
     ...base,

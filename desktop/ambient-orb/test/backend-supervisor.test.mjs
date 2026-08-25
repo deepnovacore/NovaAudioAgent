@@ -9,36 +9,52 @@ function deferred() {
   return {promise, resolve}
 }
 
-test('supervisor retries failed starts with bounded backoff and publishes readiness', async () => {
+test('recoverable starts reconnect with deterministic jitter and then connect', async () => {
   const scheduled = []
   const statuses = []
   let attempts = 0
   const supervisor = createBackendSupervisor({
-    start: async onExit => {
+    start: async () => {
       attempts += 1
-      if (attempts < 2) throw new Error('private startup detail')
-      return {backend: {id: attempts}, connection: {endpoint: 'ws://127.0.0.1:7/', token: 'a'.repeat(32)}, onExit}
+      if (attempts === 1) throw {kind: 'recoverable', code: 'transport_lost'}
+      return {backend: {id: attempts}, connection: {endpoint: 'ws://127.0.0.1:7/'}}
     },
     stopBackend: async () => {},
     schedule: (callback, delay) => {
-      scheduled.push({callback, delay})
-      return callback
+      const handle = {callback, delay, canceled: false}
+      scheduled.push(handle)
+      return handle
     },
-    cancel: () => {},
+    cancel: handle => { handle.canceled = true },
+    random: () => 1,
+    retryPolicy: {baseMs: 1000, capMs: 30_000, jitterRatio: 0.2},
     onStatus: status => statuses.push(status),
-    retryDelays: [1000, 2000],
   })
   await supervisor.start()
-  assert.equal(attempts, 1)
-  assert.equal(scheduled[0].delay, 1000)
-  await scheduled.shift().callback()
-  assert.equal(attempts, 2)
-  assert.equal(supervisor.status().state, 'ready')
-  assert.equal(statuses.some(status => status.state === 'retry_wait'), true)
+  assert.equal(supervisor.status().state, 'reconnecting')
+  assert.equal(scheduled[0].delay, 1200)
+  await scheduled[0].callback()
+  assert.equal(supervisor.status().state, 'connected')
   assert.equal(statuses.at(-1).connection.endpoint, 'ws://127.0.0.1:7/')
 })
 
-test('backend exit retries, manual restart cancels delay, and stop fences stale starts', async () => {
+test('configuration, authentication, and unavailable failures never arm a timer', async () => {
+  for (const kind of ['configuration_required', 'authentication_failed', 'unavailable']) {
+    const scheduled = []
+    const supervisor = createBackendSupervisor({
+      start: async () => { throw {kind, code: `${kind}_test`} },
+      stopBackend: async () => {},
+      schedule: (callback, delay) => { scheduled.push({callback, delay}); return callback },
+      onStatus: () => {},
+    })
+    await supervisor.start()
+    assert.equal(supervisor.status().state, kind)
+    assert.equal(supervisor.status().diagnostic, `${kind}_test`)
+    assert.equal(scheduled.length, 0)
+  }
+})
+
+test('exit reconnects, explicit retry cancels delay, and stop fences a stale start', async () => {
   const scheduled = []
   const stopped = []
   const pending = deferred()
@@ -49,7 +65,7 @@ test('backend exit retries, manual restart cancels delay, and stop fences stale 
       startCount += 1
       exit = onExit
       if (startCount === 3) return await pending.promise
-      return {backend: {id: startCount}, connection: {endpoint: 'ws://127.0.0.1:8/', token: 'b'.repeat(32)}}
+      return {backend: {id: startCount}, connection: {endpoint: 'ws://127.0.0.1:8/'}}
     },
     stopBackend: async backend => { stopped.push(backend.id) },
     schedule: (callback, delay) => {
@@ -58,19 +74,21 @@ test('backend exit retries, manual restart cancels delay, and stop fences stale 
       return handle
     },
     cancel: handle => { handle.canceled = true },
+    random: () => 0.5,
+    retryPolicy: {baseMs: 1000, capMs: 30_000, jitterRatio: 0.2},
     onStatus: () => {},
-    retryDelays: [1000],
   })
   await supervisor.start()
-  exit('backend_exit')
+  exit({kind: 'recoverable', code: 'backend_exit'})
+  assert.equal(supervisor.status().state, 'reconnecting')
   assert.equal(scheduled.at(-1).delay, 1000)
-  await supervisor.restart()
+  await supervisor.retry()
   assert.equal(scheduled[0].canceled, true)
   assert.equal(startCount, 2)
   const third = supervisor.restart()
   while (startCount < 3) await Promise.resolve()
   await supervisor.stop()
-  pending.resolve({backend: {id: 3}, connection: {endpoint: 'ws://127.0.0.1:9/', token: 'c'.repeat(32)}})
+  pending.resolve({backend: {id: 3}, connection: {endpoint: 'ws://127.0.0.1:9/'}})
   await third
   assert.deepEqual(stopped, [2, 3])
   assert.equal(supervisor.status().state, 'stopped')

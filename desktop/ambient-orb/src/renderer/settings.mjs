@@ -34,6 +34,7 @@ const secretRevisions = createSecretRevisions(SECRET_KEYS)
 
 const statusLabel = document.querySelector('#status')
 const backendStatus = document.querySelector('#backend-status')
+const backendRetry = document.querySelector('#backend-retry')
 const startListeningOnLaunch = document.querySelector('#startListeningOnLaunch')
 const warning = document.querySelector('#keyring-warning')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
@@ -145,9 +146,21 @@ function renderCodexStatus(view) {
 
 function render(view, drafts) {
   if (!view) return
-  const backendReady = view.backendStatus === 'ready'
-  backendStatus.textContent = backendReady ? 'NovaAudioAgent 已连接' : 'NovaAudioAgent 正在重连…'
+  const backendCopy = {
+    connected: 'NovaAudioAgent 已连接',
+    starting: 'NovaAudioAgent 正在启动…',
+    reconnecting: `NovaAudioAgent 正在重连${view.backendRetryInMs === null ? '' : `（${view.backendRetryInMs} ms）`}…`,
+    configuration_required: '需要补全配置；保存设置后再重试。',
+    authentication_failed: '服务鉴权失败；请检查当前管线使用的 API Key。',
+    unavailable: '后台或 Codex 当前不可用；请检查安装后重试。',
+    stopped: 'NovaAudioAgent 后台已停止。',
+  }
+  const backendReady = view.backendStatus === 'connected'
+  backendStatus.textContent = backendCopy[view.backendStatus] ?? 'NovaAudioAgent 后台状态未知。'
   backendStatus.dataset.ready = backendReady ? '1' : '0'
+  backendRetry.hidden = ![
+    'configuration_required', 'authentication_failed', 'unavailable', 'stopped',
+  ].includes(view.backendStatus)
   startListeningOnLaunch.checked = view.startListeningOnLaunch === true
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
@@ -347,6 +360,15 @@ document.querySelector('#codex-rescan').addEventListener('click', async () => {
     statusLabel.textContent = 'Codex 扫描完成'
   } catch {
     statusLabel.textContent = 'Codex 扫描失败'
+  }
+})
+backendRetry.addEventListener('click', async () => {
+  statusLabel.textContent = '正在重试后台连接…'
+  try {
+    controller.setView(await api.retryBackend())
+    statusLabel.textContent = '已发起后台重试'
+  } catch {
+    statusLabel.textContent = '后台重试失败'
   }
 })
 document.querySelector('#projects-repair').addEventListener('click', async () => {

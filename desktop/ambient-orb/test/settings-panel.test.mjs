@@ -37,7 +37,8 @@ function publicView(overrides = {}) {
     codexHeartbeatSeconds: 30,
     pipelineMode: 'integrated',
     startListeningOnLaunch: false,
-    backendStatus: 'ready',
+    backendStatus: 'connected',
+    backendRetryInMs: null,
     integratedProvider: 'qwen',
     integratedModel: 'qwen-realtime',
     integratedVoice: 'longanqian',
@@ -588,9 +589,11 @@ test('the panel exposes packaged Codex, Projects, and model endpoint configurati
 
 test('the panel exposes backend state and opt-in microphone activation', () => {
   assert.match(html, /id="backend-status"/)
+  assert.match(html, /id="backend-retry"/)
   assert.match(html, /id="startListeningOnLaunch"/)
   assert.match(html, /启动时自动开始监听/)
   assert.match(script, /backendStatus\.textContent/)
+  assert.match(script, /api\.retryBackend\(\)/)
   assert.match(script, /startListeningOnLaunch\.checked = view\.startListeningOnLaunch === true/)
   assert.match(script, /startListeningOnLaunch:\s*startListeningOnLaunch\.checked/)
 })

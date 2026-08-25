@@ -20,6 +20,8 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
   assert.deepEqual([...new Set(channels)].sort(), [
     'nova:backend-exit',
     'nova:backend-ready',
+    'nova:backend-status',
+    'nova:backend:retry',
     'nova:bootstrap',
     'nova:codex:rescan',
     'nova:memory-board:data',

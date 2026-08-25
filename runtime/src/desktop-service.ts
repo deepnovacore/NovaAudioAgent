@@ -487,15 +487,30 @@ export async function runDesktopEntry(options: DesktopEntryOptions): Promise<0 |
     ownership.commit()
     await owner.run()
     return 0
-  } catch {
+  } catch (error) {
     await ownership?.rollback()
     try {
-      options.onDiagnostic('[runtime-diagnostic] assembly_failed')
+      options.onDiagnostic(`[runtime-diagnostic] ${desktopEntryFailureCode(error)}`)
     } catch {
       // A diagnostic sink must not convert a bounded entry failure into an unhandled rejection.
     }
     return 2
   }
+}
+
+function desktopEntryFailureCode(error: unknown): string {
+  if (error !== null && typeof error === 'object') {
+    const value = error as {readonly name?: unknown; readonly code?: unknown}
+    if (value.code === 'credential_missing') return 'authentication_failed'
+    if (new Set([
+      'binary_missing', 'spawn_failed', 'codex_host_unavailable',
+      'codex_project_host_unsupported', 'backend_unavailable',
+    ]).has(String(value.code))) return 'backend_unavailable'
+    if (value.name === 'ConfigurationError'
+      || value.name === 'CodexHostConfigurationError'
+      || value.name === 'DesktopCameraConfigurationError') return 'configuration_required'
+  }
+  return 'assembly_failed'
 }
 
 interface ConstructionCleanup {

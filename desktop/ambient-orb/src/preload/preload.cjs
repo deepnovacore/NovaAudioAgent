@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     ipcRenderer.on('nova:backend-ready', listener)
     return () => ipcRenderer.removeListener('nova:backend-ready', listener)
   },
+  onBackendStatus: callback => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = (_event, status) => callback(status)
+    ipcRenderer.on('nova:backend-status', listener)
+    return () => ipcRenderer.removeListener('nova:backend-status', listener)
+  },
   orbMenu: Object.freeze({
     show: () => ipcRenderer.send('nova:orb-menu:show'),
   }),
@@ -75,6 +81,7 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
   settings: Object.freeze({
     get: () => ipcRenderer.invoke('nova:settings:get'),
     rescanCodex: () => ipcRenderer.invoke('nova:codex:rescan'),
+    retryBackend: () => ipcRenderer.invoke('nova:backend:retry'),
     repairProjects: root => ipcRenderer.invoke('nova:projects:repair', root),
     // The payload may carry plaintext key values on their way *into* main; the
     // reply never carries any back out.

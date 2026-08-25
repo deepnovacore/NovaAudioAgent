@@ -48,11 +48,22 @@ test('preload exposes a removable backend-ready listener', async () => {
   assert.deepEqual(received, [{endpoint: 'ws://127.0.0.1:7/'}])
 })
 
+test('preload exposes sanitized backend status and explicit settings retry', async () => {
+  const {exposed, ipcRenderer, invokes} = await loadPreload()
+  const seen = []
+  const unsubscribe = exposed.onBackendStatus(status => seen.push(status))
+  ipcRenderer.emit('nova:backend-status', {}, {state: 'configuration_required'})
+  unsubscribe()
+  assert.deepEqual(seen, [{state: 'configuration_required'}])
+  await exposed.settings.retryBackend()
+  assert.deepEqual(invokes, [{channel: 'nova:backend:retry', payload: undefined}])
+})
+
 test('preload exposes the settings bridge as invoke/invoke/removable listener', async () => {
   const { exposed, ipcRenderer, invokes } = await loadPreload()
 
   assert.deepEqual(Object.keys(exposed.settings).sort(), [
-    'get', 'onChanged', 'repairProjects', 'rescanCodex', 'set',
+    'get', 'onChanged', 'repairProjects', 'rescanCodex', 'retryBackend', 'set',
   ])
   assert.ok(Object.isFrozen(exposed.settings))
 
