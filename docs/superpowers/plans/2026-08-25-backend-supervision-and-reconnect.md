@@ -34,7 +34,8 @@
   ```js
   const supervisor = createBackendSupervisor({launch, shutdown, schedule, random: () => 0.5, onState})
   await supervisor.start()
-  exits[0]({code: 1, diagnostic: 'provider_authentication'})
+  const backendExit = exits[0]
+  backendExit({code: 1, diagnostic: 'provider_authentication'})
   assert.equal(supervisor.snapshot().state, 'authentication_failed')
   assert.equal(scheduled[0].delay, 1_000)
   ```
