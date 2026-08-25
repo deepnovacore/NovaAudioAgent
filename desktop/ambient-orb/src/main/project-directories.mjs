@@ -6,22 +6,44 @@ function statusOf(value) {
     : null
 }
 
-async function openChild(openDirectory, path) {
-  const handle = await openDirectory(path)
+async function openChild(openDirectory, path, stage = null) {
+  let handle
+  try {
+    handle = await openDirectory(path)
+  } catch {
+    throw new Error(stage === null
+      ? 'project_directory_open_failed'
+      : `project_directory_open_failed_${stage}`)
+  }
   if (!handle || !Number.isInteger(handle.fd) || handle.fd < 0 || typeof handle.close !== 'function') {
-    throw new Error('project_directory_open_failed')
+    throw new Error(stage === null
+      ? 'project_directory_open_failed'
+      : `project_directory_open_failed_${stage}`)
   }
   return handle
 }
 
-async function ensureChild({parent, name, path, bootstrap, nativeHost, openDirectory}) {
+function directoryOpener(nativeHost, injected) {
+  if (typeof injected === 'function') return injected
+  if (typeof nativeHost?.directoryHandles?.open !== 'function') {
+    throw new Error('project_directory_authority_unavailable')
+  }
+  return target => nativeHost.directoryHandles.open(target)
+}
+
+async function closeChild(handle) {
+  if (!handle) return
+  try { await handle.close() } catch { /* close failure is handled by the owning operation */ }
+}
+
+async function ensureChild({parent, name, path, stage, bootstrap, nativeHost, openDirectory}) {
   const created = bootstrap
     ? nativeHost.mkdirPrivateAt(parent.fd, name)
     : nativeHost.rootFiles.mkdirAt(parent.fd, name)
   if (statusOf(created) === null) throw new Error('project_directory_create_failed')
-  const child = await openChild(openDirectory, path)
+  const child = await openChild(openDirectory, path, stage)
   if (!nativeHost.protectDirectoryAt(parent.fd, name, child.fd)) {
-    await child.close().catch(() => undefined)
+    await closeChild(child)
     throw new Error('project_directory_protection_failed')
   }
   return child
@@ -47,7 +69,8 @@ export async function ensurePrivateProjectDirectories({
     throw new Error('project_directory_authority_unavailable')
   }
 
-  const homeHandle = await openChild(openDirectory, pathApi.resolve(home))
+  const openNativeDirectory = directoryOpener(nativeHost, openDirectory)
+  const homeHandle = await openChild(openNativeDirectory, pathApi.resolve(home), 'home')
   let rootHandle = null
   let workspacesHandle = null
   try {
@@ -55,9 +78,10 @@ export async function ensurePrivateProjectDirectories({
       parent: homeHandle,
       name: '.nova-audio-agent',
       path: config.root,
+      stage: 'root',
       bootstrap: true,
       nativeHost,
-      openDirectory,
+      openDirectory: openNativeDirectory,
     })
     const defaultState = pathApi.join(config.root, 'state')
     const defaultManaged = pathApi.join(config.root, 'workspaces')
@@ -66,28 +90,31 @@ export async function ensurePrivateProjectDirectories({
       parent: rootHandle,
       name: 'state',
       path: defaultState,
+      stage: 'state',
       bootstrap: false,
       nativeHost,
-      openDirectory,
+      openDirectory: openNativeDirectory,
     })
-    await stateHandle.close()
+    await closeChild(stateHandle)
     workspacesHandle = await ensureChild({
       parent: rootHandle,
       name: 'workspaces',
       path: defaultManaged,
+      stage: 'managed',
       bootstrap: false,
       nativeHost,
-      openDirectory,
+      openDirectory: openNativeDirectory,
     })
     const workspaceHandle = await ensureChild({
       parent: workspacesHandle,
       name: 'default',
       path: defaultWorkspace,
+      stage: 'workspace',
       bootstrap: false,
       nativeHost,
-      openDirectory,
+      openDirectory: openNativeDirectory,
     })
-    await workspaceHandle.close()
+    await closeChild(workspaceHandle)
 
     const defaults = new Set([config.root, defaultState, defaultManaged, defaultWorkspace])
     for (const directory of [config.stateRoot, config.managedRoot, config.workspace]) {
@@ -95,9 +122,9 @@ export async function ensurePrivateProjectDirectories({
     }
     return config
   } finally {
-    await workspacesHandle?.close().catch(() => undefined)
-    await rootHandle?.close().catch(() => undefined)
-    await homeHandle.close().catch(() => undefined)
+    await closeChild(workspacesHandle)
+    await closeChild(rootHandle)
+    await closeChild(homeHandle)
   }
 }
 
@@ -125,8 +152,9 @@ export async function repairProjectDirectory({
   let parent = null
   let child = null
   try {
-    parent = await openChild(openDirectory, parentPath)
-    child = await openChild(openDirectory, target)
+    const openNativeDirectory = directoryOpener(nativeHost, openDirectory)
+    parent = await openChild(openNativeDirectory, parentPath)
+    child = await openChild(openNativeDirectory, target)
     const repaired = nativeHost.protectDirectoryAt(parent.fd, name, child.fd)
     return Object.freeze(repaired
       ? {status: 'ok', code: null}
@@ -134,7 +162,7 @@ export async function repairProjectDirectory({
   } catch {
     return Object.freeze({status: 'failed', code: 'open_failed'})
   } finally {
-    await child?.close().catch(() => undefined)
-    await parent?.close().catch(() => undefined)
+    await closeChild(child)
+    await closeChild(parent)
   }
 }

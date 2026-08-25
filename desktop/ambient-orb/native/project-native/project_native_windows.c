@@ -5,7 +5,6 @@
 #include <aclapi.h>
 #include <delayimp.h>
 // clang-format on
-#include <io.h>
 #include <node_api.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -68,6 +67,13 @@ typedef struct {
   OVERLAPPED range;
 } nova_lock_handle;
 
+typedef struct nova_directory_handle_tag {
+  int descriptor;
+  HANDLE handle;
+  int registered;
+  struct nova_directory_handle_tag *next;
+} nova_directory_handle;
+
 typedef struct {
   DWORD Flags;
 } nova_file_disposition_info_ex;
@@ -77,6 +83,12 @@ typedef struct {
   PACL acl;
   SECURITY_DESCRIPTOR descriptor;
 } nova_private_security;
+
+static SRWLOCK nova_directory_lock = SRWLOCK_INIT;
+static nova_directory_handle *nova_directories = NULL;
+static volatile LONG nova_next_directory_descriptor = 0x3fffffffL;
+
+static int nova_owned_directory_handle(int descriptor, HANDLE *output);
 
 static FARPROC WINAPI nova_delay_load_hook(unsigned notification,
                                            PDelayLoadInfo information) {
@@ -118,6 +130,8 @@ static int nova_handle_from_value(napi_env env, napi_value value,
   if (napi_get_value_int32(env, value, &descriptor) != napi_ok ||
       descriptor < 0)
     return 0;
+  if (nova_owned_directory_handle(descriptor, output))
+    return 1;
   HMODULE executable = GetModuleHandleW(NULL);
   if (executable == NULL)
     return 0;
@@ -466,6 +480,260 @@ static void nova_lock_finalize(napi_env env, void *data, void *hint) {
   free(lock);
 }
 
+static void nova_register_directory(nova_directory_handle *directory) {
+  AcquireSRWLockExclusive(&nova_directory_lock);
+  directory->next = nova_directories;
+  directory->registered = 1;
+  nova_directories = directory;
+  ReleaseSRWLockExclusive(&nova_directory_lock);
+}
+
+static void nova_unregister_directory(nova_directory_handle *directory) {
+  AcquireSRWLockExclusive(&nova_directory_lock);
+  if (directory->registered) {
+    nova_directory_handle **cursor = &nova_directories;
+    while (*cursor != NULL && *cursor != directory)
+      cursor = &(*cursor)->next;
+    if (*cursor == directory)
+      *cursor = directory->next;
+    directory->registered = 0;
+    directory->next = NULL;
+  }
+  ReleaseSRWLockExclusive(&nova_directory_lock);
+}
+
+static int nova_owned_directory_descriptor(napi_env env, napi_value value) {
+  int32_t descriptor = -1;
+  if (napi_get_value_int32(env, value, &descriptor) != napi_ok ||
+      descriptor < 0)
+    return 0;
+  HANDLE handle;
+  return nova_owned_directory_handle(descriptor, &handle);
+}
+
+static int nova_owned_directory_handle(int descriptor, HANDLE *output) {
+  int owned = 0;
+  AcquireSRWLockShared(&nova_directory_lock);
+  for (nova_directory_handle *cursor = nova_directories; cursor != NULL;
+       cursor = cursor->next) {
+    if (cursor->descriptor == descriptor) {
+      *output = cursor->handle;
+      owned = 1;
+      break;
+    }
+  }
+  ReleaseSRWLockShared(&nova_directory_lock);
+  return owned;
+}
+
+static void nova_release_directory(nova_directory_handle *directory) {
+  if (directory == NULL || directory->descriptor < 0)
+    return;
+  nova_unregister_directory(directory);
+  directory->descriptor = -1;
+  HANDLE handle = directory->handle;
+  directory->handle = INVALID_HANDLE_VALUE;
+  if (handle != NULL && handle != INVALID_HANDLE_VALUE)
+    CloseHandle(handle);
+}
+
+static void nova_directory_finalize(napi_env env, void *data, void *hint) {
+  (void)env;
+  (void)hint;
+  nova_directory_handle *directory = (nova_directory_handle *)data;
+  nova_release_directory(directory);
+  free(directory);
+}
+
+static napi_value nova_directory_close(napi_env env,
+                                       napi_callback_info info) {
+  void *data = NULL;
+  size_t count = 0;
+  if (napi_get_cb_info(env, info, &count, NULL, NULL, &data) == napi_ok)
+    nova_release_directory((nova_directory_handle *)data);
+  napi_value undefined;
+  if (napi_get_undefined(env, &undefined) != napi_ok)
+    return NULL;
+  return undefined;
+}
+
+static size_t nova_trimmed_path_length(const WCHAR *path) {
+  size_t length = wcslen(path);
+  while (length > 3 &&
+         (path[length - 1] == L'\\' || path[length - 1] == L'/'))
+    length -= 1;
+  return length;
+}
+
+static int nova_same_path(const WCHAR *left, const WCHAR *right) {
+  size_t left_length = nova_trimmed_path_length(left);
+  size_t right_length = nova_trimmed_path_length(right);
+  return left_length == right_length &&
+         _wcsnicmp(left, right, left_length) == 0;
+}
+
+static WCHAR *nova_absolute_path(napi_env env, napi_value value) {
+  size_t length = 0;
+  if (napi_get_value_string_utf16(env, value, NULL, 0, &length) != napi_ok ||
+      length == 0 || length > 32767)
+    return NULL;
+  WCHAR *input =
+      (WCHAR *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                         (length + 1) * sizeof(WCHAR));
+  if (input == NULL ||
+      napi_get_value_string_utf16(env, value, (char16_t *)input, length + 1,
+                                  &length) != napi_ok) {
+    if (input != NULL)
+      HeapFree(GetProcessHeap(), 0, input);
+    return NULL;
+  }
+  for (size_t index = 0; index < length; index += 1) {
+    if (input[index] == L'\0') {
+      HeapFree(GetProcessHeap(), 0, input);
+      return NULL;
+    }
+  }
+  DWORD required = GetFullPathNameW(input, 0, NULL, NULL);
+  WCHAR *absolute = required == 0
+                        ? NULL
+                        : (WCHAR *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                                             required * sizeof(WCHAR));
+  if (absolute == NULL ||
+      GetFullPathNameW(input, required, absolute, NULL) == 0 ||
+      !nova_same_path(input, absolute)) {
+    if (absolute != NULL)
+      HeapFree(GetProcessHeap(), 0, absolute);
+    HeapFree(GetProcessHeap(), 0, input);
+    return NULL;
+  }
+  HeapFree(GetProcessHeap(), 0, input);
+  return absolute;
+}
+
+static WCHAR *nova_final_dos_path(HANDLE handle) {
+  DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
+  DWORD required = GetFinalPathNameByHandleW(handle, NULL, 0, flags);
+  if (required == 0)
+    return NULL;
+  WCHAR *native =
+      (WCHAR *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                         (required + 1) * sizeof(WCHAR));
+  if (native == NULL)
+    return NULL;
+  DWORD length = GetFinalPathNameByHandleW(handle, native, required + 1, flags);
+  if (length == 0 || length > required) {
+    HeapFree(GetProcessHeap(), 0, native);
+    return NULL;
+  }
+  const WCHAR unc_prefix[] = L"\\\\?\\UNC\\";
+  const WCHAR dos_prefix[] = L"\\\\?\\";
+  if (wcsncmp(native, unc_prefix, 8) == 0) {
+    size_t tail = wcslen(native + 8);
+    WCHAR *converted =
+        (WCHAR *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                           (tail + 3) * sizeof(WCHAR));
+    if (converted == NULL) {
+      HeapFree(GetProcessHeap(), 0, native);
+      return NULL;
+    }
+    converted[0] = L'\\';
+    converted[1] = L'\\';
+    CopyMemory(converted + 2, native + 8, (tail + 1) * sizeof(WCHAR));
+    HeapFree(GetProcessHeap(), 0, native);
+    return converted;
+  }
+  if (wcsncmp(native, dos_prefix, 4) == 0)
+    MoveMemory(native, native + 4, (wcslen(native + 4) + 1) * sizeof(WCHAR));
+  return native;
+}
+
+static napi_value nova_open_directory(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  if (!nova_args(env, info, 1, args))
+    return nova_status(env, "failed");
+  WCHAR *path = nova_absolute_path(env, args[0]);
+  if (path == NULL)
+    return nova_status(env, "failed");
+  DWORD desired = FILE_LIST_DIRECTORY | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY |
+                  FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC |
+                  FILE_DELETE_CHILD;
+  HANDLE opened = CreateFileW(
+      path, desired,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+      OPEN_EXISTING,
+      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  if (opened == INVALID_HANDLE_VALUE) {
+    opened = CreateFileW(
+        path,
+        FILE_LIST_DIRECTORY | FILE_ADD_SUBDIRECTORY | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  }
+  if (opened == INVALID_HANDLE_VALUE) {
+    opened = CreateFileW(
+        path, READ_CONTROL | WRITE_DAC,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  }
+  BY_HANDLE_FILE_INFORMATION information;
+  WCHAR *final_path = opened == INVALID_HANDLE_VALUE
+                          ? NULL
+                          : nova_final_dos_path(opened);
+  int opened_valid = opened != INVALID_HANDLE_VALUE;
+  int final_valid = final_path != NULL;
+  int info_valid = opened_valid && nova_handle_info(opened, &information) &&
+                   (information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+  int path_valid = final_valid && nova_same_path(path, final_path);
+  int valid = opened_valid && final_valid && info_valid && path_valid;
+  HeapFree(GetProcessHeap(), 0, path);
+  if (final_path != NULL)
+    HeapFree(GetProcessHeap(), 0, final_path);
+  if (!valid) {
+    if (opened != INVALID_HANDLE_VALUE)
+      CloseHandle(opened);
+    return nova_status(env, "failed");
+  }
+  LONG descriptor = InterlockedIncrement(&nova_next_directory_descriptor);
+  if (descriptor <= 0 || descriptor > INT32_MAX) {
+    CloseHandle(opened);
+    return nova_status(env, "failed");
+  }
+  nova_directory_handle *directory =
+      (nova_directory_handle *)calloc(1, sizeof(*directory));
+  if (directory == NULL) {
+    CloseHandle(opened);
+    return nova_status(env, "failed");
+  }
+  directory->descriptor = (int)descriptor;
+  directory->handle = opened;
+  nova_register_directory(directory);
+  napi_value result = nova_status(env, "ok");
+  napi_value descriptor_value;
+  napi_value close;
+  napi_value owner;
+  if (result == NULL ||
+      napi_create_int32(env, (int32_t)descriptor, &descriptor_value) != napi_ok ||
+      napi_create_function(env, "close", NAPI_AUTO_LENGTH,
+                           nova_directory_close, directory, &close) != napi_ok ||
+      napi_create_external(env, directory, nova_directory_finalize, NULL,
+                           &owner) != napi_ok) {
+    nova_release_directory(directory);
+    free(directory);
+    return nova_status(env, "failed");
+  }
+  if (napi_set_named_property(env, close, "__nova_directory_owner", owner) !=
+          napi_ok ||
+      napi_set_named_property(env, result, "descriptor", descriptor_value) !=
+          napi_ok ||
+      napi_set_named_property(env, result, "close", close) != napi_ok) {
+    nova_release_directory(directory);
+    return NULL;
+  }
+  return result;
+}
+
 static napi_value nova_lock_release(napi_env env, napi_callback_info info) {
   void *data = NULL;
   size_t count = 0;
@@ -568,7 +836,8 @@ static napi_value nova_protect_at(napi_env env, napi_callback_info info) {
       !nova_handle_from_value(env, args[0], &root) ||
       !nova_handle_info(root, &root_info) ||
       (root_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
-      !nova_current_user_owner(root) ||
+      (!nova_owned_directory_descriptor(env, args[0]) &&
+       !nova_current_user_owner(root)) ||
       !nova_basename(env, args[1], name, &name_bytes) ||
       !nova_handle_from_value(env, args[2], &child) ||
       !nova_handle_info(child, &expected) ||
@@ -709,7 +978,8 @@ static napi_value nova_mkdir_private_at(napi_env env,
       !nova_handle_from_value(env, args[0], &root) ||
       !nova_handle_info(root, &root_info) ||
       (root_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
-      !nova_current_user_owner(root) ||
+      (!nova_owned_directory_descriptor(env, args[0]) &&
+       !nova_current_user_owner(root)) ||
       !nova_basename(env, args[1], name, &name_bytes))
     return nova_status(env, "failed");
   nova_private_security security;
@@ -849,6 +1119,7 @@ static int nova_export(napi_env env, napi_value exports, const char *name,
 
 NAPI_MODULE_INIT() {
   if (!nova_export(env, exports, "acquire", nova_acquire) ||
+      !nova_export(env, exports, "openDirectory", nova_open_directory) ||
       !nova_export(env, exports, "probe", nova_probe) ||
       !nova_export(env, exports, "matchesAt", nova_matches_at) ||
       !nova_export(env, exports, "lookupAt", nova_lookup_at) ||

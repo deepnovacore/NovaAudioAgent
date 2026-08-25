@@ -16,7 +16,7 @@ import {
 } from 'electron'
 import { loadProjectNativeHostFromResources } from '@nova-audio-agent/runtime/desktop'
 import { randomBytes } from 'node:crypto'
-import { mkdir, open, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { spawn, spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -56,6 +56,7 @@ import {
   createReleaseSmokeChannel,
   releaseSmokeSourceRollbackExitCode,
 } from './release-smoke-channel.mjs'
+import { reportStartupFailure } from './startup-diagnostics.mjs'
 import {
   createSafeStorageCodec,
   createSettingsWriter,
@@ -434,7 +435,6 @@ async function refreshDesktopConfiguration() {
       platform: process.platform,
       nativeHost: projectNativeHost,
       pathApi: path,
-      openDirectory: target => open(target, constants.O_RDONLY),
       mkdir,
     }),
   })
@@ -556,6 +556,16 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   const launchId = randomBytes(8).toString('hex')
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
+  const windowShown = sourceStartupSmoke
+    ? new Promise((resolveShown, rejectShown) => {
+        if (mainWindow.isVisible()) {
+          resolveShown()
+          return
+        }
+        mainWindow.once('show', resolveShown)
+        mainWindow.once('closed', () => rejectShown(new Error('source_startup_window_closed')))
+      })
+    : null
   const dragController = createDragController({
     getCursor: () => screen.getCursorScreenPoint(),
     getWindowPosition: () => {
@@ -708,7 +718,6 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       config: desktopConfig,
       nativeHost: projectNativeHost,
       pathApi: path,
-      openDirectory: target => open(target, constants.O_RDONLY),
     })
   })
   ipcMain.handle('nova:settings:set', async (event, patch) => {
@@ -810,12 +819,18 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       console.error(`[desktop-diagnostic] window_position_save_failure type=${error.name}`)
     })
   })
-  void loadAppWindow(mainWindow, {
+  const rendererLoaded = loadAppWindow(mainWindow, {
     rendererRoot,
     fetchFile: file => net.fetch(pathToFileURL(file).href),
     cameraFile: camera.source === 'file' ? camera.file : undefined,
     fetchCameraFile: (url, init) => net.fetch(url, init),
-  }).then(() => {
+  })
+  if (sourceStartupSmoke) {
+    await Promise.all([rendererLoaded, windowShown])
+    process.stdout.write('[desktop-smoke] source_window_ready\n', () => app.quit())
+    return
+  }
+  void rendererLoaded.then(() => {
     if (backendStatus.state === 'connected' && backendStatus.connection) {
       sendToOrb('nova:backend-ready', backendStatus.connection)
     } else if (backendStatus.state !== 'starting') sendToOrb('nova:backend-exit')
@@ -930,6 +945,8 @@ const installedFileCameraSmoke = app.isPackaged
   && process.env.NOVA_AUDIO_AGENT_RELEASE_CAMERA_SMOKE === RELEASE_CAMERA_SMOKE_MODE
 const packagedSourceRollbackUnavailable = app.isPackaged
   && process.env.NOVA_AUDIO_AGENT_BACKEND === 'python'
+const sourceStartupSmoke = !app.isPackaged
+  && process.argv.includes('--nova-source-startup-smoke-v1')
 
 if (packagedSourceRollbackUnavailable) {
   const sourceRollbackExitCode = releaseSmokeSourceRollbackExitCode({
@@ -951,7 +968,10 @@ if (packagedSourceRollbackUnavailable) {
   )
 } else {
   app.on('second-instance', () => mainWindow?.show())
-  app.whenReady().then(start).catch(() => app.quit())
+  app.whenReady().then(start).catch(error => {
+    reportStartupFailure(error)
+    app.quit()
+  })
 }
 
 app.on('before-quit', event => {
