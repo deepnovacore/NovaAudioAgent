@@ -15,6 +15,8 @@
   --accent-wash: rgba(200, 103, 18, .09);
   --warn: #b42318;
   --warn-wash: rgba(180, 35, 24, .07);
+  --ok: #1e7a3a;
+  --ok-wash: rgba(30, 122, 58, .08);
   --label-col: 106px;
   --radius: 11px;
   --radius-sm: 7px;
@@ -98,7 +100,14 @@ header h1 {
 main { min-width: 0; }
 
 .setting-section {
-  margin: 0 0 15px;
+  margin: 0 0 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+main > .setting-section:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 
 .setting-section > h2 {
@@ -108,6 +117,80 @@ main { min-width: 0; }
   font-weight: 700;
   letter-spacing: .11em;
   text-transform: uppercase;
+}
+
+.connection-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 0 7px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.connection-status::before {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  content: "";
+}
+
+.connection-status[data-ready="1"] {
+  border-color: rgba(30, 122, 58, .3);
+  background: var(--ok-wash);
+  color: var(--ok);
+}
+
+.connection-status[data-ready="1"]::before {
+  background: var(--ok);
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.toggle-row input[type="checkbox"] {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.setting-section small {
+  display: block;
+  margin: 6px 0 0;
+  /* --ink-dim, not --ink-faint: these explainers carry real information
+     (permission behavior, repair scope) and must clear 4.5:1 on the plate. */
+  color: var(--ink-dim);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.field > small {
+  grid-column: 2 / -1;
+  margin: 0;
+}
+
+code {
+  color: var(--ink-dim);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  word-break: break-all;
 }
 
 fieldset {
@@ -144,6 +227,11 @@ legend {
 
 .segmented-proactivity {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.compact-segmented {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 8px;
 }
 
 .segmented label.choice {
@@ -235,7 +323,6 @@ legend {
   background: radial-gradient(circle at 34% 30%, #E8ECF2, #9AA3AF 46%, #3A404A);
 }
 
-.rhythm-section,
 #integrated-pipeline,
 #cascaded-pipeline {
   overflow: hidden;
@@ -243,14 +330,6 @@ legend {
   border-radius: var(--radius);
   background: rgba(246, 247, 249, .9);
   box-shadow: inset 0 1px rgba(255, 255, 255, .8);
-}
-
-.rhythm-section {
-  padding: 10px 12px;
-}
-
-.rhythm-section > h2 {
-  margin-bottom: 6px;
 }
 
 .field {
@@ -287,6 +366,7 @@ legend {
 }
 
 input[type="text"],
+input[type="url"],
 input[type="password"],
 select {
   width: 100%;
@@ -303,6 +383,7 @@ select {
 }
 
 input[type="text"]:hover,
+input[type="url"]:hover,
 input[type="password"]:hover,
 select:hover {
   border-color: var(--line-strong);
@@ -388,6 +469,13 @@ button:hover:not(:disabled) {
 
 button:active:not(:disabled) { background: var(--surface); }
 button:disabled { cursor: default; opacity: .45; }
+
+#backend-retry,
+#microphone-retry,
+#projects-repair {
+  display: block;
+  margin: 0 0 8px;
+}
 
 .secret-disclosure {
   overflow: hidden;
@@ -550,6 +638,7 @@ footer {
     --ink-faint: #222;
     --accent-wash: transparent;
     --warn-wash: transparent;
+    --ok-wash: transparent;
   }
 
   .segmented label.choice:has(:checked) { border-color: var(--accent); }
@@ -572,6 +661,9 @@ footer {
     border-color: Highlight;
     color: Highlight;
   }
+
+  .connection-status::before { background: CanvasText; }
+  .connection-status[data-ready="1"]::before { background: Highlight; }
 
   .swatch { forced-color-adjust: none; }
 }
