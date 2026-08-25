@@ -2448,6 +2448,40 @@ test('project public text enforces Python code points, category C, and path-name
   }
 })
 
+test('Windows first save completes without POSIX directory fsync', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-windows-save-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  const workspacePath = join(root, 'workspace')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(workspacePath, {mode: 0o700})
+  const durability: string[] = []
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    platform: 'win32',
+    idFactory: () => 'workspace-0001',
+    onDurabilityStep: step => { durability.push(step) },
+  })
+  try {
+    const workspace = await store.ensureImported(
+      'Windows workspace',
+      hostWorkspaceForTest(await realpath(workspacePath)),
+    )
+    assert.equal(workspace.workspace_id, 'workspace-0001')
+    assert.deepEqual(durability, [
+      'temp_open', 'file_fsync', 'atomic_replace', 'windows_metadata_commit',
+    ])
+    assert.equal(durability.includes('dir_fsync'), false)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('project state reloads under a descriptor lock and persists ready sessions atomically', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-store-'))
   const stateRoot = join(root, 'state')
@@ -2467,7 +2501,7 @@ test('project state reloads under a descriptor lock and persists ready sessions 
     rootFiles: rootFilesForTest(stateRoot, managedRoot),
     now: () => 100,
     idFactory: () => identifiers.next().value ?? 'unused-id',
-    onDurabilityStep: (step: 'temp_open' | 'file_fsync' | 'atomic_replace' | 'dir_fsync') => {
+    onDurabilityStep: (step: 'temp_open' | 'file_fsync' | 'atomic_replace' | 'dir_fsync' | 'windows_metadata_commit') => {
       durability.push(step)
     },
   }
@@ -2484,7 +2518,8 @@ test('project state reloads under a descriptor lock and persists ready sessions 
     const home = await first.persistentHome(workspace.workspace_id)
     assert.ok(home)
     assert.deepEqual(durability.slice(-4), [
-      'temp_open', 'file_fsync', 'atomic_replace', 'dir_fsync',
+      'temp_open', 'file_fsync', 'atomic_replace',
+      process.platform === 'win32' ? 'windows_metadata_commit' : 'dir_fsync',
     ])
     assert.deepEqual(await first.publicView(true), {
       workspace_display_name: 'Alpha',

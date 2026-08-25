@@ -149,7 +149,12 @@ interface MutableProjectState {
   sessions: Map<string, ProjectSessionRecord>
 }
 
-type DurabilityStep = 'temp_open' | 'file_fsync' | 'atomic_replace' | 'dir_fsync'
+type DurabilityStep =
+  | 'temp_open'
+  | 'file_fsync'
+  | 'atomic_replace'
+  | 'dir_fsync'
+  | 'windows_metadata_commit'
 
 export interface CodexProjectStoreOptions {
   readonly stateRoot: HostProjectRoot
@@ -1457,8 +1462,17 @@ export class CodexProjectStore {
       ) throw new ProjectStateError('state_permissions')
       const directory = this.#stateRootHandle
       if (directory === null) throw new ProjectStateError('state_permissions')
-      await directory.sync()
-      this.#publishDurability('dir_fsync')
+      if (this.#platform === 'win32') {
+        // Node maps FileHandle.sync() to FlushFileBuffers(), which rejects
+        // directory handles with EPERM on Windows. The replace is already
+        // committed by the native descriptor-relative rename above; the
+        // retained-root and replacement identity checks are the Windows
+        // metadata commit boundary.
+        this.#publishDurability('windows_metadata_commit')
+      } else {
+        await directory.sync()
+        this.#publishDurability('dir_fsync')
+      }
       await this.#revalidateStateRoot()
     } catch (error) {
       if (error instanceof ProjectStateError) throw error
