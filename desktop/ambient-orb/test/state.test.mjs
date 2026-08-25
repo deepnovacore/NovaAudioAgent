@@ -34,6 +34,22 @@ test('keeps capture playback codex and shell as independent axes', () => {
   assert.equal(state.aecLabel, '系统级 AEC')
 })
 
+test('projects voice and Codex state into one compact visible line', () => {
+  const state = deriveOrbState({
+    ...base,
+    capture: 'listening',
+    codex: 'working',
+    workspace: 'alpha',
+    session: 'Task 1',
+  })
+
+  assert.equal(state.statusLine, '聆听中 · Codex 工作中')
+  assert.doesNotMatch(state.statusLine, /工作区|Session|AEC/u)
+
+  const waiting = deriveOrbState({ ...base, pendingConfirmation: true })
+  assert.equal(waiting.statusLine, '待命 · Codex 等待确认')
+})
+
 test('labels the browser AEC path without implying it is a fallback', () => {
   const state = deriveOrbState({ ...base, audioMode: 'browser_aec' })
 

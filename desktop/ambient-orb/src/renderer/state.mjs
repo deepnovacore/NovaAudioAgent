@@ -20,6 +20,19 @@ const LABELS = Object.freeze({
   error: 'Nova Audio Agent 发生错误',
 })
 
+const COMPACT_LABELS = Object.freeze({
+  booting: '启动中',
+  inactive: '未启用',
+  idle: '待命',
+  candidate: '检测中',
+  listening: '聆听中',
+  speaking: '回复中',
+  interrupted: '聆听中',
+  'permission-denied': '麦克风未授权',
+  disconnected: '已断开',
+  error: '出错',
+})
+
 // The single source of truth for the `data-state` vocabulary: the visual layer
 // derives its per-state parameters from this list rather than restating it.
 export const ORB_STATE_NAMES = Object.freeze(Object.keys(LABELS))
@@ -63,12 +76,18 @@ export function deriveOrbState(input) {
     input.pendingConfirmation === true ? '等待确认' : '',
   ].filter(Boolean)
   const codexStatus = input.codex === 'working' ? 'Codex 正在后台工作' : 'Codex 空闲'
+  const compactCodexStatus = input.pendingConfirmation === true
+    ? 'Codex 等待确认'
+    : input.codex === 'working'
+      ? 'Codex 工作中'
+      : 'Codex 空闲'
   const label = name === 'permission-denied' && input.platform === 'win32'
     ? WINDOWS_PERMISSION_DENIED_LABEL
     : LABELS[name]
   return Object.freeze({
     name,
     label,
+    statusLine: `${COMPACT_LABELS[name]} · ${compactCodexStatus}`,
     codexLabel: [...project, codexStatus].join(' · '),
     aecLabel: input.audioMode === 'voice_processing_io'
       ? '系统级 AEC'

@@ -147,7 +147,7 @@ const socketRouter = new RendererSocketRouter({
 function render() {
   const state = deriveOrbState(axes)
   shell.dataset.state = state.name
-  stateLabel.textContent = state.label
+  stateLabel.textContent = state.statusLine
   codexLabel.textContent = state.codexLabel
   aecLabel.textContent = state.aecLabel
   orb.setAttribute('aria-label', `${state.label}；${state.codexLabel}`)

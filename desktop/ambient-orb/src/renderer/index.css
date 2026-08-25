@@ -48,7 +48,6 @@ body[data-opaque="1"] {
      rather than the old warm brown — warmth here fought the plate's own bloom
      and lifted the rim, which is exactly where depth needs the field to fall off. */
   background: rgba(7, 6, 11, .82);
-  box-shadow: 0 16px 44px rgba(0, 0, 0, .5);
   cursor: pointer;
   overflow: hidden;
   -webkit-app-region: no-drag;
@@ -110,6 +109,8 @@ body[data-opaque="1"] {
 }
 
 #caption[data-role='user'] { color: rgba(190, 235, 255, .9); }
+
+#codex-label, #aec-label, #caption { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
