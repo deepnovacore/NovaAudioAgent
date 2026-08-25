@@ -168,23 +168,8 @@ function compileOp(manifest: ExecutorManifest, op: OpSpec): {
   }
 
   const parameters: Record<string, JsonValue> = structuredClone(op.params)
-  const properties = parameters.properties
-  if (parameters.type !== 'object' || !isJsonObject(properties)) {
-    throw new ToolSchemaError(`${manifest.name}.${op.name} 的 params 必须是 object JSON Schema`)
-  }
-  if ('origin_ref' in properties) {
-    throw new ToolSchemaError(`${manifest.name}.${op.name} 的 params 保留字冲突：origin_ref`)
-  }
-  const declared = parameters.required
-  const required = Array.isArray(declared) ? [...declared] : []
   const hostHandledConfirmation = manifest.name === 'codex' && op.name === 'confirm_project_action'
-  if (!hostHandledConfirmation) {
-    parameters.properties = {...properties, origin_ref: {...ORIGIN_REF}}
-    if (!required.includes('origin_ref')) required.push('origin_ref')
-  }
-  parameters.required = required
-  // Python's setdefault: an explicit value in the manifest wins.
-  if (!('additionalProperties' in parameters)) parameters.additionalProperties = false
+  prepareObjectSchema(parameters, `${manifest.name}.${op.name}`, !hostHandledConfirmation)
 
   return {
     wireName,
@@ -196,6 +181,41 @@ function compileOp(manifest: ExecutorManifest, op: OpSpec): {
       op: op.name,
       sync_result: op.sync_result,
     }),
+  }
+}
+
+function prepareObjectSchema(
+  schema: Record<string, JsonValue>,
+  label: string,
+  injectOriginRef: boolean,
+): void {
+  const properties = schema.properties
+  if (schema.type !== 'object' || !isJsonObject(properties)) {
+    throw new ToolSchemaError(`${label} 的 params 必须是 object JSON Schema`)
+  }
+  if ('origin_ref' in properties) {
+    throw new ToolSchemaError(`${label} 的 params 保留字冲突：origin_ref`)
+  }
+  const declared = schema.required
+  const required = Array.isArray(declared) ? [...declared] : []
+  if (injectOriginRef) {
+    schema.properties = {...properties, origin_ref: {...ORIGIN_REF}}
+    if (!required.includes('origin_ref')) required.push('origin_ref')
+  }
+  schema.required = required
+  // Python's setdefault: an explicit value in the manifest wins.
+  if (!('additionalProperties' in schema)) schema.additionalProperties = false
+
+  const variants = schema.oneOf
+  if (variants === undefined) return
+  if (!Array.isArray(variants)) {
+    throw new ToolSchemaError(`${label} 的 oneOf 每项必须是 object JSON Schema`)
+  }
+  for (const branch of variants) {
+    if (!isJsonObject(branch)) {
+      throw new ToolSchemaError(`${label} 的 oneOf 每项必须是 object JSON Schema`)
+    }
+    prepareObjectSchema(branch, label, injectOriginRef)
   }
 }
 

@@ -42,6 +42,13 @@ function manifestFrom(spec: unknown): ReturnType<typeof executorManifestSchema.p
   })
 }
 
+function record(value: unknown): Record<string, unknown> {
+  assert.equal(typeof value, 'object')
+  assert.notEqual(value, null)
+  assert.equal(Array.isArray(value), false)
+  return value as Record<string, unknown>
+}
+
 test('compiled tool schemas match the Python oracle byte for byte', () => {
   const fixture = loadJson<Fixture>('manifests.json')
   const golden = loadJson<Golden>('manifests-expected.json')
@@ -84,6 +91,56 @@ test('the golden is not vacuous', () => {
   assert.match(rendered, /origin_ref/u)
   assert.match(rendered, /当前 ContextView 中、这次动作所回答内容的 ref/u)
   assert.match(rendered, /slow_sim__set_light/u)
+})
+
+test('origin_ref is injected into every discriminated object branch', () => {
+  const policy = handoffPolicySchema.parse({
+    channel: 'demo', priority: 10, wake: 'fast', typical_latency: 1, compress_watermark: 20,
+  })
+  const manifest = executorManifestSchema.parse({
+    name: 'demo',
+    policy,
+    ops: [{
+      name: 'route',
+      description: 'route',
+      readonly: true,
+      params: {
+        type: 'object',
+        properties: {
+          action: {type: 'string', enum: ['read', 'write']},
+          value: {type: 'string'},
+        },
+        required: ['action'],
+        additionalProperties: false,
+        oneOf: [
+          {
+            type: 'object',
+            properties: {action: {type: 'string', enum: ['read']}},
+            required: ['action'],
+            additionalProperties: false,
+          },
+          {
+            type: 'object',
+            properties: {action: {type: 'string', enum: ['write']}, value: {type: 'string'}},
+            required: ['action', 'value'],
+            additionalProperties: false,
+          },
+        ],
+      },
+    }],
+  })
+
+  const parameters = record(record(compileToolSchema([manifest]).schemas[3]).function).parameters
+  const params = record(parameters)
+  assert.ok('origin_ref' in record(params.properties))
+  assert.ok((params.required as unknown[]).includes('origin_ref'))
+  for (const rawBranch of params.oneOf as unknown[]) {
+    const branch = record(rawBranch)
+    assert.deepEqual(record(branch.properties).origin_ref, {
+      type: 'string', description: '当前 ContextView 中、这次动作所回答内容的 ref',
+    })
+    assert.ok((branch.required as unknown[]).includes('origin_ref'))
+  }
 })
 
 test('wire names, reserved params, and readonly requirements are enforced', () => {

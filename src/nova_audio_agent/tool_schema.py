@@ -147,19 +147,12 @@ def _compile_op(manifest: ExecutorManifest, op: OpSpec) -> tuple[str, dict[str, 
         raise ValueError(f"{manifest.name}.{op.name} 缺 description")
 
     parameters = copy.deepcopy(op.params)
-    if parameters.get("type") != "object" or not isinstance(parameters.get("properties"), dict):
-        raise ValueError(f"{manifest.name}.{op.name} 的 params 必须是 object JSON Schema")
-    properties = parameters["properties"]
-    if "origin_ref" in properties:
-        raise ValueError(f"{manifest.name}.{op.name} 的 params 保留字冲突：origin_ref")
-    required = list(parameters.get("required", ()))
     host_handled_confirmation = manifest.name == "codex" and op.name == "confirm_project_action"
-    if not host_handled_confirmation:
-        properties["origin_ref"] = dict(_ORIGIN_REF)
-        if "origin_ref" not in required:
-            required.append("origin_ref")
-    parameters["required"] = required
-    parameters.setdefault("additionalProperties", False)
+    _prepare_object_schema(
+        parameters,
+        label=f"{manifest.name}.{op.name}",
+        inject_origin_ref=not host_handled_confirmation,
+    )
 
     return (
         wire_name,
@@ -172,6 +165,34 @@ def _compile_op(manifest: ExecutorManifest, op: OpSpec) -> tuple[str, dict[str, 
             sync_result=op.sync_result,
         ),
     )
+
+
+def _prepare_object_schema(
+    schema: dict[str, Any],
+    *,
+    label: str,
+    inject_origin_ref: bool,
+) -> None:
+    if schema.get("type") != "object" or not isinstance(schema.get("properties"), dict):
+        raise ValueError(f"{label} 的 params 必须是 object JSON Schema")
+    properties = schema["properties"]
+    if "origin_ref" in properties:
+        raise ValueError(f"{label} 的 params 保留字冲突：origin_ref")
+    required = list(schema.get("required", ()))
+    if inject_origin_ref:
+        properties["origin_ref"] = dict(_ORIGIN_REF)
+        if "origin_ref" not in required:
+            required.append("origin_ref")
+    schema["required"] = required
+    schema.setdefault("additionalProperties", False)
+
+    variants = schema.get("oneOf")
+    if variants is None:
+        return
+    if not isinstance(variants, list) or not all(isinstance(branch, dict) for branch in variants):
+        raise ValueError(f"{label} 的 oneOf 每项必须是 object JSON Schema")
+    for branch in variants:
+        _prepare_object_schema(branch, label=label, inject_origin_ref=inject_origin_ref)
 
 
 def _validate_part(value: str, *, label: str) -> None:

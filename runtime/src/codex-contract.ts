@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto'
 import type {ExecutorProgress} from './causal-runtime.js'
+import type {JsonValue} from './events.js'
 import {snapshotJsonRecord} from './codex-safe-json.js'
 import {validProgressSummary} from './events.js'
 import {hasOtherCategory as hasPinnedOtherCategory} from './unicode-tables.js'
@@ -67,9 +68,41 @@ const STEER: OpSpec = {
   sync_result: false,
 }
 
+const PROJECT_FIELDS: Readonly<Record<string, Readonly<Record<string, JsonValue>>>> = {
+  workspace: {
+    type: 'string', minLength: 1, maxLength: 80,
+    description: 'create/select 必填；list_sessions/resume 可选；start_session 必须省略',
+  },
+  session: {type: 'string', minLength: 1, maxLength: 120},
+  work_order: {
+    type: 'string', minLength: 1, maxLength: 4000,
+    description: 'start_session 和 resume_session 必填；create_workspace 可选',
+  },
+}
+
+function projectVariant(
+  action: string,
+  fields: readonly string[],
+  required: readonly string[] = [],
+): Readonly<Record<string, JsonValue>> {
+  return {
+    type: 'object',
+    properties: {
+      action: {type: 'string', enum: [action]},
+      ...Object.fromEntries(fields.map(name => [name, PROJECT_FIELDS[name]])),
+    },
+    required: ['action', ...required],
+    additionalProperties: false,
+  }
+}
+
 const PROJECT: OpSpec = {
   name: 'project',
-  description: '列出、创建或切换工作区，以及列出或继续其中的 Session',
+  description: [
+    '管理 Workspace 和 Session。严格按 action 选择字段：start_session 只能在当前 ',
+    'Workspace 运行且不得传 workspace；start_session 和 resume_session 都必须传完整 ',
+    'work_order。',
+  ].join(''),
   params: {
     type: 'object',
     properties: {
@@ -80,12 +113,21 @@ const PROJECT: OpSpec = {
           'list_sessions', 'start_session', 'resume_session',
         ],
       },
-      workspace: {type: 'string', minLength: 1, maxLength: 80},
-      session: {type: 'string', minLength: 1, maxLength: 120},
-      work_order: {type: 'string', minLength: 1, maxLength: 4000},
+      ...PROJECT_FIELDS,
     },
     required: ['action'],
     additionalProperties: false,
+    oneOf: [
+      projectVariant('list_workspaces', []),
+      projectVariant('create_workspace', ['workspace'], ['workspace']),
+      projectVariant(
+        'create_workspace', ['workspace', 'session', 'work_order'], ['workspace', 'work_order'],
+      ),
+      projectVariant('select_workspace', ['workspace'], ['workspace']),
+      projectVariant('list_sessions', ['workspace']),
+      projectVariant('start_session', ['session', 'work_order'], ['work_order']),
+      projectVariant('resume_session', ['workspace', 'session', 'work_order'], ['work_order']),
+    ],
   },
   readonly: false,
   confirm: false,
@@ -97,7 +139,10 @@ const PROJECT: OpSpec = {
 
 const CONFIRM_PROJECT_ACTION: OpSpec = {
   name: 'confirm_project_action',
-  description: '根据用户当前自然语言回答确认或取消正在等待的项目操作',
+  description: [
+    '当前有待确认项目操作时，用户明确同意或明确拒绝都必须调用；同意传 ',
+    'confirmed=true，拒绝、取消或暂缓传 confirmed=false，不得只口头回应',
+  ].join(''),
   params: {
     type: 'object',
     properties: {

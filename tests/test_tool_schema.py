@@ -92,6 +92,52 @@ def test_compiled_binding_carries_explicit_sync_result_contract() -> None:
     assert compiled.bindings["update_goal"].sync_result is False
 
 
+def test_origin_ref_is_injected_into_every_discriminated_object_branch() -> None:
+    union = OpSpec(
+        name="route",
+        description="route",
+        params={
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["read", "write"]},
+                "value": {"type": "string"},
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {"action": {"type": "string", "enum": ["read"]}},
+                    "required": ["action"],
+                    "additionalProperties": False,
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["write"]},
+                        "value": {"type": "string"},
+                    },
+                    "required": ["action", "value"],
+                    "additionalProperties": False,
+                },
+            ],
+        },
+        readonly=True,
+    )
+
+    compiled = compile_tool_schema((_manifest(union),))
+    parameters = compiled.schemas[3]["function"]["parameters"]
+
+    assert "origin_ref" in parameters["properties"]
+    assert "origin_ref" in parameters["required"]
+    for branch in parameters["oneOf"]:
+        assert branch["properties"]["origin_ref"] == {
+            "type": "string",
+            "description": "当前 ContextView 中、这次动作所回答内容的 ref",
+        }
+        assert "origin_ref" in branch["required"]
+
+
 def test_memory_recall_query_is_opt_in_and_has_no_origin_ref() -> None:
     plain = compile_tool_schema(())
     realtime = compile_tool_schema((), include_memory_recall=True)
