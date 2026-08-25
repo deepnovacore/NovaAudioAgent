@@ -19,6 +19,8 @@ require one platform toolchain:
 - Linux: a C compiler available at `/usr/bin/cc`;
 - Windows: Visual Studio Build Tools with the **Desktop development with C++** workload.
 
+On Linux, desktop sessions run on X11; Wayland sessions go through XWayland.
+
 ```bash
 git clone \
   https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
@@ -143,7 +145,8 @@ provider, model, voice, and key edits apply on the next launch; the palette is t
 
 The configured Node executor names are
 `fast_sim`, `slow_sim`, and `codex`. Codex ordinary/live/project modes share the bounded app-server
-transport. Camera file input accepts only an absolute host-validated path.
+transport. Camera file input accepts only an absolute host-validated path, and both the local-camera
+default and `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` playback use Chromium's camera pipeline.
 
 Live provider, microphone/speaker, camera, Codex login, WindowServer, Windows descendant cleanup,
 clean-machine installer, signing, and publication checks are pending external evidence.

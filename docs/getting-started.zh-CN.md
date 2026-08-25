@@ -17,6 +17,8 @@ fixture-parser-only，不再拥有生产进程执行路径。Search、Camera、W
 - Linux：`/usr/bin/cc` 位置可用的 C 编译器；
 - Windows：Visual Studio Build Tools，并勾选 **Desktop development with C++** 工作负载。
 
+Linux 桌面会话运行在 X11 上；Wayland 会话经由 XWayland。
+
 ```bash
 git clone \
   https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
@@ -125,7 +127,8 @@ provider、模型、音色和密钥编辑均在下次启动生效；只有配色
 
 Node 可配置执行器为 `fast_sim`、`slow_sim`、`codex`。Codex 的
 ordinary/live/project 模式共用有界 app-server transport。Camera 文件输入只接受主机验证过的
-绝对路径。
+绝对路径；默认本地摄像头和 `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` 回放均使用 Chromium
+摄像头链路。
 
 真实 provider、麦克风/扬声器、Camera、Codex 登录、WindowServer、Windows 后代进程清理、
 clean-machine installer、签名和发布仍是 pending external evidence。
