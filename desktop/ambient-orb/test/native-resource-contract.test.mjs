@@ -228,12 +228,14 @@ test('native manifest maps every external native resource exactly once', async (
     await writeFile(probe, restoredProbe)
     await chmod(probe, 0o755)
 
-    await chmod(probe, 0o644)
-    await assert.rejects(
-      verifyNativeResourceManifest({ resourcesRoot: root, targetId: 'darwin-arm64' }),
-      error => error.code === 'native_resource_mode',
-    )
-    await chmod(probe, 0o755)
+    if (process.platform !== 'win32') {
+      await chmod(probe, 0o644)
+      await assert.rejects(
+        verifyNativeResourceManifest({ resourcesRoot: root, targetId: 'darwin-arm64' }),
+        error => error.code === 'native_resource_mode',
+      )
+      await chmod(probe, 0o755)
+    }
     const wrongMinimum = Buffer.from(restoredProbe)
     wrongMinimum.writeUInt32LE(0x000f0000, 44)
     await writeFile(probe, wrongMinimum)

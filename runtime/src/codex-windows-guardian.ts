@@ -68,7 +68,7 @@ type WindowsGuardianLauncher = (
     env: Readonly<Record<string, string>>
     shell: false
     detached: false
-    stdio: readonly ['pipe', 'pipe', 'pipe', 'pipe']
+    stdio: readonly ['pipe', 'pipe', 'pipe', 'overlapped']
     windowsHide: true
   }>,
 ) => WindowsGuardianChild
@@ -394,7 +394,7 @@ export class WindowsGuardianCodexProcessOwnerFactory implements CodexProcessOwne
         env: environment,
         shell: false,
         detached: false,
-        stdio: Object.freeze(['pipe', 'pipe', 'pipe', 'pipe'] as const),
+        stdio: Object.freeze(['pipe', 'pipe', 'pipe', 'overlapped'] as const),
         windowsHide: true,
       }))
     } catch {
@@ -580,7 +580,10 @@ function launchWindowsGuardian(
     env: {...options.env},
     shell: false,
     detached: false,
-    stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+    // The native guardian performs cancellable OVERLAPPED reads and writes on
+    // descriptor 3. Plain Node pipes omit FILE_FLAG_OVERLAPPED on Windows and
+    // can leave the owner protocol stuck before the ready frame.
+    stdio: ['pipe', 'pipe', 'pipe', 'overlapped'],
     windowsHide: true,
   })
 }

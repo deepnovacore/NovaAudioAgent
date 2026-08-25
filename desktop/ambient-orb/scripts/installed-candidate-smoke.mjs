@@ -4,7 +4,7 @@ import {spawn, spawnSync} from 'node:child_process'
 import {createServer as createHttpsServer} from 'node:https'
 import {copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
-import {isAbsolute, join, resolve, win32} from 'node:path'
+import {isAbsolute, join, posix, resolve, win32} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
 import {WebSocket, WebSocketServer} from 'ws'
@@ -46,20 +46,24 @@ export function candidateInstallPlan({target, artifact, scratch}) {
   for (const value of [artifact, scratch]) {
     assert.ok(typeof value === 'string' && isAbsolute(value), 'installed_candidate_invalid')
   }
-  const installRoot = resolve(scratch, 'install')
-  const mountRoot = resolve(scratch, 'mount')
+  // Release plans are also unit-tested for non-host target tuples. Preserve
+  // the syntax of the supplied absolute scratch root instead of letting the
+  // current host rewrite a POSIX path to C:\... (or vice versa).
+  const pathApi = /^(?:[A-Za-z]:[\\/]|\\\\)/u.test(scratch) ? win32 : posix
+  const installRoot = pathApi.resolve(scratch, 'install')
+  const mountRoot = pathApi.resolve(scratch, 'mount')
   const appName = 'Nova Audio Agent Ambient Orb.app'
   let executable
   let install
   let uninstall
   let residue
   if (target === 'darwin-arm64:app' || target === 'darwin-x64:app') {
-    executable = resolve(installRoot, appName, 'Contents/MacOS/Nova Audio Agent Ambient Orb')
+    executable = pathApi.resolve(installRoot, appName, 'Contents/MacOS/Nova Audio Agent Ambient Orb')
     install = [{op: 'spawn', command: '/usr/bin/ditto', args: ['-x', '-k', artifact, installRoot]}]
     uninstall = [{op: 'remove_tree', path: installRoot}]
     residue = installRoot
   } else if (target === 'darwin-arm64:dmg' || target === 'darwin-x64:dmg') {
-    executable = resolve(mountRoot, appName, 'Contents/MacOS/Nova Audio Agent Ambient Orb')
+    executable = pathApi.resolve(mountRoot, appName, 'Contents/MacOS/Nova Audio Agent Ambient Orb')
     install = [{
       op: 'spawn',
       command: '/usr/bin/hdiutil',
@@ -68,7 +72,7 @@ export function candidateInstallPlan({target, artifact, scratch}) {
     uninstall = [{op: 'spawn', command: '/usr/bin/hdiutil', args: ['detach', mountRoot]}]
     residue = executable
   } else if (target === 'win32-x64:nsis') {
-    executable = resolve(installRoot, 'Nova Audio Agent Ambient Orb.exe')
+    executable = pathApi.resolve(installRoot, 'Nova Audio Agent Ambient Orb.exe')
     install = [{
       op: 'spawn',
       command: artifact,
@@ -77,13 +81,13 @@ export function candidateInstallPlan({target, artifact, scratch}) {
     }]
     uninstall = [{
       op: 'spawn',
-      command: resolve(installRoot, 'Uninstall Nova Audio Agent Ambient Orb.exe'),
+      command: pathApi.resolve(installRoot, 'Uninstall Nova Audio Agent Ambient Orb.exe'),
       args: ['/S'],
       timeoutMs: NATIVE_INSTALLER_SETTLE_MS,
     }]
     residue = installRoot
   } else if (target === 'linux-x64-gnu:appimage') {
-    executable = resolve(installRoot, 'squashfs-root/AppRun')
+    executable = pathApi.resolve(installRoot, 'squashfs-root/AppRun')
     install = [
       {op: 'chmod', path: artifact, mode: 0o700},
       {op: 'spawn', command: artifact, args: ['--appimage-extract'], cwd: installRoot},

@@ -103,7 +103,8 @@ export function resolveClientCodexBinary({
       })
       : []
   for (const candidate of candidates) {
-    const canonical = canonicalize(candidate.path)
+    if (candidate.kind !== 'native') continue
+    const canonical = canonicalize(candidate.command)
     if (typeof canonical === 'string' && pathApi.isAbsolute(canonical)) return canonical
   }
   return null

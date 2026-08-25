@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {mkdir, mkdtemp, readFile, realpath, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {resolve} from 'node:path'
+import {fileURLToPath} from 'node:url'
 import test from 'node:test'
 
 import {
@@ -59,7 +60,7 @@ test('packaged Codex failures expose only one closed stage code', () => {
 
 test('local release Codex smoke uses the fixed repository root without caller paths', () => {
   const workspace = releaseCandidateWorkspace({})
-  assert.equal(workspace, new URL('../../..', import.meta.url).pathname.replace(/\/$/u, ''))
+  assert.equal(workspace, resolve(fileURLToPath(new URL('../../..', import.meta.url))))
   assert.equal(releaseCandidateWorkspace({GITHUB_WORKSPACE: workspace}), workspace)
 })
 
