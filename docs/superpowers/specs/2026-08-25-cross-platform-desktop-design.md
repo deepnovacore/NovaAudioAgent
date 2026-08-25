@@ -37,6 +37,12 @@ performed in this order:
 2. Supported environment variables for development and managed deployments.
 3. Platform-neutral product defaults derived from the user's home directory.
 
+An explicitly saved `codexBinaryMode: auto` ignores both a stale saved manual
+path and `NOVA_AUDIO_AGENT_CODEX_BIN`; selecting `manual` requires a non-empty,
+valid candidate and never silently falls back to discovery. Environment URL
+fallbacks pass through the same scheme, credential, and loopback validation as
+their Settings equivalents.
+
 Paths are expanded and canonicalized once at this boundary. Downstream code
 receives canonical absolute paths and never compares a user spelling directly
 to a `realpath` result. Windows comparisons account for separator and case
@@ -66,12 +72,20 @@ requests a controlled backend restart rather than requiring an app restart.
 ## Codex CLI Discovery
 
 Discovery is implemented as a pure, testable platform catalog followed by a
-bounded version/login probe:
+bounded, credential-free version probe. A candidate is stored as an invocation
+tuple (`command`, immutable `prefixArgs`, `source`) instead of assuming that
+every installation exposes one top-level executable:
 
-- Windows searches `PATH` using Windows executable resolution, including
-  `codex.cmd`, and checks the standard per-user npm shim directory. The stored
-  result is the invocation tuple required by Node; code must not assume a
-  `codex.exe` exists.
+- Windows prefers a directly executable PE image from `PATH`, WindowsApps,
+  reviewed package-manager locations, or the native platform package nested
+  under a standard npm Codex install.
+- When a standard npm installation exposes only `codex.cmd`, discovery does
+  not invoke the shim with `cmd.exe`. It canonicalizes and validates the
+  official sibling `node_modules/@openai/codex` layout, then either selects the
+  nested native executable or invokes its bounded `bin/codex.js` launcher
+  through a canonical Node executable with direct argv forwarding.
+- Arbitrary `.cmd`, `.bat`, and `.ps1` candidates remain ineligible in both
+  automatic and manual mode. No candidate is evaluated by a shell.
 - macOS and Ubuntu search `PATH` and the reviewed common user-local binary
   locations.
 - Manual paths are canonicalized and validated through the same executable
@@ -114,10 +128,22 @@ On Windows, security is evaluated with Windows primitives rather than
 - Native locks, descriptor-relative create/read/replace/rename/unlink, atomic
   persistence, rollback, and crash recovery remain fail-closed.
 
+Durability is platform-specific without reporting audit steps that did not
+occur. POSIX retains file `fsync`, atomic replace, and containing-directory
+`fsync`. Windows retains file flush, handle-relative atomic replace, and
+post-replace handle/identity revalidation; it never calls Node directory
+`FileHandle.sync()`, which is unsupported on Windows. The durability trace
+names the actual Windows metadata-commit boundary rather than claiming that a
+POSIX directory `fsync` ran.
+
 Existing unsafe user-selected directories are not silently rewritten. Settings
 reports the unsafe ACL and offers an explicit repair action scoped to the exact
 selected application-owned root. The default `~/.nova-audio-agent` tree is
-securely provisioned on first use.
+securely provisioned on first use. On Windows, default directory creation uses
+the protected owner-only security descriptor on the create operation itself;
+it is not created with inherited permissions and repaired later. Validation
+checks both the reviewed ACE set and `SE_DACL_PROTECTED` on every authoritative
+root and child handle.
 
 Windows tests cover protected DACLs, broad ACE refusal, reparse points and
 junctions, handle replacement, lock exclusion, crash recovery, rollback, path
@@ -147,6 +173,14 @@ The orb remains visible while disconnected and shows the current diagnostic and
 retry action. Renderer WebSocket reconnection follows supervisor endpoint
 updates rather than treating the first close as terminal. Application quit is
 the only ordinary path that permanently stops supervision.
+
+`configuration_required` and `authentication_failed` are terminal until a
+settings change or explicit retry creates a new generation. `unavailable`
+represents a non-credential host/runtime failure and exposes an explicit retry.
+Only transport closures, unclassified early exits, and other recoverable
+failures enter jittered `reconnecting` backoff. Diagnostics contain stable
+public codes only; exception text, credentials, paths, and provider payloads
+never cross into a renderer.
 
 ## Microphone Permission and Capture
 
@@ -190,6 +224,12 @@ failure, AudioWorklet failure, and native-audio fallback failure keep distinct
 diagnostics. Raw exception text, device identifiers, and host paths never enter
 the UI or logs.
 
+The remembered permission decision, device availability, audio-pipeline health,
+and active-listening state are independent axes. Stopping capture releases all
+tracks and native resources but retains the remembered permission decision. A
+denied decision is never inferred from a missing API or a non-permission
+exception.
+
 Clicking the orb starts active capture after preflight. An optional
 `startListeningOnLaunch` setting starts active capture after readiness only when
 the user has explicitly enabled it. Deactivation releases all browser and
@@ -225,8 +265,9 @@ Verification is layered:
   and renderer state labels.
 - `npm run check`, targeted native builds, and full `npm test` on the host.
 - Windows packaged smoke test from a clean settings state, including microphone
-  preflight, Settings configuration, Codex discovery through `codex.cmd`,
-  backend reconnect, and Projects default-root creation.
+  preflight, Settings configuration, Codex discovery through the native npm
+  package or the validated direct-Node npm launcher fallback, backend reconnect,
+  and Projects default-root creation. The smoke test never invokes `cmd.exe`.
 - CI package/test matrix for Windows, macOS, and Ubuntu. Platform-native
   permission and ACL tests run only on their owning OS; shared contract tests
   run everywhere.
