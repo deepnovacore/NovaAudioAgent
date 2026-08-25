@@ -6,6 +6,23 @@ export const SOURCE_STARTUP_SMOKE_ARGUMENT = '--nova-source-startup-smoke-v1'
 const READY_LINE = '[desktop-smoke] source_window_ready\n'
 const MAX_OUTPUT = 16 * 1024
 
+export function sourceStartupSmokeEnvironment(parentEnvironment, {home}) {
+  const environment = {}
+  for (const [key, value] of Object.entries(parentEnvironment)) {
+    const normalizedKey = key.toUpperCase()
+    if (
+      normalizedKey.startsWith('NOVA_') ||
+      normalizedKey === 'ELECTRON_RUN_AS_NODE' ||
+      normalizedKey === 'HOME' ||
+      normalizedKey === 'USERPROFILE'
+    ) continue
+    environment[key] = value
+  }
+  environment.HOME = home
+  environment.USERPROFILE = home
+  return environment
+}
+
 export async function runSourceStartupSmoke({
   packageRoot = resolve(import.meta.dirname, '..'),
   platform = process.platform,
@@ -24,11 +41,7 @@ export async function runSourceStartupSmoke({
       `--user-data-dir=${userData}`,
     ], {
       cwd: packageRoot,
-      env: {
-        ...process.env,
-        HOME: home,
-        USERPROFILE: home,
-      },
+      env: sourceStartupSmokeEnvironment(process.env, {home}),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })

@@ -1,7 +1,7 @@
 'use strict'
 
 const assert = require('node:assert/strict')
-const {closeSync, mkdirSync, mkdtempSync, openSync, rmSync} = require('node:fs')
+const {closeSync, mkdirSync, mkdtempSync, openSync, rmSync, symlinkSync} = require('node:fs')
 const {homedir} = require('node:os')
 const {join} = require('node:path')
 const {spawn, spawnSync} = require('node:child_process')
@@ -32,6 +32,12 @@ function openNativeDirectory(path) {
   return opened
 }
 
+function assertNativeDirectoryRejected(path) {
+  const opened = addon.openDirectory(path)
+  if (opened.status === 'ok') opened.close()
+  assert.deepEqual(opened.status, 'failed')
+}
+
 if (mode === 'hold') {
   const descriptor = openSync(lockPath, 'r+')
   const held = addon.acquire(descriptor)
@@ -39,10 +45,6 @@ if (mode === 'hold') {
   closeSync(descriptor)
   process.stdout.write('locked\n')
   setInterval(() => {}, 1_000)
-} else if (mode === 'open-path') {
-  const handle = openNativeDirectory(lockPath)
-  handle.close()
-  process.stdout.write('project native open passed\n')
 } else {
   void (async () => {
     const homeHandle = openNativeDirectory(homedir())
@@ -106,6 +108,23 @@ if (mode === 'hold') {
       }
 
       if (process.platform === 'win32') {
+        const finalJunctionTarget = join(root, 'final-junction-target')
+        const finalJunction = join(root, 'final-junction')
+        mkdirSync(finalJunctionTarget)
+        symlinkSync(finalJunctionTarget, finalJunction, 'junction')
+        assertNativeDirectoryRejected(finalJunction)
+        const finalCanonicalHandle = openNativeDirectory(finalJunctionTarget)
+        finalCanonicalHandle.close()
+
+        const intermediateJunctionTarget = join(root, 'intermediate-junction-target')
+        const intermediateCanonicalChild = join(intermediateJunctionTarget, 'child')
+        const intermediateJunction = join(root, 'intermediate-junction')
+        mkdirSync(intermediateCanonicalChild, {recursive: true})
+        symlinkSync(intermediateJunctionTarget, intermediateJunction, 'junction')
+        assertNativeDirectoryRejected(join(intermediateJunction, 'child'))
+        const intermediateCanonicalHandle = openNativeDirectory(intermediateCanonicalChild)
+        intermediateCanonicalHandle.close()
+
         const readonlyDirectory = join(root, 'repair-readonly')
         mkdirSync(readonlyDirectory)
         const restricted = spawnSync('icacls.exe', [
