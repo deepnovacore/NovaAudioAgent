@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { posix } from 'node:path'
+import { posix, win32 } from 'node:path'
 import test from 'node:test'
 
 import * as desktopStartup from '../src/main/desktop-startup.mjs'
@@ -16,8 +16,8 @@ test('desktop startup creates defaults then resolves an installed Codex candidat
     canonicalizePath: value => value,
     canonicalizeExecutable: value => value === '/opt/codex/bin/codex' ? value : null,
     mkdir: async path => { events.push(`mkdir:${path}`) },
-    inspectCodex: async path => {
-      events.push(`inspect:${path}`)
+    inspectCodex: async invocation => {
+      events.push(`inspect:${invocation.command}`)
       return { version: 'codex-cli 0.147.0' }
     },
   })
@@ -26,7 +26,9 @@ test('desktop startup creates defaults then resolves an installed Codex candidat
   assert.equal(result.config.codexBinaryPath, '/opt/codex/bin/codex')
   assert.deepEqual(result.codexStatus, {
     status: 'ready',
+    invocation: {command: '/opt/codex/bin/codex', prefixArgs: []},
     path: '/opt/codex/bin/codex',
+    prefixArgs: [],
     source: 'path',
     version: 'codex-cli 0.147.0',
   })
@@ -41,7 +43,9 @@ test('desktop startup creates defaults then resolves an installed Codex candidat
 
 test('Codex version inspection uses a bounded credential-free child environment', () => {
   let invocation
-  const result = desktopStartup.inspectCodexVersion('/opt/codex', {
+  const result = desktopStartup.inspectCodexVersion({
+    command: '/opt/codex', prefixArgs: ['/official/bin/codex.js'],
+  }, {
     environment: {
       PATH: '/usr/bin',
       HOME: '/home/nova',
@@ -56,7 +60,7 @@ test('Codex version inspection uses a bounded credential-free child environment'
 
   assert.deepEqual(result, { version: 'codex-cli 0.147.0' })
   assert.equal(invocation.command, '/opt/codex')
-  assert.deepEqual(invocation.args, ['--version'])
+  assert.deepEqual(invocation.args, ['/official/bin/codex.js', '--version'])
   assert.equal(invocation.options.timeout, 5_000)
   assert.equal(invocation.options.maxBuffer, 1_024)
   assert.deepEqual(invocation.options.env, { PATH: '/usr/bin', HOME: '/home/nova' })
@@ -78,4 +82,36 @@ test('canonical executable validation rejects Windows script shims', () => {
     desktopStartup.canonicalInstalledExecutable('C:\\Bin\\codex.cmd', dependencies),
     null,
   )
+})
+
+test('validated npm launcher becomes direct Node argv without executing the cmd shim', () => {
+  const packageRoot = 'C:\\Users\\nova\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex'
+  const files = new Set([
+    'C:\\Program Files\\nodejs\\node.exe',
+    'C:\\Users\\nova\\AppData\\Roaming\\npm\\codex.cmd',
+    `${packageRoot}\\package.json`,
+    `${packageRoot}\\bin\\codex.js`,
+  ])
+  const result = desktopStartup.canonicalInstalledInvocation({
+    kind: 'npm-launcher',
+    command: 'C:\\Program Files\\nodejs\\node.exe',
+    prefixArgs: [`${packageRoot}\\bin\\codex.js`],
+    packageRoot,
+    manifestPath: `${packageRoot}\\package.json`,
+    launcherPath: 'C:\\Users\\nova\\AppData\\Roaming\\npm\\codex.cmd',
+  }, {
+    platform: 'win32',
+    pathApi: win32,
+    realpath: value => value,
+    stat: value => ({
+      isFile: () => files.has(value),
+      isDirectory: () => value === packageRoot,
+    }),
+    access: () => {},
+    readFile: () => JSON.stringify({name: '@openai/codex', bin: {codex: 'bin/codex.js'}}),
+  })
+  assert.deepEqual(result, {
+    command: 'C:\\Program Files\\nodejs\\node.exe',
+    prefixArgs: [`${packageRoot}\\bin\\codex.js`],
+  })
 })

@@ -58,6 +58,7 @@ test('host resolver is lazy without Codex and brands one allowlisted launch tupl
   assert.ok(resolved !== null)
   assert.equal(hostBinaryPath(resolved.binary), fixture.binary)
   assert.equal(hostWorkspacePath(resolved.workspace), fixture.workspace)
+  assert.deepEqual(resolved.binaryPrefixArgs, [])
   assert.deepEqual({
     prewarm: resolved.prewarm,
     projects: resolved.projectsEnabled,
@@ -73,6 +74,20 @@ test('host resolver is lazy without Codex and brands one allowlisted launch tupl
   })
   assert.equal(Object.hasOwn(resolved, 'apiKey'), false)
   assert.equal(JSON.stringify(resolved).includes('secret-must-remain-opaque'), false)
+})
+
+test('host resolver canonicalizes one direct Node launcher script', t => {
+  const fixture = hostFixture(t)
+  const launcher = join(fixture.root, 'codex.js')
+  writeFileSync(launcher, '#!/usr/bin/env node\n')
+  const resolved = resolveCodexHostConfig(loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
+    NOVA_AUDIO_AGENT_CODEX_BIN: fixture.binary,
+    NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS: JSON.stringify([launcher]),
+  }), fixture.catalog)
+  assert.ok(resolved !== null)
+  assert.deepEqual(resolved.binaryPrefixArgs, [realpathSync(launcher)])
 })
 
 test('selected Codex fails as host-unavailable when Task 8 has not supplied a catalog', t => {

@@ -71,6 +71,7 @@ export type CodexTransportCode =
 
 export interface CodexAppServerLaunchConfig {
   readonly binary: HostBinary
+  readonly prefixArgs?: readonly string[]
   readonly workspace: HostWorkspace
   readonly codexHome: HostCodexHome
   readonly apiKey: string | null
@@ -682,6 +683,7 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
       const environment = this.#credentials.environment(credentialSnapshot)
       const spec = createApprovedCodexSpawnSpec({
         binary: this.#config.binary,
+        prefixArgs: this.#config.prefixArgs ?? [],
         workspace: this.#config.workspace,
         codexHome: this.#config.codexHome,
         environment,
@@ -1432,6 +1434,7 @@ function validateLaunchConfig(config: CodexAppServerLaunchConfig): ValidatedCode
   if (!config.persistent && resumeThreadId !== null) throw new CodexTransportError('resume_unavailable')
   return Object.freeze({
     binary: config.binary,
+    prefixArgs: Object.freeze([...(config.prefixArgs ?? [])]),
     workspace: config.workspace,
     codexHome: config.codexHome,
     apiKey,

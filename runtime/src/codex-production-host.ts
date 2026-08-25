@@ -333,9 +333,12 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
     const deadline = Date.now() + Math.min(timeoutMs, 20_000)
     try {
       const binary = hostBinaryPath(config.binary)
+      const prefixArgs = config.prefixArgs ?? []
       const workspace = hostWorkspacePath(config.workspace)
       requireWorkspaceRoot(workspace)
-      const versionResult = await this.#command(binary, ['--version'], workspace, deadline, 4096)
+      const versionResult = await this.#command(
+        binary, [...prefixArgs, '--version'], workspace, deadline, 4096,
+      )
       const version = parseVersion(versionResult)
       const credential = this.#hasApiKey
         ? Object.freeze({present: true, identity: 'api_key', policy: 'process_only'})
@@ -343,14 +346,14 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
             present: true,
             identity: parseLogin(await this.#command(
               binary,
-              ['login', 'status'],
+              [...prefixArgs, 'login', 'status'],
               workspace,
               deadline,
               4096,
             )),
             policy: 'saved_login',
           })
-      const limits = await this.#runSandboxProbe(binary, workspace, deadline)
+      const limits = await this.#runSandboxProbe(binary, prefixArgs, workspace, deadline)
       return Object.freeze({
         version,
         root_matches: true,
@@ -368,6 +371,7 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
 
   async #runSandboxProbe(
     binary: string,
+    prefixArgs: readonly string[],
     workspace: string,
     deadline: number,
   ): Promise<Readonly<Record<string, string>>> {
@@ -385,7 +389,7 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
     const server = createServer(socket => socket.end())
     try {
       const port = await listenLoopback(server, Math.max(1, deadline - Date.now()))
-      const result = await this.#command(binary, [
+      const result = await this.#command(binary, [...prefixArgs,
         'sandbox', '-P', 'nova_audio_agent', '-C', workspace,
         '-c', `permissions.nova_audio_agent=${PERMISSION_PROFILE}`,
         '-c', 'shell_environment_policy.inherit="core"',
@@ -501,6 +505,7 @@ export class NativeCodexLiveSchemaProbe implements CodexLiveSchemaProbe {
       const result = await this.#runCommand(Object.freeze({
         binary: hostBinaryPath(config.binary),
         argv: Object.freeze([
+          ...(config.prefixArgs ?? []),
           'app-server', 'generate-json-schema', '--out', directory,
         ]),
         cwd: hostWorkspacePath(config.workspace),

@@ -127,6 +127,30 @@ test('approved specs reject leaked keys, missing remote disable, and mismatched 
   }
 })
 
+test('approved specs prepend one canonical JavaScript launcher without a shell', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-prefix-'))
+  const launcher = join(root, 'codex.js')
+  await writeFile(launcher, '#!/usr/bin/env node\n')
+  try {
+    const workspace = process.cwd()
+    const spec = createApprovedCodexSpawnSpec({
+      binary: hostBinaryForTest(process.execPath),
+      prefixArgs: [realpathSync(launcher)],
+      workspace: hostWorkspaceForTest(workspace),
+      codexHome: hostCodexHomeForTest(workspace, {ephemeral: true}),
+      environment: {
+        PATH: '/safe', HOME: '/home', CODEX_HOME: workspace,
+        CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
+      },
+    })
+    const details = approvedCodexSpawnDetails(spec)
+    assert.deepEqual(details.argv, [realpathSync(launcher), ...EXACT_APP_SERVER_ARGV])
+    assert.equal(details.shell, false)
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('the POSIX factory performs the exact direct detached spawn', {
   skip: process.platform === 'win32',
 }, async () => {

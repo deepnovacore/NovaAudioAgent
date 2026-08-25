@@ -17,7 +17,8 @@ test('Windows candidates include PATH executables and npm native package layouts
     home: 'C:\\Users\\nova',
     pathApi: win32,
   })
-  const paths = candidates.map(candidate => candidate.path)
+  const paths = candidates.filter(candidate => candidate.kind === 'native')
+    .map(candidate => candidate.command)
 
   assert.deepEqual(paths.slice(0, 4), [
     'C:\\CodexApp\\codex.exe',
@@ -32,6 +33,10 @@ test('Windows candidates include PATH executables and npm native package layouts
     'C:\\Users\\nova\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe',
   ))
   assert.equal(paths.some(path => path.endsWith('codex.cmd')), false)
+  assert.ok(candidates.some(candidate => candidate.kind === 'npm-launcher'
+    && candidate.launcherPath.endsWith('codex.cmd')
+    && candidate.command.endsWith('node.exe')
+    && candidate.prefixArgs[0].endsWith('bin\\codex.js')))
 })
 
 test('POSIX candidates preserve PATH order before reviewed common locations', () => {
@@ -44,9 +49,9 @@ test('POSIX candidates preserve PATH order before reviewed common locations', ()
   })
 
   assert.deepEqual(candidates.slice(0, 3), [
-    { path: '/one/codex', source: 'path' },
-    { path: '/two/codex', source: 'path' },
-    { path: '/home/nova/.local/bin/codex', source: 'common' },
+    { kind: 'native', command: '/one/codex', prefixArgs: [], source: 'path' },
+    { kind: 'native', command: '/two/codex', prefixArgs: [], source: 'path' },
+    { kind: 'native', command: '/home/nova/.local/bin/codex', prefixArgs: [], source: 'common' },
   ])
 })
 
@@ -54,33 +59,39 @@ test('discovery returns the first canonical executable with a bounded version', 
   const inspected = []
   const status = await discoverCodex({
     candidates: [
-      { path: '/missing/codex', source: 'path' },
-      { path: '/installed/codex', source: 'common' },
+      { kind: 'native', command: '/missing/codex', prefixArgs: [], source: 'path' },
+      { kind: 'native', command: '/installed/codex', prefixArgs: [], source: 'common' },
     ],
-    canonicalize: path => path === '/installed/codex' ? '/real/codex' : null,
-    inspect: async path => {
-      inspected.push(path)
+    canonicalize: candidate => candidate.command === '/installed/codex'
+      ? {command: '/real/codex', prefixArgs: []} : null,
+    inspect: async invocation => {
+      inspected.push(invocation)
       return { version: 'codex-cli 0.147.0' }
     },
   })
 
   assert.deepEqual(status, {
     status: 'ready',
+    invocation: {command: '/real/codex', prefixArgs: []},
     path: '/real/codex',
+    prefixArgs: [],
     source: 'common',
     version: 'codex-cli 0.147.0',
   })
-  assert.deepEqual(inspected, ['/real/codex'])
+  assert.deepEqual(inspected, [{command: '/real/codex', prefixArgs: []}])
 })
 
 test('discovery rejects malformed probes without exposing their content', async () => {
   const missing = await discoverCodex({
-    candidates: [{ path: '/private/codex', source: 'manual' }],
-    canonicalize: () => '/private/codex',
+    candidates: [{ kind: 'native', command: '/private/codex', prefixArgs: [], source: 'manual' }],
+    canonicalize: () => ({command: '/private/codex', prefixArgs: []}),
     inspect: async () => ({ version: 'x'.repeat(129), private: 'secret' }),
   })
 
-  assert.deepEqual(missing, { status: 'missing', path: null, source: null, version: null })
+  assert.deepEqual(missing, {
+    status: 'missing', invocation: null, path: null, prefixArgs: null,
+    source: null, version: null,
+  })
   assert.doesNotMatch(JSON.stringify(missing), /private|secret/)
 })
 
@@ -92,18 +103,19 @@ test('desktop Codex resolution probes only the manual override and clears an inv
       codexBinaryPath: '/manual/codex',
       workspace: '/workspace',
     },
-    automaticCandidates: [{ path: '/automatic/codex', source: 'path' }],
-    canonicalize: path => path,
-    inspect: async path => {
-      inspected.push(path)
+    automaticCandidates: [{ kind: 'native', command: '/automatic/codex', prefixArgs: [], source: 'path' }],
+    canonicalize: candidate => ({command: candidate.command, prefixArgs: []}),
+    inspect: async invocation => {
+      inspected.push(invocation)
       return { version: 'private malformed\nversion' }
     },
   })
 
-  assert.deepEqual(inspected, ['/manual/codex'])
+  assert.deepEqual(inspected, [{command: '/manual/codex', prefixArgs: []}])
   assert.equal(result.config.codexBinaryPath, '')
   assert.equal(result.config.workspace, '/workspace')
   assert.deepEqual(result.status, {
-    status: 'missing', path: null, source: null, version: null,
+    status: 'missing', invocation: null, path: null, prefixArgs: null,
+    source: null, version: null,
   })
 })

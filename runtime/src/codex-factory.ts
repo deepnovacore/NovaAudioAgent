@@ -42,6 +42,7 @@ export type CodexAssemblyMode = 'ordinary' | 'live' | 'project'
 export interface CodexTransportBinding {
   readonly mode: CodexAssemblyMode
   readonly binary: HostBinary
+  readonly binaryPrefixArgs: readonly string[]
   readonly workspace: HostWorkspace
   readonly codexHome: HostCodexHome | null
   readonly credential: CodexCredentialProfile
@@ -78,6 +79,7 @@ export class OwnedCodexBackendTransportFactory implements CodexBackendTransportF
     const transport = new OwnedCodexAppServerTransport({
       config: {
         binary: binding.binary,
+        prefixArgs: binding.binaryPrefixArgs,
         workspace: binding.workspace,
         codexHome,
         apiKey: codexCredentialApiKey(binding.credential),
@@ -189,6 +191,7 @@ export async function createCodexAssemblyResource(
   const binding: CodexTransportBinding = Object.freeze({
     mode,
     binary: options.config.binary,
+    binaryPrefixArgs: options.config.binaryPrefixArgs,
     workspace: options.config.workspace,
     codexHome: null,
     credential: options.config.credential,
@@ -250,6 +253,7 @@ async function createProjectResource(
     startupTransport = options.transportFactory.create(Object.freeze({
       mode: 'live',
       binary: options.config.binary,
+      binaryPrefixArgs: options.config.binaryPrefixArgs,
       workspace: options.config.workspace,
       codexHome: null,
       credential: options.config.credential,
@@ -281,6 +285,7 @@ async function createProjectResource(
           const transport = options.transportFactory.create(Object.freeze({
             mode: 'project',
             binary: options.config.binary,
+            binaryPrefixArgs: options.config.binaryPrefixArgs,
             workspace: binding.workspace,
             codexHome: binding.codexHome,
             credential: options.config.credential,

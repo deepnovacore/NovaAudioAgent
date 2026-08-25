@@ -18,7 +18,7 @@ import { loadProjectNativeHostFromResources } from '@nova-audio-agent/runtime/de
 import { randomBytes } from 'node:crypto'
 import { mkdir, open, rename, unlink, writeFile } from 'node:fs/promises'
 import { spawn, spawnSync } from 'node:child_process'
-import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path, { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -39,6 +39,7 @@ import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
 import {
   canonicalInstalledExecutable,
+  canonicalInstalledInvocation,
   inspectCodexVersion,
   prepareDesktopStartup,
 } from './desktop-startup.mjs'
@@ -391,8 +392,16 @@ async function refreshDesktopConfiguration() {
       stat: statSync,
       access: executable => accessSync(executable, constants.X_OK),
     }),
+    canonicalizeInvocation: candidate => canonicalInstalledInvocation(candidate, {
+      platform: process.platform,
+      pathApi: path,
+      realpath: realpathSync,
+      stat: statSync,
+      access: executable => accessSync(executable, constants.X_OK),
+      readFile: readFileSync,
+    }),
     mkdir,
-    inspectCodex: binary => inspectCodexVersion(binary, {
+    inspectCodex: invocation => inspectCodexVersion(invocation, {
       environment: process.env,
       run: spawnSync,
     }),

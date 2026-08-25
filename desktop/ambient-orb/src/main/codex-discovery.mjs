@@ -1,10 +1,26 @@
-const SOURCES = new Set(['path', 'npm-user', 'common', 'manual'])
+const SOURCES = new Set(['path', 'npm-user', 'common', 'manual', 'npm-launcher'])
 const VERSION = /^[^\u0000-\u001f\u007f]{1,128}$/u
 
-function append(target, seen, path, source) {
-  if (typeof path !== 'string' || path === '' || seen.has(path)) return
-  seen.add(path)
-  target.push(Object.freeze({ path, source }))
+function appendNative(target, seen, command, source) {
+  if (typeof command !== 'string' || command === '') return
+  const key = `native\0${command}`
+  if (seen.has(key)) return
+  seen.add(key)
+  target.push(Object.freeze({
+    kind: 'native', command, prefixArgs: Object.freeze([]), source,
+  }))
+}
+
+function appendNpmLauncher(target, seen, candidate) {
+  const key = `npm-launcher\0${candidate.command}\0${candidate.prefixArgs.join('\0')}`
+  if (seen.has(key)) return
+  seen.add(key)
+  target.push(Object.freeze({
+    ...candidate,
+    kind: 'npm-launcher',
+    prefixArgs: Object.freeze([...candidate.prefixArgs]),
+    source: 'npm-launcher',
+  }))
 }
 
 function windowsNpmCandidates({ root, arch, pathApi }) {
@@ -25,12 +41,13 @@ export function codexCandidates({ platform, arch, env = {}, home, pathApi }) {
   const candidates = []
   const seen = new Set()
   const delimiter = platform === 'win32' ? ';' : ':'
-  for (const entry of String(env.PATH ?? '').split(delimiter).filter(Boolean)) {
+  const pathEntries = String(env.PATH ?? '').split(delimiter).filter(Boolean)
+  for (const entry of pathEntries) {
     if (platform === 'win32') {
-      append(candidates, seen, pathApi.join(entry, 'codex.exe'), 'path')
-      append(candidates, seen, pathApi.join(entry, 'codex'), 'path')
+      appendNative(candidates, seen, pathApi.join(entry, 'codex.exe'), 'path')
+      appendNative(candidates, seen, pathApi.join(entry, 'codex'), 'path')
     } else {
-      append(candidates, seen, pathApi.join(entry, 'codex'), 'path')
+      appendNative(candidates, seen, pathApi.join(entry, 'codex'), 'path')
     }
   }
   if (platform === 'win32') {
@@ -38,39 +55,61 @@ export function codexCandidates({ platform, arch, env = {}, home, pathApi }) {
       ? env.APPDATA
       : pathApi.join(home, 'AppData', 'Roaming')
     const npmRoot = pathApi.join(appData, 'npm')
-    for (const path of windowsNpmCandidates({ root: npmRoot, arch, pathApi })) {
-      append(candidates, seen, path, 'npm-user')
+    for (const command of windowsNpmCandidates({ root: npmRoot, arch, pathApi })) {
+      appendNative(candidates, seen, command, 'npm-user')
+    }
+    const packageRoot = pathApi.join(npmRoot, 'node_modules', '@openai', 'codex')
+    for (const entry of pathEntries) {
+      appendNpmLauncher(candidates, seen, {
+        command: pathApi.join(entry, 'node.exe'),
+        prefixArgs: [pathApi.join(packageRoot, 'bin', 'codex.js')],
+        packageRoot,
+        manifestPath: pathApi.join(packageRoot, 'package.json'),
+        launcherPath: pathApi.join(npmRoot, 'codex.cmd'),
+      })
     }
   } else {
-    append(candidates, seen, pathApi.join(home, '.local', 'bin', 'codex'), 'common')
-    if (platform === 'darwin') append(candidates, seen, '/opt/homebrew/bin/codex', 'common')
-    append(candidates, seen, '/usr/local/bin/codex', 'common')
+    appendNative(candidates, seen, pathApi.join(home, '.local', 'bin', 'codex'), 'common')
+    if (platform === 'darwin') appendNative(candidates, seen, '/opt/homebrew/bin/codex', 'common')
+    appendNative(candidates, seen, '/usr/local/bin/codex', 'common')
   }
   return Object.freeze(candidates)
 }
 
 function missing() {
-  return Object.freeze({ status: 'missing', path: null, source: null, version: null })
+  return Object.freeze({
+    status: 'missing', invocation: null, path: null, prefixArgs: null,
+    source: null, version: null,
+  })
+}
+
+function safeInvocation(value) {
+  if (!value || typeof value !== 'object' || typeof value.command !== 'string'
+    || value.command === '' || !Array.isArray(value.prefixArgs)
+    || value.prefixArgs.some(arg => typeof arg !== 'string' || arg === '')) return null
+  return Object.freeze({
+    command: value.command,
+    prefixArgs: Object.freeze([...value.prefixArgs]),
+  })
 }
 
 export async function discoverCodex({ candidates, canonicalize, inspect }) {
   if (!Array.isArray(candidates)) return missing()
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== 'object' || !SOURCES.has(candidate.source)) continue
-    let canonical
+    let invocation
     try {
-      canonical = canonicalize(candidate.path)
+      invocation = safeInvocation(canonicalize(candidate))
     } catch {
       continue
     }
-    if (typeof canonical !== 'string' || canonical === '') continue
+    if (invocation === null) continue
     try {
-      const result = await inspect(canonical)
+      const result = await inspect(invocation)
       if (!result || typeof result !== 'object' || !VERSION.test(result.version)) continue
       return Object.freeze({
-        status: 'ready',
-        path: canonical,
-        source: candidate.source,
+        status: 'ready', invocation, path: invocation.command,
+        prefixArgs: invocation.prefixArgs, source: candidate.source,
         version: result.version,
       })
     } catch {
@@ -90,13 +129,19 @@ export async function resolveDesktopCodex({
     && typeof config.codexBinaryPath === 'string'
     && config.codexBinaryPath !== ''
   const candidates = manual
-    ? [Object.freeze({ path: config.codexBinaryPath, source: 'manual' })]
+    ? [Object.freeze({
+        kind: 'native', command: config.codexBinaryPath,
+        prefixArgs: Object.freeze([]), source: 'manual',
+      })]
     : automaticCandidates
   const status = await discoverCodex({ candidates, canonicalize, inspect })
   return Object.freeze({
     config: Object.freeze({
       ...config,
-      codexBinaryPath: status.status === 'ready' ? status.path : '',
+      codexBinaryPath: status.status === 'ready' ? status.invocation.command : '',
+      codexBinaryPrefixArgs: status.status === 'ready'
+        ? status.invocation.prefixArgs
+        : Object.freeze([]),
     }),
     status,
   })

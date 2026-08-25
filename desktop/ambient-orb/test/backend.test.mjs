@@ -215,6 +215,7 @@ test('resolved desktop settings override inherited Codex and model configuration
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: {
       NOVA_AUDIO_AGENT_CODEX_BIN: '/environment/codex',
+      NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS: '["/environment/shim.js"]',
       NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED: 'false',
       NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: '/environment/managed',
       NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '/environment/state',
@@ -223,6 +224,7 @@ test('resolved desktop settings override inherited Codex and model configuration
     resolvedConfig: {
       workspace: '/settings/workspace',
       codexBinaryPath: '/settings/codex',
+      codexBinaryPrefixArgs: ['/settings/node_modules/@openai/codex/bin/codex.js'],
       codexProjectsEnabled: true,
       managedRoot: '/settings/managed',
       modelBaseUrl: 'https://settings.example/v1',
@@ -232,6 +234,10 @@ test('resolved desktop settings override inherited Codex and model configuration
 
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/settings/workspace')
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_BIN, '/settings/codex')
+  assert.equal(
+    spec.env.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS,
+    '["/settings/node_modules/@openai/codex/bin/codex.js"]',
+  )
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED, 'true')
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT, '/settings/managed')
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT, '/settings/state')
@@ -246,7 +252,10 @@ test('resolved desktop configuration removes an invalid inherited Codex binary',
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
-    parentEnv: { NOVA_AUDIO_AGENT_CODEX_BIN: '/private/invalid-codex' },
+    parentEnv: {
+      NOVA_AUDIO_AGENT_CODEX_BIN: '/private/invalid-codex',
+      NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS: '["/private/invalid.js"]',
+    },
     resolvedConfig: {
       workspace: '/workspace',
       codexBinaryPath: '',
@@ -258,6 +267,7 @@ test('resolved desktop configuration removes an invalid inherited Codex binary',
   })
 
   assert.equal('NOVA_AUDIO_AGENT_CODEX_BIN' in spec.env, false)
+  assert.equal('NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS' in spec.env, false)
 })
 
 test('runtime entry resolves inside the workspace for dev and the asar for packages', () => {

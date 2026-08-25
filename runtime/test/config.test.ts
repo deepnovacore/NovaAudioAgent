@@ -116,6 +116,20 @@ test('integrated Qwen credential resolution binds generic keys to the DashScope 
   assert.throws(() => requireIntegratedRealtime(foreign), /DASHSCOPE_API_KEY/u)
 })
 
+test('Codex direct argv prefix is parsed only as a bounded JSON string array', () => {
+  const configured = loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS: '["C:\\\\official\\\\codex.js"]',
+  })
+  assert.deepEqual(configured.codex_prefix_args, ['C:\\official\\codex.js'])
+  for (const value of ['not-json', '{}', '["one.js","two.js"]', '[7]']) {
+    assert.throws(() => loadSettings({
+      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+      NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS: value,
+    }), /invalid configuration/u)
+  }
+})
+
 test('integrated loading never reads inactive cascaded selector or model slots', () => {
   const forbidden = new Set([
     'NOVA_AUDIO_AGENT_CASCADE_ENDPOINTING_PROVIDER',

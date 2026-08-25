@@ -185,6 +185,7 @@ export function backendLaunchSpec({
   }
   if (resolvedConfig && typeof resolvedConfig === 'object') {
     delete env.NOVA_AUDIO_AGENT_CODEX_BIN
+    delete env.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS
     delete env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT
     delete env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT
     delete env.NOVA_AUDIO_AGENT_MODEL_BASE_URL
@@ -193,6 +194,12 @@ export function backendLaunchSpec({
     )
     if (typeof resolvedConfig.codexBinaryPath === 'string' && resolvedConfig.codexBinaryPath) {
       env.NOVA_AUDIO_AGENT_CODEX_BIN = resolvedConfig.codexBinaryPath
+    }
+    if (Array.isArray(resolvedConfig.codexBinaryPrefixArgs)
+      && resolvedConfig.codexBinaryPrefixArgs.length > 0) {
+      env.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS = JSON.stringify(
+        resolvedConfig.codexBinaryPrefixArgs,
+      )
     }
     if (typeof resolvedConfig.managedRoot === 'string' && resolvedConfig.managedRoot) {
       env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT = resolvedConfig.managedRoot

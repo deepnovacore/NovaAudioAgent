@@ -84,6 +84,7 @@ export const settingsSchema = z.object({
   executors: z.array(executorNameSchema).min(1),
   codex_workspace: z.string().nullable().default(null),
   codex_bin: z.string().default('codex'),
+  codex_prefix_args: z.array(z.string().min(1).max(32_768)).max(1).default([]),
   codex_api_key: z.string().nullable().default(null),
   codex_prewarm: z.boolean().default(true),
   codex_projects_enabled: z.boolean().default(false),
@@ -300,6 +301,9 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
     ...(codexSelected ? {
       codex_workspace: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_WORKSPACE),
       codex_bin: optionalString(environment.NOVA_AUDIO_AGENT_CODEX_BIN),
+      codex_prefix_args: optionalJsonStringArray(
+        environment.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS,
+      ),
       codex_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_CODEX_API_KEY),
       codex_prewarm: optionalBoolean(environment.NOVA_AUDIO_AGENT_CODEX_PREWARM),
       codex_projects_enabled: optionalBoolean(
@@ -581,6 +585,15 @@ function parseSelector<T extends string>(
 function optionalString(value: string | undefined): string | undefined {
   if (value === undefined) return undefined
   return stripLikePython(value)
+}
+
+function optionalJsonStringArray(value: string | undefined): unknown {
+  if (value === undefined) return undefined
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return value
+  }
 }
 
 function optionalSecret(value: string | undefined): string | null | undefined {

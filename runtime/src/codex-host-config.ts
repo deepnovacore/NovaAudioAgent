@@ -49,6 +49,7 @@ export interface CodexCredentialProfile {
 export interface ResolvedCodexHostConfig {
   readonly [resolvedCodexHostConfigBrand]: true
   readonly binary: HostBinary
+  readonly binaryPrefixArgs: readonly string[]
   readonly workspace: HostWorkspace
   readonly credential: CodexCredentialProfile
   readonly prewarm: boolean
@@ -93,6 +94,7 @@ export function resolveCodexHostConfig(
   } catch {
     throw new CodexHostConfigurationError('codex_binary_invalid')
   }
+  const binaryPrefixArgs = resolveBinaryPrefixArgs(settings.codex_prefix_args)
 
   const credential = Object.freeze({[codexCredentialProfileBrand]: true as const})
   credentialValues.set(credential, settings.codex_api_key)
@@ -119,6 +121,7 @@ export function resolveCodexHostConfig(
   return Object.freeze({
     [resolvedCodexHostConfigBrand]: true as const,
     binary,
+    binaryPrefixArgs,
     workspace,
     credential,
     prewarm: settings.codex_prewarm,
@@ -127,6 +130,28 @@ export function resolveCodexHostConfig(
     stateRoot,
     managedRoot,
   })
+}
+
+function resolveBinaryPrefixArgs(configured: readonly string[]): readonly string[] {
+  if (!Array.isArray(configured) || configured.length > 1) {
+    throw new CodexHostConfigurationError('codex_binary_invalid')
+  }
+  const result: string[] = []
+  for (const value of configured) {
+    if (typeof value !== 'string' || !isWellFormed(value) || !isAbsolute(value)
+      || !value.toLowerCase().endsWith('.js')) {
+      throw new CodexHostConfigurationError('codex_binary_invalid')
+    }
+    try {
+      const canonical = realpathSync(value)
+      const info = lstatSync(canonical)
+      if (info.isSymbolicLink() || !info.isFile() || canonical !== resolve(value)) throw new Error()
+      result.push(canonical)
+    } catch {
+      throw new CodexHostConfigurationError('codex_binary_invalid')
+    }
+  }
+  return Object.freeze(result)
 }
 
 /** Internal host accessor; this module is intentionally absent from the runtime root exports. */
