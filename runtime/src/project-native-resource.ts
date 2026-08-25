@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import {createRequire} from 'node:module'
 import {tmpdir} from 'node:os'
-import {isAbsolute, join, resolve, type PlatformPath} from 'node:path'
+import {basename, dirname, isAbsolute, join, resolve, type PlatformPath} from 'node:path'
 
 import type {NativeFileLockAuthority} from './native-file-lock.js'
 import type {
@@ -28,15 +28,13 @@ const PROJECT_ADDON_ID = 'project_native_addon'
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
-  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'probe', 'protectAt', 'protectDirectory',
+  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'probe', 'protectAt',
   'renameAt', 'unlinkAt',
 ])
 
 export interface ProjectNativeHost {
   readonly nativeLocks: NativeFileLockAuthority
   readonly rootFiles: ProjectRootFileAuthority
-  /** Protects only a host-selected canonical application directory. */
-  protectDirectory(path: string): boolean
   /** Protects a retained child selected descriptor-relatively by the host. */
   protectDirectoryAt(root: number, name: string, child: number): boolean
   /** Creates a protected private child below an owned, not-yet-private parent. */
@@ -51,9 +49,16 @@ export function protectDefaultProjectDirectories(
     managedRoot: string | null
     workspace: string | null
     pathApi?: PlatformPath
+    directoryHandles?: Readonly<{
+      open(path: string): number
+      close(descriptor: number): void
+    }>
   }>,
 ): boolean {
   const joinPath = (...parts: string[]): string => paths.pathApi?.join(...parts) ?? join(...parts)
+  const dirnamePath = (path: string): string => paths.pathApi?.dirname(path) ?? dirname(path)
+  const basenamePath = (path: string): string => paths.pathApi?.basename(path) ?? basename(path)
+  const handles = paths.directoryHandles ?? defaultProjectDirectoryHandles
   const productRoot = joinPath(paths.homeDirectory, '.nova-audio-agent')
   const defaults = new Set([
     joinPath(productRoot, 'state'),
@@ -61,9 +66,60 @@ export function protectDefaultProjectDirectories(
     joinPath(productRoot, 'workspaces', 'default'),
   ])
   for (const path of [paths.stateRoot, paths.managedRoot, paths.workspace]) {
-    if (path !== null && defaults.has(path) && !host.protectDirectory(path)) return false
+    if (path !== null && defaults.has(path) && !protectDefaultDirectory(
+      host,
+      dirnamePath(path),
+      basenamePath(path),
+      path,
+      handles,
+    )) return false
   }
   return true
+}
+
+const defaultProjectDirectoryHandles = Object.freeze({
+  open: (path: string): number => openSync(
+    path,
+    fsConstants.O_RDONLY
+      | (fsConstants.O_DIRECTORY ?? 0)
+      | (fsConstants.O_NOFOLLOW ?? 0),
+  ),
+  close: (descriptor: number): void => { closeSync(descriptor) },
+})
+
+function protectDefaultDirectory(
+  host: ProjectNativeHost,
+  parentPath: string,
+  name: string,
+  path: string,
+  handles: Readonly<{
+    open(path: string): number
+    close(descriptor: number): void
+  }>,
+): boolean {
+  let parent: number | null = null
+  let child: number | null = null
+  let protectedDirectory = false
+  let closed = true
+  try {
+    parent = handles.open(parentPath)
+    child = handles.open(path)
+    if (
+      !Number.isSafeInteger(parent) || parent < 0
+      || !Number.isSafeInteger(child) || child < 0
+    ) return false
+    protectedDirectory = host.protectDirectoryAt(parent, name, child)
+  } catch {
+    protectedDirectory = false
+  } finally {
+    if (child !== null && Number.isSafeInteger(child) && child >= 0) {
+      try { handles.close(child) } catch { closed = false }
+    }
+    if (parent !== null && Number.isSafeInteger(parent) && parent >= 0) {
+      try { handles.close(parent) } catch { closed = false }
+    }
+  }
+  return protectedDirectory && closed
 }
 
 interface ProjectNativeLoadOptions {
@@ -151,10 +207,6 @@ export function loadProjectNativeHostFromResources(
     return Object.freeze({
       nativeLocks,
       rootFiles,
-      protectDirectory: (path: string) => {
-        const result: unknown = addon.protectDirectory(path)
-        return isStatus(result, 'ok')
-      },
       protectDirectoryAt: (root: number, name: string, child: number) => {
         const result: unknown = addon.protectAt(root, name, child)
         return isStatus(result, 'ok')
@@ -332,7 +384,6 @@ function validBinary(bytes: Buffer, platform: string, arch: string): boolean {
 }
 
 interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {
-  protectDirectory(path: string): unknown
   protectAt(root: number, name: string, child: number): ProjectRootFileResult
   mkdirPrivateAt(root: number, name: string): ProjectRootFileCreateResult
 }

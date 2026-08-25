@@ -589,36 +589,6 @@ static napi_value nova_protect_at(napi_env env, napi_callback_info info) {
   return nova_status(env, valid ? "ok" : "failed");
 }
 
-static napi_value nova_protect_directory(napi_env env,
-                                         napi_callback_info info) {
-  napi_value args[1];
-  size_t length = 0;
-  if (!nova_args(env, info, 1, args) ||
-      napi_get_value_string_utf16(env, args[0], NULL, 0, &length) != napi_ok ||
-      length == 0 || length > 32767)
-    return nova_status(env, "failed");
-  WCHAR *path = (WCHAR *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                                   (length + 1) * sizeof(WCHAR));
-  if (path == NULL)
-    return nova_status(env, "failed");
-  if (napi_get_value_string_utf16(env, args[0], (char16_t *)path, length + 1,
-                                  &length) != napi_ok) {
-    HeapFree(GetProcessHeap(), 0, path);
-    return nova_status(env, "failed");
-  }
-  HANDLE handle = CreateFileW(
-      path, FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC,
-      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-      OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-      NULL);
-  HeapFree(GetProcessHeap(), 0, path);
-  if (handle == INVALID_HANDLE_VALUE)
-    return nova_status(env, "failed");
-  int valid = nova_protect_directory_handle(handle);
-  CloseHandle(handle);
-  return nova_status(env, valid ? "ok" : "failed");
-}
-
 static napi_value nova_matches_at(napi_env env, napi_callback_info info) {
   napi_value args[3];
   HANDLE root;
@@ -886,7 +856,6 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "mkdirAt", nova_mkdir_at) ||
       !nova_export(env, exports, "mkdirPrivateAt", nova_mkdir_private_at) ||
       !nova_export(env, exports, "protectAt", nova_protect_at) ||
-      !nova_export(env, exports, "protectDirectory", nova_protect_directory) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
       !nova_export(env, exports, "unlinkAt", nova_unlink_at))
     return NULL;

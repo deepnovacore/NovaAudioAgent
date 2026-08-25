@@ -32,13 +32,17 @@ if (mode === 'hold') {
   setInterval(() => {}, 1_000)
 } else {
   void (async () => {
-    const root = mkdtempSync(join(tmpdir(), 'nova-project-native-behavior-'))
+    const container = mkdtempSync(join(tmpdir(), 'nova-project-native-behavior-'))
+    const root = join(container, 'root')
+    mkdirSync(root)
+    const containerDescriptor = openDirectory(container)
     const rootDescriptor = openDirectory(root)
     let lockChild = null
     try {
       const bootstrapDirectory = addon.mkdirPrivateAt(rootDescriptor, 'bootstrap-root')
       assert.equal(bootstrapDirectory.status, 'ok')
-      assert.deepEqual(addon.protectDirectory(root), {status: 'ok'})
+      assert.equal(addon.protectDirectory, undefined)
+      assert.deepEqual(addon.protectAt(containerDescriptor, 'root', rootDescriptor), {status: 'ok'})
       assert.deepEqual(addon.probe(rootDescriptor), {status: 'ok'})
       assert.deepEqual(addon.lookupAt(rootDescriptor, '../escape'), {status: 'failed'})
       assert.deepEqual(addon.createFileAt(rootDescriptor, '/absolute', true), {status: 'failed'})
@@ -138,7 +142,8 @@ if (mode === 'hold') {
         ])
       }
       closeSync(rootDescriptor)
-      rmSync(root, {recursive: true, force: true})
+      closeSync(containerDescriptor)
+      rmSync(container, {recursive: true, force: true})
     }
     process.stdout.write('project native behavior passed\n')
   })().catch(error => {
