@@ -1,7 +1,7 @@
 'use strict'
 
 const assert = require('node:assert/strict')
-const {closeSync, mkdtempSync, openSync, rmSync} = require('node:fs')
+const {closeSync, mkdirSync, mkdtempSync, openSync, rmSync} = require('node:fs')
 const {tmpdir} = require('node:os')
 const {join} = require('node:path')
 const {spawn} = require('node:child_process')
@@ -32,10 +32,17 @@ if (mode === 'hold') {
   setInterval(() => {}, 1_000)
 } else {
   void (async () => {
-    const root = mkdtempSync(join(tmpdir(), 'nova-project-native-behavior-'))
+    const container = mkdtempSync(join(tmpdir(), 'nova-project-native-behavior-'))
+    const root = join(container, 'root')
+    mkdirSync(root)
+    const containerDescriptor = openDirectory(container)
     const rootDescriptor = openDirectory(root)
     let lockChild = null
     try {
+      const bootstrapDirectory = addon.mkdirPrivateAt(rootDescriptor, 'bootstrap-root')
+      assert.equal(bootstrapDirectory.status, 'ok')
+      assert.equal(addon.protectDirectory, undefined)
+      assert.deepEqual(addon.protectAt(containerDescriptor, 'root', rootDescriptor), {status: 'ok'})
       assert.deepEqual(addon.probe(rootDescriptor), {status: 'ok'})
       assert.deepEqual(addon.lookupAt(rootDescriptor, '../escape'), {status: 'failed'})
       assert.deepEqual(addon.createFileAt(rootDescriptor, '/absolute', true), {status: 'failed'})
@@ -47,9 +54,14 @@ if (mode === 'hold') {
       assert.deepEqual(addon.createFileAt(rootDescriptor, 'state.tmp', true), {status: 'exists'})
       assert.deepEqual(addon.lookupAt(rootDescriptor, 'missing'), {status: 'missing'})
 
-      const childDescriptor = openSync(join(root, 'state.tmp'), 'r+')
+      let childDescriptor = openSync(join(root, 'state.tmp'), 'r+')
       try {
+        assert.deepEqual(addon.protectAt(rootDescriptor, 'state.tmp', childDescriptor), {status: 'failed'})
         assert.deepEqual(addon.matchesAt(rootDescriptor, 'state.tmp', childDescriptor), {status: 'ok'})
+        if (process.platform === 'win32') {
+          closeSync(childDescriptor)
+          childDescriptor = null
+        }
         assert.deepEqual(addon.renameAt(rootDescriptor, 'state.tmp', 'state.json'), {status: 'ok'})
         assert.deepEqual(
           addon.unlinkAt(rootDescriptor, 'state.json', {device: 0n, inode: 0n}, 'file'),
@@ -60,13 +72,28 @@ if (mode === 'hold') {
           {status: 'ok'},
         )
       } finally {
-        closeSync(childDescriptor)
+        if (childDescriptor !== null) closeSync(childDescriptor)
+      }
+
+      mkdirSync(join(root, 'repair-me'))
+      const repairDescriptor = openDirectory(join(root, 'repair-me'))
+      try {
+        assert.deepEqual(
+          addon.protectAt(rootDescriptor, 'repair-me', repairDescriptor),
+          {status: 'ok'},
+        )
+      } finally {
+        closeSync(repairDescriptor)
       }
 
       const directory = addon.mkdirAt(rootDescriptor, 'workspace-01')
       assert.equal(directory.status, 'ok')
       assert.deepEqual(
         addon.unlinkAt(rootDescriptor, 'workspace-01', directory.identity, 'directory'),
+        {status: 'ok'},
+      )
+      assert.deepEqual(
+        addon.unlinkAt(rootDescriptor, 'bootstrap-root', bootstrapDirectory.identity, 'directory'),
         {status: 'ok'},
       )
 
@@ -115,7 +142,8 @@ if (mode === 'hold') {
         ])
       }
       closeSync(rootDescriptor)
-      rmSync(root, {recursive: true, force: true})
+      closeSync(containerDescriptor)
+      rmSync(container, {recursive: true, force: true})
     }
     process.stdout.write('project native behavior passed\n')
   })().catch(error => {

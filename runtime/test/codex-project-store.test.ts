@@ -164,10 +164,39 @@ class DescriptorRelativeRootFileAuthority implements ProjectRootFileAuthority {
     }
   }
 
+  mkdirPrivateAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    return this.mkdirAt(rootDescriptor, name)
+  }
+
+  protectAt(
+    rootDescriptor: number,
+    name: string,
+    childDescriptor: number,
+  ): ProjectRootFileResult {
+    const matched = this.matchesAt(rootDescriptor, name, childDescriptor)
+    if (matched.status !== 'ok') return matched
+    try {
+      chmodSync(this.pathAt(rootDescriptor, name), 0o700)
+      return {status: 'ok'}
+    } catch {
+      return {status: 'failed'}
+    }
+  }
+
   renameAt(rootDescriptor: number, from: string, to: string): ProjectRootFileResult {
     try {
       const root = this.#rootPath(rootDescriptor)
-      renameSync(join(root, from), join(root, to))
+      const destination = join(root, to)
+      // The production Windows addon uses MoveFileExW(...,
+      // MOVEFILE_REPLACE_EXISTING). Node's renameSync maps to a non-replacing
+      // Windows operation, so this test authority must emulate the native
+      // replace contract instead of accidentally testing Node's wrapper.
+      if (process.platform === 'win32') {
+        try { unlinkSync(destination) } catch (error) {
+          if (!isErrno(error, 'ENOENT')) throw error
+        }
+      }
+      renameSync(join(root, from), destination)
       return {status: 'ok'}
     } catch (error) {
       return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
@@ -585,8 +614,9 @@ test('durability and native locking source retain the audited no-fallback primit
   assert.deepEqual([...ordered].sort((left, right) => left - right), ordered)
   assert.match(storeSource, /constants\.O_RDONLY \| nonblockFlag\(\) \| noFollowFlag\(\)/u)
   assert.doesNotMatch(storeSource, /\.trim\(/u)
-  assert.match(storeSource, /\(info\.mode & 0o7777\) !== 0o700/u)
-  assert.match(storeSource, /\(info\.mode & 0o7777\) !== 0o600/u)
+  assert.match(storeSource, /privateDirectoryMetadata/u)
+  assert.match(storeSource, /privateRegularFileMetadata/u)
+  assert.match(storeSource, /if \(platform === 'win32'\) return true/u)
   assert.match(storeSource, /return \(mode & 0o7022\) !== 0/u)
   assert.match(nativeSource, /acquire\(descriptor: number\)/u)
   assert.doesNotMatch(nativeSource, /acquire\(descriptor: number\).*Promise/u)
@@ -913,7 +943,9 @@ test('a newly-created lock must retain its exact descriptor identity before nati
   }
 })
 
-test('swap-away-and-back descriptor operations never write or delete replacement roots', async () => {
+test('swap-away-and-back descriptor operations never write or delete replacement roots', {
+  skip: process.platform === 'win32' && 'Windows denies renaming a retained open directory',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-swap-back-'))
   const stateRoot = join(root, 'state')
   const stateAway = join(root, 'state-away')
@@ -955,7 +987,9 @@ test('swap-away-and-back descriptor operations never write or delete replacement
   }
 })
 
-test('state-root replacement during descriptor acquire cannot redirect state writes', async () => {
+test('state-root replacement during descriptor acquire cannot redirect state writes', {
+  skip: process.platform === 'win32' && 'requires POSIX open-directory rename and symlink semantics',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-acquire-swap-'))
   const stateRoot = join(root, 'state')
   const retainedRoot = join(root, 'state-retained')
@@ -1006,7 +1040,9 @@ test('state-root replacement during descriptor acquire cannot redirect state wri
   }
 })
 
-test('live owner acquisition validates the retained state-root identity before open returns', async () => {
+test('live owner acquisition validates the retained state-root identity before open returns', {
+  skip: process.platform === 'win32' && 'requires POSIX open-directory rename and symlink semantics',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-owner-root-swap-'))
   const stateRoot = join(root, 'state')
   const retainedRoot = join(root, 'state-retained')
@@ -1043,7 +1079,9 @@ test('live owner acquisition validates the retained state-root identity before o
   }
 })
 
-test('state-root replacement after atomic replace is detected and permanently poisons the store', async () => {
+test('state-root replacement after atomic replace is detected and permanently poisons the store', {
+  skip: process.platform === 'win32' && 'requires POSIX open-directory rename and symlink semantics',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-root-commit-swap-'))
   const stateRoot = join(root, 'state')
   const retainedRoot = join(root, 'state-retained')
@@ -1335,7 +1373,7 @@ test('an aborted bounded lock wait settles and is joined before store close retu
       options: {readonly wait: boolean; readonly signal: AbortSignal},
     ) => Promise<boolean>).call(store, starting.session_id, {wait: true, signal: abort.signal})
     void rollback.catch(() => undefined)
-    for (let attempt = 0; attempt < 100 && clock.waiterCount() === 0; attempt += 1) {
+    for (let attempt = 0; attempt < 1_000 && clock.waiterCount() === 0; attempt += 1) {
         await new Promise<void>(resolveTurn => { setImmediate(resolveTurn) })
     }
     assert.equal(clock.waiterCount(), 1, 'bounded lock wait must register one abort-aware sleep')
@@ -1509,9 +1547,11 @@ test('registry no-follow, owner mode, byte cap, strict decode, and corrupt-byte 
     await chmod(statePath, 0o600)
     await expectCode('state_too_large')
 
-    await writeFile(statePath, '{}', {mode: 0o600})
-    await chmod(statePath, 0o644)
-    await expectCode('state_permissions')
+    if (process.platform !== 'win32') {
+      await writeFile(statePath, '{}', {mode: 0o600})
+      await chmod(statePath, 0o644)
+      await expectCode('state_permissions')
+    }
 
     await rm(statePath)
     const invalidUtf8State = Buffer.concat([
@@ -1524,17 +1564,21 @@ test('registry no-follow, owner mode, byte cap, strict decode, and corrupt-byte 
     await writeFile(statePath, invalidUtf8State, {mode: 0o600})
     await expectCode('state_corrupt')
 
-    await rm(statePath)
-    const outside = join(root, 'outside')
-    await writeFile(outside, '{}', {mode: 0o600})
-    await symlink(outside, statePath)
-    await expectCode('state_permissions')
+    if (process.platform !== 'win32') {
+      await rm(statePath)
+      const outside = join(root, 'outside')
+      await writeFile(outside, '{}', {mode: 0o600})
+      await symlink(outside, statePath)
+      await expectCode('state_permissions')
+    }
   } finally {
     await rm(root, {recursive: true, force: true})
   }
 })
 
-test('state roots and files reject special permission bits rather than masking them away', async () => {
+test('state roots and files reject special permission bits rather than masking them away', {
+  skip: process.platform === 'win32' && 'Windows security is represented by ACLs, not POSIX mode bits',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-special-mode-'))
   const stateRoot = join(root, 'state')
   const managedRoot = join(root, 'managed')
@@ -1570,7 +1614,9 @@ test('state roots and files reject special permission bits rather than masking t
   }
 })
 
-test('an owner-controlled 0750 managed root is accepted while group-writable roots are refused', async () => {
+test('an owner-controlled 0750 managed root is accepted while group-writable roots are refused', {
+  skip: process.platform === 'win32' && 'Windows security is represented by ACLs, not POSIX mode bits',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-managed-mode-'))
   const stateRoot = join(root, 'state')
   const managedRoot = join(root, 'managed')
@@ -1762,7 +1808,7 @@ test('managed and registered workspace bindings reject symlink replacement at tr
       hostWorkspaceForTest(await realpath(registered)),
     )
     await rename(registered, join(root, 'registered-original'))
-    await symlink(replacement, registered, 'dir')
+    await symlink(replacement, registered, process.platform === 'win32' ? 'junction' : 'dir')
     await assert.rejects(
       store.revalidateWorkspace(imported.workspace_id),
       (error: unknown) => error instanceof ProjectStateError
@@ -1808,13 +1854,15 @@ test('workspace bindings pin inode identity and managed workspaces retain owner-
     )
 
     const managed = await store.createManaged('managed')
-    await chmod(managed.canonical_path, 0o755)
-    await assert.rejects(
-      store.revalidateWorkspace(managed.workspace_id),
-      (error: unknown) => error instanceof ProjectStateError
-        && error.code === 'workspace_boundary_changed',
-    )
-    await chmod(managed.canonical_path, 0o700)
+    if (process.platform !== 'win32') {
+      await chmod(managed.canonical_path, 0o755)
+      await assert.rejects(
+        store.revalidateWorkspace(managed.workspace_id),
+        (error: unknown) => error instanceof ProjectStateError
+          && error.code === 'workspace_boundary_changed',
+      )
+      await chmod(managed.canonical_path, 0o700)
+    }
     await rename(managed.canonical_path, `${managed.canonical_path}-original`)
     await mkdir(managed.canonical_path, {mode: 0o700})
     await assert.rejects(
@@ -1875,7 +1923,9 @@ test('workspace inode pins are process-local and a restart establishes a fresh p
   }
 })
 
-test('ensureImported preserves the stronger managed workspace binding for an existing record', async () => {
+test('ensureImported preserves the stronger managed workspace binding for an existing record', {
+  skip: process.platform === 'win32' && 'this test mutates POSIX mode bits; Windows ACLs are native-tested',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-managed-import-'))
   const stateRoot = join(root, 'state')
   const managedRoot = join(root, 'managed')
@@ -1964,7 +2014,9 @@ test('managed creation uses only a pinned safe slug and rollback never deletes u
       basename(workspace.canonical_path),
       `workspace-${[...workspace.workspace_id].slice(-12).join('')}`,
     )
-    assert.equal((await lstat(workspace.canonical_path)).mode & 0o777, 0o700)
+    if (process.platform !== 'win32') {
+      assert.equal((await lstat(workspace.canonical_path)).mode & 0o777, 0o700)
+    }
     await writeFile(join(workspace.canonical_path, 'keep.txt'), 'user data')
     assert.equal(await store.rollbackManagedCreate(workspace.workspace_id), false)
     assert.equal((await store.resolveWorkspace('😀')).workspace_id, workspace.workspace_id)
@@ -2113,7 +2165,7 @@ test('a pre-commit rollback failure restores a safe managed child and advances i
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
     )
     const after = lstatSync(managed.canonical_path, {bigint: true})
-    assert.equal((after.mode & 0o7777n), 0o700n)
+    if (process.platform !== 'win32') assert.equal((after.mode & 0o7777n), 0o700n)
     const currentAuthority = rootFiles.managedAuthorityForTest(managedName)
     if (currentAuthority === null) assert.fail('restored managed child authority was not captured')
     assert.equal(typeof currentAuthority.generation, 'symbol')
@@ -2171,7 +2223,9 @@ test('rollback restore rejects an immediate mkdir replacement before chmod or pi
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_write_failed',
     )
     assert.notEqual(rootFiles.replacementPath, null)
-    assert.equal(lstatSync(rootFiles.replacementPath!).mode & 0o7777, 0o755)
+    if (process.platform !== 'win32') {
+      assert.equal(lstatSync(rootFiles.replacementPath!).mode & 0o7777, 0o755)
+    }
     await assert.rejects(
       store.revalidateWorkspace(managed.workspace_id),
       (error: unknown) => error instanceof ProjectStateError
@@ -2322,7 +2376,10 @@ test('a committed registered workspace keeps its exact pin when release fails', 
   }
 })
 
-test('managed creation repairs a restrictive umask and leaves no rollback residue', {concurrency: false}, async () => {
+test('managed creation repairs a restrictive umask and leaves no rollback residue', {
+  concurrency: false,
+  skip: process.platform === 'win32' && 'Windows directory privacy is ACL-based, not umask-based',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-umask-'))
   const stateRoot = join(root, 'state')
   const managedRoot = join(root, 'managed')
@@ -2350,7 +2407,9 @@ test('managed creation repairs a restrictive umask and leaves no rollback residu
   }
 })
 
-test('managed creation repairs a permissive native mkdir before it can become public', async () => {
+test('managed creation repairs a permissive native mkdir before it can become public', {
+  skip: process.platform === 'win32' && 'Windows directory privacy is ACL-based, not mode-based',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-mkdir-mode-'))
   const stateRoot = join(root, 'state')
   const managedRoot = join(root, 'managed')
@@ -2402,7 +2461,9 @@ test('managed creation rolls back an empty child when the subsequent state save 
   }
 })
 
-test('an uncommitted poisoned state root cannot strand an empty managed child', async () => {
+test('an uncommitted poisoned state root cannot strand an empty managed child', {
+  skip: process.platform === 'win32' && 'requires POSIX open-directory rename and symlink semantics',
+}, async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-poison-rollback-'))
   const stateRoot = join(root, 'state')
   const retainedState = join(root, 'state-retained')
@@ -2454,6 +2515,40 @@ test('project public text enforces Python code points, category C, and path-name
   }
 })
 
+test('Windows first save completes without POSIX directory fsync', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-windows-save-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  const workspacePath = join(root, 'workspace')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(workspacePath, {mode: 0o700})
+  const durability: string[] = []
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    platform: 'win32',
+    idFactory: () => 'workspace-0001',
+    onDurabilityStep: step => { durability.push(step) },
+  })
+  try {
+    const workspace = await store.ensureImported(
+      'Windows workspace',
+      hostWorkspaceForTest(await realpath(workspacePath)),
+    )
+    assert.equal(workspace.workspace_id, 'workspace-0001')
+    assert.deepEqual(durability, [
+      'temp_open', 'file_fsync', 'atomic_replace', 'windows_metadata_commit',
+    ])
+    assert.equal(durability.includes('dir_fsync'), false)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('project state reloads under a descriptor lock and persists ready sessions atomically', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-store-'))
   const stateRoot = join(root, 'state')
@@ -2473,7 +2568,7 @@ test('project state reloads under a descriptor lock and persists ready sessions 
     rootFiles: rootFilesForTest(stateRoot, managedRoot),
     now: () => 100,
     idFactory: () => identifiers.next().value ?? 'unused-id',
-    onDurabilityStep: (step: 'temp_open' | 'file_fsync' | 'atomic_replace' | 'dir_fsync') => {
+    onDurabilityStep: (step: 'temp_open' | 'file_fsync' | 'atomic_replace' | 'dir_fsync' | 'windows_metadata_commit') => {
       durability.push(step)
     },
   }
@@ -2490,7 +2585,8 @@ test('project state reloads under a descriptor lock and persists ready sessions 
     const home = await first.persistentHome(workspace.workspace_id)
     assert.ok(home)
     assert.deepEqual(durability.slice(-4), [
-      'temp_open', 'file_fsync', 'atomic_replace', 'dir_fsync',
+      'temp_open', 'file_fsync', 'atomic_replace',
+      process.platform === 'win32' ? 'windows_metadata_commit' : 'dir_fsync',
     ])
     assert.deepEqual(await first.publicView(true), {
       workspace_display_name: 'Alpha',
@@ -2507,7 +2603,7 @@ test('project state reloads under a descriptor lock and persists ready sessions 
     ) > 0)
     assert.equal(snapshot.active_workspace_id, workspace.workspace_id)
     assert.equal(snapshot.sessions[0]?.codex_thread_id, 'thread-exact-1')
-    assert.equal(JSON.stringify(snapshot).includes(workspacePath), true)
+    assert.equal(snapshot.workspaces[0]?.canonical_path, await realpath(workspacePath))
     const publicJson = JSON.stringify(await second.publicView(false))
     assert.equal(publicJson.includes(workspacePath), false)
     assert.equal(publicJson.includes('thread-exact-1'), false)
@@ -2576,7 +2672,9 @@ test('persistent home rejects an immediate mkdir replacement before chmod or ado
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
     )
     assert.notEqual(rootFiles.replacedPath, null)
-    assert.equal(lstatSync(rootFiles.replacedPath!).mode & 0o7777, 0o755)
+    if (process.platform !== 'win32') {
+      assert.equal(lstatSync(rootFiles.replacedPath!).mode & 0o7777, 0o755)
+    }
   } finally {
     await store.close()
     await rm(root, {recursive: true, force: true})

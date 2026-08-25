@@ -29,8 +29,12 @@ test('installed scratch cleanup retries transient Windows file locks', () => {
 })
 
 function spawnSmokeFixture(mode) {
+  const environment = {...process.env}
+  delete environment.NODE_TEST_CONTEXT
+  delete environment.NODE_TEST_WORKER_ID
   return spawn(process.execPath, [processTreeFixture, mode], {
     detached: process.platform !== 'win32',
+    env: environment,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
   })

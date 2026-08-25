@@ -425,8 +425,9 @@ test('real ASAR listings admit structural directories but reject an extra packag
     await writeArtifactRoot(source)
     await createPackage(source, archive)
     const listed = listPackage(archive)
-    assert.ok(listed.includes('/node_modules'))
-    assert.ok(listed.includes('/node_modules/@nova-audio-agent'))
+    const portableListed = listed.map(file => file.replaceAll('\\', '/'))
+    assert.ok(portableListed.includes('/node_modules'))
+    assert.ok(portableListed.includes('/node_modules/@nova-audio-agent'))
     extractAll(archive, extracted)
     await writeFile(listFile, JSON.stringify(listed), 'utf8')
 
@@ -455,7 +456,7 @@ test('real ASAR listings admit structural directories but reject an extra packag
     const expandedRoot = resolve(root, 'expanded')
     await createPackage(source, expandedArchive)
     const expandedList = listPackage(expandedArchive)
-    assert.ok(expandedList.includes('/node_modules/lodash'))
+    assert.ok(expandedList.map(file => file.replaceAll('\\', '/')).includes('/node_modules/lodash'))
     extractAll(expandedArchive, expandedRoot)
     await writeFile(listFile, JSON.stringify(expandedList), 'utf8')
     await assert.rejects(
@@ -708,6 +709,7 @@ test('container preflight admits only internal relative links and verifies their
     )
   }
 
+  if (process.platform === 'win32') return
   const root = await mkdtemp(resolve(tmpdir(), 'nova-container-safe-link-'))
   const raw = resolve(root, 'raw')
   try {
@@ -871,14 +873,16 @@ test('locked installer tool snapshots one verified package-owned executable and 
       }))
     }
 
-    await writeFixture()
-    const linkTarget = resolve(dirname(toolPath), 'real-7za')
-    await writeFile(linkTarget, toolBytes, { mode: 0o700 })
-    await rm(toolPath)
-    await symlink('real-7za', toolPath)
-    await rejectsTool(packageInspection.snapshotLockedSevenZipTool({
-      lockPath, privateRoot: snapshotRoot,
-    }))
+    if (process.platform !== 'win32') {
+      await writeFixture()
+      const linkTarget = resolve(dirname(toolPath), 'real-7za')
+      await writeFile(linkTarget, toolBytes, { mode: 0o700 })
+      await rm(toolPath)
+      await symlink('real-7za', toolPath)
+      await rejectsTool(packageInspection.snapshotLockedSevenZipTool({
+        lockPath, privateRoot: snapshotRoot,
+      }))
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -1225,22 +1229,24 @@ test('dependency report binds exact files while final native bytes belong only t
       'the same name/version at an unselected install key must fail',
     )
 
-    await mkdir(resolve(repository, 'node_modules/alias-parent/node_modules'), { recursive: true })
-    await symlink(
-      resolve(repository, 'node_modules/alpha'),
-      resolve(repository, 'node_modules/alias-parent/node_modules/alpha'),
-    )
-    await assert.rejects(
-      packageInspection.buildDependencyReport(repository, {
-        ...closure,
-        packages: [...closure.packages, {
-          ...closure.packages[0],
-          installKey: 'node_modules/alias-parent/node_modules/alpha',
-        }],
-      }),
-      PackageInspectionError,
-      'two install keys resolving to one real package must fail',
-    )
+    if (process.platform !== 'win32') {
+      await mkdir(resolve(repository, 'node_modules/alias-parent/node_modules'), { recursive: true })
+      await symlink(
+        resolve(repository, 'node_modules/alpha'),
+        resolve(repository, 'node_modules/alias-parent/node_modules/alpha'),
+      )
+      await assert.rejects(
+        packageInspection.buildDependencyReport(repository, {
+          ...closure,
+          packages: [...closure.packages, {
+            ...closure.packages[0],
+            installKey: 'node_modules/alias-parent/node_modules/alpha',
+          }],
+        }),
+        PackageInspectionError,
+        'two install keys resolving to one real package must fail',
+      )
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }

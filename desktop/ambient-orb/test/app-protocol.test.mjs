@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { resolve } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
 
@@ -44,18 +44,20 @@ test('renderer graph follows future module re-exports and stylesheet imports wit
     ['/index.html', '<link href="./index.css"><script src="./index.mjs"></script>'],
     ['/capture-worklet.mjs', "export { capture } from './audio.mjs'"],
     ['/memory-board.html', '<link href="./memory-board.css">'],
-    ['/settings.html', ''],
+    ['/settings.html', '<link href="./settings.css"><script src="./settings.mjs"></script>'],
     ['/index.css', '@import "./theme.css";'],
     ['/index.mjs', "import './camera.mjs'; export { visual } from './orb-visual.mjs'"],
     ['/audio.mjs', 'export const capture = true'],
     ['/memory-board.css', ''],
+    ['/settings.css', ''],
+    ['/settings.mjs', ''],
     ['/theme.css', ''],
     ['/camera.mjs', ''],
     ['/orb-visual.mjs', 'export const visual = true'],
   ])
 
   const graph = await buildRendererAssetGraph('/unused-renderer-root', file => {
-    const route = `/${file.split('/').at(-1)}`
+    const route = `/${basename(file)}`
     assert.ok(sources.has(route), `unexpected graph read: ${route}`)
     return sources.get(route)
   })

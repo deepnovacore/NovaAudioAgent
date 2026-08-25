@@ -108,12 +108,32 @@ test('client resolves the canonical Codex executable without invoking a shell', 
     },
   }), '/canonical/codex')
   assert.deepEqual(attempted, ['/first/codex', '/second/codex'])
-  assert.throws(() => resolveClientCodexBinary({
+  assert.equal(resolveClientCodexBinary({
     configured: 'relative-custom-codex',
     platform: 'linux',
     pathValue: '/bin',
     canonicalize: () => null,
-  }), /Codex executable unavailable/u)
+  }), null)
+})
+
+test('client resolves an npm Windows shim directory to its native Codex binary', () => {
+  const native = 'C:\\Users\\nova\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\codex\\codex.exe'
+  const attempted = []
+
+  assert.equal(resolveClientCodexBinary({
+    configured: 'codex',
+    platform: 'win32',
+    arch: 'x64',
+    home: 'C:\\Users\\nova',
+    environment: { APPDATA: 'C:\\Users\\nova\\AppData\\Roaming' },
+    pathValue: 'C:\\Users\\nova\\AppData\\Roaming\\npm',
+    canonicalize: candidate => {
+      attempted.push(candidate)
+      return candidate === native ? native : null
+    },
+  }), native)
+  assert.ok(attempted.includes(native))
+  assert.equal(attempted.some(candidate => candidate.endsWith('codex.cmd')), false)
 })
 
 test('client launch plan installs when needed, builds once, and forces the Node desktop backend', () => {
@@ -196,16 +216,27 @@ test('client launch plan is Windows-safe and skips an unnecessary install', () =
   ])
 })
 
-test('client launch plan fails before side effects when setup is incomplete', () => {
-  assert.throws(() => planClientLaunch({
+test('client launch plan starts the settings-capable desktop without env or Codex', () => {
+  const plan = planClientLaunch({
     argv: [],
-    env: {},
-    platform: 'linux',
-    rootDir: '/repo',
+    env: { KEEP_ME: 'yes' },
+    platform: 'win32',
+    rootDir: 'C:\\repo',
+    nodeExecutable: 'C:\\Node\\node.exe',
+    npmCli: 'C:\\Node\\node_modules\\npm\\bin\\npm-cli.js',
+    codexBinary: null,
     envFileExists: false,
-    dependenciesInstalled: false,
-  }), /missing \.env; run: cp \.env\.example \.env/u)
+    dependenciesInstalled: true,
+  })
 
+  assert.equal(plan.length, 2)
+  assert.equal(plan[1].env.KEEP_ME, 'yes')
+  assert.equal(plan[1].env.NOVA_AUDIO_AGENT_BACKEND, 'node')
+  assert.equal('NOVA_AUDIO_AGENT_CODEX_BIN' in plan[1].env, false)
+  assert.equal('NOVA_AUDIO_AGENT_ENV_FILE' in plan[1].env, false)
+})
+
+test('client launch plan fails before side effects for an invalid invocation', () => {
   assert.throws(() => planClientLaunch({
     argv: ['unexpected'],
     env: {},
@@ -225,16 +256,4 @@ test('client launch plan fails before side effects when setup is incomplete', ()
     envFileExists: true,
     dependenciesInstalled: true,
   }), /npm CLI unavailable/u)
-
-  assert.throws(() => planClientLaunch({
-    argv: [],
-    env: {},
-    platform: 'linux',
-    rootDir: '/repo',
-    nodeExecutable: '/opt/node',
-    npmCli: '/opt/npm/bin/npm-cli.js',
-    codexBinary: 'codex',
-    envFileExists: true,
-    dependenciesInstalled: true,
-  }), /Codex executable unavailable/u)
 })

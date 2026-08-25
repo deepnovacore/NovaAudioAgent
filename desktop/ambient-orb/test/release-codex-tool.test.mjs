@@ -73,13 +73,15 @@ test('provisioning rejects wrapper paths, symlinked binaries, and unsupported tu
     await mkdir(dirname(wrapper), {recursive: true})
     await writeFile(wrapper, '#!/usr/bin/env node\n')
     assert.notEqual(resolveProvisionedCodexBinary({installRoot: root, platform: 'darwin', arch: 'arm64'}), wrapper)
-    await rm(binary)
-    await writeFile(resolve(root, 'elsewhere'), 'native-codex')
-    await import('node:fs/promises').then(({symlink}) => symlink(resolve(root, 'elsewhere'), binary))
-    assert.throws(
-      () => resolveProvisionedCodexBinary({installRoot: root, platform: 'darwin', arch: 'arm64'}),
-      /release_codex_tool_rejected/u,
-    )
+    if (process.platform !== 'win32') {
+      await rm(binary)
+      await writeFile(resolve(root, 'elsewhere'), 'native-codex')
+      await import('node:fs/promises').then(({symlink}) => symlink(resolve(root, 'elsewhere'), binary))
+      assert.throws(
+        () => resolveProvisionedCodexBinary({installRoot: root, platform: 'darwin', arch: 'arm64'}),
+        /release_codex_tool_rejected/u,
+      )
+    }
     assert.throws(
       () => resolveProvisionedCodexBinary({installRoot: root, platform: 'linux', arch: 'arm64'}),
       /release_codex_tool_rejected/u,

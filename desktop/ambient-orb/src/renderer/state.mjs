@@ -7,7 +7,16 @@ const LABELS = Object.freeze({
   speaking: 'Nova Audio Agent 正在说话',
   interrupted: '播放已中断，正在聆听',
   'permission-denied': '麦克风权限被拒绝',
+  'microphone-restricted': '麦克风被系统策略限制',
+  'microphone-no-device': '未检测到麦克风输入设备',
+  'microphone-busy': '麦克风正被其他应用占用',
+  'microphone-unavailable': '当前环境的麦克风采集不可用',
+  'audio-pipeline-error': '麦克风音频管线启动失败',
   disconnected: 'Nova Audio Agent 已断开',
+  reconnecting: 'Nova Audio Agent 正在重新连接',
+  'configuration-required': 'Nova Audio Agent 需要补全配置',
+  'authentication-failed': 'Nova Audio Agent 鉴权失败',
+  'backend-unavailable': 'Nova Audio Agent 后台不可用',
   error: 'Nova Audio Agent 发生错误',
 })
 
@@ -22,14 +31,25 @@ const WINDOWS_PERMISSION_DENIED_LABEL =
   '麦克风权限被拒绝(请在 系统设置 → 隐私 → 麦克风 中允许桌面应用)'
 
 export function deriveOrbState(input) {
+  const microphone = input.microphone
+    ?? (input.permission === 'denied' ? 'permission_denied' : input.permission)
   let name
   if (input.error) name = 'error'
   // A renderer that has not finished bootstrapping has not connected yet
   // either, so plain "disconnected wins" made 'booting' unreachable at the one
   // moment it describes. Booting only shields the socket axis: an error still
   // outranks it, and a disconnect that lands after boot still collapses.
+  else if (input.backendState === 'configuration_required') name = 'configuration-required'
+  else if (input.backendState === 'authentication_failed') name = 'authentication-failed'
+  else if (input.backendState === 'unavailable') name = 'backend-unavailable'
+  else if (input.backendState === 'reconnecting') name = 'reconnecting'
   else if (!input.connected && !input.booting) name = 'disconnected'
-  else if (input.permission === 'denied') name = 'permission-denied'
+  else if (microphone === 'permission_denied') name = 'permission-denied'
+  else if (microphone === 'restricted') name = 'microphone-restricted'
+  else if (microphone === 'no_input_device') name = 'microphone-no-device'
+  else if (microphone === 'device_busy') name = 'microphone-busy'
+  else if (microphone === 'capture_unavailable') name = 'microphone-unavailable'
+  else if (microphone === 'audio_pipeline_error') name = 'audio-pipeline-error'
   else if (input.booting) name = 'booting'
   else if (!input.activated) name = 'inactive'
   else if (input.capture === 'listening') name = 'listening'

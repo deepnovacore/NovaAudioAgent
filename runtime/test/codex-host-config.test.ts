@@ -38,6 +38,9 @@ function hostFixture(t: TestContext): {
   writeFileSync(binary, '#!/host-only-fixture\n', {mode: 0o700})
   chmodSync(binary, 0o700)
   mkdirSync(workspace, {mode: 0o700})
+  if (process.platform === 'win32') {
+    mkdirSync(join(root, '.nova-audio-agent', 'workspaces'), {recursive: true})
+  }
   t.after(() => { rmSync(root, {recursive: true, force: true}) })
   return {
     root,
@@ -65,6 +68,7 @@ test('host resolver is lazy without Codex and brands one allowlisted launch tupl
   assert.ok(resolved !== null)
   assert.equal(hostBinaryPath(resolved.binary), fixture.binary)
   assert.equal(hostWorkspacePath(resolved.workspace), fixture.workspace)
+  assert.deepEqual(resolved.binaryPrefixArgs, [])
   assert.deepEqual({
     prewarm: resolved.prewarm,
     interval: resolved.workingInterval,
@@ -79,8 +83,10 @@ test('host resolver is lazy without Codex and brands one allowlisted launch tupl
   const managedRoot = join(stateRoot, 'workspaces')
   assert.equal(existsSync(stateRoot), true)
   assert.equal(existsSync(managedRoot), true)
-  assert.equal(lstatSync(stateRoot).mode & 0o777, 0o700)
-  assert.equal(lstatSync(managedRoot).mode & 0o777, 0o700)
+  if (process.platform !== 'win32') {
+    assert.equal(lstatSync(stateRoot).mode & 0o777, 0o700)
+    assert.equal(lstatSync(managedRoot).mode & 0o777, 0o700)
+  }
   assert.equal(Object.hasOwn(resolved, 'apiKey'), false)
   assert.equal(JSON.stringify(resolved).includes('secret-must-remain-opaque'), false)
 })
@@ -97,12 +103,17 @@ test('host resolver expands a leading tilde in the selected Codex workspace', t 
 })
 
 test('host resolver never chmods a replacement for a newly created private root', t => {
+  if (process.platform === 'win32') {
+    t.skip('Windows roots are created by the native ACL bootstrap')
+    return
+  }
   const fixture = hostFixture(t)
   const stateRoot = join(fixture.root, 'state')
   const retainedRoot = join(fixture.root, 'state-created-away')
   const managedRoot = join(fixture.root, 'managed')
   const originalFstat = fstatSync
   let replaced = false
+  let replacementMode: number | null = null
   t.mock.method(fs, 'fstatSync', ((...args: unknown[]) => {
     const info = Reflect.apply(originalFstat, fs, args) as ReturnType<typeof fstatSync>
     const identity = info as unknown as {readonly dev: bigint; readonly ino: bigint}
@@ -116,6 +127,7 @@ test('host resolver never chmods a replacement for a newly created private root'
       renameSync(stateRoot, retainedRoot)
       mkdirSync(stateRoot, {mode: 0o755})
       chmodSync(stateRoot, 0o755)
+      replacementMode = lstatSync(stateRoot).mode & 0o7777
       replaced = true
     }
     return info
@@ -133,7 +145,7 @@ test('host resolver never chmods a replacement for a newly created private root'
         && error.code === 'codex_project_state_invalid',
     )
     assert.equal(replaced, true)
-    assert.equal(lstatSync(stateRoot).mode & 0o7777, 0o755)
+    assert.equal(lstatSync(stateRoot).mode & 0o7777, replacementMode)
   } finally {
     t.mock.restoreAll()
     syncBuiltinESMExports()
@@ -142,6 +154,10 @@ test('host resolver never chmods a replacement for a newly created private root'
 
 for (const targetKind of ['state', 'managed'] as const) {
   test(`host resolver never chmods a ${targetKind} replacement installed before first lstat`, t => {
+    if (process.platform === 'win32') {
+      t.skip('Windows roots are created by the native ACL bootstrap')
+      return
+    }
     const fixture = hostFixture(t)
     const stateRoot = join(fixture.root, 'state-before-stat')
     const managedRoot = join(fixture.root, 'managed-before-stat')
@@ -150,12 +166,14 @@ for (const targetKind of ['state', 'managed'] as const) {
     const originalLstat = lstatSync
     let observedMissing = false
     let replaced = false
+    let replacementMode: number | null = null
     t.mock.method(fs, 'lstatSync', ((...args: unknown[]) => {
       const candidate = args[0]
       if (candidate === targetRoot && observedMissing && !replaced) {
         renameSync(targetRoot, retainedRoot)
         mkdirSync(targetRoot, {mode: 0o755})
         chmodSync(targetRoot, 0o755)
+        replacementMode = originalLstat(targetRoot).mode & 0o7777
         replaced = true
       }
       try {
@@ -183,7 +201,7 @@ for (const targetKind of ['state', 'managed'] as const) {
         failureCode = error instanceof CodexHostConfigurationError ? error.code : null
       }
       assert.equal(replaced, true)
-      assert.equal(lstatSync(targetRoot).mode & 0o7777, 0o755)
+      assert.equal(lstatSync(targetRoot).mode & 0o7777, replacementMode)
       assert.equal(
         failureCode,
         targetKind === 'state' ? 'codex_project_state_invalid' : 'codex_managed_root_invalid',
@@ -194,6 +212,37 @@ for (const targetKind of ['state', 'managed'] as const) {
     }
   })
 }
+
+test('Windows resolver refuses to bootstrap a private root without native ACL authority', {
+  skip: process.platform !== 'win32',
+}, t => {
+  const fixture = hostFixture(t)
+  const stateRoot = join(fixture.root, 'missing-state')
+  assert.throws(
+    () => resolveCodexHostConfig(loadSettings({
+      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+      NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
+      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: stateRoot,
+    }), fixture.catalog),
+    error => error instanceof CodexHostConfigurationError
+      && error.code === 'codex_project_state_invalid',
+  )
+  assert.equal(existsSync(stateRoot), false)
+})
+
+test('host resolver canonicalizes one direct Node launcher script', t => {
+  const fixture = hostFixture(t)
+  const launcher = join(fixture.root, 'codex.js')
+  writeFileSync(launcher, '#!/usr/bin/env node\n')
+  const resolved = resolveCodexHostConfig(loadSettings({
+    NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: fixture.workspace,
+    NOVA_AUDIO_AGENT_CODEX_BIN: fixture.binary,
+    NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS: JSON.stringify([launcher]),
+  }), fixture.catalog)
+  assert.ok(resolved !== null)
+  assert.deepEqual(resolved.binaryPrefixArgs, [realpathSync(launcher)])
+})
 
 test('selected Codex fails as host-unavailable when Task 8 has not supplied a catalog', t => {
   const fixture = hostFixture(t)

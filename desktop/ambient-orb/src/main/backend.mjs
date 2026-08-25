@@ -137,6 +137,7 @@ export function backendLaunchSpec({
   parentEnv,
   settings,
   decryptedSecrets,
+  resolvedConfig,
 }) {
   if (backend !== 'python' && backend !== 'node') throw new Error('backend kind is invalid')
   if (backend === 'python' && (typeof python !== 'string' || !python)) {
@@ -149,7 +150,10 @@ export function backendLaunchSpec({
     backend === 'node'
     && (typeof nodeResourcesPath !== 'string' || !isAbsolute(nodeResourcesPath))
   ) throw new Error('absolute Node resource root is required')
-  if (typeof workspace !== 'string' || !workspace) throw new Error('workspace is required')
+  const effectiveWorkspace = resolvedConfig?.workspace ?? workspace
+  if (typeof effectiveWorkspace !== 'string' || !effectiveWorkspace) {
+    throw new Error('workspace is required')
+  }
   if (!TOKEN_PATTERN.test(token)) throw new Error('128-bit token is required')
   const endpointMatch = typeof readyEndpoint === 'string'
     ? READY_ENDPOINT_PATTERN.exec(readyEndpoint)
@@ -170,7 +174,7 @@ export function backendLaunchSpec({
     NOVA_AUDIO_AGENT_DESKTOP_TOKEN: token,
     NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT: readyEndpoint,
     NOVA_AUDIO_AGENT_BACKEND: backend,
-    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: workspace,
+    NOVA_AUDIO_AGENT_CODEX_WORKSPACE: effectiveWorkspace,
     NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
     NOVA_AUDIO_AGENT_PROACTIVITY_PRESET: proactivity,
     NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),
@@ -178,6 +182,31 @@ export function backendLaunchSpec({
     ...(backend === 'node'
       ? {NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH: nodeResourcesPath}
       : {}),
+  }
+  if (resolvedConfig && typeof resolvedConfig === 'object') {
+    delete env.NOVA_AUDIO_AGENT_CODEX_BIN
+    delete env.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS
+    delete env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT
+    delete env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT
+    delete env.NOVA_AUDIO_AGENT_MODEL_BASE_URL
+    if (typeof resolvedConfig.codexBinaryPath === 'string' && resolvedConfig.codexBinaryPath) {
+      env.NOVA_AUDIO_AGENT_CODEX_BIN = resolvedConfig.codexBinaryPath
+    }
+    if (Array.isArray(resolvedConfig.codexBinaryPrefixArgs)
+      && resolvedConfig.codexBinaryPrefixArgs.length > 0) {
+      env.NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS = JSON.stringify(
+        resolvedConfig.codexBinaryPrefixArgs,
+      )
+    }
+    if (typeof resolvedConfig.managedRoot === 'string' && resolvedConfig.managedRoot) {
+      env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT = resolvedConfig.managedRoot
+    }
+    if (typeof resolvedConfig.paths?.stateRoot === 'string') {
+      env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT = resolvedConfig.paths.stateRoot
+    }
+    if (typeof resolvedConfig.modelBaseUrl === 'string' && resolvedConfig.modelBaseUrl) {
+      env.NOVA_AUDIO_AGENT_MODEL_BASE_URL = resolvedConfig.modelBaseUrl
+    }
   }
   if (pipelineMode === 'cascaded') {
     const llmProvider = settings?.cascadedLlmProvider

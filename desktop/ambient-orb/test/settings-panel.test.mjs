@@ -36,6 +36,9 @@ function publicView(overrides = {}) {
     proactivity: 'balanced',
     codexHeartbeatSeconds: 30,
     pipelineMode: 'integrated',
+    startListeningOnLaunch: false,
+    backendStatus: 'connected',
+    backendRetryInMs: null,
     integratedProvider: 'qwen',
     integratedModel: 'qwen-realtime',
     integratedVoice: 'longanqian',
@@ -555,10 +558,48 @@ test('key usage labels are derived from public pipeline selection only', () => {
   assert.doesNotMatch(script, /\.secrets\b|ciphertext|decrypt/)
 })
 
-test('the panel states what applies now and what waits for the next launch', () => {
-  assert.match(html, /语音、主动性与 API 密钥设置将在下次启动生效/)
+test('the panel states what applies immediately and what triggers a controlled reconnect', () => {
+  assert.match(html, /运行配置保存后，后台会自动重启并重新连接/)
   assert.match(html, /配色更改立即生效/)
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
+})
+
+test('the panel exposes packaged Codex, Projects, and model endpoint configuration', () => {
+  for (const id of [
+    'codex-status',
+    'codexBinaryPath',
+    'codex-rescan',
+    'codexWorkspace',
+    'codexManagedRoot',
+    'modelBaseUrl',
+    'effective-workspace',
+    'effective-managed-root',
+  ]) assert.match(html, new RegExp(`id="${id}"`))
+  assert.match(html, /name="codexBinaryMode" value="auto"/)
+  assert.match(html, /name="codexBinaryMode" value="manual"/)
+  assert.match(html, /id="projects-repair"/)
+  assert.match(script, /api\.repairProjects\(root\)/)
+  assert.match(script, /api\.rescanCodex\(\)/)
+  assert.doesNotMatch(html, /codexProjectsEnabled/)
+  assert.doesNotMatch(script, /codexProjectsEnabled/)
+  assert.match(script, /saveText\('codexWorkspace', codexWorkspace\)/)
+  assert.match(script, /saveText\('codexManagedRoot', codexManagedRoot\)/)
+  assert.match(script, /saveText\('modelBaseUrl', modelBaseUrl\)/)
+})
+
+test('the panel exposes backend state and opt-in microphone activation', () => {
+  assert.match(html, /id="backend-status"/)
+  assert.match(html, /id="backend-retry"/)
+  assert.match(html, /id="startListeningOnLaunch"/)
+  assert.match(html, /id="microphone-status"/)
+  assert.match(html, /id="microphone-retry"/)
+  assert.match(html, /启动时自动开始监听/)
+  assert.match(script, /backendStatus\.textContent/)
+  assert.match(script, /api\.retryBackend\(\)/)
+  assert.match(script, /api\.retryMicrophone\(\)/)
+  assert.match(script, /microphoneStatus\.textContent/)
+  assert.match(script, /startListeningOnLaunch\.checked = view\.startListeningOnLaunch === true/)
+  assert.match(script, /startListeningOnLaunch:\s*startListeningOnLaunch\.checked/)
 })
 
 test('the panel talks to main only through the settings bridge', () => {

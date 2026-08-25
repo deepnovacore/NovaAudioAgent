@@ -14,9 +14,11 @@ if (mode === undefined) {
 } else if (mode === 'leader-first') {
   const marker = process.argv[3]
   const grandchild = spawn(process.execPath, [__filename, 'grandchild', marker], {
+    detached: true,
     stdio: 'ignore',
     windowsHide: true,
   })
+  grandchild.unref()
   process.stdout.write(`grandchild:${grandchild.pid}\n`)
 } else if (mode === 'hold') {
   setInterval(() => {}, 1_000)

@@ -2,7 +2,6 @@ import {randomUUID} from 'node:crypto'
 import {constants, lstatSync, realpathSync, type Stats} from 'node:fs'
 import {
   open,
-  realpath,
   type FileHandle,
 } from 'node:fs/promises'
 import {basename, dirname, isAbsolute, join, resolve} from 'node:path'
@@ -170,7 +169,12 @@ interface MutableProjectState {
   sessions: Map<string, ProjectSessionRecord>
 }
 
-type DurabilityStep = 'temp_open' | 'file_fsync' | 'atomic_replace' | 'dir_fsync'
+type DurabilityStep =
+  | 'temp_open'
+  | 'file_fsync'
+  | 'atomic_replace'
+  | 'dir_fsync'
+  | 'windows_metadata_commit'
 
 export interface CodexProjectStoreOptions {
   readonly stateRoot: HostProjectRoot
@@ -182,6 +186,8 @@ export interface CodexProjectStoreOptions {
   readonly live?: boolean
   readonly lockClock?: Clock
   readonly onDurabilityStep?: (step: DurabilityStep) => void
+  /** Host-only seam: Windows security is enforced by the native handle authority. */
+  readonly platform?: NodeJS.Platform
 }
 
 export interface ProjectTransactionWaitOptions {
@@ -210,21 +216,27 @@ interface StateRootIdentity extends FileIdentity {
 type TransactionResult<T> = readonly [value: T, changed: boolean]
 
 export function hostProjectRootFromConfig(configured: string): HostProjectRoot {
-  return brandProjectRoot(requireProjectRoot(configured, 'state_permissions'))
+  return brandProjectRoot(requireProjectRoot(configured, 'state_permissions', process.platform))
 }
 
 /** Test-only constructor; it enforces the same canonical owner-only directory contract. */
-export function hostProjectRootForTest(configured: string): HostProjectRoot {
-  return brandProjectRoot(requireProjectRoot(configured, 'state_permissions'))
+export function hostProjectRootForTest(
+  configured: string,
+  platform: NodeJS.Platform = process.platform,
+): HostProjectRoot {
+  return brandProjectRoot(requireProjectRoot(configured, 'state_permissions', platform))
 }
 
 export function hostManagedProjectRootFromConfig(configured: string): HostManagedProjectRoot {
-  return brandManagedProjectRoot(requireManagedProjectRoot(configured))
+  return brandManagedProjectRoot(requireManagedProjectRoot(configured, process.platform))
 }
 
 /** Test-only constructor; it enforces the same canonical owner-controlled directory contract. */
-export function hostManagedProjectRootForTest(configured: string): HostManagedProjectRoot {
-  return brandManagedProjectRoot(requireManagedProjectRoot(configured))
+export function hostManagedProjectRootForTest(
+  configured: string,
+  platform: NodeJS.Platform = process.platform,
+): HostManagedProjectRoot {
+  return brandManagedProjectRoot(requireManagedProjectRoot(configured, platform))
 }
 
 export class CodexProjectStore {
@@ -237,6 +249,7 @@ export class CodexProjectStore {
   readonly #recoverStarting: boolean
   readonly #lockClock: Clock
   readonly #onDurabilityStep: ((step: DurabilityStep) => void) | undefined
+  readonly #platform: NodeJS.Platform
   readonly #activeTransactions = new Set<Promise<void>>()
   readonly #workspaceIdentities = new Map<string, FileIdentity>()
   readonly #closeAbort = new AbortController()
@@ -261,6 +274,7 @@ export class CodexProjectStore {
     this.#recoverStarting = options.live === true
     this.#lockClock = options.lockClock ?? new RealClock()
     this.#onDurabilityStep = options.onDurabilityStep
+    this.#platform = options.platform ?? process.platform
   }
 
   static async open(options: CodexProjectStoreOptions): Promise<CodexProjectStore> {
@@ -433,7 +447,7 @@ export class CodexProjectStore {
         const candidateName = basename(candidate)
         let candidateFile: FileHandle | null = null
         try {
-          const created = this.#mkdirAt(
+          const created = this.#mkdirPrivateAt(
             managedHandle,
             candidateName,
             'workspace_create_failed',
@@ -455,12 +469,17 @@ export class CodexProjectStore {
           const initialInfo = await candidateFile.stat({bigint: true})
           if (
             !initialInfo.isDirectory()
-            || !ownedByCurrentUserBigInt(initialInfo.uid)
             || !sameFileIdentity(initialIdentity, fileIdentity(initialInfo))
           ) throw new ProjectStateError('workspace_boundary_changed')
-          await candidateFile.chmod(0o700)
+          this.#protectAt(
+            managedHandle,
+            candidateName,
+            candidateFile,
+            'workspace_boundary_changed',
+          )
+          if (this.#platform !== 'win32') await candidateFile.chmod(0o700)
           const verified = await candidateFile.stat({bigint: true})
-          const canonical = await realpath(candidate)
+          const canonical = realpathSync(candidate)
           this.#requireMatchesAt(
             managedHandle,
             candidateName,
@@ -470,8 +489,7 @@ export class CodexProjectStore {
           await this.#validateManagedRoot()
           if (
             !verified.isDirectory()
-            || !ownedByCurrentUserBigInt(verified.uid)
-            || (verified.mode & 0o7777n) !== 0o700n
+            || !privateDirectoryMetadata(verified, this.#platform)
             || canonical !== candidate
             || !isDirectChild(managed, canonical)
             || !sameFileIdentity(initialIdentity, fileIdentity(verified))
@@ -1031,12 +1049,11 @@ export class CodexProjectStore {
       file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
       this.#requireMatchesAt(root, basename(path), file, 'workspace_boundary_changed')
       const info = await file.stat({bigint: true})
-      const canonical = await realpath(path)
+      const canonical = realpathSync(path)
       if (
         !info.isDirectory()
         || canonical !== path
-        || !ownedByCurrentUserBigInt(info.uid)
-        || (info.mode & 0o7777n) !== 0o700n
+        || !privateDirectoryMetadata(info, this.#platform)
         || !isDirectChild(managed, canonical)
       ) throw new Error('unsafe')
       await this.#validateManagedRoot()
@@ -1112,13 +1129,13 @@ export class CodexProjectStore {
   }
 
   async #retainStateRoot(): Promise<void> {
-    const retained = await openStateRoot(this.#stateRoot)
+    const retained = await openStateRoot(this.#stateRoot, this.#platform)
     this.#stateRootHandle = retained.file
     this.#stateRootIdentity = retained.identity
   }
 
   async #retainManagedRoot(): Promise<void> {
-    const retained = await openManagedRoot(this.#managedRoot)
+    const retained = await openManagedRoot(this.#managedRoot, this.#platform)
     this.#managedRootHandle = retained.file
     this.#managedRootIdentity = retained.identity
   }
@@ -1143,14 +1160,14 @@ export class CodexProjectStore {
     let current: FileHandle | null = null
     try {
       const retainedInfo = await retained.stat({bigint: true})
-      if (!stateRootMatches(retainedInfo, expected)) throw new Error('retained root changed')
+      if (!stateRootMatches(retainedInfo, expected, this.#platform)) throw new Error('retained root changed')
       current = await open(
         this.#stateRoot,
         constants.O_RDONLY | directoryFlag() | noFollowFlag(),
       )
       const currentInfo = await current.stat({bigint: true})
-      const canonical = await realpath(this.#stateRoot)
-      if (!stateRootMatches(currentInfo, expected) || canonical !== expected.canonical) {
+      const canonical = realpathSync(this.#stateRoot)
+      if (!stateRootMatches(currentInfo, expected, this.#platform) || canonical !== expected.canonical) {
         throw new Error('state root identity changed')
       }
     } catch {
@@ -1174,8 +1191,7 @@ export class CodexProjectStore {
       const retainedInfo = await retained.stat({bigint: true})
       if (
         !retainedInfo.isDirectory()
-        || !ownedByCurrentUserBigInt(retainedInfo.uid)
-        || unsafeManagedMode(Number(retainedInfo.mode))
+        || !managedDirectoryMetadata(retainedInfo, this.#platform)
         || !sameFileIdentity(expected, fileIdentity(retainedInfo))
       ) throw new Error('retained managed root changed')
       current = await open(
@@ -1183,12 +1199,11 @@ export class CodexProjectStore {
         constants.O_RDONLY | directoryFlag() | noFollowFlag(),
       )
       const currentInfo = await current.stat({bigint: true})
-      const canonical = await realpath(this.#managedRoot)
+      const canonical = realpathSync(this.#managedRoot)
       if (
         canonical !== this.#managedRoot
         || !currentInfo.isDirectory()
-        || !ownedByCurrentUserBigInt(currentInfo.uid)
-        || unsafeManagedMode(Number(currentInfo.mode))
+        || !managedDirectoryMetadata(currentInfo, this.#platform)
         || !sameFileIdentity(expected, fileIdentity(currentInfo))
       ) throw new Error('managed root identity changed')
       return canonical
@@ -1270,6 +1285,31 @@ export class CodexProjectStore {
     return result
   }
 
+  #mkdirPrivateAt(
+    root: FileHandle,
+    name: string,
+    code: ProjectStateCode,
+  ): ProjectRootFileCreateResult {
+    if (this.#platform !== 'win32') return this.#mkdirAt(root, name, code)
+    requireProjectBasename(name, code)
+    const result = this.#callRootFileCreate(
+      () => this.#rootFiles.mkdirPrivateAt?.(root.fd, name) ?? {status: 'unsupported'},
+    )
+    if (result.status === 'unsupported' || result.status === 'failed') {
+      throw new ProjectStateError(code)
+    }
+    return result
+  }
+
+  #protectAt(root: FileHandle, name: string, child: FileHandle, code: ProjectStateCode): void {
+    if (this.#platform !== 'win32') return
+    requireProjectBasename(name, code)
+    const result = this.#callRootFile(
+      () => this.#rootFiles.protectAt?.(root.fd, name, child.fd) ?? {status: 'unsupported'},
+    )
+    if (result.status !== 'ok') throw new ProjectStateError(code)
+  }
+
   #createFileAt(
     root: FileHandle,
     name: string,
@@ -1321,7 +1361,7 @@ export class CodexProjectStore {
     name: string,
   ): Promise<{readonly file: FileHandle; readonly binding: DirectoryBinding}> {
     requireProjectBasename(name, 'state_permissions')
-    const created = this.#mkdirAt(root, name, 'state_permissions')
+    const created = this.#mkdirPrivateAt(root, name, 'state_permissions')
     if (created.status !== 'ok' && created.status !== 'exists') {
       throw new ProjectStateError('state_permissions')
     }
@@ -1336,14 +1376,14 @@ export class CodexProjectStore {
       if (createdIdentity !== null && !sameFileIdentity(createdIdentity, initialIdentity)) {
         throw new ProjectStateError('state_permissions')
       }
-      if (created.status === 'ok') await file.chmod(0o700)
+      this.#protectAt(root, name, file, 'state_permissions')
+      if (created.status === 'ok' && this.#platform !== 'win32') await file.chmod(0o700)
       const info = await file.stat({bigint: true})
       const identity = fileIdentity(info)
-      const canonical = await realpath(path)
+      const canonical = realpathSync(path)
       if (
         !info.isDirectory()
-        || !ownedByCurrentUserBigInt(info.uid)
-        || (info.mode & 0o7777n) !== 0o700n
+        || !privateDirectoryMetadata(info, this.#platform)
         || canonical !== path
         || !isDirectChild(rootPath, canonical)
       ) throw new ProjectStateError('state_permissions')
@@ -1376,6 +1416,7 @@ export class CodexProjectStore {
       join(this.#stateRoot, fileName),
       constants.O_RDWR | noFollowFlag(),
       null,
+      this.#platform,
     )
     const waitSignal = signal === undefined
       ? this.#closeAbort.signal
@@ -1435,6 +1476,7 @@ export class CodexProjectStore {
         path,
         constants.O_RDONLY | nonblockFlag() | noFollowFlag(),
         null,
+        this.#platform,
       )
     } catch (error) {
       if (isNodeError(error, 'ENOENT')) {
@@ -1516,8 +1558,7 @@ export class CodexProjectStore {
       const info = await file.stat({bigint: true})
       if (
         !info.isFile()
-        || !ownedByCurrentUserBigInt(info.uid)
-        || (info.mode & 0o7777n) !== 0o600n
+        || !privateRegularFileMetadata(info, this.#platform)
         || !sameFileIdentity(tempIdentity, fileIdentity(info))
       ) throw new ProjectStateError('state_permissions')
       await this.#revalidateStateRoot()
@@ -1547,8 +1588,17 @@ export class CodexProjectStore {
       ) throw new ProjectStateError('state_permissions')
       const directory = this.#stateRootHandle
       if (directory === null) throw new ProjectStateError('state_permissions')
-      await directory.sync()
-      this.#publishDurability('dir_fsync')
+      if (this.#platform === 'win32') {
+        // Node maps FileHandle.sync() to FlushFileBuffers(), which rejects
+        // directory handles with EPERM on Windows. The replace is already
+        // committed by the native descriptor-relative rename above; the
+        // retained-root and replacement identity checks are the Windows
+        // metadata commit boundary.
+        this.#publishDurability('windows_metadata_commit')
+      } else {
+        await directory.sync()
+        this.#publishDurability('dir_fsync')
+      }
       await this.#revalidateStateRoot()
     } catch (error) {
       if (error instanceof ProjectStateError) throw error
@@ -1585,10 +1635,10 @@ export class CodexProjectStore {
       file = await open(candidate.path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
       this.#requireMatchesAt(root, name, file, 'workspace_boundary_changed')
       const info = await file.stat({bigint: true})
-      const canonical = await realpath(candidate.path)
+      const canonical = realpathSync(candidate.path)
       if (
         !info.isDirectory()
-        || !ownedByCurrentUserBigInt(info.uid)
+        || !privateDirectoryMetadata(info, this.#platform)
         || !sameFileIdentity(candidate.identity, fileIdentity(info))
         || canonical !== candidate.path
       ) return false
@@ -1623,7 +1673,7 @@ export class CodexProjectStore {
       const managed = await this.#validateManagedRoot()
       if (!isDirectChild(managed, removed.path)) return
       const root = this.#requireManagedRootHandle()
-      const created = this.#mkdirAt(root, removed.name, 'workspace_boundary_changed')
+      const created = this.#mkdirPrivateAt(root, removed.name, 'workspace_boundary_changed')
       if (created.status !== 'ok') return
       createdRoot = root
       createdIdentity = created.identity
@@ -1631,13 +1681,13 @@ export class CodexProjectStore {
       this.#requireMatchesAt(root, removed.name, file, 'workspace_boundary_changed')
       const initialInfo = await file.stat({bigint: true})
       if (!sameFileIdentity(created.identity, fileIdentity(initialInfo))) return
-      await file.chmod(0o700)
+      this.#protectAt(root, removed.name, file, 'workspace_boundary_changed')
+      if (this.#platform !== 'win32') await file.chmod(0o700)
       const info = await file.stat({bigint: true})
-      const canonical = await realpath(removed.path)
+      const canonical = realpathSync(removed.path)
       if (
         !info.isDirectory()
-        || !ownedByCurrentUserBigInt(info.uid)
-        || (info.mode & 0o7777n) !== 0o700n
+        || !privateDirectoryMetadata(info, this.#platform)
         || canonical !== removed.path
       ) return
       this.#requireMatchesAt(root, removed.name, file, 'workspace_boundary_changed')
@@ -1846,7 +1896,11 @@ function managedProjectRootPath(value: HostManagedProjectRoot): string {
   return path
 }
 
-function requireProjectRoot(configured: string, code: ProjectStateCode): string {
+function requireProjectRoot(
+  configured: string,
+  code: ProjectStateCode,
+  platform: NodeJS.Platform,
+): string {
   try {
     if (typeof configured !== 'string' || !isAbsolute(configured) || !isWellFormed(configured)) {
       throw new Error('invalid')
@@ -1857,8 +1911,7 @@ function requireProjectRoot(configured: string, code: ProjectStateCode): string 
       info.isSymbolicLink()
       || !info.isDirectory()
       || canonical !== resolve(configured)
-      || !ownedByCurrentUser(info)
-      || (info.mode & 0o7777) !== 0o700
+      || !privateDirectoryMetadata(info, platform)
     ) throw new Error('unsafe')
     return canonical
   } catch {
@@ -1866,7 +1919,7 @@ function requireProjectRoot(configured: string, code: ProjectStateCode): string 
   }
 }
 
-function requireManagedProjectRoot(configured: string): string {
+function requireManagedProjectRoot(configured: string, platform: NodeJS.Platform): string {
   try {
     if (typeof configured !== 'string' || !isAbsolute(configured) || !isWellFormed(configured)) {
       throw new Error('invalid')
@@ -1877,8 +1930,7 @@ function requireManagedProjectRoot(configured: string): string {
       info.isSymbolicLink()
       || !info.isDirectory()
       || canonical !== resolve(configured)
-      || !ownedByCurrentUser(info)
-      || unsafeManagedMode(info.mode)
+      || !managedDirectoryMetadata(info, platform)
     ) throw new Error('unsafe')
     return canonical
   } catch {
@@ -1894,7 +1946,7 @@ async function validateRegisteredWorkspace(
     const file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
     try {
       const info = await file.stat({bigint: true})
-      const canonical = await realpath(path)
+      const canonical = realpathSync(path)
       if (!info.isDirectory() || canonical !== path) throw new Error('unsafe')
       return {canonical, identity: fileIdentity(info)}
     } finally {
@@ -1909,6 +1961,7 @@ async function openValidatedRegularFile(
   path: string,
   flags: number,
   createMode: number | null,
+  platform: NodeJS.Platform,
 ): Promise<FileHandle> {
   let file: FileHandle | null = null
   try {
@@ -1916,8 +1969,7 @@ async function openValidatedRegularFile(
     const info = await file.stat()
     if (
       !info.isFile()
-      || !ownedByCurrentUser(info)
-      || (info.mode & 0o7777) !== 0o600
+      || !privateRegularFileMetadata(info, platform)
     ) throw new ProjectStateError('state_permissions')
     return file
   } catch (error) {
@@ -1928,12 +1980,32 @@ async function openValidatedRegularFile(
   }
 }
 
-function ownedByCurrentUser(info: Stats): boolean {
-  return typeof process.getuid === 'function' && info.uid === process.getuid()
+function privateDirectoryMetadata(
+  info: Pick<Stats, 'uid' | 'mode'> | {readonly uid: bigint; readonly mode: bigint},
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === 'win32') return true
+  return ownedByCurrentUserValue(info.uid) && (BigInt(info.mode) & 0o7777n) === 0o700n
 }
 
-function ownedByCurrentUserBigInt(uid: bigint): boolean {
-  return typeof process.getuid === 'function' && uid === BigInt(process.getuid())
+function privateRegularFileMetadata(
+  info: Pick<Stats, 'uid' | 'mode'> | {readonly uid: bigint; readonly mode: bigint},
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === 'win32') return true
+  return ownedByCurrentUserValue(info.uid) && (BigInt(info.mode) & 0o7777n) === 0o600n
+}
+
+function managedDirectoryMetadata(
+  info: Pick<Stats, 'uid' | 'mode'> | {readonly uid: bigint; readonly mode: bigint},
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === 'win32') return true
+  return ownedByCurrentUserValue(info.uid) && !unsafeManagedMode(Number(info.mode))
+}
+
+function ownedByCurrentUserValue(uid: number | bigint): boolean {
+  return typeof process.getuid === 'function' && BigInt(uid) === BigInt(process.getuid())
 }
 
 function fileIdentity(info: {readonly dev: bigint; readonly ino: bigint}): FileIdentity {
@@ -1946,17 +2018,17 @@ function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
 
 async function openStateRoot(
   path: string,
+  platform: NodeJS.Platform,
 ): Promise<{readonly file: FileHandle; readonly identity: StateRootIdentity}> {
   let file: FileHandle | null = null
   try {
     file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
     const info = await file.stat({bigint: true})
-    const canonical = await realpath(path)
+    const canonical = realpathSync(path)
     if (
       !info.isDirectory()
       || canonical !== path
-      || !ownedByCurrentUserBigInt(info.uid)
-      || (info.mode & 0o7777n) !== 0o700n
+      || !privateDirectoryMetadata(info, platform)
     ) throw new Error('unsafe')
     return {
       file,
@@ -1975,17 +2047,17 @@ async function openStateRoot(
 
 async function openManagedRoot(
   path: string,
+  platform: NodeJS.Platform,
 ): Promise<{readonly file: FileHandle; readonly identity: FileIdentity}> {
   let file: FileHandle | null = null
   try {
     file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
     const info = await file.stat({bigint: true})
-    const canonical = await realpath(path)
+    const canonical = realpathSync(path)
     if (
       !info.isDirectory()
       || canonical !== path
-      || !ownedByCurrentUserBigInt(info.uid)
-      || unsafeManagedMode(Number(info.mode))
+      || !managedDirectoryMetadata(info, platform)
     ) throw new Error('unsafe')
     return {file, identity: fileIdentity(info)}
   } catch {
@@ -1997,12 +2069,16 @@ async function openManagedRoot(
 function stateRootMatches(
   info: {readonly dev: bigint; readonly ino: bigint; readonly uid: bigint; readonly mode: bigint; isDirectory(): boolean},
   expected: StateRootIdentity,
+  platform: NodeJS.Platform,
 ): boolean {
   return info.isDirectory()
     && info.dev === expected.device
     && info.ino === expected.inode
-    && info.uid === expected.owner
-    && (info.mode & 0o7777n) === expected.mode
+    && (platform === 'win32' || (
+      info.uid === expected.owner
+      && (info.mode & 0o7777n) === expected.mode
+      && privateDirectoryMetadata(info, platform)
+    ))
 }
 
 function unsafeManagedMode(mode: number): boolean {

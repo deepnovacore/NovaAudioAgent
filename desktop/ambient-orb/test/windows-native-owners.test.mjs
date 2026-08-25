@@ -29,7 +29,10 @@ test('Windows project authority owns nonblocking locks and handle-relative proje
     /GetSecurityInfo/u,
     /GetTokenInformation/u,
     /SetFileInformationByHandle/u,
-    /FileRenameInfo/u,
+    /NtSetInformationFile/u,
+    /NOVA_FILE_RENAME_INFORMATION/u,
+    /uv_get_osfhandle/u,
+    /SetSecurityInfo/u,
     /FileDispositionInfoEx/u,
     /__pfnDliNotifyHook2/u,
     /GetModuleHandleW\(NULL\)/u,
@@ -37,9 +40,13 @@ test('Windows project authority owns nonblocking locks and handle-relative proje
   assert.match(body, /const PfnDliHook __pfnDliNotifyHook2 = nova_delay_load_hook;/u)
   assert.doesNotMatch(body, /\nPfnDliHook __pfnDliNotifyHook2/u)
   for (const exported of [
-    'acquire', 'probe', 'matchesAt', 'lookupAt', 'createFileAt', 'mkdirAt', 'renameAt', 'unlinkAt',
+    'acquire', 'probe', 'protectAt', 'matchesAt', 'lookupAt', 'createFileAt', 'mkdirAt', 'mkdirPrivateAt',
+    'renameAt', 'unlinkAt',
   ]) assert.match(body, new RegExp(`"${exported}"`, 'u'))
-  assert.doesNotMatch(body, /CreateFileW\s*\(\s*(?:root|path)/u)
+  assert.doesNotMatch(body, /static napi_value nova_protect_directory|"protectDirectory"/u)
+  assert.equal(body.match(/CreateFileW\s*\(/gu)?.length ?? 0, 0)
+  const posixBody = await source('native/project-native/project_native_posix.c')
+  assert.doesNotMatch(posixBody, /static napi_value nova_protect_directory|"protectDirectory"/u)
 })
 
 test('Windows sandbox probe measures child, filesystem, network, and limit isolation', async () => {

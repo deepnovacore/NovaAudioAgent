@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
-// Version 2 deliberately replaces, rather than migrates, the original shared-
-// voice schema. `normalizeSettings` always rebuilds and stamps this shape.
-export const SETTINGS_VERSION = 2
+// `normalizeSettings` always rebuilds and stamps the latest shape, so a v2 file
+// keeps its provider choices while gaining packaged-desktop configuration.
+export const SETTINGS_VERSION = 3
 
 export const SECRET_KEYS = Object.freeze([
   'dashscopeApiKey',
@@ -26,6 +26,7 @@ export const CASCADED_TTS_PROVIDERS = Object.freeze(['volcengine'])
 export const HEARTBEAT_MIN_SECONDS = 15
 export const HEARTBEAT_MAX_SECONDS = 120
 export const MAX_MODEL_OR_VOICE_LENGTH = 64
+export const MAX_DESKTOP_SETTING_LENGTH = 32_768
 // A key is a token, not a document: anything longer is a paste accident or an
 // attempt to grow the settings file, and is refused rather than stored.
 export const MAX_SECRET_LENGTH = 4096
@@ -36,6 +37,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
   palette: 'ember',
   proactivity: 'balanced',
   codexHeartbeatSeconds: 30,
+  codexBinaryMode: 'auto',
+  codexBinaryPath: '',
+  codexWorkspace: '',
+  codexManagedRoot: '',
+  modelBaseUrl: '',
+  startListeningOnLaunch: false,
   pipelineMode: 'integrated',
   integratedProvider: 'qwen',
   integratedModel: 'qwen-audio-3.0-realtime-plus',
@@ -61,6 +68,7 @@ const CASCADED_ASR_PROVIDER_SET = new Set(CASCADED_ASR_PROVIDERS)
 const CASCADED_LLM_PROVIDER_SET = new Set(CASCADED_LLM_PROVIDERS)
 const CASCADED_TTS_PROVIDER_SET = new Set(CASCADED_TTS_PROVIDERS)
 const SECRET_KEY_SET = new Set(SECRET_KEYS)
+const CODEX_BINARY_MODES = new Set(['auto', 'manual'])
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 // Control characters would survive into an env value handed to a child process.
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
@@ -137,6 +145,36 @@ function validModelOrVoice(value) {
   return trimmed
 }
 
+function validBoolean(value) {
+  return typeof value === 'boolean' ? value : null
+}
+
+function validCodexBinaryMode(value) {
+  return CODEX_BINARY_MODES.has(value) ? value : null
+}
+
+function validDesktopString(value) {
+  if (typeof value !== 'string' || CONTROL_CHARACTERS.test(value)) return null
+  const trimmed = value.trim()
+  return [...trimmed].length <= MAX_DESKTOP_SETTING_LENGTH ? trimmed : null
+}
+
+export function validModelBaseUrl(value) {
+  const normalized = validDesktopString(value)
+  if (normalized === null || normalized === '') return normalized
+  try {
+    const parsed = new URL(normalized)
+    if (parsed.username !== '' || parsed.password !== '') return null
+    if (parsed.protocol === 'https:') return normalized
+    if (parsed.protocol !== 'http:') return null
+    return ['127.0.0.1', '[::1]', 'localhost'].includes(parsed.hostname)
+      ? normalized
+      : null
+  } catch {
+    return null
+  }
+}
+
 function normalizeCascadedLlmModels(raw, base) {
   const source = isRecord(raw) ? raw : {}
   const fallback = isRecord(base) ? base : DEFAULT_SETTINGS.cascadedLlmModels
@@ -203,6 +241,42 @@ export function normalizeSettings(raw, base = DEFAULT_SETTINGS) {
       ownEnumerableDataValue(fallback, 'codexHeartbeatSeconds'),
       DEFAULT_SETTINGS.codexHeartbeatSeconds,
       validHeartbeat,
+    ),
+    codexBinaryMode: pick(
+      ownEnumerableDataValue(source, 'codexBinaryMode'),
+      ownEnumerableDataValue(fallback, 'codexBinaryMode'),
+      DEFAULT_SETTINGS.codexBinaryMode,
+      validCodexBinaryMode,
+    ),
+    codexBinaryPath: pick(
+      ownEnumerableDataValue(source, 'codexBinaryPath'),
+      ownEnumerableDataValue(fallback, 'codexBinaryPath'),
+      DEFAULT_SETTINGS.codexBinaryPath,
+      validDesktopString,
+    ),
+    codexWorkspace: pick(
+      ownEnumerableDataValue(source, 'codexWorkspace'),
+      ownEnumerableDataValue(fallback, 'codexWorkspace'),
+      DEFAULT_SETTINGS.codexWorkspace,
+      validDesktopString,
+    ),
+    codexManagedRoot: pick(
+      ownEnumerableDataValue(source, 'codexManagedRoot'),
+      ownEnumerableDataValue(fallback, 'codexManagedRoot'),
+      DEFAULT_SETTINGS.codexManagedRoot,
+      validDesktopString,
+    ),
+    modelBaseUrl: pick(
+      ownEnumerableDataValue(source, 'modelBaseUrl'),
+      ownEnumerableDataValue(fallback, 'modelBaseUrl'),
+      DEFAULT_SETTINGS.modelBaseUrl,
+      validModelBaseUrl,
+    ),
+    startListeningOnLaunch: pick(
+      ownEnumerableDataValue(source, 'startListeningOnLaunch'),
+      ownEnumerableDataValue(fallback, 'startListeningOnLaunch'),
+      DEFAULT_SETTINGS.startListeningOnLaunch,
+      validBoolean,
     ),
     pipelineMode: pick(
       ownEnumerableDataValue(source, 'pipelineMode'),
@@ -275,6 +349,12 @@ export function publicSettings(settings) {
     palette: normalized.palette,
     proactivity: normalized.proactivity,
     codexHeartbeatSeconds: normalized.codexHeartbeatSeconds,
+    codexBinaryMode: normalized.codexBinaryMode,
+    codexBinaryPath: normalized.codexBinaryPath,
+    codexWorkspace: normalized.codexWorkspace,
+    codexManagedRoot: normalized.codexManagedRoot,
+    modelBaseUrl: normalized.modelBaseUrl,
+    startListeningOnLaunch: normalized.startListeningOnLaunch,
     pipelineMode: normalized.pipelineMode,
     integratedProvider: normalized.integratedProvider,
     integratedModel: normalized.integratedModel,
@@ -286,6 +366,14 @@ export function publicSettings(settings) {
     cascadedTtsProvider: normalized.cascadedTtsProvider,
     cascadedTtsVoice: normalized.cascadedTtsVoice,
   }
+}
+
+export function orbSettings(settings) {
+  const normalized = normalizeSettings(settings)
+  return Object.freeze({
+    palette: normalized.palette,
+    startListeningOnLaunch: normalized.startListeningOnLaunch,
+  })
 }
 
 export function secretsPresent(settings) {
@@ -425,6 +513,12 @@ export function applySettingsUpdate(current, patch, codec) {
     palette: ownEnumerableDataValue(source, 'palette'),
     proactivity: ownEnumerableDataValue(source, 'proactivity'),
     codexHeartbeatSeconds: ownEnumerableDataValue(source, 'codexHeartbeatSeconds'),
+    codexBinaryMode: ownEnumerableDataValue(source, 'codexBinaryMode'),
+    codexBinaryPath: ownEnumerableDataValue(source, 'codexBinaryPath'),
+    codexWorkspace: ownEnumerableDataValue(source, 'codexWorkspace'),
+    codexManagedRoot: ownEnumerableDataValue(source, 'codexManagedRoot'),
+    modelBaseUrl: ownEnumerableDataValue(source, 'modelBaseUrl'),
+    startListeningOnLaunch: ownEnumerableDataValue(source, 'startListeningOnLaunch'),
     pipelineMode: ownEnumerableDataValue(source, 'pipelineMode'),
     integratedProvider: ownEnumerableDataValue(source, 'integratedProvider'),
     integratedModel: ownEnumerableDataValue(source, 'integratedModel'),

@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
-import {randomUUID} from 'node:crypto'
-import {once} from 'node:events'
 import {mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
-import {createConnection, createServer} from 'node:net'
 import {tmpdir} from 'node:os'
 import {resolve} from 'node:path'
 import test from 'node:test'
@@ -59,16 +56,11 @@ async function waitProcessGone(pid) {
 }
 
 async function launchGuardian(guardian, cwd, targetArguments) {
-  const pipeName = `\\\\.\\pipe\\nova-guardian-${process.pid}-${randomUUID()}`
-  const server = createServer()
-  await new Promise((resolveListen, rejectListen) => {
-    server.once('error', rejectListen)
-    server.listen(pipeName, resolveListen)
-  })
-  const acceptedPromise = once(server, 'connection')
-  const control = createConnection(pipeName)
-  await once(control, 'connect')
-  const [childControl] = await acceptedPromise
+  const environment = {...process.env}
+  // A Node target launched by the guardian is a product process, not another
+  // worker in the surrounding `node --test` control plane.
+  delete environment.NODE_TEST_CONTEXT
+  delete environment.NODE_TEST_WORKER_ID
   const child = spawn(guardian, [
     '--target', process.execPath,
     '--cwd', cwd,
@@ -76,13 +68,12 @@ async function launchGuardian(guardian, cwd, targetArguments) {
     ...targetArguments,
   ], {
     cwd,
-    env: {...process.env},
+    env: environment,
     windowsHide: true,
-    stdio: ['pipe', 'pipe', 'pipe', childControl],
+    stdio: ['pipe', 'pipe', 'pipe', 'overlapped'],
   })
-  childControl.destroy()
-  await new Promise(resolveClose => server.close(resolveClose))
-  assert.ok(child.stdin && child.stdout && child.stderr)
+  const control = child.stdio[3]
+  assert.ok(child.stdin && child.stdout && child.stderr && control)
   return {child, control}
 }
 
@@ -110,11 +101,17 @@ test('Windows Job guardian keeps leader-first descendants owned and force-closes
     const targetPromise = waitForText(child.stdout, value => value.includes('\n'))
     const ready = await readyPromise
     assert.match(ready, /^\{"type":"ready","version":1,"targetPid":\d+\}\n/u)
+    const targetPid = Number(/"targetPid":(\d+)/u.exec(ready)?.[1])
+    assert.ok(Number.isSafeInteger(targetPid) && targetPid > 0)
     const targetLine = await targetPromise
     const match = /^grandchild:(\d+)\n/u.exec(targetLine)
     assert.ok(match)
     const grandchildPid = Number(match[1])
     assert.equal(processGone(grandchildPid), false)
+    // Prove the leader has already exited naturally before forcing the Job;
+    // otherwise TerminateJobObject legitimately assigns it exit code 1 and
+    // the test no longer exercises the leader-first case its name promises.
+    await waitProcessGone(targetPid)
     const exitPromise = waitForText(control, value => value.includes('"treeEmpty":true}\n'))
     control.write('{"type":"force","version":1}\n')
     const exited = await exitPromise

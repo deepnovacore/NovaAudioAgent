@@ -6,7 +6,7 @@ import {
   chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, readlink, realpath, rm, symlink,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, matchesGlob, relative, resolve, sep } from 'node:path'
+import { basename, dirname, matchesGlob, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { extractAll, getRawHeader, listPackage } from '@electron/asar'
@@ -1017,8 +1017,10 @@ function assertSafeSymlink(relativePath, target) {
     || target.includes('\\')
     || target.startsWith('/')
   ) throw new PackageInspectionError('candidate snapshot link rejected')
-  const sentinel = resolve('/candidate-snapshot')
-  const destination = resolve(sentinel, dirname(relativePath), target)
+  // Container inventories and link targets always use archive/POSIX syntax,
+  // regardless of which host is performing the inspection.
+  const sentinel = '/candidate-snapshot'
+  const destination = posix.resolve(sentinel, posix.dirname(relativePath), target)
   if (destination !== sentinel && !destination.startsWith(`${sentinel}/`)) {
     throw new PackageInspectionError('candidate snapshot link rejected')
   }

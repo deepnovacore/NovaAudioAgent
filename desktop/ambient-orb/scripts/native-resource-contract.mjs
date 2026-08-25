@@ -163,6 +163,7 @@ async function hashNativeFile(path, target, kind) {
     if (
       kind === 'executable'
       && target.platform !== 'win32'
+      && process.platform !== 'win32'
       && (before.mode & 0o111) === 0
     ) throw new NativeResourceError('native_resource_mode')
     const header = Buffer.alloc(Math.min(4096, before.size))

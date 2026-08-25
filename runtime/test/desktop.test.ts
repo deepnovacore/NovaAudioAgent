@@ -1301,13 +1301,24 @@ test('a failed desktop outbound send releases only that socket and notifies once
   })
   const readiness = await startDesktopServer(server)
   const socket = await connectDesktopClient(server, readiness.port)
+  const prototype = WebSocket.prototype as unknown as {
+    send(data: unknown, options: unknown, callback: (error?: Error) => void): void
+  }
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const originalSend = prototype.send
 
   try {
     await authenticate(socket)
+    prototype.send = function failOutboundSend(data, options, callback): void {
+      if (typeof data !== 'string') {
+        callback(new Error('injected private outbound send failure'))
+        return
+      }
+      originalSend.call(this, data, options, callback)
+    }
     const sending = server.sendBinary(
       new Uint8Array(MAX_DESKTOP_OUTBOUND_BINARY_BYTES),
     )
-    socket.terminate()
     await assert.rejects(
       settleWithin('failed desktop outbound send', sending),
       error => error instanceof DesktopProtocolError,
@@ -1315,6 +1326,7 @@ test('a failed desktop outbound send releases only that socket and notifies once
     await settleWithin('failed send disconnect notification', disconnected)
     assert.equal(disconnects, 1)
   } finally {
+    prototype.send = originalSend
     await closeDesktopServer(server)
   }
 })

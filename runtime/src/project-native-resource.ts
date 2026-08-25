@@ -13,22 +13,113 @@ import {
 } from 'node:fs'
 import {createRequire} from 'node:module'
 import {tmpdir} from 'node:os'
-import {isAbsolute, join, resolve} from 'node:path'
+import {basename, dirname, isAbsolute, join, resolve, type PlatformPath} from 'node:path'
 
 import type {NativeFileLockAuthority} from './native-file-lock.js'
-import type {ProjectFileIdentity, ProjectRootFileAuthority} from './project-root-file.js'
+import type {
+  ProjectFileIdentity,
+  ProjectRootFileAuthority,
+  ProjectRootFileCreateResult,
+  ProjectRootFileResult,
+} from './project-root-file.js'
 
 const PROJECT_ADDON_PATH = 'native/project-native/nova_project_native.node'
 const PROJECT_ADDON_ID = 'project_native_addon'
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
-  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'probe', 'renameAt', 'unlinkAt',
+  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'probe', 'protectAt',
+  'renameAt', 'unlinkAt',
 ])
 
 export interface ProjectNativeHost {
   readonly nativeLocks: NativeFileLockAuthority
   readonly rootFiles: ProjectRootFileAuthority
+  /** Protects a retained child selected descriptor-relatively by the host. */
+  protectDirectoryAt(root: number, name: string, child: number): boolean
+  /** Creates a protected private child below an owned, not-yet-private parent. */
+  mkdirPrivateAt(root: number, name: string): unknown
+}
+
+export function protectDefaultProjectDirectories(
+  host: ProjectNativeHost,
+  paths: Readonly<{
+    homeDirectory: string
+    stateRoot: string | null
+    managedRoot: string | null
+    workspace: string | null
+    pathApi?: PlatformPath
+    directoryHandles?: Readonly<{
+      open(path: string): number
+      close(descriptor: number): void
+    }>
+  }>,
+): boolean {
+  const joinPath = (...parts: string[]): string => paths.pathApi?.join(...parts) ?? join(...parts)
+  const dirnamePath = (path: string): string => paths.pathApi?.dirname(path) ?? dirname(path)
+  const basenamePath = (path: string): string => paths.pathApi?.basename(path) ?? basename(path)
+  const handles = paths.directoryHandles ?? defaultProjectDirectoryHandles
+  const productRoot = joinPath(paths.homeDirectory, '.nova-audio-agent')
+  const defaults = new Set([
+    joinPath(productRoot, 'state'),
+    joinPath(productRoot, 'workspaces'),
+    joinPath(productRoot, 'workspaces', 'default'),
+  ])
+  for (const path of [paths.stateRoot, paths.managedRoot, paths.workspace]) {
+    if (path !== null && defaults.has(path) && !protectDefaultDirectory(
+      host,
+      dirnamePath(path),
+      basenamePath(path),
+      path,
+      handles,
+    )) return false
+  }
+  return true
+}
+
+const defaultProjectDirectoryHandles = Object.freeze({
+  open: (path: string): number => openSync(
+    path,
+    fsConstants.O_RDONLY
+      | (fsConstants.O_DIRECTORY ?? 0)
+      | (fsConstants.O_NOFOLLOW ?? 0),
+  ),
+  close: (descriptor: number): void => { closeSync(descriptor) },
+})
+
+function protectDefaultDirectory(
+  host: ProjectNativeHost,
+  parentPath: string,
+  name: string,
+  path: string,
+  handles: Readonly<{
+    open(path: string): number
+    close(descriptor: number): void
+  }>,
+): boolean {
+  let parent: number | null = null
+  let child: number | null = null
+  let protectedDirectory = false
+  let closed = true
+  try {
+    parent = handles.open(parentPath)
+    child = handles.open(path)
+    if (
+      !Number.isSafeInteger(parent) || parent < 0
+      || !Number.isSafeInteger(child) || child < 0
+    ) return false
+    protectedDirectory = host.protectDirectoryAt(parent, name, child)
+  } catch {
+    protectedDirectory = false
+  } finally {
+    if (child !== null && Number.isSafeInteger(child) && child >= 0) {
+      try { handles.close(child) } catch { closed = false }
+    }
+    if (parent !== null && Number.isSafeInteger(parent) && parent >= 0) {
+      try { handles.close(parent) } catch { closed = false }
+    }
+  }
+  return protectedDirectory && closed
 }
 
 interface ProjectNativeLoadOptions {
@@ -103,6 +194,8 @@ export function loadProjectNativeHostFromResources(
         addon.createFileAt(root, name, exclusive)
       ),
       mkdirAt: (root: number, name: string) => addon.mkdirAt(root, name),
+      mkdirPrivateAt: (root: number, name: string) => addon.mkdirPrivateAt(root, name),
+      protectAt: (root: number, name: string, child: number) => addon.protectAt(root, name, child),
       renameAt: (root: number, from: string, to: string) => addon.renameAt(root, from, to),
       unlinkAt: (
         root: number,
@@ -114,6 +207,11 @@ export function loadProjectNativeHostFromResources(
     return Object.freeze({
       nativeLocks,
       rootFiles,
+      protectDirectoryAt: (root: number, name: string, child: number) => {
+        const result: unknown = addon.protectAt(root, name, child)
+        return isStatus(result, 'ok')
+      },
+      mkdirPrivateAt: (root: number, name: string) => addon.mkdirPrivateAt(root, name),
     })
   } catch {
     return null
@@ -285,7 +383,18 @@ function validBinary(bytes: Buffer, platform: string, arch: string): boolean {
     && (bytes.readUInt16LE(offset + 22) & 0x2000) !== 0
 }
 
-interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {}
+interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {
+  protectAt(root: number, name: string, child: number): ProjectRootFileResult
+  mkdirPrivateAt(root: number, name: string): ProjectRootFileCreateResult
+}
+
+function isStatus(value: unknown, status: string): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  const descriptor = descriptors.status
+  if (Object.keys(descriptors).length !== 1 || descriptor?.enumerable !== true) return false
+  return Object.hasOwn(descriptor, 'value') && descriptor.value === status
+}
 
 function requireAddon(value: unknown): ProjectAddon | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null

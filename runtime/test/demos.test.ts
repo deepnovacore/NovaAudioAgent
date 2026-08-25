@@ -76,7 +76,9 @@ test('product demos fail when the runtime evidence for their invariant is mutate
   })
 })
 
-test('product demo root rejects symlink escape and unknown schema/name', async t => {
+test('product demo root rejects symlink escape and unknown schema/name', {
+  skip: process.platform === 'win32' && 'unprivileged Windows test users cannot create directory symlinks',
+}, async t => {
   const root = await mkdtemp(resolve(tmpdir(), 'nova-product-root-'))
   const outside = await mkdtemp(resolve(tmpdir(), 'nova-product-outside-'))
   t.after(async () => {

@@ -1,9 +1,8 @@
-import {constants as fsConstants, type BigIntStats} from 'node:fs'
+import {constants as fsConstants, realpathSync, type BigIntStats} from 'node:fs'
 import {
   chmod,
   lstat,
   open,
-  realpath,
   rename,
   rm,
   stat,
@@ -174,9 +173,9 @@ async function removeEphemeralHome(
       let linkInfo
       try { linkInfo = await lstat(selected.path, {bigint: true}) }
       catch (error) { if (isErrno(error, 'ENOENT')) return; throw error }
-      await requireCleanupIdentity(selected.path, linkInfo, identity)
+      requireCleanupIdentity(selected.path, linkInfo, identity)
       if (process.platform !== 'win32') await chmod(selected.path, 0o700)
-      await requireCleanupIdentity(
+      requireCleanupIdentity(
         selected.path,
         await lstat(selected.path, {bigint: true}),
         identity,
@@ -196,10 +195,10 @@ async function removeEphemeralHome(
       await afterQuarantineRename?.(cleanupPath)
     }
     const quarantined = await lstat(cleanupPath, {bigint: true})
-    await requireCleanupIdentity(cleanupPath, quarantined, identity)
+    requireCleanupIdentity(cleanupPath, quarantined, identity)
     if (process.platform !== 'win32') await chmod(cleanupPath, 0o700)
     await requirePrivateDirectory(cleanupPath)
-    await requireCleanupIdentity(cleanupPath, await lstat(cleanupPath, {bigint: true}), identity)
+    requireCleanupIdentity(cleanupPath, await lstat(cleanupPath, {bigint: true}), identity)
     // Security precondition: the transport calls this only after the one owned app-server tree is
     // confirmed gone. Node has no fd-relative recursive removal API, so the private-parent,
     // quarantine rename, and device/inode capability bind the path once that sole actor is dead.
@@ -210,20 +209,22 @@ async function removeEphemeralHome(
   }
 }
 
-async function requireCleanupIdentity(
+function requireCleanupIdentity(
   path: string,
   linkInfo: BigIntStats,
   identity: {readonly device: bigint; readonly inode: bigint; readonly uid: number},
-): Promise<void> {
-  if (
-    linkInfo.isSymbolicLink()
+): void {
+  const invalid = linkInfo.isSymbolicLink()
     || !linkInfo.isDirectory()
     || linkInfo.dev !== identity.device
     || linkInfo.ino !== identity.inode
     || Number(linkInfo.uid) !== identity.uid
     || !ownerMatches(Number(linkInfo.uid))
-    || await realpath(path) !== path
-  ) throw new CodexCredentialError()
+    // Use the same sync canonicalization domain that minted the cleanup
+    // capability. Windows async realpath can expand an 8.3 alias differently
+    // from realpathSync even though the device/inode identity is unchanged.
+    || realpathSync(path) !== path
+  if (invalid) throw new CodexCredentialError()
 }
 
 export function credentialSnapshotEnvironment(snapshot: CredentialSnapshot): Readonly<Record<string, string>> {
@@ -248,15 +249,14 @@ export async function prepareCodexCredentialSnapshotForTest(
 }
 
 async function requirePrivateDirectory(path: string): Promise<void> {
-  const [linkInfo, fileInfo, canonical] = await Promise.all([
+  const [linkInfo, fileInfo] = await Promise.all([
     lstat(path),
     stat(path),
-    realpath(path),
   ])
   if (
     linkInfo.isSymbolicLink()
     || !fileInfo.isDirectory()
-    || canonical !== path
+    || realpathSync(path) !== path
     || (!ownerMatches(fileInfo.uid))
     || (process.platform !== 'win32' && (fileInfo.mode & 0o777) !== 0o700)
   ) throw new CodexCredentialError()

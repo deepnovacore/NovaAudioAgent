@@ -8,11 +8,33 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     ipcRenderer.on('nova:backend-exit', listener)
     return () => ipcRenderer.removeListener('nova:backend-exit', listener)
   },
+  onBackendReady: callback => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = (_event, connection) => callback(connection)
+    ipcRenderer.on('nova:backend-ready', listener)
+    return () => ipcRenderer.removeListener('nova:backend-ready', listener)
+  },
+  onBackendStatus: callback => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = (_event, status) => callback(status)
+    ipcRenderer.on('nova:backend-status', listener)
+    return () => ipcRenderer.removeListener('nova:backend-status', listener)
+  },
   orbMenu: Object.freeze({
     show: () => ipcRenderer.send('nova:orb-menu:show'),
   }),
   releaseCamera: Object.freeze({
     report: result => ipcRenderer.send('nova:release-camera:result', result),
+  }),
+  microphone: Object.freeze({
+    requestPermission: () => ipcRenderer.invoke('nova:microphone:permission'),
+    report: status => ipcRenderer.send('nova:microphone:status', status),
+    onRetry: callback => {
+      if (typeof callback !== 'function') return () => {}
+      const listener = () => callback()
+      ipcRenderer.on('nova:microphone:retry', listener)
+      return () => ipcRenderer.removeListener('nova:microphone:retry', listener)
+    },
   }),
   memoryBoard: Object.freeze({
     request: () => ipcRenderer.invoke('nova:memory-board:request'),
@@ -68,6 +90,10 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
   }),
   settings: Object.freeze({
     get: () => ipcRenderer.invoke('nova:settings:get'),
+    rescanCodex: () => ipcRenderer.invoke('nova:codex:rescan'),
+    retryBackend: () => ipcRenderer.invoke('nova:backend:retry'),
+    retryMicrophone: () => ipcRenderer.invoke('nova:microphone:retry'),
+    repairProjects: root => ipcRenderer.invoke('nova:projects:repair', root),
     // The payload may carry plaintext key values on their way *into* main; the
     // reply never carries any back out.
     set: patch => ipcRenderer.invoke('nova:settings:set', patch),

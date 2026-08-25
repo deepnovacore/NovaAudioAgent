@@ -61,12 +61,14 @@ test('Codex sandbox probe resolves only the fixed manifest-bound executable', as
     assert.notEqual(loaded, null)
     assert.equal(codexSandboxProbePathForTest(loaded!), probe)
 
-    await chmod(probe, 0o644)
-    assert.equal(loadCodexSandboxProbeFromResources({
-      resourcesPath: root,
-      platform: 'darwin',
-      arch: 'arm64',
-    }), null)
+    if (process.platform !== 'win32') {
+      await chmod(probe, 0o644)
+      assert.equal(loadCodexSandboxProbeFromResources({
+        resourcesPath: root,
+        platform: 'darwin',
+        arch: 'arm64',
+      }), null)
+    }
   } finally {
     await rm(root, {recursive: true, force: true})
   }
@@ -311,7 +313,7 @@ test('production host catalog admits only absolute host config and a packaged fi
     await mkdir(join(workspace, '.git'))
     await mkdir(home)
     await mkdir(temporary)
-    await symlink(temporary, temporaryAlias, 'dir')
+    await symlink(temporary, temporaryAlias, process.platform === 'win32' ? 'junction' : 'dir')
     await mkdir(join(resources, 'native'), {recursive: true})
     await writeFile(binary, '#!/bin/sh\nexit 0\n', {mode: 0o755})
     await writeFile(probe, body, {mode: 0o755})

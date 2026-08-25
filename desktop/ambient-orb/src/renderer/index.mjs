@@ -13,6 +13,10 @@ import {
   PlaybackMeter,
 } from './audio.mjs'
 import {
+  classifyMicrophoneFailure,
+  preflightMicrophone,
+} from './microphone-permission.mjs'
+import {
   RendererCameraController,
   RendererSocketRouter,
 } from './camera.mjs'
@@ -78,7 +82,8 @@ const axes = {
   session: '',
   pendingConfirmation: false,
   connected: false,
-  permission: 'unknown',
+  backendState: 'stopped',
+  microphone: 'checking',
   error: '',
   shellExpanded: false,
   audioMode: 'inactive',
@@ -87,6 +92,7 @@ const axes = {
 }
 
 let socket
+let activeConnection = null
 let context
 let media
 let processor
@@ -94,6 +100,7 @@ let source
 let workletLoaded = false
 let nativeAvailable = false
 let nativeReady = false
+let microphoneSystemStatus = 'unknown'
 let playbackCursor = 0
 const playingSources = new Set()
 const nativeFrames = new Map()
@@ -288,11 +295,14 @@ async function activateCapture() {
     })
     axes.audioMode = result.audioMode
     axes.activated = true
-    axes.permission = 'granted'
+    axes.microphone = 'granted'
+    window.novaAudioAgentDesktop.microphone.report(axes.microphone)
     axes.error = ''
-  } catch {
+  } catch (error) {
     nativeReady = false
-    axes.permission = 'denied'
+    axes.microphone = error?.novaMicrophoneStatus
+      ?? classifyMicrophoneFailure(error, microphoneSystemStatus)
+    window.novaAudioAgentDesktop.microphone.report(axes.microphone)
   } finally {
     axes.activationPending = false
   }
@@ -300,11 +310,11 @@ async function activateCapture() {
 }
 
 async function startBrowserCapture() {
-  await ensurePlaybackContext()
   const nextMedia = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   })
   try {
+    await ensurePlaybackContext()
     if (!workletLoaded) {
       await context.audioWorklet.addModule('nova://orb/capture-worklet.mjs')
       workletLoaded = true
@@ -326,7 +336,9 @@ async function startBrowserCapture() {
     processor = nextProcessor
   } catch (error) {
     nextMedia.getTracks().forEach(track => track.stop())
-    throw error
+    const pipelineError = new Error('audio pipeline unavailable')
+    pipelineError.novaMicrophoneStatus = 'audio_pipeline_error'
+    throw pipelineError
   }
   return Object.freeze({ audioMode: 'browser_aec' })
 }
@@ -357,7 +369,6 @@ function stopCurrentNativePlayback() {
 async function deactivateCapture() {
   if (axes.activationPending) {
     axes.activated = false
-    axes.permission = 'unknown'
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     onsetTracker.reset()
@@ -374,7 +385,6 @@ async function deactivateCapture() {
     releaseBrowserCapture()
     onsetTracker.reset()
     axes.activated = false
-    axes.permission = 'unknown'
     axes.audioMode = 'inactive'
     axes.capture = 'idle'
     axes.activationPending = false
@@ -395,12 +405,14 @@ async function fallBackAfterNativeFailure() {
     })
     if (!result) return render()
     axes.audioMode = result.audioMode
-    axes.permission = 'granted'
+    axes.microphone = 'granted'
+    window.novaAudioAgentDesktop.microphone.report(axes.microphone)
     axes.error = ''
-  } catch {
+  } catch (error) {
     if (axes.activated) {
-      axes.permission = 'denied'
-      axes.error = 'native-audio'
+      axes.microphone = error?.novaMicrophoneStatus
+        ?? classifyMicrophoneFailure(error, microphoneSystemStatus)
+      window.novaAudioAgentDesktop.microphone.report(axes.microphone)
     }
   }
   render()
@@ -549,30 +561,89 @@ async function handleSocketMessage(event) {
 // 'nova:backend-exit' event and the verdict carried on the bootstrap reply — land here.
 function handleBackendExit() {
   axes.connected = false
-  axes.error = 'backend-exit'
+  axes.error = ''
   alertTone.stop()
   playback.stopAll()
   render()
 }
 
+function connectBackend(connection) {
+  if (!connection || typeof connection.endpoint !== 'string' || typeof connection.token !== 'string') {
+    return handleBackendExit()
+  }
+  try {
+    activeConnection?.close(false)
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
+    const nextSocket = new WebSocket(connection.endpoint)
+    const nextConnection = socketRouter.connect(nextSocket)
+    activeConnection = nextConnection
+    socket = nextSocket
+    nextSocket.binaryType = 'arraybuffer'
+    nextSocket.onopen = () => {
+      if (!nextConnection.isCurrent()) return
+      nextConnection.delivery.sendText(JSON.stringify({ type: 'hello', token: connection.token }))
+      axes.connected = true
+      axes.backendState = 'connected'
+      axes.error = ''
+      render()
+    }
+    nextSocket.onmessage = nextConnection.onMessage
+    nextSocket.onclose = () => { nextConnection.close() }
+    nextSocket.onerror = () => {
+      if (!nextConnection.isCurrent()) return
+      axes.error = 'connection'
+      render()
+    }
+  } catch {
+    handleBackendExit()
+  }
+}
+
+async function refreshMicrophonePermission() {
+  axes.microphone = 'checking'
+  render()
+  try {
+    const system = await window.novaAudioAgentDesktop.microphone.requestPermission()
+    microphoneSystemStatus = system?.status ?? 'unknown'
+    const result = await preflightMicrophone({
+      mediaDevices: navigator.mediaDevices,
+      systemStatus: microphoneSystemStatus,
+    })
+    axes.microphone = result.status
+  } catch {
+    axes.microphone = 'capture_unavailable'
+  }
+  window.novaAudioAgentDesktop.microphone.report(axes.microphone)
+  render()
+  return axes.microphone
+}
+
 async function boot() {
-  let bootConnection = null
-  let bootSocket = null
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
     cameraController.setSourceMode(bootstrap.cameraSource)
     axes.audioMode = bootstrap.audioMode
     axes.platform = bootstrap.platform
-    // bootstrap.settings does not exist yet (it lands with the settings task);
-    // the optional chain reads as undefined today, and setPalette already
-    // falls back to 'ember' for anything that isn't a known palette name.
+    axes.backendState = typeof bootstrap.backendStatus === 'string'
+      ? bootstrap.backendStatus
+      : 'stopped'
+    // Only the renderer-owned subset reaches the orb; credentials, executable
+    // paths, and service endpoints stay in the main process/settings panel.
     visual.setPalette(bootstrap.settings?.palette)
     if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
     window.novaAudioAgentDesktop.onBackendExit(handleBackendExit)
-    // Same guard for the live-push side: window.novaAudioAgentDesktop.settings
-    // is not exposed by the preload script until that same future task, so
-    // this must not throw in the meantime.
+    window.novaAudioAgentDesktop.onBackendReady(connectBackend)
+    window.novaAudioAgentDesktop.onBackendStatus?.(status => {
+      if (!status || typeof status.state !== 'string') return
+      axes.backendState = status.state
+      render()
+    })
+    window.novaAudioAgentDesktop.microphone.onRetry(() => {
+      void refreshMicrophonePermission()
+    })
+    // Palette updates are the only live renderer setting. Runtime settings
+    // trigger a supervised backend restart in main.
     window.novaAudioAgentDesktop.settings?.onChanged?.(next => visual.setPalette(next.palette))
     window.novaAudioAgentDesktop.memoryBoard.onFetch(requestId => {
       send({ type: 'memory.board.request', request_id: requestId })
@@ -611,32 +682,14 @@ async function boot() {
         void fallBackAfterNativeFailure()
       }
     })
-    const nextSocket = new WebSocket(bootstrap.endpoint)
-    const connection = socketRouter.connect(nextSocket)
-    bootConnection = connection
-    bootSocket = nextSocket
-    socket = nextSocket
-    nextSocket.binaryType = 'arraybuffer'
-    nextSocket.onopen = () => {
-      if (!connection.isCurrent()) return
-      connection.delivery.sendText(JSON.stringify({ type: 'hello', token: bootstrap.token }))
-    }
-    nextSocket.onmessage = connection.onMessage
-    nextSocket.onclose = () => { connection.close() }
-    nextSocket.onerror = () => {
-      if (!connection.isCurrent()) return
-      axes.error = 'connection'
-      render()
-    }
-    axes.connected = true
     axes.booting = false
-    // Applied after the optimistic connect, which would otherwise overwrite it: the
-    // backend may have died before this renderer existed, in which case its exit was
-    // never pushed here and only the bootstrap reply above knows about it.
-    if (bootstrap.backendExited === true) handleBackendExit()
+    if (bootstrap.backend) connectBackend(bootstrap.backend)
+    else handleBackendExit()
+    const microphone = await refreshMicrophonePermission()
+    if (microphone === 'granted' && bootstrap.settings?.startListeningOnLaunch === true) {
+      await activateCapture()
+    }
   } catch {
-    bootConnection?.close(false)
-    if (socket === bootSocket) socket = undefined
     axes.booting = false
     axes.error = 'bootstrap'
   }

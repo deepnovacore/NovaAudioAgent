@@ -47,6 +47,21 @@ test('provides stable accessible labels for permission disconnect and interrupti
   assert.ok(deriveOrbState({ ...base, playback: 'speaking' }).label)
 })
 
+test('keeps microphone recovery states distinct and actionable', () => {
+  for (const [microphone, name, copy] of [
+    ['permission_denied', 'permission-denied', /权限被拒绝/],
+    ['restricted', 'microphone-restricted', /系统策略/],
+    ['no_input_device', 'microphone-no-device', /未检测到/],
+    ['device_busy', 'microphone-busy', /占用/],
+    ['capture_unavailable', 'microphone-unavailable', /不可用/],
+    ['audio_pipeline_error', 'audio-pipeline-error', /音频管线/],
+  ]) {
+    const state = deriveOrbState({ ...base, microphone })
+    assert.equal(state.name, name, microphone)
+    assert.match(state.label, copy, microphone)
+  }
+})
+
 test('shows booting until the first connection instead of an immediate disconnect', () => {
   // The renderer's axes start out booting with connected=false, so a plain
   // "disconnected wins" precedence made 'booting' unreachable: the very first
@@ -81,6 +96,18 @@ test('does not claim an AEC implementation before microphone activation', () => 
   })
 
   assert.equal(state.aecLabel, 'AEC 未启用')
+})
+
+test('backend terminal and reconnecting states remain distinguishable', () => {
+  const base = {
+    booting: false, connected: false, permission: 'granted', activated: false,
+    capture: 'idle', playback: 'idle', codex: 'idle', workspace: '', session: '',
+    pendingConfirmation: false, error: '', audioMode: 'inactive', shellExpanded: false,
+  }
+  assert.equal(deriveOrbState({...base, backendState: 'reconnecting'}).name, 'reconnecting')
+  assert.equal(deriveOrbState({...base, backendState: 'configuration_required'}).name, 'configuration-required')
+  assert.equal(deriveOrbState({...base, backendState: 'authentication_failed'}).name, 'authentication-failed')
+  assert.equal(deriveOrbState({...base, backendState: 'unavailable'}).name, 'backend-unavailable')
 })
 
 test('projects only public workspace session and confirmation into the Codex label', () => {

@@ -715,6 +715,28 @@ test('entry wrapper always disposes stop sources after construction failure and 
   assert.equal(stoppedStdin.pauses, 1)
 })
 
+test('entry construction emits only stable failure classes without raw messages', async () => {
+  for (const fixture of [
+    {error: Object.assign(new Error('private config path'), {name: 'ConfigurationError'}), code: 'configuration_required'},
+    {error: Object.assign(new Error('private credential'), {code: 'credential_missing'}), code: 'authentication_failed'},
+    {error: Object.assign(new Error('private binary'), {code: 'codex_host_unavailable'}), code: 'backend_unavailable'},
+    {error: new Error('private unknown'), code: 'assembly_failed'},
+  ]) {
+    const diagnostics: string[] = []
+    const result = await runDesktopEntryWithStopSources({
+      token: TOKEN,
+      readyEndpoint: '127.0.0.1:51515',
+      stop: new AbortController(),
+      construct: () => { throw fixture.error },
+      announce: () => Promise.resolve(),
+      onDiagnostic: line => diagnostics.push(line),
+    }, {processEvents: new EventEmitter(), stdin: new FakeStdin()})
+    assert.equal(result, 2)
+    assert.deepEqual(diagnostics, [`[runtime-diagnostic] ${fixture.code}`])
+    assert.equal(JSON.stringify(diagnostics).includes('private'), false)
+  }
+})
+
 class NeverGateway implements ModelGateway {
   async *stream(request: StreamRequest): AsyncIterable<GatewayDelta> {
     void request

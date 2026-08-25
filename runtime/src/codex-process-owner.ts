@@ -189,6 +189,7 @@ interface ApprovedSpawnDetails {
 
 export function createApprovedCodexSpawnSpec(input: {
   readonly binary: HostBinary
+  readonly prefixArgs?: readonly string[]
   readonly workspace: HostWorkspace
   readonly codexHome: HostCodexHome
   readonly environment: Readonly<Record<string, string>>
@@ -200,7 +201,10 @@ export function createApprovedCodexSpawnSpec(input: {
   const spec = Object.freeze({[approvedSpawnBrand]: true as const})
   spawnValues.set(spec, Object.freeze({
     binary,
-    argv: CODEX_APP_SERVER_ARGV,
+    argv: Object.freeze([
+      ...validateBinaryPrefixArgs(input.prefixArgs),
+      ...CODEX_APP_SERVER_ARGV,
+    ]),
     cwd,
     environment,
     shell: false,
@@ -209,6 +213,21 @@ export function createApprovedCodexSpawnSpec(input: {
     windowsHide: true,
   }))
   return spec
+}
+
+function validateBinaryPrefixArgs(value: readonly string[] | undefined): readonly string[] {
+  if (value === undefined) return Object.freeze([])
+  if (!Array.isArray(value) || value.length > 1) {
+    throw new CodexProcessOwnerError('spawn_failed')
+  }
+  const result: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string' || !isAbsolute(item) || !item.toLowerCase().endsWith('.js')) {
+      throw new CodexProcessOwnerError('spawn_failed')
+    }
+    result.push(requireCanonicalRegularFile(item, 'spawn_failed'))
+  }
+  return Object.freeze(result)
 }
 
 /** Visible only to host-side factories and deterministic launch-boundary tests. */

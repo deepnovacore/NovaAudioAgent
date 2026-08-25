@@ -21,7 +21,10 @@ function canonicalFile(path, {executable = false, platform = process.platform} =
   const status = lstatSync(lexical)
   if (status.isSymbolicLink() || !status.isFile() || status.size <= 0) reject()
   if (realpathSync(lexical) !== lexical) reject()
-  if (executable && platform !== 'win32' && (status.mode & 0o111) === 0) reject()
+  // Windows does not represent POSIX execute bits, even when inspecting a
+  // pinned macOS/Linux fixture. Target-native release jobs still enforce them.
+  if (executable && platform !== 'win32' && process.platform !== 'win32'
+    && (status.mode & 0o111) === 0) reject()
   return lexical
 }
 

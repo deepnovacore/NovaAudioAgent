@@ -1046,12 +1046,21 @@ test('STATE_FPS covers every orb state and tiers them by how much they move', ()
     interrupted: 60,
     candidate: 30,
     booting: 30,
+    reconnecting: 30,
     idle: 15,
     // Zero means one static frame and no loop at all.
     inactive: 0,
     disconnected: 0,
+    'configuration-required': 0,
+    'authentication-failed': 0,
+    'backend-unavailable': 0,
     error: 0,
     'permission-denied': 0,
+    'microphone-restricted': 0,
+    'microphone-no-device': 0,
+    'microphone-busy': 0,
+    'microphone-unavailable': 0,
+    'audio-pipeline-error': 0,
   })
 })
 

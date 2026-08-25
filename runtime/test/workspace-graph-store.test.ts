@@ -303,6 +303,7 @@ test('compaction repairs historical over-limit relation evidence in card and tab
     await reopened.listRelationEvidence('lw-a', 'lw-b', 'depends_on'),
     retained?.evidence_refs,
   )
+  await reopened.close()
 })
 
 test('reopen and replay retain one canonical observation and the configured schema', async t => {
@@ -331,6 +332,7 @@ test('reopen and replay retain one canonical observation and the configured sche
     relation_evidence: 0,
     operation_receipts: 2,
   })
+  await reopened.close()
 })
 
 test('two real clients concurrently replay one observation idempotently', async t => {
@@ -342,6 +344,9 @@ test('two real clients concurrently replay one observation idempotently', async 
     await Promise.all([first.close(), second.close()])
     await rm(directory, {recursive: true, force: true})
   })
+  const bootstrap = new WorkspaceGraphStoreClient(path)
+  await bootstrap.open()
+  await bootstrap.close()
   await Promise.all([first.open(), second.open()])
   const lock = await holdWriteLock(path)
   const observation = workspaceOpened('concurrent-replay')
@@ -777,6 +782,7 @@ test('compaction bounds private histories while retaining relation decision prov
   assert.equal(aliasIds.has('alias-008'), true)
   await reopened.appendObservation(workspaceOpened('after-history-compaction'))
   assert.equal((await reopened.listObservations()).at(-1)?.observation_id, 'after-history-compaction')
+  await reopened.close()
 })
 
 test('compaction preserves suppression tombstones and their complete evidence history', async t => {
@@ -967,6 +973,7 @@ test('commit-then-exit reconciles a durable receipt without double-applying on r
       evidence: {source: 'runtime', ref: 'commit-exit-observation', observed_at: 1},
     },
   })
+  await restarted.close()
 })
 
 test('relation receipt replay returns its exact committed result after derived state advances', async t => {
@@ -1045,6 +1052,7 @@ test('a genuine schema-v1 database advances through every explicit migration', a
     await querySqlite(path, 'SELECT version FROM schema_migrations ORDER BY version'),
     [{version: 1}, {version: 2}, {version: 3}],
   )
+  await client.close()
 })
 
 test('a genuine schema-v2 relation receipt remains retained and conflicts stably after advancement', async t => {

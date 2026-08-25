@@ -22,6 +22,14 @@ export interface ProjectRootFileAuthority {
   lookupAt(rootDescriptor: number, name: string): ProjectRootFileLookupResult
   createFileAt(rootDescriptor: number, name: string, exclusive: boolean): ProjectRootFileCreateResult
   mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult
+  /** Windows-only private create seam; callers fail closed when it is unavailable. */
+  mkdirPrivateAt?(rootDescriptor: number, name: string): ProjectRootFileCreateResult
+  /** Windows-only ACL repair seam for an already-retained exact child. */
+  protectAt?(
+    rootDescriptor: number,
+    name: string,
+    childDescriptor: number,
+  ): ProjectRootFileResult
   renameAt(rootDescriptor: number, from: string, to: string): ProjectRootFileResult
   unlinkAt(
     rootDescriptor: number,
@@ -38,6 +46,8 @@ export const unsupportedProjectRootFiles: ProjectRootFileAuthority = Object.free
   lookupAt: (): ProjectRootFileLookupResult => ({status: 'unsupported'}),
   createFileAt: (): ProjectRootFileCreateResult => ({status: 'unsupported'}),
   mkdirAt: (): ProjectRootFileCreateResult => ({status: 'unsupported'}),
+  mkdirPrivateAt: (): ProjectRootFileCreateResult => ({status: 'unsupported'}),
+  protectAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
   renameAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
   unlinkAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
 })

@@ -7,7 +7,6 @@ import {
   openSync,
   realpathSync,
 } from 'node:fs'
-import {getuid} from 'node:process'
 import {basename, dirname, isAbsolute, join, resolve} from 'node:path'
 
 import {
@@ -58,6 +57,7 @@ export interface CodexCredentialProfile {
 export interface ResolvedCodexHostConfig {
   readonly [resolvedCodexHostConfigBrand]: true
   readonly binary: HostBinary
+  readonly binaryPrefixArgs: readonly string[]
   readonly workspace: HostWorkspace
   readonly credential: CodexCredentialProfile
   readonly prewarm: boolean
@@ -102,6 +102,7 @@ export function resolveCodexHostConfig(
   } catch {
     throw new CodexHostConfigurationError('codex_binary_invalid')
   }
+  const binaryPrefixArgs = resolveBinaryPrefixArgs(settings.codex_prefix_args)
 
   const credential = Object.freeze({[codexCredentialProfileBrand]: true as const})
   credentialValues.set(credential, settings.codex_api_key)
@@ -126,6 +127,7 @@ export function resolveCodexHostConfig(
   return Object.freeze({
     [resolvedCodexHostConfigBrand]: true as const,
     binary,
+    binaryPrefixArgs,
     workspace,
     credential,
     prewarm: settings.codex_prewarm,
@@ -133,6 +135,28 @@ export function resolveCodexHostConfig(
     stateRoot,
     managedRoot,
   })
+}
+
+function resolveBinaryPrefixArgs(configured: readonly string[]): readonly string[] {
+  if (!Array.isArray(configured) || configured.length > 1) {
+    throw new CodexHostConfigurationError('codex_binary_invalid')
+  }
+  const result: string[] = []
+  for (const value of configured) {
+    if (typeof value !== 'string' || !isWellFormed(value) || !isAbsolute(value)
+      || !value.toLowerCase().endsWith('.js')) {
+      throw new CodexHostConfigurationError('codex_binary_invalid')
+    }
+    try {
+      const canonical = realpathSync(value)
+      const info = lstatSync(canonical)
+      if (info.isSymbolicLink() || !info.isFile() || canonical !== resolve(value)) throw new Error()
+      result.push(canonical)
+    } catch {
+      throw new CodexHostConfigurationError('codex_binary_invalid')
+    }
+  }
+  return Object.freeze(result)
 }
 
 /** Internal host accessor; this module is intentionally absent from the runtime root exports. */
@@ -188,6 +212,10 @@ function ensurePrivateDirectory(path: string): string {
     lstatSync(path)
   } catch (error) {
     if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    // Node cannot create or validate a protected DACL. The desktop bootstrap
+    // must create missing Windows roots through the packaged native host
+    // before runtime configuration is resolved.
+    if (process.platform === 'win32') throw error
     const parent = dirname(path)
     const name = basename(path)
     if (parent === path || name === '' || name === '.' || name === '..') throw error
@@ -210,7 +238,7 @@ function createPrivateDirectory(parent: string, path: string): void {
       !retainedParent.isDirectory()
       || !sameIdentity(retainedParent, currentParent)
       || !ownedByCurrentUser(retainedParent.uid)
-      || (retainedParent.mode & 0o7022n) !== 0n
+      || !safeParentMode(retainedParent.mode)
       || realpathSync(parent) !== resolve(parent)
     ) throw new Error('unsafe parent')
     mkdirSync(path, {mode: 0o700})
@@ -224,7 +252,7 @@ function createPrivateDirectory(parent: string, path: string): void {
       !opened.isDirectory()
       || !sameIdentity(created, opened)
       || !ownedByCurrentUser(opened.uid)
-      || (opened.mode & 0o7777n) !== 0o700n
+      || !privateDirectoryMode(opened.mode)
     ) throw new Error('unsafe created directory')
     const verified = fstatSync(childDescriptor, {bigint: true})
     const current = lstatSync(path, {bigint: true})
@@ -235,7 +263,7 @@ function createPrivateDirectory(parent: string, path: string): void {
       || !sameIdentity(opened, current)
       || !sameIdentity(retainedParent, verifiedParent)
       || !sameIdentity(retainedParent, currentParentAfterCreate)
-      || (verified.mode & 0o7777n) !== 0o700n
+      || !privateDirectoryMode(verified.mode)
       || realpathSync(path) !== resolve(path)
       || dirname(realpathSync(path)) !== realpathSync(parent)
     ) throw new Error('created directory replaced')
@@ -253,7 +281,15 @@ function sameIdentity(
 }
 
 function ownedByCurrentUser(uid: bigint): boolean {
-  return typeof getuid !== 'function' || uid === BigInt(getuid())
+  return typeof process.getuid !== 'function' || uid === BigInt(process.getuid())
+}
+
+function safeParentMode(mode: bigint): boolean {
+  return (mode & 0o7022n) === 0n
+}
+
+function privateDirectoryMode(mode: bigint): boolean {
+  return (mode & 0o7777n) === 0o700n
 }
 
 function hasRejectedScriptSuffix(path: string): boolean {

@@ -77,6 +77,7 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_VOLCENGINE_VAD_MAX_UTTERANCE_MS', 'volcengine', false, true, 'never', '15000', 'VAD maximum utterance duration.', 'VAD 最长话语时长。'],
   ['NOVA_AUDIO_AGENT_CODEX_WORKSPACE', 'codex', false, true, 'when_selected', null, 'Host-approved Codex workspace.', '主机批准的 Codex 工作区。'],
   ['NOVA_AUDIO_AGENT_CODEX_BIN', 'codex', false, true, 'never', 'codex', 'Host-approved Codex app-server binary.', '主机批准的 Codex app-server 可执行文件。'],
+  ['NOVA_AUDIO_AGENT_CODEX_PREFIX_ARGS', 'codex', false, false, 'never', '[]', 'Host-approved direct argv prefix for an official Codex launcher.', '宿主批准的官方 Codex 启动器直接 argv 前缀。'],
   ['NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH', 'codex', false, false, 'never', 'codex', 'Host-owned native resource root.', '宿主持有的原生资源根目录。'],
   ['NOVA_AUDIO_AGENT_CODEX_API_KEY', 'codex', true, true, 'never', 'Codex login', 'Optional Codex credential override.', '可选 Codex 凭据覆盖。'],
   ['NOVA_AUDIO_AGENT_CODEX_PREWARM', 'codex', false, true, 'never', 'true', 'Prewarm Codex app-server.', '预热 Codex app-server。'],

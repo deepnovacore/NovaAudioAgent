@@ -231,3 +231,36 @@ test('main camera permission helper catches prompting or examining permissions i
     assert.deepEqual(calls, expected, name)
   }
 })
+
+test('main microphone helper resolves macOS TCC only when the renderer requests it', async () => {
+  assert.equal(typeof securityModule.resolveMicrophonePermission, 'function')
+  for (const [name, platform, statuses, expectedCalls, expectedStatus] of [
+    ['mac not determined then granted', 'darwin', ['not-determined', 'granted'], ['status', 'ask', 'status'], 'granted'],
+    ['mac not determined then denied', 'darwin', ['not-determined', 'denied'], ['status', 'ask', 'status'], 'denied'],
+    ['mac granted', 'darwin', ['granted'], ['status'], 'granted'],
+    ['mac denied', 'darwin', ['denied'], ['status'], 'denied'],
+    ['mac restricted', 'darwin', ['restricted'], ['status'], 'restricted'],
+    ['windows', 'win32', ['not-determined'], [], 'unknown'],
+    ['linux', 'linux', ['not-determined'], [], 'unknown'],
+  ]) {
+    const calls = []
+    let index = 0
+    const result = await securityModule.resolveMicrophonePermission({
+      platform,
+      systemPreferences: {
+        getMediaAccessStatus(kind) {
+          assert.equal(kind, 'microphone')
+          calls.push('status')
+          return statuses[Math.min(index++, statuses.length - 1)]
+        },
+        async askForMediaAccess(kind) {
+          assert.equal(kind, 'microphone')
+          calls.push('ask')
+          return true
+        },
+      },
+    })
+    assert.deepEqual(calls, expectedCalls, name)
+    assert.deepEqual(result, { status: expectedStatus }, name)
+  }
+})
