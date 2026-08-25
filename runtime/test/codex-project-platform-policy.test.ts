@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {chmod, mkdir, mkdtemp, rm} from 'node:fs/promises'
+import {chmod, mkdir, mkdtemp, realpath, rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
@@ -17,8 +17,10 @@ test('Windows root admission defers ownership and ACL authority to the native ha
   try {
     await mkdir(state, {mode: 0o755})
     await mkdir(managed, {mode: 0o777})
-    assert.doesNotThrow(() => hostProjectRootForTest(state, 'win32'))
-    assert.doesNotThrow(() => hostManagedProjectRootForTest(managed, 'win32'))
+    const canonicalState = await realpath(state)
+    const canonicalManaged = await realpath(managed)
+    assert.doesNotThrow(() => hostProjectRootForTest(canonicalState, 'win32'))
+    assert.doesNotThrow(() => hostManagedProjectRootForTest(canonicalManaged, 'win32'))
   } finally {
     await rm(root, {recursive: true, force: true})
   }
@@ -33,10 +35,11 @@ test('POSIX root admission retains exact owner-only mode checks', async t => {
   const state = join(root, 'state')
   try {
     await mkdir(state, {mode: 0o700})
-    assert.doesNotThrow(() => hostProjectRootForTest(state, process.platform))
+    const canonicalState = await realpath(state)
+    assert.doesNotThrow(() => hostProjectRootForTest(canonicalState, process.platform))
     await chmod(state, 0o755)
     assert.throws(
-      () => hostProjectRootForTest(state, process.platform),
+      () => hostProjectRootForTest(canonicalState, process.platform),
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_permissions',
     )
   } finally {
