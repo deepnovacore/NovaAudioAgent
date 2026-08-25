@@ -2,7 +2,6 @@ import {randomUUID} from 'node:crypto'
 import {constants, lstatSync, realpathSync, type Stats} from 'node:fs'
 import {
   open,
-  realpath,
   type FileHandle,
 } from 'node:fs/promises'
 import {basename, dirname, isAbsolute, join, resolve} from 'node:path'
@@ -420,7 +419,7 @@ export class CodexProjectStore {
         const candidateName = basename(candidate)
         let candidateFile: FileHandle | null = null
         try {
-          const created = this.#mkdirAt(
+          const created = this.#mkdirPrivateAt(
             managedHandle,
             candidateName,
             'workspace_create_failed',
@@ -442,12 +441,17 @@ export class CodexProjectStore {
           const initialInfo = await candidateFile.stat({bigint: true})
           if (
             !initialInfo.isDirectory()
-            || !privateDirectoryMetadata(initialInfo, this.#platform)
             || !sameFileIdentity(initialIdentity, fileIdentity(initialInfo))
           ) throw new ProjectStateError('workspace_boundary_changed')
-          await candidateFile.chmod(0o700)
+          this.#protectAt(
+            managedHandle,
+            candidateName,
+            candidateFile,
+            'workspace_boundary_changed',
+          )
+          if (this.#platform !== 'win32') await candidateFile.chmod(0o700)
           const verified = await candidateFile.stat({bigint: true})
-          const canonical = await realpath(candidate)
+          const canonical = realpathSync(candidate)
           this.#requireMatchesAt(
             managedHandle,
             candidateName,
@@ -949,7 +953,7 @@ export class CodexProjectStore {
       file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
       this.#requireMatchesAt(root, basename(path), file, 'workspace_boundary_changed')
       const info = await file.stat({bigint: true})
-      const canonical = await realpath(path)
+      const canonical = realpathSync(path)
       if (
         !info.isDirectory()
         || canonical !== path
@@ -1066,7 +1070,7 @@ export class CodexProjectStore {
         constants.O_RDONLY | directoryFlag() | noFollowFlag(),
       )
       const currentInfo = await current.stat({bigint: true})
-      const canonical = await realpath(this.#stateRoot)
+      const canonical = realpathSync(this.#stateRoot)
       if (!stateRootMatches(currentInfo, expected, this.#platform) || canonical !== expected.canonical) {
         throw new Error('state root identity changed')
       }
@@ -1099,7 +1103,7 @@ export class CodexProjectStore {
         constants.O_RDONLY | directoryFlag() | noFollowFlag(),
       )
       const currentInfo = await current.stat({bigint: true})
-      const canonical = await realpath(this.#managedRoot)
+      const canonical = realpathSync(this.#managedRoot)
       if (
         canonical !== this.#managedRoot
         || !currentInfo.isDirectory()
@@ -1185,6 +1189,31 @@ export class CodexProjectStore {
     return result
   }
 
+  #mkdirPrivateAt(
+    root: FileHandle,
+    name: string,
+    code: ProjectStateCode,
+  ): ProjectRootFileCreateResult {
+    if (this.#platform !== 'win32') return this.#mkdirAt(root, name, code)
+    requireProjectBasename(name, code)
+    const result = this.#callRootFileCreate(
+      () => this.#rootFiles.mkdirPrivateAt?.(root.fd, name) ?? {status: 'unsupported'},
+    )
+    if (result.status === 'unsupported' || result.status === 'failed') {
+      throw new ProjectStateError(code)
+    }
+    return result
+  }
+
+  #protectAt(root: FileHandle, name: string, child: FileHandle, code: ProjectStateCode): void {
+    if (this.#platform !== 'win32') return
+    requireProjectBasename(name, code)
+    const result = this.#callRootFile(
+      () => this.#rootFiles.protectAt?.(root.fd, name, child.fd) ?? {status: 'unsupported'},
+    )
+    if (result.status !== 'ok') throw new ProjectStateError(code)
+  }
+
   #createFileAt(
     root: FileHandle,
     name: string,
@@ -1236,7 +1265,7 @@ export class CodexProjectStore {
     name: string,
   ): Promise<{readonly file: FileHandle; readonly binding: DirectoryBinding}> {
     requireProjectBasename(name, 'state_permissions')
-    const created = this.#mkdirAt(root, name, 'state_permissions')
+    const created = this.#mkdirPrivateAt(root, name, 'state_permissions')
     if (created.status !== 'ok' && created.status !== 'exists') {
       throw new ProjectStateError('state_permissions')
     }
@@ -1251,10 +1280,11 @@ export class CodexProjectStore {
       if (createdIdentity !== null && !sameFileIdentity(createdIdentity, initialIdentity)) {
         throw new ProjectStateError('state_permissions')
       }
-      if (created.status === 'ok') await file.chmod(0o700)
+      this.#protectAt(root, name, file, 'state_permissions')
+      if (created.status === 'ok' && this.#platform !== 'win32') await file.chmod(0o700)
       const info = await file.stat({bigint: true})
       const identity = fileIdentity(info)
-      const canonical = await realpath(path)
+      const canonical = realpathSync(path)
       if (
         !info.isDirectory()
         || !privateDirectoryMetadata(info, this.#platform)
@@ -1509,7 +1539,7 @@ export class CodexProjectStore {
       file = await open(candidate.path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
       this.#requireMatchesAt(root, name, file, 'workspace_boundary_changed')
       const info = await file.stat({bigint: true})
-      const canonical = await realpath(candidate.path)
+      const canonical = realpathSync(candidate.path)
       if (
         !info.isDirectory()
         || !privateDirectoryMetadata(info, this.#platform)
@@ -1547,7 +1577,7 @@ export class CodexProjectStore {
       const managed = await this.#validateManagedRoot()
       if (!isDirectChild(managed, removed.path)) return
       const root = this.#requireManagedRootHandle()
-      const created = this.#mkdirAt(root, removed.name, 'workspace_boundary_changed')
+      const created = this.#mkdirPrivateAt(root, removed.name, 'workspace_boundary_changed')
       if (created.status !== 'ok') return
       createdRoot = root
       createdIdentity = created.identity
@@ -1555,9 +1585,10 @@ export class CodexProjectStore {
       this.#requireMatchesAt(root, removed.name, file, 'workspace_boundary_changed')
       const initialInfo = await file.stat({bigint: true})
       if (!sameFileIdentity(created.identity, fileIdentity(initialInfo))) return
-      await file.chmod(0o700)
+      this.#protectAt(root, removed.name, file, 'workspace_boundary_changed')
+      if (this.#platform !== 'win32') await file.chmod(0o700)
       const info = await file.stat({bigint: true})
-      const canonical = await realpath(removed.path)
+      const canonical = realpathSync(removed.path)
       if (
         !info.isDirectory()
         || !privateDirectoryMetadata(info, this.#platform)
@@ -1819,7 +1850,7 @@ async function validateRegisteredWorkspace(
     const file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
     try {
       const info = await file.stat({bigint: true})
-      const canonical = await realpath(path)
+      const canonical = realpathSync(path)
       if (!info.isDirectory() || canonical !== path) throw new Error('unsafe')
       return {canonical, identity: fileIdentity(info)}
     } finally {
@@ -1897,7 +1928,7 @@ async function openStateRoot(
   try {
     file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
     const info = await file.stat({bigint: true})
-    const canonical = await realpath(path)
+    const canonical = realpathSync(path)
     if (
       !info.isDirectory()
       || canonical !== path
@@ -1926,7 +1957,7 @@ async function openManagedRoot(
   try {
     file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
     const info = await file.stat({bigint: true})
-    const canonical = await realpath(path)
+    const canonical = realpathSync(path)
     if (
       !info.isDirectory()
       || canonical !== path

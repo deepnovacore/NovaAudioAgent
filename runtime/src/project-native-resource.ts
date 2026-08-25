@@ -16,7 +16,12 @@ import {tmpdir} from 'node:os'
 import {isAbsolute, join, resolve, type PlatformPath} from 'node:path'
 
 import type {NativeFileLockAuthority} from './native-file-lock.js'
-import type {ProjectFileIdentity, ProjectRootFileAuthority} from './project-root-file.js'
+import type {
+  ProjectFileIdentity,
+  ProjectRootFileAuthority,
+  ProjectRootFileCreateResult,
+  ProjectRootFileResult,
+} from './project-root-file.js'
 
 const PROJECT_ADDON_PATH = 'native/project-native/nova_project_native.node'
 const PROJECT_ADDON_ID = 'project_native_addon'
@@ -133,6 +138,8 @@ export function loadProjectNativeHostFromResources(
         addon.createFileAt(root, name, exclusive)
       ),
       mkdirAt: (root: number, name: string) => addon.mkdirAt(root, name),
+      mkdirPrivateAt: (root: number, name: string) => addon.mkdirPrivateAt(root, name),
+      protectAt: (root: number, name: string, child: number) => addon.protectAt(root, name, child),
       renameAt: (root: number, from: string, to: string) => addon.renameAt(root, from, to),
       unlinkAt: (
         root: number,
@@ -326,8 +333,8 @@ function validBinary(bytes: Buffer, platform: string, arch: string): boolean {
 
 interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {
   protectDirectory(path: string): unknown
-  protectAt(root: number, name: string, child: number): unknown
-  mkdirPrivateAt(root: number, name: string): unknown
+  protectAt(root: number, name: string, child: number): ProjectRootFileResult
+  mkdirPrivateAt(root: number, name: string): ProjectRootFileCreateResult
 }
 
 function isStatus(value: unknown, status: string): boolean {

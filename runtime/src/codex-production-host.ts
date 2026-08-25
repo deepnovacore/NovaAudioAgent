@@ -266,7 +266,11 @@ export function loadCodexSandboxProbeFromResources(
       before.size !== record.byteSize
       || before.sha256 !== record.sha256
       || !validExecutable(before.bytes, options.platform, options.arch)
-      || (options.platform !== 'win32' && (before.mode & 0o111n) !== 0o111n)
+      || (
+        process.platform !== 'win32'
+        && options.platform !== 'win32'
+        && (before.mode & 0o111n) !== 0o111n
+      )
     ) return null
     const after = snapshotRegularFile(probePath, MAX_PROBE_BYTES)
     if (!sameSnapshot(before, after)) return null

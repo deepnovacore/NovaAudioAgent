@@ -481,8 +481,12 @@ export class WorkspaceGraphStore {
       database = this.#databaseFactory(this.#path)
       database.exec('PRAGMA busy_timeout=1000')
       database.exec('PRAGMA foreign_keys=ON')
-      database.exec('PRAGMA journal_mode=WAL')
       this.#migrate(database)
+      // A fresh database must finish its serialized schema transaction before
+      // concurrent clients negotiate WAL. On Windows, racing journal_mode with
+      // another connection's first migration fails immediately despite the busy
+      // timeout, while BEGIN IMMEDIATE itself waits correctly.
+      database.exec('PRAGMA journal_mode=WAL')
       this.#database = database
       this.#publicationRevision = Math.max(
         this.#publicationRevision,

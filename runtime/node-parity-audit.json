@@ -2,6 +2,7 @@
   "schema_version": 2,
   "files": [
     "desktop/ambient-orb/src/main/app-protocol.mjs",
+    "desktop/ambient-orb/src/main/backend-diagnostics.mjs",
     "desktop/ambient-orb/src/main/backend-supervisor.mjs",
     "desktop/ambient-orb/src/main/backend.mjs",
     "desktop/ambient-orb/src/main/camera-source.mjs",
@@ -11,6 +12,7 @@
     "desktop/ambient-orb/src/main/main.mjs",
     "desktop/ambient-orb/src/main/native-audio.mjs",
     "desktop/ambient-orb/src/main/platform-config.mjs",
+    "desktop/ambient-orb/src/main/project-directories.mjs",
     "desktop/ambient-orb/src/main/release-smoke-channel.mjs",
     "desktop/ambient-orb/src/main/security.mjs",
     "desktop/ambient-orb/src/main/settings-store.mjs",
@@ -200,6 +202,15 @@
       "disposition": "host_only_unicode",
       "test": "desktop/ambient-orb/test/app-protocol.test.mjs",
       "behavior": "renderer protocol serves the complete reachable static import graph and nothing arbitrary"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/backend-diagnostics.mjs",
+      "kind": "regex_unicode_semantics",
+      "occurrence_index": 0,
+      "snippet_sha256": "4f46122526d89ad40f40a24e6ad2af5f477964ac79bb61e350eb77c9a3eb30ea",
+      "disposition": "host_only_unicode",
+      "test": "desktop/ambient-orb/test/backend-diagnostics.test.mjs",
+      "behavior": "collector accepts split stable diagnostics and never returns raw stderr"
     },
     {
       "file": "desktop/ambient-orb/src/main/backend.mjs",
@@ -520,6 +531,15 @@
       "file": "runtime/src/codex-host-config.ts",
       "kind": "locale_unicode",
       "occurrence_index": 0,
+      "snippet_sha256": "2363322a01e8cbed64d90a151d3ded281b44f3080329426ebc7dad3791c32103",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-host-config.test.ts",
+      "behavior": "host resolver canonicalizes one direct Node launcher script"
+    },
+    {
+      "file": "runtime/src/codex-host-config.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 1,
       "snippet_sha256": "f5feeecfc6e58c061ce8ee0f4d892b6746d496bc2f9a2000a20e8836f0a9c640",
       "disposition": "host_only_unicode",
       "test": "runtime/test/codex-host-config.test.ts",
@@ -529,6 +549,15 @@
       "file": "runtime/src/codex-process-owner.ts",
       "kind": "locale_unicode",
       "occurrence_index": 0,
+      "snippet_sha256": "f3d4c88f657b1d41682f269111ec30e668e0c5fc9a73dbe7b87f649c5c724d2a",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-process-owner.test.ts",
+      "behavior": "the host launch boundary ignores caller argv and parent secrets"
+    },
+    {
+      "file": "runtime/src/codex-process-owner.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 1,
       "snippet_sha256": "f5feeecfc6e58c061ce8ee0f4d892b6746d496bc2f9a2000a20e8836f0a9c640",
       "disposition": "host_only_unicode",
       "test": "runtime/test/codex-process-owner.test.ts",

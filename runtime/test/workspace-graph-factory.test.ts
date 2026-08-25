@@ -27,7 +27,9 @@ test('workspace graph factory is disabled by default and accepts only an owner-o
   }
 })
 
-test('workspace graph factory rejects an unsafe parent with one fixed diagnostic', async () => {
+test('workspace graph factory rejects an unsafe parent with one fixed diagnostic', {
+  skip: process.platform === 'win32' && 'Windows parent privacy is ACL-based, not mode-based',
+}, async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-workspace-graph-unsafe-')))
   const diagnostics: string[] = []
   try {

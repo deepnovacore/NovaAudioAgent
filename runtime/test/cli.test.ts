@@ -36,7 +36,9 @@ test('Node CLI fixture replay emits a verified deterministic runtime snapshot', 
   ))}\n`)
 })
 
-test('Node CLI demo rejects a scenario symlink that escapes the fixture root', async t => {
+test('Node CLI demo rejects a scenario symlink that escapes the fixture root', {
+  skip: process.platform === 'win32' && 'unprivileged Windows test users cannot create directory symlinks',
+}, async t => {
   const root = await mkdtemp(resolve(tmpdir(), 'nova-fixture-root-'))
   const outside = await mkdtemp(resolve(tmpdir(), 'nova-fixture-outside-'))
   await mkdir(resolve(root, 'v1'))

@@ -185,10 +185,35 @@ class DescriptorRootFileAuthority implements ProjectRootFileAuthority {
     }
   }
 
+  mkdirPrivateAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    return this.mkdirAt(rootDescriptor, name)
+  }
+
+  protectAt(
+    rootDescriptor: number,
+    name: string,
+    childDescriptor: number,
+  ): ProjectRootFileResult {
+    const matched = this.matchesAt(rootDescriptor, name, childDescriptor)
+    if (matched.status !== 'ok') return matched
+    try {
+      chmodSync(join(this.#rootPath(rootDescriptor), name), 0o700)
+      return {status: 'ok'}
+    } catch {
+      return {status: 'failed'}
+    }
+  }
+
   renameAt(rootDescriptor: number, from: string, to: string): ProjectRootFileResult {
     try {
       const root = this.#rootPath(rootDescriptor)
-      renameSync(join(root, from), join(root, to))
+      const destination = join(root, to)
+      if (process.platform === 'win32') {
+        try { unlinkSync(destination) } catch (error) {
+          if (!isErrno(error, 'ENOENT')) throw error
+        }
+      }
+      renameSync(join(root, from), destination)
       return {status: 'ok'}
     } catch (error) {
       return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}

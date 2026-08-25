@@ -39,7 +39,9 @@ test('saved login is copied privately and the child environment is an exact allo
     })
 
     assert.equal(await readFile(join(destination, 'auth.json'), 'utf8'), '{"token":"credential-sentinel"}')
-    assert.equal((await lstat(join(destination, 'auth.json'))).mode & 0o777, 0o600)
+    if (process.platform !== 'win32') {
+      assert.equal((await lstat(join(destination, 'auth.json'))).mode & 0o777, 0o600)
+    }
     const marker = JSON.parse(await readFile(
       join(destination, '.nova-credential-source-v1.json'),
       'utf8',
@@ -62,11 +64,15 @@ test('an API key skips hostile saved-login files and remains process-only', asyn
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-key-'))
   const source = join(root, 'source')
   const destination = join(root, 'destination')
-  const outside = join(root, 'outside-auth')
   await mkdir(source, {mode: 0o700})
   await mkdir(destination, {mode: 0o700})
-  await writeFile(outside, 'saved-login-secret', {mode: 0o600})
-  await symlink(outside, join(source, 'auth.json'))
+  if (process.platform === 'win32') {
+    await writeFile(join(source, 'auth.json'), 'saved-login-secret', {mode: 0o600})
+  } else {
+    const outside = join(root, 'outside-auth')
+    await writeFile(outside, 'saved-login-secret', {mode: 0o600})
+    await symlink(outside, join(source, 'auth.json'))
+  }
   try {
     const home = hostCodexHomeForTest(await realpath(destination), {ephemeral: true})
     const snapshotter = new CredentialSnapshotter({
@@ -90,7 +96,10 @@ test('an API key skips hostile saved-login files and remains process-only', asyn
 test('credential no-follow, mode, and exact byte bounds fail with only credential_missing', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-bound-'))
   try {
-    for (const scenario of ['symlink', 'group-write', 'over-limit'] as const) {
+    const scenarios = process.platform === 'win32'
+      ? (['over-limit'] as const)
+      : (['symlink', 'group-write', 'over-limit'] as const)
+    for (const scenario of scenarios) {
       const source = join(root, `${scenario}-source`)
       const destination = join(root, `${scenario}-destination`)
       await mkdir(source, {mode: 0o700})
@@ -186,8 +195,10 @@ test('credential marker exact byte bound is accepted and over-bound or hostile d
   )
   await writeFile(join(source, 'auth.json'), 'new-source', {mode: 0o600})
   const outside = join(root, 'outside-destination')
-  await writeFile(outside, 'destination-secret', {mode: 0o600})
-  await symlink(outside, join(hostileDestination, 'auth.json'))
+  if (process.platform !== 'win32') {
+    await writeFile(outside, 'destination-secret', {mode: 0o600})
+    await symlink(outside, join(hostileDestination, 'auth.json'))
+  }
   try {
     const snapshotter = new CredentialSnapshotter({
       sourceHome: await realpath(source),
@@ -197,12 +208,17 @@ test('credential marker exact byte bound is accepted and over-bound or hostile d
       codexHome: hostCodexHomeForTest(await realpath(exactDestination), {ephemeral: true}),
       apiKey: null,
     })
-    assert.equal((await lstat(join(exactDestination, 'auth.json'))).mode & 0o777, 0o600)
-    assert.equal(
-      (await lstat(join(exactDestination, '.nova-credential-source-v1.json'))).mode & 0o777,
-      0o600,
-    )
-    for (const destination of [overDestination, hostileDestination]) {
+    if (process.platform !== 'win32') {
+      assert.equal((await lstat(join(exactDestination, 'auth.json'))).mode & 0o777, 0o600)
+      assert.equal(
+        (await lstat(join(exactDestination, '.nova-credential-source-v1.json'))).mode & 0o777,
+        0o600,
+      )
+    }
+    const rejectedDestinations = process.platform === 'win32'
+      ? [overDestination]
+      : [overDestination, hostileDestination]
+    for (const destination of rejectedDestinations) {
       await assert.rejects(
         snapshotter.prepare({
           codexHome: hostCodexHomeForTest(await realpath(destination), {ephemeral: true}),
@@ -211,7 +227,9 @@ test('credential marker exact byte bound is accepted and over-bound or hostile d
         (error: unknown) => String(error) === 'CodexCredentialError: credential_missing',
       )
     }
-    assert.equal(await readFile(outside, 'utf8'), 'destination-secret')
+    if (process.platform !== 'win32') {
+      assert.equal(await readFile(outside, 'utf8'), 'destination-secret')
+    }
   } finally {
     await rm(root, {recursive: true, force: true})
   }
