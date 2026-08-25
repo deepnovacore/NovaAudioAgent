@@ -8,6 +8,7 @@ import type {
   TransportObserver,
   TransportOutcome,
 } from '../codex-app-server-transport.js'
+import {CodexTransportError} from '../codex-app-server-transport.js'
 import {
   CODEX_PROJECT_MANIFEST,
   validateCodexRequest,
@@ -41,6 +42,7 @@ import {CodexLiveAdapter} from './codex-live.js'
 import {
   createCodexAdapterSharedState,
   failureHandoff,
+  failureStage,
   type CodexAdapterSharedState,
   type ValidatedCodexDisposition,
 } from './codex-common.js'
@@ -638,6 +640,13 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
         ).catch(() => false)
         await this.#refreshProjectContextBarrier()
       }
+      if (error instanceof CodexTransportError) {
+        const terminal = failureHandoff(
+          error.code, 'run', failureStage(error.code, 'thread_start'),
+        )
+        await this.#notifyTerminalWorkOrder(workspace, workOrder, terminal)
+        return terminal
+      }
       throw error
     }
     const transport = new ThreadObservingTransport(inner, threadId => {
@@ -696,11 +705,12 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       }
       await this.#refreshProjectViewTolerant()
     }
+    const transportResult = result ?? failureHandoff('transport_failure', 'run', 'thread_start')
     const terminal = bindingMismatch
-      ? failureHandoff('session_thread_mismatch', 'run')
-      : resumed === null && reportedThreadId === null
-        ? failureHandoff('thread_id_invalid', 'run')
-        : result ?? failureHandoff('transport_failure', 'run')
+      ? failureHandoff('session_thread_mismatch', 'run', 'thread_start')
+      : resumed === null && reportedThreadId === null && transportResult.outcome === 'ok'
+        ? failureHandoff('thread_id_invalid', 'run', 'thread_start')
+        : transportResult
     if (deferWorkspaceObservation && terminal.outcome === 'ok') {
       await this.#notifyCommittedWorkspace(workspace)
     }

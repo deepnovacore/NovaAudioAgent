@@ -706,12 +706,21 @@ def _gate_projection(timeline: _Timeline) -> GateResult:
         content = _text(data.get("content"))
         if event_id.startswith("suggestion:"):
             selected_facts.append((record, content))
+        elif (
+            event_id.startswith("progress:")
+            and ":started:" in event_id
+            and content == "Codex 已开始处理这个任务。"
+        ):
+            # Thread readiness is a host lifecycle fact, not worker-authored
+            # progress. It may be spoken directly; only working milestones must
+            # pass through Surrogate selection.
+            continue
         else:
             findings.append(
                 _finding(
                     "progress_fact_not_surrogate_selected",
                     record,
-                    "default Codex progress must arrive through a selected suggestion",
+                    "Codex working progress must arrive through a selected suggestion",
                 )
             )
     if informative and not selected_facts:

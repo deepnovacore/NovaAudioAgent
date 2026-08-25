@@ -49,6 +49,7 @@ import {
   GUARD_CLEAR_ACK_DEADLINE_S,
   HIT_ALERT_MIN_PRIORITY,
   MAX_HOST_FACT_CHARS,
+  MAX_LATE_SYNC_RESULTS,
   MAX_PENDING_TOOL_REFUSALS,
   MAX_TRACKED_ORIGIN_DELIVERY_PROOFS,
   MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS,
@@ -56,6 +57,8 @@ import {
   MAX_UNCERTAIN_DELIVERY_RETRIES,
   PROJECT_EXPIRY_STEP_TIMEOUT_S,
   PREEMPT_MIN_PRIORITY,
+  SYNC_RESULT_SNIPPET_CHARS,
+  SYNC_RESULT_TITLE_CHARS,
   USER_HOLD_MAX_S,
   callKey,
   compareQueuedHostResponses,
@@ -317,6 +320,8 @@ export class RealtimeService {
   readonly #originDeferredToolCalls: DeferredOriginToolCall[] = []
   /** R105: delegate id -> the call key waiting on its synchronous result. */
   readonly #pendingSync = new Map<string, string>()
+  /** A timed-out sync call whose first real late handoff should become one host fact. */
+  readonly #lateSync = new Map<string, string>()
   /** Reserved user items answering a proposal, keyed `epoch:item`. */
   readonly #projectConfirmationItems = new Set<string>()
   /** Items mid-close: no longer answerable, still blocking tool calls. */
@@ -1107,7 +1112,7 @@ export class RealtimeService {
         kind: 'progress',
         host_item_id: this.#idFactory(),
         event_id: acknowledgement.event_id,
-        content: `${this.#executorDisplayName(acknowledgement.channel)} 已接手开始处理：${acknowledgement.summary}`,
+        content: `${this.#executorDisplayName(acknowledgement.channel)} 已提交，正在启动：${acknowledgement.summary}`,
         call_id: null,
       },
       task_summary: null,
@@ -1387,7 +1392,9 @@ export class RealtimeService {
    * waiting on it rather than to the narration stream.
    */
   projectRuntimeEvent(event: EventRecord): void {
+    if (event.kind === 'handoff' && this.#resolveSyncResult(event)) return
     if (event.kind === 'deadline') {
+      if (this.#expireSyncResult(event)) return
       this.#projectDeadline(event)
       return
     }
@@ -1419,6 +1426,119 @@ export class RealtimeService {
     } else {
       this.#projectHandoff(event, manifest)
     }
+  }
+
+  /** Resolve a synchronous tool result before ordinary channel projection can consume it. */
+  #resolveSyncResult(event: Extract<EventRecord, {kind: 'handoff'}>): boolean {
+    const callKeyValue = this.#pendingSync.get(event.payload.delegate_id)
+    if (callKeyValue === undefined) {
+      if (!this.#lateSync.has(event.payload.delegate_id)) return false
+      this.#lateSync.delete(event.payload.delegate_id)
+      this.#queueSyncAnnouncement(event)
+      return true
+    }
+    this.#pendingSync.delete(event.payload.delegate_id)
+    const state = this.#toolCallState(callKeyValue)
+    if (state === undefined) {
+      this.#queueSyncAnnouncement(event)
+      return true
+    }
+    if (state.sync === 'pending') {
+      this.#confirmSyncOutput(state, this.#syncResultContent(event))
+      state.sync = 'resolved'
+      this.#deliveryReady.set()
+    } else if (state.sync === 'announce') {
+      this.#queueSyncAnnouncement(event)
+    }
+    return true
+  }
+
+  /** Resolve a synchronous timeout without narrating it; one real late handoff may still be announced. */
+  #expireSyncResult(event: Extract<EventRecord, {kind: 'deadline'}>): boolean {
+    const callKeyValue = this.#pendingSync.get(event.payload.delegate_id)
+    if (callKeyValue === undefined) return false
+    this.#pendingSync.delete(event.payload.delegate_id)
+    const state = this.#toolCallState(callKeyValue)
+    if (state !== undefined) {
+      if (state.sync === 'pending') {
+        this.#confirmSyncOutput(state, '{"state":"timeout"}')
+        this.#deliveryReady.set()
+      } else if (state.sync !== 'announce') {
+        return true
+      }
+      state.sync = 'announce'
+    }
+    this.#lateSync.delete(event.payload.delegate_id)
+    this.#lateSync.set(event.payload.delegate_id, callKeyValue)
+    while (this.#lateSync.size > MAX_LATE_SYNC_RESULTS) {
+      const oldest = this.#lateSync.keys().next()
+      if (oldest.done) break
+      this.#lateSync.delete(oldest.value)
+    }
+    return true
+  }
+
+  #confirmSyncOutput(state: ToolCallState, content: string): void {
+    const previous = state.acceptance.host_item
+    if (previous.call_id === null) return
+    const hostItem: HostContextItem = {...previous, content}
+    state.acceptance = {
+      ...state.acceptance,
+      host_item: hostItem,
+      response_intent: {
+        kind: 'tool_result', item: hostItem, task_summary: null, origin_spoken: false,
+      },
+    }
+  }
+
+  #queueSyncAnnouncement(event: Extract<EventRecord, {kind: 'handoff'}>): void {
+    this.queueHostItem(hostFactIntent({
+      kind: 'final',
+      host_item_id: this.#idFactory(),
+      event_id: `sync:${event.payload.delegate_id}`,
+      content: this.#syncResultContent(event),
+    }), {priority: this.#executorPriority(event.payload.channel)})
+  }
+
+  /** Compact, closed sync result for the model; status remains intact and private refs stay excluded. */
+  #syncResultContent(event: Extract<EventRecord, {kind: 'handoff'}>): string {
+    const content = event.payload.content
+    if (event.payload.channel === 'search' && event.payload.outcome === 'ok') {
+      const results = Array.isArray(content.results)
+        ? content.results.flatMap(raw => {
+          if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return []
+          const title = typeof raw.title === 'string'
+            ? [...raw.title].slice(0, SYNC_RESULT_TITLE_CHARS).join('')
+            : ''
+          const snippet = typeof raw.snippet === 'string'
+            ? [...raw.snippet].slice(0, SYNC_RESULT_SNIPPET_CHARS).join('')
+            : ''
+          let source = ''
+          if (typeof raw.canonical_url === 'string') {
+            try { source = new URL(raw.canonical_url).hostname } catch { /* invalid source stays empty */ }
+          }
+          return [{title, snippet, source}]
+        })
+        : []
+      const query = typeof content.query === 'string'
+        ? [...content.query].slice(0, 512).join('')
+        : null
+      let encoded = JSON.stringify({state: 'ok', query, results})
+      while ([...encoded].length > MAX_HOST_FACT_CHARS && results.length > 0) {
+        const longest = Math.max(...results.map(result => [...result.snippet].length))
+        if (longest > 50) {
+          for (const result of results) {
+            result.snippet = [...result.snippet].slice(0, Math.max(50, Math.floor(longest / 2))).join('')
+          }
+        } else results.pop()
+        encoded = JSON.stringify({state: 'ok', query, results})
+      }
+      return encoded
+    }
+    const encoded = JSON.stringify({state: event.payload.outcome, content})
+    return [...encoded].length <= MAX_HOST_FACT_CHARS
+      ? encoded
+      : JSON.stringify({state: event.payload.outcome, error: 'result_too_large'})
   }
 
   /**
@@ -1565,13 +1685,6 @@ export class RealtimeService {
     this.#publishCodexState()
     if (manifest.policy.progress_via_surrogate === true && payload.phase === 'working') return
 
-    const hasRealtimeAcknowledgement = this.#semanticAcknowledgements
-      .has(`background:${payload.delegate_id}`)
-    if (payload.phase === 'started' && hasRealtimeAcknowledgement) {
-      // The delegation acknowledgement continuation already told the user the task was accepted; a
-      // spoken started fact would repeat it. Delegate state registration above still happens.
-      return
-    }
     let content: string
     if (payload.phase === 'started') {
       content = `${displayName} 已开始处理这个任务。`
@@ -2839,7 +2952,7 @@ export class RealtimeService {
                     const result = await callback(outcome.operation, origin.originRef)
                     state = result.accepted ? 'accepted' : 'failed'
                     text = result.accepted
-                      ? '已确认，正在处理。'
+                      ? '已确认，已提交并正在启动。'
                       : projectCommitFailureText(result.code)
                   } catch (failure) {
                     if (isAbort(failure)) throw failure

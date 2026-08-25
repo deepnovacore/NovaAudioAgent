@@ -383,12 +383,14 @@ export function createCodexRunEnvelope(
   code: unknown,
   preflight: Readonly<Record<string, unknown>>,
   evidence?: unknown,
+  stage?: 'preflight' | 'credential' | 'spawn' | 'thread_start',
 ): Readonly<Record<string, unknown>> {
   const admitted = evidence === undefined ? null : sanitizeCodexEvidence(evidence)
   return deepFreeze({
     op: 'run',
     worker: 'codex',
     code: safeWorkerCode(code),
+    ...(stage === undefined ? {} : {stage}),
     ...(admitted ?? {}),
     preflight: sanitizeCodexPreflightReport(preflight) ?? {},
     goal_verification: 'unverified',

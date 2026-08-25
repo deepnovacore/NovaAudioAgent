@@ -581,6 +581,7 @@ function pipelineService(options: {
 } = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
+  readonly injectedContents: string[]
   readonly session: RealtimeSession
 } {
   const manifest = executorManifestSchema.parse({
@@ -609,6 +610,7 @@ function pipelineService(options: {
         description: 'read status',
         params: {type: 'object', properties: {}, additionalProperties: false},
         readonly: true,
+        sync_result: true,
         deadline_budget: 5,
       },
     ],
@@ -617,6 +619,7 @@ function pipelineService(options: {
   const memory = new Memory({policies: [manifest.policy]})
   const executors = new Map([[manifest.name, {manifest}]])
   const actions: string[] = []
+  const injectedContents: string[] = []
   let idSeq = 0
   const nextId = (): string => {
     idSeq += 1
@@ -641,6 +644,7 @@ function pipelineService(options: {
     },
     injectHostItem: (item) => {
       actions.push(`inject:${item.event_id}`)
+      injectedContents.push(item.content)
       return Promise.resolve({session_epoch: epoch, host_item_id: item.host_item_id})
     },
     createResponse: (intent) => {
@@ -722,7 +726,7 @@ function pipelineService(options: {
     ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
     onDiagnostic: () => undefined,
   })
-  return {service, actions, session}
+  return {service, actions, injectedContents, session}
 }
 
 test('a tool call is admitted against the user turn that justifies it', async () => {
@@ -1668,6 +1672,62 @@ test('a sync-result op resolves its own timeout rather than announcing one', () 
   assert.deepEqual(queued(), [])
 })
 
+test('codex status idle and running handoffs each trigger their same-turn continuation', async () => {
+  for (const state of ['idle', 'running'] as const) {
+    const {service, actions, injectedContents} = pipelineService()
+    await service.connect()
+    await service.handleEvent({
+      kind: 'user_speech_started', session_epoch: 1,
+      speech_id: `speech-${state}`, provider_item_id: `user-${state}`,
+    })
+    await service.handleEvent({
+      kind: 'user_speech_ended', session_epoch: 1,
+      speech_id: `speech-${state}`, provider_item_id: `user-${state}`,
+    })
+    await service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1,
+      item_id: `user-${state}`, text: '你现在开发得怎么样',
+    })
+    await service.handleEvent({
+      kind: 'response_started', session_epoch: 1, response_id: `origin-${state}`,
+    })
+    await service.handleEvent({
+      kind: 'tool_call_ready', session_epoch: 1,
+      call_id: `call-${state}`, item_id: `tool-${state}`, name: 'codex__status',
+      arguments: {}, response_id: `origin-${state}`,
+    })
+    await service.handleEvent({
+      kind: 'response_terminal', session_epoch: 1, response_id: `origin-${state}`,
+      status: 'completed', reason: '',
+    })
+    assert.equal(
+      actions.filter(action => action === 'create_response:tool_result').length,
+      0,
+      'the continuation waits for the correlated status handoff',
+    )
+
+    service.projectRuntimeEvent({
+      kind: 'handoff', seq: 1, ts: 1,
+      payload: {
+        channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+        outcome: 'ok', trust: 'trusted_system', content: {op: 'status', state}, refs: [],
+      },
+    })
+    await service.driveContinuations()
+
+    assert.equal(
+      actions.filter(action => action === 'create_response:tool_result').length,
+      1,
+      `${state} must request one continuation`,
+    )
+    const statusResult = JSON.parse(injectedContents.at(-1) ?? '{}') as {
+      readonly state?: string
+      readonly content?: {readonly state?: string}
+    }
+    assert.deepEqual(statusResult, {state: 'ok', content: {op: 'status', state}})
+  }
+})
+
 test('an observation is matched to the exact run it belongs to', () => {
   // All four fields, not just the delegate id: a differing channel, op, or origin describes a
   // different run, and projecting it would attribute one executor's finding to another's task.
@@ -1943,10 +2003,9 @@ test('a progress event with an empty op is refused', () => {
   assert.deepEqual(queued(), [])
 })
 
-test('a started fact is suppressed when the acknowledgement already said it', async () => {
-  // The delegation acknowledgement continuation has already told the user the task was accepted. A
-  // spoken started fact right after would say the same thing twice -- while the delegate state
-  // registration still has to happen, because the renderer depends on it.
+test('a thread-ready started fact follows the submitted acknowledgement', async () => {
+  // The acknowledgement only says that the task was submitted and is starting. The host-owned
+  // started fact is the first evidence that a real Codex thread exists, so it must still be spoken.
   const {service} = pipelineService()
   await service.connect()
   await service.handleEvent({
@@ -1984,7 +2043,6 @@ test('a started fact is suppressed when the acknowledgement already said it', as
   // The admission created the acknowledgement this suppression depends on.
   assert.equal(service.toolCallAcceptances()[0]?.acceptance.delegate_id, 'd-1')
 
-  const before = service.pendingHostItemCount
   service.projectRuntimeEvent({
     kind: 'progress',
     seq: 1,
@@ -1999,8 +2057,72 @@ test('a started fact is suppressed when the acknowledgement already said it', as
       summary: null,
     },
   })
-  assert.equal(service.pendingHostItemCount, before, 'nothing queued: it was already said')
-  assert.equal(service.session.delegateState('d-1'), 'running', 'but state is still registered')
+  assert.equal(service.pendingHostItemCount, 1)
+  assert.equal(
+    service.queuedHostItems()[0]?.intent.item.content,
+    'Codex 已开始处理这个任务。',
+  )
+  assert.equal(service.session.delegateState('d-1'), 'running')
+})
+
+test('an immediate Codex startup failure waits behind a playing acknowledgement and is still spoken', async () => {
+  const {service, actions, session} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'build the game',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
+    name: 'codex__start', arguments: {work_order: 'build the game'}, response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'r-1',
+    status: 'completed', reason: '',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-ack'})
+  await service.handleEvent({
+    kind: 'response_audio_delta', session_epoch: 1,
+    response_id: 'r-ack', pcm: new Uint8Array([0, 1]),
+  })
+  const generation = session.currentGeneration
+  assert.notEqual(generation, null)
+  assert.equal(session.playbackStarted(generation!.utterance_id, generation!.generation_epoch), true)
+  assert.equal(service.semanticAcknowledgementFor('r-ack'), 'background:d-1')
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'failed', trust: 'trusted_system',
+      content: {error: 'spawn_failed', op: 'run', stage: 'spawn'}, refs: [],
+    },
+  })
+
+  assert.equal(service.pendingHostItemCount, 1, 'the failure remains queued while audio is playing')
+  assert.equal(
+    service.queuedHostItems()[0]?.intent.item.content,
+    'Codex 进程未能启动，这次任务没有成功启动。',
+  )
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'r-ack',
+    status: 'completed', reason: '',
+  })
+  assert.equal(session.playbackDone(generation!.utterance_id, generation!.generation_epoch), true)
+  await service.flushHostItems()
+  assert.ok(
+    actions.includes('inject:final:d-1'),
+    `the queued failure is delivered after the acknowledgement: ${JSON.stringify(actions)}`,
+  )
 })
 
 /**

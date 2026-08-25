@@ -26,8 +26,12 @@ const CODEX_PROGRESS_KEYS = new Set(['op', 'phase', 'internal_activity', 'elapse
 export function finalSpeechView(outcome: string, content: unknown): string {
   let finalMessage: unknown
   let code: unknown
+  let error: unknown
+  let stage: unknown
   if (isObject(content)) {
     code = content.code
+    error = content.error
+    stage = content.stage
     if (isObject(content.result)) finalMessage = content.result.final_message
   }
   let text: string | undefined
@@ -39,7 +43,13 @@ export function finalSpeechView(outcome: string, content: unknown): string {
     upstreamTruncated = finalMessage.truncated === true
   }
   if (text === undefined) {
-    const category = typeof code === 'string' && code !== '' ? code : 'no_final_message'
+    const category = typeof code === 'string' && code !== ''
+      ? code
+      : typeof error === 'string' && error !== '' ? error : 'no_final_message'
+    if (outcome === 'failed') {
+      const failure = codexStartupFailureSpeech(category, stage)
+      if (failure !== null) return failure
+    }
     return `Codex 任务未能确认完成（${category}）`
   }
   const prepared = prepareForSpeech(text, {limit: SPEECH_FINAL_LIMIT})
@@ -50,6 +60,28 @@ export function finalSpeechView(outcome: string, content: unknown): string {
     return `Codex 任务失败${category}：${prepared.text}${note}`
   }
   return `Codex 任务结果不确定：${prepared.text}${note}`
+}
+
+function codexStartupFailureSpeech(category: string, stage: unknown): string | null {
+  if (category === 'credential_missing' || stage === 'credential') {
+    return 'Codex 登录凭据不可用，这次任务没有成功启动。'
+  }
+  if (category === 'spawn_failed' || stage === 'spawn') {
+    return 'Codex 进程未能启动，这次任务没有成功启动。'
+  }
+  if (category === 'thread_id_invalid' || category === 'session_thread_mismatch') {
+    return 'Codex 会话未能建立，这次任务没有成功启动。'
+  }
+  if (category === 'worker_refused' || category === 'server_rejected') {
+    return 'Codex 会话启动被拒绝，这次任务没有成功启动。'
+  }
+  if (stage === 'preflight') {
+    return 'Codex 启动前检查失败，这次任务没有成功启动。'
+  }
+  if (stage === 'thread_start') {
+    return 'Codex 会话启动失败，这次任务没有成功启动。'
+  }
+  return null
 }
 
 export function genericFinalSpeechView(

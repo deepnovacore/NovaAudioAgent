@@ -24,6 +24,7 @@ def test_project_routing_corpus_covers_exact_six_action_arguments_and_stages() -
         case.expected_arguments["action"]: case
         for case in CORPUS
         if case.expected_tool == "codex__project"
+        and case.case_id in {"independent", "current", "history", "select", "sessions", "resume"}
     }
     assert set(project_cases) == {
         "create_workspace",
@@ -62,6 +63,21 @@ def test_project_routing_scorer_accepts_complete_real_action_arguments() -> None
     report = evaluate_project_routing(perfect_predictions())
     assert report.passed is True
     assert report.matched == len(CORPUS)
+
+
+def test_project_routing_corpus_covers_elliptical_explicit_and_confirmed_creation() -> None:
+    cases = {case.case_id: case for case in CORPUS}
+    for case_id in ("elliptical-after-help", "explicit-develop", "clarified-yes"):
+        case = cases[case_id]
+        assert case.expected_tool == "codex__project"
+        assert case.expected_arguments == {
+            "action": "create_workspace",
+            "workspace": "俄罗斯方块",
+            "work_order": "开发一个可运行并经过验证的俄罗斯方块小游戏",
+        }
+    assert "有什么可以帮你" in (cases["elliptical-after-help"].context or "")
+    assert "原始目标" in (cases["clarified-yes"].context or "")
+    assert cases["material-choice-missing"].expected_tool == "none"
 
 
 def test_project_routing_rejects_extra_missing_null_and_wrong_action_values() -> None:

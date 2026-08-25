@@ -47,6 +47,37 @@ def test_codex_recall_evidence_exposes_only_prepared_final_message() -> None:
     assert "secret.example" not in evidence
 
 
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    (
+        (
+            {"code": "preflight_failed", "stage": "preflight"},
+            "Codex 启动前检查失败，这次任务没有成功启动。",
+        ),
+        (
+            {"code": "credential_missing", "stage": "credential"},
+            "Codex 登录凭据不可用，这次任务没有成功启动。",
+        ),
+        (
+            {"error": "spawn_failed", "op": "run", "stage": "spawn"},
+            "Codex 进程未能启动，这次任务没有成功启动。",
+        ),
+        (
+            {"error": "thread_id_invalid", "op": "run", "stage": "thread_start"},
+            "Codex 会话未能建立，这次任务没有成功启动。",
+        ),
+        (
+            {"code": "worker_refused", "stage": "thread_start"},
+            "Codex 会话启动被拒绝，这次任务没有成功启动。",
+        ),
+    ),
+)
+def test_codex_startup_failure_uses_safe_category_in_natural_chinese(
+    content: dict[str, object], expected: str,
+) -> None:
+    assert safe_memory_evidence(_item("codex", content=content, outcome="failed")) == expected
+
+
 def _progress_item(
     *,
     content: dict[str, object] | None = None,

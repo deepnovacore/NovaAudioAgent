@@ -715,10 +715,15 @@ async def test_first_completed_item_is_silent_and_first_spoken_progress_is_prose
     assert is_informative(summaries[-1])
 
     facts = [record for record in records if record["kind"] == "progress.fact"]
-    assert len(facts) == 1
-    assert str(facts[0]["data"]["event_id"]).startswith("suggestion:")
-    assert summaries[0] not in str(facts[0]["data"]["content"])
-    assert summaries[-1] in str(facts[0]["data"]["content"])
+    selected_facts = [
+        record
+        for record in facts
+        if str(record["data"]["event_id"]).startswith("suggestion:")
+    ]
+    assert len(facts) == 2
+    assert len(selected_facts) == 1
+    assert summaries[0] not in str(selected_facts[0]["data"]["content"])
+    assert summaries[-1] in str(selected_facts[0]["data"]["content"])
     for record in facts:
         content = str(record["data"]["content"])
         assert "仍在处理这个任务" not in content
@@ -741,7 +746,7 @@ async def test_first_completed_item_is_silent_and_first_spoken_progress_is_prose
 
 
 async def test_started_prose_and_final_are_each_spoken(workspace: Path) -> None:
-    """Started and low-value progress stay silent; one selected milestone and final speak."""
+    """Thread-ready, one selected milestone, and final each speak once."""
     scenario = await run_scenario(workspace)
     records = scenario.recorder.records
 
@@ -751,7 +756,7 @@ async def test_started_prose_and_final_are_each_spoken(workspace: Path) -> None:
         if record["kind"] == "progress.fact"
         and "已开始处理这个任务" in str(record["data"]["content"])
     ]
-    assert len(started_facts) == 0
+    assert len(started_facts) == 1
 
     progress_facts = [
         str(record["data"]["content"])
@@ -818,7 +823,12 @@ async def test_memory_stores_the_same_summary_the_session_spoke(workspace: Path)
         for record in records
         if record["kind"] == "memory.progress" and "summary" in record["data"]
     ]
-    facts = [record["data"]["content"] for record in records if record["kind"] == "progress.fact"]
+    facts = [
+        record["data"]["content"]
+        for record in records
+        if record["kind"] == "progress.fact"
+        and str(record["data"]["event_id"]).startswith("suggestion:")
+    ]
 
     assert projected and stored == projected
     assert len(facts) == 1
@@ -1230,9 +1240,28 @@ async def test_synthetic_baseline_matches_the_live_wiring(workspace: Path) -> No
 
     assert produced == synthetic
     progress = next(
-        record for record in scenario.recorder.records if record["kind"] == "progress.fact"
+        record
+        for record in scenario.recorder.records
+        if record["kind"] == "progress.fact"
+        and str(record["data"]["event_id"]).startswith("suggestion:")
     )
     assert str(progress["data"]["event_id"]).startswith("suggestion:")
+
+
+def test_thread_ready_lifecycle_fact_is_allowed_without_surrogate_selection() -> None:
+    entries = baseline_entries(live=False)
+    entries.insert(
+        find(entries, "codex.progress"),
+        (
+            "progress.fact",
+            {
+                "event_id": "progress:d-1:started:0",
+                "content": "Codex 已开始处理这个任务。",
+            },
+        ),
+    )
+
+    assert evaluate_codex_progress_status(stamp(entries), live=False).passed
 
 
 def test_old_direct_progress_fact_is_rejected() -> None:

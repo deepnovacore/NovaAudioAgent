@@ -32,8 +32,12 @@ def final_speech_view(outcome: str, content: object) -> str:
     """Extract a speech-prepared view of a Codex terminal handoff."""
     final_message: object = None
     code: object = None
+    error: object = None
+    stage: object = None
     if type(content) is dict:
         code = content.get("code")
+        error = content.get("error")
+        stage = content.get("stage")
         result = content.get("result")
         if type(result) is dict:
             final_message = result.get("final_message")
@@ -45,7 +49,17 @@ def final_speech_view(outcome: str, content: object) -> str:
             text = raw
         upstream_truncated = final_message.get("truncated") is True
     if text is None:
-        category = code if type(code) is str and code else "no_final_message"
+        category = (
+            code
+            if type(code) is str and code
+            else error
+            if type(error) is str and error
+            else "no_final_message"
+        )
+        if outcome == "failed":
+            failure = _codex_startup_failure_speech(category, stage)
+            if failure is not None:
+                return failure
         return f"Codex 任务未能确认完成（{category}）"
     prepped, clipped = prepare_for_speech(text, limit=SPEECH_FINAL_LIMIT)
     note = "（结果较长，已截取要点）" if upstream_truncated or clipped else ""
@@ -55,6 +69,22 @@ def final_speech_view(outcome: str, content: object) -> str:
         category = f"（{code}）" if type(code) is str and code else ""
         return f"Codex 任务失败{category}：{prepped}{note}"
     return f"Codex 任务结果不确定：{prepped}{note}"
+
+
+def _codex_startup_failure_speech(category: str, stage: object) -> str | None:
+    if category == "credential_missing" or stage == "credential":
+        return "Codex 登录凭据不可用，这次任务没有成功启动。"
+    if category == "spawn_failed" or stage == "spawn":
+        return "Codex 进程未能启动，这次任务没有成功启动。"
+    if category in {"thread_id_invalid", "session_thread_mismatch"}:
+        return "Codex 会话未能建立，这次任务没有成功启动。"
+    if category in {"worker_refused", "server_rejected"}:
+        return "Codex 会话启动被拒绝，这次任务没有成功启动。"
+    if stage == "preflight":
+        return "Codex 启动前检查失败，这次任务没有成功启动。"
+    if stage == "thread_start":
+        return "Codex 会话启动失败，这次任务没有成功启动。"
+    return None
 
 
 def generic_final_speech_view(display_name: str, outcome: str, content: object) -> str:

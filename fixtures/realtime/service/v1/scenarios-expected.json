@@ -1109,7 +1109,7 @@
     },
     {
       "name": "final-codex-failed",
-      "content": "Codex 任务未能确认完成（no_final_message）"
+      "content": "Codex 任务未能确认完成（build_failed）"
     },
     {
       "name": "final-generic-ok",
