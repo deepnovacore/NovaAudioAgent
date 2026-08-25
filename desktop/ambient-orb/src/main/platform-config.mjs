@@ -28,11 +28,19 @@ export function resolveDesktopConfig({
   canonicalize = value => pathApi.resolve(value),
 }) {
   const defaults = productPaths({ home, pathApi })
+  const settingsHasMode = Object.hasOwn(settings, 'codexBinaryMode')
   const settingsBinary = nonempty(settings.codexBinaryPath)
   const environmentBinary = nonempty(environment.NOVA_AUDIO_AGENT_CODEX_BIN)
-  const binaryPath = settingsBinary || environmentBinary || ''
   const settingsMode = settings.codexBinaryMode === 'manual' ? 'manual' : 'auto'
-  const codexBinaryMode = settingsBinary || environmentBinary ? 'manual' : settingsMode
+  const codexBinaryMode = settingsHasMode
+    ? settingsMode
+    : (environmentBinary === null ? 'auto' : 'manual')
+  const binaryPath = codexBinaryMode === 'manual'
+    ? (settingsHasMode ? settingsBinary : environmentBinary) ?? ''
+    : ''
+  const codexConfigurationError = codexBinaryMode === 'manual' && binaryPath === ''
+    ? 'manual_path_required'
+    : null
   const managedRoot = nonempty(settings.codexManagedRoot)
     || nonempty(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT)
     || defaults.managedRoot
@@ -42,9 +50,13 @@ export function resolveDesktopConfig({
   const codexProjectsEnabled = typeof settings.codexProjectsEnabled === 'boolean'
     ? settings.codexProjectsEnabled
     : envBoolean(environment.NOVA_AUDIO_AGENT_CODEX_PROJECTS_ENABLED, false)
-  const modelBaseUrl = nonempty(settings.modelBaseUrl)
+  const rawModelBaseUrl = nonempty(settings.modelBaseUrl)
     || nonempty(environment.NOVA_AUDIO_AGENT_MODEL_BASE_URL)
     || ''
+  const modelBaseUrl = validModelBaseUrl(rawModelBaseUrl)
+  const modelConfigurationError = modelBaseUrl === null
+    ? 'model_base_url_invalid'
+    : null
 
   void platform
   return Object.freeze({
@@ -54,8 +66,10 @@ export function resolveDesktopConfig({
     workspace: canonicalize(workspace),
     codexBinaryMode,
     codexBinaryPath: binaryPath === '' ? '' : canonicalize(binaryPath),
+    codexConfigurationError,
     codexProjectsEnabled,
-    modelBaseUrl,
+    modelBaseUrl: modelBaseUrl ?? '',
+    modelConfigurationError,
     startListeningOnLaunch: settings.startListeningOnLaunch === true,
   })
 }
@@ -76,3 +90,4 @@ export async function ensureProductDirectories(config, { mkdir, pathApi }) {
   }
   return config
 }
+import { validModelBaseUrl } from './settings-store.mjs'

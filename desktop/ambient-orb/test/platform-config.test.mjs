@@ -26,7 +26,7 @@ test('desktop configuration resolves settings before environment before defaults
   const resolved = resolveDesktopConfig({
     settings: {
       codexBinaryMode: 'manual',
-      codexBinaryPath: 'C:\\Tools\\codex.cmd',
+      codexBinaryPath: 'C:\\Tools\\codex.exe',
       codexProjectsEnabled: true,
       codexWorkspace: 'C:\\Work\\Nova',
       codexManagedRoot: '',
@@ -55,9 +55,11 @@ test('desktop configuration resolves settings before environment before defaults
     managedRoot: 'C:\\Env\\Managed',
     workspace: 'C:\\Work\\Nova',
     codexBinaryMode: 'manual',
-    codexBinaryPath: 'C:\\Tools\\codex.cmd',
+    codexBinaryPath: 'C:\\Tools\\codex.exe',
+    codexConfigurationError: null,
     codexProjectsEnabled: true,
     modelBaseUrl: 'https://settings.example/v1',
+    modelConfigurationError: null,
     startListeningOnLaunch: true,
   })
   assert.deepEqual(canonicalized, [
@@ -65,7 +67,7 @@ test('desktop configuration resolves settings before environment before defaults
     'C:\\Users\\nova\\.nova-audio-agent\\state',
     'C:\\Env\\Managed',
     'C:\\Work\\Nova',
-    'C:\\Tools\\codex.cmd',
+    'C:\\Tools\\codex.exe',
   ])
 })
 
@@ -83,10 +85,50 @@ test('empty desktop settings admit environment and hidden-root defaults', () => 
 
   assert.equal(resolved.codexBinaryMode, 'auto')
   assert.equal(resolved.codexBinaryPath, '')
+  assert.equal(resolved.codexConfigurationError, null)
   assert.equal(resolved.codexProjectsEnabled, true)
   assert.equal(resolved.managedRoot, '/home/nova/.nova-audio-agent/workspaces')
   assert.equal(resolved.workspace, '/home/nova/.nova-audio-agent/workspaces/default')
   assert.equal(resolved.startListeningOnLaunch, false)
+})
+
+test('saved auto mode ignores stale manual and environment Codex paths', () => {
+  const resolved = resolveDesktopConfig({
+    settings: {codexBinaryMode: 'auto', codexBinaryPath: 'C:\\Stale\\codex.exe'},
+    environment: {NOVA_AUDIO_AGENT_CODEX_BIN: 'C:\\Env\\codex.exe'},
+    home: 'C:\\Users\\nova', platform: 'win32', pathApi: win32,
+    canonicalize: value => value,
+  })
+  assert.equal(resolved.codexBinaryMode, 'auto')
+  assert.equal(resolved.codexBinaryPath, '')
+  assert.equal(resolved.codexConfigurationError, null)
+})
+
+test('saved manual mode with no path remains terminal instead of falling back to auto', () => {
+  const resolved = resolveDesktopConfig({
+    settings: {codexBinaryMode: 'manual', codexBinaryPath: ''},
+    environment: {NOVA_AUDIO_AGENT_CODEX_BIN: 'C:\\Env\\codex.exe'},
+    home: 'C:\\Users\\nova', platform: 'win32', pathApi: win32,
+    canonicalize: value => value,
+  })
+  assert.equal(resolved.codexBinaryMode, 'manual')
+  assert.equal(resolved.codexBinaryPath, '')
+  assert.equal(resolved.codexConfigurationError, 'manual_path_required')
+})
+
+test('environment model URL uses the same safety validator as Settings', () => {
+  const invalid = resolveDesktopConfig({
+    settings: {}, environment: {NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'http://models.example/v1'},
+    home: '/home/nova', platform: 'linux', pathApi: posix, canonicalize: value => value,
+  })
+  assert.equal(invalid.modelBaseUrl, '')
+  assert.equal(invalid.modelConfigurationError, 'model_base_url_invalid')
+  const loopback = resolveDesktopConfig({
+    settings: {}, environment: {NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'http://127.0.0.1:8080/v1'},
+    home: '/home/nova', platform: 'linux', pathApi: posix, canonicalize: value => value,
+  })
+  assert.equal(loopback.modelBaseUrl, 'http://127.0.0.1:8080/v1')
+  assert.equal(loopback.modelConfigurationError, null)
 })
 
 test('startup creates every application-owned default directory before spawn', async () => {

@@ -160,7 +160,7 @@ function validDesktopString(value) {
   return [...trimmed].length <= MAX_DESKTOP_SETTING_LENGTH ? trimmed : null
 }
 
-function validModelBaseUrl(value) {
+export function validModelBaseUrl(value) {
   const normalized = validDesktopString(value)
   if (normalized === null || normalized === '') return normalized
   try {
