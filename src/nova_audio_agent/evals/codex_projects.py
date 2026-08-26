@@ -55,6 +55,17 @@ CORPUS = (
         },
     ),
     ProjectRoutingCase(
+        "independent-named-session",
+        "创建 alpha 工作区，并新建一个叫初始开发的 Session 来完成登录页",
+        "codex__project",
+        {
+            "action": "create_workspace",
+            "workspace": "alpha",
+            "session": "初始开发",
+            "work_order": "在 alpha 工作区完成并验证登录页",
+        },
+    ),
+    ProjectRoutingCase(
         "elliptical-after-help",
         "俄罗斯方块的小游戏",
         "codex__project",

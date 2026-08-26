@@ -80,6 +80,19 @@ def test_project_routing_corpus_covers_elliptical_explicit_and_confirmed_creatio
     assert cases["material-choice-missing"].expected_tool == "none"
 
 
+def test_project_routing_corpus_preserves_an_explicit_new_session_title() -> None:
+    case = next(item for item in CORPUS if item.case_id == "independent-named-session")
+
+    assert case.utterance == "创建 alpha 工作区，并新建一个叫初始开发的 Session 来完成登录页"
+    assert case.expected_tool == "codex__project"
+    assert case.expected_arguments == {
+        "action": "create_workspace",
+        "workspace": "alpha",
+        "session": "初始开发",
+        "work_order": "在 alpha 工作区完成并验证登录页",
+    }
+
+
 def test_project_routing_rejects_extra_missing_null_and_wrong_action_values() -> None:
     perfect = perfect_predictions()
     project_cases = [case for case in CORPUS if case.expected_tool == "codex__project"]

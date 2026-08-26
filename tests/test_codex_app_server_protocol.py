@@ -9,6 +9,8 @@ import pytest
 
 from nova_audio_agent.clock import VirtualClock
 from nova_audio_agent.executors.codex_app_server_protocol import (
+    APP_SERVER_INBOUND_SCHEMAS,
+    APP_SERVER_SCHEMAS,
     AppServerProtocolError,
     AppServerTurnProjection,
     JsonRpcConnection,
@@ -32,6 +34,32 @@ class _Stdin:
     async def drain(self) -> None:
         if self.fail_drain:
             raise ConnectionError("closed before drain")
+
+
+def test_codex_0147_thread_schema_uses_current_request_fields() -> None:
+    assert APP_SERVER_SCHEMAS["thread/start"][1] == {
+        "ephemeral": "boolean",
+        "approvalPolicy": "string",
+        "developerInstructions": "string",
+        "cwd": "string",
+    }
+    assert APP_SERVER_SCHEMAS["thread/resume"][1] == {
+        "threadId": "string",
+        "approvalPolicy": "string",
+        "developerInstructions": "string",
+        "cwd": "string",
+    }
+    resume_response = next(
+        fields
+        for relative, fields, _required in APP_SERVER_INBOUND_SCHEMAS
+        if relative == "v2/ThreadResumeResponse.json"
+    )
+    assert resume_response == {
+        "approvalPolicy": "string",
+        "cwd": "string",
+        "sandbox": "object",
+        "thread": "object",
+    }
 
 
 class _BlockingStdin(_Stdin):

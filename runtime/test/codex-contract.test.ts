@@ -120,6 +120,10 @@ test('project mode exposes project-only public tools and the confirmation schema
     String(projectDeclaration.description),
     /start_session 和 resume_session 都必须传完整 work_order/u,
   )
+  assert.match(
+    String(projectDeclaration.description),
+    /用户显式命名新 Session 时必须传 session/u,
+  )
   const projectParameters = record(projectDeclaration.parameters)
   const projectProperties = record(projectParameters.properties)
   assert.equal(
@@ -130,6 +134,15 @@ test('project mode exposes project-only public tools and the confirmation schema
     record(projectProperties.work_order).description,
     'start_session 和 resume_session 必填；create_workspace 可选',
   )
+  assert.deepEqual(record(projectProperties.session), {
+    type: 'string',
+    minLength: 1,
+    maxLength: 120,
+    description: [
+      '用户显式命名新 Session 时必须传入；未命名的新 Session 可省略；',
+      'resume_session 指定历史 Session 时传入',
+    ].join(''),
+  })
   const projectVariants = (projectParameters.oneOf as unknown[]).map(rawBranch => {
     const branch = record(rawBranch)
     const properties = record(branch.properties)

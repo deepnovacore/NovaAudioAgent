@@ -173,6 +173,56 @@ test('production preflight uses the fixed native probe and never passes credenti
   }
 })
 
+test('production preflight accepts a canonical non-Git workspace for a new managed project', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-codex-non-git-workspace-')))
+  const workspace = join(root, 'workspace')
+  const binary = join(root, 'codex')
+  const home = join(root, 'home')
+  const probe = join(root, 'probe')
+  await mkdir(workspace)
+  await mkdir(home)
+  await writeFile(binary, '#!/bin/sh\nexit 0\n', {mode: 0o755})
+  await writeFile(probe, '#!/bin/sh\nexit 0\n', {mode: 0o755})
+  let call = 0
+  try {
+    const runner = new NativeCodexHostPreflightRunner({
+      probePath: probe,
+      environment: {PATH: '/usr/bin:/bin', HOME: home},
+      hasApiKey: true,
+      commandRunner: async () => {
+        call += 1
+        await Promise.resolve()
+        if (call === 1) return {status: 0, stdout: Buffer.from('codex-cli 0.147.0')}
+        return {status: 0, stdout: Buffer.from(JSON.stringify({
+          cwd_matches: true,
+          inside_write: true,
+          inside_remove: true,
+          outside_write_denied: true,
+          child_outside_write_denied: true,
+          network_denied: true,
+          limits: {cpu: 'finite', as: 'unbounded', nofile: 'finite'},
+        }))}
+      },
+    })
+
+    const report = await runner.run({
+      binary: hostBinaryForTest(await realpath(binary)),
+      workspace: hostWorkspaceForTest(await realpath(workspace)),
+      codexHome: hostCodexHomeForTest(await realpath(home), {ephemeral: true}),
+      apiKey: null,
+      developerInstructions: null,
+      resumeThreadId: null,
+      persistent: false,
+      workingInterval: 30,
+    }, 5_000)
+
+    assert.equal(Reflect.get(report as object, 'root_matches'), true)
+    assert.equal(call, 2)
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('unsandboxed or malformed native probe output fails closed with a stable code', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-codex-production-host-')))
   const workspace = join(root, 'workspace')

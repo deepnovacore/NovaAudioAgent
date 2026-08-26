@@ -209,6 +209,11 @@ def test_project_mode_exposes_project_and_confirmation_tools() -> None:
     assert project["parameters"]["properties"]["work_order"]["description"] == (
         "start_session 和 resume_session 必填；create_workspace 可选"
     )
+    assert project["parameters"]["properties"]["session"]["description"] == (
+        "用户显式命名新 Session 时必须传入；未命名的新 Session 可省略；"
+        "resume_session 指定历史 Session 时传入"
+    )
+    assert "用户显式命名新 Session 时必须传 session" in project["description"]
     assert set(project["parameters"]["properties"]) == {
         "action",
         "workspace",

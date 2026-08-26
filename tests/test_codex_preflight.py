@@ -531,6 +531,36 @@ async def test_git_root_must_resolve_to_exact_configured_workspace(
 
 
 @pytest.mark.asyncio
+async def test_canonical_non_git_workspace_is_accepted_for_new_managed_projects(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeRunner(
+        _result("codex-cli 0.145.0\n"),
+        _result("Logged in using ChatGPT\n"),
+        _result("", returncode=128),
+        _probe_result(),
+    )
+
+    report = await CodexPreflight(
+        binary="codex",
+        workspace=tmp_path,
+        runner=runner,
+        environ={"PATH": "/safe/bin"},
+        probe_factory=_fake_probe,
+    ).run()
+
+    assert report.root_matches is True
+    assert runner.calls[2].argv == (
+        "git",
+        "-C",
+        str(tmp_path),
+        "rev-parse",
+        "--show-toplevel",
+    )
+    assert len(runner.calls) == 4
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failed_evidence",
     [

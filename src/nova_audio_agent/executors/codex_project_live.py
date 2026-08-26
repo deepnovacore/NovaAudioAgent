@@ -39,7 +39,15 @@ _PROJECT_FIELDS = {
         "maxLength": 80,
         "description": "create/select 必填；list_sessions/resume 可选；start_session 必须省略",
     },
-    "session": {"type": "string", "minLength": 1, "maxLength": 120},
+    "session": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120,
+        "description": (
+            "用户显式命名新 Session 时必须传入；未命名的新 Session 可省略；"
+            "resume_session 指定历史 Session 时传入"
+        ),
+    },
     "work_order": {
         "type": "string",
         "minLength": 1,
@@ -70,7 +78,7 @@ PROJECT = OpSpec(
     description=(
         "管理 Workspace 和 Session。严格按 action 选择字段：start_session 只能在当前 "
         "Workspace 运行且不得传 workspace；start_session 和 resume_session 都必须传完整 "
-        "work_order。"
+        "work_order。用户显式命名新 Session 时必须传 session。"
     ),
     params={
         "type": "object",

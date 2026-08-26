@@ -409,7 +409,7 @@ class CodexPreflight:
                     env=env,
                     deadline=deadline,
                 )
-                _require_matching_root(root_result, self._workspace)
+                _require_workspace_root(root_result, self._workspace)
                 probe_factory = (
                     _empirical_probe if self._probe_factory is None else self._probe_factory
                 )
@@ -572,15 +572,36 @@ def _contains_login_identity(value: str) -> bool:
     return "logged in" in normalized or "chatgpt" in normalized or "api key" in normalized
 
 
-def _require_matching_root(result: PreflightCommandResult, workspace: Path) -> None:
-    value = _decode_stdout(result, "workspace_root_mismatch")
+def _require_workspace_root(result: PreflightCommandResult, workspace: Path) -> None:
     try:
-        actual = Path(value).resolve(strict=True)
         expected = workspace.resolve(strict=True)
+        if workspace.is_symlink() or not expected.is_dir() or workspace.absolute() != expected:
+            raise OSError
     except (OSError, RuntimeError):
         raise CodexPreflightFailure("workspace_root_mismatch") from None
-    if actual != expected:
+    if (
+        type(result) is not PreflightCommandResult
+        or type(result.returncode) is not int
+        or type(result.stdout) is not bytes
+    ):
         raise CodexPreflightFailure("workspace_root_mismatch")
+    if result.returncode == 0:
+        value = _decode_stdout(result, "workspace_root_mismatch")
+        try:
+            actual = Path(value).resolve(strict=True)
+        except (OSError, RuntimeError):
+            raise CodexPreflightFailure("workspace_root_mismatch") from None
+        if actual != expected:
+            raise CodexPreflightFailure("workspace_root_mismatch")
+        return
+    marker = expected / ".git"
+    try:
+        marker.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        pass
+    raise CodexPreflightFailure("workspace_root_mismatch")
 
 
 def _parse_probe(result: PreflightCommandResult) -> Mapping[str, str]:

@@ -782,8 +782,12 @@ function filteredEnvironment(
 function requireWorkspaceRoot(workspace: string): void {
   try {
     if (realpathSync(workspace) !== workspace || !statSync(workspace).isDirectory()) throw new Error()
-    const marker = lstatSync(join(workspace, '.git'))
-    if (marker.isSymbolicLink() || (!marker.isDirectory() && !marker.isFile())) throw new Error()
+    try {
+      const marker = lstatSync(join(workspace, '.git'))
+      if (marker.isSymbolicLink() || (!marker.isDirectory() && !marker.isFile())) throw new Error()
+    } catch (error) {
+      if (!isErrno(error, 'ENOENT')) throw error
+    }
   } catch {
     throw new CodexTransportError('workspace_root_mismatch')
   }

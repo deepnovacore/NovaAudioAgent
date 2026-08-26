@@ -688,6 +688,9 @@ def test_frontend_instructions_route_project_actions_and_confirmation_semantical
         "明确同意、拒绝、取消或暂缓都必须调用",
         "不得只做口头回应",
         "拒绝、取消或暂缓用 confirmed=false",
+        "用户显式指定新 Session 名称时",
+        "必须把名称原样放入 session 字段",
+        "用户未指定名称时才省略 session",
     ):
         assert phrase in FRONTEND_INSTRUCTIONS
     assert "codex__run" not in FRONTEND_INSTRUCTIONS

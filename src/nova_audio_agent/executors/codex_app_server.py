@@ -359,11 +359,8 @@ class CodexAppServerTransport:
             method = "thread/resume"
             thread_params = {
                 "threadId": self._resume_thread_id,
-                "excludeTurns": True,
                 "approvalPolicy": "never",
                 "cwd": str(self._workspace),
-                "runtimeWorkspaceRoots": [str(self._workspace)],
-                "permissions": "nova_audio_agent",
             }
         elif persistent:
             method = "thread/start"
@@ -371,8 +368,6 @@ class CodexAppServerTransport:
                 "ephemeral": False,
                 "approvalPolicy": "never",
                 "cwd": str(self._workspace),
-                "runtimeWorkspaceRoots": [str(self._workspace)],
-                "permissions": "nova_audio_agent",
             }
         else:
             method = "thread/start"

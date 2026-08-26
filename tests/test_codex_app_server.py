@@ -532,8 +532,6 @@ async def test_persistent_new_session_uses_non_ephemeral_start_and_retains_home(
         "ephemeral": False,
         "approvalPolicy": "never",
         "cwd": str(workspace),
-        "runtimeWorkspaceRoots": [str(workspace)],
-        "permissions": "nova_audio_agent",
         "developerInstructions": codex_app_server.DEFAULT_DEVELOPER_INSTRUCTIONS,
     }
     assert ready == ["thread-private"]
@@ -572,11 +570,8 @@ async def test_persistent_resume_is_validated_before_turn_start(tmp_path: Path) 
     resume = next(item for item in peer.messages if item.get("method") == "thread/resume")
     assert resume["params"] == {
         "threadId": "thread-saved",
-        "excludeTurns": True,
         "approvalPolicy": "never",
         "cwd": str(workspace),
-        "runtimeWorkspaceRoots": [str(workspace)],
-        "permissions": "nova_audio_agent",
         "developerInstructions": codex_app_server.DEFAULT_DEVELOPER_INSTRUCTIONS,
     }
     assert ready == ["thread-saved"]

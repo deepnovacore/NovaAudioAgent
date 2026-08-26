@@ -164,6 +164,10 @@ test('Qwen project instructions route the six actions and structured confirmatio
   assert.match(FRONTEND_INSTRUCTIONS, /目标项目身份未知.*list_workspaces/su)
   assert.match(FRONTEND_INSTRUCTIONS, /同意、拒绝、取消或暂缓.*必须调用.*不得只做口头回应/su)
   assert.match(FRONTEND_INSTRUCTIONS, /拒绝、取消或暂缓用 confirmed=false/u)
+  assert.match(
+    FRONTEND_INSTRUCTIONS,
+    /用户显式指定新 Session 名称时.*必须把名称原样放入 session 字段.*用户未指定名称时才省略 session/su,
+  )
   assert.match(FRONTEND_INSTRUCTIONS, /有什么可以帮你.*俄罗斯方块的小游戏.*create_workspace/su)
   assert.match(FRONTEND_INSTRUCTIONS, /不要改写成问句复述/u)
   assert.match(FRONTEND_INSTRUCTIONS, /普通澄清后的明确肯定.*只发起一次/su)
