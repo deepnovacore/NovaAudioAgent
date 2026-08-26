@@ -2,10 +2,9 @@
 
 # Nova Audio Agent
 
-**English** | [简体中文](README.zh-CN.md)
+**An always-on, one-for-all voice agent with restrained proactivity.**
 
-> **An always-on voice agent with restrained proactivity — always working, speaking only when
-> it's worth the floor.**
+**English** | [简体中文](README.zh-CN.md)
 
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
@@ -49,16 +48,10 @@ worth it at all ([design post](docs/blog/2026-08-proactive-voice-agent-design-sp
 
 ## 2. Architecture
 
-```mermaid
-flowchart LR
-  IN["Input"] --> SPINE["Runtime spine"]
-  SPINE --> FAST["FastBrain"]
-  SPINE --> EXEC["Executor slots"]
-  EXEC -- "typed handoff" --> MEM["Memory"]
-  MEM -- "bounded ContextView" --> FAST
-  MEM --> POOL["Suggestion pool"] --> SUR["Surrogate"] --> FLOOR["Floor"] --> FAST
-  FAST --> OUT["One speech path"]
-```
+[![Nova Audio Agent runtime architecture on a chalkboard](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)
+
+*One event loop, two model ports reading one ContextView, Memory as the shared blackboard,
+Floor guarding the single speech path.*
 
 Non-negotiable boundaries, checked at the runtime boundary rather than promised in prompts
 ([Architecture](docs/architecture.md)):
@@ -79,10 +72,6 @@ later, answer from the same state** — separating three judgments that are easy
 | Nobody asked: is this change worth saying now? | Surrogate, for eligible ambient suggestions |
 | The user asked: how should the answer be expressed? | FastBrain over a bounded `ContextView` |
 
-This is not a ReAct loop: a model dispatches work, returns control, and keeps responding while
-results come back as causal events, not blocking tool results
-([Design essence](docs/essence.md), [v3 design series](docs/archs/v3/00-overview.md)).
-
 The front brain owns the conversation; Codex is the slow work brain behind a narrow boundary:
 
 - one bounded work order crosses to Codex — never conversation history;
@@ -90,10 +79,6 @@ The front brain owns the conversation; Codex is the slow work brain behind a nar
 - the conversation channel compresses at a fixed watermark; `codex__steer` appends to the
   in-flight turn instead of re-dispatching;
 - workspace-graph context enters model calls only through fixed budgets.
-
-Structural bounds, not measured savings: a resumed Session still restores its saved Codex
-thread's accumulated context; no token or cost benchmarks are published, and both brains are
-cloud models.
 
 ## 3. Quickstart
 
@@ -129,23 +114,27 @@ default voice); per-integration setup and variables: [Getting started](docs/gett
 
 ## 4. One assistant, many workspaces
 
-A **Workspace** is an isolated filesystem/Git project with its own `CODEX_HOME`; a **Session**
-is a resumable Codex thread inside one. Create, switch, and resume are proposal-first: only a
-structured confirmation carrying the exact proposal ID commits them — rejection, a mismatched
-ID, or replay fails closed. Switching is staged, Codex runs one global task at a time, one
-live Orb owner is admitted, and the Orb shows public labels only. Voice creates new managed directories; importing an existing repository goes through
-`NOVA_AUDIO_AGENT_CODEX_WORKSPACE`. Full contract:
-[Multi-project Workspace handoff](docs/multi-project-workspace-handoff.md); retention and
-credentials: [Getting started](docs/getting-started.md).
+Nova's multi-project story rests on two nouns: a **Workspace** is an isolated filesystem/Git
+project with its own `CODEX_HOME`, and a **Session** is a Codex thread inside one that can be
+suspended and resumed at any time.
 
-An opt-in workspace memory graph records weak `discussed_with` cues — bounded, low-authority,
-below the proactive threshold, stale after 90 days — and Nova never reads or inspects another
-workspace on its own ([v3 memory volume](docs/archs/v3/02-memory.md)). The optional MyContext
-boundary adds a person-wide, read-only, untrusted, non-proactive evidence source for explicit
-recall; no
-Nova-compatible adapter ships here, so the integration is not yet functional end to end, and
-upstream MyContext (Elastic License 2.0) requires a separate legal and distribution review
-before any reuse or bundling.
+Every lifecycle action — create, switch, resume — takes two steps: voice produces a proposal,
+and only a structured confirmation carrying that proposal's ID commits it; rejection, a
+mismatched ID, or a replay fails closed. Switching confirms in stages, Codex execution is
+globally serialized, and the desktop client surfaces public labels only. Voice can only
+create new managed directories — connecting an existing repository goes through the
+`NOVA_AUDIO_AGENT_CODEX_WORKSPACE` startup setting. The complete contract lives in
+[Multi-project Workspace handoff](docs/multi-project-workspace-handoff.md), retention and
+credential handling in [Getting started](docs/getting-started.md).
+
+Two memory layers sit on top. An opt-in workspace graph records weak `discussed_with` cues —
+bounded, low-authority, below the proactive threshold, stale after 90 days — and Nova never
+reads or inspects another workspace on its own
+([v3 memory volume](docs/archs/v3/02-memory.md)). The optional MyContext boundary adds a
+person-wide evidence source — read-only, untrusted, never proactive, consulted only for
+explicit recall; no Nova-compatible adapter ships here, so the integration is not yet
+functional end to end, and upstream MyContext (Elastic License 2.0) needs a separate legal
+and distribution review before reuse or bundling.
 
 ```bash
 NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
@@ -153,9 +142,9 @@ NOVA_AUDIO_AGENT_WORKSPACE_GRAPH_ENABLED=true
 NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL=http://127.0.0.1:PORT/base
 ```
 
-## 5. Ambient Orb
+## 5. Nova Desktop
 
-The Ambient Orb is the local voice interface. After filling `.env`:
+Nova Desktop is the local voice interface. After filling `.env`:
 
 ```bash
 npm run start:client
@@ -164,17 +153,14 @@ npm run start:client
 The launcher starts the Node runtime and a sandboxed, context-isolated Electron renderer; it
 needs the `codex` executable, microphone permission, and `TAVILY_API_KEY`; `DASHSCOPE_API_KEY`
 is needed only for integrated Qwen and cascaded Qwen, and cascaded Ark needs `ARK_API_KEY`
-plus `DOUBAO_BIGMODEL_API_KEY`. The default `integrated` pipeline is Qwen
-`qwen-audio-3.0-realtime-plus` with the `longanqian` voice; `cascaded` mode defaults to
-Volcengine ASR → Qwen `qwen-flash` → Volcengine TTS. One key per platform, no provider
-failover; pipeline, provider, model, voice, and key edits apply on the next launch (only the
-palette is live).
+plus `DOUBAO_BIGMODEL_API_KEY`. Pipeline shapes, key reuse, and settings behavior:
+[Getting started](docs/getting-started.md).
 
 The orb is a Canvas 2D particle field whose behavior carries state — converging while
 listening, pulsing with playback, an orbiting band while Codex works — in the Ember or
 Graphite palette. Right-clicking opens the Memory Board (each channel's latest items) and a
-settings panel for palette, proactivity preset, Codex progress cadence, voice, and API keys
-(encrypted via the OS keychain).
+settings panel (palette, proactivity, Codex cadence, voice, and API keys encrypted via the
+OS keychain).
 
 ## 6. Documentation
 
@@ -192,12 +178,12 @@ settings panel for palette, proactivity preset, Codex progress cadence, voice, a
 
 ## 7. Roadmap
 
-1. **MyContext end to end** — a Nova-compatible read-only adapter, after the Elastic License
-   2.0 review; only the strict client boundary ships today.
-2. **Workspace graph on by default, plus episodic memory** — once soak evidence justifies it;
-   today the graph is opt-in and session-level episodic summaries are unbuilt.
-3. **More coding agents through the executor port** — the `ExecutorAdapter` port is the seam
-   for ACP or native protocols; Codex is the only backend today.
+- [ ] **MyContext end to end** — a Nova-compatible read-only adapter, after the Elastic
+  License 2.0 review; only the strict client boundary ships today.
+- [ ] **Workspace graph on by default, plus episodic memory** — once soak evidence justifies
+  it; today the graph is opt-in and session-level episodic summaries are unbuilt.
+- [ ] **More coding agents through the executor port** — the `ExecutorAdapter` port is the
+  seam for ACP or native protocols; Codex is the only backend today.
 
 ## 8. Development and verification
 

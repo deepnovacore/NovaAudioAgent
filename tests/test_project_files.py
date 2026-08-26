@@ -189,11 +189,11 @@ def test_conda_environment_provisions_uv() -> None:
 @pytest.mark.parametrize(
     ("readme", "section_heading", "next_heading"),
     (
-        (Path("README.md"), "## 6. Ambient Orb", "## 7. Repository layout"),
-        (Path("README.zh-CN.md"), "## 6. Ambient Orb", "## 7. 仓库布局"),
+        (Path("README.md"), "## 5. Nova Desktop", "## 6. Documentation"),
+        (Path("README.zh-CN.md"), "## 5. Nova Desktop", "## 6. 文档"),
     ),
 )
-def test_ambient_orb_readme_uses_current_client_launcher(
+def test_desktop_readme_uses_current_client_launcher(
     readme: Path,
     section_heading: str,
     next_heading: str,
