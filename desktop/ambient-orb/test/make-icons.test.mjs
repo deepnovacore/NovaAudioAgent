@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { crc32, inflateSync } from 'node:zlib'
+import { crc32 } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -11,11 +11,7 @@ import {
   ICON_SIZES,
   TRAY_SIZES,
   encodeIco,
-  insideSector,
   makeIcons,
-  markShapes,
-  markSvg,
-  renderMark,
 } from '../scripts/make-icons.mjs'
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -40,32 +36,6 @@ function readPngHeader(bytes) {
   // IEND is a whole chunk: zero-length, its type, and its (constant) CRC.
   assert.equal(bytes.subarray(bytes.length - 12).toString('latin1'), '\0\0\0\0IEND\xae\x42\x60\x82', 'IEND terminator')
   return header
-}
-
-// The pixels, recovered from the container. Every row is written with filter
-// type 0, so undoing the encoding is inflate plus dropping one byte per row —
-// which is exactly what lets the committed-artifact test below compare the
-// *image* instead of the compressor's output.
-function decodePng(bytes) {
-  const header = readPngHeader(bytes)
-  const parts = []
-  let offset = 8
-  while (offset + 8 <= bytes.length) {
-    const length = bytes.readUInt32BE(offset)
-    if (bytes.subarray(offset + 4, offset + 8).toString('latin1') === 'IDAT') {
-      parts.push(bytes.subarray(offset + 8, offset + 8 + length))
-    }
-    offset += 12 + length
-  }
-  const raw = inflateSync(Buffer.concat(parts))
-  const stride = header.width * 4
-  assert.equal(raw.length, (stride + 1) * header.height, 'decompressed scanline count')
-  const rgba = Buffer.alloc(stride * header.height)
-  for (let y = 0; y < header.height; y += 1) {
-    assert.equal(raw[y * (stride + 1)], 0, `row ${y} uses filter type 0`)
-    raw.copy(rgba, y * stride, y * (stride + 1) + 1, (y + 1) * (stride + 1))
-  }
-  return { ...header, rgba }
 }
 
 function chunkTypes(bytes) {
@@ -96,7 +66,7 @@ function assertChunkCrcs(bytes, label) {
     count += 1
   }
   assert.equal(offset, bytes.length, `${label}: chunks tile the file exactly`)
-  assert.equal(count, 3, `${label}: IHDR, IDAT, IEND`)
+  assert.ok(count >= 3, `${label}: IHDR, one or more IDAT chunks, IEND`)
 }
 
 async function generate(options = {}) {
@@ -109,6 +79,56 @@ async function generate(options = {}) {
   })
   return { directory, result }
 }
+
+async function sourcePngFixture() {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-icon-sources-'))
+  const sizes = [16, 22, 24, 32, 44, 48, 64, 128, 256, 512]
+  await Promise.all(sizes.map(size => (
+    writeFile(resolve(directory, `${size}x${size}.png`), Buffer.from(`fixture-${size}`))
+  )))
+  return directory
+}
+
+test('packaging and tray PNGs come from the canonical size-specific sources', async t => {
+  const sourceDir = await sourcePngFixture()
+  const { directory } = await generate({ sourceDir })
+  t.after(() => Promise.all([
+    rm(sourceDir, { recursive: true, force: true }),
+    rm(directory, { recursive: true, force: true }),
+  ]))
+
+  for (const size of ICON_SIZES) {
+    assert.deepEqual(
+      await readFile(resolve(directory, `build/icons/${size}x${size}.png`)),
+      await readFile(resolve(sourceDir, `${size}x${size}.png`)),
+      `${size}px linux icon uses its canonical source`,
+    )
+  }
+
+  for (const size of TRAY_SIZES) {
+    for (const [file, pixels] of [
+      [`tray-${size}.png`, size],
+      [`tray-${size}@2x.png`, size * 2],
+    ]) {
+      assert.deepEqual(
+        await readFile(resolve(directory, 'resources/tray', file)),
+        await readFile(resolve(sourceDir, `${pixels}x${pixels}.png`)),
+        `${file} uses its canonical source`,
+      )
+    }
+  }
+})
+
+test('source-based generation does not recreate the legacy SVG mark', async t => {
+  const sourceDir = await sourcePngFixture()
+  const { directory } = await generate({ sourceDir })
+  t.after(() => Promise.all([
+    rm(sourceDir, { recursive: true, force: true }),
+    rm(directory, { recursive: true, force: true }),
+  ]))
+
+  assert.equal(existsSync(resolve(directory, 'resources/icon.svg')), false)
+})
 
 test('every generated PNG carries a valid signature and its declared size', async t => {
   const { directory } = await generate()
@@ -127,12 +147,11 @@ test('every generated PNG carries a valid signature and its declared size', asyn
     assert.equal(header.compression, 0)
     assert.equal(header.filter, 0)
     assert.equal(header.interlace, 0)
-    assert.deepEqual(chunkTypes(bytes), ['IHDR', 'IDAT', 'IEND'])
+    const types = chunkTypes(bytes)
+    assert.equal(types[0], 'IHDR')
+    assert.equal(types.at(-1), 'IEND')
+    assert.ok(types.slice(1, -1).every(type => type === 'IDAT'), `${size}px contains only image data`)
     assertChunkCrcs(bytes, `${size}px`)
-    // The IDAT actually decodes, and to exactly the pixels the mark draws:
-    // without this the encoder could ship a stream no decoder accepts.
-    const decoded = decodePng(bytes)
-    assert.deepEqual(decoded.rgba, renderMark(size), `${size}px round-trips to the rendered mark`)
   }
 })
 
@@ -246,131 +265,45 @@ test('two generations are byte-identical', async t => {
   }
 })
 
-test('the band sector holds up when it crosses zero degrees', () => {
-  const radians = degrees => (degrees / 360) * Math.PI * 2
-  // atan2 hands the rasterizer -π..π, so a sector that wraps past 0 is where a
-  // naive single `+ TAU` normalisation goes negative and reports every angle as
-  // inside — a full ring instead of an arc. The current constants (118°-238°)
-  // never cross zero, so nothing else in the suite would notice a regression
-  // here until someone moved the band.
-  const start = radians(300)
-  const end = radians(60)
-  assert.equal(insideSector(radians(330), start, end), true, '330 is inside 300-60')
-  assert.equal(insideSector(radians(-30), start, end), true, 'the same angle as atan2 reports it')
-  assert.equal(insideSector(radians(30), start, end), true, '30 is inside')
-  assert.equal(insideSector(radians(180), start, end), false, '180 is outside')
-  assert.equal(insideSector(radians(-150), start, end), false, 'and as atan2 reports it')
-  // The ordinary, non-crossing case still behaves.
-  assert.equal(insideSector(radians(180), radians(118), radians(238)), true)
-  assert.equal(insideSector(radians(0), radians(118), radians(238)), false)
-  assert.equal(insideSector(radians(-90), radians(118), radians(238)), false)
+test('the canonical source ladder covers every packaged size as transparent RGBA PNG', async () => {
+  const root = resolve(import.meta.dirname, '..')
+  const sizes = [16, 22, 24, 32, 44, 48, 64, 128, 256, 512, 1024]
+
+  for (const size of sizes) {
+    const bytes = await readFile(resolve(root, `resources/icon-source/${size}x${size}.png`))
+    const header = readPngHeader(bytes)
+    assert.equal(header.width, size, `${size}px width`)
+    assert.equal(header.height, size, `${size}px height`)
+    assert.equal(header.bitDepth, 8)
+    assert.equal(header.colorType, 6, `${size}px keeps an alpha channel`)
+    assertChunkCrcs(bytes, `${size}px source`)
+  }
 })
 
-test('the SVG paints the particles in exactly the rasterizer order', () => {
-  // Both outputs come from markShapes(), but only if the SVG keeps the array
-  // order. Grouping every dot of one colour into a single <g> — the obvious
-  // tidy-up — silently reorders overlapping dots of different tones, so the
-  // vector file and the PNGs would disagree about which ember is on top.
-  const svg = markSvg()
-  const painted = [...svg.matchAll(/<g fill="(#[0-9A-F]{6})">|<circle cx="([-\d.]+)" cy="([-\d.]+)" r="([-\d.]+)"\/>/g)]
-  const order = []
-  let fill = null
-  for (const match of painted) {
-    if (match[1]) fill = match[1]
-    else order.push({ color: fill, cx: Number(match[2]), cy: Number(match[3]), r: Number(match[4]) })
-  }
-  const round2 = value => Math.round(value * 100) / 100 + 0
-  assert.deepEqual(
-    order,
-    markShapes().dots.map(dot => ({
-      color: dot.color,
-      cx: round2(dot.x * 512),
-      cy: round2(dot.y * 512),
-      r: round2(dot.r * 512),
-    })),
-  )
-})
-
-test('the mark renders as amber particles over a dark plate, not a gradient sphere', async t => {
-  const { directory } = await generate()
-  t.after(() => rm(directory, { recursive: true, force: true }))
-
-  const svg = await readFile(resolve(directory, 'resources/icon.svg'), 'utf8')
-  assert.equal(svg, markSvg(), 'makeIcons writes the mark, not some other SVG')
-  assert.match(svg, /viewBox="0 0 512 512"/)
-  assert.match(svg, /fill="#141005"/)
-  // Every dot the layout produces must reach the SVG. The generator used to
-  // group by a hardcoded palette list, which would silently drop a particle
-  // whose tone was introduced later while the rasterizer kept drawing it.
-  const { dots } = markShapes()
-  assert.equal((svg.match(/<circle /g) || []).length, dots.length, 'no particle is dropped')
-  for (const color of new Set(dots.map(dot => dot.color))) {
-    assert.ok(svg.includes(`fill="${color}"`), `${color} reaches the SVG`)
-  }
-  for (const color of ['#FFB454', '#FFE3B3', '#C96F2B']) {
-    assert.ok(svg.includes(color), `${color} particles are present`)
-  }
-  // Exactly one arc band, stroked — the codex-band motif, not a ring echo.
-  const strokes = svg.match(/stroke="#FFD9A0"/g) || []
-  assert.equal(strokes.length, 1, 'one arc band')
-  assert.match(svg, /<path d="M[^"]*A[^"]*" fill="none" stroke="#FFD9A0"/)
-  // No gradient sphere and no concentric-ring motif.
-  assert.doesNotMatch(svg, /Gradient|<circle[^>]*fill="none"/)
-  assert.ok(dots.length >= 24 && dots.length <= 40, `24-40 particle dots, got ${dots.length}`)
-})
-
-test('the raster mark keeps the plate opaque and the corners transparent', () => {
-  const size = 64
-  const rgba = renderMark(size)
-  assert.equal(rgba.length, size * size * 4)
-
-  const at = (x, y) => rgba.subarray((y * size + x) * 4, (y * size + x) * 4 + 4)
-  assert.equal(at(0, 0)[3], 0, 'top-left corner is cut away by the rounded square')
-  assert.equal(at(size - 1, size - 1)[3], 0, 'bottom-right corner too')
-  assert.equal(at(size / 2, 2)[3], 255, 'the plate itself is opaque')
-
-  // Somewhere in the core there must be a pixel far brighter than the plate.
-  let brightest = 0
-  for (let index = 0; index < rgba.length; index += 4) {
-    brightest = Math.max(brightest, rgba[index])
-  }
-  assert.ok(brightest > 200, `amber particles light the field, got ${brightest}`)
-})
-
-test('the icns step drives iconutil over a full iconset and is skippable', async t => {
+test('the icns step converts the canonical 1024px source with Electron Builder tooling', async t => {
   const calls = []
   const { directory } = await generate({
     icns: true,
-    runIconutil: async ({ iconset, output }) => {
-      calls.push({ iconset, output })
-      assert.deepEqual((await readdir(iconset)).sort(), [
-        'icon_128x128.png',
-        'icon_128x128@2x.png',
-        'icon_16x16.png',
-        'icon_16x16@2x.png',
-        'icon_256x256.png',
-        'icon_256x256@2x.png',
-        'icon_32x32.png',
-        'icon_32x32@2x.png',
-        'icon_512x512.png',
-      ])
+    runIcnsTool: async ({ inputFile, outDir }) => {
+      calls.push({ inputFile, outDir })
+      await writeFile(resolve(outDir, 'icon.icns'), Buffer.from('fixture-icns'))
       return { ok: true }
     },
   })
   t.after(() => rm(directory, { recursive: true, force: true }))
 
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].output, resolve(directory, 'build/icon.icns'))
-  // The scratch iconset is not left behind next to the real outputs.
-  assert.equal(existsSync(calls[0].iconset), false)
+  assert.equal(calls[0].inputFile, resolve(import.meta.dirname, '../resources/icon-source/1024x1024.png'))
+  assert.equal(calls[0].outDir, resolve(directory, 'build'))
+  assert.deepEqual(await readFile(resolve(directory, 'build/icon.icns')), Buffer.from('fixture-icns'))
 })
 
-test('a missing iconutil logs a skip instead of failing the build', async t => {
+test('a missing ICNS converter logs a skip instead of failing the build', async t => {
   const lines = []
   const { directory, result } = await generate({
     icns: true,
     log: line => lines.push(line),
-    runIconutil: async () => ({ ok: false, reason: 'iconutil is unavailable' }),
+    runIcnsTool: async () => ({ ok: false, reason: 'icon converter is unavailable' }),
   })
   t.after(() => rm(directory, { recursive: true, force: true }))
 
@@ -393,29 +326,21 @@ test('--if-missing regenerates nothing once every output is present', async t =>
   assert.ok(third.written.length > 0)
 })
 
-test('the committed icon artifacts are the ones the generator produces', async t => {
+test('the committed tray artifacts are the canonical sources the generator packages', async t => {
   const packageRoot = resolve(import.meta.dirname, '..')
   const { directory } = await generate()
   t.after(() => rm(directory, { recursive: true, force: true }))
 
-  // The SVG is text the generator emits verbatim, so it is compared byte for byte.
-  assert.equal(
-    await readFile(resolve(packageRoot, 'resources/icon.svg'), 'utf8'),
-    await readFile(resolve(directory, 'resources/icon.svg'), 'utf8'),
-    'resources/icon.svg is checked in up to date',
-  )
-  // The PNGs are compared as pixels, not as files. Node's bundled zlib changes
-  // between releases (1.2.12 and 1.3.1 deflate the same mark to different
-  // bytes), so a byte comparison here would fail on a node upgrade that changed
-  // nothing about the icon. Pixels still catch the case that matters: a layout
-  // edit committed without rerunning `npm run icons`.
   for (const size of TRAY_SIZES) {
     for (const file of [`resources/tray/tray-${size}.png`, `resources/tray/tray-${size}@2x.png`]) {
-      const [committed, fresh] = await Promise.all([
+      const pixels = file.includes('@2x') ? size * 2 : size
+      const [committed, fresh, source] = await Promise.all([
         readFile(resolve(packageRoot, file)),
         readFile(resolve(directory, file)),
+        readFile(resolve(packageRoot, `resources/icon-source/${pixels}x${pixels}.png`)),
       ])
-      assert.deepEqual(decodePng(committed).rgba, decodePng(fresh).rgba, `${file} is checked in up to date`)
+      assert.deepEqual(committed, source, `${file} matches its canonical source`)
+      assert.deepEqual(fresh, source, `${file} regenerates from the same source`)
     }
   }
 })
