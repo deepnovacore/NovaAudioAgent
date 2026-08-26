@@ -56,6 +56,10 @@ function mount(options = {}) {
   const pending = []
   const handles = []
   const cancelled = []
+  // Timer waits recorded by the slow-tier pacer. The stub fires synchronously,
+  // which puts the follow-up rAF straight into `pending`, so every existing
+  // step()/settle() flow drives timer-paced tiers exactly like pure-rAF ones.
+  const waits = []
   let nextHandle = 0
   const visual = createOrbVisual(canvas, {
     devicePixelRatio: 2,
@@ -82,6 +86,12 @@ function mount(options = {}) {
         pending.splice(at, 1)
       }
     },
+    timer: (callback, delayMs) => {
+      waits.push(delayMs)
+      callback()
+      return -1
+    },
+    cancelTimer: () => {},
     ...options,
   })
   const context = canvas.context
@@ -100,7 +110,7 @@ function mount(options = {}) {
   step.clock = 1000
   // Runs the smoothing to steady state so per-state counts are comparable.
   const settle = (frames = 90) => { for (let index = 0; index < frames; index += 1) step() }
-  return { visual, canvas, context, offscreen, pending, cancelled, take, step, settle }
+  return { visual, canvas, context, offscreen, pending, cancelled, waits, take, step, settle }
 }
 
 // A matchMedia stub whose queries can be flipped and fired on demand. The visual
@@ -183,7 +193,7 @@ test('STATE_PARAMS covers exactly the orb states derived by state.mjs', () => {
   for (const name of ORB_STATE_NAMES) {
     const params = STATE_PARAMS[name]
     assert.ok(Object.isFrozen(params), `${name} params must be frozen`)
-    for (const key of ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio']) {
+    for (const key of ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'twinkleSpeed']) {
       assert.ok(Number.isFinite(params[key]), `${name}.${key} must be a finite number`)
     }
     assert.ok(params.alpha > 0 && params.alpha <= 1, `${name}.alpha in (0, 1]`)
@@ -193,40 +203,43 @@ test('STATE_PARAMS covers exactly the orb states derived by state.mjs', () => {
 
 test('STATE_PARAMS carries the specified per-state behaviour values', () => {
   assert.deepEqual(
-    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
+    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'twinkleSpeed'].map(
       key => STATE_PARAMS.booting[key],
     ),
-    [0.4, 0.2, 0.3, 0, 0.7, 0.7],
+    [0.4, 0.2, 0.3, 0, 0.7, 0.7, 1],
   )
+  // Inactive drifts rather than freezes: the slow orbit was always in the
+  // parameters, and the reduced twinkleSpeed turns the shimmer into an
+  // occasional faint glint instead of a live sparkle.
   assert.deepEqual(
-    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
+    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'twinkleSpeed'].map(
       key => STATE_PARAMS.inactive[key],
     ),
-    [0.1, 0.02, 0.02, 0, 0.5, 0.45],
+    [0.1, 0.02, 0.02, 0, 0.5, 0.45, 0.35],
   )
   assert.deepEqual(
-    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
+    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'twinkleSpeed'].map(
       key => STATE_PARAMS.idle[key],
     ),
-    [0.25, 0.06, 0.12, 0, 0.8, 1],
+    [0.25, 0.06, 0.12, 0, 0.8, 1, 1],
   )
   assert.deepEqual(
-    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
+    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'twinkleSpeed'].map(
       key => STATE_PARAMS.candidate[key],
     ),
-    [0.35, 0.08, 0.18, 0, 0.9, 1],
+    [0.35, 0.08, 0.18, 0, 0.9, 1, 1],
   )
   assert.deepEqual(
-    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
+    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'twinkleSpeed'].map(
       key => STATE_PARAMS.listening[key],
     ),
-    [0.8, 0.1, 0.1, 0.45, 1, 1],
+    [0.8, 0.1, 0.1, 0.45, 1, 1, 1],
   )
   assert.deepEqual(
-    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio'].map(
+    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'twinkleSpeed'].map(
       key => STATE_PARAMS.speaking[key],
     ),
-    [0.3, 0.12, 0.2, 1, 1, 1],
+    [0.3, 0.12, 0.2, 1, 1, 1, 1],
   )
   // Listening pulls the pulse inward, speaking pushes it outward.
   assert.equal(STATE_PARAMS.listening.pulseDirection, -1)
@@ -237,7 +250,7 @@ test('interrupted is a one-shot scatter over the listening parameters', () => {
   const { interrupted, listening } = STATE_PARAMS
   assert.ok(interrupted.scatter > 0, 'interrupted carries a scatter impulse')
   assert.equal(listening.scatter, 0)
-  for (const key of ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'pulseDirection', 'alpha', 'countRatio']) {
+  for (const key of ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'pulseDirection', 'alpha', 'countRatio', 'twinkleSpeed']) {
     assert.equal(interrupted[key], listening[key], `interrupted.${key} matches listening`)
   }
 })
@@ -275,11 +288,13 @@ test('the three terminal states share the alert language but not the behaviour',
 test('muted is a deliberate dim ring, not an alert', () => {
   const params = STATE_PARAMS.muted
   assert.equal(params.tone, 'dim', 'user action, not an error')
+  // Full twinkleSpeed: a muted session is still a live session, so the ring
+  // keeps the same shimmer it has while unmuted.
   assert.deepEqual(
-    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'ringRadius'].map(
+    ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'alpha', 'countRatio', 'ringRadius', 'twinkleSpeed'].map(
       key => params[key],
     ),
-    [0.75, 0.03, 0.04, 0, 0.6, 0.6, 32],
+    [0.75, 0.03, 0.04, 0, 0.6, 0.6, 32, 1],
   )
 })
 
@@ -530,10 +545,12 @@ test('countRatio thins the field for low-energy states', () => {
   mounted.step()
   const idleCount = drawnCount(mounted.context)
 
-  // `inactive` is a static tier: it snaps to its parameters and draws exactly
-  // one frame, so the thinning shows up in that snapshot rather than in a loop.
-  resetDraws(mounted.context)
+  // `inactive` is a live (if sleepy) tier now, so the thinning has to be read
+  // after the countRatio easing has settled, from a single drawn frame.
   mounted.visual.setState('inactive')
+  mounted.settle()
+  resetDraws(mounted.context)
+  mounted.step()
   const inactiveCount = drawnCount(mounted.context)
 
   assert.ok(idleCount >= 230 && idleCount <= 240, `idle draws ~240 particles, got ${idleCount}`)
@@ -1081,9 +1098,13 @@ test('STATE_FPS covers every orb state and tiers them by how much they move', ()
     booting: 30,
     reconnecting: 30,
     idle: 15,
+    // Muted is a live session that is simply not being fed: it keeps moving at
+    // the same tier it will resume into.
+    muted: 15,
+    // Inactive drifts on its own slow tier: 50 s per orbit needs far fewer
+    // samples than idle's restless field.
+    inactive: 10,
     // Zero means one static frame and no loop at all.
-    inactive: 0,
-    muted: 0,
     disconnected: 0,
     'configuration-required': 0,
     'authentication-failed': 0,
@@ -1128,6 +1149,174 @@ test('the tick tiers throttle the loop instead of drawing every animation frame'
   mounted.step(18)
   assert.equal(mounted.context.calls.clearRect, candidate + 1)
   mounted.visual.destroy()
+})
+
+test('the resting states run a slow live loop instead of freezing', () => {
+  const mounted = mount()
+
+  mounted.visual.setState('inactive')
+  assert.equal(mounted.visual.fps, 10)
+  assert.equal(mounted.pending.length, 1, 'inactive keeps a scheduled frame')
+  mounted.settle()
+  resetDraws(mounted.context)
+  mounted.step()
+  const field = centres(mounted.context)
+  assert.ok(field.length > 0)
+  resetDraws(mounted.context)
+  mounted.step()
+  assert.notDeepEqual(centres(mounted.context), field, 'the inactive field drifts between frames')
+
+  mounted.visual.setState('muted')
+  assert.equal(mounted.visual.fps, 15, 'muted keeps the tier it resumes into')
+  assert.equal(mounted.pending.length, 1, 'muted keeps a scheduled frame')
+  mounted.settle()
+  resetDraws(mounted.context)
+  mounted.step()
+  const ring = centres(mounted.context)
+  resetDraws(mounted.context)
+  mounted.step()
+  assert.notDeepEqual(centres(mounted.context), ring, 'the muted ring keeps rotating')
+  mounted.visual.destroy()
+})
+
+test('slow tiers wait on a timer between frames instead of spinning at display rate', () => {
+  const mounted = mount()
+
+  // Inactive draws 10 frames a second; the other 50+ display refreshes must
+  // not wake JavaScript at all. After each drawn frame the loop sleeps out the
+  // whole interval on a timer and only then takes a rAF to align the draw.
+  mounted.visual.setState('inactive')
+  mounted.settle()
+  const paced = mounted.waits.length
+  assert.ok(paced >= 90, 'every settled inactive frame was timer-paced')
+  assert.equal(mounted.waits.at(-1), 100, 'the sleep covers the whole 100 ms interval')
+
+  mounted.visual.setState('muted')
+  mounted.step()
+  assert.equal(mounted.waits.at(-1), 1000 / 15)
+
+  // Fast tiers keep the pure rAF path: a 60 fps field has no interval to wait out.
+  mounted.visual.setState('listening')
+  const before = mounted.waits.length
+  mounted.settle(10)
+  assert.equal(mounted.waits.length, before, 'listening never touches the timer')
+  mounted.visual.destroy()
+})
+
+test('a pending slow-tier wait is cancelled by state changes and destroy', () => {
+  // An async timer stub, unlike mount()'s default synchronous one: the loop
+  // sits in the wait until the test fires or cancels it, which is the only way
+  // to exercise the cancellation paths.
+  const timers = []
+  let nextTimer = 0
+  const mounted = mount({
+    timer: (callback, delayMs) => {
+      nextTimer += 1
+      timers.push({ id: nextTimer, callback, delayMs })
+      return nextTimer
+    },
+    cancelTimer: handle => {
+      const at = timers.findIndex(entry => entry.id === handle)
+      if (at >= 0) timers.splice(at, 1)
+    },
+  })
+
+  mounted.visual.setState('inactive')
+  mounted.step()
+  assert.equal(mounted.pending.length, 0, 'no rAF is pending during the wait')
+  assert.equal(timers.length, 1, 'the wait is armed')
+
+  // A tier change must not sit out the previous tier's wait.
+  mounted.visual.setState('listening')
+  assert.equal(timers.length, 0, 'the wait is cancelled')
+  assert.equal(mounted.pending.length, 1, 'the new tier gets a frame right away')
+
+  mounted.step()
+  mounted.visual.setState('muted')
+  mounted.step()
+  assert.equal(timers.length, 1, 'muted waits between its frames')
+  mounted.visual.destroy()
+  assert.equal(timers.length, 0, 'destroy cancels the pending wait')
+  assert.equal(mounted.pending.length, 0)
+})
+
+test('an early rAF landing on a slow tier sleeps out the remainder instead of hopping vsyncs', () => {
+  const timers = []
+  let nextTimer = 0
+  const mounted = mount({
+    timer: (callback, delayMs) => {
+      nextTimer += 1
+      timers.push({ id: nextTimer, callback, delayMs })
+      return nextTimer
+    },
+    cancelTimer: handle => {
+      const at = timers.findIndex(entry => entry.id === handle)
+      if (at >= 0) timers.splice(at, 1)
+    },
+  })
+
+  mounted.visual.setState('inactive')
+  mounted.step()
+  assert.equal(timers.length, 1)
+  assert.equal(timers[0].delayMs, 100, 'a drawn frame sleeps a whole interval')
+
+  // The sleep ends but the aligning rAF lands 40 ms before the deadline (a
+  // spuriously early timer). The loop goes back to sleep for the remainder
+  // rather than burning display frames until the deadline passes.
+  timers.shift().callback()
+  assert.equal(mounted.pending.length, 1)
+  const landEarly = mounted.take()
+  mounted.step.clock += 60
+  landEarly(mounted.step.clock)
+  assert.equal(mounted.pending.length, 0, 'no vsync hop is armed')
+  assert.equal(timers.length, 1, 'the loop is asleep again')
+  assert.equal(timers[0].delayMs, 40, 'for exactly the remainder')
+
+  // When the remainder sleep lands past the deadline, the frame draws.
+  const clears = mounted.context.calls.clearRect
+  timers.shift().callback()
+  const landOnTime = mounted.take()
+  mounted.step.clock += 40
+  landOnTime(mounted.step.clock)
+  assert.equal(mounted.context.calls.clearRect, clears + 1, 'the on-time frame draws')
+  assert.equal(timers.length, 1, 'and the loop sleeps again')
+  mounted.visual.destroy()
+  assert.equal(timers.length, 0)
+})
+
+test('inactive twinkles slower than idle over the same elapsed time', () => {
+  // Per-particle sprite alpha is stateAlpha * (floor + swing * twinkle), with
+  // floor and swing fixed per particle, so once the state easing has settled
+  // the ratio of one particle's alpha across two frames isolates how far the
+  // twinkle phase advanced. Both states step the same 100 ms of animation
+  // time; only twinkleSpeed separates them.
+  const shimmer = state => {
+    const mounted = mount()
+    mounted.visual.setState(state)
+    mounted.settle()
+    resetDraws(mounted.context)
+    mounted.step(100)
+    const before = particleBlits(mounted.context).map(call => call.alpha)
+    resetDraws(mounted.context)
+    mounted.step(100)
+    const after = particleBlits(mounted.context).map(call => call.alpha)
+    mounted.visual.destroy()
+    const sampled = Math.min(before.length, after.length, 100)
+    assert.ok(sampled > 50, `${state} draws enough particles to sample`)
+    let total = 0
+    for (let index = 0; index < sampled; index += 1) {
+      total += Math.abs(after[index] / before[index] - 1)
+    }
+    return total / sampled
+  }
+
+  const idleShimmer = shimmer('idle')
+  const inactiveShimmer = shimmer('inactive')
+  assert.ok(inactiveShimmer > 0, 'inactive still shimmers')
+  assert.ok(
+    inactiveShimmer < idleShimmer * 0.6,
+    `inactive shimmer ${inactiveShimmer} must sit well under idle's ${idleShimmer}`,
+  )
 })
 
 test('a static state draws one frame and stops the loop until a live state returns', () => {

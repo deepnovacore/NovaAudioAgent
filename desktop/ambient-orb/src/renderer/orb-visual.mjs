@@ -59,6 +59,16 @@ const FIRST_FRAME_MS = 16
 // display would skip every other 30 fps frame and halve the tier.
 const TICK_SLACK_MS = 1
 
+// Slow tiers sleep out their whole interval on a cancelable timer and only
+// then take a rAF to align the draw with the compositor: rescheduling rAF
+// every display refresh would wake JavaScript 60-120 times a second to draw
+// ten frames, which is exactly the cost the low tiers exist to avoid. Timers
+// fire at-or-after their delay, so the aligning rAF lands past the deadline
+// and draws first try; the cadence runs about half a display frame slow,
+// which a ten-fps nebula cannot show. Tiers under this interval stay on pure
+// rAF — there the sleep would be shorter than a display frame anyway.
+const TIMER_TIER_MS = 40
+
 // Auto-degrade: if our own advance+draw is costing this much per frame on
 // average, the machine cannot afford the full field and the count is halved once.
 const DEGRADE_FRAME_MS = 4
@@ -160,6 +170,10 @@ function stateParams({
   ringRadius = 0,
   scatter = 0,
   tone = 'base',
+  // Multiplier on the twinkle phase advance only. Orbit and wobble already
+  // scale per state through orbitSpeed and jitter; twinkle is the one motion
+  // that would otherwise shimmer at full rate in any live tier.
+  twinkleSpeed = 1,
 }) {
   return Object.freeze({
     convergence,
@@ -172,6 +186,7 @@ function stateParams({
     ringRadius,
     scatter,
     tone,
+    twinkleSpeed,
   })
 }
 
@@ -223,6 +238,10 @@ export const STATE_PARAMS = Object.freeze({
     // than half of idle's.
     countRatio: 0.45,
     tone: 'dim',
+    // The resting nebula drifts: a 50 s orbit with an occasional faint glint,
+    // not idle's live sparkle — slow enough to read as asleep, alive enough
+    // not to read as a screenshot.
+    twinkleSpeed: 0.35,
   }),
   idle: stateParams({
     convergence: 0.25,
@@ -258,7 +277,8 @@ export const STATE_PARAMS = Object.freeze({
   interrupted: Object.freeze({ ...LISTENING, scatter: 1 }),
   // A deliberate mute: collapsed like the terminal family so it reads as
   // "not receiving", but dim-toned and mid-sized — the user chose this, so it
-  // must not borrow the alert red. Static (0 fps): nothing it shows moves.
+  // must not borrow the alert red. It keeps moving at the tier it resumes
+  // into: a muted session is still a live session, only unfed.
   muted: stateParams({
     convergence: 0.75,
     orbitSpeed: 0.03,
@@ -298,8 +318,9 @@ export const STATE_PARAMS = Object.freeze({
 })
 
 // Tick tiers. A resting orb sits in the menu bar for hours, so it must not pay
-// display rate for a field that is barely moving, and a dead session must not
-// pay anything at all: zero means one static frame with the loop stopped.
+// display rate for a field that is barely moving — inactive gets its own low
+// tier for a 50 s orbit — and a dead session must not pay anything at all:
+// zero means one static frame with the loop stopped.
 export const STATE_FPS = Object.freeze({
   speaking: 60,
   listening: 60,
@@ -307,8 +328,9 @@ export const STATE_FPS = Object.freeze({
   candidate: 30,
   booting: 30,
   idle: 15,
-  inactive: 0,
-  muted: 0,
+  // A muted session is live, only unfed: it keeps the tier it resumes into.
+  muted: 15,
+  inactive: 10,
   disconnected: 0,
   reconnecting: 30,
   'configuration-required': 0,
@@ -522,6 +544,8 @@ export function createOrbVisual(canvas, options = {}) {
     createCanvas = defaultCreateCanvas,
     raf,
     cancelRaf,
+    timer,
+    cancelTimer,
     now,
     getSpeakingLevel = null,
     document: documentRef = globalThis.document,
@@ -538,6 +562,10 @@ export function createOrbVisual(canvas, options = {}) {
     || (typeof globalThis.cancelAnimationFrame === 'function'
       ? handle => globalThis.cancelAnimationFrame(handle)
       : () => {})
+  const wait = timer
+    || ((callback, delayMs) => globalThis.setTimeout(callback, delayMs))
+  const cancelWait = cancelTimer
+    || (handle => globalThis.clearTimeout(handle))
   const clock = typeof now === 'function'
     ? now
     : () => (globalThis.performance?.now?.() ?? Date.now())
@@ -677,8 +705,10 @@ export function createOrbVisual(canvas, options = {}) {
   let scatter = 0
 
   let wobbleClock = 0
+  let twinkleClock = 0
   let codexPhase = 0
   let frameHandle = null
+  let timerHandle = null
   let lastTimestamp = -1
   let destroyed = false
   let hidden = documentRef?.visibilityState === 'hidden'
@@ -767,6 +797,11 @@ export function createOrbVisual(canvas, options = {}) {
       angle[index] = next >= TAU ? next - TAU : next
     }
     wobbleClock += elapsedMs / 1000
+    // Twinkle keeps its own clock so a state can slow the shimmer without
+    // touching the wobble. A rate change is continuous in the output — the
+    // clock keeps its value and only advances slower — so unlike the eased
+    // parameters above it can read the target state directly.
+    twinkleClock += (elapsedMs / 1000) * params.twinkleSpeed
     codexPhase += CODEX_ORBIT_SPEED * (elapsedMs / 1000) * TAU
     if (codexPhase > TAU) codexPhase -= TAU
   }
@@ -842,7 +877,7 @@ export function createOrbVisual(canvas, options = {}) {
       const heading = angle[index]
         + jitter * JITTER_ARC * Math.cos(wobbleClock * wobbleFrequency[index] + wobblePhase[index])
       const twinkle = 0.5
-        + 0.5 * Math.sin(wobbleClock * twinkleFrequency[index] + twinklePhase[index])
+        + 0.5 * Math.sin(twinkleClock * twinkleFrequency[index] + twinklePhase[index])
       // Twinkle depth follows the particle's own depth: the far field flickers
       // hard and dim, the core holds steady and bright. Derived from homeRadius
       // rather than a fourth typed array, because this loop allocates nothing.
@@ -893,11 +928,18 @@ export function createOrbVisual(canvas, options = {}) {
     // A state that went static between two frames stops here rather than
     // rescheduling; setState already drew its single frame.
     if (interval === 0) {
-      frameHandle = null
+      stopLoop()
       return
     }
-    frameHandle = schedule(tick)
-    if (lastTimestamp >= 0 && timestamp - lastTimestamp + TICK_SLACK_MS < interval) return
+    if (lastTimestamp >= 0 && timestamp - lastTimestamp + TICK_SLACK_MS < interval) {
+      // An early landing on a slow tier goes back to sleep for the remainder
+      // rather than hopping vsync to vsync until the deadline passes — on a
+      // 144 Hz display those hops would triple the wakeups the sleep exists
+      // to avoid.
+      if (interval >= TIMER_TIER_MS) armWait(Math.max(1, interval - (timestamp - lastTimestamp)))
+      else frameHandle = schedule(tick)
+      return
+    }
     const elapsedMs = lastTimestamp < 0
       ? FIRST_FRAME_MS
       // The stall guard has to leave room for the slowest tier's own interval,
@@ -908,16 +950,39 @@ export function createOrbVisual(canvas, options = {}) {
     advance(elapsedMs)
     draw()
     sampleFrameCost(clock() - startedAt)
+    if (interval >= TIMER_TIER_MS) armWait(interval)
+    else frameHandle = schedule(tick)
+  }
+
+  // Sleep off-rAF, then take one frame to align the next draw with the
+  // compositor.
+  function armWait(delayMs) {
+    frameHandle = null
+    let firedInline = false
+    const handle = wait(() => {
+      firedInline = true
+      timerHandle = null
+      if (destroyed) return
+      frameHandle = schedule(tick)
+    }, delayMs)
+    // An injected test timer may run its callback synchronously; a handle
+    // stored after that would outlive the wait it names.
+    if (!firedInline) timerHandle = handle
   }
 
   function stopLoop() {
+    if (timerHandle !== null) {
+      cancelWait(timerHandle)
+      timerHandle = null
+    }
     if (frameHandle === null) return
     unschedule(frameHandle)
     frameHandle = null
   }
 
   function startLoop() {
-    if (destroyed || staticMode || hidden || frameHandle !== null) return
+    if (destroyed || staticMode || hidden) return
+    if (frameHandle !== null || timerHandle !== null) return
     if (tickIntervalMs() === 0) return
     // The gap since the last frame is not animation time: a resumed orb starts
     // from a nominal frame instead of jumping through the whole pause.
@@ -956,6 +1021,9 @@ export function createOrbVisual(canvas, options = {}) {
       stopLoop()
       drawStaticFrame()
     } else {
+      // A state change must not sit out a slow tier's pending wait: activating
+      // from inactive expects its first frame now, not up to 100 ms from now.
+      if (timerHandle !== null) stopLoop()
       startLoop()
     }
   }
@@ -1007,6 +1075,9 @@ export function createOrbVisual(canvas, options = {}) {
     scatter = STATE_PARAMS.interrupted.scatter
     if (!staticMode && tickIntervalMs() > 0) {
       // A running loop decays the impulse; a hidden orb picks it up on resume.
+      // A slow tier's pending wait is cancelled first — a barge-in impulse
+      // that lands 84 ms late is not an impulse.
+      if (timerHandle !== null) stopLoop()
       startLoop()
       return
     }
