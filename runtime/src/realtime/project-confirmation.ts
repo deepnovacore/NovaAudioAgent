@@ -45,6 +45,10 @@ export interface ProjectConfirmationView {
   readonly pending_confirmation: boolean
   readonly workspace_display_name: string | null
   readonly session_title: string | null
+  readonly pending_action?: 'create_workspace' | 'select_workspace' | 'resume_session' | null
+  readonly pending_workspace_display_name?: string | null
+  readonly pending_session_title?: string | null
+  readonly pending_expires_in_seconds?: number | null
 }
 
 export interface ConfirmationOutcome {
@@ -80,10 +84,21 @@ export class ProjectConfirmationController {
 
   get view(): ProjectConfirmationView {
     const proposal = this.pending ? this.#proposal : null
+    if (proposal === null) {
+      return {
+        pending_confirmation: false,
+        workspace_display_name: null,
+        session_title: null,
+      }
+    }
     return {
-      pending_confirmation: proposal !== null,
-      workspace_display_name: proposal?.workspace_display_name ?? null,
-      session_title: proposal?.session_title ?? null,
+      pending_confirmation: true,
+      workspace_display_name: proposal.workspace_display_name,
+      session_title: proposal.session_title,
+      pending_action: publicProjectAction(proposal.action),
+      pending_workspace_display_name: proposal.workspace_display_name,
+      pending_session_title: proposal.session_title,
+      pending_expires_in_seconds: Math.max(0, proposal.expires_at - this.#clock.now()),
     }
   }
 
@@ -342,6 +357,14 @@ export class ProjectConfirmationController {
       // prevent the state change that produced it.
     }
   }
+}
+
+function publicProjectAction(
+  action: ProjectAction,
+): 'create_workspace' | 'select_workspace' | 'resume_session' {
+  if (action === 'create') return 'create_workspace'
+  if (action === 'select') return 'select_workspace'
+  return 'resume_session'
 }
 
 function reservationKey(epoch: number, itemId: string): string {

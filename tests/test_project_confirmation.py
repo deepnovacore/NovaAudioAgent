@@ -90,6 +90,41 @@ def test_matching_structured_true_decision_grants_one_shot_identity_authority() 
     assert controller.claim_confirmed(accepted.operation) is False
 
 
+def test_public_pending_view_exposes_only_action_target_and_relative_expiry() -> None:
+    clock = VirtualClock(start=10.0)
+    controller = _controller(clock)
+    proposal = controller.prepare(
+        action="resume",
+        workspace_display_name="天气看板",
+        workspace_id="workspace-private",
+        session_title="登录修复",
+        session_id="session-private",
+        work_order="继续修复",
+        origin_ref="conversation:1",
+    )
+
+    assert asdict(controller.view) == {
+        "pending_confirmation": True,
+        "workspace_display_name": "天气看板",
+        "session_title": "登录修复",
+        "pending_action": "resume_session",
+        "pending_workspace_display_name": "天气看板",
+        "pending_session_title": "登录修复",
+        "pending_expires_in_seconds": 90.0,
+    }
+    rendered = repr(asdict(controller.view))
+    for private in (
+        "workspace-private",
+        "session-private",
+        proposal.proposal_id,
+        "继续修复",
+        "conversation:1",
+    ):
+        assert private not in rendered
+    clock.advance_to(35.0)
+    assert controller.view.pending_expires_in_seconds == 65.0
+
+
 def test_reconstructed_operation_cannot_claim_identity_authority() -> None:
     controller = _controller()
     proposal = _prepare_select(controller)

@@ -30,6 +30,9 @@ _CODEX_PROGRESS_KEYS = frozenset({"op", "phase", "internal_activity", "elapsed",
 
 def final_speech_view(outcome: str, content: object) -> str:
     """Extract a speech-prepared view of a Codex terminal handoff."""
+    confirmation = _codex_confirmation_speech(content) if outcome == "ok" else None
+    if confirmation is not None:
+        return confirmation
     final_message: object = None
     code: object = None
     error: object = None
@@ -69,6 +72,52 @@ def final_speech_view(outcome: str, content: object) -> str:
         category = f"（{code}）" if type(code) is str and code else ""
         return f"Codex 任务失败{category}：{prepped}{note}"
     return f"Codex 任务结果不确定：{prepped}{note}"
+
+
+def _codex_confirmation_speech(content: object) -> str | None:
+    if type(content) is not dict or content.get("code") != "confirmation_required":
+        return None
+    action = content.get("action")
+    workspace = content.get("workspace")
+    session = content.get("session")
+    prompt = content.get("confirmation_prompt")
+    if (
+        type(action) is not str
+        or type(workspace) is not str
+        or not workspace.strip()
+        or len(workspace) > 120
+        or type(prompt) is not str
+        or len(prompt) > 512
+    ):
+        return _generic_codex_confirmation_speech()
+    if action == "create_workspace":
+        expected = {
+            f"准备创建工作区{workspace}，并在其中开始任务，请确认或取消。",
+            f"准备创建并切换到工作区{workspace}，请确认或取消。",
+        }
+    elif action == "select_workspace":
+        expected = {f"准备切换到工作区{workspace}，请确认或取消。"}
+    elif (
+        action == "resume_session"
+        and type(session) is str
+        and bool(session.strip())
+        and len(session) <= 120
+    ):
+        expected = {f"准备切换到{workspace}，并继续 Session“{session}”，请确认或取消。"}
+    else:
+        return _generic_codex_confirmation_speech()
+    if prompt not in expected:
+        return _generic_codex_confirmation_speech()
+    operation = prompt.removesuffix("，请确认或取消。")
+    return (
+        f"Codex 需要你的确认：{operation}。这项操作尚未执行，Codex 也还没有开始任务。请确认或取消。"
+    )
+
+
+def _generic_codex_confirmation_speech() -> str:
+    return (
+        "Codex 有一项项目操作等待你的确认。这项操作尚未执行，Codex 也还没有开始任务。请确认或取消。"
+    )
 
 
 def _codex_startup_failure_speech(category: str, stage: object) -> str | None:

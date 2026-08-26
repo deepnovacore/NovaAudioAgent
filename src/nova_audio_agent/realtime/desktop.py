@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import math
 import os
 import signal
 import string
@@ -236,10 +237,57 @@ def codex_state_message(state: CodexState) -> str:
 def codex_project_message(view: PublicProjectView) -> str:
     if type(view) is not PublicProjectView:
         raise DesktopProtocolError("desktop Codex project view is invalid")
-    for value in (view.workspace_display_name, view.session_title):
+    for value in (
+        view.workspace_display_name,
+        view.session_title,
+        view.pending_workspace_display_name,
+        view.pending_session_title,
+    ):
         if value is not None and (type(value) is not str or not value or len(value) > 120):
             raise DesktopProtocolError("desktop Codex project view is invalid")
     if type(view.pending_confirmation) is not bool:
+        raise DesktopProtocolError("desktop Codex project view is invalid")
+    pending_action = view.pending_action
+    if pending_action is not None and (
+        type(pending_action) is not str
+        or pending_action
+        not in {
+            "create_workspace",
+            "select_workspace",
+            "resume_session",
+        }
+    ):
+        raise DesktopProtocolError("desktop Codex project view is invalid")
+    expires = view.pending_expires_in_seconds
+    if expires is not None and (
+        type(expires) not in {int, float}
+        or not math.isfinite(expires)
+        or expires < 0
+        or expires > 90
+    ):
+        raise DesktopProtocolError("desktop Codex project view is invalid")
+    has_pending_metadata = any(
+        value is not None
+        for value in (
+            view.pending_action,
+            view.pending_workspace_display_name,
+            view.pending_session_title,
+            expires,
+        )
+    )
+    if not view.pending_confirmation and has_pending_metadata:
+        raise DesktopProtocolError("desktop Codex project view is invalid")
+    if (
+        view.pending_confirmation
+        and has_pending_metadata
+        and (
+            view.pending_action is None
+            or view.pending_workspace_display_name is None
+            or expires is None
+        )
+    ):
+        raise DesktopProtocolError("desktop Codex project view is invalid")
+    if pending_action == "resume_session" and view.pending_session_title is None:
         raise DesktopProtocolError("desktop Codex project view is invalid")
     return json.dumps(
         {
@@ -247,6 +295,10 @@ def codex_project_message(view: PublicProjectView) -> str:
             "workspace_display_name": view.workspace_display_name,
             "session_title": view.session_title,
             "pending_confirmation": view.pending_confirmation,
+            "pending_action": view.pending_action,
+            "pending_workspace_display_name": view.pending_workspace_display_name,
+            "pending_session_title": view.pending_session_title,
+            "pending_expires_in_seconds": expires,
         },
         ensure_ascii=False,
         separators=(",", ":"),

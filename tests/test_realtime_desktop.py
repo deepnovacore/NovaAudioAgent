@@ -206,7 +206,21 @@ def test_codex_project_message_has_closed_public_shape() -> None:
         "workspace_display_name": "alpha",
         "session_title": "Task 1",
         "pending_confirmation": True,
+        "pending_action": None,
+        "pending_workspace_display_name": None,
+        "pending_session_title": None,
+        "pending_expires_in_seconds": None,
     }
+
+    with pytest.raises(DesktopProtocolError, match="project view"):
+        codex_project_message(
+            PublicProjectView(
+                "alpha",
+                None,
+                True,
+                pending_action=[],  # type: ignore[arg-type]
+            )
+        )
 
 
 def test_delivery_events_exclude_suppressed_speech() -> None:

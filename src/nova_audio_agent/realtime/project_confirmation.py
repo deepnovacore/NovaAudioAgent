@@ -69,6 +69,10 @@ class ProjectConfirmationView:
     pending_confirmation: bool
     workspace_display_name: str | None = None
     session_title: str | None = None
+    pending_action: Literal["create_workspace", "select_workspace", "resume_session"] | None = None
+    pending_workspace_display_name: str | None = None
+    pending_session_title: str | None = None
+    pending_expires_in_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,10 +104,20 @@ class ProjectConfirmationController:
     @property
     def view(self) -> ProjectConfirmationView:
         proposal = self._proposal if self.pending else None
+        if proposal is None:
+            return ProjectConfirmationView(pending_confirmation=False)
         return ProjectConfirmationView(
-            pending_confirmation=proposal is not None,
-            workspace_display_name=(None if proposal is None else proposal.workspace_display_name),
-            session_title=None if proposal is None else proposal.session_title,
+            pending_confirmation=True,
+            workspace_display_name=proposal.workspace_display_name,
+            session_title=proposal.session_title,
+            pending_action={
+                "create": "create_workspace",
+                "select": "select_workspace",
+                "resume": "resume_session",
+            }[proposal.action],
+            pending_workspace_display_name=proposal.workspace_display_name,
+            pending_session_title=proposal.session_title,
+            pending_expires_in_seconds=max(0.0, proposal.expires_at - self._clock.now()),
         )
 
     @property

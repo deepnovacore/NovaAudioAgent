@@ -11,8 +11,13 @@
         <button id="mute-toggle" type="button" aria-label="闭麦" aria-pressed="false" disabled></button>
         <button id="open-settings" type="button" aria-label="设置"></button>
       </nav>
-      <p id="state-label">待命 · Codex 空闲</p>
-      <p id="codex-label">工作区 alpha · Codex 空闲</p>
+      <p id="state-label" role="status" aria-live="polite" aria-atomic="true">待命 · Codex 空闲</p>
+      <p id="codex-label" data-visible="false">
+        <span id="codex-summary">工作区 alpha · Codex 空闲</span>
+        <span id="codex-operation"></span>
+        <span id="codex-expiry" aria-hidden="true"></span>
+      </p>
+      <p id="confirmation-announcement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
       <p id="aec-label">系统级 AEC</p>
       <p id="caption">这是一段 ASR 转写</p>
     </main>

@@ -380,6 +380,10 @@ def test_proposal_has_zero_mutation_and_public_projection_has_no_private_values(
         "workspace_display_name": "alpha",
         "session_title": None,
         "pending_confirmation": True,
+        "pending_action": None,
+        "pending_workspace_display_name": None,
+        "pending_session_title": None,
+        "pending_expires_in_seconds": None,
     }
     for private in (
         workspace.workspace_id,

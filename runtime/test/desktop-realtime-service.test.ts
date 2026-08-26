@@ -1049,6 +1049,10 @@ async function assertDesktopControlOutputs(
     {
       type: 'codex.project', workspace_display_name: '项目甲',
       session_title: '会话乙', pending_confirmation: true,
+      pending_action: null,
+      pending_workspace_display_name: null,
+      pending_session_title: null,
+      pending_expires_in_seconds: null,
     },
   ])
 }
@@ -1609,7 +1613,7 @@ test('captured composition callbacks preserve clear alert Codex project clock an
     '{"type":"playback.alert","utterance_id":"utterance-alert","generation_epoch":3}',
     '{"type":"clock.ping","ping_id":"ping-0"}',
     '{"type":"codex.state","state":"running"}',
-    '{"type":"codex.project","workspace_display_name":"项目甲","session_title":"会话乙","pending_confirmation":true}',
+    '{"type":"codex.project","workspace_display_name":"项目甲","session_title":"会话乙","pending_confirmation":true,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
   ])
   assert.deepEqual(telemetryRecords.map(record => record.kind), [
     'playback.clear_sent',

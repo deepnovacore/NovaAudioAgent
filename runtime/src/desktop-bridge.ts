@@ -818,6 +818,11 @@ function sameProjectView(
   return left.workspace_display_name === right.workspace_display_name
     && left.session_title === right.session_title
     && left.pending_confirmation === right.pending_confirmation
+    && (left.pending_action ?? null) === (right.pending_action ?? null)
+    && (left.pending_workspace_display_name ?? null)
+      === (right.pending_workspace_display_name ?? null)
+    && (left.pending_session_title ?? null) === (right.pending_session_title ?? null)
+    && (left.pending_expires_in_seconds ?? null) === (right.pending_expires_in_seconds ?? null)
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

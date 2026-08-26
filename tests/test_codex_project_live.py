@@ -1196,6 +1196,8 @@ async def test_locked_registry_yields_bounded_state_busy_not_an_exception(tmp_pa
 async def test_prepared_confirmation_survives_busy_view_refresh(tmp_path: Path) -> None:
     adapter, store = _adapter(tmp_path)
     ctx = _context(VirtualClock())
+    views: list[PublicProjectView] = []
+    adapter.observe_project_view(views.append)
 
     def busy_view(*, pending_confirmation: bool) -> Any:
         raise ProjectStateError("state_busy")
@@ -1208,6 +1210,15 @@ async def test_prepared_confirmation_survives_busy_view_refresh(tmp_path: Path) 
     assert proposal.outcome == "ok"
     assert proposal.content["code"] == "confirmation_required"
     assert adapter.confirmation.pending is True
+    assert views[-1] == PublicProjectView(
+        workspace_display_name="alpha",
+        session_title=None,
+        pending_confirmation=True,
+        pending_action="select_workspace",
+        pending_workspace_display_name="alpha",
+        pending_session_title=None,
+        pending_expires_in_seconds=90.0,
+    )
 
 
 @pytest.mark.asyncio

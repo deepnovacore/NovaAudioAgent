@@ -64,6 +64,7 @@ def _project_variant(
         "additionalProperties": False,
     }
 
+
 PROJECT = OpSpec(
     name="project",
     description=(
@@ -643,15 +644,17 @@ class ProjectCodexAdapter(CodexLiveAdapter):
     async def _load_project_context(self) -> tuple[str | None, PublicProjectView] | None:
         self._project_view_refresh_seq += 1
         refresh_seq = self._project_view_refresh_seq
-        workspace_id, view = await _complete_sync(
+        workspace_id, stored_view = await _complete_sync(
             self.store.public_context,
-            pending_confirmation=self.confirmation.pending,
+            pending_confirmation=False,
         )
         if refresh_seq != self._project_view_refresh_seq:
             return None
         self._public_workspace_id = workspace_id
-        self._public_project_view = view
-        return workspace_id, view
+        self._public_project_view = stored_view
+        return workspace_id, self.public_project_view(
+            pending_confirmation=self.confirmation.pending
+        )
 
     async def _refresh_project_view(self) -> None:
         context = await self._load_project_context()
@@ -684,6 +687,9 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         except ProjectStateError as failure:
             if failure.code != "state_busy":
                 raise
+            await self._publish_project_view(
+                self.public_project_view(pending_confirmation=self.confirmation.pending)
+            )
 
     async def _rollback_confirmed_create(
         self,
@@ -715,9 +721,23 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             self.store.close()
 
     def public_project_view(self, *, pending_confirmation: bool) -> PublicProjectView:
+        if not pending_confirmation:
+            return replace(
+                self._public_project_view,
+                pending_confirmation=False,
+                pending_action=None,
+                pending_workspace_display_name=None,
+                pending_session_title=None,
+                pending_expires_in_seconds=None,
+            )
+        confirmation = self.confirmation.view
         return replace(
             self._public_project_view,
-            pending_confirmation=pending_confirmation,
+            pending_confirmation=True,
+            pending_action=confirmation.pending_action,
+            pending_workspace_display_name=confirmation.pending_workspace_display_name,
+            pending_session_title=confirmation.pending_session_title,
+            pending_expires_in_seconds=confirmation.pending_expires_in_seconds,
         )
 
     def public_project_context(

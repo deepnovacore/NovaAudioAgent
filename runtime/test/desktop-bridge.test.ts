@@ -357,10 +357,27 @@ test('the project view is deduplicated by value, not by identity', () => {
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: true,
+    pending_action: 'create_workspace',
+    pending_workspace_display_name: 'tetris-game',
+    pending_session_title: null,
+    pending_expires_in_seconds: 90,
   })
   assert.ok(
     String(bridge.takeNextFrame()).includes('"pending_confirmation":true'),
     'a changed one is',
+  )
+  bridge.onCodexProject({
+    workspace_display_name: '研究项目',
+    session_title: null,
+    pending_confirmation: true,
+    pending_action: 'select_workspace',
+    pending_workspace_display_name: 'beta',
+    pending_session_title: null,
+    pending_expires_in_seconds: 75,
+  })
+  assert.ok(
+    String(bridge.takeNextFrame()).includes('"pending_workspace_display_name":"beta"'),
+    'a changed pending target is resent',
   )
 })
 

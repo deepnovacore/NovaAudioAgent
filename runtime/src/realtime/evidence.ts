@@ -1,7 +1,7 @@
 import { validProgressSummary, type JsonValue } from '../events.js'
 import { CONVERSATION_CHANNEL, type MemoryItem } from '../memory.js'
 import {pythonFloat} from '../python-number.js'
-import {stripLikePython} from '../python-text.js'
+import {codePointLengthLikePython, stripLikePython} from '../python-text.js'
 import { prepareForSpeech, SPEECH_FINAL_LIMIT } from './speech-prep.js'
 
 const GENERIC_SCALAR_KEYS = [
@@ -24,6 +24,8 @@ const UNKNOWN_PROSE_KEYS = ['observation', 'summary', 'message', 'error'] as con
 const CODEX_PROGRESS_KEYS = new Set(['op', 'phase', 'internal_activity', 'elapsed', 'summary'])
 
 export function finalSpeechView(outcome: string, content: unknown): string {
+  const confirmation = outcome === 'ok' ? codexConfirmationSpeech(content) : null
+  if (confirmation !== null) return confirmation
   let finalMessage: unknown
   let code: unknown
   let error: unknown
@@ -60,6 +62,57 @@ export function finalSpeechView(outcome: string, content: unknown): string {
     return `Codex 任务失败${category}：${prepared.text}${note}`
   }
   return `Codex 任务结果不确定：${prepared.text}${note}`
+}
+
+/**
+ * Render only a host-generated confirmation prompt whose exact shape matches the public action
+ * fields beside it. This keeps proposal ids, work orders, and forged prose out of speech while still
+ * preserving the question that used to be lost by the generic no-final-message fallback.
+ */
+function codexConfirmationSpeech(content: unknown): string | null {
+  if (!isObject(content) || content.code !== 'confirmation_required') return null
+  const action = content.action
+  const workspace = content.workspace
+  const session = content.session
+  const prompt = content.confirmation_prompt
+  if (
+    typeof action !== 'string'
+    || typeof workspace !== 'string'
+    || stripLikePython(workspace) === ''
+    || codePointLengthLikePython(workspace) > 120
+    || typeof prompt !== 'string'
+    || codePointLengthLikePython(prompt) > 512
+  ) return genericCodexConfirmationSpeech()
+
+  let expected: readonly string[]
+  if (action === 'create_workspace') {
+    expected = [
+      `准备创建工作区${workspace}，并在其中开始任务，请确认或取消。`,
+      `准备创建并切换到工作区${workspace}，请确认或取消。`,
+    ]
+  } else if (action === 'select_workspace') {
+    expected = [`准备切换到工作区${workspace}，请确认或取消。`]
+  } else if (
+    action === 'resume_session'
+    && typeof session === 'string'
+    && stripLikePython(session) !== ''
+    && codePointLengthLikePython(session) <= 120
+  ) {
+    expected = [`准备切换到${workspace}，并继续 Session“${session}”，请确认或取消。`]
+  } else {
+    return genericCodexConfirmationSpeech()
+  }
+  if (!expected.includes(prompt)) return genericCodexConfirmationSpeech()
+
+  const suffix = '，请确认或取消。'
+  const operation = prompt.slice(0, prompt.lastIndexOf(suffix))
+  return `Codex 需要你的确认：${operation}。`
+    + '这项操作尚未执行，Codex 也还没有开始任务。请确认或取消。'
+}
+
+function genericCodexConfirmationSpeech(): string {
+  return 'Codex 有一项项目操作等待你的确认。'
+    + '这项操作尚未执行，Codex 也还没有开始任务。请确认或取消。'
 }
 
 function codexStartupFailureSpeech(category: string, stage: unknown): string | null {

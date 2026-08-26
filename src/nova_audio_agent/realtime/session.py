@@ -247,8 +247,8 @@ class RealtimeSession:
     def arm_next_response_fence(self) -> None:
         """Fence the next provider response before it can own playback.
 
-        Used by host-reserved confirmation turns. Repeated arming is deliberately
-        idempotent so one user speech item cannot consume multiple responses.
+        Repeated arming is deliberately idempotent. Confirmation uses the
+        narrower pending-only wrapper below.
         """
         if self._fence_next_response:
             return
@@ -256,6 +256,17 @@ class RealtimeSession:
             self._mark_head_pending_fenced()
         self._fence_next_response = True
         self._advance_snapshot()
+
+    def arm_pending_response_fence(self) -> bool:
+        """Fence an already-requested host response, not the user's next response."""
+        if self._fence_next_response:
+            return True
+        if not self._pending_responses:
+            return False
+        self._mark_head_pending_fenced()
+        self._fence_next_response = True
+        self._advance_snapshot()
+        return True
 
     async def connect(self, *, tools: tuple[dict[str, object], ...]) -> None:
         identity = await self._provider.connect(tools=tools)  # type: ignore[arg-type]

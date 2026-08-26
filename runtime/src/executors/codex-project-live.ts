@@ -345,7 +345,18 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   }
 
   publicProjectView(pendingConfirmation: boolean): PublicProjectView {
-    return Object.freeze({...this.#publicView, pending_confirmation: pendingConfirmation})
+    if (!pendingConfirmation) {
+      return Object.freeze({...this.#publicView, pending_confirmation: false})
+    }
+    const confirmation = pendingConfirmation ? this.#confirmation.view : null
+    return Object.freeze({
+      ...this.#publicView,
+      pending_confirmation: true,
+      pending_action: confirmation?.pending_action ?? null,
+      pending_workspace_display_name: confirmation?.pending_workspace_display_name ?? null,
+      pending_session_title: confirmation?.pending_session_title ?? null,
+      pending_expires_in_seconds: confirmation?.pending_expires_in_seconds ?? null,
+    })
   }
 
   publicProjectContext(pendingConfirmation: boolean): {
@@ -747,11 +758,14 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   async #loadProjectContext(): Promise<PublicProjectContext | null> {
     this.#refreshSequence += 1
     const sequence = this.#refreshSequence
-    const context = await this.#store.publicContext(this.#confirmation.pending)
+    const stored = await this.#store.publicContext(false)
     if (sequence !== this.#refreshSequence) return null
-    this.#publicWorkspaceId = context.workspace_id
-    this.#publicView = context.view
-    return context
+    this.#publicWorkspaceId = stored.workspace_id
+    this.#publicView = stored.view
+    return Object.freeze({
+      workspace_id: stored.workspace_id,
+      view: this.publicProjectView(this.#confirmation.pending),
+    })
   }
 
   async #publishAdvisoryProjectView(context: PublicProjectContext): Promise<void> {
@@ -783,6 +797,10 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       await this.#refreshProjectView()
     } catch (error) {
       if (!(error instanceof ProjectStateError) || error.code !== 'state_busy') throw error
+      await this.#publishAdvisoryProjectView(Object.freeze({
+        workspace_id: this.#publicWorkspaceId,
+        view: this.publicProjectView(this.#confirmation.pending),
+      }))
     }
   }
 

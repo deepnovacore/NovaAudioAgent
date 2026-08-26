@@ -437,6 +437,24 @@ function storeWithPersistentHomeHook(
   })
 }
 
+function storeWithBusyPublicContext(
+  store: CodexProjectStore,
+  busy: () => boolean,
+): CodexProjectStore {
+  return new Proxy(store, {
+    get(target, property) {
+      if (property === 'publicContext') {
+        return async (pendingConfirmation: boolean) => {
+          if (busy()) throw new ProjectStateError('state_busy')
+          return await target.publicContext(pendingConfirmation)
+        }
+      }
+      const value: unknown = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) as unknown : value
+    },
+  })
+}
+
 function context(
   op: string,
   request: Readonly<Record<string, JsonValue>>,
@@ -576,6 +594,8 @@ test('workspace and Session listings are capped at twenty most-recent records', 
 test('select and resume proposals expose public action IDs, expiry, and resolved display names', async () => {
   const value = await fixture({preexistingSession: true})
   try {
+    const views: PublicProjectView[] = []
+    value.adapter.observeProjectView(view => { views.push(view) })
     const selected = await value.adapter.dispatch(
       'project',
       {action: 'select_workspace', workspace: 'alpha'},
@@ -586,6 +606,8 @@ test('select and resume proposals expose public action IDs, expiry, and resolved
       action: 'select_workspace', workspace: 'alpha', session: null,
       confirmation_prompt: '准备切换到工作区alpha，请确认或取消。',
     })
+    assert.equal(views.at(-1)?.pending_action, 'select_workspace')
+    assert.equal(views.at(-1)?.pending_workspace_display_name, 'alpha')
     const resumed = await value.adapter.dispatch(
       'project',
       {
@@ -599,13 +621,58 @@ test('select and resume proposals expose public action IDs, expiry, and resolved
       action: 'resume_session', workspace: 'alpha', session: 'Existing',
       confirmation_prompt: '准备切换到alpha，并继续 Session“Existing”，请确认或取消。',
     })
+    assert.deepEqual(value.adapter.publicProjectView(true), {
+      workspace_display_name: 'alpha',
+      session_title: 'Existing',
+      pending_confirmation: true,
+      pending_action: 'resume_session',
+      pending_workspace_display_name: 'alpha',
+      pending_session_title: 'Existing',
+      pending_expires_in_seconds: 90,
+    })
+    assert.equal(views.at(-1)?.pending_action, 'resume_session')
+    assert.equal(views.at(-1)?.pending_session_title, 'Existing')
   } finally {
     await value.adapter.close()
     await rm(value.root, {recursive: true, force: true})
   }
 })
 
-test('initialize publishes the pre-existing active project using only the public three-field view', async () => {
+test('a prepared proposal publishes cached target metadata when the registry refresh is busy',
+  async () => {
+    let busy = false
+    const value = await fixture({
+      decorateStore: store => storeWithBusyPublicContext(store, () => busy),
+    })
+    try {
+      await value.adapter.initialize()
+      const views: PublicProjectView[] = []
+      value.adapter.observeProjectView(view => { views.push(view) })
+      busy = true
+
+      const proposal = await value.adapter.dispatch(
+        'project',
+        {action: 'create_workspace', workspace: 'beta', work_order: 'build it'},
+        context('project', {}, value.clock),
+      )
+
+      assert.equal(proposal.content.code, 'confirmation_required')
+      assert.deepEqual(views.at(-1), {
+        workspace_display_name: 'alpha',
+        session_title: null,
+        pending_confirmation: true,
+        pending_action: 'create_workspace',
+        pending_workspace_display_name: 'beta',
+        pending_session_title: null,
+        pending_expires_in_seconds: 90,
+      })
+    } finally {
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
+
+test('initialize publishes the pre-existing active project using only its committed public view', async () => {
   const value = await fixture({preexistingSession: true})
   try {
     const views: PublicProjectView[] = []

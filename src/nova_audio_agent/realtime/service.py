@@ -28,7 +28,11 @@ from nova_audio_agent.events import (
 )
 from nova_audio_agent.memory import USER_PRIORITY, MemoryRef, parse_ref
 from nova_audio_agent.ports import ExecutorManifest, valid_progress_summary
-from nova_audio_agent.realtime.bridge import RealtimeRuntimeBridge, ToolAcceptance
+from nova_audio_agent.realtime.bridge import (
+    RealtimeRuntimeBridge,
+    ToolAcceptance,
+    requires_synchronous_result,
+)
 from nova_audio_agent.realtime.evidence import (
     final_speech_view as _final_speech_view,
     generic_final_speech_view as _generic_final_speech_view,
@@ -134,6 +138,19 @@ def _project_commit_failure_text(code: object) -> str:
         "session_unavailable": "指定 Session 当前不可继续，本次操作未执行。",
     }
     return messages.get(code, "已确认，但操作未执行。")
+
+
+def _project_commit_success_text(
+    operation: ConfirmedProjectOperation,
+    code: object,
+) -> str:
+    if code != "committed":
+        return "已确认，已提交并正在启动。"
+    if operation.action == "create":
+        return f"已确认，已创建并切换到工作区 {operation.workspace_display_name}。"
+    if operation.action == "select":
+        return f"已确认，已切换到工作区 {operation.workspace_display_name}。"
+    return "已确认，项目操作已完成。"
 
 
 def _project_confirmation_decision_arguments(value: object) -> tuple[str, bool] | None:
@@ -891,9 +908,13 @@ class RealtimeService:
             and event.session_epoch == self.session.session_epoch
             and self._project_confirmation_blocking
         ):
-            self._project_confirmation_responses.add((event.session_epoch, event.response_id))
-            if (event.session_epoch, event.response_id) not in self._response_user_origin_items:
-                self._bind_response_user_origin(event.session_epoch, event.response_id)
+            # A fenced pre-start response is the stale question the user
+            # interrupted, not the response to their answer. It spends the
+            # fence without binding or releasing the reserved item.
+            if accepted:
+                self._project_confirmation_responses.add((event.session_epoch, event.response_id))
+                if (event.session_epoch, event.response_id) not in self._response_user_origin_items:
+                    self._bind_response_user_origin(event.session_epoch, event.response_id)
             self._project_confirmation_fence_pending = False
             self._project_confirmation_blocking = bool(
                 self._project_confirmation_items or self._project_confirmation_closing_items
@@ -963,16 +984,23 @@ class RealtimeService:
                 self._reopen_failed_semantic_acknowledgements()
             self._finish_continuation(event)
             self._finish_origin(event.response_id)
-            item_id = self._response_user_origin_items.get(
-                (event.session_epoch, event.response_id)
-            )
+            item_id = self._response_user_origin_items.get((event.session_epoch, event.response_id))
             if item_id is not None and self._is_project_confirmation_item(
                 event.session_epoch, item_id
             ):
-                if self._project_confirmation is not None:
-                    self._project_confirmation.release_undecided(
+                controller = self._project_confirmation
+                released = False
+                if controller is not None:
+                    released = controller.release_undecided(
                         epoch=event.session_epoch, item_id=item_id
                     )
+                if (
+                    released
+                    and controller is not None
+                    and controller.pending
+                    and not self.session.response_has_spoken(event.response_id)
+                ):
+                    self._queue_project_confirmation_retry_fact()
                 self._end_project_confirmation_item(event.session_epoch, item_id)
             generation = self.session.current_generation
             if (
@@ -992,12 +1020,8 @@ class RealtimeService:
                 self._awaiting_user_origin = bool(self._unbound_user_origin_items)
                 if not self._awaiting_user_origin:
                     self._user_origin_preexisting_response_id = None
-                if (
-                    self._is_project_confirmation_item(event.session_epoch, event.item_id)
-                    and (
-                        self._project_confirmation is None
-                        or not self._project_confirmation.pending
-                    )
+                if self._is_project_confirmation_item(event.session_epoch, event.item_id) and (
+                    self._project_confirmation is None or not self._project_confirmation.pending
                 ):
                     await self._close_confirmation_deferred_calls(event.item_id)
                 else:
@@ -1121,8 +1145,10 @@ class RealtimeService:
             return
         self._project_confirmation_items.add((event.session_epoch, item_id))
         self._project_confirmation_blocking = True
-        self._project_confirmation_fence_pending = True
-        self.session.arm_next_response_fence()
+        # Only an already-requested confirmation question is stale. The response
+        # created from this answer must remain alive long enough to emit the
+        # structured confirmation function after ``response.created``.
+        self._project_confirmation_fence_pending = self.session.arm_pending_response_fence()
         self._publish_project_view()
 
     def _blocks_project_confirmation_tool(self, event: ToolCallReady) -> bool:
@@ -1210,11 +1236,7 @@ class RealtimeService:
                         proposal_id=proposal_id,
                         confirmed=confirmed,
                     )
-                    code = (
-                        "confirmation_not_pending"
-                        if outcome.kind == "ignored"
-                        else outcome.kind
-                    )
+                    code = "confirmation_not_pending" if outcome.kind == "ignored" else outcome.kind
                     state = "accepted" if outcome.kind == "confirmed" else "refused"
                     text = outcome.response_text
                     if outcome.kind not in {"invalid", "ignored"}:
@@ -1235,7 +1257,9 @@ class RealtimeService:
                                         state = "accepted" if accepted else "failed"
                                         result_code = getattr(result, "code", "commit_failed")
                                         text = (
-                                            "已确认，已提交并正在启动。"
+                                            _project_commit_success_text(
+                                                outcome.operation, result_code
+                                            )
                                             if accepted
                                             else _project_commit_failure_text(result_code)
                                         )
@@ -1345,7 +1369,34 @@ class RealtimeService:
         )
         self._delivery_ready.set()
 
+    def _queue_project_confirmation_retry_fact(self) -> None:
+        """Queue truthful retry guidance that stays safe if expiry wins after injection."""
+        item = HostContextItem.final(
+            host_item_id=self._id_factory(),
+            event_id=f"project-confirmation-retry:{self._id_factory()}",
+            content="我没有确认清楚；若界面仍显示等待确认，请明确说“确认”或“取消”。",
+        )
+        self._queue_host_item(
+            HostResponseIntent.host_fact(item),
+            priority=USER_PRIORITY - 1,
+            preemptive=False,
+        )
+        self._delivery_ready.set()
+
+    def _discard_queued_project_confirmation_retries(self) -> None:
+        """Expiry makes queued retry guidance ineligible without touching other facts."""
+        retained = [
+            queued
+            for queued in self._host_items
+            if not queued.intent.item.event_id.startswith("project-confirmation-retry:")
+        ]
+        if len(retained) == len(self._host_items):
+            return
+        heapq.heapify(retained)
+        self._host_items = retained
+
     def _project_confirmation_expired(self) -> None:
+        self._discard_queued_project_confirmation_retries()
         item_keys = tuple(self._project_confirmation_items)
         source_epoch = self.session.session_epoch
         reconnect = self._project_confirmation_fence_pending or any(
@@ -1623,11 +1674,23 @@ class RealtimeService:
                 self._prune_terminal_tool_state()
             call_over_capacity = len(self._tool_calls) >= MAX_TRACKED_TOOL_CALLS
             binding = self._tools.bindings.get(event.name)
+            synchronous_delegate_call = (
+                binding is not None
+                and binding.kind == "delegate"
+                and binding.executor is not None
+                and binding.op is not None
+                and requires_synchronous_result(
+                    binding.executor,
+                    binding.op,
+                    event.arguments,
+                    binding.sync_result,
+                )
+            )
             requires_semantic_acknowledgement = (
                 not superseded
                 and binding is not None
                 and binding.kind == "delegate"
-                and not binding.sync_result
+                and not synchronous_delegate_call
             )
             semantic_reserved = False
             if not call_over_capacity and requires_semantic_acknowledgement:
@@ -1692,7 +1755,11 @@ class RealtimeService:
                 self._pending_sync[acceptance.delegate_id] = call_key
             if semantic_reserved:
                 try:
-                    if acceptance.accepted and acceptance.delegate_id is not None:
+                    if (
+                        acceptance.accepted
+                        and acceptance.delegate_id is not None
+                        and not acceptance.sync_result
+                    ):
                         if self._semantic_acknowledgement(state) is None:
                             raise RuntimeError("reserved semantic acknowledgement is unavailable")
                 finally:
@@ -2811,6 +2878,12 @@ class RealtimeService:
             view = {"state": event.outcome, "error": content.get("error")}
         else:
             view = {"state": event.outcome, "content": event.content}
+            if content.get("code") == "confirmation_required":
+                view["response_instruction"] = (
+                    "该项目操作尚未执行。请用自然口语说明目标操作尚未执行，"
+                    "并依据 confirmation_prompt 明确询问用户确认或取消；"
+                    "不得声称已提交、已创建、已切换或已开始任务，也不要朗读 proposal_id。"
+                )
         return _encode_view(view)[:MAX_HOST_FACT_CHARS]
 
     async def flush_host_items(self) -> None:

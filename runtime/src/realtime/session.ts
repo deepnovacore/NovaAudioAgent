@@ -222,14 +222,24 @@ export class RealtimeSession {
   /**
    * Fence the next provider response before it can own playback.
    *
-   * Used by host-reserved confirmation turns. Repeated arming is deliberately idempotent, so one
-   * user speech item cannot consume several responses.
+   * Repeated arming is deliberately idempotent, so one interruption cannot consume several
+   * responses. Confirmation uses the narrower pending-only wrapper below.
    */
   armNextResponseFence(): void {
     if (this.#fenceNextResponse) return
     if (this.#state.pendingResponseCount > 0) this.#markHeadPendingFenced()
     this.#fenceNextResponse = true
     this.#state.advanceSnapshot()
+  }
+
+  /** Fence an already-requested host response, without consuming the user's next response. */
+  armPendingResponseFence(): boolean {
+    if (this.#fenceNextResponse) return true
+    if (this.#state.pendingResponseCount === 0) return false
+    this.#markHeadPendingFenced()
+    this.#fenceNextResponse = true
+    this.#state.advanceSnapshot()
+    return true
   }
 
   // ---------------------------------------------------------------------------

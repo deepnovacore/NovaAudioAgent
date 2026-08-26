@@ -13,6 +13,7 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import { VirtualClock } from '../src/clock.js'
+import { CODEX_PROJECT_MANIFEST } from '../src/codex-contract.js'
 import type { JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema, type ExecutorManifest, type UpdateSpec } from '../src/ports.js'
@@ -232,6 +233,71 @@ test('every bridge scenario matches the Python-exported golden', async () => {
     }
   }
   assert.deepEqual(mismatched, [], 'bridge behavior differs from the oracle')
+})
+
+test('project-boundary actions wait for their result while task execution stays delegated', () => {
+  const manifest = CODEX_PROJECT_MANIFEST
+  const memory = new Memory({policies: [manifest.policy]})
+  const dispatchResults = Array.from({length: 6}, (_, index) => ({
+    accepted: true,
+    delegate_id: `delegate-${index + 1}`,
+  }))
+  const runtime = new ScriptedRuntime(
+    new VirtualClock(),
+    memory,
+    new Map([[manifest.name, {manifest}]]),
+    {dispatch_results: dispatchResults},
+  )
+  let identifier = 0
+  const bridge = new RealtimeRuntimeBridge({
+    runtime,
+    tools: compileToolSchema([manifest]),
+    idFactory: () => `host-${++identifier}`,
+    queryDigestKey: DIGEST_KEY,
+  })
+
+  const boundaryActions: readonly Readonly<Record<string, JsonValue>>[] = [
+    {action: 'list_workspaces'},
+    {action: 'create_workspace', workspace: 'tetris-game', work_order: '制作俄罗斯方块'},
+    {action: 'select_workspace', workspace: 'alpha'},
+    {action: 'list_sessions', workspace: 'alpha'},
+    {
+      action: 'resume_session',
+      workspace: 'alpha',
+      session: '俄罗斯方块',
+      work_order: '继续实现',
+    },
+  ]
+  for (const [index, arguments_] of boundaryActions.entries()) {
+    const action = typeof arguments_.action === 'string' ? arguments_.action : 'invalid_action'
+    const accepted = bridge.acceptToolCall({
+      kind: 'tool_call_ready',
+      session_epoch: 1,
+      call_id: `boundary-${index + 1}`,
+      item_id: `item-${index + 1}`,
+      name: 'codex__project',
+      arguments: arguments_,
+      response_id: `response-${index + 1}`,
+    }, {originRef: 'conversation:1'})
+    assert.equal(accepted.accepted, true)
+    assert.equal(accepted.sync_result, true, action)
+    assert.equal(accepted.response_intent.kind, 'tool_result', action)
+    assert.equal(accepted.host_item.content, '{"state":"pending"}', action)
+  }
+
+  const execution = bridge.acceptToolCall({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'execution-1',
+    item_id: 'item-execution-1',
+    name: 'codex__project',
+    arguments: {action: 'start_session', session: '俄罗斯方块', work_order: '开始实现'},
+    response_id: 'response-execution-1',
+  }, {originRef: 'conversation:1'})
+  assert.equal(execution.accepted, true)
+  assert.equal(execution.sync_result, false)
+  assert.equal(execution.response_intent.kind, 'delegation_acknowledgement')
+  assert.equal(execution.host_item.content, '{"state":"accepted"}')
 })
 
 test('the golden records one result per scenario, in order', () => {

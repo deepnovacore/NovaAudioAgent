@@ -19,6 +19,10 @@ const base = {
   workspace: '',
   session: '',
   pendingConfirmation: false,
+  pendingAction: null,
+  pendingWorkspace: '',
+  pendingSession: '',
+  pendingExpiresInSeconds: null,
 }
 
 test('keeps capture playback codex and shell as independent axes', () => {
@@ -48,8 +52,19 @@ test('projects voice and Codex state into one compact visible line', () => {
   assert.equal(state.statusLine, '聆听中 · Codex 工作中')
   assert.doesNotMatch(state.statusLine, /工作区|Session|AEC/u)
 
-  const waiting = deriveOrbState({ ...base, pendingConfirmation: true })
-  assert.equal(waiting.statusLine, '待命 · Codex 等待确认')
+  const waiting = deriveOrbState({
+    ...base,
+    pendingConfirmation: true,
+    pendingAction: 'create_workspace',
+    pendingWorkspace: 'tetris-game',
+    pendingExpiresInSeconds: 89.25,
+  })
+  assert.equal(waiting.statusLine, '需要你的确认')
+  assert.equal(
+    waiting.codexLabel,
+    '创建工作区 “tetris-game”\n尚未执行 · 90 秒后自动取消',
+  )
+  assert.equal(waiting.confirmationVisible, true)
 })
 
 test('explains incomplete configuration on the visible status line', () => {
@@ -193,9 +208,13 @@ test('projects only public workspace session and confirmation into the Codex lab
     workspace: 'alpha',
     session: 'Task 1',
     pendingConfirmation: true,
+    pendingAction: 'resume_session',
+    pendingWorkspace: 'beta',
+    pendingSession: 'Task 2',
+    pendingExpiresInSeconds: 40,
   })
 
-  assert.equal(state.codexLabel, '工作区 alpha · Session Task 1 · 等待确认 · Codex 空闲')
+  assert.equal(state.codexLabel, '恢复 “beta / Task 2”\n尚未执行 · 40 秒后自动取消')
 })
 
 test('adds a Windows-specific hint to the permission-denied label', () => {

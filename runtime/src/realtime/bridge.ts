@@ -81,6 +81,33 @@ export interface ToolAcceptance {
 /** Longest task summary a delegation acknowledgement will carry. */
 const MAX_TASK_SUMMARY = 240
 
+/**
+ * `codex.project` multiplexes short project-boundary operations and long-running task execution.
+ * The former can produce a confirmation proposal, so acknowledging them as delegated work would
+ * let the model speak before it has seen the confirmation question. Keep only `start_session`
+ * asynchronous; every immediate project action must resolve through its correlated Handoff.
+ */
+const SYNCHRONOUS_PROJECT_ACTIONS = new Set([
+  'list_workspaces',
+  'create_workspace',
+  'select_workspace',
+  'list_sessions',
+  'resume_session',
+])
+
+export function requiresSynchronousResult(
+  executor: string,
+  op: string,
+  arguments_: Readonly<Record<string, JsonValue>>,
+  declaredSyncResult: boolean,
+): boolean {
+  if (declaredSyncResult) return true
+  return executor === 'codex'
+    && op === 'project'
+    && typeof arguments_.action === 'string'
+    && SYNCHRONOUS_PROJECT_ACTIONS.has(arguments_.action)
+}
+
 export class RealtimeRuntimeBridge {
   readonly #runtime: BridgeRuntime
   readonly #tools: CompiledTools
@@ -197,7 +224,12 @@ export class RealtimeRuntimeBridge {
     )
     if (summary === '') return this.#refused(call, 'invalid_params')
 
-    const syncResult = op.sync_result === true
+    const syncResult = requiresSynchronousResult(
+      binding.executor,
+      binding.op,
+      arguments_,
+      op.sync_result === true,
+    )
     let hostItem: HostContextItem
     let responseIntent: HostResponseIntent
     if (syncResult) {

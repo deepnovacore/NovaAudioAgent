@@ -16,12 +16,20 @@ import {
 import { VirtualClock } from '../src/clock.js'
 import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
 import type {CodexAssemblyResource} from '../src/codex-factory.js'
-import type {PublicProjectContext, WorkspaceRecord} from '../src/codex-project-store.js'
+import type {
+  CodexProjectStore,
+  PublicProjectContext,
+  WorkspaceRecord,
+} from '../src/codex-project-store.js'
 import { settingsSchema } from '../src/config.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../src/causal-runtime.js'
+import {
+  ProjectCodexAdapter,
+  type ProjectTransportBinding,
+  type ProjectTransportFactory,
+} from '../src/executors/codex-project-live.js'
 import type {
   CommittedWorkspaceEvent,
-  ProjectCodexAdapter,
   TerminalWorkOrderEvent,
 } from '../src/executors/codex-project-live.js'
 import type {
@@ -658,6 +666,173 @@ test('callbacks route once through the single playback, session, bridge, and ser
   await settleNamed('callback assembly stop', realtime.stop())
 })
 
+test('project proposal reaches provider and desktop before confirmation', async () => {
+  const clock = new VirtualClock(10)
+  const confirmation = new ProjectConfirmationController({
+    clock,
+    idFactory: () => 'assembly-proposal',
+  })
+  const alpha: WorkspaceRecord = Object.freeze({
+    workspace_id: 'workspace-alpha',
+    display_name: 'alpha',
+    normalized_name: 'alpha',
+    canonical_path: '/safe/alpha',
+    origin: 'registered',
+    codex_home_key: 'workspace-alpha',
+    active_session_id: null,
+    created_at: 1,
+    last_used_at: 1,
+  })
+  const validations: string[] = []
+  const store = {
+    validateManagedCreate: (name: string) => {
+      validations.push(name)
+      return Promise.resolve(name)
+    },
+    publicContext: () => Promise.resolve(Object.freeze({
+      workspace_id: alpha.workspace_id,
+      view: Object.freeze({
+        workspace_display_name: alpha.display_name,
+        session_title: null,
+        pending_confirmation: false,
+      }),
+    })),
+    snapshot: () => Promise.resolve(Object.freeze({
+      active_workspace_id: alpha.workspace_id,
+      workspaces: Object.freeze([alpha]),
+    })),
+    close: () => Promise.resolve(),
+  } as unknown as CodexProjectStore
+  let transportCreations = 0
+  const transportFactory: ProjectTransportFactory = {
+    create: (binding: ProjectTransportBinding) => {
+      void binding
+      transportCreations += 1
+      throw new Error('Codex transport must not start before project confirmation')
+    },
+  }
+  const adapter = new ProjectCodexAdapter({store, confirmation, transportFactory})
+  class ConfirmationProvider extends WorkspaceContextProvider {
+    readonly hostItems: HostContextItem[] = []
+    readonly responseIntents: HostResponseIntent[] = []
+
+    override injectHostItem(
+      item: HostContextItem,
+      options: {
+        readonly confirmationTimeout: number | null
+        readonly asUserActivation: boolean
+        readonly signal: AbortSignal
+      },
+    ): Promise<unknown> {
+      this.hostItems.push(structuredClone(item))
+      return super.injectHostItem(item, options)
+    }
+
+    override createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void> {
+      this.responseIntents.push(structuredClone(intent))
+      return super.createResponse(intent, signal)
+    }
+  }
+  const provider = new ConfirmationProvider()
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock,
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    executors: [adapter],
+  })
+  const views: ProjectConfirmationView[] = []
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider,
+    projectAdapter: adapter,
+    onProjectView: view => { views.push(view) },
+  })
+
+  await realtime.start()
+  try {
+    await realtime.service.handleEvent({
+      kind: 'user_speech_started', session_epoch: 1,
+      speech_id: 'speech-project', provider_item_id: 'user-project',
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_speech_ended', session_epoch: 1,
+      speech_id: 'speech-project', provider_item_id: 'user-project',
+    })
+    await realtime.service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1,
+      item_id: 'user-project', text: '新建 tetris-game 并实现俄罗斯方块',
+    })
+    await realtime.service.handleEvent({
+      kind: 'response_started', session_epoch: 1, response_id: 'response-project',
+    })
+    await realtime.service.handleEvent({
+      kind: 'tool_call_ready', session_epoch: 1,
+      call_id: 'call-project', item_id: 'function-project', response_id: 'response-project',
+      name: 'codex__project',
+      arguments: {
+        action: 'create_workspace',
+        workspace: 'tetris-game',
+        work_order: '实现并验证俄罗斯方块小游戏',
+      },
+    })
+    await realtime.service.handleEvent({
+      kind: 'response_terminal', session_epoch: 1, response_id: 'response-project',
+      status: 'completed', reason: 'done',
+    })
+
+    await waitNamed('immediate pending project view', () => (
+      views.some(view => view.pending_action === 'create_workspace')
+    ))
+    await waitNamed('correlated confirmation tool result', () => (
+      provider.hostItems.some(item => item.call_id === 'call-project')
+      && provider.responseIntents.some(intent => intent.kind === 'tool_result')
+    ))
+
+    const pending = views.findLast(view => view.pending_action === 'create_workspace')
+    assert.deepEqual(pending, {
+      workspace_display_name: 'alpha',
+      session_title: null,
+      pending_confirmation: true,
+      pending_action: 'create_workspace',
+      pending_workspace_display_name: 'tetris-game',
+      pending_session_title: null,
+      pending_expires_in_seconds: 90,
+    })
+    assert.equal(JSON.stringify(pending).includes('assembly-proposal'), false)
+
+    const item = provider.hostItems.find(candidate => candidate.call_id === 'call-project')
+    assert.ok(item !== undefined)
+    const result = JSON.parse(item.content) as {
+      readonly state?: string
+      readonly content?: {
+        readonly code?: string
+        readonly action?: string
+        readonly workspace?: string
+        readonly confirmation_prompt?: string
+        readonly proposal_id?: string
+      }
+      readonly response_instruction?: string
+    }
+    assert.equal(result.state, 'ok')
+    assert.equal(result.content?.code, 'confirmation_required')
+    assert.equal(result.content?.action, 'create_workspace')
+    assert.equal(result.content?.workspace, 'tetris-game')
+    assert.match(result.content?.confirmation_prompt ?? '', /请确认或取消/u)
+    assert.match(result.response_instruction ?? '', /尚未执行.*确认或取消/su)
+    assert.equal(result.content?.proposal_id, 'assembly-proposal')
+    assert.equal(
+      provider.responseIntents.some(intent => intent.kind === 'delegation_acknowledgement'),
+      false,
+    )
+    assert.deepEqual(validations, ['tetris-game'])
+    assert.equal(transportCreations, 0)
+    assert.equal(confirmation.pending, true)
+  } finally {
+    await realtime.stop()
+  }
+})
+
 test('project adapter wiring carries one confirmed identity through the real realtime runtime', async () => {
   const clock = new VirtualClock(0)
   const confirmation = new ProjectConfirmationController({
@@ -788,6 +963,12 @@ test('project adapter wiring carries one confirmed identity through the real rea
       provider_item_id: 'item-confirm',
     })
     await realtime.service.handleEvent({
+      kind: 'user_speech_ended',
+      session_epoch: 1,
+      speech_id: 'speech-confirm',
+      provider_item_id: 'item-confirm',
+    })
+    await realtime.service.handleEvent({
       kind: 'response_started',
       session_epoch: 1,
       response_id: 'response-confirm',
@@ -797,12 +978,6 @@ test('project adapter wiring carries one confirmed identity through the real rea
       session_epoch: 1,
       item_id: 'item-confirm',
       text: '确认',
-    })
-    await realtime.service.handleEvent({
-      kind: 'user_speech_ended',
-      session_epoch: 1,
-      speech_id: 'speech-confirm',
-      provider_item_id: 'item-confirm',
     })
     assert.deepEqual(realtime.service.confirmationItemsForTest, ['1:item-confirm'])
     assert.deepEqual(realtime.service.boundOriginsForTest, [

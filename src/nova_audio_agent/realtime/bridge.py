@@ -25,6 +25,25 @@ from nova_audio_agent.realtime.recall import (
 from nova_audio_agent.runtime import Runtime
 from nova_audio_agent.tool_schema import CompiledTools
 
+_SYNCHRONOUS_PROJECT_ACTIONS = frozenset(
+    {"list_workspaces", "create_workspace", "select_workspace", "list_sessions", "resume_session"}
+)
+
+
+def requires_synchronous_result(
+    executor: str,
+    op: str,
+    arguments: Mapping[str, object],
+    declared_sync_result: bool,
+) -> bool:
+    action = arguments.get("action")
+    return declared_sync_result or (
+        executor == "codex"
+        and op == "project"
+        and type(action) is str
+        and action in _SYNCHRONOUS_PROJECT_ACTIONS
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class ToolAcceptance:
@@ -127,7 +146,13 @@ class RealtimeRuntimeBridge:
         ).strip()[:240]
         if not summary:
             return self._refused(call, "invalid_params")
-        if op.sync_result:
+        sync_result = requires_synchronous_result(
+            binding.executor,
+            binding.op,
+            arguments,
+            op.sync_result,
+        )
+        if sync_result:
             # R105: hold the provider protocol open with a pending tool result;
             # the service resolves it from the correlated Handoff or Deadline.
             host_item = self._tool_output(call, {"state": "pending"})
@@ -155,7 +180,7 @@ class RealtimeRuntimeBridge:
             delegate_id=admission.delegate_id,
             host_item=host_item,
             response_intent=response_intent,
-            sync_result=op.sync_result,
+            sync_result=sync_result,
             executor=binding.executor,
             op=binding.op,
         )

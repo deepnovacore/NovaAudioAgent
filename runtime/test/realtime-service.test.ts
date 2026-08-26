@@ -16,6 +16,7 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import { VirtualClock } from '../src/clock.js'
+import { CODEX_PROJECT_MANIFEST } from '../src/codex-contract.js'
 import type { EventRecord, JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
@@ -578,13 +579,14 @@ function pipelineService(options: {
     readonly final: boolean
   }) => void
   readonly includeRecall?: boolean
+  readonly projectTool?: boolean
 } = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
   readonly injectedContents: string[]
   readonly session: RealtimeSession
 } {
-  const manifest = executorManifestSchema.parse({
+  const manifest = options.projectTool ? CODEX_PROJECT_MANIFEST : executorManifestSchema.parse({
     name: 'codex',
     policy: {
       channel: 'codex',
@@ -673,7 +675,7 @@ function pipelineService(options: {
   const pipelineDelegate = {
     delegate_id: 'd-1',
     executor: 'codex',
-    op: 'start',
+    op: options.projectTool ? 'project' : 'start',
     origin_ref: 'conversation:1',
     routing_class: 'user_awaited',
   }
@@ -1726,6 +1728,79 @@ test('codex status idle and running handoffs each trigger their same-turn contin
     }
     assert.deepEqual(statusResult, {state: 'ok', content: {op: 'status', state}})
   }
+})
+
+test('a project confirmation returns one constrained same-turn question to the model', async () => {
+  const {service, actions, injectedContents} = pipelineService({projectTool: true})
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-project', provider_item_id: 'user-project',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-project', provider_item_id: 'user-project',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-project', text: '帮我写一个俄罗斯方块小游戏',
+  })
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'origin-project',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    call_id: 'call-project', item_id: 'tool-project', name: 'codex__project',
+    arguments: {
+      action: 'create_workspace',
+      workspace: 'tetris-game',
+      work_order: '实现并验证俄罗斯方块小游戏',
+    },
+    response_id: 'origin-project',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'origin-project',
+    status: 'completed', reason: '',
+  })
+  assert.equal(
+    actions.filter(action => action === 'create_response:tool_result').length,
+    0,
+    'the model must not answer before the confirmation proposal exists',
+  )
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system',
+      content: {
+        code: 'confirmation_required',
+        action: 'create_workspace',
+        proposal_id: 'proposal-1',
+        workspace: 'tetris-game',
+        session: null,
+        confirmation_prompt: '准备创建工作区tetris-game，并在其中开始任务，请确认或取消。',
+      },
+      refs: [],
+    },
+  })
+  await service.driveContinuations()
+
+  assert.equal(
+    actions.filter(action => action === 'create_response:tool_result').length,
+    1,
+    'the proposal must trigger exactly one same-turn continuation',
+  )
+  const result = JSON.parse(injectedContents.at(-1) ?? '{}') as {
+    readonly state?: string
+    readonly content?: {readonly code?: string; readonly confirmation_prompt?: string}
+    readonly response_instruction?: string
+  }
+  assert.equal(result.state, 'ok')
+  assert.equal(result.content?.code, 'confirmation_required')
+  assert.match(result.content?.confirmation_prompt ?? '', /请确认或取消/u)
+  assert.match(result.response_instruction ?? '', /尚未执行.*询问.*确认或取消/su)
+  assert.doesNotMatch(result.response_instruction ?? '', /proposal-1/u)
 })
 
 test('an observation is matched to the exact run it belongs to', () => {
@@ -3215,6 +3290,12 @@ async function reserveConfirmationTurn(
     speech_id: `speech-${itemId}`,
     provider_item_id: itemId,
   })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: `speech-${itemId}`,
+    provider_item_id: itemId,
+  })
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: responseId})
   await service.handleEvent({
     kind: 'user_transcript_final',
@@ -3260,6 +3341,11 @@ test('the dedicated confirmation function commits the reserved proposal', async 
 
   assert.deepEqual(commits, [proposal.proposal_id])
   assert.match(injected.at(-1)?.content ?? '', /"code":"confirmed"/u)
+  const confirmationFacts = [
+    ...injected.map(item => item.content),
+    ...service.queuedHostItems().map(item => item.intent.item.content),
+  ]
+  assert.ok(confirmationFacts.includes('已确认，已创建并切换到工作区 研究项目。'))
   assert.equal(controller.pending, false)
 })
 
@@ -3461,11 +3547,17 @@ test('malformed confirmation arguments preserve the proposal and reservation', a
 })
 
 test('a terminal without a confirmation function releases the item for the next utterance', async () => {
-  const {service, controller, actions} = confirmationService()
+  const {service, controller, actions, injected} = confirmationService()
   await service.connect()
   const proposal = propose(controller)
   await service.handleEvent({
     kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-first',
+    provider_item_id: 'first',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
     session_epoch: 1,
     speech_id: 'speech-first',
     provider_item_id: 'first',
@@ -3482,13 +3574,179 @@ test('a terminal without a confirmation function releases the item for the next 
     reason: '',
   })
   assert.equal(controller.pending, true, 'the proposal remains live')
-  await confirmationTurn(service, {
-    proposalId: proposal.proposal_id,
-    confirmed: true,
-    itemId: 'second',
-    responseId: 'response-second',
-    callId: 'confirm-second',
+  const retryPrompt = '我没有确认清楚；若界面仍显示等待确认，请明确说“确认”或“取消”。'
+  assert.equal(
+    [
+      ...injected.map(item => item.content),
+      ...service.queuedHostItems().map(item => item.intent.item.content),
+    ].filter(content => content === retryPrompt).length,
+    1,
+    'a silent model turn gets exactly one deterministic retry prompt',
+  )
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-second', provider_item_id: 'second',
   })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-second', provider_item_id: 'second',
+  })
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'response-retry-prompt',
+  })
+  assert.ok(actions.includes('cancel:response-retry-prompt'))
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'response-retry-prompt',
+    status: 'cancelled', reason: 'cancelled',
+  })
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'response-second',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'second', text: '确认',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    call_id: 'confirm-second', item_id: 'function-second', response_id: 'response-second',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+})
+
+test('a confirmation response that already spoke gets no duplicate retry prompt', async () => {
+  const {service, controller, injected} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'spoken-answer',
+    responseId: 'spoken-response',
+    transcript: '我还在想',
+  })
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'spoken-response',
+    pcm: new Uint8Array([0, 1]),
+  })
+  const generation = service.session.currentGeneration
+  assert.ok(generation !== null)
+  assert.equal(service.playbackStarted(generation.utterance_id, generation.generation_epoch), true)
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'spoken-response',
+    status: 'completed',
+    reason: '',
+  })
+
+  assert.equal(
+    [
+      ...injected.map(item => item.content),
+      ...service.queuedHostItems().map(item => item.intent.item.content),
+    ].some(content => content.includes('我没有确认清楚')),
+    false,
+  )
+})
+
+test('a silent confirmation terminal at expiry cannot offer an impossible retry', async () => {
+  const {service, controller, injected, clock} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'expiring-answer',
+    responseId: 'expiring-response',
+    transcript: '我还在想',
+  })
+  clock.advanceTo(90)
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'expiring-response',
+    status: 'completed',
+    reason: '',
+  })
+
+  assert.equal(controller.pending, false)
+  assert.equal(
+    [
+      ...injected.map(item => item.content),
+      ...service.queuedHostItems().map(item => item.intent.item.content),
+    ].some(content => content.includes('我没有确认清楚')),
+    false,
+  )
+})
+
+test('expiry removes a retry prompt that was queued while the user held the floor', async () => {
+  const {service, controller, clock} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'near-expiry-answer',
+    responseId: 'near-expiry-response',
+    transcript: '我还在想',
+  })
+  clock.advanceTo(89)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-holds-floor',
+    provider_item_id: 'floor-holder',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'near-expiry-response',
+    status: 'completed',
+    reason: '',
+  })
+  assert.ok(service.queuedHostItems().some(item => (
+    item.intent.item.event_id.startsWith('project-confirmation-retry:')
+  )))
+
+  clock.advanceTo(90)
+  assert.equal(controller.expire(), true)
+  assert.equal(service.queuedHostItems().some(item => (
+    item.intent.item.event_id.startsWith('project-confirmation-retry:')
+  )), false)
+})
+
+test('the confirmation function may arrive before its user transcript', async () => {
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-tool-first',
+    provider_item_id: 'tool-first-user',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-tool-first',
+    provider_item_id: 'tool-first-user',
+  })
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'tool-first-response',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    response_id: 'tool-first-response',
+    call_id: 'tool-first-confirm',
+    item_id: 'tool-first-function',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+  assert.equal(actions.includes('commit'), false, 'the call waits for its user origin')
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'tool-first-user',
+    text: '确认',
+  })
+
   assert.equal(actions.filter(action => action === 'commit').length, 1)
 })
 
@@ -3653,12 +3911,118 @@ test('reserving does nothing when no proposal is pending', () => {
   })()
 })
 
+test('a confirmation answer response stays alive long enough to emit its decision', async () => {
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-answer',
+    provider_item_id: 'user-answer',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-answer',
+    provider_item_id: 'user-answer',
+  })
+
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'response-answer',
+  })
+  assert.equal(
+    actions.includes('cancel:response-answer'),
+    false,
+    'Qwen emits response.created before the confirmation function and must remain alive',
+  )
+
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-answer',
+    text: '同意',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'confirm-answer',
+    item_id: 'function-answer',
+    response_id: 'response-answer',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+})
+
+test('a fenced stale question cannot consume the reserved confirmation answer', async () => {
+  const {service, controller, actions} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  service.queueHostItem(guardFact('confirmation-question-pending'), {priority: 50})
+  await service.flushHostItems()
+
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-answer',
+    provider_item_id: 'user-answer',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-answer',
+    provider_item_id: 'user-answer',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'response-stale-question',
+  })
+  assert.ok(actions.includes('cancel:response-stale-question'))
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'response-stale-question',
+    status: 'cancelled',
+    reason: 'cancelled',
+  })
+
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'response-answer',
+  })
+  assert.equal(actions.includes('cancel:response-answer'), false)
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-answer',
+    text: '确认',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'confirm-answer',
+    item_id: 'function-answer',
+    response_id: 'response-answer',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+})
+
 test('reserving arms a fence so the question is not spoken over', async () => {
-  // The user is answering something. A new turn starting on top of it would replace the question they
-  // are answering, and the answer would then be to nothing.
+  // A host-requested question that has not started is stale once the user begins answering it.
   const {service, controller, actions} = confirmationService()
   await service.connect()
   propose(controller)
+  service.queueHostItem(guardFact('confirmation-question-pending'), {priority: 50})
+  await service.flushHostItems()
   await service.handleEvent({
     kind: 'user_speech_started',
     session_epoch: 1,
@@ -3671,7 +4035,7 @@ test('reserving arms a fence so the question is not spoken over', async () => {
     speech_id: 'speech-1',
     provider_item_id: 'user-item-1',
   })
-  // The fence is armed, so the next response is cancelled rather than allowed to speak.
+  // The already-requested question is cancelled rather than allowed to speak over the answer.
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
   assert.ok(actions.includes('cancel:r-1'), 'the next turn was fenced')
 })
@@ -3831,12 +4195,12 @@ test('a view observer that throws does not break the state change that produced 
   assert.equal(controller.pending, false, 'the proposal is still gone')
 })
 
-test('an expiry reconnects when a close failed, even without a fenced response', async () => {
-  // A close that did not complete leaves the provider holding a function call open. Reconnecting is the
-  // only way back to a session whose state can be reasoned about.
+test('an expiry reconnects while a pending confirmation question fence remains', async () => {
   const {service, controller, actions, clock} = confirmationService()
   await service.connect()
   propose(controller)
+  service.queueHostItem(guardFact('confirmation-question-pending'), {priority: 50})
+  await service.flushHostItems()
   await service.handleEvent({
     kind: 'user_speech_started',
     session_epoch: 1,
@@ -3850,7 +4214,7 @@ test('an expiry reconnects when a close failed, even without a fenced response',
   await new Promise<void>(resolve => setTimeout(resolve, 30))
   assert.ok(
     actions.filter(action => action.startsWith('connect:')).length > connects,
-    'the fenced response forced a reconnect',
+    'the pending-question fence forced a reconnect',
   )
   // The reserved item is released. The block itself legitimately persists here, because the armed fence
   // was never spent -- the user never finished speaking -- and an unspent fence is still holding the
@@ -3910,7 +4274,6 @@ test('a settled confirmation stops blocking, so later turns work again', async (
     speech_id: 'speech-1',
     provider_item_id: 'user-item-1',
   })
-  // The armed fence is spent by the next response, which is what stops it holding the block open.
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
   await service.handleEvent({
     kind: 'user_transcript_final',
@@ -3937,9 +4300,7 @@ test('a settled confirmation stops blocking, so later turns work again', async (
   )
 })
 
-test('a transcript alone keeps the reserved item and unspent fence blocked', async () => {
-  // The fence is what stops the question being spoken over. While it is still armed the confirmation is
-  // not finished, whatever happened to the reserved item -- which is why the recomputation counts it.
+test('a transcript alone keeps its confirmation item reserved', async () => {
   const {service, controller} = confirmationService()
   await service.connect()
   propose(controller)
@@ -3949,7 +4310,7 @@ test('a transcript alone keeps the reserved item and unspent fence blocked', asy
     speech_id: 'speech-1',
     provider_item_id: 'user-item-1',
   })
-  // No `user_speech_ended`, and no response: the fence is armed and unspent.
+  // No response has produced a structured decision yet.
   await service.handleEvent({
     kind: 'user_transcript_final',
     session_epoch: 1,
@@ -3960,11 +4321,11 @@ test('a transcript alone keeps the reserved item and unspent fence blocked', asy
   assert.equal(
     service.projectConfirmationBlockingForTest,
     true,
-    'but the unspent fence still holds the block',
+    'the undecided reserved item still holds the block',
   )
 })
 
-test('a response spends the fence but cannot lift a still-undecided item', async () => {
+test('a response cannot lift a still-undecided confirmation item', async () => {
   const {service, controller} = confirmationService()
   await service.connect()
   propose(controller)
@@ -3992,7 +4353,7 @@ test('a response spends the fence but cannot lift a still-undecided item', async
   assert.equal(
     service.projectConfirmationBlockingForTest,
     true,
-    'the response spent the fence but the undecided item still blocks',
+    'the response started but the undecided item still blocks',
   )
 })
 

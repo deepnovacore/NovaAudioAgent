@@ -292,7 +292,8 @@ test('provider invalidation clears both a proposal and unspent authority', () =>
 
 test('public view and prompt expose labels but no private bindings', () => {
   const changes: ProjectConfirmationView[] = []
-  const controller = createController(new VirtualClock(10), changes)
+  const clock = new VirtualClock(10)
+  const controller = createController(clock, changes)
   const proposal = controller.prepare({
     action: 'resume',
     workspace_display_name: '天气看板',
@@ -304,6 +305,15 @@ test('public view and prompt expose labels but no private bindings', () => {
   })
 
   assert.equal(proposal.confirmation_prompt, '准备切换到天气看板，并继续 Session“登录修复”，请确认或取消。')
+  assert.deepEqual(controller.view, {
+    pending_confirmation: true,
+    workspace_display_name: '天气看板',
+    session_title: '登录修复',
+    pending_action: 'resume_session',
+    pending_workspace_display_name: '天气看板',
+    pending_session_title: '登录修复',
+    pending_expires_in_seconds: 90,
+  })
   const rendered = JSON.stringify(controller.view)
   for (const privateValue of [
     'workspace-secret', 'session-secret', proposal.proposal_id, 'user:1', '继续修复',
@@ -312,6 +322,8 @@ test('public view and prompt expose labels but no private bindings', () => {
     assert.equal(proposal.confirmation_prompt.includes(privateValue), false)
   }
   assert.deepEqual(changes.at(-1), controller.view)
+  clock.advanceTo(35)
+  assert.equal(controller.view.pending_expires_in_seconds, 65)
 })
 
 test('invalid proposal IDs are rejected before replacing pending state', () => {

@@ -176,6 +176,37 @@ test('Codex project view bounds Python code points rather than UTF-16 units', ()
   }), DesktopProtocolError)
 })
 
+test('Codex project view carries a bounded public confirmation description', () => {
+  const parsed = JSON.parse(codexProjectMessage({
+    workspace_display_name: 'alpha',
+    session_title: null,
+    pending_confirmation: true,
+    pending_action: 'create_workspace',
+    pending_workspace_display_name: 'tetris-game',
+    pending_session_title: null,
+    pending_expires_in_seconds: 89.25,
+  })) as Readonly<Record<string, unknown>>
+  assert.deepEqual(parsed, {
+    type: 'codex.project',
+    workspace_display_name: 'alpha',
+    session_title: null,
+    pending_confirmation: true,
+    pending_action: 'create_workspace',
+    pending_workspace_display_name: 'tetris-game',
+    pending_session_title: null,
+    pending_expires_in_seconds: 89.25,
+  })
+  assert.throws(() => codexProjectMessage({
+    workspace_display_name: 'alpha',
+    session_title: null,
+    pending_confirmation: false,
+    pending_action: 'select_workspace',
+    pending_workspace_display_name: 'beta',
+    pending_session_title: null,
+    pending_expires_in_seconds: 90,
+  }), DesktopProtocolError)
+})
+
 test('every desktop wire case matches the Python-exported golden, byte for byte', () => {
   const divergent: string[] = []
   for (const [index, spec] of document.cases.entries()) {

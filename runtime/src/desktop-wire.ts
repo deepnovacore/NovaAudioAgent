@@ -37,6 +37,10 @@ export interface PublicProjectView {
   readonly workspace_display_name: string | null
   readonly session_title: string | null
   readonly pending_confirmation: boolean
+  readonly pending_action?: 'create_workspace' | 'select_workspace' | 'resume_session' | null
+  readonly pending_workspace_display_name?: string | null
+  readonly pending_session_title?: string | null
+  readonly pending_expires_in_seconds?: number | null
 }
 
 /**
@@ -195,7 +199,16 @@ export function codexStateMessage(state: CodexState): string {
  * would triple the frame to no benefit.
  */
 export function codexProjectMessage(view: PublicProjectView): string {
-  for (const value of [view.workspace_display_name, view.session_title]) {
+  const pendingAction = view.pending_action ?? null
+  const pendingWorkspace = view.pending_workspace_display_name ?? null
+  const pendingSession = view.pending_session_title ?? null
+  const pendingExpires = view.pending_expires_in_seconds ?? null
+  for (const value of [
+    view.workspace_display_name,
+    view.session_title,
+    pendingWorkspace,
+    pendingSession,
+  ]) {
     if (value === null) continue
     if (typeof value !== 'string' || value === '' || codePointLengthLikePython(value) > 120) {
       throw new DesktopProtocolError('desktop Codex project view is invalid')
@@ -204,11 +217,51 @@ export function codexProjectMessage(view: PublicProjectView): string {
   if (typeof view.pending_confirmation !== 'boolean') {
     throw new DesktopProtocolError('desktop Codex project view is invalid')
   }
+  if (
+    pendingAction !== null
+    && pendingAction !== 'create_workspace'
+    && pendingAction !== 'select_workspace'
+    && pendingAction !== 'resume_session'
+  ) {
+    throw new DesktopProtocolError('desktop Codex project view is invalid')
+  }
+  if (
+    pendingExpires !== null
+    && (
+      typeof pendingExpires !== 'number'
+      || !Number.isFinite(pendingExpires)
+      || pendingExpires < 0
+      || pendingExpires > 90
+    )
+  ) {
+    throw new DesktopProtocolError('desktop Codex project view is invalid')
+  }
+  const hasPendingMetadata = pendingAction !== null
+    || pendingWorkspace !== null
+    || pendingSession !== null
+    || pendingExpires !== null
+  if (!view.pending_confirmation && hasPendingMetadata) {
+    throw new DesktopProtocolError('desktop Codex project view is invalid')
+  }
+  if (
+    view.pending_confirmation
+    && hasPendingMetadata
+    && (pendingAction === null || pendingWorkspace === null || pendingExpires === null)
+  ) {
+    throw new DesktopProtocolError('desktop Codex project view is invalid')
+  }
+  if (pendingAction === 'resume_session' && pendingSession === null) {
+    throw new DesktopProtocolError('desktop Codex project view is invalid')
+  }
   return unicodeJson({
     type: 'codex.project',
     workspace_display_name: view.workspace_display_name,
     session_title: view.session_title,
     pending_confirmation: view.pending_confirmation,
+    pending_action: pendingAction,
+    pending_workspace_display_name: pendingWorkspace,
+    pending_session_title: pendingSession,
+    pending_expires_in_seconds: pendingExpires,
   })
 }
 

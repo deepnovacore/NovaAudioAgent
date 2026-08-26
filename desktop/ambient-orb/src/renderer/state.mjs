@@ -93,25 +93,47 @@ export function deriveOrbState(input) {
   else if (input.playback === 'interrupted') name = 'interrupted'
   else if (input.playback === 'speaking') name = 'speaking'
   else name = 'idle'
-  const project = [
-    input.workspace ? `工作区 ${input.workspace}` : '',
-    input.session ? `Session ${input.session}` : '',
-    input.pendingConfirmation === true ? '等待确认' : '',
-  ].filter(Boolean)
+  const pendingConfirmation = input.pendingConfirmation === true
+  const pendingExpiry = Number.isFinite(input.pendingExpiresInSeconds)
+    ? `${Math.ceil(Math.max(0, input.pendingExpiresInSeconds)).toFixed(0)} 秒后自动取消`
+    : ''
+  const pendingOperation = pendingConfirmation ? confirmationOperation(input) : ''
+  const pendingStatus = pendingConfirmation
+    ? ['尚未执行', pendingExpiry].filter(Boolean).join(' · ')
+    : ''
+  const project = pendingConfirmation
+    ? [
+      pendingOperation,
+      pendingStatus,
+    ].filter(Boolean)
+    : [
+      input.workspace ? `工作区 ${input.workspace}` : '',
+      input.session ? `Session ${input.session}` : '',
+    ].filter(Boolean)
   const codexStatus = input.codex === 'working' ? 'Codex 正在后台工作' : 'Codex 空闲'
-  const compactCodexStatus = input.pendingConfirmation === true
-    ? 'Codex 等待确认'
+  const compactCodexStatus = pendingConfirmation
+    ? '等待你的确认'
     : input.codex === 'working'
       ? 'Codex 工作中'
       : 'Codex 空闲'
+  const codexLabel = [...project, ...(pendingConfirmation ? [] : [codexStatus])]
+    .join(pendingConfirmation ? '\n' : ' · ')
   const label = name === 'permission-denied' && input.platform === 'win32'
     ? WINDOWS_PERMISSION_DENIED_LABEL
     : LABELS[name]
   return Object.freeze({
     name,
     label,
-    statusLine: `${compactOrbLabel(name)} · ${compactCodexStatus}`,
-    codexLabel: [...project, codexStatus].join(' · '),
+    statusLine: pendingConfirmation
+      ? '需要你的确认'
+      : `${compactOrbLabel(name)} · ${compactCodexStatus}`,
+    codexLabel,
+    accessibleCodexLabel: pendingConfirmation
+      ? `${pendingOperation}；尚未执行；等待你的确认`
+      : codexLabel,
+    confirmationVisible: pendingConfirmation,
+    confirmationOperation: pendingOperation,
+    confirmationStatus: pendingStatus,
     aecLabel: input.audioMode === 'voice_processing_io'
       ? '系统级 AEC'
       : input.audioMode === 'browser_aec'
@@ -119,4 +141,19 @@ export function deriveOrbState(input) {
         : 'AEC 未启用',
     shellExpanded: input.shellExpanded === true,
   })
+}
+
+function confirmationOperation(input) {
+  const workspace = typeof input.pendingWorkspace === 'string' ? input.pendingWorkspace : ''
+  const session = typeof input.pendingSession === 'string' ? input.pendingSession : ''
+  if (input.pendingAction === 'create_workspace' && workspace) {
+    return `创建工作区 “${workspace}”`
+  }
+  if (input.pendingAction === 'select_workspace' && workspace) {
+    return `切换到工作区 “${workspace}”`
+  }
+  if (input.pendingAction === 'resume_session' && workspace && session) {
+    return `恢复 “${workspace} / ${session}”`
+  }
+  return '项目操作等待确认'
 }

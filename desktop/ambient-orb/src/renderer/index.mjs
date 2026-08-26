@@ -22,6 +22,7 @@ import {
 } from './camera.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
 import { createOrbVisualSafe } from './orb-visual.mjs'
+import { ConfirmationCountdown } from './confirmation-countdown.mjs'
 import { deriveOrbState } from './state.mjs'
 
 const shell = document.querySelector('#shell')
@@ -30,6 +31,10 @@ const muteToggle = document.querySelector('#mute-toggle')
 const openSettingsButton = document.querySelector('#open-settings')
 const stateLabel = document.querySelector('#state-label')
 const codexLabel = document.querySelector('#codex-label')
+const codexSummary = document.querySelector('#codex-summary')
+const codexOperation = document.querySelector('#codex-operation')
+const codexExpiry = document.querySelector('#codex-expiry')
+const confirmationAnnouncement = document.querySelector('#confirmation-announcement')
 const aecLabel = document.querySelector('#aec-label')
 const captionLabel = document.querySelector('#caption')
 const cameraController = new RendererCameraController({
@@ -84,6 +89,10 @@ const axes = {
   workspace: '',
   session: '',
   pendingConfirmation: false,
+  pendingAction: null,
+  pendingWorkspace: '',
+  pendingSession: '',
+  pendingExpiresInSeconds: null,
   connected: false,
   backendState: 'stopped',
   microphone: 'checking',
@@ -93,6 +102,14 @@ const axes = {
   activationPending: false,
   platform: 'unknown',
 }
+
+const confirmationCountdown = new ConfirmationCountdown({
+  onTick: seconds => {
+    if (!axes.pendingConfirmation) return
+    axes.pendingExpiresInSeconds = seconds
+    render()
+  },
+})
 
 let socket
 let activeConnection = null
@@ -150,15 +167,26 @@ const socketRouter = new RendererSocketRouter({
 function render() {
   const state = deriveOrbState(axes)
   shell.dataset.state = state.name
-  stateLabel.textContent = state.statusLine
-  codexLabel.textContent = state.codexLabel
-  aecLabel.textContent = state.aecLabel
-  orb.setAttribute('aria-label', `${state.label}；${state.codexLabel}`)
+  setText(stateLabel, state.statusLine)
+  setText(codexSummary, state.codexLabel)
+  setText(codexOperation, state.confirmationOperation)
+  setText(codexExpiry, state.confirmationStatus)
+  codexLabel.dataset.visible = String(state.confirmationVisible)
+  setText(aecLabel, state.aecLabel)
+  setAttribute(orb, 'aria-label', `${state.label}；${state.accessibleCodexLabel}`)
   orb.setAttribute('aria-pressed', String(axes.activated))
   muteToggle.disabled = !axes.activated
   muteToggle.setAttribute('aria-pressed', String(axes.muted))
   muteToggle.setAttribute('aria-label', axes.muted ? '取消闭麦' : '闭麦')
   visual.setState(state.name, { codexWorking: axes.codex === 'working' })
+}
+
+function setText(element, value) {
+  if (element.textContent !== value) element.textContent = value
+}
+
+function setAttribute(element, name, value) {
+  if (element.getAttribute(name) !== value) element.setAttribute(name, value)
 }
 
 // The one door onto the interrupted playback axis. A real barge-in — the user
@@ -553,14 +581,64 @@ async function handleControl(message) {
     const keys = Object.keys(message).sort().join(',')
     const workspace = message.workspace_display_name
     const session = message.session_title
-    const valid = keys === 'pending_confirmation,session_title,type,workspace_display_name'
-      && (workspace === null || (typeof workspace === 'string' && [...workspace].length <= 80))
+    const pendingAction = message.pending_action
+    const pendingWorkspace = message.pending_workspace_display_name
+    const pendingSession = message.pending_session_title
+    const pendingExpires = message.pending_expires_in_seconds
+    const validAction = pendingAction === null
+      || pendingAction === 'create_workspace'
+      || pendingAction === 'select_workspace'
+      || pendingAction === 'resume_session'
+    const pendingMetadata = pendingAction !== null
+      || pendingWorkspace !== null
+      || pendingSession !== null
+      || pendingExpires !== null
+    const valid = keys === [
+      'pending_action',
+      'pending_confirmation',
+      'pending_expires_in_seconds',
+      'pending_session_title',
+      'pending_workspace_display_name',
+      'session_title',
+      'type',
+      'workspace_display_name',
+    ].join(',')
+      && (workspace === null || (typeof workspace === 'string' && [...workspace].length <= 120))
       && (session === null || (typeof session === 'string' && [...session].length <= 120))
       && typeof message.pending_confirmation === 'boolean'
+      && validAction
+      && (pendingWorkspace === null
+        || (typeof pendingWorkspace === 'string' && [...pendingWorkspace].length <= 120))
+      && (pendingSession === null
+        || (typeof pendingSession === 'string' && [...pendingSession].length <= 120))
+      && (pendingExpires === null
+        || (Number.isFinite(pendingExpires) && pendingExpires >= 0 && pendingExpires <= 90))
+      && (message.pending_confirmation
+        ? (!pendingMetadata || (pendingAction !== null
+          && pendingWorkspace !== null
+          && pendingExpires !== null
+          && (pendingAction !== 'resume_session' || pendingSession !== null)))
+        : !pendingMetadata)
     if (valid) {
+      const wasPending = axes.pendingConfirmation
       axes.workspace = workspace || ''
       axes.session = session || ''
       axes.pendingConfirmation = message.pending_confirmation
+      axes.pendingAction = pendingAction
+      axes.pendingWorkspace = pendingWorkspace || ''
+      axes.pendingSession = pendingSession || ''
+      axes.pendingExpiresInSeconds = pendingExpires
+      if (message.pending_confirmation) {
+        confirmationCountdown.start(pendingExpires)
+        const state = deriveOrbState(axes)
+        setText(
+          confirmationAnnouncement,
+          `${state.confirmationOperation}；尚未执行，需要你的确认。`,
+        )
+      } else {
+        confirmationCountdown.stop()
+        if (wasPending) setText(confirmationAnnouncement, '项目确认已结束。')
+      }
     }
   } else if (message.type === 'error') {
     axes.error = 'backend'

@@ -28,6 +28,7 @@ import { validProgressSummary, type EventRecord, type JsonValue } from '../event
 import { USER_PRIORITY, type MemoryItem } from '../memory.js'
 import type { PlaybackCompletion, PlaybackGeneration } from '../playback.js'
 import type { CompiledTools } from '../tool-schema.js'
+import {requiresSynchronousResult} from './bridge.js'
 import type { RealtimeRuntimeBridge, ToolAcceptance, ToolCallReady } from './bridge.js'
 import type {
   ConfirmedProjectOperation,
@@ -1535,7 +1536,18 @@ export class RealtimeService {
       }
       return encoded
     }
-    const encoded = JSON.stringify({state: event.payload.outcome, content})
+    const responseInstruction = content.code === 'confirmation_required'
+      ? [
+        '该项目操作尚未执行。请用自然口语说明目标操作尚未执行，',
+        '并依据 confirmation_prompt 明确询问用户确认或取消；',
+        '不得声称已提交、已创建、已切换或已开始任务，也不要朗读 proposal_id。',
+      ].join('')
+      : null
+    const encoded = JSON.stringify({
+      state: event.payload.outcome,
+      content,
+      ...(responseInstruction === null ? {} : {response_instruction: responseInstruction}),
+    })
     return [...encoded].length <= MAX_HOST_FACT_CHARS
       ? encoded
       : JSON.stringify({state: event.payload.outcome, error: 'result_too_large'})
@@ -1919,9 +1931,13 @@ export class RealtimeService {
       && event.session_epoch === this.session.sessionEpoch
       && this.#projectConfirmationBlocking
     ) {
-      this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
-      if (!this.#responseUserOriginItems.has(callKey(event.session_epoch, event.response_id))) {
-        this.#bindResponseUserOrigin(event.session_epoch, event.response_id)
+      // A fenced pre-start response is the stale question the user interrupted, not the response to
+      // their answer. It spends the one-shot fence but must not bind or release the reserved item.
+      if (accepted) {
+        this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
+        if (!this.#responseUserOriginItems.has(callKey(event.session_epoch, event.response_id))) {
+          this.#bindResponseUserOrigin(event.session_epoch, event.response_id)
+        }
       }
       // The armed fence has been spent by this response, so it no longer holds the block open.
       this.#projectConfirmationFencePending = false
@@ -2015,7 +2031,18 @@ export class RealtimeService {
         itemId !== undefined
         && this.#isProjectConfirmationItem(event.session_epoch, itemId)
       ) {
-        this.#projectConfirmation?.releaseUndecided({epoch: event.session_epoch, itemId})
+        const controller = this.#projectConfirmation
+        const released = controller?.releaseUndecided({
+          epoch: event.session_epoch,
+          itemId,
+        }) === true
+        if (
+          released
+          && controller?.pending === true
+          && !this.session.responseHasSpoken(event.response_id)
+        ) {
+          this.#queueProjectConfirmationRetryFact()
+        }
         this.#endProjectConfirmationItem(event.session_epoch, itemId)
       }
       // Released only when the terminal is *not* the current generation: if it is, playback is still
@@ -2427,9 +2454,18 @@ export class RealtimeService {
     // A delegated call will eventually need to be spoken about, so its acknowledgement slot is
     // reserved *before* admission -- admitting work the agent could never mention is worse than
     // refusing it.
+    const synchronousDelegateCall = binding?.kind === 'delegate'
+      && typeof binding.executor === 'string'
+      && typeof binding.op === 'string'
+      && requiresSynchronousResult(
+        binding.executor,
+        binding.op,
+        event.arguments,
+        binding.sync_result === true,
+      )
     const requiresSemanticAcknowledgement = !superseded
       && binding?.kind === 'delegate'
-      && binding.sync_result !== true
+      && !synchronousDelegateCall
     let semanticReserved = false
     if (!callOverCapacity && requiresSemanticAcknowledgement) {
       semanticReserved = this.#reserveSemanticAcknowledgement()
@@ -2492,7 +2528,11 @@ export class RealtimeService {
     }
     if (semanticReserved) {
       try {
-        if (acceptance.accepted && acceptance.delegate_id !== null) {
+        if (
+          acceptance.accepted
+          && acceptance.delegate_id !== null
+          && !acceptance.sync_result
+        ) {
           if (this.#semanticAcknowledgement(state) === null) {
             throw new Error('reserved semantic acknowledgement is unavailable')
           }
@@ -2804,9 +2844,9 @@ export class RealtimeService {
   // owns the decision; this owns the *isolation* around it.
   //
   // Three overlapping guards, because the failure modes are different. The reserved item makes one
-  // transcript the answer and nothing else. The response block stops the model calling tools in a turn
-  // that is meant to be waiting. And the armed fence keeps the reply the user is answering from being
-  // spoken over by a new turn. Each closes a hole the other two leave open.
+  // transcript the answer and nothing else. The response block permits only the dedicated decision
+  // function. And the pending-only fence cancels an old host-requested question without cancelling the
+  // model response that must produce that function. Each closes a hole the other two leave open.
   // ---------------------------------------------------------------------------------------------
 
   /**
@@ -2830,9 +2870,10 @@ export class RealtimeService {
     if (!this.#projectConfirmation.reserveUserItem({epoch: event.session_epoch, itemId})) return
     this.#projectConfirmationItems.add(callKey(event.session_epoch, itemId))
     this.#projectConfirmationBlocking = true
-    this.#projectConfirmationFencePending = true
-    // The reply the user is answering must not be spoken over by whatever the model says next.
-    this.session.armNextResponseFence()
+    // Cancel only a confirmation question whose host-requested response has not started yet. The
+    // response created from this user answer must remain alive so Qwen can emit the structured
+    // confirmation function after `response.created`.
+    this.#projectConfirmationFencePending = this.session.armPendingResponseFence()
     this.#publishProjectView()
   }
 
@@ -2952,7 +2993,7 @@ export class RealtimeService {
                     const result = await callback(outcome.operation, origin.originRef)
                     state = result.accepted ? 'accepted' : 'failed'
                     text = result.accepted
-                      ? '已确认，已提交并正在启动。'
+                      ? projectCommitSuccessText(outcome.operation, result.code)
                       : projectCommitFailureText(result.code)
                   } catch (failure) {
                     if (isAbort(failure)) throw failure
@@ -3079,6 +3120,28 @@ export class RealtimeService {
     this.#deliveryReady.set()
   }
 
+  /** Retry guidance remains truthful even if expiry wins after the item has already been injected. */
+  #queueProjectConfirmationRetryFact(): void {
+    this.queueHostItem(hostFactIntent({
+      kind: 'final',
+      host_item_id: this.#idFactory(),
+      event_id: `project-confirmation-retry:${this.#idFactory()}`,
+      content: '我没有确认清楚；若界面仍显示等待确认，请明确说“确认”或“取消”。',
+    }), {priority: USER_PRIORITY - 1, preemptive: false})
+    this.#deliveryReady.set()
+  }
+
+  /** Expiry makes a not-yet-injected retry ineligible; retain all unrelated host facts in heap order. */
+  #discardQueuedProjectConfirmationRetries(): void {
+    const retained = this.#hostItems.filter(queued => (
+      !queued.intent.item.event_id.startsWith('project-confirmation-retry:')
+    ))
+    if (retained.length === this.#hostItems.length) return
+    retained.sort(compareQueuedHostResponses)
+    this.#hostItems.length = 0
+    this.#hostItems.push(...retained)
+  }
+
   /**
    * The proposal timed out on its own.
    *
@@ -3087,6 +3150,7 @@ export class RealtimeService {
    * awaiting either. A second expiry while one is draining joins the queue instead of racing it.
    */
   #projectConfirmationExpired(): void {
+    this.#discardQueuedProjectConfirmationRetries()
     const itemKeys = [...this.#projectConfirmationItems]
     const sourceEpoch = this.session.sessionEpoch
     // A reconnect is needed when the confirmation armed a fence or blocked a response in this epoch:
@@ -4405,6 +4469,20 @@ async function settleWithin(tasks: readonly Promise<void>[], graceMs: number): P
 /** A callback that was not supplied. Named so two of them are not two anonymous empty functions. */
 function noop(): void {
   // Intentionally empty: an absent observer is not an error.
+}
+
+function projectCommitSuccessText(
+  operation: ConfirmedProjectOperation,
+  code: string,
+): string {
+  if (code !== 'committed') return '已确认，已提交并正在启动。'
+  if (operation.action === 'create') {
+    return `已确认，已创建并切换到工作区 ${operation.workspace_display_name}。`
+  }
+  if (operation.action === 'select') {
+    return `已确认，已切换到工作区 ${operation.workspace_display_name}。`
+  }
+  return '已确认，项目操作已完成。'
 }
 
 /** Wrap whatever was thrown so it can be re-thrown as an Error without losing the original. */

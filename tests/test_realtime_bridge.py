@@ -16,7 +16,7 @@ from nova_audio_agent.executors.codex_live import CODEX_LIVE_MANIFEST, CodexLive
 from nova_audio_agent.executors.search import SEARCH_MANIFEST, SearchAdapter
 from nova_audio_agent.memory import CONVERSATION_CHANNEL, USER_PRIORITY, HandoffPolicy, Memory
 from nova_audio_agent.ports import ExecutorManifest, Handoff, OpSpec
-from nova_audio_agent.realtime.bridge import RealtimeRuntimeBridge
+from nova_audio_agent.realtime.bridge import RealtimeRuntimeBridge, requires_synchronous_result
 from nova_audio_agent.realtime.protocol import ToolCallReady
 from nova_audio_agent.runtime import Runtime
 from nova_audio_agent.tool_schema import compile_tool_schema
@@ -24,6 +24,26 @@ from nova_audio_agent.tool_schema import compile_tool_schema
 
 def ids(*values: str) -> Iterator[str]:
     return iter(values)
+
+
+def test_project_boundary_sync_classifier_keeps_only_task_execution_async() -> None:
+    for action in (
+        "list_workspaces",
+        "create_workspace",
+        "select_workspace",
+        "list_sessions",
+        "resume_session",
+    ):
+        assert requires_synchronous_result("codex", "project", {"action": action}, False)
+    assert not requires_synchronous_result("codex", "project", {"action": "start_session"}, False)
+    assert requires_synchronous_result("codex", "status", {}, True)
+
+
+@pytest.mark.parametrize("malformed", ([], {}))
+def test_project_boundary_sync_classifier_fails_closed_for_unhashable_actions(
+    malformed: object,
+) -> None:
+    assert not requires_synchronous_result("codex", "project", {"action": malformed}, False)
 
 
 class PendingCodexWorker:

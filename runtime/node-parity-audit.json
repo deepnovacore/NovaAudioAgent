@@ -21,6 +21,7 @@
     "desktop/ambient-orb/src/renderer/audio.mjs",
     "desktop/ambient-orb/src/renderer/camera.mjs",
     "desktop/ambient-orb/src/renderer/capture-worklet.mjs",
+    "desktop/ambient-orb/src/renderer/confirmation-countdown.mjs",
     "desktop/ambient-orb/src/renderer/drag-gesture.mjs",
     "desktop/ambient-orb/src/renderer/index.mjs",
     "desktop/ambient-orb/src/renderer/memory-board.mjs",
@@ -410,6 +411,15 @@
       "disposition": "wire_json",
       "test": "desktop/ambient-orb/test/orb-visual.test.mjs",
       "behavior": "STATE_PARAMS covers exactly the orb states derived by state.mjs"
+    },
+    {
+      "file": "desktop/ambient-orb/src/renderer/state.mjs",
+      "kind": "number_format",
+      "occurrence_index": 0,
+      "snippet_sha256": "fd121dc99ad57c470a6586ec4ebc7f5407729966db47e3e97a27f6dd020763ad",
+      "disposition": "wire_json",
+      "test": "desktop/ambient-orb/test/state.test.mjs",
+      "behavior": "projects voice and Codex state into one compact visible line"
     },
     {
       "file": "desktop/ambient-orb/src/renderer/workspace-graph-board.mjs",
