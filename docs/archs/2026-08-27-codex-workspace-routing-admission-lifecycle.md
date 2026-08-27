@@ -67,8 +67,8 @@
 - 该规则由提交 `3d6a54e9` 引入；同一提交还增加了固定的俄罗斯方块路由评测样例。生产规则与评测输入共享
   具体名词，存在明显的 eval overfitting。
 - `create_workspace` 在写入前调用唯一性检查；同名时抛出 `workspace_name_conflict`：
-  - `src/nova_audio_agent/executors/codex_projects.py:788-790`
-  - `runtime/src/codex-project-store.ts:2247-2251`
+  - `src/nova_audio_agent/executors/codex_projects.py:785-788`
+  - `runtime/src/codex-project-store.ts:2245-2248`
 - `project` schema 用 `oneOf` 定义 action-specific 字段；其中 `start_session` 必须有 `work_order`，可以有
   `session`，但不能有 `workspace`：
   - `src/nova_audio_agent/executors/codex_project_live.py:76-123`
@@ -77,6 +77,8 @@
   `additionalProperties` 和字段基础类型，没有处理 `oneOf`：
   - `src/nova_audio_agent/realtime/bridge.py:344-359`
   - `runtime/src/realtime/bridge.ts:536-560`
+- TypeScript `validParams` 的注释仍声称其子集覆盖了工具 schema 实际使用的全部形状；`PROJECT` 引入
+  `oneOf` 后，这个前提已经失效。现有 oracle 没有捕获该分歧，本身也是 contract drift 的证据。
 - Executor 的 `_normalize_project_request` 会再次按 action 严格检查字段集合，并拒绝多余字段：
   `src/nova_audio_agent/executors/codex_project_live.py:782-823`。
 - 用当前代码直接验证一个代表性请求：
@@ -190,6 +192,10 @@ sequenceDiagram
 
 因此确认文案与 TTL 修复本身仍然有效，但它与这次的路由、准入和回执问题正交。
 
+实现前复核还发现一个独立的 TTL parity 缺口：确认控制器已使用 360 秒，但 Python desktop encoder、
+TypeScript desktop wire 和 renderer 仍拒绝大于 90 秒的 `pending_expires_in_seconds`。这会让新的待确认视图
+在桌面协议边界被判非法，必须在其他修复前先统一为 360 秒并增加跨层测试。
+
 ## 6. 设计目标与不变量
 
 ### 6.1 目标
@@ -229,6 +235,9 @@ sequenceDiagram
 3. 用户指向历史项目或命名 Workspace 时，先 resolve/list，再 select/resume，不猜测；
 4. 新请求与当前 Workspace 的目标名称或身份相同，优先进入同名恢复流程，不再次创建；
 5. “再建一份、独立副本、新仓库”等明确隔离语义，才允许创建带后缀副本。
+6. 在 tool result 到达前，模型不得用“我来创建”“已经提交”“正在启动”等自述预告操作结果；只能说明
+   正在确认目标或准备请求。host fencing 无法撤回已经流式播放的模型前置自述，这一约束必须由路由提示词
+   和真实行为评测共同保证。
 
 例如，在当前 Workspace 为 `tetris-game` 时：
 
@@ -257,6 +266,9 @@ sequenceDiagram
 `reuse_existing_workspace` 应是一个宿主拥有的复合 proposal：一次确认原子地表达“切换到已存在的
 Workspace，并使用原始 work order 启动新 Session”。这样不会让用户确认切换后还要重说任务，也不会让
 模型自行拼接两条授权强度不同的操作。
+
+当目标就是当前 Workspace、无需跨边界确认时，用户可见回复必须明确说“复用现有工作区”，不得继续使用
+“已创建工作区”。这条呈现要求属于 resolution 的行为契约，不应依赖前端按错误码补文案。
 
 存储层现有 `_require_unique_workspace_name` / `requireUniqueWorkspaceName` 继续作为最后一道竞态保护。现有
 `_unique_workspace_name` / `uniqueWorkspaceName` 只在用户已明确选择“另建副本”后使用。
@@ -316,6 +328,11 @@ delegate，也不写入 Codex channel 的 terminal failure。
 5. terminal fact 成为该 delegate 的权威状态，后续模型上下文不能仅凭旧回执推断 running。
 
 这沿用现有“一个事实一个 reply owner”的原则：未交付的乐观回执和 terminal failure 不能同时拥有播报权。
+
+现有 acknowledgement 虽然没有单独的 `delegate_id` 字段，但其唯一 `event_id` 已由
+`background:<delegate_id>` 构造，`semantic_acknowledgement_for` 也在使用这一关联。实现应按该精确键执行
+fencing，不再增加一份可能与 `event_id` 漂移的冗余 delegate 字段；若未来移除该键约定，再把关联升级为
+显式结构字段。
 
 ### 8.5 区分 recoverable refusal 与 execution failure
 
@@ -387,6 +404,7 @@ TypeScript、Memory codec、desktop wire 和 fixture；不能只在前端按错�
 | Realtime service | terminal failure 按 delegate fencing 未交付回执；started 事实拥有进行中措辞 |
 | Events / Memory / desktop wire | 增加 `refused` 并显示为“未执行/需要选择” |
 | Python/TypeScript parity fixtures | 覆盖 action 组合、resolution 和 lifecycle 顺序 |
+| Desktop confirmation wire | Python encoder、TypeScript wire 与 renderer 接受同一个 360 秒上限 |
 
 ## 11. 测试策略
 
@@ -412,6 +430,8 @@ TypeScript、Memory codec、desktop wire 和 fixture；不能只在前端按错�
 - `started/working` 前禁止“已开始处理”；
 - terminal 后重复用户请求不能被旧 acknowledgement 判定为已有任务；
 - reconnect、response interruption 和 continuation abandonment 下仍保持单一 reply owner。
+- 模型在 tool result 前产生“我来创建/已经提交/正在启动”等前置自述时，路由行为评测失败；该测试与 host
+  acknowledgement fencing 分开覆盖两个 reply owner。
 
 ### 11.4 冲突与并发测试
 
@@ -431,7 +451,8 @@ TypeScript、Memory codec、desktop wire 和 fixture；不能只在前端按错�
 5. bridge 与 executor 的 admissible request set 完全一致；
 6. 任意 terminal failure 之后，同一 delegate 不再出现“已提交、正在启动”或“仍在启动”；
 7. Board 能区分“执行前拒绝”和“执行失败”；
-8. Python/TypeScript parity、realtime lifecycle、Codex project E2E 和 `npm run check` 全部通过。
+8. tool result 到达前，模型不得流式承诺 Workspace 已创建或任务已提交；
+9. Python/TypeScript parity、realtime lifecycle、Codex project E2E 和 `npm run check` 全部通过。
 
 ## 13. 风险与上线顺序
 
@@ -447,6 +468,8 @@ TypeScript、Memory codec、desktop wire 和 fixture；不能只在前端按错�
 - `outcome` 枚举扩展会触及持久化/序列化精确键测试，需要兼容读取旧数据；
 - 复合 reuse proposal 必须复用现有 proposal ID、过期和一次性消费机制，不能新开较弱授权路径；
 - ack fencing 不能撤销已经真实播放的音频，必须复用现有 delivery proof；
+- ack fencing 只能管理 host acknowledgement，不能撤回模型在 tool call 前已经流式说出的自述；后者必须
+  由提示词约束和端到端路由评测拦截；
 - 路由评测不能只换另一组固定名词，应验证关系变化和实体替换两个维度。
 
 建议新增结构化 telemetry：`project.route_decision`、`project.resolution`、`project.admission_rejected`、
