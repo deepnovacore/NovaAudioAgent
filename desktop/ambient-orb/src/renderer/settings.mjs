@@ -232,19 +232,13 @@ function render(view, drafts) {
   warning.hidden = view.keyringAvailable !== false
 }
 
-let restartPending = false
-let restartTransitionSeen = false
-
 function updateRestartNotice(phase) {
   restartNotice.hidden = false
   restartNotice.dataset.state = phase
   if (phase === 'restarting') {
-    restartPending = true
-    restartTransitionSeen = false
     restartNotice.textContent = '已保存，后台正在重启并重新连接'
     return
   }
-  restartPending = false
   restartNotice.textContent = '已保存，后台已重启并重新连接'
 }
 
@@ -257,12 +251,6 @@ const controller = createSettingsController({
 
 api.onChanged(view => {
   controller.syncView(view)
-  if (!restartPending) return
-  if (view.backendStatus !== 'connected') {
-    restartTransitionSeen = true
-  } else if (restartTransitionSeen) {
-    updateRestartNotice('complete')
-  }
 })
 
 function push(patch, note) {

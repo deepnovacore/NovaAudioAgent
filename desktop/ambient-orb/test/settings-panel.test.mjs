@@ -205,6 +205,37 @@ test('a Main settings push outranks an older initial get snapshot', () => {
   assert.equal(renders.at(-1).backendStatus, 'starting')
 })
 
+test('a Main restart transition outranks the pending save response and completes on reconnect', async () => {
+  let resolveSet
+  let markSetStarted
+  const setStarted = new Promise(resolve => { markSetStarted = resolve })
+  const response = new Promise(resolve => { resolveSet = resolve })
+  const renders = []
+  const notices = []
+  const controller = createSettingsController({
+    api: {set: async () => {
+      markSetStarted()
+      return response
+    }},
+    render: view => renders.push(view),
+    status: () => {},
+    notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView({backendStatus: 'connected'}))
+
+  const saving = controller.push({pipelineMode: 'cascaded'}, '语音管线已保存')
+  await setStarted
+  controller.syncView(publicView({pipelineMode: 'cascaded', backendStatus: 'starting'}))
+  resolveSet(publicView({pipelineMode: 'cascaded', backendStatus: 'connected'}))
+  await saving
+
+  assert.equal(renders.at(-1).backendStatus, 'starting', 'the older IPC response cannot roll Main back')
+  assert.deepEqual(notices, ['restarting'])
+
+  controller.syncView(publicView({pipelineMode: 'cascaded', backendStatus: 'connected'}))
+  assert.deepEqual(notices, ['restarting', 'complete'])
+})
+
 test('presence metadata keeps only known own boolean data properties without invoking getters', async () => {
   let getterCalls = 0
   const hostilePresence = Object.create({ dashscopeApiKey: true })
@@ -595,7 +626,7 @@ test('the panel states what applies immediately and what triggers a controlled r
   assert.match(html, /<p id="restart-notice" class="warning" hidden><\/p>/)
   assert.match(script, /已保存，后台正在重启并重新连接/u)
   assert.match(script, /已保存，后台已重启并重新连接/u)
-  assert.match(script, /view\.backendStatus === 'connected'/)
+  assert.match(controllerScript, /announce\('complete'\)/)
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
 })
 

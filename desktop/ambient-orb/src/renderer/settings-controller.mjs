@@ -33,6 +33,14 @@ const SECRET_KEY_NAMES = [
   'doubaoAsrApiKey',
 ]
 const SECRET_KEYS = new Set(SECRET_KEY_NAMES)
+const MAIN_LIVE_VIEW_FIELDS = [
+  'codexStatus',
+  'backendStatus',
+  'backendDiagnostic',
+  'backendRetryInMs',
+  'microphoneStatus',
+  'effectivePaths',
+]
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -97,12 +105,26 @@ function writePatch(value) {
   return safe
 }
 
+function mainLiveViewPatch(value) {
+  const safe = {}
+  if (!isRecord(value)) return safe
+  for (const field of MAIN_LIVE_VIEW_FIELDS) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, field)
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) continue
+    safe[field] = publicValue(descriptor.value)
+  }
+  return safe
+}
+
 export function createSettingsController({ api, render, status, notice = () => {} }) {
   let view = null
   let inFlight = null
   let pending = null
   let hasConfirmedSaveResponse = false
   let confirmedView = null
+  let mainSyncRevision = 0
+  let restartPending = false
+  let restartTransitionSeen = false
   const drafts = new Map()
 
   function draftSnapshot() {
@@ -164,6 +186,7 @@ export function createSettingsController({ api, render, status, notice = () => {
     const batch = pending
     pending = null
     inFlight = batch
+    const syncRevisionAtStart = mainSyncRevision
     status('保存中…')
     try {
       const remoteView = publicPatch(await api.set(batch.patch))
@@ -173,7 +196,10 @@ export function createSettingsController({ api, render, status, notice = () => {
         : []
       if (bridgeSaved) {
         hasConfirmedSaveResponse = true
-        confirmedView = remoteView
+        const liveMainState = mainSyncRevision === syncRevisionAtStart
+          ? {}
+          : mainLiveViewPatch(confirmedView)
+        confirmedView = mergePatch(remoteView, liveMainState)
         syncTopLevelDrafts(batch.patch, remoteView)
         // The bridge response is authoritative for the completed batch. Public
         // edits still waiting behind it are reapplied before render, so an
@@ -189,7 +215,17 @@ export function createSettingsController({ api, render, status, notice = () => {
         bridgeSaved
         && rejectedPublicFields.length === 0
         && (remoteView?.rejectedSecrets?.length ?? 0) === 0
-      ) announce('restarting')
+      ) {
+        restartPending = true
+        restartTransitionSeen = batch.restartTransitionSeen === true
+          || (typeof confirmedView?.backendStatus === 'string'
+            && confirmedView.backendStatus !== 'connected')
+        announce('restarting')
+        if (restartTransitionSeen && confirmedView?.backendStatus === 'connected') {
+          restartPending = false
+          announce('complete')
+        }
+      }
       resolveBatch(batch, bridgeSaved, remoteView)
     } catch {
       view = composeView(confirmedView ?? view)
@@ -213,6 +249,7 @@ export function createSettingsController({ api, render, status, notice = () => {
       } else {
         pending = {
           patch: writePatch(patch), note,
+          restartTransitionSeen: false,
           waiters: [{ resolve, publicPatch: publicPatch(patch) }],
         }
       }
@@ -235,10 +272,23 @@ export function createSettingsController({ api, render, status, notice = () => {
   function syncView(nextView) {
     // Any Main push is newer than an initial get still in flight, so that get may no longer replace it.
     hasConfirmedSaveResponse = true
+    mainSyncRevision += 1
+    if (
+      inFlight !== null
+      && typeof nextView?.backendStatus === 'string'
+      && nextView.backendStatus !== 'connected'
+    ) inFlight.restartTransitionSeen = true
     confirmedView = publicPatch(nextView)
     view = mergePatch(confirmedView, publicPatch(inFlight?.patch))
     view = composeView(view)
     renderCurrent()
+    if (!restartPending || typeof confirmedView?.backendStatus !== 'string') return
+    if (confirmedView.backendStatus !== 'connected') {
+      restartTransitionSeen = true
+    } else if (restartTransitionSeen) {
+      restartPending = false
+      announce('complete')
+    }
   }
 
   function applyLocal(patch) {
