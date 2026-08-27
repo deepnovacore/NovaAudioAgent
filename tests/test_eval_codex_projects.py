@@ -36,8 +36,8 @@ def test_project_routing_corpus_covers_exact_six_action_arguments_and_stages() -
     }
     assert project_cases["create_workspace"].expected_arguments == {
         "action": "create_workspace",
-        "workspace": "俄罗斯方块",
-        "work_order": "创建一个完整的俄罗斯方块游戏",
+        "workspace": "番茄钟",
+        "work_order": "创建一个完整的番茄钟桌面应用",
     }
     assert project_cases["start_session"].expected_arguments == {
         "action": "start_session",
@@ -65,17 +65,30 @@ def test_project_routing_scorer_accepts_complete_real_action_arguments() -> None
     assert report.matched == len(CORPUS)
 
 
-def test_project_routing_corpus_covers_elliptical_explicit_and_confirmed_creation() -> None:
+def test_project_routing_corpus_diversifies_elliptical_explicit_and_confirmed_creation() -> None:
     cases = {case.case_id: case for case in CORPUS}
-    for case_id in ("elliptical-after-help", "explicit-develop", "clarified-yes"):
-        case = cases[case_id]
-        assert case.expected_tool == "codex__project"
-        assert case.expected_arguments == {
+    expected = {
+        "elliptical-after-help": {
             "action": "create_workspace",
-            "workspace": "俄罗斯方块",
-            "work_order": "开发一个可运行并经过验证的俄罗斯方块小游戏",
-        }
-    assert "有什么可以帮你" in (cases["elliptical-after-help"].context or "")
+            "workspace": "库存管理看板",
+            "work_order": "开发一个可运行并经过验证的库存管理看板",
+        },
+        "explicit-develop": {
+            "action": "create_workspace",
+            "workspace": "习惯追踪",
+            "work_order": "开发一个可运行并经过验证的习惯追踪应用",
+        },
+        "clarified-yes": {
+            "action": "create_workspace",
+            "workspace": "会议室预订",
+            "work_order": "开发一个可运行并经过验证的会议室预订系统",
+        },
+    }
+    for case_id, expected_arguments in expected.items():
+        assert cases[case_id].expected_tool == "codex__project"
+        assert cases[case_id].expected_arguments == expected_arguments
+    assert len({arguments["workspace"] for arguments in expected.values()}) == len(expected)
+    assert "你想做什么" in (cases["elliptical-after-help"].context or "")
     assert "原始目标" in (cases["clarified-yes"].context or "")
     assert cases["material-choice-missing"].expected_tool == "none"
 
@@ -121,7 +134,7 @@ def test_project_routing_rejects_extra_missing_null_and_wrong_action_values() ->
     for case_id, payload in (
         (
             "independent",
-            {"action": "create_workspace", "workspace": "俄罗斯方块", "session": "初始开发"},
+            {"action": "create_workspace", "workspace": "番茄钟", "session": "初始开发"},
         ),
         ("current", {"action": "start_session", "work_order": None}),
         ("select", {"action": "select_workspace"}),

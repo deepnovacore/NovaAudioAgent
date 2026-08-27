@@ -670,8 +670,8 @@ def test_frontend_instructions_preserve_the_complete_codex_work_order() -> None:
 def test_frontend_instructions_route_project_actions_and_confirmation_semantically() -> None:
     for phrase in (
         "Codex 开发工作只使用 codex__project。",
-        "明显独立的完整产品或仓库使用 create_workspace",
-        "明确在当前项目内的新任务使用 start_session",
+        "可独立交付的完整产品或仓库时，使用 create_workspace",
+        "已有 active workspace 且请求明确属于其中时，使用 start_session",
         "先 list_workspaces",
         "候选上下文后使用 select_workspace",
         "进入目标 workspace 后再 list_sessions",
@@ -722,17 +722,21 @@ def test_frontend_instructions_merge_clarification_into_one_work_order() -> None
         assert phrase in FRONTEND_INSTRUCTIONS
 
 
-def test_frontend_instructions_treat_contextual_deliverable_phrases_as_creation_requests() -> None:
+def test_frontend_instructions_route_contextual_deliverables_by_relationship() -> None:
     for phrase in (
-        "有什么可以帮你",
-        "俄罗斯方块的小游戏",
-        "明确交付物名词短语",
-        "create_workspace",
+        "先根据用户目标与当前上下文判断关系",
+        "路由优先级",
+        "待确认 proposal 的决定",
+        "身份未知的 workspace",
+        "可独立交付的完整产品或仓库",
+        "workspace 名称必须从本轮用户表达动态提取",
+        "不得依赖固定产品名称",
         "不要改写成问句复述",
         "普通澄清后的明确肯定",
         "只发起一次",
     ):
         assert phrase in FRONTEND_INSTRUCTIONS
+    assert "俄罗斯方块" not in FRONTEND_INSTRUCTIONS
 
 
 def test_frontend_instructions_separate_dispatch_from_thread_ready_fact() -> None:

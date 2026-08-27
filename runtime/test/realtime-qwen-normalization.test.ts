@@ -168,7 +168,12 @@ test('Qwen project instructions route the six actions and structured confirmatio
     FRONTEND_INSTRUCTIONS,
     /用户显式指定新 Session 名称时.*必须把名称原样放入 session 字段.*用户未指定名称时才省略 session/su,
   )
-  assert.match(FRONTEND_INSTRUCTIONS, /有什么可以帮你.*俄罗斯方块的小游戏.*create_workspace/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /先根据用户目标与当前上下文判断关系.*路由优先级/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /待确认 proposal 的决定.*身份未知的 workspace/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /可独立交付的完整产品或仓库.*create_workspace/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /workspace 名称必须从本轮用户表达动态提取/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /不得依赖固定产品名称/u)
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /俄罗斯方块/u)
   assert.match(FRONTEND_INSTRUCTIONS, /不要改写成问句复述/u)
   assert.match(FRONTEND_INSTRUCTIONS, /普通澄清后的明确肯定.*只发起一次/su)
   assert.match(FRONTEND_INSTRUCTIONS, /已提交、正在启动.*host 生命周期事实.*已开始处理/su)

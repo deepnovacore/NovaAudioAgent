@@ -46,12 +46,12 @@ class ProjectRoutingReport:
 CORPUS = (
     ProjectRoutingCase(
         "independent",
-        "创建一个完整的俄罗斯方块游戏",
+        "创建一个完整的番茄钟桌面应用",
         "codex__project",
         {
             "action": "create_workspace",
-            "workspace": "俄罗斯方块",
-            "work_order": "创建一个完整的俄罗斯方块游戏",
+            "workspace": "番茄钟",
+            "work_order": "创建一个完整的番茄钟桌面应用",
         },
     ),
     ProjectRoutingCase(
@@ -67,23 +67,23 @@ CORPUS = (
     ),
     ProjectRoutingCase(
         "elliptical-after-help",
-        "俄罗斯方块的小游戏",
+        "库存管理看板",
         "codex__project",
         {
             "action": "create_workspace",
-            "workspace": "俄罗斯方块",
-            "work_order": "开发一个可运行并经过验证的俄罗斯方块小游戏",
+            "workspace": "库存管理看板",
+            "work_order": "开发一个可运行并经过验证的库存管理看板",
         },
-        "assistant: 有什么可以帮你的吗？",
+        "assistant: 你想做什么？",
     ),
     ProjectRoutingCase(
         "explicit-develop",
-        "我要开发俄罗斯方块游戏",
+        "我要开发习惯追踪应用",
         "codex__project",
         {
             "action": "create_workspace",
-            "workspace": "俄罗斯方块",
-            "work_order": "开发一个可运行并经过验证的俄罗斯方块小游戏",
+            "workspace": "习惯追踪",
+            "work_order": "开发一个可运行并经过验证的习惯追踪应用",
         },
     ),
     ProjectRoutingCase(
@@ -92,10 +92,10 @@ CORPUS = (
         "codex__project",
         {
             "action": "create_workspace",
-            "workspace": "俄罗斯方块",
-            "work_order": "开发一个可运行并经过验证的俄罗斯方块小游戏",
+            "workspace": "会议室预订",
+            "work_order": "开发一个可运行并经过验证的会议室预订系统",
         },
-        "普通澄清；原始目标=俄罗斯方块的小游戏；当前没有待确认 proposal。",
+        "普通澄清；原始目标=会议室预订系统；当前没有待确认 proposal。",
     ),
     ProjectRoutingCase(
         "current",
@@ -106,7 +106,7 @@ CORPUS = (
     ),
     ProjectRoutingCase(
         "history",
-        "继续俄罗斯方块项目",
+        "继续客户门户项目",
         "codex__project",
         {"action": "list_workspaces"},
     ),
