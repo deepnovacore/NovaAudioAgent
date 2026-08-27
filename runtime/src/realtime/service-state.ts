@@ -38,6 +38,8 @@ export const USER_HOLD_MAX_S = 30
 export const STALE_DELIVERY_RETRY_S = 1
 /** Below this priority a host item waits its turn; at or above it may interrupt the agent. */
 export const PREEMPT_MIN_PRIORITY = 80
+/** Ordinary progress older than this is stale operational narration, not a current user fact. */
+export const PROGRESS_HOST_ITEM_TTL_S = 45
 export const GUARD_ALERT_DEADLINE_S = 0.35
 export const GUARD_CLEAR_ACK_DEADLINE_S = 0.5
 /**
@@ -169,8 +171,12 @@ export interface SemanticAcknowledgement {
   origin_response_id: string | null
   origin_user_input_revision: number | null
   origin_delivered: boolean
+  heard: boolean
   phase: 'pending' | 'queued' | 'requested' | 'bound' | 'delivered' | 'cancelled'
   response_id: string | null
+  response_session_epoch: number | null
+  /** The host event currently backing this semantic fact in provider history. */
+  provider_event_id: string | null
   binding: 'continuation' | 'fallback' | null
   failed_retry_consumed: boolean
 }
@@ -188,8 +194,11 @@ export function semanticAcknowledgement(input: {
     origin_response_id: null,
     origin_user_input_revision: null,
     origin_delivered: false,
+    heard: false,
     phase: 'pending',
     response_id: null,
+    response_session_epoch: null,
+    provider_event_id: null,
     binding: null,
     failed_retry_consumed: false,
   }
@@ -206,6 +215,7 @@ export interface ProjectExpiryBatch {
   readonly item_keys: readonly string[]
   readonly source_epoch: number
   readonly reconnect: boolean
+  readonly lifecycle_id: string
 }
 
 /**
@@ -224,6 +234,14 @@ export interface QueuedHostResponse {
   readonly queued_at: number
   readonly semantic_event_id: string | null
   readonly guard_activation: GuardActivationAuthority | null
+  readonly owner: HostItemOwner | null
+  readonly expires_at: number | null
+}
+
+/** Structured lifecycle authority for a queued fact; never reconstructed from its event id. */
+export interface HostItemOwner {
+  readonly delegate_id: string
+  readonly channel: string
 }
 
 /** Order two queued items the way the oracle's tuple comparison does. */

@@ -169,6 +169,10 @@ export class RealtimeSessionState {
   readonly #interruptedEventIds: string[] = []
   readonly #respondedEventIds = new Map<string, null>()
   readonly #injectedEventEpochs = new Map<string, number>()
+  readonly #injectedProviderItems = new Map<
+    string,
+    {readonly epoch: number; readonly provider_item_id: string}
+  >()
   readonly #retainedSuggestionInjectionIds = new Set<string>()
   readonly #pendingResponses: PendingResponse[] = []
   readonly #suppressedResponseIds = new Set<string>()
@@ -502,13 +506,21 @@ export class RealtimeSessionState {
    * the caller may still be about to reference, and pruning reclaims the slack once entries become
    * prunable.
    */
-  recordInjectedEvent(eventId: string): void {
+  recordInjectedEvent(eventId: string, providerItemId?: string): void {
     this.#injectedEventEpochs.delete(eventId)
     this.#injectedEventEpochs.set(eventId, this.#epoch)
+    this.#injectedProviderItems.delete(eventId)
+    if (providerItemId !== undefined) {
+      this.#injectedProviderItems.set(eventId, {
+        epoch: this.#epoch,
+        provider_item_id: providerItemId,
+      })
+    }
     while (this.#injectedEventEpochs.size > MAX_PENDING_HOST_EVENTS) {
       const oldest = this.#injectedEventEpochs.keys().next()
       if (oldest.done === true) break
       this.#injectedEventEpochs.delete(oldest.value)
+      this.#injectedProviderItems.delete(oldest.value)
       this.#retainedSuggestionInjectionIds.delete(oldest.value)
     }
     this.advanceSnapshot()
@@ -518,7 +530,29 @@ export class RealtimeSessionState {
     return this.#injectedEventEpochs.get(eventId)
   }
 
+  injectedProviderItem(eventId: string): {
+    readonly epoch: number
+    readonly provider_item_id: string
+  } | undefined {
+    const identity = this.#injectedProviderItems.get(eventId)
+    return identity === undefined ? undefined : {...identity}
+  }
+
   releaseInjectedEvent(eventId: string): boolean {
+    this.#injectedProviderItems.delete(eventId)
+    return this.#injectedEventEpochs.delete(eventId)
+  }
+
+  releaseInjectedProviderItem(
+    eventId: string,
+    expected: {readonly epoch: number; readonly provider_item_id: string},
+  ): boolean {
+    const current = this.#injectedProviderItems.get(eventId)
+    if (
+      current?.epoch !== expected.epoch
+      || current.provider_item_id !== expected.provider_item_id
+    ) return false
+    this.#injectedProviderItems.delete(eventId)
     return this.#injectedEventEpochs.delete(eventId)
   }
 
@@ -540,6 +574,7 @@ export class RealtimeSessionState {
   revokeRetainedSuggestionInjections(): void {
     for (const eventId of this.#retainedSuggestionInjectionIds) {
       this.#injectedEventEpochs.delete(eventId)
+      this.#injectedProviderItems.delete(eventId)
     }
     this.#retainedSuggestionInjectionIds.clear()
   }
@@ -556,6 +591,7 @@ export class RealtimeSessionState {
       if (this.#injectedEventEpochs.size <= MAX_TRACKED_HOST_EVENTS) break
       if (!prunable.has(eventId)) continue
       this.#injectedEventEpochs.delete(eventId)
+      this.#injectedProviderItems.delete(eventId)
       this.#retainedSuggestionInjectionIds.delete(eventId)
     }
     this.pruneRespondedEvents()

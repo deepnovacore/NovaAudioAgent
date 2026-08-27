@@ -23,7 +23,7 @@
  * than silently taking the inert branch, so a test that gets there fails loudly.
  */
 
-import {randomUUID} from 'node:crypto'
+import {createHash, randomUUID} from 'node:crypto'
 import type { Clock } from '../clock.js'
 import { validProgressSummary, type EventRecord, type JsonValue } from '../events.js'
 import { parseMemoryRef, USER_PRIORITY, type MemoryItem } from '../memory.js'
@@ -46,7 +46,11 @@ import type {
 import { ItemDeliveryUncertainError } from './protocol.js'
 import { packRecoveryTurns, projectRecoveryTurns, type RecoveryTurn } from './history.js'
 import { RealtimeDeliveryError, type RealtimeSession } from './session.js'
-import { MAX_CONTINUATION_TASK_SUMMARY, type CaptionFrame } from './session-state.js'
+import {
+  MAX_CONTINUATION_TASK_SUMMARY,
+  MAX_PENDING_HOST_EVENTS,
+  type CaptionFrame,
+} from './session-state.js'
 import {codePointLengthLikePython, stripLikePython} from '../python-text.js'
 import {
   GUARD_ALERT_DEADLINE_S,
@@ -61,6 +65,7 @@ import {
   MAX_UNCERTAIN_DELIVERY_RETRIES,
   PROJECT_EXPIRY_STEP_TIMEOUT_S,
   PREEMPT_MIN_PRIORITY,
+  PROGRESS_HOST_ITEM_TTL_S,
   SYNC_RESULT_SNIPPET_CHARS,
   SYNC_RESULT_TITLE_CHARS,
   USER_HOLD_MAX_S,
@@ -77,6 +82,7 @@ import {
   type GuardActivationAuthority,
   type GuardHistoryRecovery,
   type GuardPreemption,
+  type HostItemOwner,
   type ProjectExpiryBatch,
   type QueuedHostResponse,
   type SemanticAcknowledgement,
@@ -330,6 +336,11 @@ export class RealtimeService {
   readonly #continuationBatches = new Map<string, ContinuationBatch>()
   readonly #continuationFifo: string[] = []
   readonly #semanticAcknowledgements = new Map<string, SemanticAcknowledgement>()
+  /** Provider-visible progress events and their owners, bounded in provider-ledger order. */
+  readonly #delegateHostEvents = new Map<string, string>()
+  /** Best-effort provider cleanup is observed so it cannot reject outside service ownership. */
+  readonly #providerRetirementTasks = new Set<Promise<void>>()
+  readonly #providerRetirementEventIds = new Set<string>()
   readonly #audioStarted = new Set<string>()
   /**
    * Slots promised to calls admitted but not yet acknowledged.
@@ -531,7 +542,9 @@ export class RealtimeService {
     if (closeAbandoned) {
       this.#onDiagnostic('[realtime-diagnostic] shutdown_provider_close_abandoned')
     }
-    const tasks = draining === null ? this.#tasks : [...this.#tasks, draining]
+    const tasks = draining === null
+      ? [...this.#tasks, ...this.#providerRetirementTasks]
+      : [...this.#tasks, draining, ...this.#providerRetirementTasks]
     this.#tasks = []
     // Bounded. A promise cannot be cancelled from outside the way an asyncio task can, so a loop that
     // ignores the abort would make `close` wait forever -- and a service that never finishes closing
@@ -573,6 +586,8 @@ export class RealtimeService {
       readonly priority?: number
       readonly preemptive?: boolean
       readonly guardDelegateId?: string | null
+      readonly owner?: HostItemOwner | null
+      readonly expiresAt?: number | null
     } = {},
   ): void {
     const priority = options.priority ?? 50
@@ -597,6 +612,8 @@ export class RealtimeService {
       queued_at: this.#clock.now(),
       semantic_event_id: options.semanticEventId ?? null,
       guard_activation: guardActivation,
+      owner: options.owner ?? null,
+      expires_at: options.expiresAt ?? null,
     }
     heapPush(this.#hostItems, queued)
     if (preemptive) this.#armPreempt(effectivePriority)
@@ -801,6 +818,11 @@ export class RealtimeService {
   async #flushHostItemsLocked(): Promise<void> {
     while (this.#hostItems.length > 0) {
       const queued = this.#hostItems[0]!
+      if (!this.#queuedHostItemEligible(queued)) {
+        heapPop(this.#hostItems)
+        if (queued.preemptive) this.#recomputePreemptPriority()
+        continue
+      }
       const preemptiveOverlap = this.#guardOverlapAllowed(queued)
       const ordinaryDelivery = this.session.foregroundIdle && this.session.floor.state === 'idle'
       if (!preemptiveOverlap && !ordinaryDelivery) break
@@ -869,6 +891,22 @@ export class RealtimeService {
         break
       }
     }
+  }
+
+  /** Revalidate lifecycle eligibility at the final provider boundary. */
+  #queuedHostItemEligible(queued: QueuedHostResponse): boolean {
+    if (queued.semantic_event_id !== null) {
+      const acknowledgement = this.#semanticAcknowledgements.get(queued.semantic_event_id)
+      if (
+        acknowledgement?.phase === 'cancelled'
+        || acknowledgement?.phase === 'delivered'
+      ) return false
+    }
+    if (queued.owner !== null) {
+      const state = this.session.delegateState(queued.owner.delegate_id)
+      if (state !== undefined && state !== 'running') return false
+    }
+    return queued.expires_at === null || this.#clock.now() < queued.expires_at
   }
 
   /** Whether this queued item is the captured Guard the current preemption is waiting to deliver. */
@@ -1112,9 +1150,10 @@ export class RealtimeService {
     const acknowledgement = this.#semanticAcknowledgement(state)
     if (acknowledgement === null) return
     this.#refreshOriginDelivery(state)
-    if (acknowledgement.origin_delivered) {
+    if (acknowledgement.origin_delivered || acknowledgement.heard) {
       acknowledgement.phase = 'delivered'
       acknowledgement.response_id = null
+      acknowledgement.response_session_epoch = null
       acknowledgement.binding = null
       return
     }
@@ -1137,6 +1176,7 @@ export class RealtimeService {
       return
     }
     const priority = this.#executorPriority(acknowledgement.channel)
+    acknowledgement.provider_event_id = acknowledgement.event_id
     this.queueHostItem({
       kind: 'host_fact',
       item: {
@@ -1185,31 +1225,44 @@ export class RealtimeService {
   /**
    * Settle the acknowledgements the response that just ended was carrying.
    *
-   * Three outcomes, and the distinction is what stops the agent both repeating itself and going quiet.
-   * A completed response said it, so the acknowledgement is delivered and never mentioned again. A
-   * *fallback* binding that did not complete gets one more attempt -- it was a host fact of its own, and
-   * losing it would lose the only notice the user gets. A *continuation* binding that did not complete
-   * goes back to pending without re-queueing, because the batch it belonged to will drive it again.
+   * Provider completion is not audible delivery. A completed turn with a live renderer generation
+   * stays bound until playback reports what happened; one with no playable audio becomes a fallback.
+   * A failed fallback gets one bounded retry, while a failed continuation returns to its batch.
    *
    * An origin already proven delivered is delivered regardless of the status: the user heard it, and a
    * retry would be the second telling.
    */
   #finishSemanticAcknowledgement(event: {
+    readonly session_epoch: number
     readonly response_id: string
     readonly status: string
   }): void {
     const bound = [...this.#semanticAcknowledgements.values()]
-      .filter(current => current.phase === 'bound' && current.response_id === event.response_id)
+      .filter(current => (
+        current.phase === 'bound'
+        && current.response_session_epoch === event.session_epoch
+        && current.response_id === event.response_id
+      ))
     for (const acknowledgement of bound) {
-      if (acknowledgement.origin_delivered) {
+      if (acknowledgement.origin_delivered || acknowledgement.heard) {
         this.#markAcknowledgementDelivered(acknowledgement)
         continue
       }
       if (event.status === 'completed') {
-        this.#markAcknowledgementDelivered(acknowledgement)
+        const generation = this.session.currentGeneration
+        if (
+          generation?.session_epoch === event.session_epoch
+          && generation.response_id === event.response_id
+        ) continue
+        acknowledgement.phase = 'pending'
+        acknowledgement.response_id = null
+        acknowledgement.response_session_epoch = null
+        acknowledgement.binding = null
+        this.#queueSemanticAcknowledgement(acknowledgement)
       } else if (acknowledgement.binding === 'fallback') {
         acknowledgement.phase = 'pending'
         acknowledgement.response_id = null
+        acknowledgement.response_session_epoch = null
         acknowledgement.binding = null
         if (event.status === 'failed') {
           // One retry after a failure, and only one: a provider failing the same fact repeatedly would
@@ -1221,6 +1274,7 @@ export class RealtimeService {
       } else if (acknowledgement.binding === 'continuation') {
         acknowledgement.phase = 'pending'
         acknowledgement.response_id = null
+        acknowledgement.response_session_epoch = null
         acknowledgement.binding = null
       }
     }
@@ -1229,6 +1283,7 @@ export class RealtimeService {
   #markAcknowledgementDelivered(acknowledgement: SemanticAcknowledgement): void {
     acknowledgement.phase = 'delivered'
     acknowledgement.response_id = null
+    acknowledgement.response_session_epoch = null
     acknowledgement.binding = null
   }
 
@@ -1238,6 +1293,8 @@ export class RealtimeService {
       if (acknowledgement.phase !== 'requested') continue
       acknowledgement.phase = 'bound'
       acknowledgement.response_id = responseId
+      acknowledgement.response_session_epoch = this.session.sessionEpoch
+      acknowledgement.provider_event_id = acknowledgement.event_id
       acknowledgement.binding = 'fallback'
       return
     }
@@ -1260,9 +1317,11 @@ export class RealtimeService {
     ) return false
     if (
       acknowledgement.origin_delivered
+      || acknowledgement.heard
       || this.session.eventWasSpoken(acknowledgement.event_id)
     ) {
       this.#markAcknowledgementDelivered(acknowledgement)
+      this.#retireSemanticAcknowledgementHostEvent(acknowledgement)
       return false
     }
     if (acknowledgement.phase === 'bound') {
@@ -1279,7 +1338,9 @@ export class RealtimeService {
     }
     acknowledgement.phase = 'cancelled'
     acknowledgement.response_id = null
+    acknowledgement.response_session_epoch = null
     acknowledgement.binding = null
+    this.#retireSemanticAcknowledgementHostEvent(acknowledgement)
     return true
   }
 
@@ -1406,18 +1467,26 @@ export class RealtimeService {
   /**
    * Re-queue acknowledgements whose turn died with the old session.
    *
-   * One that was requested or bound to a continuation was never actually spoken -- the turn carrying it
-   * belonged to a provider session that is gone -- so it goes back to pending and is queued again. A
-   * `delivered` one stays delivered: the user heard it, and repeating it would be worse than silence.
+   * One that was requested or bound to any response was never proven audible -- the turn carrying it
+   * belonged to a provider session that is gone -- so it goes back to pending and is queued again.
+   * Only an acknowledgement carrying renderer-backed `heard` proof stays delivered.
    */
   #reconcileSemanticAcknowledgementsAfterReconnect(): void {
     for (const acknowledgement of this.#semanticAcknowledgements.values()) {
+      if (acknowledgement.heard) {
+        this.#markAcknowledgementDelivered(acknowledgement)
+        continue
+      }
       if (
         acknowledgement.phase === 'requested'
-        || (acknowledgement.phase === 'bound' && acknowledgement.binding === 'continuation')
+        || acknowledgement.phase === 'bound'
       ) {
+        if (acknowledgement.provider_event_id !== null) {
+          this.session.reopenHostEvent(acknowledgement.provider_event_id)
+        }
         acknowledgement.phase = 'pending'
         acknowledgement.response_id = null
+        acknowledgement.response_session_epoch = null
         acknowledgement.binding = null
       }
       if (acknowledgement.phase === 'pending' || acknowledgement.phase === 'queued') {
@@ -1806,6 +1875,10 @@ export class RealtimeService {
       elapsed: payload.elapsed,
     })
     this.#publishCodexState()
+    if (
+      payload.phase === 'started'
+      && this.#semanticAcknowledgements.has(`background:${payload.delegate_id}`)
+    ) return
     // A monitor's periodic heartbeat is operational state, not a new user-facing event. Speaking it
     // creates a fresh model turn that can accidentally replay an older acknowledgement.
     if (
@@ -1826,12 +1899,18 @@ export class RealtimeService {
     } else {
       content = `${displayName} 仍在处理这个任务，目前已推进 ${payload.internal_activity} 个步骤。`
     }
+    const eventId = `progress:${payload.delegate_id}:${payload.phase}:${payload.internal_activity}`
+    this.#rememberDelegateHostEvent(payload.delegate_id, eventId)
     this.queueHostItem(hostFactIntent({
       kind: 'progress',
       host_item_id: this.#idFactory(),
-      event_id: `progress:${payload.delegate_id}:${payload.phase}:${payload.internal_activity}`,
+      event_id: eventId,
       content,
-    }), {priority: manifest.policy.priority})
+    }), {
+      priority: manifest.policy.priority,
+      owner: {delegate_id: payload.delegate_id, channel: payload.channel},
+      expiresAt: this.#clock.now() + PROGRESS_HOST_ITEM_TTL_S,
+    })
   }
 
   /**
@@ -1854,7 +1933,8 @@ export class RealtimeService {
     if (claimed?.executor !== event.payload.channel) return
     const payload = event.payload
     const displayName = this.#executorDisplayName(payload.channel)
-    if (payload.outcome !== 'ok') this.#fenceSemanticAcknowledgement(payload.delegate_id)
+    this.#fenceSemanticAcknowledgement(payload.delegate_id)
+    this.#retireDelegateHostEvents(payload.delegate_id)
     const directSuggestionHandoff = manifest.policy.suggest === true
       && payload.outcome === 'ok'
       && claimed.routing_class === 'user_awaited'
@@ -2165,7 +2245,10 @@ export class RealtimeService {
           && controller?.pending === true
           && !this.session.responseHasSpoken(event.response_id)
         ) {
-          this.#queueProjectConfirmationRetryFact()
+          this.#queueProjectConfirmationRetryFact(
+            this.#projectConfirmationLifecycleId(),
+            callKey(event.session_epoch, itemId),
+          )
         }
         this.#endProjectConfirmationItem(event.session_epoch, itemId)
       }
@@ -2828,7 +2911,9 @@ export class RealtimeService {
 
   #executorDisplayName(channel: string): string {
     if (channel === 'codex') return 'Codex'
-    return this.#runtime.executors.has(channel) ? channel : channel
+    if (channel === 'guard') return '监控'
+    if (channel === 'watch') return '观察'
+    return channel
   }
 
   /**
@@ -2940,6 +3025,8 @@ export class RealtimeService {
       if (acknowledgement?.phase === 'pending') {
         acknowledgement.phase = 'bound'
         acknowledgement.response_id = responseId
+        acknowledgement.response_session_epoch = this.session.sessionEpoch
+        acknowledgement.provider_event_id = state.acceptance.host_item.event_id
         acknowledgement.binding = 'continuation'
       }
     }
@@ -3006,8 +3093,13 @@ export class RealtimeService {
     if (this.#projectConfirmation?.pending !== true) return
     const itemId = event.provider_item_id
     if (itemId === null) {
+      const lifecycleId = this.#projectConfirmationLifecycleId()
       this.#invalidateProjectConfirmation('missing_item_correlation')
-      this.#queueProjectConfirmationFact('缺少语音确认关联，本次操作已取消。')
+      this.#queueProjectConfirmationFact(
+        '缺少语音确认关联，本次操作已取消。',
+        lifecycleId,
+        'missing-item-correlation',
+      )
       return
     }
     if (!this.#projectConfirmation.reserveUserItem({epoch: event.session_epoch, itemId})) {
@@ -3171,7 +3263,11 @@ export class RealtimeService {
           // still receives its structured result, but no provider-authored paraphrase may race it.
           const responseId = origin.observedProviderResponseId
           if (responseId === null || this.session.suppressResponse(responseId)) {
-            this.#queueProjectConfirmationFact(text)
+            this.#queueProjectConfirmationFact(
+              text,
+              this.#projectConfirmationLifecycleId(),
+              `decision:${code}:${state}`,
+            )
           }
         }
         this.#publishProjectView()
@@ -3208,7 +3304,11 @@ export class RealtimeService {
     if (controller === undefined) return
     const outcome = controller.failTranscript({epoch, itemId})
     if (outcome.response_text !== null && outcome.response_text !== '') {
-      this.#queueProjectConfirmationFact(outcome.response_text)
+      this.#queueProjectConfirmationFact(
+        outcome.response_text,
+        this.#projectConfirmationLifecycleId(),
+        `transcript-failed:${callKey(epoch, itemId)}`,
+      )
     }
     this.#publishProjectView()
   }
@@ -3276,22 +3376,34 @@ export class RealtimeService {
   }
 
   /** Say something to the user about the confirmation. Just below user priority: urgent, not louder. */
-  #queueProjectConfirmationFact(text: string): void {
+  #queueProjectConfirmationFact(text: string, lifecycleId: string, transition: string): void {
     this.queueHostItem(hostFactIntent({
       kind: 'final',
       host_item_id: this.#idFactory(),
-      event_id: `project-confirmation:${this.#idFactory()}`,
+      event_id: projectConfirmationEventId('project-confirmation', lifecycleId, transition),
       content: [...text].slice(0, MAX_HOST_FACT_CHARS).join(''),
     }), {priority: USER_PRIORITY - 1, preemptive: false})
     this.#deliveryReady.set()
   }
 
+  /** The proposal id is the lifecycle key; settlement deliberately does not erase it. */
+  #projectConfirmationLifecycleId(): string {
+    const lifecycleId = this.#projectConfirmation?.lifecycleId
+    if (lifecycleId !== null && lifecycleId !== undefined) return lifecycleId
+    this.#onDiagnostic('[realtime-diagnostic] project_confirmation_lifecycle_missing')
+    return `session:${this.session.sessionEpoch}`
+  }
+
   /** Retry guidance remains truthful even if expiry wins after the item has already been injected. */
-  #queueProjectConfirmationRetryFact(): void {
+  #queueProjectConfirmationRetryFact(lifecycleId: string, attemptKey: string): void {
     this.queueHostItem(hostFactIntent({
       kind: 'final',
       host_item_id: this.#idFactory(),
-      event_id: `project-confirmation-retry:${this.#idFactory()}`,
+      event_id: projectConfirmationEventId(
+        'project-confirmation-retry',
+        lifecycleId,
+        `retry:${attemptKey}`,
+      ),
       content: '我没有确认清楚；若界面仍显示等待确认，请明确说“确认”或“取消”。',
     }), {priority: USER_PRIORITY - 1, preemptive: false})
     this.#deliveryReady.set()
@@ -3319,6 +3431,7 @@ export class RealtimeService {
     this.#discardQueuedProjectConfirmationRetries()
     const itemKeys = [...this.#projectConfirmationItems]
     const sourceEpoch = this.session.sessionEpoch
+    const lifecycleId = this.#projectConfirmationLifecycleId()
     // A reconnect is needed when the confirmation armed a fence or blocked a response in this epoch:
     // either leaves provider state the next turn would otherwise inherit.
     const reconnect = this.#projectConfirmationFencePending
@@ -3328,7 +3441,12 @@ export class RealtimeService {
       const {sessionEpoch, id} = parseCallKey(key)
       this.#beginProjectConfirmationClose(sessionEpoch, id)
     }
-    this.#projectExpiryBatches.push({item_keys: itemKeys, source_epoch: sourceEpoch, reconnect})
+    this.#projectExpiryBatches.push({
+      item_keys: itemKeys,
+      source_epoch: sourceEpoch,
+      reconnect,
+      lifecycle_id: lifecycleId,
+    })
     if (this.#projectExpiryDraining === null) {
       const signal = this.#stop.signal
       this.#projectExpiryDraining = this.#drainProjectConfirmationExpiries(signal)
@@ -3406,7 +3524,11 @@ export class RealtimeService {
       this.#endProjectConfirmationClose(sessionEpoch, id)
     }
     if (signal.aborted) return
-    this.#queueProjectConfirmationFact('确认已过期，本次操作已取消。')
+    this.#queueProjectConfirmationFact(
+      '确认已过期，本次操作已取消。',
+      batch.lifecycle_id,
+      'expired',
+    )
     try {
       await this.#runProjectExpiryStep(this.#deliveryPass())
     } catch (failure) {
@@ -3549,6 +3671,7 @@ export class RealtimeService {
     const completion = this.session.completePlayback(utteranceId, generationEpoch, playedMs)
     if (completion === null) return false
     this.#recordOriginDeliveryProof(completion)
+    this.#recordSemanticAcknowledgementHeard(completion)
     this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
     for (const eventId of eventIds) {
       // Confirmed only if it was actually spoken: a suggestion in a turn that was cut off has not been
@@ -3609,6 +3732,67 @@ export class RealtimeService {
     this.#originDeliveryProofs.delete(key)
     this.#originDeliveryProofs.set(key, null)
     this.#pruneOriginDeliveryProofs()
+  }
+
+  /** Persist renderer-backed audibility for the acknowledgement bound to this exact provider turn. */
+  #recordSemanticAcknowledgementHeard(completion: PlaybackCompletion): void {
+    const audible = completion.played_ms === null
+      ? completion.started
+      : completion.played_ms > 0
+    if (completion.disposition !== 'spoken' || !audible) return
+    for (const acknowledgement of this.#semanticAcknowledgements.values()) {
+      if (
+        acknowledgement.phase !== 'bound'
+        || acknowledgement.response_session_epoch !== completion.session_epoch
+        || acknowledgement.response_id !== completion.response_id
+      ) continue
+      acknowledgement.heard = true
+      this.#markAcknowledgementDelivered(acknowledgement)
+      this.#retireSemanticAcknowledgementHostEvent(acknowledgement)
+    }
+  }
+
+  #rememberDelegateHostEvent(delegateId: string, eventId: string): void {
+    this.#delegateHostEvents.delete(eventId)
+    this.#delegateHostEvents.set(eventId, delegateId)
+    while (this.#delegateHostEvents.size > MAX_PENDING_HOST_EVENTS) {
+      const oldest = this.#delegateHostEvents.keys().next()
+      if (oldest.done) break
+      this.#delegateHostEvents.delete(oldest.value)
+    }
+  }
+
+  #retireDelegateHostEvents(delegateId: string): void {
+    for (const [eventId, owner] of [...this.#delegateHostEvents]) {
+      if (owner !== delegateId) continue
+      this.#delegateHostEvents.delete(eventId)
+      this.#retireProviderHostEvent(eventId)
+    }
+  }
+
+  #retireSemanticAcknowledgementHostEvent(
+    acknowledgement: SemanticAcknowledgement,
+  ): void {
+    const eventId = acknowledgement.provider_event_id
+    if (eventId !== null) this.#retireProviderHostEvent(eventId)
+  }
+
+  /** Provider deletion is defense in depth; queue eligibility remains the correctness boundary. */
+  #retireProviderHostEvent(eventId: string): void {
+    if (this.#providerRetirementEventIds.has(eventId)) return
+    this.#providerRetirementEventIds.add(eventId)
+    const task = this.session.retireHostEvent(eventId)
+      .then(() => undefined)
+      .catch((failure: unknown) => {
+        this.#onDiagnostic(
+          `[realtime-diagnostic] host_item_retire_failure type=${diagnosticName(failure)}`,
+        )
+      })
+      .finally(() => {
+        this.#providerRetirementEventIds.delete(eventId)
+        this.#providerRetirementTasks.delete(task)
+      })
+    this.#providerRetirementTasks.add(task)
   }
 
   /** Whether anything at all refers to this turn. A proof nothing can cite is not worth keeping. */
@@ -4310,6 +4494,8 @@ export class RealtimeService {
         queued_at: 0,
         semantic_event_id: null,
         guard_activation: null,
+        owner: null,
+        expires_at: null,
       },
       response_id: input.responseId,
       generation: null,
@@ -4717,6 +4903,20 @@ function diagnosticName(cause: unknown): string {
 function randomHex(): string {
   // 32 hex characters, matching the oracle's `uuid4().hex`.
   return randomUUID().replaceAll('-', '')
+}
+
+/** Stable within one proposal transition, distinct across proposal lifecycles. */
+function projectConfirmationEventId(
+  namespace: 'project-confirmation' | 'project-confirmation-retry',
+  lifecycleId: string,
+  transition: string,
+): string {
+  const digest = createHash('sha256')
+    .update(lifecycleId)
+    .update('\0')
+    .update(transition)
+    .digest('hex')
+  return `${namespace}:${digest}`
 }
 
 export type { HostContextItem, PlaybackCompletion }

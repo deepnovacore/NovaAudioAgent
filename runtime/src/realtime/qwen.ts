@@ -19,6 +19,7 @@ import {
   ItemDeliveryUncertainError,
   MAX_REALTIME_PCM_BYTES,
   hostContextItemSchema,
+  realtimeIdentifierSchema,
   workspaceContextInjectionSchema,
   type HostContextItem,
   type HostResponseIntent,
@@ -427,6 +428,14 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
     return await this.#createConfirmedItem(item, timeout, options.asUserActivation)
   }
 
+  async retireHostItem(providerItemId: string, signal: AbortSignal): Promise<void> {
+    if (this.#epoch < 1) throw new QwenRealtimeError('qwen realtime is not connected')
+    const validated = realtimeIdentifierSchema.parse(providerItemId)
+    signal.throwIfAborted()
+    await this.#deleteConfirmedItem(validated, this.#itemConfirmationTimeout)
+    signal.throwIfAborted()
+  }
+
   async injectWorkspaceContext(
     input: HostContextItem,
     options: {
@@ -548,7 +557,7 @@ export class QwenAudioRealtimeAdapter implements RealtimeProvider {
       this.#ensureReader()
       await withTimeout(confirmation, timeout)
     } catch {
-      throw new QwenRealtimeError('workspace context deletion confirmation did not arrive')
+      throw new QwenRealtimeError('provider item deletion confirmation did not arrive')
     } finally {
       this.#pendingDeletes.delete(providerItemId)
     }

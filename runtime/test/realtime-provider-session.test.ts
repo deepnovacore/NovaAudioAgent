@@ -28,6 +28,7 @@ class FakeProvider implements RealtimeProvider {
   injected: HostContextItem[] = []
   responses: HostResponseIntent[] = []
   cancelled: string[] = []
+  retired: string[] = []
   tools: readonly (readonly JsonObject[])[] = []
   closeCount = 0
   failure: Error | null = null
@@ -74,6 +75,12 @@ class FakeProvider implements RealtimeProvider {
     return this.workspaceDelivery === null
       ? Promise.reject(new Error('unavailable'))
       : Promise.resolve(this.workspaceDelivery)
+  }
+
+  retireHostItem(providerItemId: string, signal: AbortSignal): Promise<void> {
+    assert.equal(signal.aborted, false)
+    this.retired.push(providerItemId)
+    return Promise.resolve()
   }
 
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void> {
@@ -249,6 +256,9 @@ test('audio and host delivery are validated and correlated before crossing the p
   assert.equal(provider.injected.length, 1)
   assert.equal(provider.responses.length, 1)
   assert.deepEqual(provider.cancelled, ['response-1'])
+
+  assert.equal(await session.retireHostItem('provider-1'), true)
+  assert.deepEqual(provider.retired, ['provider-1'])
 
   provider.itemIdentity = {
     session_epoch: 2,

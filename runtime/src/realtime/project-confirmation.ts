@@ -76,6 +76,8 @@ export class ProjectConfirmationController {
   readonly #expiryObservers: (() => void)[] = []
 
   #proposal: ProjectProposal | null = null
+  /** Retained after settlement so the host can identify every fact from this proposal lifecycle. */
+  #lifecycleId: string | null = null
   /** The one user item allowed to answer the proposal, as `epoch:itemId`. */
   #reserved: string | null = null
   #commitAuthority: ConfirmedProjectOperation | null = null
@@ -105,6 +107,10 @@ export class ProjectConfirmationController {
       pending_session_title: proposal.session_title,
       pending_expires_in_seconds: Math.max(0, proposal.expires_at - this.#clock.now()),
     }
+  }
+
+  get lifecycleId(): string | null {
+    return this.#lifecycleId
   }
 
   /** A proposal that has passed its deadline is not pending, even before anything expires it. */
@@ -148,6 +154,7 @@ export class ProjectConfirmationController {
       ),
     })
     this.#proposal = proposal
+    this.#lifecycleId = proposal.proposal_id
     this.#reserved = null
     this.#commitAuthority = null
     this.#scheduleExpiry(proposal)

@@ -45,7 +45,15 @@ function makeSession(options: {readonly ids?: readonly string[]} = {}): {
     },
     injectHostItem: (item: HostContextItem) => {
       actions.push(`inject:${item.host_item_id}`)
-      return Promise.resolve({session_epoch: epoch, host_item_id: item.host_item_id})
+      return Promise.resolve({
+        session_epoch: epoch,
+        host_item_id: item.host_item_id,
+        provider_item_id: `provider-${item.host_item_id}`,
+      })
+    },
+    retireHostItem: (providerItemId: string) => {
+      actions.push(`retire:${providerItemId}`)
+      return Promise.resolve(true)
     },
     createResponse: (intent: HostResponseIntent) => {
       actions.push(`create_response:${intent.kind}`)
@@ -242,6 +250,28 @@ test('injecting a non-tool-output item through the tool path is refused', async 
     }),
     /bypass host response gating/u,
   )
+})
+
+test('retiring an injected host event deletes its exact provider item and releases injection', async () => {
+  const {session, actions} = makeSession()
+  await session.connect({tools: []})
+  const item: HostContextItem = {
+    kind: 'tool_output',
+    host_item_id: 'host-1',
+    event_id: 'background:1',
+    content: '结果',
+    call_id: 'call-1',
+  }
+
+  assert.equal(await session.injectToolOutput(item), true)
+  assert.equal(await session.retireHostEvent(item.event_id), true)
+  assert.equal(await session.injectToolOutput(item), true)
+  assert.deepEqual(actions, [
+    'connect:1',
+    'inject:host-1',
+    'retire:provider-host-1',
+    'inject:host-1',
+  ])
 })
 
 test('a host response delivered while the foreground is busy is an error, not a refusal', async () => {

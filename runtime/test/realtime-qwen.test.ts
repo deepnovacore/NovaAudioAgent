@@ -151,6 +151,24 @@ test('connect performs the Qwen handshake and never logs the credential', async 
   assert.doesNotMatch(JSON.stringify(update), /secret-key-value/u)
 })
 
+test('retiring a host item uses the provider conversation item id', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+
+  const retirement = adapter.retireHostItem(
+    'provider-host-1',
+    new AbortController().signal,
+  )
+  await until(() => scripted.sent.some(frame => frame.type === 'conversation.item.delete'))
+  const deletion = scripted.sent.find(frame => frame.type === 'conversation.item.delete')
+  assert.equal(deletion?.type, 'conversation.item.delete')
+  assert.equal(deletion?.item_id, 'provider-host-1')
+  scripted.push({type: 'conversation.item.deleted', item_id: 'provider-host-1'})
+  await retirement
+  await adapter.close()
+})
+
 test('a session id that changes between created and updated is rejected', async () => {
   const scripted = scriptedSocket([
     {type: 'session.created', session: {id: 'sess-1'}},

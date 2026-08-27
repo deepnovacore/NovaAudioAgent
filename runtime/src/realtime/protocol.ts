@@ -395,6 +395,8 @@ export interface RealtimeProvider {
       readonly signal: AbortSignal
     },
   ): Promise<unknown>
+  /** Remove a previously confirmed host item from the provider conversation, when supported. */
+  retireHostItem?(providerItemId: string, signal: AbortSignal): Promise<void>
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void>
   cancelResponse(responseId: string, signal: AbortSignal): Promise<void>
   events(signal: AbortSignal): AsyncIterable<unknown>

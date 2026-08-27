@@ -634,11 +634,14 @@ function pipelineService(options: {
   }) => void
   readonly includeRecall?: boolean
   readonly projectTool?: boolean
+  readonly retireFailure?: boolean
 } = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
   readonly injectedContents: string[]
   readonly session: RealtimeSession
+  readonly clock: VirtualClock
+  readonly diagnostics: string[]
 } {
   const manifest = options.projectTool ? CODEX_PROJECT_MANIFEST : executorManifestSchema.parse({
     name: 'codex',
@@ -676,6 +679,7 @@ function pipelineService(options: {
   const executors = new Map([[manifest.name, {manifest}]])
   const actions: string[] = []
   const injectedContents: string[] = []
+  const diagnostics: string[] = []
   let idSeq = 0
   const nextId = (): string => {
     idSeq += 1
@@ -701,7 +705,16 @@ function pipelineService(options: {
     injectHostItem: (item) => {
       actions.push(`inject:${item.event_id}`)
       injectedContents.push(item.content)
-      return Promise.resolve({session_epoch: epoch, host_item_id: item.host_item_id})
+      return Promise.resolve({
+        session_epoch: epoch,
+        host_item_id: item.host_item_id,
+        provider_item_id: `provider:${item.event_id}`,
+      })
+    },
+    retireHostItem: (providerItemId) => {
+      actions.push(`retire:${providerItemId}`)
+      if (options.retireFailure === true) return Promise.reject(new Error('provider refused delete'))
+      return Promise.resolve(true)
     },
     createResponse: (intent) => {
       actions.push(`create_response:${intent.kind}`)
@@ -723,7 +736,7 @@ function pipelineService(options: {
     playback,
     idFactory: nextId,
     clock,
-    onDiagnostic: () => undefined,
+    onDiagnostic: line => diagnostics.push(line),
   })
   const scripted = options.toolResult ?? {accepted: true, delegateId: 'd-1'}
   const pipelineDelegate = {
@@ -780,9 +793,9 @@ function pipelineService(options: {
     // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent optional from
     // one explicitly set to undefined, and the service's contract is the former.
     ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
-    onDiagnostic: () => undefined,
+    onDiagnostic: line => diagnostics.push(line),
   })
-  return {service, actions, injectedContents, session}
+  return {service, actions, injectedContents, session, clock, diagnostics}
 }
 
 test('a tool call is admitted against the user turn that justifies it', async () => {
@@ -1329,14 +1342,23 @@ function runProjection(spec: Projection): Record<string, unknown> {
   }
 }
 
-test('every projection matches the Python-exported golden', () => {
+test('every projection matches the Python-exported golden outside Node display localization', () => {
   const divergent: string[] = []
   for (const [index, spec] of projectionDocument.projections.entries()) {
     const actual = runProjection(spec)
-    const expected = projectionGolden.projections[index]
+    const pythonExpected = projectionGolden.projections[index]
+    if (pythonExpected === undefined) throw new Error(`missing projection golden: ${spec.name}`)
+    // This branch intentionally remains Node-only. The desktop product localizes built-in executor
+    // names, while the Python runtime stays untouched; retain every other byte of the exported golden.
+    const localizedName = spec.display_name === 'watch'
+      ? '观察'
+      : spec.display_name === 'guard' ? '监控' : null
+    const expected = localizedName === null || typeof pythonExpected.content !== 'string'
+      ? pythonExpected
+      : {...pythonExpected, content: pythonExpected.content.replace(spec.display_name, localizedName)}
     if (canonicalJson(actual) !== canonicalJson(expected)) {
       divergent.push(
-        `${spec.name}: python=${canonicalJson(expected)} node=${canonicalJson(actual)}`,
+        `${spec.name}: expected=${canonicalJson(expected)} node=${canonicalJson(actual)}`,
       )
     }
   }
@@ -2279,9 +2301,9 @@ test('a progress event with an empty op is refused', () => {
   assert.deepEqual(queued(), [])
 })
 
-test('a thread-ready started fact follows the submitted acknowledgement', async () => {
-  // The acknowledgement only says that the task was submitted and is starting. The host-owned
-  // started fact is the first evidence that a real Codex thread exists, so it must still be spoken.
+test('a thread-ready started fact is silent when the delegate already owns an acknowledgement', async () => {
+  // Submission owns the one user-facing acknowledgement for this delegate. Projecting thread-ready
+  // still updates live state below, but must not create a second turn that says the same thing again.
   const {service} = pipelineService()
   await service.connect()
   await service.handleEvent({
@@ -2333,12 +2355,58 @@ test('a thread-ready started fact follows the submitted acknowledgement', async 
       summary: null,
     },
   })
-  assert.equal(service.pendingHostItemCount, 1)
-  assert.equal(
-    service.queuedHostItems()[0]?.intent.item.content,
-    'Codex 已开始处理这个任务。',
-  )
+  assert.equal(service.pendingHostItemCount, 0)
   assert.equal(service.session.delegateState('d-1'), 'running')
+})
+
+test('a thread-ready started fact remains the fallback when no acknowledgement owner exists', () => {
+  const {service, queued} = projectionService()
+
+  service.projectRuntimeEvent({
+    kind: 'progress',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: 'start',
+      phase: 'started',
+      internal_activity: 0,
+      elapsed: 0,
+      summary: null,
+    },
+  })
+
+  assert.deepEqual(queued(), ['Codex 已开始处理这个任务。'])
+  assert.equal(service.session.delegateState('d-1'), 'running')
+})
+
+test('built-in monitoring executors use stable Chinese display names', () => {
+  for (const [channel, displayName] of [
+    ['guard', '监控'],
+    ['watch', '观察'],
+  ] as const) {
+    const {service, queued} = projectionService({
+      delegate: {executor: channel, op: 'start', routing_class: 'user_awaited'},
+    })
+
+    service.projectRuntimeEvent({
+      kind: 'progress',
+      seq: 1,
+      ts: 1,
+      payload: {
+        channel,
+        delegate_id: 'd-1',
+        op: 'start',
+        phase: 'started',
+        internal_activity: 0,
+        elapsed: 0,
+        summary: null,
+      },
+    })
+
+    assert.deepEqual(queued(), [`${displayName} 已开始处理这个任务。`])
+  }
 })
 
 test('an immediate Codex startup failure waits behind a playing acknowledgement and is still spoken', async () => {
@@ -2435,6 +2503,148 @@ test('failed handoff fences an undelivered semantic acknowledgement', async () =
   assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
   assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
   assert.equal(service.session.delegateState('d-1'), 'failed')
+})
+
+test('successful handoff fences an undelivered semantic acknowledgement before the final result', async () => {
+  const {service} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'build timer',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
+    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+  })
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'pending')
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system',
+      content: {result: {final_message: {text: 'timer completed'}}}, refs: [],
+    },
+  })
+
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
+  assert.equal(service.session.delegateState('d-1'), 'completed')
+})
+
+test('a settled delegate cannot deliver progress that was queued while it was running', async () => {
+  const {service, actions} = pipelineService()
+  await service.connect()
+  service.projectRuntimeEvent({
+    kind: 'progress', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      internal_activity: 1, elapsed: 1, summary: 'implementing timer',
+    },
+  })
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 2, ts: 2,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system',
+      content: {result: {final_message: {text: 'timer completed'}}}, refs: [],
+    },
+  })
+
+  await service.flushHostItems()
+
+  assert.equal(
+    actions.some(action => action.startsWith('inject:progress:d-1:')),
+    false,
+    'stale progress is rejected at the provider boundary',
+  )
+  assert.ok(actions.includes('inject:final:d-1'), 'the final result remains deliverable')
+})
+
+test('a terminal delegate retires progress already visible in provider history', async () => {
+  const {service, actions} = pipelineService()
+  await service.connect()
+  service.projectRuntimeEvent({
+    kind: 'progress', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      internal_activity: 1, elapsed: 1, summary: 'implementing timer',
+    },
+  })
+  await service.flushHostItems()
+  assert.ok(actions.includes('inject:progress:d-1:working:1'))
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 2, ts: 2,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system',
+      content: {result: {final_message: {text: 'timer completed'}}}, refs: [],
+    },
+  })
+
+  assert.ok(
+    actions.includes('retire:provider:progress:d-1:working:1'),
+    'stale progress is removed from the provider conversation on settlement',
+  )
+})
+
+test('provider retirement failure is diagnostic-only and leaves the final result deliverable', async () => {
+  const {service, diagnostics} = pipelineService({retireFailure: true})
+  await service.connect()
+  service.projectRuntimeEvent({
+    kind: 'progress', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      internal_activity: 1, elapsed: 1, summary: 'implementing timer',
+    },
+  })
+  await service.flushHostItems()
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 2, ts: 2,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system',
+      content: {result: {final_message: {text: 'timer completed'}}}, refs: [],
+    },
+  })
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
+  assert.ok(diagnostics.some(line => (
+    line === '[realtime-diagnostic] host_item_retire_failure type=RealtimeDeliveryError'
+  )))
+})
+
+test('ordinary progress expires while final facts remain durable', async () => {
+  const {service, actions, clock} = pipelineService()
+  await service.connect()
+  service.projectRuntimeEvent({
+    kind: 'progress', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      internal_activity: 1, elapsed: 1, summary: 'implementing timer',
+    },
+  })
+  clock.advanceTo(clock.now() + 46)
+
+  await service.flushHostItems()
+
+  assert.equal(
+    actions.some(action => action.startsWith('inject:progress:d-1:')),
+    false,
+    'expired progress never crosses the provider boundary',
+  )
 })
 
 test('unknown handoff fences acknowledgement but remains open to a late verdict', async () => {
@@ -2939,7 +3149,7 @@ test('a reconnect blanks speculative captions on both roles', async () => {
 test('a batch already spoken before the reconnect keeps its terminal phase', async () => {
   // It was spoken. Marking it abandoned would make the reconnect re-announce work the user already
   // heard about.
-  const {service, actions} = pipelineService()
+  const {service, actions, session} = pipelineService()
   await service.connect()
   await twoTurns(service)
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
@@ -2965,8 +3175,20 @@ test('a batch already spoken before the reconnect keeps its terminal phase', asy
     status: 'completed',
     reason: '',
   })
-  // The continuation turn runs to completion, so the batch is terminal.
+  // The continuation turn runs to audible renderer completion, so the batch is truly spoken.
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-2',
+    pcm: new Uint8Array([0, 1]),
+  })
+  const generation = session.currentGeneration
+  assert.notEqual(generation, null)
+  assert.equal(
+    service.playbackStarted(generation!.utterance_id, generation!.generation_epoch),
+    true,
+  )
   await service.handleEvent({
     kind: 'response_terminal',
     session_epoch: 1,
@@ -2974,6 +3196,14 @@ test('a batch already spoken before the reconnect keeps its terminal phase', asy
     status: 'completed',
     reason: '',
   })
+  assert.equal(
+    service.playbackDone(generation!.utterance_id, generation!.generation_epoch, 250),
+    true,
+  )
+  assert.ok(
+    actions.some(action => action.startsWith('retire:provider:id-')),
+    `audibly delivered acknowledgement is removed from provider history: ${JSON.stringify(actions)}`,
+  )
   assert.equal(
     service.toolCallDispositionsForTest[0],
     'completed',
@@ -3072,6 +3302,168 @@ test('an acknowledgement bound to an unfinished continuation is reopened by the 
     actions.filter(action => action === 'inject:background:d-1').length,
     before + 1,
     'reopened and delivered in the new session',
+  )
+})
+
+test('an acknowledgement bound to an unfinished fallback is reopened by the reconnect', async () => {
+  const {service, actions} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'compile the runtime',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    call_id: 'call-1', item_id: 'tool-1', name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'}, response_id: 'r-1',
+  })
+
+  // The first reconnect abandons the continuation and requests the standalone fallback fact.
+  await service.reconnectForTest()
+  const fallbackEpoch = service.session.sessionEpoch
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: fallbackEpoch, response_id: 'r-fallback',
+  })
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'bound')
+  const before = actions.filter(action => action === 'inject:background:d-1').length
+
+  await service.reconnectForTest()
+
+  assert.equal(
+    actions.filter(action => action === 'inject:background:d-1').length,
+    before + 1,
+    'the dead fallback binding is re-offered in the replacement session',
+  )
+})
+
+test('an acknowledgement heard from its continuation is not reopened by a reconnect', async () => {
+  const {service, actions, session} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-2',
+    pcm: new Uint8Array([0, 1]),
+  })
+  const generation = session.currentGeneration
+  assert.notEqual(generation, null)
+  assert.equal(
+    service.playbackStarted(generation!.utterance_id, generation!.generation_epoch),
+    true,
+  )
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-2',
+    status: 'completed',
+    reason: '',
+  })
+  assert.equal(
+    service.acknowledgementPhasesForTest['background:d-1'],
+    'bound',
+    'provider completion is not proof that renderer playback reached the user',
+  )
+  assert.equal(
+    service.playbackDone(generation!.utterance_id, generation!.generation_epoch, 250),
+    true,
+  )
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'delivered')
+  const before = actions.filter(action => action === 'inject:background:d-1').length
+
+  await service.reconnectForTest()
+
+  assert.equal(
+    actions.filter(action => action === 'inject:background:d-1').length,
+    before,
+    'audibly delivered acknowledgement stays retired across provider replacement',
+  )
+})
+
+test('a completed continuation that renderer never played is reopened by a reconnect', async () => {
+  const {service, session} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-item-1',
+    text: 'compile the runtime',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'call-1',
+    item_id: 'tool-1',
+    name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'},
+    response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-1',
+    status: 'completed',
+    reason: '',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-2',
+    pcm: new Uint8Array([0, 1]),
+  })
+  const generation = session.currentGeneration
+  assert.notEqual(generation, null)
+  assert.equal(
+    service.playbackStarted(generation!.utterance_id, generation!.generation_epoch),
+    true,
+  )
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'r-2',
+    status: 'completed',
+    reason: '',
+  })
+  await service.reconnectForTest()
+
+  assert.equal(
+    service.acknowledgementPhasesForTest['background:d-1'],
+    'queued',
+    'the replacement session retains the acknowledgement until it has activation',
+  )
+  assert.deepEqual(
+    service.queuedHostItems().map(item => item.intent.item.event_id),
+    ['background:d-1'],
+    'provider completion without renderer delivery cannot retire the acknowledgement',
   )
 })
 
@@ -3455,6 +3847,7 @@ function confirmationService(options: {
   /** Make the provider's injection hang, so an expiry outlives the shutdown grace period. */
   readonly hangInjection?: boolean
   readonly expiryStepTimeoutMs?: number
+  readonly idFactory?: () => string
 } = {}): {
   readonly service: RealtimeService
   readonly controller: ProjectConfirmationController
@@ -3500,7 +3893,8 @@ function confirmationService(options: {
   const injected: HostContextItem[] = []
   const views: ProjectConfirmationView[] = []
   let ids = 0
-  const nextId = (): string => `id-${++ids}`
+  const defaultNextId = (): string => `id-${++ids}`
+  const nextId = options.idFactory ?? defaultNextId
   let epoch = 0
   const provider = {
     connect: () => {
@@ -3744,6 +4138,68 @@ test('a committed confirmation has one host-owned reply and suppresses the tool 
   ].filter(item => item.event_id.startsWith('project-confirmation:'))
   assert.equal(confirmationFacts.length, 1)
   assert.equal(confirmationFacts[0]?.content, '已确认，已提交并正在启动。')
+})
+
+test('a confirmation transition has a stable event id within its proposal lifecycle', async () => {
+  const lifecycleFactory = (suffix: string): (() => string) => {
+    let count = 0
+    return () => {
+      count += 1
+      return count === 1 ? 'shared-proposal' : `${suffix}-${count}`
+    }
+  }
+  const first = confirmationService({
+    idFactory: lifecycleFactory('first'),
+    commit: () => Promise.resolve({accepted: true, code: 'accepted'}),
+  })
+  const second = confirmationService({
+    idFactory: lifecycleFactory('second'),
+    commit: () => Promise.resolve({accepted: true, code: 'accepted'}),
+  })
+  await first.service.connect()
+  await second.service.connect()
+  const firstProposal = propose(first.controller)
+  const secondProposal = propose(second.controller)
+  assert.equal(firstProposal.proposal_id, secondProposal.proposal_id)
+
+  await confirmationTurn(first.service, {proposalId: firstProposal.proposal_id, confirmed: true})
+  await confirmationTurn(second.service, {proposalId: secondProposal.proposal_id, confirmed: true})
+
+  const eventId = (service: ReturnType<typeof confirmationService>): string | undefined => [
+    ...service.injected,
+    ...service.service.queuedHostItems().map(item => item.intent.item),
+  ].find(item => item.event_id.startsWith('project-confirmation:'))?.event_id
+  assert.equal(eventId(first), eventId(second))
+})
+
+test('identical confirmation text in different proposal lifecycles has different event ids', async () => {
+  const first = confirmationService({
+    idFactory: (() => {
+      let count = 0
+      return () => ++count === 1 ? 'proposal-a' : `a-${count}`
+    })(),
+    commit: () => Promise.resolve({accepted: true, code: 'accepted'}),
+  })
+  const second = confirmationService({
+    idFactory: (() => {
+      let count = 0
+      return () => ++count === 1 ? 'proposal-b' : `b-${count}`
+    })(),
+    commit: () => Promise.resolve({accepted: true, code: 'accepted'}),
+  })
+  await first.service.connect()
+  await second.service.connect()
+  const firstProposal = propose(first.controller)
+  const secondProposal = propose(second.controller)
+
+  await confirmationTurn(first.service, {proposalId: firstProposal.proposal_id, confirmed: true})
+  await confirmationTurn(second.service, {proposalId: secondProposal.proposal_id, confirmed: true})
+
+  const eventId = (service: ReturnType<typeof confirmationService>): string | undefined => [
+    ...service.injected,
+    ...service.service.queuedHostItems().map(item => item.intent.item),
+  ].find(item => item.event_id.startsWith('project-confirmation:'))?.event_id
+  assert.notEqual(eventId(first), eventId(second))
 })
 
 test('a second utterance captured during the reserved confirmation cannot produce another reply', async () => {

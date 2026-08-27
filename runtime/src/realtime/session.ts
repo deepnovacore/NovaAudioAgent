@@ -68,7 +68,12 @@ export interface SessionProvider {
       readonly confirmationTimeout?: number | null
       readonly asUserActivation?: boolean
     },
-  ): Promise<{readonly session_epoch: number; readonly host_item_id: string}>
+  ): Promise<{
+    readonly session_epoch: number
+    readonly host_item_id: string
+    readonly provider_item_id?: string
+  }>
+  retireHostItem?(providerItemId: string): Promise<boolean>
   createResponse(intent: HostResponseIntent): Promise<void>
   cancelResponse(responseId: string): Promise<void>
   close(): Promise<void>
@@ -577,12 +582,38 @@ export class RealtimeSession {
     return this.#injectHostItem(item, {confirmationTimeout: null, asUserActivation: false})
   }
 
+  /** Retire one exact provider-visible host item without weakening the answered-event ledger. */
+  async retireHostEvent(eventId: string): Promise<boolean> {
+    const identity = this.#state.injectedProviderItem(eventId)
+    if (identity?.epoch !== this.sessionEpoch) return false
+    if (this.#provider.retireHostItem === undefined) return false
+    let retired: boolean
+    try {
+      retired = await this.#provider.retireHostItem(identity.provider_item_id)
+    } catch (cause) {
+      throw new RealtimeDeliveryError(`host item retirement failed: ${String(cause)}`)
+    }
+    if (!retired) return false
+    return this.#state.releaseInjectedProviderItem(eventId, identity)
+  }
+
+  /** Return an un-heard event's delivery authority after its provider session has been replaced. */
+  reopenHostEvent(eventId: string): boolean {
+    const responded = this.#state.releaseRespondedEvent(eventId)
+    const injected = this.#state.releaseInjectedEvent(eventId)
+    return responded || injected
+  }
+
   async #injectHostItem(
     item: HostContextItem,
     options: {readonly confirmationTimeout: number | null; readonly asUserActivation: boolean},
   ): Promise<boolean> {
     if (this.#state.injectedEventEpoch(item.event_id) !== undefined) return false
-    let identity: {readonly session_epoch: number; readonly host_item_id: string}
+    let identity: {
+      readonly session_epoch: number
+      readonly host_item_id: string
+      readonly provider_item_id?: string
+    }
     try {
       identity = options.asUserActivation
         ? await this.#provider.injectHostItem(item, {
@@ -606,7 +637,7 @@ export class RealtimeSession {
     ) {
       throw new TypeError('host item confirmation identity mismatch')
     }
-    this.#state.recordInjectedEvent(item.event_id)
+    this.#state.recordInjectedEvent(item.event_id, identity.provider_item_id)
     return true
   }
 

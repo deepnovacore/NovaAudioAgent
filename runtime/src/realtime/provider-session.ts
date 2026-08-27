@@ -206,6 +206,22 @@ export class RealtimeProviderSession {
     return structuredClone(result)
   }
 
+  async retireHostItem(input: string, signal?: AbortSignal): Promise<boolean> {
+    const providerItemId = realtimeIdentifierSchema.parse(input)
+    const owner = this.#requiredConnectionOwner()
+    if (this.#provider.retireHostItem === undefined) return false
+    try {
+      await this.#provider.retireHostItem(
+        providerItemId,
+        combinedSignal(owner.controller.signal, signal),
+      )
+      this.#assertCurrentConnection(owner)
+      return true
+    } catch (error) {
+      throw protocolFailure('host item retirement failed', error)
+    }
+  }
+
   async injectWorkspaceContext(
     input: HostContextItem,
     options: Omit<InjectHostItemOptions, 'asUserActivation'> = {},

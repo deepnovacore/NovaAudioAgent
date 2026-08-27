@@ -1414,12 +1414,12 @@
     },
     {
       "file": "runtime/src/realtime/service.ts",
-      "kind": "string_length",
+      "kind": "numeric_template",
       "occurrence_index": 4,
-      "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
-      "disposition": "intentional_utf16",
+      "snippet_sha256": "73f3d5bff15a17e3969ea80c5dd3718c21c6aea00d5d3791deed51ed23dbcc91",
+      "disposition": "wire_json",
       "test": "runtime/test/realtime-service.test.ts",
-      "behavior": "Guard recovery telemetry counts Python code points in astral history"
+      "behavior": "a confirmation transition has a stable event id within its proposal lifecycle"
     },
     {
       "file": "runtime/src/realtime/service.ts",
@@ -1432,8 +1432,17 @@
     },
     {
       "file": "runtime/src/realtime/service.ts",
-      "kind": "numeric_template",
+      "kind": "string_length",
       "occurrence_index": 6,
+      "snippet_sha256": "e7189396f7fd485fc1e379182738782c8c54ac319c21d732fafa00d22220f260",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/realtime-service.test.ts",
+      "behavior": "Guard recovery telemetry counts Python code points in astral history"
+    },
+    {
+      "file": "runtime/src/realtime/service.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 7,
       "snippet_sha256": "312a76f17befeed056da4dbb995c9d86554a275b67fb89f365088c0a6039e0d9",
       "disposition": "wire_json",
       "test": "runtime/test/realtime-service.test.ts",
@@ -1442,7 +1451,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 7,
+      "occurrence_index": 8,
       "snippet_sha256": "88c621c35cd74d7f42af02c856f028ef45106d5181cd15e91d678c69d7019eb6",
       "disposition": "wire_json",
       "test": "runtime/test/realtime-service.test.ts",
@@ -1451,7 +1460,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 8,
+      "occurrence_index": 9,
       "snippet_sha256": "a947109c5fb07fd3b221a2f220031120b6f5a79089dad0ff6ce5cbe7f27cc781",
       "disposition": "wire_json",
       "test": "runtime/test/realtime-service.test.ts",
@@ -1460,7 +1469,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 9,
+      "occurrence_index": 10,
       "snippet_sha256": "a3e1f4935b0919b346c2caf4da18078a1ebaf6451eb7f7b5dc79c11629b6368c",
       "disposition": "wire_json",
       "test": "runtime/test/realtime-service.test.ts",
@@ -1469,7 +1478,7 @@
     {
       "file": "runtime/src/realtime/service.ts",
       "kind": "numeric_template",
-      "occurrence_index": 10,
+      "occurrence_index": 11,
       "snippet_sha256": "a540ffd17090437f8d94ce8c1d341ca870696286623dee8d4e18cfdcfa78af6a",
       "disposition": "wire_json",
       "test": "runtime/test/realtime-service.test.ts",
