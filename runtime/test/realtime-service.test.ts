@@ -2401,6 +2401,129 @@ test('an immediate Codex startup failure waits behind a playing acknowledgement 
   )
 })
 
+test('failed handoff fences an undelivered semantic acknowledgement', async () => {
+  const {service} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'build timer',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
+    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+  })
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'pending')
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'failed', trust: 'trusted_system',
+      content: {error: 'spawn_failed', stage: 'spawn'}, refs: [],
+    },
+  })
+
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
+  assert.equal(service.session.delegateState('d-1'), 'failed')
+})
+
+test('failed handoff suppresses a bound unspoken acknowledgement', async () => {
+  const {service, session} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'build timer',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
+    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'origin',
+    status: 'completed', reason: '',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'ack'})
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'bound')
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'failed', trust: 'trusted_system',
+      content: {error: 'spawn_failed', stage: 'spawn'}, refs: [],
+    },
+  })
+  await service.handleEvent({
+    kind: 'response_audio_delta', session_epoch: 1,
+    response_id: 'ack', pcm: new Uint8Array([0, 1]),
+  })
+
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.equal(session.currentGeneration, null)
+  assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
+})
+
+test('failed handoff suppresses a requested acknowledgement when its response starts', async () => {
+  const {service, session} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'build timer',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
+    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+  })
+  await service.reconnectForTest()
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'requested')
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'failed', trust: 'trusted_system',
+      content: {error: 'spawn_failed', stage: 'spawn'}, refs: [],
+    },
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 2, response_id: 'late-ack'})
+  await service.handleEvent({
+    kind: 'response_audio_delta', session_epoch: 2,
+    response_id: 'late-ack', pcm: new Uint8Array([0, 1]),
+  })
+
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.equal(session.currentGeneration, null)
+  assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
+})
+
 /**
  * Two user turns and two responses, which is the smallest shape that can tell binding order apart.
  *

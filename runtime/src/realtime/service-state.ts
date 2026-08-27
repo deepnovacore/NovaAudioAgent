@@ -169,7 +169,7 @@ export interface SemanticAcknowledgement {
   origin_response_id: string | null
   origin_user_input_revision: number | null
   origin_delivered: boolean
-  phase: 'pending' | 'queued' | 'requested' | 'bound' | 'delivered'
+  phase: 'pending' | 'queued' | 'requested' | 'bound' | 'delivered' | 'cancelled'
   response_id: string | null
   binding: 'continuation' | 'fallback' | null
   failed_retry_consumed: boolean

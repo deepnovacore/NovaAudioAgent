@@ -2921,6 +2921,101 @@ def test_public_semantic_acknowledgement_lookup_requires_bound_background_event(
     assert service.semantic_acknowledgement_for("missing") is None
 
 
+@pytest.mark.asyncio
+async def test_failed_handoff_fences_undelivered_semantic_acknowledgement() -> None:
+    service, _provider, runtime, _frames = make_service()
+    await service.connect()
+    await service.handle_event(ResponseStarted(1, "origin"))
+    await service.handle_event(
+        ToolCallReady(
+            session_epoch=1,
+            call_id="call-1",
+            item_id="tool-1",
+            name="codex__run",
+            arguments={"work_order": "实现计时器"},
+            response_id="origin",
+        )
+    )
+    acknowledgement = service._semantic_acknowledgements["background:d-1"]
+    assert acknowledgement.phase == "pending"
+
+    event = HandoffEvent(
+        channel="codex",
+        delegate_id="d-1",
+        origin_ref="conversation:1",
+        outcome="failed",
+        trust="trusted_system",
+        content={"error": "spawn_failed", "stage": "spawn"},
+    )
+    project_claimed_handoff(service, runtime, event, op="run")
+    service._queue_semantic_acknowledgement(acknowledgement)
+
+    assert acknowledgement.phase == "cancelled"
+    assert service.semantic_acknowledgement_for("origin") is None
+    assert [queued.intent.item.event_id for queued in service._host_items] == ["final:d-1"]
+    assert service.session.delegate_state("d-1") == "failed"
+
+
+@pytest.mark.asyncio
+async def test_failed_handoff_suppresses_bound_unspoken_acknowledgement() -> None:
+    service, _provider, runtime, frames = make_service()
+    await service.connect()
+    acknowledgement = _SemanticAcknowledgement(
+        event_id="background:d-1",
+        summary="实现计时器",
+    )
+    service._semantic_acknowledgements[acknowledgement.event_id] = acknowledgement
+    service._queue_semantic_acknowledgement(acknowledgement)
+    await service.flush_host_items()
+    await service.handle_event(ResponseStarted(1, "ack-response"))
+    assert acknowledgement.phase == "bound"
+
+    event = HandoffEvent(
+        channel="codex",
+        delegate_id="d-1",
+        origin_ref="conversation:1",
+        outcome="failed",
+        trust="trusted_system",
+        content={"error": "spawn_failed", "stage": "spawn"},
+    )
+    project_claimed_handoff(service, runtime, event, op="run")
+    await service.handle_event(ResponseAudioDelta(1, "ack-response", b"\x00\x01"))
+
+    assert acknowledgement.phase == "cancelled"
+    assert frames == []
+    assert [queued.intent.item.event_id for queued in service._host_items] == ["final:d-1"]
+
+
+@pytest.mark.asyncio
+async def test_failed_handoff_suppresses_requested_acknowledgement_when_response_starts() -> None:
+    service, _provider, runtime, frames = make_service()
+    await service.connect()
+    acknowledgement = _SemanticAcknowledgement(
+        event_id="background:d-1",
+        summary="实现计时器",
+    )
+    service._semantic_acknowledgements[acknowledgement.event_id] = acknowledgement
+    service._queue_semantic_acknowledgement(acknowledgement)
+    await service.flush_host_items()
+    assert acknowledgement.phase == "requested"
+
+    event = HandoffEvent(
+        channel="codex",
+        delegate_id="d-1",
+        origin_ref="conversation:1",
+        outcome="failed",
+        trust="trusted_system",
+        content={"error": "spawn_failed", "stage": "spawn"},
+    )
+    project_claimed_handoff(service, runtime, event, op="run")
+    await service.handle_event(ResponseStarted(1, "late-ack-response"))
+    await service.handle_event(ResponseAudioDelta(1, "late-ack-response", b"\x00\x01"))
+
+    assert acknowledgement.phase == "cancelled"
+    assert frames == []
+    assert [queued.intent.item.event_id for queued in service._host_items] == ["final:d-1"]
+
+
 def project_claimed_handoff(
     service: RealtimeService,
     runtime: FakeRuntime,

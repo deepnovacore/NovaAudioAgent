@@ -233,6 +233,16 @@ class RealtimeSession:
     def response_has_spoken(self, response_id: str | None) -> bool:
         return response_id is not None and response_id == self._spoken_response_id
 
+    def suppress_response(self, response_id: str) -> bool:
+        """Give the host sole speech ownership before provider audio is attributed."""
+        generation = self._playback.current
+        if self.response_has_spoken(response_id) or (
+            generation is not None and generation.response_id == response_id
+        ):
+            return False
+        self._suppressed_response_ids.add(response_id)
+        return True
+
     def event_was_spoken(self, event_id: str) -> bool:
         return event_id in self._spoken_event_ids
 

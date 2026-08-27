@@ -225,7 +225,9 @@ class _SemanticAcknowledgement:
     origin_response_id: str | None = None
     origin_user_input_revision: int | None = None
     origin_delivered: bool = False
-    phase: Literal["pending", "queued", "requested", "bound", "delivered"] = "pending"
+    phase: Literal[
+        "pending", "queued", "requested", "bound", "delivered", "cancelled"
+    ] = "pending"
     response_id: str | None = None
     binding: Literal["continuation", "fallback"] | None = None
     failed_retry_consumed: bool = False
@@ -955,6 +957,7 @@ class RealtimeService:
         if isinstance(event, ResponseStarted) and accepted:
             if not self.session.response_event_ids(event.response_id):
                 self._bind_response_user_origin(event.session_epoch, event.response_id)
+            self._suppress_cancelled_semantic_acknowledgement(event.response_id)
             self._bind_requested_semantic_acknowledgement(event.response_id)
             self._bind_continuation(event.response_id)
         if self._on_caption is not None:
@@ -2395,7 +2398,7 @@ class RealtimeService:
                 (
                     current_id
                     for current_id, current in self._semantic_acknowledgements.items()
-                    if current.phase == "delivered"
+                    if current.phase in {"delivered", "cancelled"}
                 ),
                 None,
             )
@@ -2425,7 +2428,7 @@ class RealtimeService:
                 (
                     event_id
                     for event_id, acknowledgement in self._semantic_acknowledgements.items()
-                    if acknowledgement.phase == "delivered"
+                    if acknowledgement.phase in {"delivered", "cancelled"}
                 ),
                 None,
             )
@@ -2439,7 +2442,7 @@ class RealtimeService:
         self,
         acknowledgement: _SemanticAcknowledgement,
     ) -> None:
-        if acknowledgement.phase in {"requested", "bound", "delivered"}:
+        if acknowledgement.phase in {"requested", "bound", "delivered", "cancelled"}:
             return
         if any(queued.semantic_event_id == acknowledgement.event_id for queued in self._host_items):
             acknowledgement.phase = "queued"
@@ -2476,6 +2479,46 @@ class RealtimeService:
         acknowledgement.phase = "bound"
         acknowledgement.response_id = response_id
         acknowledgement.binding = "fallback"
+
+    def _suppress_cancelled_semantic_acknowledgement(self, response_id: str) -> bool:
+        event_ids = self.session.response_event_ids(response_id)
+        acknowledgement = next(
+            (
+                current
+                for current in self._semantic_acknowledgements.values()
+                if current.phase == "cancelled" and current.event_id in event_ids
+            ),
+            None,
+        )
+        return acknowledgement is not None and self.session.suppress_response(response_id)
+
+    def _fence_semantic_acknowledgement(self, delegate_id: str) -> bool:
+        acknowledgement = self._semantic_acknowledgements.get(f"background:{delegate_id}")
+        if acknowledgement is None or acknowledgement.phase in {"delivered", "cancelled"}:
+            return False
+        if acknowledgement.origin_delivered or self.session.event_was_spoken(
+            acknowledgement.event_id
+        ):
+            acknowledgement.phase = "delivered"
+            acknowledgement.response_id = None
+            acknowledgement.binding = None
+            return False
+        if acknowledgement.phase == "bound":
+            response_id = acknowledgement.response_id
+            if response_id is None or not self.session.suppress_response(response_id):
+                return False
+        retained = [
+            queued
+            for queued in self._host_items
+            if queued.semantic_event_id != acknowledgement.event_id
+        ]
+        if len(retained) != len(self._host_items):
+            heapq.heapify(retained)
+            self._host_items = retained
+        acknowledgement.phase = "cancelled"
+        acknowledgement.response_id = None
+        acknowledgement.binding = None
+        return True
 
     def _finish_semantic_acknowledgement(self, event: ResponseTerminal) -> None:
         acknowledgements = tuple(
@@ -2685,6 +2728,8 @@ class RealtimeService:
         elif isinstance(event, HandoffEvent):
             display_name = self._executor_display_name(event.channel, manifest=manifest)
             assert claimed_delegate is not None
+            if event.outcome != "ok":
+                self._fence_semantic_acknowledgement(event.delegate_id)
             direct_suggestion_handoff = (
                 manifest.policy.suggest
                 and event.outcome == "ok"

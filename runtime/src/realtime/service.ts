@@ -1127,6 +1127,7 @@ export class RealtimeService {
       acknowledgement.phase === 'requested'
       || acknowledgement.phase === 'bound'
       || acknowledgement.phase === 'delivered'
+      || acknowledgement.phase === 'cancelled'
     ) {
       return
     }
@@ -1240,6 +1241,46 @@ export class RealtimeService {
       acknowledgement.binding = 'fallback'
       return
     }
+  }
+
+  #suppressCancelledSemanticAcknowledgement(responseId: string): boolean {
+    const eventIds = this.session.responseEventIds(responseId)
+    const acknowledgement = [...this.#semanticAcknowledgements.values()].find(current => (
+      current.phase === 'cancelled' && eventIds.includes(current.event_id)
+    ))
+    return acknowledgement !== undefined && this.session.suppressResponse(responseId)
+  }
+
+  #fenceSemanticAcknowledgement(delegateId: string): boolean {
+    const acknowledgement = this.#semanticAcknowledgements.get(`background:${delegateId}`)
+    if (
+      acknowledgement === undefined
+      || acknowledgement.phase === 'delivered'
+      || acknowledgement.phase === 'cancelled'
+    ) return false
+    if (
+      acknowledgement.origin_delivered
+      || this.session.eventWasSpoken(acknowledgement.event_id)
+    ) {
+      this.#markAcknowledgementDelivered(acknowledgement)
+      return false
+    }
+    if (acknowledgement.phase === 'bound') {
+      const responseId = acknowledgement.response_id
+      if (responseId === null || !this.session.suppressResponse(responseId)) return false
+    }
+    const retained = this.#hostItems.filter(queued => (
+      queued.semantic_event_id !== acknowledgement.event_id
+    ))
+    if (retained.length !== this.#hostItems.length) {
+      retained.sort(compareQueuedHostResponses)
+      this.#hostItems.length = 0
+      this.#hostItems.push(...retained)
+    }
+    acknowledgement.phase = 'cancelled'
+    acknowledgement.response_id = null
+    acknowledgement.binding = null
+    return true
   }
 
   /**
@@ -1813,6 +1854,7 @@ export class RealtimeService {
     if (claimed?.executor !== event.payload.channel) return
     const payload = event.payload
     const displayName = this.#executorDisplayName(payload.channel)
+    if (payload.outcome !== 'ok') this.#fenceSemanticAcknowledgement(payload.delegate_id)
     const directSuggestionHandoff = manifest.policy.suggest === true
       && payload.outcome === 'ok'
       && claimed.routing_class === 'user_awaited'
@@ -2050,6 +2092,7 @@ export class RealtimeService {
       if (this.session.responseEventIds(event.response_id).length === 0) {
         this.#bindResponseUserOrigin(event.session_epoch, event.response_id)
       }
+      this.#suppressCancelledSemanticAcknowledgement(event.response_id)
       this.#bindRequestedSemanticAcknowledgement(event.response_id)
       this.#bindContinuation(event.response_id)
       this.#suppressShadowConfirmationResponse(event.session_epoch, event.response_id)
@@ -2815,7 +2858,7 @@ export class RealtimeService {
    *
    * Returns null rather than evicting something live: an acknowledgement still waiting to be spoken
    * is a promise to the user, and dropping one to make room for another would silently break it. Only
-   * already-delivered entries are reclaimed.
+   * terminal entries (delivered, or cancelled before speech) are reclaimed.
    */
   #semanticAcknowledgement(state: ToolCallState): SemanticAcknowledgement | null {
     const summary = state.acceptance.response_intent.task_summary
@@ -2830,7 +2873,9 @@ export class RealtimeService {
     }
     while (this.#semanticAcknowledgements.size >= MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS) {
       const deliveredId = [...this.#semanticAcknowledgements.entries()]
-        .find(([, current]) => current.phase === 'delivered')?.[0]
+        .find(([, current]) => (
+          current.phase === 'delivered' || current.phase === 'cancelled'
+        ))?.[0]
       if (deliveredId === undefined) return null
       this.#semanticAcknowledgements.delete(deliveredId)
     }
@@ -2860,7 +2905,9 @@ export class RealtimeService {
       >= MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS
     ) {
       const deliveredId = [...this.#semanticAcknowledgements.entries()]
-        .find(([, current]) => current.phase === 'delivered')?.[0]
+        .find(([, current]) => (
+          current.phase === 'delivered' || current.phase === 'cancelled'
+        ))?.[0]
       if (deliveredId === undefined) return false
       this.#semanticAcknowledgements.delete(deliveredId)
     }
