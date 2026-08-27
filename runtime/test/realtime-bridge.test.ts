@@ -300,6 +300,46 @@ test('project-boundary actions wait for their result while task execution stays 
   assert.equal(execution.host_item.content, '{"state":"accepted"}')
 })
 
+test('project admission refuses fields owned by a different action variant', () => {
+  const manifest = CODEX_PROJECT_MANIFEST
+  const memory = new Memory({policies: [manifest.policy]})
+  const runtime = new ScriptedRuntime(
+    new VirtualClock(),
+    memory,
+    new Map([[manifest.name, {manifest}]]),
+    {dispatch_results: [{accepted: true, delegate_id: 'must-not-dispatch'}]},
+  )
+  let identifier = 0
+  const bridge = new RealtimeRuntimeBridge({
+    runtime,
+    tools: compileToolSchema([manifest]),
+    idFactory: () => `host-${++identifier}`,
+    queryDigestKey: DIGEST_KEY,
+  })
+
+  const result = bridge.acceptToolCall({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'invalid-project-shape',
+    item_id: 'invalid-project-item',
+    name: 'codex__project',
+    arguments: {
+      action: 'start_session',
+      workspace: 'timer-app',
+      work_order: '开始实现计时器',
+    },
+    response_id: 'invalid-project-response',
+  }, {originRef: 'conversation:1'})
+
+  assert.equal(result.accepted, false)
+  assert.equal(result.code, 'invalid_params')
+  assert.deepEqual(runtime.unconsumed(), {
+    ingest_refs: 0,
+    update_results: 0,
+    dispatch_results: 1,
+  })
+})
+
 test('the golden records one result per scenario, in order', () => {
   assert.deepEqual(
     golden.scenarios.map(entry => entry.name),
@@ -408,6 +448,15 @@ test('an unrecognised schema type refuses rather than passes', () => {
   // A schema that is not an object schema.
   assert.equal(validParams({}, {type: 'array'}), false)
   assert.equal(validParams({}, {type: 'object'}), false, 'properties is required')
+  assert.equal(
+    validParams({action: 'a'}, {
+      type: 'object',
+      properties: {action: {type: 'string'}},
+      oneOf: [],
+    }),
+    false,
+    'domain unions require a dedicated validator',
+  )
   // A malformed `required`.
   assert.equal(
     validParams({}, {type: 'object', properties: {}, required: 'field'}),

@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 from nova_audio_agent.events import UserInput, WakeReason
+from nova_audio_agent.executors.codex_project_contract import normalize_project_request
 from nova_audio_agent.memory import USER_PRIORITY, MemoryRef
 from nova_audio_agent.ports import DelegateRequest, UpdateSpec
 from nova_audio_agent.realtime.protocol import HostContextItem, HostResponseIntent, ToolCallReady
@@ -127,7 +128,14 @@ class RealtimeRuntimeBridge:
             return self._refused(call, "missing_origin_ref")
         adapter = self._runtime.executors.get(binding.executor)
         op = None if adapter is None else adapter.manifest.op(binding.op)
-        if op is None or not _valid_params(arguments, op.params):
+        if op is None:
+            return self._refused(call, "invalid_params")
+        if binding.executor == "codex" and binding.op == "project":
+            normalized_project = normalize_project_request(arguments)
+            if normalized_project is None:
+                return self._refused(call, "invalid_params")
+            arguments = normalized_project
+        elif not _valid_params(arguments, op.params):
             return self._refused(call, "invalid_params")
         if binding.op == "start" and adapter.manifest.policy.suggest:
             # R128: a suggest-channel start window is an ambient observation —
@@ -342,6 +350,10 @@ class RealtimeRuntimeBridge:
 
 
 def _valid_params(arguments: dict[str, Any], schema: dict[str, Any]) -> bool:
+    # Domain unions require an action-aware validator. Failing closed here prevents
+    # a future oneOf schema from being silently treated as its permissive top level.
+    if "oneOf" in schema:
+        return False
     if schema.get("type") != "object":
         return False
     properties = schema.get("properties")

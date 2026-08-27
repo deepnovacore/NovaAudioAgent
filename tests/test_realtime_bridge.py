@@ -13,6 +13,7 @@ from nova_audio_agent.clock import RealClock, VirtualClock
 from nova_audio_agent.executors.codex import CodexProcessStatus, CodexTransportResult
 from nova_audio_agent.executors.codex_app_server import SteerTransportResult
 from nova_audio_agent.executors.codex_live import CODEX_LIVE_MANIFEST, CodexLiveAdapter
+from nova_audio_agent.executors.codex_project_live import CODEX_PROJECT_LIVE_MANIFEST
 from nova_audio_agent.executors.search import SEARCH_MANIFEST, SearchAdapter
 from nova_audio_agent.memory import CONVERSATION_CHANNEL, USER_PRIORITY, HandoffPolicy, Memory
 from nova_audio_agent.ports import ExecutorManifest, Handoff, OpSpec
@@ -44,6 +45,42 @@ def test_project_boundary_sync_classifier_fails_closed_for_unhashable_actions(
     malformed: object,
 ) -> None:
     assert not requires_synchronous_result("codex", "project", {"action": malformed}, False)
+
+
+@pytest.mark.asyncio
+async def test_project_bridge_and_executor_share_the_same_action_shape() -> None:
+    bridge, runtime = make_project_bridge()
+
+    invalid = await bridge.accept_tool_call(
+        ToolCallReady(
+            session_epoch=1,
+            call_id="call-invalid",
+            item_id="item-invalid",
+            name="codex__project",
+            arguments={
+                "action": "start_session",
+                "workspace": "timer-app",
+                "work_order": "开始实现计时器",
+            },
+        ),
+        origin_ref="conversation:1",
+    )
+    valid = await bridge.accept_tool_call(
+        ToolCallReady(
+            session_epoch=1,
+            call_id="call-valid",
+            item_id="item-valid",
+            name="codex__project",
+            arguments={"action": "start_session", "work_order": "开始实现计时器"},
+        ),
+        origin_ref="conversation:1",
+    )
+
+    assert invalid.accepted is False
+    assert invalid.code == "invalid_params"
+    assert valid.accepted is True
+    (delegate,) = runtime.delegates.snapshot()
+    assert delegate.request == {"action": "start_session", "work_order": "开始实现计时器"}
 
 
 class PendingCodexWorker:
@@ -179,6 +216,14 @@ class WatchAdapter:
         return Handoff(outcome="ok", trust="trusted_system", content={})
 
 
+class ProjectManifestAdapter:
+    manifest = CODEX_PROJECT_LIVE_MANIFEST
+
+    async def dispatch(self, op: str, request: dict[str, object], ctx: object) -> Handoff:
+        del op, request, ctx
+        return Handoff(outcome="ok", trust="trusted_system", content={})
+
+
 def make_search_bridge() -> tuple[RealtimeRuntimeBridge, Runtime]:
     """The production pairing (D19): codex owns side effects, search is the readonly always-on."""
     clock = VirtualClock()
@@ -248,6 +293,32 @@ def make_watch_bridge() -> tuple[RealtimeRuntimeBridge, Runtime]:
     )
     tools = compile_tool_schema((adapter.manifest,))
     bridge = RealtimeRuntimeBridge(runtime=runtime, tools=tools, id_factory=lambda: "host-watch")
+    return bridge, runtime
+
+
+def make_project_bridge() -> tuple[RealtimeRuntimeBridge, Runtime]:
+    clock = VirtualClock()
+    adapter = ProjectManifestAdapter()
+    memory = Memory(policies=(adapter.manifest.policy,))
+    memory.append(
+        CONVERSATION_CHANNEL,
+        ts=clock.now(),
+        trust="trusted_user",
+        priority=USER_PRIORITY,
+        content={"text": "开始实现计时器"},
+    )
+    runtime = Runtime(
+        clock=clock,
+        memory=memory,
+        executors={"codex": adapter},  # type: ignore[dict-item]
+    )
+    tools = compile_tool_schema((adapter.manifest,))
+    id_values = ids("host-invalid", "event-invalid", "host-valid", "event-valid")
+    bridge = RealtimeRuntimeBridge(
+        runtime=runtime,
+        tools=tools,
+        id_factory=lambda: next(id_values),
+    )
     return bridge, runtime
 
 

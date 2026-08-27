@@ -17,6 +17,7 @@
 
 import { createHmac, randomBytes } from 'node:crypto'
 import { canonicalJson } from '../canonical-json.js'
+import {validateCodexRequest} from '../codex-contract.js'
 import type { JsonValue } from '../events.js'
 import { USER_PRIORITY } from '../memory.js'
 import type { DelegateRequest, UpdateSpec } from '../ports.js'
@@ -195,7 +196,8 @@ export class RealtimeRuntimeBridge {
       return this.#refused(call, 'unsupported_tool')
     }
 
-    const {origin_ref: providerOriginRef, ...arguments_} = call.arguments
+    const {origin_ref: providerOriginRef, ...argumentSnapshot} = call.arguments
+    let arguments_: Readonly<Record<string, JsonValue>> = argumentSnapshot
     // Host-ingested evidence outranks whatever the provider supplied. A model that has just heard
     // the user must not be able to reach past that transcript to an older reference.
     const resolvedOriginRef = originRef ?? this.#latestUserOriginRef ?? providerOriginRef
@@ -204,7 +206,12 @@ export class RealtimeRuntimeBridge {
     }
     const adapter = this.#runtime.executors.get(binding.executor)
     const op = adapter?.manifest.ops.find(candidate => candidate.name === binding.op) ?? null
-    if (op === null || !validParams(arguments_, op.params)) {
+    if (op === null) return this.#refused(call, 'invalid_params')
+    if (binding.executor === 'codex' && binding.op === 'project') {
+      const normalized = validateCodexRequest('project', 'project', arguments_)
+      if (!normalized.ok) return this.#refused(call, 'invalid_params')
+      arguments_ = normalized.value as Readonly<Record<string, JsonValue>>
+    } else if (!validParams(arguments_, op.params)) {
       return this.#refused(call, 'invalid_params')
     }
     if (binding.op === 'start' && adapter?.manifest.policy.suggest === true) {
@@ -537,6 +544,9 @@ export function validParams(
   arguments_: Readonly<Record<string, JsonValue>>,
   schema: Readonly<Record<string, JsonValue>>,
 ): boolean {
+  // Domain unions require a dedicated validator. Ignoring `oneOf` would validate only the
+  // permissive top-level properties and admit fields belonging to a different variant.
+  if ('oneOf' in schema) return false
   if (schema.type !== 'object') return false
   const properties = schema.properties
   if (!isJsonObject(properties)) return false
