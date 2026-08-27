@@ -51,6 +51,8 @@ test('projects voice and Codex state into one compact visible line', () => {
 
   assert.equal(state.statusLine, '聆听中 · Codex 工作中')
   assert.doesNotMatch(state.statusLine, /工作区|Session|AEC/u)
+  assert.equal(state.projectLabel, '工作区 alpha · Session Task 1')
+  assert.equal(state.codexMode, 'project')
 
   const waiting = deriveOrbState({
     ...base,
@@ -65,6 +67,17 @@ test('projects voice and Codex state into one compact visible line', () => {
     '创建工作区 “tetris-game”\n尚未执行 · 90 秒后自动取消',
   )
   assert.equal(waiting.confirmationVisible, true)
+  assert.equal(waiting.codexMode, 'confirmation')
+})
+
+test('hides the project row only when neither workspace nor session is known', () => {
+  const hidden = deriveOrbState(base)
+  assert.equal(hidden.projectLabel, '')
+  assert.equal(hidden.codexMode, 'hidden')
+
+  const workspaceOnly = deriveOrbState({...base, workspace: 'alpha'})
+  assert.equal(workspaceOnly.projectLabel, '工作区 alpha')
+  assert.equal(workspaceOnly.codexMode, 'project')
 })
 
 test('describes workspace reuse as reuse rather than creation', () => {

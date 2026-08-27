@@ -176,6 +176,35 @@ test('all seven presence booleans survive initial and confirmed public views', a
   assert.deepEqual(renders.at(-1).secretsPresent, confirmedPresence)
 })
 
+test('a fully accepted save announces backend restart without claiming it already completed', async () => {
+  const notices = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView({pipelineMode: 'cascaded'})},
+    render: () => {},
+    status: () => {},
+    notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+
+  await controller.push({pipelineMode: 'cascaded'}, '语音管线已保存')
+
+  assert.deepEqual(notices, ['restarting'])
+})
+
+test('a Main settings push outranks an older initial get snapshot', () => {
+  const renders = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView()},
+    render: view => renders.push(view),
+    status: () => {},
+  })
+
+  controller.syncView(publicView({backendStatus: 'starting'}))
+  controller.setView(publicView({backendStatus: 'connected'}))
+
+  assert.equal(renders.at(-1).backendStatus, 'starting')
+})
+
 test('presence metadata keeps only known own boolean data properties without invoking getters', async () => {
   let getterCalls = 0
   const hostilePresence = Object.create({ dashscopeApiKey: true })
@@ -563,6 +592,10 @@ test('key usage labels are derived from public pipeline selection only', () => {
 test('the panel states what applies immediately and what triggers a controlled reconnect', () => {
   assert.match(html, /运行配置保存后，后台会自动重启并重新连接/)
   assert.match(html, /配色更改立即生效/)
+  assert.match(html, /<p id="restart-notice" class="warning" hidden><\/p>/)
+  assert.match(script, /已保存，后台正在重启并重新连接/u)
+  assert.match(script, /已保存，后台已重启并重新连接/u)
+  assert.match(script, /view\.backendStatus === 'connected'/)
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
 })
 

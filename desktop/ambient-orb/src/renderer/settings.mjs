@@ -34,6 +34,7 @@ const secretRevisions = createSecretRevisions(SECRET_KEYS)
 
 const statusLabel = document.querySelector('#status')
 const backendStatus = document.querySelector('#backend-status')
+const restartNotice = document.querySelector('#restart-notice')
 const backendRetry = document.querySelector('#backend-retry')
 const microphoneStatus = document.querySelector('#microphone-status')
 const microphoneRetry = document.querySelector('#microphone-retry')
@@ -231,10 +232,37 @@ function render(view, drafts) {
   warning.hidden = view.keyringAvailable !== false
 }
 
+let restartPending = false
+let restartTransitionSeen = false
+
+function updateRestartNotice(phase) {
+  restartNotice.hidden = false
+  restartNotice.dataset.state = phase
+  if (phase === 'restarting') {
+    restartPending = true
+    restartTransitionSeen = false
+    restartNotice.textContent = '已保存，后台正在重启并重新连接'
+    return
+  }
+  restartPending = false
+  restartNotice.textContent = '已保存，后台已重启并重新连接'
+}
+
 const controller = createSettingsController({
   api,
   render,
   status: note => { statusLabel.textContent = note },
+  notice: updateRestartNotice,
+})
+
+api.onChanged(view => {
+  controller.syncView(view)
+  if (!restartPending) return
+  if (view.backendStatus !== 'connected') {
+    restartTransitionSeen = true
+  } else if (restartTransitionSeen) {
+    updateRestartNotice('complete')
+  }
 })
 
 function push(patch, note) {
@@ -371,7 +399,7 @@ modelBaseUrl.addEventListener('change', () => { void saveText('modelBaseUrl', mo
 codexRescan.addEventListener('click', async () => {
   statusLabel.textContent = '正在扫描 Codex…'
   try {
-    controller.setView(await api.rescanCodex())
+    controller.syncView(await api.rescanCodex())
     statusLabel.textContent = 'Codex 扫描完成'
   } catch {
     statusLabel.textContent = 'Codex 扫描失败'
@@ -380,7 +408,7 @@ codexRescan.addEventListener('click', async () => {
 backendRetry.addEventListener('click', async () => {
   statusLabel.textContent = '正在重试后台连接…'
   try {
-    controller.setView(await api.retryBackend())
+    controller.syncView(await api.retryBackend())
     statusLabel.textContent = '已发起后台重试'
   } catch {
     statusLabel.textContent = '后台重试失败'
@@ -389,7 +417,7 @@ backendRetry.addEventListener('click', async () => {
 microphoneRetry.addEventListener('click', async () => {
   statusLabel.textContent = '正在重新检测麦克风…'
   try {
-    controller.setView(await api.retryMicrophone())
+    controller.syncView(await api.retryMicrophone())
     statusLabel.textContent = '已发起麦克风检测'
   } catch {
     statusLabel.textContent = '麦克风检测失败'

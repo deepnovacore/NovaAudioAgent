@@ -31,7 +31,7 @@ app.whenReady().then(async () => {
         const label = document.getElementById('codex-label')
         const operation = document.getElementById('codex-operation')
         const expiry = document.getElementById('codex-expiry')
-        label.dataset.visible = 'true'
+        label.dataset.mode = 'confirmation'
         operation.textContent = '恢复 “' + '工'.repeat(120) + ' / ' + '任'.repeat(120) + '”'
         expiry.textContent = '尚未执行 · 90 秒后自动取消'
         requestAnimationFrame(() => requestAnimationFrame(() => {

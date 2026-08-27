@@ -183,10 +183,10 @@ function render() {
   const state = deriveOrbState(axes)
   shell.dataset.state = state.name
   setText(stateLabel, state.statusLine)
-  setText(codexSummary, state.codexLabel)
+  setText(codexSummary, state.projectLabel)
   setText(codexOperation, state.confirmationOperation)
   setText(codexExpiry, state.confirmationStatus)
-  codexLabel.dataset.visible = String(state.confirmationVisible)
+  codexLabel.dataset.mode = state.codexMode
   setText(aecLabel, state.aecLabel)
   setAttribute(orb, 'aria-label', `${state.label}；${state.accessibleCodexLabel}`)
   orb.setAttribute('aria-pressed', String(axes.activated))

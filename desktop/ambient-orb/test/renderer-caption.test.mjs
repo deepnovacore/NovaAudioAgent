@@ -40,5 +40,6 @@ test('renderer accepts the closed public Codex project message', async () => {
   assert.match(source, /\[\.\.\.session\]\.length <= 120/)
   assert.match(source, /const PROJECT_CONFIRMATION_TTL_SECONDS = 360/)
   assert.match(source, /pendingExpires <= PROJECT_CONFIRMATION_TTL_SECONDS/)
-  assert.match(source, /codexLabel\.dataset\.visible = String\(state\.confirmationVisible\)/)
+  assert.match(source, /setText\(codexSummary, state\.projectLabel\)/)
+  assert.match(source, /codexLabel\.dataset\.mode = state\.codexMode/)
 })

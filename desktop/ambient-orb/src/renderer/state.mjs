@@ -110,6 +110,13 @@ export function deriveOrbState(input) {
       input.workspace ? `工作区 ${input.workspace}` : '',
       input.session ? `Session ${input.session}` : '',
     ].filter(Boolean)
+  const projectLabel = [
+    input.workspace ? `工作区 ${input.workspace}` : '',
+    input.session ? `Session ${input.session}` : '',
+  ].filter(Boolean).join(' · ')
+  const codexMode = pendingConfirmation
+    ? 'confirmation'
+    : projectLabel === '' ? 'hidden' : 'project'
   const codexStatus = input.codex === 'working' ? 'Codex 正在后台工作' : 'Codex 空闲'
   const compactCodexStatus = pendingConfirmation
     ? '等待你的确认'
@@ -128,6 +135,8 @@ export function deriveOrbState(input) {
       ? '需要你的确认'
       : `${compactOrbLabel(name)} · ${compactCodexStatus}`,
     codexLabel,
+    projectLabel,
+    codexMode,
     accessibleCodexLabel: pendingConfirmation
       ? `${pendingOperation}；尚未执行；等待你的确认`
       : codexLabel,

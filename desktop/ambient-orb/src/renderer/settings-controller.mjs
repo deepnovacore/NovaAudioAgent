@@ -97,7 +97,7 @@ function writePatch(value) {
   return safe
 }
 
-export function createSettingsController({ api, render, status }) {
+export function createSettingsController({ api, render, status, notice = () => {} }) {
   let view = null
   let inFlight = null
   let pending = null
@@ -155,6 +155,10 @@ export function createSettingsController({ api, render, status }) {
     return mergePatch(base, publicPatch(pending?.patch))
   }
 
+  function announce(phase) {
+    try { notice(phase) } catch { /* a UI observer cannot undo a committed settings write */ }
+  }
+
   async function flush() {
     if (inFlight || !pending) return
     const batch = pending
@@ -181,6 +185,11 @@ export function createSettingsController({ api, render, status }) {
       renderCurrent()
       status(!bridgeSaved ? '保存失败'
         : rejectedPublicFields.length > 0 ? '部分设置未保存' : batch.note)
+      if (
+        bridgeSaved
+        && rejectedPublicFields.length === 0
+        && (remoteView?.rejectedSecrets?.length ?? 0) === 0
+      ) announce('restarting')
       resolveBatch(batch, bridgeSaved, remoteView)
     } catch {
       view = composeView(confirmedView ?? view)
@@ -216,6 +225,16 @@ export function createSettingsController({ api, render, status }) {
     // not roll the panel back. Before any set response, retain selections
     // already queued behind that initial get.
     if (hasConfirmedSaveResponse) return
+    confirmedView = publicPatch(nextView)
+    view = mergePatch(confirmedView, publicPatch(inFlight?.patch))
+    view = composeView(view)
+    renderCurrent()
+  }
+
+  /** Apply a newer Main push while preserving edits that have not reached Main yet. */
+  function syncView(nextView) {
+    // Any Main push is newer than an initial get still in flight, so that get may no longer replace it.
+    hasConfirmedSaveResponse = true
     confirmedView = publicPatch(nextView)
     view = mergePatch(confirmedView, publicPatch(inFlight?.patch))
     view = composeView(view)
@@ -264,5 +283,6 @@ export function createSettingsController({ api, render, status }) {
     saveSecrets,
     setDraft,
     setView,
+    syncView,
   }
 }

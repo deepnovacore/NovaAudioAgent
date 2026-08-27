@@ -196,17 +196,17 @@ body:hover #orb-rail,
 #caption[data-role='user'] { color: rgba(190, 235, 255, .9); }
 
 #codex-label, #aec-label, #caption { display: none; }
-#shell:has(#codex-label[data-visible='true']) {
+#shell:has(#codex-label[data-mode='confirmation']) {
   gap: 5px;
 }
 
-#shell:has(#codex-label[data-visible='true']) #orb,
-#shell:has(#codex-label[data-visible='true']) .orb-canvas {
+#shell:has(#codex-label[data-mode='confirmation']) #orb,
+#shell:has(#codex-label[data-mode='confirmation']) .orb-canvas {
   width: clamp(38px, calc(100vh - 96px), 88px);
   height: clamp(38px, calc(100vh - 96px), 88px);
 }
 
-#shell:has(#codex-label[data-visible='true']) #state-label {
+#shell:has(#codex-label[data-mode='confirmation']) #state-label {
   color: #ffe1a3;
   font-size: 12px;
   font-weight: 680;
@@ -214,7 +214,7 @@ body:hover #orb-rail,
   text-shadow: 0 1px 6px rgba(0, 0, 0, .9), 0 0 12px rgba(255, 181, 71, .24);
 }
 
-#codex-label[data-visible='true'] {
+#codex-label[data-mode='confirmation'] {
   display: grid;
   width: min(174px, calc(100vw - 10px));
   max-width: calc(100vw - 10px);
@@ -237,8 +237,25 @@ body:hover #orb-rail,
   min-width: 0;
 }
 
-#codex-label[data-visible='true'] #codex-summary {
+#codex-label[data-mode='confirmation'] #codex-summary {
   display: none;
+}
+
+#codex-label[data-mode='project'] {
+  display: block;
+  width: min(172px, calc(100vw - 12px));
+  max-width: calc(100vw - 12px);
+  color: rgba(209, 219, 240, .78);
+  text-align: center;
+  white-space: normal;
+}
+
+#codex-label[data-mode='project'] #codex-summary {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
 #codex-operation {
@@ -293,7 +310,7 @@ body:hover #orb-rail,
   [data-state="permission-denied"] #orb::after { background: #ff3b30; }
   .capture-indicator { z-index: 1; }
   #state-label, #codex-label, #aec-label { color: white; text-shadow: none; }
-  #codex-label[data-visible='true'] {
+  #codex-label[data-mode='confirmation'] {
     border: 2px solid white;
     background: black;
     box-shadow: none;
