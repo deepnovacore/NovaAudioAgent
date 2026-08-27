@@ -692,12 +692,14 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
               reportedThreadId,
               {wait: true},
             )
-          } catch {
+          } catch (error) {
             await this.#store.rollbackSessionStart(
               session.session_id,
               {wait: true},
             ).catch(() => false)
-            reportedThreadId = null
+            if (!(error instanceof ProjectStateError && error.code === 'state_busy')) {
+              reportedThreadId = null
+            }
           }
         } else {
           await this.#store.rollbackSessionStart(

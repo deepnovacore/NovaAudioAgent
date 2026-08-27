@@ -284,14 +284,14 @@ function hostConfig(t: TestContext): ReturnType<typeof resolveCodexHostConfig> {
   }), catalog)
 }
 
-function projectHostConfig(t: TestContext): {
+function projectHostConfig(t: TestContext, workspaceName = 'workspace'): {
   readonly config: NonNullable<ReturnType<typeof resolveCodexHostConfig>>
   readonly stateRoot: string
   readonly managedRoot: string
 } {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'nova-codex-project-factory-')))
   const binary = join(root, 'codex-host')
-  const workspace = join(root, 'workspace')
+  const workspace = join(root, workspaceName)
   const managedRoot = join(root, 'managed')
   const stateRoot = join(root, 'state')
   writeFileSync(binary, '#!/fixture\n', {mode: 0o700})
@@ -477,4 +477,25 @@ test('realtime mode always opens one project store and exposes only project tool
   await assert.rejects(resource.close(), /retained project cleanup/u)
   await resource.close()
   assert.equal(closeCalls, 2)
+})
+
+test('realtime project startup truncates an imported directory basename to the store limit', async t => {
+  const longName = '界'.repeat(81)
+  const {config, stateRoot, managedRoot} = projectHostConfig(t, longName)
+  const resource = await createCodexAssemblyResource({
+    config,
+    composition: 'realtime',
+    transportFactory: new RecordingTransportFactory(),
+    clock: new VirtualClock(100),
+    idFactory: () => 'long-name-id',
+    projectHost: {
+      nativeLocks: new DescriptorLockAuthority(),
+      rootFiles: new DescriptorRootFileAuthority([stateRoot, managedRoot]),
+    },
+  })
+  try {
+    assert.equal(resource.projectView?.workspace_display_name, '界'.repeat(80))
+  } finally {
+    await resource.close()
+  }
 })

@@ -1287,6 +1287,37 @@ test('critical active Session publication fails closed and rolls back on persist
     }
   })
 
+test('a successful new run stays successful when only ready-state finalization is busy', async () => {
+  const value = await fixture({
+    decorateStore: store => new Proxy(store, {
+      get(target, property) {
+        if (property === 'markSessionReady') {
+          return (): never => { throw new ProjectStateError('state_busy') }
+        }
+        const member: unknown = Reflect.get(target, property, target)
+        if (typeof member !== 'function') return member
+        const bound: unknown = member.bind(target)
+        return bound
+      },
+    }),
+  })
+  try {
+    const result = await value.adapter.dispatch(
+      'project',
+      {action: 'start_session', work_order: 'completed despite bookkeeping contention'},
+      context('project', {}, value.clock),
+    )
+
+    assert.equal(result.outcome, 'ok')
+    assert.equal(result.content.code, 'completed')
+    const active = await value.store.resolveWorkspace(null)
+    assert.deepEqual(await value.store.listSessions(active), [])
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
 test('critical provider publication failure rolls back before transport while UI remains advisory',
   async () => {
     const value = await fixture()

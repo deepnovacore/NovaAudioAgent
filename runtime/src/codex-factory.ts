@@ -18,7 +18,11 @@ import type {
 import {codexCredentialApiKey} from './codex-host-config.js'
 import type {CredentialSnapshotter} from './codex-credential-snapshot.js'
 import type {PublicProjectView} from './codex-project-store.js'
-import {CodexProjectStore, ProjectStateError} from './codex-project-store.js'
+import {
+  CodexProjectStore,
+  MAX_PROJECT_WORKSPACE_NAME,
+  ProjectStateError,
+} from './codex-project-store.js'
 import type {NativeFileLockAuthority} from './native-file-lock.js'
 import type {ProjectRootFileAuthority} from './project-root-file.js'
 import {
@@ -258,7 +262,8 @@ async function createProjectResource(
       live: true,
       now: options.now ?? (() => Date.now() / 1_000),
     })
-    const displayName = basename(hostWorkspacePath(options.config.workspace)) || 'workspace'
+    const derivedName = basename(hostWorkspacePath(options.config.workspace)) || 'workspace'
+    const displayName = [...derivedName].slice(0, MAX_PROJECT_WORKSPACE_NAME).join('')
     await store.ensureImported(displayName, options.config.workspace)
     const confirmation = new ProjectConfirmationController({
       clock: options.clock,

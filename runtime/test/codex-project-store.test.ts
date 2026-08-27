@@ -650,12 +650,24 @@ test('native lock unsupported and busy results fail closed without a PID or path
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_lock_failed',
     )
     const busy: NativeFileLockAuthority = {acquire: () => ({status: 'busy'})}
-    const contended = await CodexProjectStore.open({...roots, nativeLocks: busy})
+    const busyClock = new AdvancingClock()
+    const contended = await CodexProjectStore.open({...roots, nativeLocks: busy, lockClock: busyClock})
     await assert.rejects(
       contended.snapshot(),
       (error: unknown) => error instanceof ProjectStateError && error.code === 'state_busy',
     )
+    assert.ok(busyClock.sleeps.length > 0, 'ordinary readers use the bounded lock wait')
     await contended.close()
+
+    const transientLocks = new BusyThenDescriptorLockAuthority()
+    transientLocks.busyAttempts = 2
+    const transientClock = new AdvancingClock()
+    const transient = await CodexProjectStore.open({
+      ...roots, nativeLocks: transientLocks, lockClock: transientClock,
+    })
+    await transient.snapshot()
+    assert.equal(transientClock.sleeps.length, 2)
+    await transient.close()
     for (const nativeLocks of [
       {acquire: (): NativeFileLockResult => ({status: 'failed'})},
       {acquire: (): NativeFileLockResult => { throw new Error('native sentinel') }},

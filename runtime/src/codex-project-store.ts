@@ -347,7 +347,7 @@ export class CodexProjectStore {
   }
 
   async snapshot(): Promise<ProjectSnapshot> {
-    return await this.#transaction(state => [snapshotState(state), false])
+    return await this.#transaction(state => [snapshotState(state), false], {wait: true})
   }
 
   async listWorkspaces(): Promise<readonly WorkspaceRecord[]> {
