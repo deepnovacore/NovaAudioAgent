@@ -215,6 +215,8 @@ export interface OpenAIGatewayOptions {
   readonly metrics?: MetricsSink
   readonly fetch?: typeof globalThis.fetch
   readonly requestTimeout?: number
+  /** Maximum silence between SSE body chunks, in seconds. */
+  readonly streamIdleTimeout?: number
 }
 
 /** OpenAI-compatible transport. Prompts and outputs never enter metrics or logs. */
@@ -225,6 +227,7 @@ export class OpenAIModelGateway implements ModelGateway {
   readonly #metrics: MetricsSink
   readonly #fetch: typeof globalThis.fetch
   readonly #requestTimeout: number
+  readonly #streamIdleTimeout: number
 
   constructor(options: OpenAIGatewayOptions) {
     if (!options.baseUrl || !options.apiKey) {
@@ -236,6 +239,10 @@ export class OpenAIModelGateway implements ModelGateway {
     this.#metrics = options.metrics ?? new LoggingMetrics()
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#requestTimeout = options.requestTimeout ?? 120
+    this.#streamIdleTimeout = options.streamIdleTimeout ?? 600
+    if (!Number.isFinite(this.#streamIdleTimeout) || this.#streamIdleTimeout <= 0) {
+      throw new TypeError('streamIdleTimeout must be a positive finite number')
+    }
   }
 
   async *stream(request: StreamRequest): AsyncIterable<GatewayDelta> {
@@ -247,8 +254,12 @@ export class OpenAIModelGateway implements ModelGateway {
     let finishReason: string | null = null
     let errorType: string | null = null
     try {
-      const response = await this.#post(streamRequestBody(request), request.signal)
-      for await (const event of readServerSentEvents(response)) {
+      const pending = await this.#post(streamRequestBody(request), request.signal)
+      pending.clearRequestTimeout()
+      const response = pending.response
+      for await (const event of readServerSentEvents(response, {
+        idleTimeoutMs: this.#streamIdleTimeout * 1000,
+      })) {
         const parsed = chunkSchema.safeParse(event)
         if (!parsed.success) continue
         const chunk = parsed.data
@@ -293,8 +304,14 @@ export class OpenAIModelGateway implements ModelGateway {
     let finishReason: string | null = null
     let errorType: string | null = null
     try {
-      const response = await this.#post(completeRequestBody(request), request.signal)
-      const payload = completionSchema.parse(await response.json())
+      const pending = await this.#post(completeRequestBody(request), request.signal)
+      let raw: unknown
+      try {
+        raw = await pending.response.json()
+      } finally {
+        pending.clearRequestTimeout()
+      }
+      const payload = completionSchema.parse(raw)
       requestId = payload.id ?? null
       if (payload.usage != null) {
         inputTokens = payload.usage.prompt_tokens ?? null
@@ -316,24 +333,34 @@ export class OpenAIModelGateway implements ModelGateway {
   async #post(
     body: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
-  ): Promise<Response> {
-    const timeout = AbortSignal.timeout(this.#requestTimeout * 1000)
-    const response = await this.#fetch(this.#endpoint, {
-      method: 'POST',
-      headers: {
-        // The credential rides in the header and never in a log line or metric.
-        authorization: `Bearer ${this.#apiKey}`,
-        'content-type': 'application/json',
-        accept: body.stream === true ? 'text/event-stream' : 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
-    })
-    if (!response.ok) {
-      // The provider's body can echo the prompt, so only the status is kept.
-      throw new GatewayError(`HTTPStatus${response.status}`)
+  ): Promise<{readonly response: Response; readonly clearRequestTimeout: () => void}> {
+    const timeout = new AbortController()
+    const timer = setTimeout(() => {
+      timeout.abort(new DOMException('The model request timed out', 'TimeoutError'))
+    }, this.#requestTimeout * 1000)
+    const clearRequestTimeout = (): void => { clearTimeout(timer) }
+    try {
+      const response = await this.#fetch(this.#endpoint, {
+        method: 'POST',
+        headers: {
+          // The credential rides in the header and never in a log line or metric.
+          authorization: `Bearer ${this.#apiKey}`,
+          'content-type': 'application/json',
+          accept: body.stream === true ? 'text/event-stream' : 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: signal === undefined
+          ? timeout.signal : AbortSignal.any([signal, timeout.signal]),
+      })
+      if (!response.ok) {
+        // The provider's body can echo the prompt, so only the status is kept.
+        throw new GatewayError(`HTTPStatus${response.status}`)
+      }
+      return {response, clearRequestTimeout}
+    } catch (error) {
+      clearRequestTimeout()
+      throw error
     }
-    return response
   }
 
   #record(
@@ -378,27 +405,60 @@ function classify(error: unknown): string {
  * Parse a `text/event-stream` body into decoded `data:` payloads.
  *
  * Events are separated by a blank line and a single event may carry several `data:`
- * lines that concatenate. `[DONE]` terminates the stream without being delivered.
+ * lines joined with newlines. `[DONE]` terminates the stream without being delivered.
  */
-export async function *readServerSentEvents(response: Response): AsyncIterable<unknown> {
+export async function *readServerSentEvents(
+  response: Response,
+  options: {readonly idleTimeoutMs?: number} = {},
+): AsyncIterable<unknown> {
   const body = response.body
   if (body === null) throw new GatewayError('EmptyBody')
   const decoder = new TextDecoder()
   let buffered = ''
-  for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
-    buffered += decoder.decode(chunk, {stream: true})
-    let boundary = nextBoundary(buffered)
-    while (boundary !== null) {
-      const block = buffered.slice(0, boundary.index)
-      buffered = buffered.slice(boundary.index + boundary.length)
-      const payload = dataOf(block)
-      if (payload === '[DONE]') return
-      if (payload !== null) yield JSON.parse(payload)
-      boundary = nextBoundary(buffered)
+  const reader = body.getReader()
+  let completed = false
+  try {
+    for (;;) {
+      const {done, value} = await readBodyChunk(reader, options.idleTimeoutMs)
+      if (done) {
+        completed = true
+        break
+      }
+      buffered += decoder.decode(value, {stream: true})
+      let boundary = nextBoundary(buffered)
+      while (boundary !== null) {
+        const block = buffered.slice(0, boundary.index)
+        buffered = buffered.slice(boundary.index + boundary.length)
+        const payload = dataOf(block)
+        if (payload === '[DONE]') return
+        if (payload !== null) yield JSON.parse(payload)
+        boundary = nextBoundary(buffered)
+      }
     }
+  } finally {
+    if (!completed) await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
   }
   const trailing = dataOf(buffered)
   if (trailing !== null && trailing !== '[DONE]') yield JSON.parse(trailing)
+}
+
+async function readBodyChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleTimeoutMs: number | undefined,
+): Promise<Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>['read']>>> {
+  if (idleTimeoutMs === undefined) return await reader.read()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new DOMException('The model stream became idle', 'TimeoutError'))
+    }, idleTimeoutMs)
+  })
+  try {
+    return await Promise.race([reader.read(), timedOut])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 function nextBoundary(buffered: string): {readonly index: number, readonly length: number} | null {
@@ -415,5 +475,5 @@ function dataOf(block: string): string | null {
     .split(/\r?\n/u)
     .filter(line => line.startsWith('data:'))
     .map(line => line.slice('data:'.length).replace(/^ /u, ''))
-  return payloads.length === 0 ? null : payloads.join('')
+  return payloads.length === 0 ? null : payloads.join('\n')
 }

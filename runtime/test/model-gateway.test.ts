@@ -9,6 +9,7 @@ import {
   GatewayError,
   OpenAIModelGateway,
   completeRequestBody,
+  readServerSentEvents,
   streamRequestBody,
   type GatewayDelta,
   type GatewayImage,
@@ -156,6 +157,70 @@ test('an SSE event split across several data lines is reassembled', async () => 
     seen.push(delta)
   }
   assert.deepEqual(seen, [{kind: 'text', text: '拼接'}])
+})
+
+test('SSE data lines retain their specification-mandated newline', async () => {
+  const response = new Response('data: "joined\ndata: without-newline"\n\n', {status: 200})
+  await assert.rejects(async () => {
+    for await (const event of readServerSentEvents(response)) void event
+  }, SyntaxError)
+})
+
+test('stream timeout ends after response headers and does not abort a healthy long body', async () => {
+  const gateway = new OpenAIModelGateway({
+    baseUrl: 'https://example.invalid/v1',
+    apiKey: 'k',
+    clock: new VirtualClock(),
+    metrics: {record: () => undefined},
+    requestTimeout: 0.01,
+    fetch: (_url, init) => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        const timer = setTimeout(() => {
+          controller.enqueue(new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"仍在流式传输"}}]}\n\n'
+            + 'data: [DONE]\n\n',
+          ))
+          controller.close()
+        }, 30)
+        init?.signal?.addEventListener('abort', () => {
+          clearTimeout(timer)
+          controller.error(init.signal?.reason)
+        }, {once: true})
+      },
+    }), {status: 200})),
+  })
+
+  const seen: GatewayDelta[] = []
+  for await (const delta of gateway.stream({model: 'm', system: 's', prompt: 'p'})) {
+    seen.push(delta)
+  }
+  assert.deepEqual(seen, [{kind: 'text', text: '仍在流式传输'}])
+})
+
+test('stream idle timeout cancels a body that stalls after response headers', async () => {
+  let cancelled = false
+  const gateway = new OpenAIModelGateway({
+    baseUrl: 'https://example.invalid/v1',
+    apiKey: 'k',
+    clock: new VirtualClock(),
+    metrics: {record: () => undefined},
+    streamIdleTimeout: 0.01,
+    fetch: () => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+      pull: () => new Promise<void>(() => undefined),
+      cancel: () => { cancelled = true },
+    }), {status: 200})),
+  })
+
+  await assert.rejects(async () => {
+    for await (const delta of gateway.stream({model: 'm', system: 's', prompt: 'p'})) {
+      void delta
+    }
+  }, (error: unknown) => {
+    assert.ok(error instanceof GatewayError)
+    assert.equal(error.message, '模型请求失败（TimeoutError）')
+    return true
+  })
+  assert.equal(cancelled, true)
 })
 
 test('a provider failure never echoes its body, credential, or prompt', async () => {
