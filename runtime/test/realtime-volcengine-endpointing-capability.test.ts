@@ -1089,6 +1089,19 @@ test('concurrent callers share one immutable process-cache resolution and safe t
   }])
 })
 
+test('different injected executors never share a cached capability resolution', async () => {
+  const cache = createEndpointingCapabilityCache()
+  const unavailableExecutor = new RecordingExecutor({modelUnavailable: true})
+  const unavailable = await readyProbe({executor: unavailableExecutor, cache})
+  assert.deepEqual(unavailable.result.eot, {available: false, reason: 'model_unavailable'})
+
+  const readyExecutor = new RecordingExecutor()
+  const ready = await readyProbe({executor: readyExecutor, cache})
+
+  assert.equal(ready.result.mode, 'livekit_v1_mini')
+  assert.equal(readyExecutor.calls, 2)
+})
+
 test('an aborted caller stops waiting without poisoning another shared caller', async () => {
   const cache = createEndpointingCapabilityCache()
   const clock = new ProbeClock('none', true)
@@ -1116,6 +1129,60 @@ test('an aborted caller stops waiting without poisoning another shared caller', 
   const secondResult = await second
   assert.equal(secondResult.mode, 'livekit_v1_mini')
   assert.equal(created.state.loaderCalls, 1)
+})
+
+test('a new caller never joins a shared probe whose last waiter already aborted', async () => {
+  const cache = createEndpointingCapabilityCache()
+  const clock = new ProbeClock('none', true)
+  const executor = new RecordingExecutor()
+  const created = createSurface({})
+  const loadedFixtures = await fixtures()
+  const firstAbort = new AbortController()
+  const common = {
+    executor,
+    agentsLoader: loaderFor(created.surface, created.state),
+    clock,
+    fixtures: loadedFixtures,
+    runtime: SUPPORTED_RUNTIME,
+    cache,
+  }
+  const first = probeEndpointingCapability({...common, signal: firstAbort.signal})
+
+  await Promise.resolve()
+  firstAbort.abort()
+  const firstResult = await first
+  assert.equal(firstResult.eot.reason, 'aborted')
+  const second = probeEndpointingCapability({
+    ...common,
+    signal: new AbortController().signal,
+  })
+  clock.releaseCadence()
+
+  assert.equal((await second).mode, 'livekit_v1_mini')
+  assert.equal(created.state.loaderCalls, 2)
+})
+
+test('a total timeout is transient and does not become a process-lifetime negative cache', async () => {
+  const cache = createEndpointingCapabilityCache()
+  const executor = new RecordingExecutor()
+  const created = createSurface({})
+  const loadedFixtures = await fixtures()
+  const common = {
+    executor,
+    signal: new AbortController().signal,
+    agentsLoader: loaderFor(created.surface, created.state),
+    fixtures: loadedFixtures,
+    runtime: SUPPORTED_RUNTIME,
+    cache,
+  }
+  const first = await probeEndpointingCapability({...common, clock: new ProbeClock('total')})
+  assert.equal(first.eot.reason, 'timeout')
+  assert.equal(first.vad.reason, 'timeout')
+
+  const second = await probeEndpointingCapability({...common, clock: new ProbeClock()})
+
+  assert.equal(second.mode, 'livekit_v1_mini')
+  assert.equal(created.state.loaderCalls, 2)
 })
 
 test('fallback telemetry contains only stable safe fields and is recorded once', async () => {

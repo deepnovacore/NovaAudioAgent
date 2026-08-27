@@ -1,5 +1,5 @@
 import type * as LiveKitAgents from '@livekit/agents'
-import {createHash} from 'node:crypto'
+import {createHash, randomUUID} from 'node:crypto'
 import {readFile} from 'node:fs/promises'
 import {join} from 'node:path'
 import {ReadableStream} from 'node:stream/web'
@@ -268,6 +268,7 @@ interface CacheEntry {
 
 interface CapabilityCacheState {
   readonly entries: Map<string, CacheEntry>
+  readonly executorIds: WeakMap<LiveKitExecutor, string>
   loggerInitialized: boolean
 }
 
@@ -326,6 +327,7 @@ export function createEndpointingCapabilityCache(): EndpointingCapabilityCache {
   })
   CACHE_STATES.set(cache, {
     entries: new Map(),
+    executorIds: new WeakMap(),
     loggerInitialized: false,
   })
   return cache
@@ -348,9 +350,13 @@ export async function probeEndpointingCapability(
     runtime.arch,
     libc,
     supported ? 'supported' : 'unsupported',
-    options.executor === undefined ? 'executor_context' : 'executor_injected',
+    executorCacheKey(state, options.executor),
   ].join('|')
   let entry = state.entries.get(key)
+  if (entry?.controller.signal.aborted === true) {
+    state.entries.delete(key)
+    entry = undefined
+  }
   if (entry === undefined) {
     const controller = new AbortController()
     const promise = supported
@@ -365,8 +371,12 @@ export async function probeEndpointingCapability(
       })
     entry = {controller, promise, waiters: 0}
     state.entries.set(key, entry)
+    const createdEntry = entry
     void promise.then(result => {
-      if (result.eot.reason === 'aborted' && result.vad.reason === 'aborted') {
+      const transient = result.eot.reason === 'timeout'
+        || result.vad.reason === 'timeout'
+        || (result.eot.reason === 'aborted' && result.vad.reason === 'aborted')
+      if (transient && state.entries.get(key) === createdEntry) {
         state.entries.delete(key)
       }
     })
@@ -382,6 +392,19 @@ export async function probeEndpointingCapability(
     entry.waiters -= 1
     if (callerAborted && entry.waiters === 0) entry.controller.abort()
   }
+}
+
+function executorCacheKey(
+  state: CapabilityCacheState,
+  executor: LiveKitExecutor | undefined,
+): string {
+  if (executor === undefined) return 'executor_context'
+  let id = state.executorIds.get(executor)
+  if (id === undefined) {
+    id = randomUUID()
+    state.executorIds.set(executor, id)
+  }
+  return `executor_injected_${id}`
 }
 
 async function runSharedProbe(
@@ -982,7 +1005,11 @@ function currentProbeRuntime(): EndpointingProbeRuntime {
 function cacheState(cache: EndpointingCapabilityCache): CapabilityCacheState {
   let state = CACHE_STATES.get(cache)
   if (state === undefined) {
-    state = {entries: new Map(), loggerInitialized: false}
+    state = {
+      entries: new Map(),
+      executorIds: new WeakMap(),
+      loggerInitialized: false,
+    }
     CACHE_STATES.set(cache, state)
   }
   return state
