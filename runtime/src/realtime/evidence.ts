@@ -36,6 +36,12 @@ export function finalSpeechView(outcome: string, content: unknown): string {
     stage = content.stage
     if (isObject(content.result)) finalMessage = content.result.final_message
   }
+  const category = typeof code === 'string' && code !== ''
+    ? code
+    : typeof error === 'string' && error !== '' ? error : 'no_final_message'
+  if (outcome === 'refused') {
+    return `Codex 未执行，需要选择或修正请求（${category}）`
+  }
   let text: string | undefined
   let upstreamTruncated = false
   if (isObject(finalMessage)) {
@@ -45,15 +51,9 @@ export function finalSpeechView(outcome: string, content: unknown): string {
     upstreamTruncated = finalMessage.truncated === true
   }
   if (text === undefined) {
-    const category = typeof code === 'string' && code !== ''
-      ? code
-      : typeof error === 'string' && error !== '' ? error : 'no_final_message'
     if (outcome === 'failed') {
       const failure = codexStartupFailureSpeech(category, stage)
       if (failure !== null) return failure
-    }
-    if (outcome === 'refused') {
-      return `Codex 未执行，需要选择或修正请求（${category}）`
     }
     return `Codex 任务未能确认完成（${category}）`
   }

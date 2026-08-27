@@ -2437,6 +2437,51 @@ test('failed handoff fences an undelivered semantic acknowledgement', async () =
   assert.equal(service.session.delegateState('d-1'), 'failed')
 })
 
+test('unknown handoff fences acknowledgement but remains open to a late verdict', async () => {
+  const {service} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-1',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'build timer',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'origin'})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-1', item_id: 'tool-1',
+    name: 'codex__start', arguments: {work_order: 'build timer'}, response_id: 'origin',
+  })
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'unknown', trust: 'trusted_system',
+      content: {error: 'transport_timeout'}, refs: [],
+    },
+  })
+
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  assert.equal(service.session.delegateState('d-1'), 'unknown')
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 2, ts: 2,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system',
+      content: {result: {final_message: {text: 'timer completed'}}}, refs: [],
+    },
+  })
+
+  assert.equal(service.session.delegateState('d-1'), 'completed')
+})
+
 test('failed handoff suppresses a bound unspoken acknowledgement', async () => {
   const {service, session} = pipelineService()
   await service.connect()

@@ -355,6 +355,11 @@ refusal 返回，不创建 Codex delegate；若内部仍出现 executor-side `in
 Board/UI 对 `refused` 显示“需要选择”或“未执行”，而不是红色“失败”。这项 schema 变更需要同步 Python、
 TypeScript、Memory codec、desktop wire 和 fixture；不能只在前端按错误字符串打补丁。
 
+Workspace Graph 的 task-completion observation 必须原样持久化权威 handoff outcome，不再把 `unknown`
+强制改写为 `failed`。这是枚举的追加式兼容演进：历史记录里的 `failed` 保持原值，不做回填或重解释；新记录
+可以是上述四种值。下游消费者必须显式处理 `refused` 与 `unknown`，不能再把“不是 `ok`”等价为确定失败。
+旧数据仍只包含原有取值，因此读取兼容；写入端和精确 schema/fixture 则负责接受并钉死新增取值。
+
 ## 9. 预期数据流
 
 ### 9.1 独立计时器应用

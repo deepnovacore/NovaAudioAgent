@@ -78,6 +78,15 @@ class ProjectSessionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SessionStartRollback:
+    activation_revision: int
+    previous_active_workspace_id: str | None
+    workspace_id: str
+    previous_active_session_id: str | None
+    started_session_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class SessionResumeRollback:
     activation_revision: int
     previous_active_workspace_id: str | None
@@ -100,9 +109,9 @@ class PublicProjectView:
     workspace_display_name: str | None
     session_title: str | None
     pending_confirmation: bool
-    pending_action: Literal[
-        "create_workspace", "reuse_workspace", "select_workspace", "resume_session"
-    ] | None = None
+    pending_action: (
+        Literal["create_workspace", "reuse_workspace", "select_workspace", "resume_session"] | None
+    ) = None
     pending_workspace_display_name: str | None = None
     pending_session_title: str | None = None
     pending_expires_in_seconds: float | None = None
@@ -494,10 +503,22 @@ class CodexProjectStore:
         workspace_id: str,
         display_title: str | None,
     ) -> ProjectSessionRecord:
-        def update(state: _State) -> tuple[ProjectSessionRecord, bool]:
+        session, _rollback = self.begin_session_for_run(workspace_id, display_title)
+        return session
+
+    def begin_session_for_run(
+        self,
+        workspace_id: str,
+        display_title: str | None,
+    ) -> tuple[ProjectSessionRecord, SessionStartRollback]:
+        def update(
+            state: _State,
+        ) -> tuple[tuple[ProjectSessionRecord, SessionStartRollback], bool]:
             workspace = state.workspaces.get(workspace_id)
             if workspace is None:
                 raise ProjectStateError("workspace_not_found")
+            previous_active_workspace_id = state.active_workspace_id
+            previous_active_session_id = workspace.active_session_id
             self._prune_for_session_insert(state, workspace_id)
             stamp = self._stamp()
             base_title = (
@@ -525,8 +546,15 @@ class CodexProjectStore:
                 last_used_at=stamp,
             )
             state.active_workspace_id = workspace_id
-            _bump_active_binding_revision(state)
-            return session, True
+            activation_revision = _bump_active_binding_revision(state)
+            rollback = SessionStartRollback(
+                activation_revision=activation_revision,
+                previous_active_workspace_id=previous_active_workspace_id,
+                workspace_id=workspace_id,
+                previous_active_session_id=previous_active_session_id,
+                started_session_id=session_id,
+            )
+            return (session, rollback), True
 
         return self._transaction(update)
 
@@ -555,6 +583,73 @@ class CodexProjectStore:
                     workspace,
                     active_session_id=None if replacement is None else replacement.session_id,
                 )
+                _bump_active_binding_revision(state)
+            return True, True
+
+        return self._transaction(update, wait=wait)
+
+    def rollback_session_start_for_run(
+        self,
+        rollback: SessionStartRollback,
+        *,
+        wait: bool = False,
+    ) -> bool:
+        def update(state: _State) -> tuple[bool, bool]:
+            session = state.sessions.get(rollback.started_session_id)
+            if (
+                session is None
+                or session.workspace_id != rollback.workspace_id
+                or session.state != "starting"
+                or session.codex_thread_id is not None
+            ):
+                return False, False
+            workspace = state.workspaces.get(rollback.workspace_id)
+            exact_activation = (
+                workspace is not None
+                and state.active_binding_revision == rollback.activation_revision
+                and state.active_workspace_id == rollback.workspace_id
+                and workspace.active_session_id == rollback.started_session_id
+            )
+            del state.sessions[rollback.started_session_id]
+            binding_changed = False
+            if workspace is not None and workspace.active_session_id == rollback.started_session_id:
+                previous_session = (
+                    None
+                    if rollback.previous_active_session_id is None
+                    else state.sessions.get(rollback.previous_active_session_id)
+                )
+                if (
+                    previous_session is None
+                    or previous_session.workspace_id != rollback.workspace_id
+                    or previous_session.state != "ready"
+                ):
+                    previous_session = max(
+                        (
+                            item
+                            for item in state.sessions.values()
+                            if item.workspace_id == rollback.workspace_id and item.state == "ready"
+                        ),
+                        key=lambda item: (
+                            item.last_used_at,
+                            item.created_at,
+                            item.session_id,
+                        ),
+                        default=None,
+                    )
+                state.workspaces[rollback.workspace_id] = replace(
+                    workspace,
+                    active_session_id=(
+                        None if previous_session is None else previous_session.session_id
+                    ),
+                )
+                binding_changed = True
+            if exact_activation and (
+                rollback.previous_active_workspace_id is None
+                or rollback.previous_active_workspace_id in state.workspaces
+            ):
+                state.active_workspace_id = rollback.previous_active_workspace_id
+                binding_changed = True
+            if binding_changed:
                 _bump_active_binding_revision(state)
             return True, True
 

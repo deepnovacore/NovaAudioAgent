@@ -2957,6 +2957,49 @@ async def test_failed_handoff_fences_undelivered_semantic_acknowledgement() -> N
 
 
 @pytest.mark.asyncio
+async def test_unknown_handoff_fences_ack_but_remains_open_to_late_verdict() -> None:
+    service, _provider, runtime, _frames = make_service()
+    await service.connect()
+    await service.handle_event(ResponseStarted(1, "origin"))
+    await service.handle_event(
+        ToolCallReady(
+            session_epoch=1,
+            call_id="call-1",
+            item_id="tool-1",
+            name="codex__run",
+            arguments={"work_order": "实现计时器"},
+            response_id="origin",
+        )
+    )
+    acknowledgement = service._semantic_acknowledgements["background:d-1"]
+
+    unknown = HandoffEvent(
+        channel="codex",
+        delegate_id="d-1",
+        origin_ref="conversation:1",
+        outcome="unknown",
+        trust="trusted_system",
+        content={"error": "transport_timeout"},
+    )
+    project_claimed_handoff(service, runtime, unknown, op="run")
+
+    assert acknowledgement.phase == "cancelled"
+    assert service.session.delegate_state("d-1") == "unknown"
+
+    completed = HandoffEvent(
+        channel="codex",
+        delegate_id="d-1",
+        origin_ref="conversation:1",
+        outcome="ok",
+        trust="trusted_system",
+        content={"result": {"final_message": {"text": "计时器已完成"}}},
+    )
+    project_claimed_handoff(service, runtime, completed, op="run")
+
+    assert service.session.delegate_state("d-1") == "completed"
+
+
+@pytest.mark.asyncio
 async def test_failed_handoff_suppresses_bound_unspoken_acknowledgement() -> None:
     service, _provider, runtime, frames = make_service()
     await service.connect()

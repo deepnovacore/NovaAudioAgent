@@ -83,7 +83,12 @@ def test_codex_reuse_confirmation_speaks_the_exact_approved_question() -> None:
 def test_codex_refusal_is_not_spoken_as_failure_or_uncertainty() -> None:
     evidence = final_speech_view(
         "refused",
-        {"op": "project", "code": "workspace_name_conflict", "recoverable": True},
+        {
+            "op": "project",
+            "code": "workspace_name_conflict",
+            "recoverable": True,
+            "result": {"final_message": {"text": "provider supplied refusal detail"}},
+        },
     )
 
     assert evidence == "Codex 未执行，需要选择或修正请求（workspace_name_conflict）"

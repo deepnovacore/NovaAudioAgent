@@ -637,6 +637,90 @@ test('confirmed create reuses an inactive workspace and starts exactly one Sessi
   }
 })
 
+test('Session start rollback restores the previous active workspace', async () => {
+  const value = await fixture()
+  try {
+    const alpha = await value.store.resolveWorkspace('alpha')
+    const beta = await value.store.createManaged('beta')
+
+    const begun = await value.store.beginSessionForRun(alpha.workspace_id, 'Initial')
+
+    assert.equal((await value.store.resolveWorkspace(null)).workspace_id, alpha.workspace_id)
+    assert.equal(await value.store.rollbackSessionStartForRun(begun.rollback, {wait: true}), true)
+    assert.equal((await value.store.resolveWorkspace(null)).workspace_id, beta.workspace_id)
+    assert.deepEqual(await value.store.listSessions(alpha), [])
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('Session start rollback preserves a newer workspace selection', async () => {
+  const value = await fixture()
+  try {
+    const alpha = await value.store.resolveWorkspace('alpha')
+    await value.store.createManaged('beta')
+    const gamma = await value.store.createManaged('gamma')
+
+    const begun = await value.store.beginSessionForRun(alpha.workspace_id, 'Initial')
+    await value.store.selectWorkspaceExact(gamma.display_name, gamma.workspace_id)
+
+    assert.equal(await value.store.rollbackSessionStartForRun(begun.rollback, {wait: true}), true)
+    assert.equal((await value.store.resolveWorkspace(null)).workspace_id, gamma.workspace_id)
+    assert.deepEqual(await value.store.listSessions(alpha), [])
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('failed confirmed reuse restores the previous active workspace', async () => {
+  const value = await fixture()
+  try {
+    const alpha = await value.store.resolveWorkspace('alpha')
+    const beta = await value.store.createManaged('beta')
+    value.factory.preflightError = new CodexTransportError('preflight_failed')
+    const proposal = await value.adapter.dispatch(
+      'project',
+      {
+        action: 'create_workspace', workspace: 'alpha', session: 'Initial',
+        work_order: 'build it',
+      },
+      context('project', {}, value.clock),
+    )
+    value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-reuse-failure'})
+    const decision = value.confirmation.acceptDecision({
+      epoch: 1,
+      itemId: 'confirm-reuse-failure',
+      proposalId: proposalId(proposal.content),
+      confirmed: true,
+    })
+    assert.ok(decision.operation)
+    const committed = await value.adapter.commitConfirmed(
+      decision.operation,
+      'conversation:1',
+      () => ({accepted: true, delegate_id: 'delegate-reuse-failure'}),
+    )
+    assert.equal(committed.accepted, true)
+
+    const result = await value.adapter.dispatch(
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
+        private: decision.operation,
+        delegateId: 'delegate-reuse-failure',
+      }),
+    )
+
+    assert.equal(result.outcome, 'failed')
+    assert.equal((await value.store.resolveWorkspace(null)).workspace_id, beta.workspace_id)
+    assert.deepEqual(await value.store.listSessions(alpha), [])
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
 test('a residual create race is recoverably refused before effects', async () => {
   const value = await fixture()
   try {
@@ -1054,6 +1138,88 @@ test('confirmed resume binds one exact capability, delegate, origin, work order,
     )
     assert.deepEqual(replay.content, {error: 'confirmation_binding_mismatch', op: 'project'})
     assert.equal(value.factory.calls.length, 2)
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('confirmed reuse revalidates workspace identity before dispatch', async () => {
+  const value = await fixture()
+  try {
+    const alpha = await value.store.resolveWorkspace('alpha')
+    const original = await value.store.createManaged('beta')
+    await value.store.selectWorkspaceExact(alpha.display_name, alpha.workspace_id)
+    const proposal = await value.adapter.dispatch(
+      'project',
+      {action: 'create_workspace', workspace: 'beta', work_order: 'build it'},
+      context('project', {}, value.clock),
+    )
+    value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-reuse-identity'})
+    const confirmed = value.confirmation.acceptDecision({
+      epoch: 1,
+      itemId: 'confirm-reuse-identity',
+      proposalId: proposalId(proposal.content),
+      confirmed: true,
+    })
+    assert.ok(confirmed.operation)
+    assert.equal(await value.store.rollbackManagedCreate(original.workspace_id), true)
+    const replacement = await value.store.createManaged('beta')
+    const dispatched: DelegateRequest[] = []
+
+    const committed = await value.adapter.commitConfirmed(
+      confirmed.operation,
+      'conversation:1',
+      request => {
+        dispatched.push(request)
+        return {accepted: true, delegate_id: 'delegate-reuse-identity'}
+      },
+    )
+
+    assert.deepEqual(committed, {accepted: false, code: 'workspace_boundary_changed'})
+    assert.deepEqual(dispatched, [])
+    assert.equal((await value.store.resolveWorkspace('beta')).workspace_id, replacement.workspace_id)
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('confirmed resume revalidates ready state before runtime dispatch', async () => {
+  const value = await fixture({preexistingSession: true})
+  try {
+    const workspace = await value.store.resolveWorkspace('alpha')
+    const session = await value.store.resolveSession(workspace.workspace_id, 'Existing')
+    const proposal = await value.adapter.dispatch(
+      'project',
+      {
+        action: 'resume_session', workspace: 'alpha', session: 'Existing',
+        work_order: 'continue it',
+      },
+      context('project', {}, value.clock),
+    )
+    value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm-resume-state'})
+    const confirmed = value.confirmation.acceptDecision({
+      epoch: 1,
+      itemId: 'confirm-resume-state',
+      proposalId: proposalId(proposal.content),
+      confirmed: true,
+    })
+    assert.ok(confirmed.operation)
+    await value.store.markSessionUnavailable(session.session_id)
+    const dispatched: DelegateRequest[] = []
+
+    const committed = await value.adapter.commitConfirmed(
+      confirmed.operation,
+      'conversation:1',
+      request => {
+        dispatched.push(request)
+        return {accepted: true, delegate_id: 'delegate-resume-state'}
+      },
+    )
+
+    assert.deepEqual(committed, {accepted: false, code: 'session_unavailable'})
+    assert.deepEqual(dispatched, [])
   } finally {
     await value.adapter.close()
     await rm(value.root, {recursive: true, force: true})

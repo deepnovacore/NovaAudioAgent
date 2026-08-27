@@ -225,9 +225,7 @@ class _SemanticAcknowledgement:
     origin_response_id: str | None = None
     origin_user_input_revision: int | None = None
     origin_delivered: bool = False
-    phase: Literal[
-        "pending", "queued", "requested", "bound", "delivered", "cancelled"
-    ] = "pending"
+    phase: Literal["pending", "queued", "requested", "bound", "delivered", "cancelled"] = "pending"
     response_id: str | None = None
     binding: Literal["continuation", "fallback"] | None = None
     failed_retry_consumed: bool = False
@@ -2743,6 +2741,8 @@ class RealtimeService:
                 if event.outcome == "ok"
                 else "refused"
                 if event.outcome == "refused"
+                else "unknown"
+                if event.outcome == "unknown"
                 else "failed"
             )
             self.session.register_delegate(

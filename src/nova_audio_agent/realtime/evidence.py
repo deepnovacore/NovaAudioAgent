@@ -44,6 +44,15 @@ def final_speech_view(outcome: str, content: object) -> str:
         result = content.get("result")
         if type(result) is dict:
             final_message = result.get("final_message")
+    category = (
+        code
+        if type(code) is str and code
+        else error
+        if type(error) is str and error
+        else "no_final_message"
+    )
+    if outcome == "refused":
+        return f"Codex 未执行，需要选择或修正请求（{category}）"
     text: str | None = None
     upstream_truncated = False
     if type(final_message) is dict:
@@ -52,19 +61,10 @@ def final_speech_view(outcome: str, content: object) -> str:
             text = raw
         upstream_truncated = final_message.get("truncated") is True
     if text is None:
-        category = (
-            code
-            if type(code) is str and code
-            else error
-            if type(error) is str and error
-            else "no_final_message"
-        )
         if outcome == "failed":
             failure = _codex_startup_failure_speech(category, stage)
             if failure is not None:
                 return failure
-        if outcome == "refused":
-            return f"Codex 未执行，需要选择或修正请求（{category}）"
         return f"Codex 任务未能确认完成（{category}）"
     prepped, clipped = prepare_for_speech(text, limit=SPEECH_FINAL_LIMIT)
     note = "（结果较长，已截取要点）" if upstream_truncated or clipped else ""

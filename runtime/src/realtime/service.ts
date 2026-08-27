@@ -1865,7 +1865,9 @@ export class RealtimeService {
       summary: this.#delegateSummary(payload.delegate_id, displayName),
       state: payload.outcome === 'ok'
         ? 'completed'
-        : payload.outcome === 'refused' ? 'refused' : 'failed',
+        : payload.outcome === 'refused'
+          ? 'refused'
+          : payload.outcome === 'unknown' ? 'unknown' : 'failed',
       channel: payload.channel,
     })
     // CP1: a settled delegate leaves no dedup residue behind.

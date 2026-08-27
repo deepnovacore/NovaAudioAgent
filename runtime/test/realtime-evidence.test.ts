@@ -76,6 +76,7 @@ test('Codex reuse confirmation speaks the exact approved question', () => {
 test('Codex refusal is neither failure nor uncertainty', () => {
   assert.equal(finalSpeechView('refused', {
     op: 'project', code: 'workspace_name_conflict', recoverable: true,
+    result: {final_message: {text: 'provider supplied refusal detail'}},
   }), 'Codex 未执行，需要选择或修正请求（workspace_name_conflict）')
 })
 

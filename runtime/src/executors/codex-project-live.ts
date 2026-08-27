@@ -20,6 +20,7 @@ import {
   type PublicProjectContext,
   type PublicProjectView,
   type SessionResumeRollback,
+  type SessionStartRollback,
   type WorkspaceRecord,
 } from '../codex-project-store.js'
 import type {HostCodexHome, HostWorkspace} from '../codex-process-owner.js'
@@ -651,7 +652,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       return failureHandoff('transport_failure', 'run')
     }
     let session = resumed
-    let provisionalSessionId: string | null = null
+    let startRollback: SessionStartRollback | null = null
     let reportedThreadId: string | null = null
     let bindingMismatch = false
     let result: ExecutorHandoff | null = null
@@ -662,8 +663,9 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     let inner: CodexAppServerTransport
     try {
       if (session === null) {
-        session = await this.#store.beginSession(workspace.workspace_id, sessionTitle)
-        provisionalSessionId = session.session_id
+        const begun = await this.#store.beginSessionForRun(workspace.workspace_id, sessionTitle)
+        session = begun.session
+        startRollback = begun.rollback
       }
       // Persistent-home setup and session persistence both cross await boundaries. Revalidate the
       // exact approved workspace again immediately before host process construction.
@@ -690,9 +692,9 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
         resumeThreadId: resumed?.codex_thread_id ?? null,
       }))
     } catch (error) {
-      if (provisionalSessionId !== null) {
-        await this.#store.rollbackSessionStart(
-          provisionalSessionId,
+      if (startRollback !== null) {
+        await this.#store.rollbackSessionStartForRun(
+          startRollback,
           {wait: true},
         ).catch(() => false)
         await this.#refreshProjectContextBarrier()
@@ -745,8 +747,9 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
               {wait: true},
             )
           } catch (error) {
-            await this.#store.rollbackSessionStart(
-              session.session_id,
+            if (startRollback === null) throw new ProjectStateError('state_corrupt')
+            await this.#store.rollbackSessionStartForRun(
+              startRollback,
               {wait: true},
             ).catch(() => false)
             if (!(error instanceof ProjectStateError && error.code === 'state_busy')) {
@@ -754,8 +757,9 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
             }
           }
         } else {
-          await this.#store.rollbackSessionStart(
-            session.session_id,
+          if (startRollback === null) throw new ProjectStateError('state_corrupt')
+          await this.#store.rollbackSessionStartForRun(
+            startRollback,
             {wait: true},
           ).catch(() => false)
         }

@@ -21,6 +21,7 @@ from nova_audio_agent.executors.codex_projects import (
     ProjectSessionRecord,
     ProjectStateError,
     PublicProjectView,
+    SessionStartRollback,
     WorkspaceRecord,
 )
 from nova_audio_agent.ports import (
@@ -433,11 +434,15 @@ class ProjectCodexAdapter(CodexLiveAdapter):
         ctx: DispatchContext,
     ) -> Handoff:
         path = await _complete_sync(self.store.revalidate_workspace, workspace.workspace_id)
+        start_rollback: SessionStartRollback | None = None
         resume_rollback = None
-        session = resumed or await _complete_sync(
-            self.store.begin_session, workspace.workspace_id, session_title
-        )
-        if resumed is not None:
+        if resumed is None:
+            session, start_rollback = await _complete_sync(
+                self.store.begin_session_for_run,
+                workspace.workspace_id,
+                session_title,
+            )
+        else:
             session, resume_rollback = await _complete_sync(
                 self.store.activate_session_for_resume,
                 workspace.workspace_id,
@@ -484,9 +489,11 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             if not ready:
                 state_changed = False
                 if resumed is None:
+                    if start_rollback is None:
+                        raise ProjectStateError("state_corrupt")
                     state_changed = await _complete_sync(
-                        self.store.rollback_session_start,
-                        session.session_id,
+                        self.store.rollback_session_start_for_run,
+                        start_rollback,
                         wait=True,
                     )
                 elif binding_invalid or (
@@ -573,6 +580,10 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             return ProjectCommitResult(False, "invalid_operation")
         if self._run_lock.locked():
             return ProjectCommitResult(False, "busy")
+        try:
+            await self._revalidate_proposal(operation)
+        except ProjectStateError as failure:
+            return ProjectCommitResult(False, failure.code)
         admission = runtime_dispatch(
             DelegateRequest(
                 executor="codex",
@@ -591,6 +602,51 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             origin_ref,
         )
         return ProjectCommitResult(True, "accepted", admission.delegate_id)
+
+    async def _revalidate_proposal(self, operation: ConfirmedProjectOperation) -> None:
+        if operation.action == "create":
+            if operation.workspace_id is not None or operation.session_id is not None:
+                raise ProjectStateError("workspace_boundary_changed")
+            await _complete_sync(
+                self.store.validate_managed_create,
+                operation.workspace_display_name,
+            )
+            return
+        if operation.action == "reuse":
+            if operation.workspace_id is None or operation.session_id is not None:
+                raise ProjectStateError("workspace_boundary_changed")
+            workspace = await _complete_sync(
+                self.store.resolve_workspace,
+                operation.workspace_display_name,
+            )
+            if workspace.workspace_id != operation.workspace_id:
+                raise ProjectStateError("workspace_boundary_changed")
+            await _complete_sync(self.store.revalidate_workspace, workspace.workspace_id)
+            return
+        if (
+            operation.action != "resume"
+            or operation.workspace_id is None
+            or operation.session_id is None
+        ):
+            raise ProjectStateError("session_workspace_mismatch")
+        workspace = await _complete_sync(
+            self.store.resolve_workspace,
+            operation.workspace_display_name,
+        )
+        if workspace.workspace_id != operation.workspace_id:
+            raise ProjectStateError("workspace_boundary_changed")
+        session = await _complete_sync(
+            self.store.resolve_session,
+            workspace.workspace_id,
+            operation.session_title,
+        )
+        if (
+            session.session_id != operation.session_id
+            or session.state != "ready"
+            or session.codex_thread_id is None
+        ):
+            raise ProjectStateError("session_unavailable")
+        await _complete_sync(self.store.revalidate_workspace, workspace.workspace_id)
 
     async def _active_workspace_or_none(self) -> WorkspaceRecord | None:
         try:

@@ -132,6 +132,19 @@ export interface ProjectSessionRecord {
   readonly last_used_at: number
 }
 
+export interface SessionStartRollback {
+  readonly activationRevision: number
+  readonly previousActiveWorkspaceId: string | null
+  readonly workspaceId: string
+  readonly previousActiveSessionId: string | null
+  readonly startedSessionId: string
+}
+
+export interface BegunSession {
+  readonly session: ProjectSessionRecord
+  readonly rollback: SessionStartRollback
+}
+
 export interface ProjectSnapshot {
   readonly version: 1
   readonly active_binding_revision: number
@@ -795,10 +808,16 @@ export class CodexProjectStore {
   }
 
   async beginSession(workspaceId: string, displayTitle: string | null): Promise<ProjectSessionRecord> {
+    return (await this.beginSessionForRun(workspaceId, displayTitle)).session
+  }
+
+  async beginSessionForRun(workspaceId: string, displayTitle: string | null): Promise<BegunSession> {
     const supplied = displayTitle === null ? null : normalizeProjectSessionTitle(displayTitle)
     return await this.#transaction(state => {
       const workspace = state.workspaces.get(workspaceId)
       if (workspace === undefined) throw new ProjectStateError('workspace_not_found')
+      const previousActiveWorkspaceId = state.activeWorkspaceId
+      const previousActiveSessionId = workspace.active_session_id
       pruneForSessionInsert(state, workspaceId)
       const base = supplied?.display ?? nextDefaultSessionTitle(state, workspaceId)
       const title = uniqueSessionTitle(state, workspaceId, base)
@@ -822,8 +841,15 @@ export class CodexProjectStore {
         last_used_at: stamp,
       }))
       state.activeWorkspaceId = workspaceId
-      bumpActiveBindingRevision(state)
-      return [session, true]
+      const activationRevision = bumpActiveBindingRevision(state)
+      const rollback: SessionStartRollback = Object.freeze({
+        activationRevision,
+        previousActiveWorkspaceId,
+        workspaceId,
+        previousActiveSessionId,
+        startedSessionId: sessionId,
+      })
+      return [Object.freeze({session, rollback}), true]
     })
   }
 
@@ -846,6 +872,55 @@ export class CodexProjectStore {
         }))
         bumpActiveBindingRevision(state)
       }
+      return [true, true]
+    }, options)
+  }
+
+  async rollbackSessionStartForRun(
+    rollback: SessionStartRollback,
+    options?: ProjectTransactionWaitOptions,
+  ): Promise<boolean> {
+    return await this.#transaction(state => {
+      const session = state.sessions.get(rollback.startedSessionId)
+      if (
+        session?.workspace_id !== rollback.workspaceId
+        || session.state !== 'starting'
+        || session.codex_thread_id !== null
+      ) {
+        return [false, false]
+      }
+      const workspace = state.workspaces.get(rollback.workspaceId)
+      const exactActivation = workspace !== undefined
+        && state.activeBindingRevision === rollback.activationRevision
+        && state.activeWorkspaceId === rollback.workspaceId
+        && workspace.active_session_id === rollback.startedSessionId
+      state.sessions.delete(rollback.startedSessionId)
+      let bindingChanged = false
+      if (workspace?.active_session_id === rollback.startedSessionId) {
+        const previousSession = rollback.previousActiveSessionId === null
+          ? undefined
+          : state.sessions.get(rollback.previousActiveSessionId)
+        const restoredSession = previousSession?.workspace_id === rollback.workspaceId
+          && previousSession.state === 'ready'
+          ? previousSession
+          : newestReadySession(state, rollback.workspaceId)
+        state.workspaces.set(rollback.workspaceId, Object.freeze({
+          ...workspace,
+          active_session_id: restoredSession?.session_id ?? null,
+        }))
+        bindingChanged = true
+      }
+      if (
+        exactActivation
+        && (
+          rollback.previousActiveWorkspaceId === null
+          || state.workspaces.has(rollback.previousActiveWorkspaceId)
+        )
+      ) {
+        state.activeWorkspaceId = rollback.previousActiveWorkspaceId
+        bindingChanged = true
+      }
+      if (bindingChanged) bumpActiveBindingRevision(state)
       return [true, true]
     }, options)
   }

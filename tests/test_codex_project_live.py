@@ -416,7 +416,9 @@ async def test_confirmed_create_reuses_an_inactive_workspace_and_starts_once(
         "session": "Initial",
         "confirmation_prompt": "是否使用现有工作区“alpha”并开始任务？请确认或取消。",
     }
-    assert adapter.public_project_view(pending_confirmation=True).pending_action == "reuse_workspace"
+    assert (
+        adapter.public_project_view(pending_confirmation=True).pending_action == "reuse_workspace"
+    )
     assert adapter.confirmation.reserve_user_item(epoch=1, item_id="confirm")
     decision = adapter.confirmation.accept_decision(
         epoch=1,
@@ -466,6 +468,102 @@ async def test_confirmed_create_reuses_an_inactive_workspace_and_starts_once(
     assert store.list_sessions(beta) == ()
     assert len(store.list_workspaces()) == 2
     assert len(factory.calls) == 1
+
+
+def test_session_start_rollback_restores_the_previous_active_workspace(tmp_path: Path) -> None:
+    adapter, store = _adapter(tmp_path)
+    alpha = store.resolve_workspace("alpha")
+    beta = store.create_managed("beta")
+
+    session, rollback = store.begin_session_for_run(alpha.workspace_id, "Initial")
+
+    assert store.resolve_workspace(None).workspace_id == alpha.workspace_id
+    assert store.rollback_session_start_for_run(rollback, wait=True) is True
+    assert store.resolve_workspace(None).workspace_id == beta.workspace_id
+    assert store.list_sessions(alpha) == ()
+    asyncio.run(adapter.aclose())
+
+
+def test_session_start_rollback_preserves_a_newer_workspace_selection(tmp_path: Path) -> None:
+    adapter, store = _adapter(tmp_path)
+    alpha = store.resolve_workspace("alpha")
+    store.create_managed("beta")
+    gamma = store.create_managed("gamma")
+
+    _session, rollback = store.begin_session_for_run(alpha.workspace_id, "Initial")
+    store.select_workspace_exact(gamma.display_name, gamma.workspace_id)
+
+    assert store.rollback_session_start_for_run(rollback, wait=True) is True
+    assert store.resolve_workspace(None).workspace_id == gamma.workspace_id
+    assert store.list_sessions(alpha) == ()
+    asyncio.run(adapter.aclose())
+
+
+@pytest.mark.asyncio
+async def test_failed_confirmed_reuse_restores_the_previous_active_workspace(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    store = CodexProjectStore(
+        tmp_path / "state",
+        tmp_path / "managed",
+        now=clock.now,
+        id_factory=iter((f"identifier-{index:03d}" for index in range(100))).__next__,
+    )
+    alpha = store.create_managed("alpha")
+    beta = store.create_managed("beta")
+    confirmation = ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce")
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=confirmation,
+        worker_factory=lambda _workspace, _home, resume, on_ready: _NeverReadyWorker(
+            resume or "missing", on_ready
+        ),
+    )
+    proposal = await adapter.dispatch(
+        "project",
+        {
+            "action": "create_workspace",
+            "workspace": "alpha",
+            "session": "Initial",
+            "work_order": "build it",
+        },
+        _context(clock),
+    )
+    assert confirmation.reserve_user_item(epoch=1, item_id="confirm-reuse")
+    decision = confirmation.accept_decision(
+        epoch=1,
+        item_id="confirm-reuse",
+        proposal_id=str(proposal.content["proposal_id"]),
+        confirmed=True,
+    )
+    assert decision.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="delegate-reuse-failure")
+
+    committed = await adapter.commit_confirmed(
+        decision.operation,
+        origin_ref="conversation:1",
+        runtime_dispatch=dispatch,
+    )
+    assert committed.accepted is True
+
+    result = await adapter.dispatch(
+        "project",
+        {"action": "execute_confirmed"},
+        _context(
+            clock,
+            delegate_id="delegate-reuse-failure",
+            private=dispatched[0][0].private,
+        ),
+    )
+
+    assert result.outcome == "failed"
+    assert store.resolve_workspace(None).workspace_id == beta.workspace_id
+    assert store.list_sessions(alpha) == ()
 
 
 @pytest.mark.asyncio
@@ -879,7 +977,7 @@ async def test_confirmed_resume_reuses_thread_in_a_new_worker(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_confirmed_resume_revalidates_ready_state_at_execution_time(
+async def test_confirmed_resume_revalidates_ready_state_before_runtime_dispatch(
     tmp_path: Path,
 ) -> None:
     clock = VirtualClock(start=10.0)
@@ -927,24 +1025,50 @@ async def test_confirmed_resume_revalidates_ready_state_at_execution_time(
     committed = await adapter.commit_confirmed(
         outcome.operation, origin_ref="conversation:1", runtime_dispatch=dispatch
     )
-    resumed = await adapter.dispatch(
+
+    assert committed == ProjectCommitResult(False, "session_unavailable")
+    assert dispatched == []
+    assert len(factory.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirmed_reuse_revalidates_workspace_identity_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    adapter, store = _adapter(tmp_path)
+    clock = VirtualClock()
+    alpha = store.resolve_workspace("alpha")
+    original = store.create_managed("beta")
+    store.select_workspace_exact(alpha.display_name, alpha.workspace_id)
+    proposal = await adapter.dispatch(
         "project",
-        {"action": "execute_confirmed"},
-        _context(
-            clock,
-            delegate_id="delegate-resume",
-            private=dispatched[0][0].private,
+        {"action": "create_workspace", "workspace": "beta", "work_order": "build it"},
+        _context(clock),
+    )
+    assert adapter.confirmation.reserve_user_item(epoch=1, item_id="confirm-reuse")
+    confirmed = adapter.confirmation.accept_decision(
+        epoch=1,
+        item_id="confirm-reuse",
+        proposal_id=str(proposal.content["proposal_id"]),
+        confirmed=True,
+    )
+    assert confirmed.operation is not None
+    assert store.rollback_managed_create(original.workspace_id)
+    replacement = store.create_managed("beta")
+    dispatched: list[Any] = []
+
+    committed = await adapter.commit_confirmed(
+        confirmed.operation,
+        origin_ref="conversation:1",
+        runtime_dispatch=lambda request, *, reason: (
+            dispatched.append((request, reason))
+            or RuntimeDispatchResult(accepted=True, delegate_id="delegate-reuse")
         ),
     )
 
-    assert committed.accepted is True
-    assert resumed.outcome == "refused"
-    assert resumed.content == {
-        "op": "project",
-        "code": "session_unavailable",
-        "recoverable": True,
-    }
-    assert len(factory.calls) == 1
+    assert committed == ProjectCommitResult(False, "workspace_boundary_changed")
+    assert dispatched == []
+    assert store.resolve_workspace("beta").workspace_id == replacement.workspace_id
 
 
 @pytest.mark.asyncio
@@ -1277,18 +1401,18 @@ async def test_failed_new_run_waits_for_contended_rollback_off_event_loop(
             resume or "missing", on_ready
         ),
     )
-    original = store.rollback_session_start
+    original = store.rollback_session_start_for_run
     entered = threading.Event()
     release = threading.Event()
     observed_wait: list[bool] = []
 
-    def delayed_rollback(session_id: str, *, wait: bool = False) -> bool:
+    def delayed_rollback(rollback: Any, *, wait: bool = False) -> bool:
         observed_wait.append(wait)
         entered.set()
         release.wait(1.0)
-        return original(session_id, wait=wait)
+        return original(rollback, wait=wait)
 
-    monkeypatch.setattr(store, "rollback_session_start", delayed_rollback)
+    monkeypatch.setattr(store, "rollback_session_start_for_run", delayed_rollback)
     ticks = 0
     finished = False
 
