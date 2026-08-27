@@ -207,6 +207,29 @@ test('Codex project view carries a bounded public confirmation description', () 
   }), DesktopProtocolError)
 })
 
+test('Codex project view accepts the full confirmation ttl', () => {
+  const parsed = JSON.parse(codexProjectMessage({
+    workspace_display_name: 'alpha',
+    session_title: null,
+    pending_confirmation: true,
+    pending_action: 'create_workspace',
+    pending_workspace_display_name: 'timer-app',
+    pending_session_title: null,
+    pending_expires_in_seconds: 360,
+  })) as Readonly<Record<string, unknown>>
+  assert.equal(parsed.pending_expires_in_seconds, 360)
+
+  assert.throws(() => codexProjectMessage({
+    workspace_display_name: 'alpha',
+    session_title: null,
+    pending_confirmation: true,
+    pending_action: 'create_workspace',
+    pending_workspace_display_name: 'timer-app',
+    pending_session_title: null,
+    pending_expires_in_seconds: 360.001,
+  }), DesktopProtocolError)
+})
+
 test('every desktop wire case matches the Python-exported golden, byte for byte', () => {
   const divergent: string[] = []
   for (const [index, spec] of document.cases.entries()) {

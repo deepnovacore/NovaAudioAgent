@@ -11,7 +11,7 @@ from nova_audio_agent.clock import Clock
 
 ProjectAction = Literal["create", "select", "resume"]
 ConfirmationKind = Literal["confirmed", "cancelled", "invalid", "expired", "ignored"]
-_EXPIRY_SECONDS = 360.0
+PROJECT_CONFIRMATION_TTL_SECONDS = 360.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +156,7 @@ class ProjectConfirmationController:
             work_order=work_order,
             origin_ref=origin_ref,
             proposal_id=proposal_id,
-            expires_at=self._clock.now() + _EXPIRY_SECONDS,
+            expires_at=self._clock.now() + PROJECT_CONFIRMATION_TTL_SECONDS,
             confirmation_prompt=_confirmation_prompt(
                 action,
                 workspace_display_name,

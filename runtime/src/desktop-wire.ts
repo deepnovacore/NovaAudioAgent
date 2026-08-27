@@ -17,6 +17,7 @@ import type { PlaybackCompletion, PlaybackFrame } from './playback.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
+import {PROJECT_CONFIRMATION_TTL_SECONDS} from './realtime/project-confirmation.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1_024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1_024
@@ -231,7 +232,7 @@ export function codexProjectMessage(view: PublicProjectView): string {
       typeof pendingExpires !== 'number'
       || !Number.isFinite(pendingExpires)
       || pendingExpires < 0
-      || pendingExpires > 90
+      || pendingExpires > PROJECT_CONFIRMATION_TTL_SECONDS
     )
   ) {
     throw new DesktopProtocolError('desktop Codex project view is invalid')

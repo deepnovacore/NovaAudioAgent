@@ -14,7 +14,7 @@ import {codePointLengthLikePython} from '../python-text.js'
 
 export type ProjectAction = 'create' | 'select' | 'resume'
 export type ConfirmationKind = 'confirmed' | 'cancelled' | 'invalid' | 'expired' | 'ignored'
-const EXPIRY_SECONDS = 360
+export const PROJECT_CONFIRMATION_TTL_SECONDS = 360
 
 export interface ProjectProposal {
   readonly action: ProjectAction
@@ -134,7 +134,7 @@ export class ProjectConfirmationController {
     const proposal: ProjectProposal = Object.freeze({
       ...input,
       proposal_id: proposalId,
-      expires_at: this.#clock.now() + EXPIRY_SECONDS,
+      expires_at: this.#clock.now() + PROJECT_CONFIRMATION_TTL_SECONDS,
       confirmation_prompt: confirmationPrompt(
         input.action,
         input.workspace_display_name,

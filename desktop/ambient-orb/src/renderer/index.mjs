@@ -26,6 +26,8 @@ import { createOrbVisualSafe } from './orb-visual.mjs'
 import { ConfirmationCountdown } from './confirmation-countdown.mjs'
 import { deriveOrbState } from './state.mjs'
 
+const PROJECT_CONFIRMATION_TTL_SECONDS = 360
+
 const shell = document.querySelector('#shell')
 const orb = document.querySelector('#orb')
 const muteToggle = document.querySelector('#mute-toggle')
@@ -640,7 +642,9 @@ async function handleControl(message) {
       && (pendingSession === null
         || (typeof pendingSession === 'string' && [...pendingSession].length <= 120))
       && (pendingExpires === null
-        || (Number.isFinite(pendingExpires) && pendingExpires >= 0 && pendingExpires <= 90))
+        || (Number.isFinite(pendingExpires)
+          && pendingExpires >= 0
+          && pendingExpires <= PROJECT_CONFIRMATION_TTL_SECONDS))
       && (message.pending_confirmation
         ? (!pendingMetadata || (pendingAction !== null
           && pendingWorkspace !== null

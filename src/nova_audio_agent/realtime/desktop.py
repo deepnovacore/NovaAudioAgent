@@ -28,6 +28,9 @@ from nova_audio_agent.realtime.playback import (
     PlaybackCompletion,
     PlaybackFrame,
 )
+from nova_audio_agent.realtime.project_confirmation import (
+    PROJECT_CONFIRMATION_TTL_SECONDS,
+)
 from nova_audio_agent.realtime.service import CodexState
 from nova_audio_agent.realtime.session import CaptionFrame
 from nova_audio_agent.realtime.telemetry import RealtimeTelemetry
@@ -263,7 +266,7 @@ def codex_project_message(view: PublicProjectView) -> str:
         type(expires) not in {int, float}
         or not math.isfinite(expires)
         or expires < 0
-        or expires > 90
+        or expires > PROJECT_CONFIRMATION_TTL_SECONDS
     ):
         raise DesktopProtocolError("desktop Codex project view is invalid")
     has_pending_metadata = any(

@@ -223,6 +223,34 @@ def test_codex_project_message_has_closed_public_shape() -> None:
         )
 
 
+def test_codex_project_message_accepts_full_confirmation_ttl() -> None:
+    from nova_audio_agent.executors.codex_projects import PublicProjectView
+
+    message = codex_project_message(
+        PublicProjectView(
+            "alpha",
+            None,
+            True,
+            pending_action="create_workspace",
+            pending_workspace_display_name="timer-app",
+            pending_expires_in_seconds=360,
+        )
+    )
+
+    assert json.loads(message)["pending_expires_in_seconds"] == 360
+    with pytest.raises(DesktopProtocolError, match="project view"):
+        codex_project_message(
+            PublicProjectView(
+                "alpha",
+                None,
+                True,
+                pending_action="create_workspace",
+                pending_workspace_display_name="timer-app",
+                pending_expires_in_seconds=360.001,
+            )
+        )
+
+
 def test_delivery_events_exclude_suppressed_speech() -> None:
     """Words nobody heard must never be posted into the conversation."""
 
