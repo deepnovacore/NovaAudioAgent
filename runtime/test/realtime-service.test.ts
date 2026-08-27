@@ -635,6 +635,8 @@ function pipelineService(options: {
   readonly includeRecall?: boolean
   readonly projectTool?: boolean
   readonly retireFailure?: boolean
+  readonly beforeInjectConfirmation?: () => Promise<void>
+  readonly beforeCancelResponse?: () => Promise<void>
 } = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
@@ -702,14 +704,15 @@ function pipelineService(options: {
       actions.push('connect')
       return Promise.resolve({epoch})
     },
-    injectHostItem: (item) => {
+    injectHostItem: async (item) => {
       actions.push(`inject:${item.event_id}`)
       injectedContents.push(item.content)
-      return Promise.resolve({
+      await options.beforeInjectConfirmation?.()
+      return {
         session_epoch: epoch,
         host_item_id: item.host_item_id,
         provider_item_id: `provider:${item.event_id}`,
-      })
+      }
     },
     retireHostItem: (providerItemId) => {
       actions.push(`retire:${providerItemId}`)
@@ -720,9 +723,9 @@ function pipelineService(options: {
       actions.push(`create_response:${intent.kind}`)
       return Promise.resolve()
     },
-    cancelResponse: (responseId) => {
+    cancelResponse: async (responseId) => {
       actions.push(`cancel:${responseId}`)
-      return Promise.resolve()
+      await options.beforeCancelResponse?.()
     },
     sendAudio: () => Promise.resolve(),
     events: () => emptyStream(),
@@ -2647,6 +2650,77 @@ test('ordinary progress expires while final facts remain durable', async () => {
   )
 })
 
+test('delegate settlement during provider injection prevents stale response creation', async () => {
+  let releaseInjection!: () => void
+  const injectionGate = new Promise<void>(resolve => { releaseInjection = resolve })
+  const {service, actions} = pipelineService({
+    beforeInjectConfirmation: () => injectionGate,
+  })
+  await service.connect()
+  service.projectRuntimeEvent({
+    kind: 'progress', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      internal_activity: 1, elapsed: 1, summary: 'implementing timer',
+    },
+  })
+  const delivery = service.flushHostItems()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.ok(actions.includes('inject:progress:d-1:working:1'), 'injection is awaiting confirmation')
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 2, ts: 2,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system',
+      content: {result: {final_message: {text: 'timer completed'}}}, refs: [],
+    },
+  })
+  releaseInjection()
+  await delivery
+  await new Promise(resolve => setImmediate(resolve))
+
+  const retirement = actions.indexOf('retire:provider:progress:d-1:working:1')
+  const response = actions.findIndex(action => action.startsWith('create_response:'))
+  assert.ok(
+    retirement >= 0,
+    'the provider identity learned after settlement is still retired',
+  )
+  assert.ok(
+    response === -1 || retirement < response,
+    `stale progress is retired before the durable final may create a response: ${actions.join(',')}`,
+  )
+})
+
+test('progress expiring during provider injection prevents stale response creation', async () => {
+  let releaseInjection!: () => void
+  const injectionGate = new Promise<void>(resolve => { releaseInjection = resolve })
+  const {service, actions, clock} = pipelineService({
+    beforeInjectConfirmation: () => injectionGate,
+  })
+  await service.connect()
+  service.projectRuntimeEvent({
+    kind: 'progress', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', op: 'start', phase: 'working',
+      internal_activity: 1, elapsed: 1, summary: 'implementing timer',
+    },
+  })
+  const delivery = service.flushHostItems()
+  await new Promise(resolve => setImmediate(resolve))
+  clock.advanceTo(clock.now() + 46)
+  releaseInjection()
+  await delivery
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(
+    actions.some(action => action.startsWith('create_response:')),
+    false,
+    'expired progress cannot request a response after injection resumes',
+  )
+  assert.ok(actions.includes('retire:provider:progress:d-1:working:1'))
+})
+
 test('unknown handoff fences acknowledgement but remains open to a late verdict', async () => {
   const {service} = pipelineService()
   await service.connect()
@@ -3403,6 +3477,142 @@ test('an acknowledgement heard from its continuation is not reopened by a reconn
     actions.filter(action => action === 'inject:background:d-1').length,
     before,
     'audibly delivered acknowledgement stays retired across provider replacement',
+  )
+})
+
+async function openCompletedAcknowledgementPlayback(
+  service: RealtimeService,
+  session: RealtimeSession,
+  providerCompleted = true,
+): Promise<NonNullable<RealtimeSession['currentGeneration']>> {
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'compile the runtime',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    call_id: 'call-1', item_id: 'tool-1', name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'}, response_id: 'r-1',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1,
+    response_id: 'r-1', status: 'completed', reason: '',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
+  await service.handleEvent({
+    kind: 'response_audio_delta', session_epoch: 1,
+    response_id: 'r-2', pcm: new Uint8Array([0, 1]),
+  })
+  const generation = session.currentGeneration
+  assert.notEqual(generation, null)
+  assert.equal(service.playbackStarted(generation!.utterance_id, generation!.generation_epoch), true)
+  if (providerCompleted) {
+    await service.handleEvent({
+      kind: 'response_terminal', session_epoch: 1,
+      response_id: 'r-2', status: 'completed', reason: '',
+    })
+  }
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'bound')
+  return generation!
+}
+
+test('playback clear reopens an unheard acknowledgement until its delegate settles', async () => {
+  const {service, session, actions} = pipelineService()
+  await service.connect()
+  const generation = await openCompletedAcknowledgementPlayback(service, session)
+
+  await service.localSpeechOnset('local-speech-1')
+  assert.equal(
+    service.playbackCleared(generation.utterance_id, generation.generation_epoch, 0),
+    true,
+  )
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'queued')
+
+  service.projectRuntimeEvent({
+    kind: 'handoff', seq: 1, ts: 1,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system',
+      content: {result: {final_message: {text: 'timer completed'}}}, refs: [],
+    },
+  })
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'cancelled')
+  const before = actions.filter(action => action === 'inject:background:d-1').length
+  await service.reconnectForTest()
+  assert.equal(
+    actions.filter(action => action === 'inject:background:d-1').length,
+    before,
+    'settlement prevents the interrupted acknowledgement from returning after reconnect',
+  )
+})
+
+test('playback stop reopens an unheard acknowledgement for the still-running delegate', async () => {
+  const {service, session, actions} = pipelineService()
+  await service.connect()
+  const generation = await openCompletedAcknowledgementPlayback(service, session)
+
+  assert.equal(
+    await service.playbackStopped(generation.utterance_id, generation.generation_epoch, 0),
+    true,
+  )
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'queued')
+  const before = actions.filter(action => action === 'inject:background:d-1').length
+
+  await service.reconnectForTest()
+
+  assert.equal(
+    actions.filter(action => action === 'inject:background:d-1').length,
+    before + 1,
+    'the replacement session re-offers the acknowledgement that renderer never completed',
+  )
+})
+
+test('playback stop requeues an acknowledgement when provider cancellation terminates first', async () => {
+  let reportCancelStarted: (() => void) | undefined
+  let releaseCancel: (() => void) | undefined
+  const cancelStarted = new Promise<void>(resolve => {
+    reportCancelStarted = resolve
+  })
+  const cancelReleased = new Promise<void>(resolve => {
+    releaseCancel = resolve
+  })
+  const {service, session} = pipelineService({
+    beforeCancelResponse: async () => {
+      reportCancelStarted?.()
+      await cancelReleased
+    },
+  })
+  await service.connect()
+  const generation = await openCompletedAcknowledgementPlayback(service, session, false)
+
+  const stopped = service.playbackStopped(
+    generation.utterance_id,
+    generation.generation_epoch,
+    0,
+  )
+  await cancelStarted
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-item-2',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1,
+    response_id: 'r-2', status: 'cancelled', reason: 'renderer stopped',
+  })
+  assert.equal(
+    service.acknowledgementPhasesForTest['background:d-1'],
+    'queued',
+    'the terminal event cannot strand the recovered acknowledgement while cancel is pending',
+  )
+
+  releaseCancel?.()
+  assert.equal(await stopped, true)
+  assert.equal(
+    service.acknowledgementPhasesForTest['background:d-1'],
+    'queued',
+    'the renderer interruption still makes the unheard acknowledgement eligible for delivery',
   )
 })
 

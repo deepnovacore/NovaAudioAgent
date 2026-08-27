@@ -165,6 +165,7 @@ export function continuationBatch(providerResponseId: string): ContinuationBatch
 /** A fact the agent should mention, tracked until it has actually been said. */
 export interface SemanticAcknowledgement {
   readonly event_id: string
+  readonly delegate_id: string
   readonly summary: string
   readonly channel: string
   origin_session_epoch: number | null
@@ -183,11 +184,13 @@ export interface SemanticAcknowledgement {
 
 export function semanticAcknowledgement(input: {
   readonly event_id: string
+  readonly delegate_id: string
   readonly summary: string
   readonly channel?: string
 }): SemanticAcknowledgement {
   return {
     event_id: input.event_id,
+    delegate_id: input.delegate_id,
     summary: input.summary,
     channel: input.channel ?? 'codex',
     origin_session_epoch: null,

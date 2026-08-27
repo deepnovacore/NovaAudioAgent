@@ -828,13 +828,22 @@ export class RealtimeService {
       if (!preemptiveOverlap && !ordinaryDelivery) break
       heapPop(this.#hostItems)
       const userActivation = this.#guardActivationRequired(queued)
+      let eligibilityRevoked = false
+      const responseAllowed = (): boolean => {
+        const eligible = this.#queuedHostItemEligible(queued)
+        if (!eligible) eligibilityRevoked = true
+        return eligible
+      }
       let delivery
       try {
         if (userActivation) {
           // A reconnected session will not speak until something user-shaped arrives, so a Guard fact
           // crossing a reconnect has to carry that activation or it lands in a session that never
           // responds.
-          delivery = await this.session.deliverHostResponse(queued.intent, {asUserActivation: true})
+          delivery = await this.session.deliverHostResponse(queued.intent, {
+            responseAllowed,
+            asUserActivation: true,
+          })
         } else if (preemptiveOverlap) {
           const preemption = this.#guardPreemption
           // Only a permit-consuming preemption gets a confirmation timeout: it is speaking into a
@@ -845,10 +854,13 @@ export class RealtimeService {
             ? 0.5
             : null
           delivery = confirmationTimeout === null
-            ? await this.session.deliverPreemptiveHostResponse(queued.intent)
-            : await this.session.deliverPreemptiveHostResponse(queued.intent, {confirmationTimeout})
+            ? await this.session.deliverPreemptiveHostResponse(queued.intent, {responseAllowed})
+            : await this.session.deliverPreemptiveHostResponse(queued.intent, {
+              confirmationTimeout,
+              responseAllowed,
+            })
         } else {
-          delivery = await this.session.deliverHostResponse(queued.intent)
+          delivery = await this.session.deliverHostResponse(queued.intent, {responseAllowed})
         }
       } catch (cause) {
         // Put it back before propagating: a delivery that threw has not been delivered, and dropping
@@ -857,6 +869,13 @@ export class RealtimeService {
         throw cause
       }
       const delivered = delivery.accepted
+      if (
+        !delivered
+        && eligibilityRevoked
+        && delivery.injectionEpoch === this.session.sessionEpoch
+      ) {
+        await this.#retireProviderHostEventNow(queued.intent.item.event_id)
+      }
       if (delivered && userActivation) {
         this.#providerEpochNeedingActivation = null
         this.#providerReconnectSourceEpoch = null
@@ -2972,6 +2991,7 @@ export class RealtimeService {
     if (channel === null) return null
     const created = semanticAcknowledgement({
       event_id: eventId,
+      delegate_id: delegateId,
       summary: [...summary].slice(0, MAX_CONTINUATION_TASK_SUMMARY).join(''),
       channel,
     })
@@ -3688,8 +3708,12 @@ export class RealtimeService {
   /** The renderer dropped a generation on request. */
   playbackCleared(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean {
     const urgentOwner = this.#urgentOwnerForGeneration(utteranceId, generationEpoch)
-    const cleared = this.session.playbackCleared(utteranceId, generationEpoch, playedMs)
-    if (!cleared) return false
+    const completion = this.session.completePlaybackClear(utteranceId, generationEpoch, playedMs)
+    if (completion === null) return false
+    this.#reconcileAcknowledgementAfterPlaybackInterruption(
+      completion.session_epoch,
+      completion.response_id,
+    )
     // The acknowledgement arrived, so the deadline waiting for it has nothing left to retire.
     this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
     this.#releaseUrgentHostResponse(urgentOwner)
@@ -3703,13 +3727,63 @@ export class RealtimeService {
     generationEpoch: number,
     playedMs: number | null,
   ): Promise<boolean> {
+    const generation = this.session.currentGeneration
     const urgentOwner = this.#urgentOwnerForGeneration(utteranceId, generationEpoch)
-    const stopped = await this.session.playbackStopped(utteranceId, generationEpoch, playedMs)
+    const namesCurrentGeneration = generation !== null
+      && generation.utterance_id === utteranceId
+      && generation.generation_epoch === generationEpoch
+    const stopping = this.session.playbackStopped(utteranceId, generationEpoch, playedMs)
+    // `RealtimeSession.playbackStopped` fences and clears the renderer generation synchronously,
+    // then may wait for provider cancellation. Recover acknowledgement ownership before that wait:
+    // a cascaded provider can emit `response_terminal(cancelled)` while the cancel promise is still
+    // pending, and that terminal deliberately removes the old continuation binding.
+    if (namesCurrentGeneration) {
+      this.#reconcileAcknowledgementAfterPlaybackInterruption(
+        generation.session_epoch,
+        generation.response_id,
+      )
+    }
+    const stopped = await stopping
     if (!stopped) return false
     this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
     this.#releaseUrgentHostResponse(urgentOwner)
     this.#deliveryReady.set()
     return true
+  }
+
+  /** Return an interrupted, unheard acknowledgement to the live delegate that still owns it. */
+  #reconcileAcknowledgementAfterPlaybackInterruption(
+    sessionEpoch: number,
+    responseId: string,
+  ): void {
+    for (const acknowledgement of this.#semanticAcknowledgements.values()) {
+      if (
+        acknowledgement.phase !== 'bound'
+        || acknowledgement.response_session_epoch !== sessionEpoch
+        || acknowledgement.response_id !== responseId
+        || acknowledgement.heard
+      ) continue
+      if (this.session.delegateState(acknowledgement.delegate_id) !== 'running') {
+        acknowledgement.phase = 'cancelled'
+        acknowledgement.response_id = null
+        acknowledgement.response_session_epoch = null
+        acknowledgement.binding = null
+        this.#retireSemanticAcknowledgementHostEvent(acknowledgement)
+        continue
+      }
+      if (
+        acknowledgement.provider_event_id === acknowledgement.event_id
+        && !this.session.reopenHostResponse(acknowledgement.event_id)
+      ) {
+        this.#onDiagnostic('[realtime-diagnostic] semantic_ack_reopen_failed')
+        continue
+      }
+      acknowledgement.phase = 'pending'
+      acknowledgement.response_id = null
+      acknowledgement.response_session_epoch = null
+      acknowledgement.binding = null
+      this.#queueSemanticAcknowledgement(acknowledgement)
+    }
   }
 
   /**
@@ -3793,6 +3867,17 @@ export class RealtimeService {
         this.#providerRetirementTasks.delete(task)
       })
     this.#providerRetirementTasks.add(task)
+  }
+
+  /** Injection just completed, so perform a fresh lookup even if an earlier best-effort miss exists. */
+  async #retireProviderHostEventNow(eventId: string): Promise<void> {
+    try {
+      await this.session.retireHostEvent(eventId)
+    } catch (failure) {
+      this.#onDiagnostic(
+        `[realtime-diagnostic] host_item_retire_failure type=${diagnosticName(failure)}`,
+      )
+    }
   }
 
   /** Whether anything at all refers to this turn. A proof nothing can cite is not worth keeping. */
@@ -4040,11 +4125,16 @@ export class RealtimeService {
     this.#hostItems.splice(index, 1)
     this.#hostItems.sort(compareQueuedHostResponses)
     const userActivation = this.#guardActivationRequired(queued)
+    let lifecycleRevoked = false
     let delivery
     try {
       delivery = await this.session.deliverPreemptiveHostResponse(queued.intent, {
         confirmationTimeout: 0.5,
-        responseAllowed: () => this.#guardResponseIsAllowed(queued.intent.item.event_id),
+        responseAllowed: () => {
+          const eligible = this.#queuedHostItemEligible(queued)
+          if (!eligible) lifecycleRevoked = true
+          return eligible && this.#guardResponseIsAllowed(queued.intent.item.event_id)
+        },
         asUserActivation: userActivation,
       })
     } catch (cause) {
@@ -4052,7 +4142,13 @@ export class RealtimeService {
       throw cause
     }
     if (!delivery.accepted) {
-      this.#requeueHostItem(queued)
+      if (lifecycleRevoked) {
+        if (delivery.injectionEpoch === this.session.sessionEpoch) {
+          await this.#retireProviderHostEventNow(queued.intent.item.event_id)
+        }
+      } else {
+        this.#requeueHostItem(queued)
+      }
       this.#recomputePreemptPriority()
       return
     }

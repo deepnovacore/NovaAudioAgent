@@ -496,12 +496,16 @@ export class RealtimeSession {
 
   async deliverHostResponse(
     intent: HostResponseIntent,
-    options: {readonly asUserActivation?: boolean} = {},
+    options: {
+      readonly responseAllowed?: () => boolean
+      readonly asUserActivation?: boolean
+    } = {},
   ): Promise<HostResponseDelivery> {
     return this.#deliverHostResponse(intent, {
       allowPlaybackOverlap: false,
       confirmationTimeout: null,
       asUserActivation: options.asUserActivation ?? false,
+      ...(options.responseAllowed === undefined ? {} : {responseAllowed: options.responseAllowed}),
     })
   }
 
@@ -602,6 +606,13 @@ export class RealtimeSession {
     const responded = this.#state.releaseRespondedEvent(eventId)
     const injected = this.#state.releaseInjectedEvent(eventId)
     return responded || injected
+  }
+
+  /** Reuse one still-injected provider fact after renderer playback was interrupted. */
+  reopenHostResponse(eventId: string): boolean {
+    if (this.#state.injectedEventEpoch(eventId) !== this.sessionEpoch) return false
+    this.#state.releaseRespondedEvent(eventId)
+    return true
   }
 
   async #injectHostItem(
@@ -1291,13 +1302,21 @@ export class RealtimeSession {
     generationEpoch: number,
     playedMs: number | null = null,
   ): boolean {
+    return this.completePlaybackClear(utteranceId, generationEpoch, playedMs) !== null
+  }
+
+  completePlaybackClear(
+    utteranceId: string,
+    generationEpoch: number,
+    playedMs: number | null = null,
+  ): PlaybackCompletion | null {
     const completion = this.#playback.recordCleared(utteranceId, generationEpoch, playedMs)
-    if (completion === null) return false
+    if (completion === null) return null
     this.#releaseInterruptedSuggestionAuthority(completion.response_id, completion.session_epoch)
     this.#finishResponseAuthority(completion.response_id, completion.session_epoch)
     this.#onDelivery(completion)
     this.#floor = this.#floor.onSpeakEnd(utteranceId)
-    return true
+    return completion
   }
 
   /**
