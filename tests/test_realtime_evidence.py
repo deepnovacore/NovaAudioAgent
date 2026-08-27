@@ -47,7 +47,7 @@ def test_codex_recall_evidence_exposes_only_prepared_final_message() -> None:
     assert "secret.example" not in evidence
 
 
-def test_codex_confirmation_preserves_the_question_without_private_fields() -> None:
+def test_codex_confirmation_speaks_only_the_approved_concise_question() -> None:
     evidence = final_speech_view(
         "ok",
         {
@@ -56,14 +56,11 @@ def test_codex_confirmation_preserves_the_question_without_private_fields() -> N
             "proposal_id": "proposal-secret",
             "workspace": "tetris-game",
             "session": None,
-            "confirmation_prompt": "准备创建工作区tetris-game，并在其中开始任务，请确认或取消。",
+            "confirmation_prompt": "是否创建工作区“tetris-game”并开始任务？请确认或取消。",
             "work_order": "NEVER-EXPOSE",
         },
     )
-    assert evidence == (
-        "Codex 需要你的确认：准备创建工作区tetris-game，并在其中开始任务。"
-        "这项操作尚未执行，Codex 也还没有开始任务。请确认或取消。"
-    )
+    assert evidence == "是否创建工作区“tetris-game”并开始任务？请确认或取消。"
     assert "proposal-secret" not in evidence
     assert "NEVER-EXPOSE" not in evidence
 

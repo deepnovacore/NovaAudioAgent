@@ -87,7 +87,7 @@ function codexConfirmationSpeech(content: unknown): string | null {
   let expected: readonly string[]
   if (action === 'create_workspace') {
     expected = [
-      `准备创建工作区${workspace}，并在其中开始任务，请确认或取消。`,
+      `是否创建工作区“${workspace}”并开始任务？请确认或取消。`,
       `准备创建并切换到工作区${workspace}，请确认或取消。`,
     ]
   } else if (action === 'select_workspace') {
@@ -103,11 +103,7 @@ function codexConfirmationSpeech(content: unknown): string | null {
     return genericCodexConfirmationSpeech()
   }
   if (!expected.includes(prompt)) return genericCodexConfirmationSpeech()
-
-  const suffix = '，请确认或取消。'
-  const operation = prompt.slice(0, prompt.lastIndexOf(suffix))
-  return `Codex 需要你的确认：${operation}。`
-    + '这项操作尚未执行，Codex 也还没有开始任务。请确认或取消。'
+  return prompt
 }
 
 function genericCodexConfirmationSpeech(): string {

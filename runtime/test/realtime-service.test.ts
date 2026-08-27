@@ -1836,7 +1836,7 @@ test('a project confirmation returns one constrained same-turn question to the m
         proposal_id: 'proposal-1',
         workspace: 'tetris-game',
         session: null,
-        confirmation_prompt: '准备创建工作区tetris-game，并在其中开始任务，请确认或取消。',
+        confirmation_prompt: '是否创建工作区“tetris-game”并开始任务？请确认或取消。',
       },
       refs: [],
     },
@@ -1856,7 +1856,7 @@ test('a project confirmation returns one constrained same-turn question to the m
   assert.equal(result.state, 'ok')
   assert.equal(result.content?.code, 'confirmation_required')
   assert.match(result.content?.confirmation_prompt ?? '', /请确认或取消/u)
-  assert.match(result.response_instruction ?? '', /尚未执行.*询问.*确认或取消/su)
+  assert.match(result.response_instruction ?? '', /只.*confirmation_prompt.*一次.*不得补充/su)
   assert.doesNotMatch(result.response_instruction ?? '', /proposal-1/u)
 })
 
@@ -3954,7 +3954,7 @@ test('a silent confirmation terminal at expiry cannot offer an impossible retry'
     responseId: 'expiring-response',
     transcript: '我还在想',
   })
-  clock.advanceTo(90)
+  clock.advanceTo(360)
   await service.handleEvent({
     kind: 'response_terminal',
     session_epoch: 1,
@@ -4000,7 +4000,7 @@ test('expiry removes a retry prompt that was queued while the user held the floo
     item.intent.item.event_id.startsWith('project-confirmation-retry:')
   )))
 
-  clock.advanceTo(90)
+  clock.advanceTo(360)
   assert.equal(controller.expire(), true)
   assert.equal(service.queuedHostItems().some(item => (
     item.intent.item.event_id.startsWith('project-confirmation-retry:')
@@ -4177,7 +4177,7 @@ test('an expiry cleans up and tells the user, without leaving the block set', as
     speech_id: 'speech-1',
     provider_item_id: 'user-item-1',
   })
-  clock.advanceTo(clock.now() + 200)
+  clock.advanceTo(clock.now() + 400)
   assert.equal(controller.expire(), true, 'the proposal lapsed')
   // Let the drain task run.
   for (let index = 0; index < 20; index += 1) await Promise.resolve()
@@ -4504,7 +4504,7 @@ test('an expiry reconnects while a pending confirmation question fence remains',
     provider_item_id: 'user-item-1',
   })
   const connects = actions.filter(action => action.startsWith('connect:')).length
-  clock.advanceTo(clock.now() + 200)
+  clock.advanceTo(clock.now() + 400)
   assert.equal(controller.expire(), true, 'past the deadline')
   for (let index = 0; index < 30; index += 1) await Promise.resolve()
   await new Promise<void>(resolve => setTimeout(resolve, 30))
@@ -4792,7 +4792,7 @@ test('an expiry in flight cannot reconnect after the service is closed', async (
     speech_id: 'speech-1',
     provider_item_id: 'user-item-1',
   })
-  clock.advanceTo(clock.now() + 200)
+  clock.advanceTo(clock.now() + 400)
   assert.equal(controller.expire(), true)
   // Close immediately, before the drain has had a turn.
   await service.close()
@@ -4865,7 +4865,7 @@ test('an expiry that outlives the shutdown grace period still cannot reconnect',
   })
   // A deferred call for this epoch, so the expiry has provider work to do.
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
-  clock.advanceTo(clock.now() + 200)
+  clock.advanceTo(clock.now() + 400)
   assert.equal(controller.expire(), true)
   // Let the drain reach its first hanging injection.
   for (let index = 0; index < 10; index += 1) await Promise.resolve()
@@ -4924,7 +4924,7 @@ test('a shutdown mid-cleanup stops the expiry before it reconnects', async () =>
     speech_id: 'speech-2',
     provider_item_id: 'user-item-2',
   })
-  clock.advanceTo(clock.now() + 200)
+  clock.advanceTo(clock.now() + 400)
   assert.equal(controller.expire(), true)
 
   // Let the drain reach the hanging close of that deferred call, then close during it.

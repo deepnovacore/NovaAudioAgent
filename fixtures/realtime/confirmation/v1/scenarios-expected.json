@@ -16,8 +16,8 @@
             "work_order": "开始实现",
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
-            "confirmation_prompt": "准备创建工作区研究项目，并在其中开始任务，请确认或取消。"
+            "expires_at": 360.0,
+            "confirmation_prompt": "是否创建工作区“研究项目”并开始任务？请确认或取消。"
           },
           "views": [
             {
@@ -27,7 +27,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "研究项目",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -40,7 +40,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "研究项目",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -60,7 +60,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "研究项目",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -165,7 +165,7 @@
             "work_order": null,
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备创建并切换到工作区研究项目，请确认或取消。"
           },
           "views": [
@@ -176,7 +176,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "研究项目",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -189,7 +189,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "研究项目",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -209,7 +209,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "研究项目",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -314,7 +314,7 @@
             "work_order": null,
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备切换到工作区alpha，请确认或取消。"
           },
           "views": [
@@ -325,7 +325,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -338,7 +338,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -358,7 +358,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -382,7 +382,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -406,7 +406,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -471,7 +471,7 @@
             "work_order": null,
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备切换到工作区alpha，请确认或取消。"
           },
           "views": [
@@ -482,7 +482,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -495,7 +495,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -515,7 +515,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -591,7 +591,7 @@
             "work_order": null,
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备创建并切换到工作区beta，请确认或取消。"
           },
           "views": [
@@ -602,7 +602,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -615,7 +615,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -635,7 +635,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -659,7 +659,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -724,7 +724,7 @@
             "work_order": null,
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备创建并切换到工作区beta，请确认或取消。"
           },
           "views": [
@@ -735,7 +735,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -748,7 +748,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -768,7 +768,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -792,7 +792,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -857,7 +857,7 @@
             "work_order": null,
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备创建并切换到工作区beta，请确认或取消。"
           },
           "views": [
@@ -868,7 +868,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -881,7 +881,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -901,7 +901,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -977,7 +977,7 @@
             "work_order": null,
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备创建并切换到工作区beta，请确认或取消。"
           },
           "views": [
@@ -988,7 +988,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -1001,7 +1001,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1021,7 +1021,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1043,7 +1043,7 @@
               "pending_session_title": null,
               "pending_expires_in_seconds": null
             },
-            "clock": 100
+            "clock": 400
           }
         },
         {
@@ -1077,7 +1077,7 @@
               "pending_session_title": null,
               "pending_expires_in_seconds": null
             },
-            "clock": 100
+            "clock": 400
           }
         },
         {
@@ -1097,7 +1097,7 @@
               "pending_session_title": null,
               "pending_expires_in_seconds": null
             },
-            "clock": 100
+            "clock": 400
           }
         }
       ]
@@ -1117,7 +1117,7 @@
             "work_order": null,
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备创建并切换到工作区alpha，请确认或取消。"
           },
           "views": [
@@ -1128,7 +1128,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -1141,7 +1141,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1161,7 +1161,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1178,7 +1178,7 @@
             "work_order": null,
             "origin_ref": "conversation:2",
             "proposal_id": "proposal-2",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备创建并切换到工作区beta，请确认或取消。"
           },
           "views": [
@@ -1189,7 +1189,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -1202,7 +1202,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1226,7 +1226,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1246,7 +1246,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "beta",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1311,7 +1311,7 @@
             "work_order": null,
             "origin_ref": "conversation:1",
             "proposal_id": "proposal-1",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备创建并切换到工作区alpha，请确认或取消。"
           },
           "views": [
@@ -1322,7 +1322,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -1335,7 +1335,7 @@
               "pending_action": "create_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1352,7 +1352,7 @@
             "work_order": null,
             "origin_ref": "conversation:2",
             "proposal_id": "proposal-2",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备切换到工作区alpha，请确认或取消。"
           },
           "views": [
@@ -1363,7 +1363,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -1376,7 +1376,7 @@
               "pending_action": "select_workspace",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": null,
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1393,7 +1393,7 @@
             "work_order": "continue",
             "origin_ref": "conversation:3",
             "proposal_id": "proposal-3",
-            "expires_at": 90.0,
+            "expires_at": 360.0,
             "confirmation_prompt": "准备切换到alpha，并继续 Session“Task 1”，请确认或取消。"
           },
           "views": [
@@ -1404,7 +1404,7 @@
               "pending_action": "resume_session",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": "Task 1",
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             }
           ],
           "expiry_notifications": 0,
@@ -1417,7 +1417,7 @@
               "pending_action": "resume_session",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": "Task 1",
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1439,7 +1439,7 @@
               "pending_action": "resume_session",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": "Task 1",
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }
@@ -1461,7 +1461,7 @@
               "pending_action": "resume_session",
               "pending_workspace_display_name": "alpha",
               "pending_session_title": "Task 1",
-              "pending_expires_in_seconds": 90.0
+              "pending_expires_in_seconds": 360.0
             },
             "clock": 0.0
           }

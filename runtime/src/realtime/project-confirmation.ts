@@ -14,7 +14,7 @@ import {codePointLengthLikePython} from '../python-text.js'
 
 export type ProjectAction = 'create' | 'select' | 'resume'
 export type ConfirmationKind = 'confirmed' | 'cancelled' | 'invalid' | 'expired' | 'ignored'
-const EXPIRY_SECONDS = 90
+const EXPIRY_SECONDS = 360
 
 export interface ProjectProposal {
   readonly action: ProjectAction
@@ -457,7 +457,7 @@ function confirmationPrompt(
     return `准备切换到${workspace}，并继续 Session“${session}”，请确认或取消。`
   }
   if (action === 'create' && hasWorkOrder) {
-    return `准备创建工作区${workspace}，并在其中开始任务，请确认或取消。`
+    return `是否创建工作区“${workspace}”并开始任务？请确认或取消。`
   }
   if (action === 'create') return `准备创建并切换到工作区${workspace}，请确认或取消。`
   return `准备切换到工作区${workspace}，请确认或取消。`

@@ -517,11 +517,11 @@ test('project create proposal validates without mutating state or constructing t
       op: 'project',
       code: 'confirmation_required',
       proposal_id: 'nonce-1',
-      expires_at: 100,
+      expires_at: 370,
       action: 'create_workspace',
       workspace: 'beta',
       session: 'Initial build',
-      confirmation_prompt: '准备创建工作区beta，并在其中开始任务，请确认或取消。',
+      confirmation_prompt: '是否创建工作区“beta”并开始任务？请确认或取消。',
     })
     assert.deepEqual(await value.store.snapshot(), before)
     assert.equal(value.factory.calls.length, 0)
@@ -602,7 +602,7 @@ test('select and resume proposals expose public action IDs, expiry, and resolved
       context('project', {}, value.clock),
     )
     assert.deepEqual(selected.content, {
-      op: 'project', code: 'confirmation_required', proposal_id: 'nonce-1', expires_at: 100,
+      op: 'project', code: 'confirmation_required', proposal_id: 'nonce-1', expires_at: 370,
       action: 'select_workspace', workspace: 'alpha', session: null,
       confirmation_prompt: '准备切换到工作区alpha，请确认或取消。',
     })
@@ -617,7 +617,7 @@ test('select and resume proposals expose public action IDs, expiry, and resolved
       context('project', {}, value.clock),
     )
     assert.deepEqual(resumed.content, {
-      op: 'project', code: 'confirmation_required', proposal_id: 'nonce-2', expires_at: 100,
+      op: 'project', code: 'confirmation_required', proposal_id: 'nonce-2', expires_at: 370,
       action: 'resume_session', workspace: 'alpha', session: 'Existing',
       confirmation_prompt: '准备切换到alpha，并继续 Session“Existing”，请确认或取消。',
     })
@@ -628,7 +628,7 @@ test('select and resume proposals expose public action IDs, expiry, and resolved
       pending_action: 'resume_session',
       pending_workspace_display_name: 'alpha',
       pending_session_title: 'Existing',
-      pending_expires_in_seconds: 90,
+      pending_expires_in_seconds: 360,
     })
     assert.equal(views.at(-1)?.pending_action, 'resume_session')
     assert.equal(views.at(-1)?.pending_session_title, 'Existing')
@@ -664,7 +664,7 @@ test('a prepared proposal publishes cached target metadata when the registry ref
         pending_action: 'create_workspace',
         pending_workspace_display_name: 'beta',
         pending_session_title: null,
-        pending_expires_in_seconds: 90,
+        pending_expires_in_seconds: 360,
       })
     } finally {
       await value.adapter.close()

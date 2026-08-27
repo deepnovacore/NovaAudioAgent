@@ -80,7 +80,7 @@
       "steps": [
         {"kind": "prepare", "action": "create", "workspace_display_name": "beta", "origin_ref": "conversation:1"},
         {"kind": "reserve", "epoch": 1, "item_id": "item-a"},
-        {"kind": "set_clock", "to": 100},
+        {"kind": "set_clock", "to": 400},
         {"kind": "accept", "epoch": 1, "item_id": "item-a", "proposal_id": "proposal-1", "confirmed": true},
         {"kind": "claim"}
       ]

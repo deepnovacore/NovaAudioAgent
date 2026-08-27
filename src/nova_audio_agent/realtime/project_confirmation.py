@@ -11,7 +11,7 @@ from nova_audio_agent.clock import Clock
 
 ProjectAction = Literal["create", "select", "resume"]
 ConfirmationKind = Literal["confirmed", "cancelled", "invalid", "expired", "ignored"]
-_EXPIRY_SECONDS = 90.0
+_EXPIRY_SECONDS = 360.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,7 +364,7 @@ def _confirmation_prompt(
         assert session is not None
         return f"准备切换到{workspace}，并继续 Session“{session}”，请确认或取消。"
     if action == "create" and has_work_order:
-        return f"准备创建工作区{workspace}，并在其中开始任务，请确认或取消。"
+        return f"是否创建工作区“{workspace}”并开始任务？请确认或取消。"
     if action == "create":
         return f"准备创建并切换到工作区{workspace}，请确认或取消。"
     return f"准备切换到工作区{workspace}，请确认或取消。"

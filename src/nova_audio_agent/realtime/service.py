@@ -2901,8 +2901,7 @@ class RealtimeService:
             view = {"state": event.outcome, "content": event.content}
             if content.get("code") == "confirmation_required":
                 view["response_instruction"] = (
-                    "该项目操作尚未执行。请用自然口语说明目标操作尚未执行，"
-                    "并依据 confirmation_prompt 明确询问用户确认或取消；"
+                    "只简短转述 confirmation_prompt 一次，不得补充解释、背景或其他问句；"
                     "不得声称已提交、已创建、已切换或已开始任务，也不要朗读 proposal_id。"
                 )
         return _encode_view(view)[:MAX_HOST_FACT_CHARS]

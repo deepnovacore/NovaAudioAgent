@@ -1052,7 +1052,7 @@ async def test_silent_confirmation_terminal_at_expiry_cannot_offer_retry() -> No
     await service.handle_event(
         UserTranscriptFinal(session_epoch=1, item_id="expiry", text="我还在想")
     )
-    clock.advance_to(90.0)
+    clock.advance_to(360.0)
     await service.handle_event(
         ResponseTerminal(
             session_epoch=1,
@@ -1122,7 +1122,7 @@ async def test_expiry_removes_retry_queued_while_user_holds_floor() -> None:
         for queued in service._host_items
     )
 
-    clock.advance_to(90.0)
+    clock.advance_to(360.0)
     assert controller.expire() is True
     assert not any(
         queued.intent.item.event_id.startswith("project-confirmation-retry:")
@@ -1392,7 +1392,7 @@ async def test_confirmation_expiry_reconnects_fenced_epoch_before_later_tool_adm
     await service.handle_event(UserSpeechEnded(session_epoch=1, speech_id="speech-confirm"))
     await service.handle_event(ResponseStarted(session_epoch=1, response_id="fenced-confirm"))
 
-    clock.advance_to(90.0)
+    clock.advance_to(360.0)
     assert controller.expire() is True
     for _ in range(12):
         await asyncio.sleep(0)
@@ -1486,7 +1486,7 @@ async def test_confirmation_expiry_closes_all_old_epoch_deferred_calls_before_re
             )
         )
 
-    clock.advance_to(90.0)
+    clock.advance_to(360.0)
     assert controller.expire() is True
     for _ in range(20):
         await asyncio.sleep(0)
@@ -1528,7 +1528,7 @@ async def test_confirmation_expiry_reconnects_when_fence_is_armed_before_respons
         )
     )
 
-    clock.advance_to(90.0)
+    clock.advance_to(360.0)
     assert controller.expire() is True
     for _ in range(12):
         await asyncio.sleep(0)
@@ -1583,7 +1583,7 @@ async def test_late_expired_transcript_closes_deferred_call_instead_of_dispatchi
         )
     )
 
-    clock.advance_to(90.0)
+    clock.advance_to(360.0)
     assert controller.expire() is True
     await service.handle_event(
         UserTranscriptFinal(session_epoch=1, item_id="user-confirm", text="确认")
@@ -1630,7 +1630,7 @@ async def test_confirmation_expiry_still_queues_fact_when_reconnect_fails() -> N
         raise RuntimeError("provider unavailable")
 
     service._reconnect_provider_session = fail_reconnect  # type: ignore[method-assign]
-    clock.advance_to(90.0)
+    clock.advance_to(360.0)
     assert controller.expire() is True
     for _ in range(12):
         await asyncio.sleep(0)
@@ -1671,11 +1671,11 @@ async def test_confirmation_expiry_hung_reconnect_is_bounded_and_still_queues_fa
         return True
 
     service._reconnect_provider_session = hung_reconnect  # type: ignore[method-assign]
-    clock.advance_to(90.0)
+    clock.advance_to(360.0)
     assert controller.expire() is True
     for _ in range(4):
         await asyncio.sleep(0)
-    clock.advance_to(95.0)
+    clock.advance_to(365.0)
     for _ in range(20):
         await asyncio.sleep(0)
 

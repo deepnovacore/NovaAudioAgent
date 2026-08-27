@@ -44,20 +44,19 @@ test('Codex startup failures use the real safe category in natural Chinese', () 
   }
 })
 
-test('Codex confirmation results preserve the question and state that nothing has started', () => {
+test('Codex confirmation results speak only the approved concise question', () => {
   const evidence = finalSpeechView('ok', {
     code: 'confirmation_required',
     action: 'create_workspace',
     proposal_id: 'proposal-secret',
     workspace: 'tetris-game',
     session: null,
-    confirmation_prompt: '准备创建工作区tetris-game，并在其中开始任务，请确认或取消。',
+    confirmation_prompt: '是否创建工作区“tetris-game”并开始任务？请确认或取消。',
     work_order: 'NEVER-EXPOSE',
   })
   assert.equal(
     evidence,
-    'Codex 需要你的确认：准备创建工作区tetris-game，并在其中开始任务。'
-      + '这项操作尚未执行，Codex 也还没有开始任务。请确认或取消。',
+    '是否创建工作区“tetris-game”并开始任务？请确认或取消。',
   )
   assert.doesNotMatch(evidence, /proposal-secret|NEVER-EXPOSE/u)
 })

@@ -92,7 +92,7 @@ def _codex_confirmation_speech(content: object) -> str | None:
         return _generic_codex_confirmation_speech()
     if action == "create_workspace":
         expected = {
-            f"准备创建工作区{workspace}，并在其中开始任务，请确认或取消。",
+            f"是否创建工作区“{workspace}”并开始任务？请确认或取消。",
             f"准备创建并切换到工作区{workspace}，请确认或取消。",
         }
     elif action == "select_workspace":
@@ -108,10 +108,7 @@ def _codex_confirmation_speech(content: object) -> str | None:
         return _generic_codex_confirmation_speech()
     if prompt not in expected:
         return _generic_codex_confirmation_speech()
-    operation = prompt.removesuffix("，请确认或取消。")
-    return (
-        f"Codex 需要你的确认：{operation}。这项操作尚未执行，Codex 也还没有开始任务。请确认或取消。"
-    )
+    return prompt
 
 
 def _generic_codex_confirmation_speech() -> str:

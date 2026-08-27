@@ -173,7 +173,7 @@ test('expired decisions clear the proposal and notify expiry without committing'
   const proposal = prepareSelect(controller)
   controller.observeExpiry(() => expiries.push(true))
   controller.reserveUserItem({epoch: 1, itemId: 'user-1'})
-  clock.advanceTo(91)
+  clock.advanceTo(361)
 
   const expired = controller.acceptDecision({
     epoch: 1,
@@ -209,18 +209,36 @@ test('releaseUndecided releases only the matching reservation', () => {
   assert.equal(accepted.kind, 'confirmed')
 })
 
-test('a released proposal remains live only until its original 90-second expiry', () => {
+test('a released proposal remains live only until its original 360-second expiry', () => {
   const clock = new VirtualClock(10)
   const controller = createController(clock)
   prepareSelect(controller)
   controller.reserveUserItem({epoch: 1, itemId: 'first'})
   assert.equal(controller.releaseUndecided({epoch: 1, itemId: 'first'}), true)
 
-  clock.advanceTo(99.9)
+  clock.advanceTo(369.9)
   assert.equal(controller.pending, true)
-  clock.advanceTo(100)
+  clock.advanceTo(370)
   assert.equal(controller.pending, false)
   assert.equal(controller.reserveUserItem({epoch: 1, itemId: 'late'}), false)
+})
+
+test('a workspace creation with work starts with the approved concise confirmation question', () => {
+  const controller = createController()
+  const proposal = controller.prepare({
+    action: 'create',
+    workspace_display_name: 'timer-app',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: '实现计时器',
+    origin_ref: 'conversation:1',
+  })
+
+  assert.equal(
+    proposal.confirmation_prompt,
+    '是否创建工作区“timer-app”并开始任务？请确认或取消。',
+  )
 })
 
 test('duplicate and replayed decisions fail closed', () => {
@@ -312,7 +330,7 @@ test('public view and prompt expose labels but no private bindings', () => {
     pending_action: 'resume_session',
     pending_workspace_display_name: '天气看板',
     pending_session_title: '登录修复',
-    pending_expires_in_seconds: 90,
+    pending_expires_in_seconds: 360,
   })
   const rendered = JSON.stringify(controller.view)
   for (const privateValue of [
@@ -323,7 +341,7 @@ test('public view and prompt expose labels but no private bindings', () => {
   }
   assert.deepEqual(changes.at(-1), controller.view)
   clock.advanceTo(35)
-  assert.equal(controller.view.pending_expires_in_seconds, 65)
+  assert.equal(controller.view.pending_expires_in_seconds, 335)
 })
 
 test('invalid proposal IDs are rejected before replacing pending state', () => {

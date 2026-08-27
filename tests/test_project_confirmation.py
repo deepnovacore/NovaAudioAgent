@@ -59,7 +59,7 @@ async def test_proposal_expiry_is_clock_scheduled_and_published() -> None:
     _prepare_select(controller)
     await asyncio.create_task(_checkpoint())
 
-    clock.advance_to(100.0)
+    clock.advance_to(370.0)
     await asyncio.create_task(_checkpoint())
 
     assert controller.view.pending_confirmation is False
@@ -110,7 +110,7 @@ def test_public_pending_view_exposes_only_action_target_and_relative_expiry() ->
         "pending_action": "resume_session",
         "pending_workspace_display_name": "天气看板",
         "pending_session_title": "登录修复",
-        "pending_expires_in_seconds": 90.0,
+        "pending_expires_in_seconds": 360.0,
     }
     rendered = repr(asdict(controller.view))
     for private in (
@@ -122,7 +122,7 @@ def test_public_pending_view_exposes_only_action_target_and_relative_expiry() ->
     ):
         assert private not in rendered
     clock.advance_to(35.0)
-    assert controller.view.pending_expires_in_seconds == 65.0
+    assert controller.view.pending_expires_in_seconds == 335.0
 
 
 def test_reconstructed_operation_cannot_claim_identity_authority() -> None:
@@ -279,7 +279,7 @@ def test_expired_decision_clears_proposal_and_notifies_without_committing() -> N
     proposal = _prepare_select(controller)
     controller.observe_expiry(lambda: expiries.append(True))
     controller.reserve_user_item(epoch=1, item_id="user-1")
-    clock.advance_to(91.0)
+    clock.advance_to(361.0)
 
     expired = controller.accept_decision(
         epoch=1,
@@ -323,11 +323,25 @@ def test_released_proposal_remains_live_only_until_original_expiry() -> None:
     controller.reserve_user_item(epoch=1, item_id="first")
     assert controller.release_undecided(epoch=1, item_id="first") is True
 
-    clock.advance_to(99.9)
+    clock.advance_to(369.9)
     assert controller.pending is True
-    clock.advance_to(100.0)
+    clock.advance_to(370.0)
     assert controller.pending is False
     assert controller.reserve_user_item(epoch=1, item_id="late") is False
+
+
+def test_workspace_creation_with_work_uses_approved_concise_confirmation_question() -> None:
+    proposal = _controller().prepare(
+        action="create",
+        workspace_display_name="timer-app",
+        workspace_id=None,
+        session_title=None,
+        session_id=None,
+        work_order="实现计时器",
+        origin_ref="conversation:1",
+    )
+
+    assert proposal.confirmation_prompt == "是否创建工作区“timer-app”并开始任务？请确认或取消。"
 
 
 def test_duplicate_and_replayed_decisions_fail_closed() -> None:

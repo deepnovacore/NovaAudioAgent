@@ -340,11 +340,11 @@ async def test_project_action_validation_and_proposal_only_dispatch(tmp_path: Pa
         "op": "project",
         "code": "confirmation_required",
         "proposal_id": "nonce-0",
-        "expires_at": 90.0,
+        "expires_at": 360.0,
         "action": "create_workspace",
         "workspace": "beta",
         "session": "Initial",
-        "confirmation_prompt": "准备创建工作区beta，并在其中开始任务，请确认或取消。",
+        "confirmation_prompt": "是否创建工作区“beta”并开始任务？请确认或取消。",
     }
     assert store.snapshot() == before
 
@@ -377,7 +377,7 @@ async def test_select_and_resume_proposals_include_ids_expiry_and_resolved_names
         "op": "project",
         "code": "confirmation_required",
         "proposal_id": "nonce-0",
-        "expires_at": 90.0,
+        "expires_at": 360.0,
         "action": "select_workspace",
         "workspace": "alpha",
         "session": None,
@@ -387,7 +387,7 @@ async def test_select_and_resume_proposals_include_ids_expiry_and_resolved_names
         "op": "project",
         "code": "confirmation_required",
         "proposal_id": "nonce-1",
-        "expires_at": 90.0,
+        "expires_at": 360.0,
         "action": "resume_session",
         "workspace": "alpha",
         "session": "Existing",
@@ -1222,7 +1222,7 @@ async def test_prepared_confirmation_survives_busy_view_refresh(tmp_path: Path) 
         pending_action="select_workspace",
         pending_workspace_display_name="alpha",
         pending_session_title=None,
-        pending_expires_in_seconds=90.0,
+        pending_expires_in_seconds=360.0,
     )
 
 

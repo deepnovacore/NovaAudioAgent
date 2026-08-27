@@ -804,7 +804,7 @@ test('project proposal reaches provider and desktop before confirmation', async 
       pending_action: 'create_workspace',
       pending_workspace_display_name: 'tetris-game',
       pending_session_title: null,
-      pending_expires_in_seconds: 90,
+      pending_expires_in_seconds: 360,
     })
     assert.equal(JSON.stringify(pending).includes('assembly-proposal'), false)
 
@@ -826,7 +826,7 @@ test('project proposal reaches provider and desktop before confirmation', async 
     assert.equal(result.content?.action, 'create_workspace')
     assert.equal(result.content?.workspace, 'tetris-game')
     assert.match(result.content?.confirmation_prompt ?? '', /请确认或取消/u)
-    assert.match(result.response_instruction ?? '', /尚未执行.*确认或取消/su)
+    assert.match(result.response_instruction ?? '', /只.*confirmation_prompt.*一次.*不得补充/su)
     assert.equal(result.content?.proposal_id, 'assembly-proposal')
     assert.equal(
       provider.responseIntents.some(intent => intent.kind === 'delegation_acknowledgement'),
