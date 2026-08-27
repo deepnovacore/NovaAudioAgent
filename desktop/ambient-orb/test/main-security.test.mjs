@@ -23,6 +23,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:backend-status',
     'nova:backend:retry',
     'nova:bootstrap',
+    'nova:camera:permission',
     'nova:codex:rescan',
     'nova:memory-board:data',
     'nova:memory-board:export',
@@ -382,17 +383,21 @@ test('renderer threads the bootstrap platform into the orb state axes', async ()
   assert.match(source, /axes\.platform = bootstrap\.platform/)
 })
 
-test('main delegates camera-gated startup through the tested selector lifecycle', async () => {
+test('main starts without camera permission and exposes only an explicit sender-bound request', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const preload = await readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8')
 
   const start = source.slice(source.indexOf('async function start()'))
   assert.match(start, /return startWithSelectedCamera\(\{/u)
   assert.match(start, /environment: process\.env/u)
-  assert.match(start, /requestPermission: source => requestLocalCameraPermission\(source/u)
+  assert.doesNotMatch(start.slice(0, start.indexOf('\n}')), /CameraPermission|camera:permission/u)
   assert.match(
     start,
     /start: camera => startSelectedCamera\(camera, backendKind, releaseSmokeChannel\)/u,
   )
+  assert.match(source, /ipcMain\.handle\('nova:camera:permission', async event => \{\n\s*if \(!mainWindow \|\| event\.sender !== mainWindow\.webContents\)/u)
+  assert.match(source, /resolveCameraPermission\(camera\.source, \{/u)
+  assert.match(preload, /requestPermission: \(\) => ipcRenderer\.invoke\('nova:camera:permission'\)/u)
 })
 
 test('backend mode is admitted before camera selection or permission work', async () => {

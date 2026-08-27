@@ -78,12 +78,14 @@ export function candidateInstallPlan({target, artifact, scratch}) {
       command: artifact,
       args: ['/S', `/D=${installRoot}`],
       timeoutMs: NATIVE_INSTALLER_SETTLE_MS,
+      windowsVerbatimArguments: true,
     }]
     uninstall = [{
       op: 'spawn',
       command: pathApi.resolve(installRoot, 'Uninstall Nova Audio Agent Ambient Orb.exe'),
-      args: ['/S'],
+      args: ['/S', `_?=${installRoot}`],
       timeoutMs: NATIVE_INSTALLER_SETTLE_MS,
+      windowsVerbatimArguments: true,
     }]
     residue = installRoot
   } else if (target === 'linux-x64-gnu:appimage') {
@@ -412,6 +414,7 @@ async function runActions(actions, environment) {
     }
     const result = spawnSync(action.command, action.args, {
       ...(action.cwd === undefined ? {} : {cwd: action.cwd}),
+      ...(action.windowsVerbatimArguments === true ? {windowsVerbatimArguments: true} : {}),
       env: environment,
       encoding: 'utf8', timeout: action.timeoutMs ?? SETTLE_MS, maxBuffer: OUTPUT_LIMIT,
       stdio: ['ignore', 'pipe', 'pipe'],

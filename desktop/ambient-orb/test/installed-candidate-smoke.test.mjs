@@ -95,6 +95,18 @@ test('Windows native installer actions allow enough time for cold CI extraction'
   assert.equal(plan.uninstall[0].timeoutMs, NATIVE_INSTALLER_SETTLE_MS)
 })
 
+test('Windows NSIS actions preserve spaced install roots and bind the uninstaller directory', () => {
+  const plan = candidateInstallPlan({
+    target: 'win32-x64:nsis',
+    artifact: '/private/Candidate Files/nova setup.exe',
+    scratch: '/private/Smoke Root',
+  })
+  assert.deepEqual(plan.install[0].args, ['/S', '/D=/private/Smoke Root/install'])
+  assert.equal(plan.install[0].windowsVerbatimArguments, true)
+  assert.deepEqual(plan.uninstall[0].args, ['/S', '_?=/private/Smoke Root/install'])
+  assert.equal(plan.uninstall[0].windowsVerbatimArguments, true)
+})
+
 test('installed source rollback accepts its stable exit code despite platform output', async () => {
   const {classifySourceRollbackResult} = await import('../scripts/installed-candidate-smoke.mjs')
   assert.deepEqual(classifySourceRollbackResult({

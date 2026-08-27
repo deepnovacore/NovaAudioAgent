@@ -26,11 +26,11 @@ export function resolveDesktopConfig({
   const settingsBinary = nonempty(settings.codexBinaryPath)
   const environmentBinary = nonempty(environment.NOVA_AUDIO_AGENT_CODEX_BIN)
   const settingsMode = settings.codexBinaryMode === 'manual' ? 'manual' : 'auto'
-  const codexBinaryMode = settingsHasMode
-    ? settingsMode
-    : (environmentBinary === null ? 'auto' : 'manual')
+  const codexBinaryMode = environmentBinary !== null
+    ? 'manual'
+    : (settingsHasMode ? settingsMode : 'auto')
   const binaryPath = codexBinaryMode === 'manual'
-    ? (settingsHasMode ? settingsBinary : environmentBinary) ?? ''
+    ? environmentBinary ?? settingsBinary ?? ''
     : ''
   const codexConfigurationError = codexBinaryMode === 'manual' && binaryPath === ''
     ? 'manual_path_required'

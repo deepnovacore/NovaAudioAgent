@@ -29,45 +29,6 @@
         <small>首次启动会申请麦克风权限并立即释放设备；只有启用此项才会自动监听。</small>
       </section>
       <section class="setting-section">
-        <h2>Codex 与 Projects</h2>
-        <p id="codex-status" class="connection-status" aria-live="polite">正在检查 Codex…</p>
-        <fieldset class="segmented compact-segmented">
-          <legend>Codex CLI</legend>
-          <label class="choice">
-            <input type="radio" name="codexBinaryMode" value="auto">
-            <span class="option"><span class="option-name">自动发现</span></span>
-          </label>
-          <label class="choice">
-            <input type="radio" name="codexBinaryMode" value="manual">
-            <span class="option"><span class="option-name">手动路径</span></span>
-          </label>
-        </fieldset>
-        <div class="field">
-          <label for="codexBinaryPath">Codex 原生可执行文件</label>
-          <input type="text" id="codexBinaryPath" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="自动发现，或输入绝对路径">
-          <button type="button" id="codex-rescan">重新扫描</button>
-        </div>
-        <div class="field">
-          <label for="codexWorkspace">当前 workspace</label>
-          <input type="text" id="codexWorkspace" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="默认 ~/.nova-audio-agent/workspaces/default">
-          <small>当前有效值：<code id="effective-workspace"></code></small>
-        </div>
-        <div class="field">
-          <label for="codexManagedRoot">托管 workspace 根目录</label>
-          <input type="text" id="codexManagedRoot" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="默认 ~/.nova-audio-agent/workspaces">
-          <small>当前有效值：<code id="effective-managed-root"></code></small>
-        </div>
-        <button type="button" id="projects-repair">修复 Projects 目录权限</button>
-        <small>仅修复当前设置对应的 state、托管根目录和 workspace，不接受任意路径。</small>
-      </section>
-      <section class="setting-section">
-        <h2>模型连接</h2>
-        <div class="field">
-          <label for="modelBaseUrl">兼容模型 Base URL</label>
-          <input type="url" id="modelBaseUrl" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="HTTPS，或本机 loopback HTTP">
-        </div>
-      </section>
-      <section class="setting-section">
         <h2>外观</h2>
         <fieldset id="palette" class="segmented segmented-palette">
           <legend>光球配色</legend>
@@ -247,6 +208,13 @@
           <input type="password" id="modelApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
           <button type="button" class="clear" data-key="modelApiKey">清除</button>
         </div>
+        <div class="gateway-endpoint">
+          <div class="field">
+            <label for="modelBaseUrl">模型网关地址（高级）</label>
+            <input type="url" id="modelBaseUrl" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="HTTPS，或本机 loopback HTTP">
+            <small>仅用于 FastBrain 等辅助模型；留空使用 DashScope 默认地址。</small>
+          </div>
+        </div>
         <div class="secret">
           <label for="codexApiKey">Codex</label>
           <span class="badge" id="badge-codexApiKey">未设置</span>
@@ -276,6 +244,48 @@
           <button type="button" class="clear" data-key="doubaoAsrApiKey">清除</button>
         </div>
         <button type="button" id="save-secrets">保存密钥</button>
+        </div>
+      </details>
+      <details id="codex-projects" class="secret-disclosure codex-disclosure">
+        <summary>
+          <span class="summary-copy">
+            <span class="summary-title">Codex 与 Projects</span>
+            <span class="summary-note">Codex CLI 与 workspace 高级设置</span>
+          </span>
+          <span class="summary-chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="codex-content">
+          <p id="codex-status" class="connection-status" aria-live="polite">正在检查 Codex…</p>
+          <fieldset class="segmented compact-segmented">
+            <legend>Codex CLI</legend>
+            <label class="choice">
+              <input type="radio" name="codexBinaryMode" value="auto">
+              <span class="option"><span class="option-name">自动发现</span></span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="codexBinaryMode" value="manual">
+              <span class="option"><span class="option-name">手动路径</span></span>
+            </label>
+          </fieldset>
+          <button type="button" id="codex-rescan">重新扫描</button>
+          <div id="codex-manual-settings" hidden>
+            <div class="field">
+              <label for="codexBinaryPath">Codex 原生可执行文件</label>
+              <input type="text" id="codexBinaryPath" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="输入绝对路径">
+            </div>
+            <div class="field">
+              <label for="codexWorkspace">当前 workspace</label>
+              <input type="text" id="codexWorkspace" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="默认 ~/.nova-audio-agent/workspaces/default">
+              <small>当前有效值：<code id="effective-workspace"></code></small>
+            </div>
+            <div class="field">
+              <label for="codexManagedRoot">托管 workspace 根目录</label>
+              <input type="text" id="codexManagedRoot" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="默认 ~/.nova-audio-agent/workspaces">
+              <small>当前有效值：<code id="effective-managed-root"></code></small>
+            </div>
+            <button type="button" id="projects-repair">修复 Projects 目录权限</button>
+            <small>仅修复当前设置对应的 state、托管根目录和 workspace，不接受任意路径。</small>
+          </div>
         </div>
       </details>
     </main>

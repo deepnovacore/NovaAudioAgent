@@ -152,6 +152,19 @@ body:hover #orb-rail,
   color: #ff6a6a;
 }
 
+#camera-toggle .icon-camera { display: none; }
+#camera-toggle[aria-pressed="true"] .icon-camera { display: block; }
+#camera-toggle[aria-pressed="true"] .icon-camera-off { display: none; }
+#camera-toggle[aria-pressed="true"] {
+  border-color: rgba(67, 241, 166, .4);
+  color: #43f1a6;
+}
+#camera-toggle[data-camera-state="denied"],
+#camera-toggle[data-camera-state="unavailable"] {
+  border-color: rgba(255, 106, 106, .4);
+  color: #ff6a6a;
+}
+
 #state-label, #codex-label, #aec-label {
   max-width: 172px;
   margin: 0;
@@ -288,4 +301,7 @@ body:hover #orb-rail,
   }
   #orb-rail button { border: 2px solid white; background: black; color: white; }
   #mute-toggle[aria-pressed="true"] { color: #ff3b30; border-color: #ff3b30; }
+  #camera-toggle[aria-pressed="true"] { color: #43f1a6; border-color: #43f1a6; }
+  #camera-toggle[data-camera-state="denied"],
+  #camera-toggle[data-camera-state="unavailable"] { color: #ff3b30; border-color: #ff3b30; }
 }

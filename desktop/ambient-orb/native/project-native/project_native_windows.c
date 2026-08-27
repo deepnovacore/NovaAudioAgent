@@ -665,7 +665,8 @@ static napi_value nova_open_directory(napi_env env, napi_callback_info info) {
   if (opened == INVALID_HANDLE_VALUE) {
     opened = CreateFileW(
         path,
-        FILE_LIST_DIRECTORY | FILE_ADD_SUBDIRECTORY | FILE_READ_ATTRIBUTES,
+        FILE_LIST_DIRECTORY | FILE_ADD_SUBDIRECTORY | FILE_READ_ATTRIBUTES |
+            READ_CONTROL,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
         OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
@@ -686,7 +687,8 @@ static napi_value nova_open_directory(napi_env env, napi_callback_info info) {
   int info_valid = opened_valid && nova_handle_info(opened, &information) &&
                    (information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
   int path_valid = final_valid && nova_same_path(path, final_path);
-  int valid = opened_valid && final_valid && info_valid && path_valid;
+  int owner_valid = opened_valid && nova_current_user_owner(opened);
+  int valid = opened_valid && final_valid && info_valid && path_valid && owner_valid;
   HeapFree(GetProcessHeap(), 0, path);
   if (final_path != NULL)
     HeapFree(GetProcessHeap(), 0, final_path);

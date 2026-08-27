@@ -165,11 +165,20 @@ export function configureWindowSecurity(window) {
   })
 }
 
-export async function requestLocalCameraPermission(source, { platform, systemPreferences }) {
-  if (source !== 'local' || platform !== 'darwin') return
-  if (systemPreferences.getMediaAccessStatus('camera') === 'not-determined') {
-    await systemPreferences.askForMediaAccess('camera')
+export async function resolveCameraPermission(source, { platform, systemPreferences }) {
+  if (source !== 'local' || platform !== 'darwin') {
+    return Object.freeze({ status: 'unknown' })
   }
+  let status = systemPreferences.getMediaAccessStatus('camera')
+  if (status === 'not-determined') {
+    await systemPreferences.askForMediaAccess('camera')
+    status = systemPreferences.getMediaAccessStatus('camera')
+  }
+  return Object.freeze({
+    status: status === 'granted' || status === 'denied' || status === 'restricted'
+      ? status
+      : 'unknown',
+  })
 }
 
 export async function resolveMicrophonePermission({ platform, systemPreferences }) {

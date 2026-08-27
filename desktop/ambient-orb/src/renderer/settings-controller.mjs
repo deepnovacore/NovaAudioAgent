@@ -12,6 +12,14 @@ export function mergePatch(base, next) {
   return merged
 }
 
+export function codexModeVisibility(mode) {
+  const manual = mode === 'manual'
+  return Object.freeze({
+    manualConfigurationHidden: !manual,
+    rescanHidden: manual,
+  })
+}
+
 // Direct secret fields and the root `secrets` map are never public state. The
 // same names are legitimate boolean fields inside `secretsPresent`, so that
 // presence-only shape is sanitized separately instead of recursively denied.

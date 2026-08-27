@@ -227,23 +227,26 @@ test('window security installs one policy pair and invokes each request callback
   }
 })
 
-test('main camera permission helper catches prompting or examining permissions in file mode', async () => {
-  assert.equal(typeof securityModule.requestLocalCameraPermission, 'function')
-  for (const [name, source, platform, status, expected] of [
-    ['local not determined', 'local', 'darwin', 'not-determined', ['status', 'ask']],
-    ['local already granted', 'local', 'darwin', 'granted', ['status']],
-    ['local non-mac', 'local', 'linux', 'not-determined', []],
-    ['file mac', 'file', 'darwin', 'not-determined', []],
-    ['file non-mac', 'file', 'linux', 'not-determined', []],
+test('camera permission is resolved only after an explicit local-camera request', async () => {
+  assert.equal(typeof securityModule.resolveCameraPermission, 'function')
+  for (const [name, source, platform, statuses, expectedCalls, expectedStatus] of [
+    ['local not determined then granted', 'local', 'darwin', ['not-determined', 'granted'], ['status', 'ask', 'status'], 'granted'],
+    ['local not determined then denied', 'local', 'darwin', ['not-determined', 'denied'], ['status', 'ask', 'status'], 'denied'],
+    ['local already granted', 'local', 'darwin', ['granted'], ['status'], 'granted'],
+    ['local restricted', 'local', 'darwin', ['restricted'], ['status'], 'restricted'],
+    ['local non-mac', 'local', 'linux', ['not-determined'], [], 'unknown'],
+    ['file mac', 'file', 'darwin', ['not-determined'], [], 'unknown'],
+    ['file non-mac', 'file', 'linux', ['not-determined'], [], 'unknown'],
   ]) {
     const calls = []
-    await securityModule.requestLocalCameraPermission(source, {
+    let index = 0
+    const result = await securityModule.resolveCameraPermission(source, {
       platform,
       systemPreferences: {
         getMediaAccessStatus(kind) {
           assert.equal(kind, 'camera')
           calls.push('status')
-          return status
+          return statuses[Math.min(index++, statuses.length - 1)]
         },
         async askForMediaAccess(kind) {
           assert.equal(kind, 'camera')
@@ -252,7 +255,8 @@ test('main camera permission helper catches prompting or examining permissions i
         },
       },
     })
-    assert.deepEqual(calls, expected, name)
+    assert.deepEqual(calls, expectedCalls, name)
+    assert.deepEqual(result, {status: expectedStatus}, name)
   }
 })
 

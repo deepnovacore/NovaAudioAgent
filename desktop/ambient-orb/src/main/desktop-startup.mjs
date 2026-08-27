@@ -20,7 +20,7 @@ export function inspectCodexVersion(invocation, { environment = {}, run }) {
     encoding: 'utf8',
     env,
     timeout: 5_000,
-    maxBuffer: 1_024,
+    maxBuffer: 64 * 1_024,
     windowsHide: true,
   })
   if (result?.status !== 0 || typeof result.stdout !== 'string') return null

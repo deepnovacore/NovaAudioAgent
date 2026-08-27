@@ -1,7 +1,7 @@
 // The panel talks only to the constrained settings bridge. The controller
 // owns queued requests and drafts, which keeps an older bridge response from
 // erasing text the user typed while it was in flight.
-import { createSettingsController } from './settings-controller.mjs'
+import { codexModeVisibility, createSettingsController } from './settings-controller.mjs'
 import { createSecretRevisions } from './secret-revisions.mjs'
 import {
   CUSTOM_VOICE_VALUE,
@@ -47,6 +47,8 @@ const heartbeatValue = document.querySelector('#heartbeat-value')
 const codexModeInputs = [...document.querySelectorAll('input[name="codexBinaryMode"]')]
 const codexBinaryPath = document.querySelector('#codexBinaryPath')
 const codexStatus = document.querySelector('#codex-status')
+const codexManualSettings = document.querySelector('#codex-manual-settings')
+const codexRescan = document.querySelector('#codex-rescan')
 const codexWorkspace = document.querySelector('#codexWorkspace')
 const codexManagedRoot = document.querySelector('#codexManagedRoot')
 const modelBaseUrl = document.querySelector('#modelBaseUrl')
@@ -183,6 +185,9 @@ function render(view, drafts) {
   heartbeat.value = String(view.codexHeartbeatSeconds)
   heartbeatValue.textContent = `${view.codexHeartbeatSeconds} 秒`
   for (const input of codexModeInputs) input.checked = input.value === view.codexBinaryMode
+  const codexVisibility = codexModeVisibility(view.codexBinaryMode)
+  codexManualSettings.hidden = codexVisibility.manualConfigurationHidden
+  codexRescan.hidden = codexVisibility.rescanHidden
   codexBinaryPath.disabled = view.codexBinaryMode !== 'manual'
   renderText(codexBinaryPath, 'codexBinaryPath', view.codexBinaryPath, drafts)
   renderText(codexWorkspace, 'codexWorkspace', view.codexWorkspace, drafts)
@@ -363,7 +368,7 @@ codexManagedRoot.addEventListener('change', () => {
 })
 modelBaseUrl.addEventListener('input', () => { recordDraft(modelBaseUrl) })
 modelBaseUrl.addEventListener('change', () => { void saveText('modelBaseUrl', modelBaseUrl) })
-document.querySelector('#codex-rescan').addEventListener('click', async () => {
+codexRescan.addEventListener('click', async () => {
   statusLabel.textContent = '正在扫描 Codex…'
   try {
     controller.setView(await api.rescanCodex())

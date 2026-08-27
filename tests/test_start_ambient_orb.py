@@ -267,6 +267,11 @@ def test_ps1_resolves_a_native_codex_binary_instead_of_an_npm_shim() -> None:
         "the message must name the override the user can set instead"
     )
 
+    override = text.split("if ($env:NOVA_AUDIO_AGENT_CODEX_BIN) {", 1)[1].split("\n} else {", 1)[0]
+    assert "-CommandType Application" in override
+    assert "-match '\\.(exe|com)$'" in override
+    assert "Source" in override, "the validated executable must replace the raw override"
+
 
 def test_ps1_launchers_have_utf8_bom() -> None:
     for source in (PS1_SOURCE, BOOTSTRAP_PS1_SOURCE):

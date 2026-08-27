@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
   "files": [
+    "desktop/ambient-orb/src/main/app-icon.mjs",
     "desktop/ambient-orb/src/main/app-protocol.mjs",
     "desktop/ambient-orb/src/main/backend-diagnostics.mjs",
     "desktop/ambient-orb/src/main/backend-supervisor.mjs",
@@ -266,7 +267,7 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "test": "desktop/ambient-orb/test/platform-config.test.mjs",
-      "behavior": "desktop configuration resolves settings before environment before defaults"
+      "behavior": "desktop configuration lets the explicit process binary override saved discovery settings"
     },
     {
       "file": "desktop/ambient-orb/src/main/platform-config.mjs",
@@ -275,7 +276,7 @@
       "snippet_sha256": "cc7cbda749d25fe6e6becacae90513c4333116f41ddd58b42df7bf739c64e64e",
       "disposition": "host_only_unicode",
       "test": "desktop/ambient-orb/test/platform-config.test.mjs",
-      "behavior": "desktop configuration resolves settings before environment before defaults"
+      "behavior": "desktop configuration lets the explicit process binary override saved discovery settings"
     },
     {
       "file": "desktop/ambient-orb/src/main/settings-store.mjs",

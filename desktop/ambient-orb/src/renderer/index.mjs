@@ -18,6 +18,7 @@ import {
 } from './microphone-permission.mjs'
 import {
   RendererCameraController,
+  RendererCameraToggle,
   RendererSocketRouter,
 } from './camera.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
@@ -28,6 +29,7 @@ import { deriveOrbState } from './state.mjs'
 const shell = document.querySelector('#shell')
 const orb = document.querySelector('#orb')
 const muteToggle = document.querySelector('#mute-toggle')
+const cameraToggle = document.querySelector('#camera-toggle')
 const openSettingsButton = document.querySelector('#open-settings')
 const stateLabel = document.querySelector('#state-label')
 const codexLabel = document.querySelector('#codex-label')
@@ -101,7 +103,18 @@ const axes = {
   audioMode: 'inactive',
   activationPending: false,
   platform: 'unknown',
+  camera: 'off',
+  cameraSource: 'local',
 }
+
+const cameraToggleController = new RendererCameraToggle({
+  cameraController,
+  requestPermission: () => window.novaAudioAgentDesktop.camera.requestPermission(),
+  onState: state => {
+    axes.camera = state
+    render()
+  },
+})
 
 const confirmationCountdown = new ConfirmationCountdown({
   onTick: seconds => {
@@ -178,6 +191,21 @@ function render() {
   muteToggle.disabled = !axes.activated
   muteToggle.setAttribute('aria-pressed', String(axes.muted))
   muteToggle.setAttribute('aria-label', axes.muted ? '取消闭麦' : '闭麦')
+  cameraToggle.hidden = axes.cameraSource === 'file'
+  cameraToggle.disabled = axes.booting
+    || axes.cameraSource !== 'local'
+    || axes.camera === 'requesting'
+  cameraToggle.dataset.cameraState = axes.camera
+  cameraToggle.setAttribute('aria-pressed', String(axes.camera === 'on'))
+  cameraToggle.setAttribute('aria-busy', String(axes.camera === 'requesting'))
+  cameraToggle.setAttribute('aria-label', ({
+    off: '打开摄像头',
+    requesting: '正在请求摄像头权限',
+    on: '关闭摄像头',
+    denied: '摄像头权限被拒绝，点击重试',
+    unavailable: '摄像头不可用，点击重试',
+    file: '使用测试视频源',
+  })[axes.camera] ?? '打开摄像头')
   visual.setState(state.name, { codexWorking: axes.codex === 'working' })
 }
 
@@ -736,6 +764,8 @@ async function boot() {
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
     cameraController.setSourceMode(bootstrap.cameraSource)
+    axes.cameraSource = bootstrap.cameraSource
+    axes.camera = bootstrap.cameraSource === 'file' ? 'file' : 'off'
     axes.audioMode = bootstrap.audioMode
     axes.platform = bootstrap.platform
     axes.backendState = typeof bootstrap.backendStatus === 'string'
@@ -846,6 +876,7 @@ orb.addEventListener('contextmenu', event => {
   window.novaAudioAgentDesktop.orbMenu.show()
 })
 muteToggle.addEventListener('click', () => toggleMute())
+cameraToggle.addEventListener('click', () => { void cameraToggleController.toggle() })
 openSettingsButton.addEventListener('click', () => window.novaAudioAgentDesktop.orbMenu.openSettings?.())
 window.addEventListener('beforeunload', () => {
   socketRouter.dispose()

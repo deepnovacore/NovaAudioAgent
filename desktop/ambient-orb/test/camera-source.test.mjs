@@ -176,14 +176,11 @@ test('camera selection failure stops every later main startup phase without path
   })
 })
 
-test('main camera startup orders selection, permission, and the remaining startup body', async () => {
+test('main camera startup selects the source without requesting camera permission', async () => {
   assert.equal(typeof cameraSource.startWithSelectedCamera, 'function')
   const events = []
   const result = await cameraSource.startWithSelectedCamera({
     environment: {},
-    requestPermission: async source => {
-      events.push(`permission:${source}`)
-    },
     start: async selected => {
       events.push(`start:${selected.source}`)
       return 'started-sentinel'
@@ -191,5 +188,5 @@ test('main camera startup orders selection, permission, and the remaining startu
   })
 
   assert.equal(result, 'started-sentinel')
-  assert.deepEqual(events, ['permission:local', 'start:local'])
+  assert.deepEqual(events, ['start:local'])
 })

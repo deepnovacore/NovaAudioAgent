@@ -46,6 +46,10 @@ test('Windows project authority owns nonblocking locks and handle-relative proje
   assert.doesNotMatch(body, /static napi_value nova_protect_directory|"protectDirectory"/u)
   assert.match(body, /CreateFileW\s*\(/u)
   assert.match(body, /FILE_FLAG_BACKUP_SEMANTICS\s*\|\s*FILE_FLAG_OPEN_REPARSE_POINT/u)
+  const openDirectory = body.split(
+    'static napi_value nova_open_directory',
+  )[1].split('static napi_value', 1)[0]
+  assert.match(openDirectory, /nova_current_user_owner\(opened\)/u)
   const posixBody = await source('native/project-native/project_native_posix.c')
   assert.doesNotMatch(posixBody, /static napi_value nova_protect_directory|"protectDirectory"/u)
 })

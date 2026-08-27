@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
   releaseCamera: Object.freeze({
     report: result => ipcRenderer.send('nova:release-camera:result', result),
   }),
+  camera: Object.freeze({
+    requestPermission: () => ipcRenderer.invoke('nova:camera:permission'),
+  }),
   microphone: Object.freeze({
     requestPermission: () => ipcRenderer.invoke('nova:microphone:permission'),
     report: status => ipcRenderer.send('nova:microphone:status', status),

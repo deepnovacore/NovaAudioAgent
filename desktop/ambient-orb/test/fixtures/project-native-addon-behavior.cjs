@@ -50,6 +50,9 @@ if (mode === 'hold') {
     const homeHandle = openNativeDirectory(homedir())
     assert.equal(homeHandle.close(), undefined)
     assert.equal(homeHandle.close(), undefined)
+    if (process.platform === 'win32' && process.env.SystemRoot) {
+      assertNativeDirectoryRejected(process.env.SystemRoot)
+    }
 
     const container = mkdtempSync(join(process.cwd(), 'build', 'nova-project-native-behavior-'))
     const root = join(container, 'root')

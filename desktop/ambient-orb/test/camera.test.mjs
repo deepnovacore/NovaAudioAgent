@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import * as cameraModule from '../src/renderer/camera.mjs'
 import {
   CAMERA_FILE_URL,
   CAMERA_FINAL_FRAME_EPSILON_SECONDS,
@@ -16,6 +17,8 @@ import {
   encodeCameraFrame,
   parseCameraCapture,
 } from '../src/renderer/camera.mjs'
+
+const {RendererCameraToggle} = cameraModule
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -125,9 +128,10 @@ function makeLocalHarness(overrides = {}) {
   return {calls, track, stream, bitmap, blob, mediaDevices, ImageCapture, OffscreenCanvas}
 }
 
-function makeController(options, sourceMode = 'local') {
+async function makeController(options, sourceMode = 'local') {
   const controller = new RendererCameraController(options)
   controller.setSourceMode(sourceMode)
+  if (sourceMode === 'local') await controller.enableLocal()
   return controller
 }
 
@@ -341,6 +345,121 @@ test('camera unavailable response is compact, ordered, and leak-free', () => {
   assert.doesNotMatch(text, /device|DOMException|nova:\/\/|credential|\/Users\//u)
 })
 
+test('local camera starts privacy-gated and rejects capture without touching the device', async () => {
+  const harness = makeLocalHarness()
+  const controller = new RendererCameraController(harness)
+  controller.setSourceMode('local')
+  const response = makeDelivery()
+
+  controller.enqueue(localRequest('camera-disabled'), response.delivery)
+
+  assert.equal(
+    (await settleWithin(response.response.promise, 'disabled local camera')).value,
+    cameraUnavailableMessage('camera-disabled'),
+  )
+  assert.deepEqual(harness.calls.constraints, [])
+  assert.deepEqual(harness.calls.captures, [])
+  controller.dispose()
+})
+
+test('explicit enable acquires once and disable releases the device and hard-gates later capture', async () => {
+  const harness = makeLocalHarness()
+  const controller = new RendererCameraController(harness)
+  controller.setSourceMode('local')
+
+  assert.equal(await controller.enableLocal(), true)
+  assert.deepEqual(harness.calls.constraints, [{video: true, audio: false}])
+  assert.deepEqual(harness.calls.captures, [harness.track])
+
+  const enabled = makeDelivery()
+  controller.enqueue(localRequest('camera-enabled'), enabled.delivery)
+  assert.equal((await settleWithin(enabled.response.promise, 'enabled local camera')).kind, 'binary')
+  assert.equal(harness.calls.constraints.length, 1, 'capture reuses the explicitly acquired stream')
+
+  controller.disableLocal()
+  assert.equal(harness.track.stops, 1)
+
+  const disabled = makeDelivery(enabled.delivery.generation)
+  controller.enqueue(localRequest('camera-disabled-again'), disabled.delivery)
+  assert.equal(
+    (await settleWithin(disabled.response.promise, 'disabled camera after use')).value,
+    cameraUnavailableMessage('camera-disabled-again'),
+  )
+  assert.equal(harness.calls.constraints.length, 1, 'disabled capture never reacquires the device')
+  controller.dispose()
+  assert.equal(harness.track.stops, 1)
+})
+
+test('failed explicit enable leaves local capture disabled and releases an unusable stream', async () => {
+  const badTrack = {readyState: 'ended', stops: 0, stop() { this.stops += 1 }}
+  const badStream = {getVideoTracks: () => [badTrack], getTracks: () => [badTrack]}
+  const harness = makeLocalHarness({getUserMedia: async () => badStream})
+  const controller = new RendererCameraController(harness)
+  controller.setSourceMode('local')
+
+  assert.equal(await controller.enableLocal(), false)
+  assert.equal(badTrack.stops, 1)
+
+  const response = makeDelivery()
+  controller.enqueue(localRequest('camera-after-denial'), response.delivery)
+  assert.equal(
+    (await settleWithin(response.response.promise, 'capture after failed enable')).value,
+    cameraUnavailableMessage('camera-after-denial'),
+  )
+  assert.equal(harness.calls.constraints.length, 1, 'failed enable is not retried by a host request')
+  controller.dispose()
+})
+
+test('camera toggle asks on the user action, enables the real controller, and releases on off', async () => {
+  assert.equal(typeof RendererCameraToggle, 'function')
+  const harness = makeLocalHarness()
+  const controller = new RendererCameraController(harness)
+  controller.setSourceMode('local')
+  const states = []
+  let permissionRequests = 0
+  const toggle = new RendererCameraToggle({
+    cameraController: controller,
+    requestPermission: async () => {
+      permissionRequests += 1
+      return {status: 'granted'}
+    },
+    onState: state => states.push(state),
+  })
+
+  assert.equal(toggle.state, 'off')
+  assert.equal(await toggle.toggle(), 'on')
+  assert.equal(permissionRequests, 1)
+  assert.deepEqual(harness.calls.constraints, [{video: true, audio: false}])
+  assert.deepEqual(states, ['requesting', 'on'])
+
+  assert.equal(await toggle.toggle(), 'off')
+  assert.equal(harness.track.stops, 1)
+  assert.equal(permissionRequests, 1, 'turning off never asks for permission')
+  assert.deepEqual(states, ['requesting', 'on', 'off'])
+  controller.dispose()
+})
+
+test('camera toggle keeps the hard gate closed when system permission is denied', async () => {
+  assert.equal(typeof RendererCameraToggle, 'function')
+  const harness = makeLocalHarness()
+  const controller = new RendererCameraController(harness)
+  controller.setSourceMode('local')
+  const toggle = new RendererCameraToggle({
+    cameraController: controller,
+    requestPermission: async () => ({status: 'denied'}),
+  })
+
+  assert.equal(await toggle.toggle(), 'denied')
+  assert.deepEqual(harness.calls.constraints, [])
+  const response = makeDelivery()
+  controller.enqueue(localRequest('camera-denied'), response.delivery)
+  assert.equal(
+    (await settleWithin(response.response.promise, 'denied camera capture')).value,
+    cameraUnavailableMessage('camera-denied'),
+  )
+  controller.dispose()
+})
+
 test('bootstrap source mode catches both mismatch directions before media or canvas work', async () => {
   for (const [allowed, requested] of [['file', 'local'], ['local', 'file']]) {
     const harness = makeLocalHarness()
@@ -389,6 +508,7 @@ test('bootstrap source mode is immutable and matching local/file requests still 
     controller.setSourceMode(sourceMode)
     assert.throws(() => controller.setSourceMode(sourceMode), /already set/u)
     assert.throws(() => controller.setSourceMode(sourceMode === 'local' ? 'file' : 'local'), /already set/u)
+    if (sourceMode === 'local') assert.equal(await controller.enableLocal(), true)
 
     const response = makeDelivery()
     controller.enqueue(
@@ -405,13 +525,13 @@ test('bootstrap source mode is immutable and matching local/file requests still 
   }
 })
 
-test('local capture is lazy, fixed-size, retained, and closes every owned bitmap/track', async () => {
+test('explicitly enabled local capture is fixed-size, retained, and closes every owned bitmap/track', async () => {
   const harness = makeLocalHarness()
-  const controller = makeController(harness)
+  const controller = await makeController(harness)
   const first = makeDelivery()
 
-  assert.equal(harness.calls.constraints.length, 0)
-  assert.equal(harness.calls.captures.length, 0)
+  assert.equal(harness.calls.constraints.length, 1)
+  assert.equal(harness.calls.captures.length, 1)
   assert.equal(harness.calls.canvases.length, 0)
   controller.enqueue(localRequest('camera-local-1'), first.delivery)
   const firstResponse = await settleWithin(first.response.promise, 'first local capture')
@@ -454,7 +574,7 @@ test('local failure stages emit one stable error and never leak the thrown detai
   for (const [name, overrides] of cases) {
     await t.test(name, async () => {
       const harness = makeLocalHarness(overrides)
-      const controller = makeController(harness)
+      const controller = await makeController(harness)
       const response = makeDelivery()
       controller.enqueue(localRequest(`camera-${name.replaceAll(' ', '-')}`), response.delivery)
       const outbound = await settleWithin(response.response.promise, `${name} failure`)
@@ -476,7 +596,7 @@ test('bitmap ownership survives draw and conversion failures', async () => {
     {convertToBlob: async () => { throw new Error('convert') }},
   ]) {
     const harness = makeLocalHarness(overrides)
-    const controller = makeController(harness)
+    const controller = await makeController(harness)
     const response = makeDelivery()
     controller.enqueue(localRequest(), response.delivery)
     await settleWithin(response.response.promise, 'owned bitmap failure')
@@ -495,7 +615,7 @@ test('an already-resolved bitmap is released exactly once when its generation cl
       controller.closeGeneration(generation)
     },
   })
-  controller = makeController(harness)
+  controller = await makeController(harness)
   const response = makeDelivery(generation)
   controller.enqueue(localRequest('camera-bitmap-race'), response.delivery)
   await new Promise(resolve => setImmediate(resolve))
@@ -505,7 +625,7 @@ test('an already-resolved bitmap is released exactly once when its generation cl
   controller.dispose()
 })
 
-test('a controlled local deadline cleans late streams and emits at most one error', async () => {
+test('a controlled enable deadline cleans a late stream and leaves capture disabled', async () => {
   const capture = deferred()
   const callbacks = new Map()
   let nextTimer = 0
@@ -518,20 +638,24 @@ test('a controlled local deadline cleans late streams and emits at most one erro
     clearTimeout(id) { callbacks.delete(id) },
   }
   const harness = makeLocalHarness({getUserMedia: () => capture.promise})
-  const controller = makeController({...harness, ...scheduler, deadlineMs: 4_500})
-  const response = makeDelivery()
-  controller.enqueue(localRequest('camera-timeout'), response.delivery)
+  const controller = new RendererCameraController({...harness, ...scheduler, deadlineMs: 4_500})
+  controller.setSourceMode('local')
+  const enabling = controller.enableLocal()
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(callbacks.size, 1)
   callbacks.values().next().value()
-  const outbound = await settleWithin(response.response.promise, 'local deadline')
-  assert.equal(outbound.value, cameraUnavailableMessage('camera-timeout'))
+  assert.equal(await settleWithin(enabling, 'local enable deadline'), false)
   assert.equal(callbacks.size, 0)
   capture.resolve(harness.stream)
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(harness.track.stops, 1, 'a stream resolving after timeout is relinquished')
-  assert.equal(response.sent.length, 1)
-  controller.closeGeneration(response.delivery.generation)
+  const response = makeDelivery()
+  controller.enqueue(localRequest('camera-timeout'), response.delivery)
+  assert.equal(
+    (await settleWithin(response.response.promise, 'capture after enable timeout')).value,
+    cameraUnavailableMessage('camera-timeout'),
+  )
+  assert.equal(harness.calls.constraints.length, 1)
   controller.dispose()
 })
 
@@ -539,7 +663,7 @@ test('file capture is lazy, fixed-url, paused, deterministic, and reuses one dec
   const video = makeFakeVideo({duration: 10})
   const harness = makeLocalHarness()
   let createCalls = 0
-  const controller = makeController({
+  const controller = await makeController({
     ...harness,
     createVideo: () => { createCalls += 1; return video },
   }, 'file')
@@ -578,7 +702,7 @@ test('file capture is lazy, fixed-url, paused, deterministic, and reuses one dec
 test('file seek honors the injected controller position ceiling', async () => {
   const video = makeFakeVideo({duration: 10})
   const harness = makeLocalHarness()
-  const controller = makeController({
+  const controller = await makeController({
     ...harness, createVideo: () => video, maxPositionMs: 1_000,
   }, 'file')
   const response = makeDelivery()
@@ -601,7 +725,7 @@ test('file metadata/seek/frame failures are stable and failed decoders can be re
       const second = makeFakeVideo()
       const harness = makeLocalHarness()
       let createCalls = 0
-      const controller = makeController({
+      const controller = await makeController({
         ...harness,
         createVideo: () => (++createCalls === 1 ? first : second),
       }, 'file')
@@ -631,7 +755,7 @@ test('file decode failure after metadata is stable and the next decoder recovers
   const recoveredDecoder = makeFakeVideo()
   const harness = makeLocalHarness()
   let createCalls = 0
-  const controller = makeController({
+  const controller = await makeController({
     ...harness,
     createVideo: () => (++createCalls === 1 ? failedDecoder : recoveredDecoder),
   }, 'file')
@@ -664,7 +788,7 @@ test('a controlled file metadata deadline removes listeners and ignores late eve
   }
   const video = makeFakeVideo({metadata: 'held'})
   const harness = makeLocalHarness()
-  const controller = makeController({
+  const controller = await makeController({
     ...harness, ...scheduler, deadlineMs: 4_500, createVideo: () => video,
   }, 'file')
   const response = makeDelivery()
@@ -693,7 +817,7 @@ test('camera requests are FIFO without poisoning the independent capture tail', 
       return grabs === 1 ? firstGrab.promise : harness.bitmap
     },
   })
-  const controller = makeController(harness)
+  const controller = await makeController(harness)
   const generation = Object.freeze({})
   const first = makeDelivery(generation)
   const second = makeDelivery(generation)
@@ -710,7 +834,7 @@ test('camera requests are FIFO without poisoning the independent capture tail', 
 
 test('malformed camera capture is contained and a valid next request still succeeds', async () => {
   const harness = makeLocalHarness()
-  const controller = makeController(harness)
+  const controller = await makeController(harness)
   const generation = Object.freeze({})
   const malformed = makeDelivery(generation)
   controller.enqueue(
@@ -733,16 +857,18 @@ test('malformed camera capture is contained and a valid next request still succe
 })
 
 test('closing generation A fences late work while generation B captures independently', async () => {
-  const firstCapture = deferred()
+  const firstFrame = deferred()
   const trackA = {stops: 0, stop() { this.stops += 1 }}
   const trackB = {stops: 0, stop() { this.stops += 1 }}
   const streamA = {getVideoTracks: () => [trackA], getTracks: () => [trackA]}
   const streamB = {getVideoTracks: () => [trackB], getTracks: () => [trackB]}
   let acquisitions = 0
+  let grabs = 0
   const harness = makeLocalHarness({
-    getUserMedia: () => (++acquisitions === 1 ? firstCapture.promise : streamB),
+    getUserMedia: () => (++acquisitions === 1 ? streamA : streamB),
+    grabFrame: () => (++grabs === 1 ? firstFrame.promise : harness.bitmap),
   })
-  const controller = makeController(harness)
+  const controller = await makeController(harness)
   const generationA = Object.freeze({name: 'A'})
   const generationB = Object.freeze({name: 'B'})
   const responseA = makeDelivery(generationA)
@@ -754,7 +880,7 @@ test('closing generation A fences late work while generation B captures independ
   controller.closeGeneration(generationA)
   controller.enqueue(localRequest('camera-B'), responseB.delivery)
   assert.equal((await settleWithin(responseB.response.promise, 'generation B capture')).kind, 'binary')
-  firstCapture.resolve(streamA)
+  firstFrame.resolve(harness.bitmap)
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(responseA.sent.length, 0)
   assert.equal(trackA.stops, 1)
@@ -769,7 +895,7 @@ test('closing a generation at the encode barrier releases FIFO and fences its la
   const harness = makeLocalHarness({
     convertToBlob: () => (++conversions === 1 ? firstEncoding.promise : harness.blob),
   })
-  const controller = makeController(harness)
+  const controller = await makeController(harness)
   const generationA = Object.freeze({name: 'encode-A'})
   const generationB = Object.freeze({name: 'encode-B'})
   const responseA = makeDelivery(generationA)
@@ -797,14 +923,14 @@ test('closing a generation at the encode barrier releases FIFO and fences its la
 
 test('a generation closed before its first capture can never be reopened by queued work', async () => {
   const harness = makeLocalHarness()
-  const controller = makeController(harness)
+  const controller = await makeController(harness)
   const generation = Object.freeze({name: 'already-closed'})
   const response = makeDelivery(generation)
   controller.closeGeneration(generation)
   controller.enqueue(localRequest('camera-after-close'), response.delivery)
   await new Promise(resolve => setImmediate(resolve))
   await new Promise(resolve => setImmediate(resolve))
-  assert.equal(harness.calls.constraints.length, 0)
+  assert.equal(harness.calls.constraints.length, 1, 'only the explicit enable touches the device')
   assert.equal(response.sent.length, 0)
   controller.dispose()
 })
@@ -812,7 +938,7 @@ test('a generation closed before its first capture can never be reopened by queu
 test('isCurrent is rechecked immediately before response and send failures stay contained', async () => {
   const conversion = deferred()
   const harness = makeLocalHarness({convertToBlob: () => conversion.promise})
-  const controller = makeController(harness)
+  const controller = await makeController(harness)
   const stale = makeDelivery()
   controller.enqueue(localRequest('camera-stale'), stale.delivery)
   await new Promise(resolve => setImmediate(resolve))

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { createSettingsController } from '../src/renderer/settings-controller.mjs'
+import * as settingsController from '../src/renderer/settings-controller.mjs'
 import { createSecretRevisions } from '../src/renderer/secret-revisions.mjs'
+
+const { createSettingsController } = settingsController
 
 const html = await readFile(new URL('../src/renderer/settings.html', import.meta.url), 'utf8')
 const script = await readFile(new URL('../src/renderer/settings.mjs', import.meta.url), 'utf8')
@@ -564,6 +566,28 @@ test('the panel states what applies immediately and what triggers a controlled r
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
 })
 
+test('automatic discovery hides manual Codex and Projects configuration', () => {
+  assert.deepEqual(settingsController.codexModeVisibility?.('auto'), {
+    manualConfigurationHidden: true,
+    rescanHidden: false,
+  })
+})
+
+test('manual discovery exposes Codex and Projects configuration without rescan', () => {
+  assert.deepEqual(settingsController.codexModeVisibility?.('manual'), {
+    manualConfigurationHidden: false,
+    rescanHidden: true,
+  })
+})
+
+test('Codex and Projects is the final collapsed settings disclosure', () => {
+  const disclosure = html.match(/<details id="codex-projects"[\s\S]*<\/details>\s*<\/main>/)?.[0]
+  assert.ok(disclosure, 'Codex and Projects closes the settings content')
+  assert.doesNotMatch(disclosure, /<details id="codex-projects"[^>]*\sopen(?:\s|>)/)
+  assert.match(disclosure, /<div id="codex-manual-settings"[^>]*hidden>/)
+  assert.match(disclosure, /Codex 与 Projects/)
+})
+
 test('the panel exposes packaged Codex, Projects, and model endpoint configuration', () => {
   for (const id of [
     'codex-status',
@@ -580,11 +604,26 @@ test('the panel exposes packaged Codex, Projects, and model endpoint configurati
   assert.match(html, /id="projects-repair"/)
   assert.match(script, /api\.repairProjects\(root\)/)
   assert.match(script, /api\.rescanCodex\(\)/)
+  assert.match(script, /codexModeVisibility\(view\.codexBinaryMode\)/)
   assert.doesNotMatch(html, /codexProjectsEnabled/)
   assert.doesNotMatch(script, /codexProjectsEnabled/)
   assert.match(script, /saveText\('codexWorkspace', codexWorkspace\)/)
   assert.match(script, /saveText\('codexManagedRoot', codexManagedRoot\)/)
   assert.match(script, /saveText\('modelBaseUrl', modelBaseUrl\)/)
+})
+
+test('the optional model gateway address is grouped with its API key', () => {
+  const secretsStart = html.indexOf('<details id="secrets"')
+  const secretsEnd = html.indexOf('</details>', secretsStart)
+  const baseUrl = html.indexOf('id="modelBaseUrl"')
+  const modelKey = html.indexOf('id="modelApiKey"')
+  assert.ok(secretsStart >= 0 && secretsEnd > secretsStart)
+  assert.ok(baseUrl > secretsStart && baseUrl < secretsEnd)
+  assert.ok(modelKey > secretsStart && modelKey < secretsEnd)
+  assert.doesNotMatch(html, /<h2>模型连接<\/h2>/)
+  assert.match(html, /模型网关地址（高级）/)
+  assert.match(html, /留空使用 DashScope 默认地址/)
+  assert.match(html, /FastBrain/)
 })
 
 test('the panel exposes backend state and opt-in microphone activation', () => {

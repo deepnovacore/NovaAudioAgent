@@ -62,7 +62,7 @@ test('Codex version inspection uses a bounded credential-free child environment'
   assert.equal(invocation.command, '/opt/codex')
   assert.deepEqual(invocation.args, ['/official/bin/codex.js', '--version'])
   assert.equal(invocation.options.timeout, 5_000)
-  assert.equal(invocation.options.maxBuffer, 1_024)
+  assert.equal(invocation.options.maxBuffer, 64 * 1_024)
   assert.deepEqual(invocation.options.env, { PATH: '/usr/bin', HOME: '/home/nova' })
 })
 

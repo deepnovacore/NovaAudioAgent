@@ -80,14 +80,13 @@ function Resolve-CodexExe {
 }
 
 if ($env:NOVA_AUDIO_AGENT_CODEX_BIN) {
-    if (-not (Get-Command $env:NOVA_AUDIO_AGENT_CODEX_BIN -ErrorAction SilentlyContinue)) {
+    $override = Get-Command $env:NOVA_AUDIO_AGENT_CODEX_BIN -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    $isNativeImage = $override -and $override.Source -and $override.Source -match '\.(exe|com)$'
+    if (-not $isNativeImage) {
         Fail '环境变量 NOVA_AUDIO_AGENT_CODEX_BIN 必须指向一个可执行的 codex'
     }
-    # An override pointing at a shim fails in exactly the same way as a shim on PATH, and
-    # from further away, so it is worth catching here rather than at the first turn.
-    if ($env:NOVA_AUDIO_AGENT_CODEX_BIN -match '\.(cmd|bat)$') {
-        Fail 'NOVA_AUDIO_AGENT_CODEX_BIN 指向 npm 批处理包装（.cmd/.bat），后端无法直接启动它；请改为原生 codex.exe 的完整路径'
-    }
+    $env:NOVA_AUDIO_AGENT_CODEX_BIN = $override.Source
 } else {
     $CodexBin = Resolve-CodexExe
     if (-not $CodexBin) {

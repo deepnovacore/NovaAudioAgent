@@ -98,6 +98,66 @@ export function classifyCameraCaptureText(raw) {
   })
 }
 
+export class RendererCameraToggle {
+  #cameraController
+  #requestPermission
+  #onState
+  #state = 'off'
+  #pending = null
+
+  constructor({cameraController, requestPermission, onState = () => {}} = {}) {
+    if (!cameraController
+      || typeof cameraController.enableLocal !== 'function'
+      || typeof cameraController.disableLocal !== 'function'
+      || typeof requestPermission !== 'function'
+      || typeof onState !== 'function') throw new TypeError('invalid camera toggle')
+    this.#cameraController = cameraController
+    this.#requestPermission = requestPermission
+    this.#onState = onState
+  }
+
+  get state() {
+    return this.#state
+  }
+
+  async toggle() {
+    if (this.#pending) return this.#pending
+    if (this.#state === 'on') {
+      this.#cameraController.disableLocal()
+      this.#setState('off')
+      return this.#state
+    }
+    this.#setState('requesting')
+    const pending = this.#enable()
+    this.#pending = pending
+    try {
+      return await pending
+    } finally {
+      if (this.#pending === pending) this.#pending = null
+    }
+  }
+
+  async #enable() {
+    try {
+      const permission = await this.#requestPermission()
+      if (permission?.status === 'denied' || permission?.status === 'restricted') {
+        this.#setState('denied')
+        return this.#state
+      }
+      const enabled = await this.#cameraController.enableLocal()
+      this.#setState(enabled ? 'on' : 'unavailable')
+    } catch {
+      this.#setState('unavailable')
+    }
+    return this.#state
+  }
+
+  #setState(state) {
+    this.#state = state
+    try { this.#onState(state) } catch { /* presentation cannot break the privacy gate */ }
+  }
+}
+
 export class RendererSocketRouter {
   #cameraController
   #handleGeneric
@@ -227,6 +287,10 @@ export class RendererCameraController {
   #captureTail = Promise.resolve()
   #disposed = false
   #sourceMode
+  #localEnabled = false
+  #preparedLocal = null
+  #enableEpoch = 0
+  #stoppedTracks = new Set()
 
   constructor({
     mediaDevices,
@@ -256,6 +320,63 @@ export class RendererCameraController {
     if (this.#sourceMode !== undefined) throw new Error('camera source mode is already set')
     if (source !== 'local' && source !== 'file') throw new Error('camera source mode is invalid')
     this.#sourceMode = source
+  }
+
+  async enableLocal() {
+    if (this.#disposed || this.#sourceMode !== 'local') return false
+    if (this.#localEnabled) return true
+    const epoch = ++this.#enableEpoch
+    let stream = null
+    let timer
+    try {
+      if (typeof this.#mediaDevices?.getUserMedia !== 'function'
+        || typeof this.#ImageCapture !== 'function') return false
+      const acquisition = Promise.resolve().then(
+        () => this.#mediaDevices.getUserMedia({video: true, audio: false}),
+      )
+      let timedOut = false
+      const deadline = new Promise(resolve => {
+        timer = this.#setTimeout?.(() => {
+          timedOut = true
+          resolve(null)
+        }, this.#deadlineMs)
+      })
+      acquisition.then(lateStream => {
+        if (timedOut || epoch !== this.#enableEpoch || this.#disposed) {
+          this.#stopStream(lateStream)
+        }
+      }, () => {})
+      stream = timer === undefined ? await acquisition : await Promise.race([acquisition, deadline])
+      if (!stream) return false
+      const track = usableVideoTrack(stream)
+      if (!track) throw new Error('unavailable')
+      const imageCapture = new this.#ImageCapture(track)
+      if (this.#disposed || epoch !== this.#enableEpoch || this.#sourceMode !== 'local') {
+        this.#stopStream(stream)
+        return false
+      }
+      this.#releasePreparedLocal()
+      this.#preparedLocal = {stream, imageCapture}
+      this.#localEnabled = true
+      return true
+    } catch {
+      if (stream) this.#stopStream(stream)
+      if (epoch === this.#enableEpoch) this.#localEnabled = false
+      return false
+    } finally {
+      if (timer !== undefined) this.#clearTimeout?.(timer)
+    }
+  }
+
+  disableLocal() {
+    this.#enableEpoch += 1
+    this.#localEnabled = false
+    this.#releasePreparedLocal()
+    for (const state of this.#states.values()) {
+      for (const cancel of [...state.cancels]) cancel()
+      state.cancels.clear()
+      this.#releaseLocal(state)
+    }
   }
 
   enqueue(rawText, delivery) {
@@ -298,6 +419,7 @@ export class RendererCameraController {
   dispose() {
     if (this.#disposed) return
     this.#disposed = true
+    this.disableLocal()
     for (const generation of [...this.#states.keys()]) this.closeGeneration(generation)
   }
 
@@ -329,31 +451,39 @@ export class RendererCameraController {
   }
 
   async #captureLocal(state, operation) {
+    if (!this.#localEnabled) throw new Error('unavailable')
     if (!state.localStream) {
-      if (typeof this.#mediaDevices?.getUserMedia !== 'function'
-        || typeof this.#ImageCapture !== 'function') throw new Error('unavailable')
-      const stream = await operation.wait(
-        Promise.resolve().then(() => this.#mediaDevices.getUserMedia({video: true, audio: false})),
-        lateStream => this.#stopStream(state, lateStream),
-      )
-      const track = usableVideoTrack(stream)
-      if (!track) {
-        this.#stopStream(state, stream)
-        throw new Error('unavailable')
+      if (this.#preparedLocal) {
+        const prepared = this.#preparedLocal
+        this.#preparedLocal = null
+        state.localStream = prepared.stream
+        state.imageCapture = prepared.imageCapture
+      } else {
+        if (typeof this.#mediaDevices?.getUserMedia !== 'function'
+          || typeof this.#ImageCapture !== 'function') throw new Error('unavailable')
+        const stream = await operation.wait(
+          Promise.resolve().then(() => this.#mediaDevices.getUserMedia({video: true, audio: false})),
+          lateStream => this.#stopStream(lateStream),
+        )
+        const track = usableVideoTrack(stream)
+        if (!track) {
+          this.#stopStream(stream)
+          throw new Error('unavailable')
+        }
+        let capture
+        try {
+          capture = new this.#ImageCapture(track)
+        } catch {
+          this.#stopStream(stream)
+          throw new Error('unavailable')
+        }
+        if (!operation.active() || state.closed || !this.#localEnabled) {
+          this.#stopStream(stream)
+          throw new Error('unavailable')
+        }
+        state.localStream = stream
+        state.imageCapture = capture
       }
-      let capture
-      try {
-        capture = new this.#ImageCapture(track)
-      } catch {
-        this.#stopStream(state, stream)
-        throw new Error('unavailable')
-      }
-      if (!operation.active() || state.closed) {
-        this.#stopStream(state, stream)
-        throw new Error('unavailable')
-      }
-      state.localStream = stream
-      state.imageCapture = capture
     }
     const bitmap = await operation.wait(
       Promise.resolve().then(() => state.imageCapture.grabFrame()),
@@ -521,12 +651,18 @@ export class RendererCameraController {
   }
 
   #releaseLocal(state) {
-    if (state.localStream) this.#stopStream(state, state.localStream)
+    if (state.localStream) this.#stopStream(state.localStream)
     state.localStream = null
     state.imageCapture = null
   }
 
-  #stopStream(state, stream) {
+  #releasePreparedLocal() {
+    if (!this.#preparedLocal) return
+    this.#stopStream(this.#preparedLocal.stream)
+    this.#preparedLocal = null
+  }
+
+  #stopStream(stream) {
     let tracks = []
     try {
       tracks = typeof stream?.getTracks === 'function'
@@ -534,8 +670,8 @@ export class RendererCameraController {
         : typeof stream?.getVideoTracks === 'function' ? stream.getVideoTracks() : []
     } catch { /* an invalid stream owns no usable track */ }
     for (const track of tracks) {
-      if (!track || state.stoppedTracks.has(track)) continue
-      state.stoppedTracks.add(track)
+      if (!track || this.#stoppedTracks.has(track)) continue
+      this.#stoppedTracks.add(track)
       try { track.stop?.() } catch { /* cleanup is best effort */ }
     }
   }
@@ -557,7 +693,6 @@ function makeGenerationState() {
   return {
     closed: false,
     cancels: new Set(),
-    stoppedTracks: new Set(),
     localStream: null,
     imageCapture: null,
     video: null,

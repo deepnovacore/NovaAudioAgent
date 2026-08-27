@@ -472,6 +472,7 @@ button:disabled { cursor: default; opacity: .45; }
 
 #backend-retry,
 #microphone-retry,
+#codex-rescan,
 #projects-repair {
   display: block;
   margin: 0 0 8px;
@@ -538,6 +539,22 @@ button:disabled { cursor: default; opacity: .45; }
 .secret-content {
   padding: 0 10px 10px;
   border-top: 1px solid var(--line);
+}
+
+.codex-content {
+  padding: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.gateway-endpoint {
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.gateway-endpoint .field { margin: 0; }
+
+#codex-manual-settings {
+  padding-top: 2px;
 }
 
 .secret {

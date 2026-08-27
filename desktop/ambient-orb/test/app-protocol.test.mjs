@@ -9,9 +9,27 @@ import {
   buildRendererAssetGraph,
   installAppProtocol,
   loadAppWindow,
+  registerAppScheme,
 } from '../src/main/app-protocol.mjs'
 
 const ACTUAL_RENDERER_ROOT = resolve(import.meta.dirname, '../src/renderer')
+
+test('app scheme enables media streaming for the file-backed camera', () => {
+  const registrations = []
+  registerAppScheme({
+    registerSchemesAsPrivileged(value) { registrations.push(value) },
+  })
+
+  assert.deepEqual(registrations, [[{
+    scheme: 'nova',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  }]])
+})
 
 test('renderer protocol serves the complete reachable static import graph and nothing arbitrary', async () => {
   const rendererFiles = await buildRendererAssetGraph(ACTUAL_RENDERER_ROOT)

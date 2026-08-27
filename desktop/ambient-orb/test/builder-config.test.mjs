@@ -409,21 +409,32 @@ test('every package: script disables publishing explicitly', async () => {
   }
 })
 
-test('CI is manual-only while automatic runners are paused', async () => {
+test('CI runs checks and packaging across the supported automatic runner matrix', async () => {
   const text = await readFile(CI_WORKFLOW_PATH, 'utf8')
   const workflow = parseYaml(text)
 
-  assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch'])
-  assert.deepEqual(workflow.jobs.python.strategy.matrix.os, ['windows-latest'])
-  assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, ['windows-latest'])
+  assert.deepEqual(Object.keys(workflow.on), ['push', 'pull_request'])
+  assert.deepEqual(workflow.jobs.python.strategy.matrix.os, ['ubuntu-latest', 'windows-latest'])
+  assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, [
+    'macos-latest', 'ubuntu-latest', 'windows-latest',
+  ])
   assert.deepEqual(workflow.jobs.package.strategy.matrix.include, [
+    {
+      os: 'macos-latest',
+      script: 'package:mac:candidate',
+      artifact: 'ambient-orb-mac',
+    },
+    {
+      os: 'ubuntu-latest',
+      script: 'package:linux',
+      artifact: 'ambient-orb-linux',
+    },
     {
       os: 'windows-latest',
       script: 'package:win',
       artifact: 'ambient-orb-win',
     },
   ])
-  assert.doesNotMatch(text, /(?:ubuntu|macos)-/u)
 })
 
 test('unsigned Windows workflow closes the native package through digest-bound installed smoke', async () => {

@@ -38,7 +38,8 @@ import {
   createBackendDiagnosticCollector,
 } from './backend-diagnostics.mjs'
 import { createBackendSupervisor } from './backend-supervisor.mjs'
-import { installAppProtocol, loadAppWindow } from './app-protocol.mjs'
+import { configureDevelopmentDockIcon } from './app-icon.mjs'
+import { installAppProtocol, loadAppWindow, registerAppScheme } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
 import {
@@ -82,17 +83,14 @@ import {
   browserWindowOptions,
   configureWindowSecurity,
   createBootstrapAccess,
-  requestLocalCameraPermission,
+  resolveCameraPermission,
   resolveMicrophonePermission,
   settingsWindowOptions,
   validateBootstrap,
 } from './security.mjs'
 import { validReleaseCameraResult } from '../renderer/release-camera-contract.mjs'
 
-protocol.registerSchemesAsPrivileged([{
-  scheme: 'nova',
-  privileges: { standard: true, secure: true, supportFetchAPI: true },
-}])
+registerAppScheme(protocol)
 
 // Windows groups taskbar/notification identity by AppUserModelID; a no-op
 // everywhere else, so it is set unconditionally rather than gated by platform.
@@ -576,6 +574,15 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     clamp: clampToNearestWorkArea,
   })
   const readBootstrap = createBootstrapAccess(bootstrap, mainWindow.webContents)
+  ipcMain.handle('nova:camera:permission', async event => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('camera permission request rejected')
+    }
+    return resolveCameraPermission(camera.source, {
+      platform: process.platform,
+      systemPreferences,
+    })
+  })
   ipcMain.handle('nova:microphone:permission', async event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('microphone permission request rejected')
@@ -879,10 +886,6 @@ async function start() {
   })
   return startWithSelectedCamera({
     environment: process.env,
-    requestPermission: source => requestLocalCameraPermission(source, {
-      platform: process.platform,
-      systemPreferences,
-    }),
     start: camera => startSelectedCamera(camera, backendKind, releaseSmokeChannel),
   })
 }
@@ -890,7 +893,6 @@ async function start() {
 async function runInstalledFileCameraSmoke() {
   return startWithSelectedCamera({
     environment: process.env,
-    requestPermission: async () => true,
     start: async camera => {
       if (camera.source !== 'file') throw new Error('release camera smoke rejected')
       const window = new BrowserWindow(browserWindowOptions(
@@ -971,7 +973,14 @@ if (packagedSourceRollbackUnavailable) {
   )
 } else {
   app.on('second-instance', () => mainWindow?.show())
-  app.whenReady().then(start).catch(error => {
+  app.whenReady().then(() => {
+    configureDevelopmentDockIcon({
+      app,
+      platform: process.platform,
+      iconFile: resolve(packageRoot, 'resources/icon-source/1024x1024.png'),
+    })
+    return start()
+  }).catch(error => {
     reportStartupFailure(error)
     app.quit()
   })

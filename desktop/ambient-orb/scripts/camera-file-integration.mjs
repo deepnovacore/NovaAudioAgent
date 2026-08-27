@@ -4,7 +4,7 @@ import { app, BrowserWindow, net, protocol } from 'electron'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { installAppProtocol } from '../src/main/app-protocol.mjs'
+import { installAppProtocol, registerAppScheme } from '../src/main/app-protocol.mjs'
 import { selectMainCameraSource } from '../src/main/camera-source.mjs'
 import { browserWindowOptions } from '../src/main/security.mjs'
 import {
@@ -29,10 +29,7 @@ import {
 } from '../../../runtime/dist/src/executors/watcher.js'
 import { MediaStore } from '../../../runtime/dist/src/media-store.js'
 
-protocol.registerSchemesAsPrivileged([{
-  scheme: 'nova',
-  privileges: {standard: true, secure: true, supportFetchAPI: true, stream: true},
-}])
+registerAppScheme(protocol)
 
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, '..')

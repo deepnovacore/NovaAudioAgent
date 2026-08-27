@@ -6,6 +6,18 @@ import { pathToFileURL } from 'node:url'
 export const CAMERA_SOURCE_PATH = '/camera-source'
 export const CAMERA_SOURCE_URL = 'nova://orb/camera-source'
 
+export function registerAppScheme(targetProtocol) {
+  targetProtocol.registerSchemesAsPrivileged([{
+    scheme: 'nova',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  }])
+}
+
 const RENDERER_ENTRY_PATHS = Object.freeze([
   '/index.html',
   '/capture-worklet.mjs',

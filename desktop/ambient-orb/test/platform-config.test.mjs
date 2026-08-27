@@ -21,7 +21,7 @@ test('product paths use the hidden Nova root on Windows and POSIX', () => {
   })
 })
 
-test('desktop configuration resolves settings before environment before defaults', () => {
+test('desktop configuration lets the explicit process binary override saved discovery settings', () => {
   const canonicalized = []
   const resolved = resolveDesktopConfig({
     settings: {
@@ -53,7 +53,7 @@ test('desktop configuration resolves settings before environment before defaults
     managedRoot: 'C:\\Env\\Managed',
     workspace: 'C:\\Work\\Nova',
     codexBinaryMode: 'manual',
-    codexBinaryPath: 'C:\\Tools\\codex.exe',
+    codexBinaryPath: 'C:\\Env\\codex.exe',
     codexConfigurationError: null,
     modelBaseUrl: 'https://settings.example/v1',
     modelConfigurationError: null,
@@ -64,7 +64,7 @@ test('desktop configuration resolves settings before environment before defaults
     'C:\\Users\\nova\\.nova-audio-agent\\state',
     'C:\\Env\\Managed',
     'C:\\Work\\Nova',
-    'C:\\Tools\\codex.exe',
+    'C:\\Env\\codex.exe',
   ])
 })
 
@@ -87,19 +87,19 @@ test('empty desktop settings admit environment and hidden-root defaults', () => 
   assert.equal(resolved.startListeningOnLaunch, false)
 })
 
-test('saved auto mode ignores stale manual and environment Codex paths', () => {
+test('an environment Codex binary remains effective after settings normalization saves auto mode', () => {
   const resolved = resolveDesktopConfig({
     settings: {codexBinaryMode: 'auto', codexBinaryPath: 'C:\\Stale\\codex.exe'},
     environment: {NOVA_AUDIO_AGENT_CODEX_BIN: 'C:\\Env\\codex.exe'},
     home: 'C:\\Users\\nova', platform: 'win32', pathApi: win32,
     canonicalize: value => value,
   })
-  assert.equal(resolved.codexBinaryMode, 'auto')
-  assert.equal(resolved.codexBinaryPath, '')
+  assert.equal(resolved.codexBinaryMode, 'manual')
+  assert.equal(resolved.codexBinaryPath, 'C:\\Env\\codex.exe')
   assert.equal(resolved.codexConfigurationError, null)
 })
 
-test('saved manual mode with no path remains terminal instead of falling back to auto', () => {
+test('an environment Codex binary fills a saved empty manual path', () => {
   const resolved = resolveDesktopConfig({
     settings: {codexBinaryMode: 'manual', codexBinaryPath: ''},
     environment: {NOVA_AUDIO_AGENT_CODEX_BIN: 'C:\\Env\\codex.exe'},
@@ -107,8 +107,8 @@ test('saved manual mode with no path remains terminal instead of falling back to
     canonicalize: value => value,
   })
   assert.equal(resolved.codexBinaryMode, 'manual')
-  assert.equal(resolved.codexBinaryPath, '')
-  assert.equal(resolved.codexConfigurationError, 'manual_path_required')
+  assert.equal(resolved.codexBinaryPath, 'C:\\Env\\codex.exe')
+  assert.equal(resolved.codexConfigurationError, null)
 })
 
 test('environment model URL uses the same safety validator as Settings', () => {
