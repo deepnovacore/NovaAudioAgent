@@ -21,6 +21,7 @@ import {
 import { NullTelemetry, type RealtimeTelemetry } from '../telemetry.js'
 import type {
   CascadedLlmEvent,
+  CascadedLlmFactory,
   CascadedLlmInput,
   CascadedLlmSession,
   CascadedLlmTool,
@@ -52,6 +53,8 @@ export interface CascadedRealtimeAdapterOptions {
   readonly endpointing: EndpointingPort
   readonly asr: AsrClient
   readonly llm: CascadedLlmSession
+  /** Opens a fresh LLM session for every adapter connection epoch. */
+  readonly llmFactory?: CascadedLlmFactory
   readonly tts: TtsClient
   readonly telemetry?: RealtimeTelemetry
   readonly idFactory?: () => string
@@ -121,6 +124,7 @@ interface EpochOwner {
   readonly controller: AbortController
   readonly queue: BoundedEventQueue
   readonly llm: CascadedLlmSession
+  llmClosePromise: Promise<void> | null
   readonly tools: readonly CascadedLlmTool[]
   readonly pending: Map<string, PendingHostItem>
   readonly consumed: Map<string, number>
@@ -266,6 +270,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
   readonly #asrClient: AsrClient
   readonly #ttsClient: TtsClient
   readonly #llm: CascadedLlmSession
+  readonly #llmFactory: CascadedLlmFactory | undefined
   readonly #telemetry: RealtimeTelemetry
   readonly #idFactory: () => string
   readonly #settleTimeoutMs: number
@@ -274,13 +279,15 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
   #owner: EpochOwner | null = null
   #audioTail: Promise<void> = Promise.resolve()
   #closePromise: Promise<void> | null = null
-  #llmClosePromise: Promise<void> | null = null
+  #legacyLlmUsed = false
+  #legacyLlmClosePromise: Promise<void> | null = null
 
   constructor(options: CascadedRealtimeAdapterOptions) {
     this.#endpointing = options.endpointing
     this.#asrClient = options.asr
     this.#ttsClient = options.tts
     this.#llm = options.llm
+    this.#llmFactory = options.llmFactory
     this.#telemetry = options.telemetry ?? new NullTelemetry()
     this.#idFactory = options.idFactory ?? randomUUID
     this.#settleTimeoutMs = options.settleTimeoutMs ?? DEFAULT_CASCADED_SETTLE_MS
@@ -305,16 +312,18 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     this.#closePromise = null
     this.#audioTail = Promise.resolve()
     const epoch = this.#epoch + 1
+    let owner: EpochOwner | null = null
     try {
       const tools = options.tools.map(schema => cascadedToolSchema(structuredClone(schema)))
       const sessionId = this.#freshId()
-      const llm = this.#llm
-      const owner: EpochOwner = {
+      const llm = this.#openLlm()
+      owner = {
         epoch,
         sessionId,
         controller: new AbortController(),
         queue: new BoundedEventQueue(),
         llm,
+        llmClosePromise: null,
         tools: Object.freeze(tools.map(tool => Object.freeze(structuredClone(tool)))),
         pending: new Map(),
         consumed: new Map(),
@@ -336,7 +345,10 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       this.#record('volcengine.session.connected', {epoch})
       return {epoch, provider_session_id: sessionId}
     } catch (error) {
-      await safeCallWithin(() => this.#closeLlm(), this.#settleTimeoutMs)
+      if (owner !== null) {
+        const failedOwner = owner
+        await safeCallWithin(() => this.#closeLlm(failedOwner), this.#settleTimeoutMs)
+      }
       if (this.#owner?.epoch === epoch) this.#owner = null
       this.#finishConnectFailure()
       if (error instanceof CascadedRealtimeError) throw error
@@ -551,7 +563,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
     if (this.#state === 'new' || this.#state === 'disconnected') {
       this.#state = 'disconnected'
       this.#closePromise = (async () => {
-        if (!(await safeCallWithin(() => this.#closeLlm(), this.#settleTimeoutMs))) {
+        if (!(await safeCallWithin(() => this.#closeUnusedLegacyLlm(), this.#settleTimeoutMs))) {
           throw new CascadedRealtimeError('closed')
         }
       })()
@@ -716,7 +728,7 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
             })
             await this.#startUserResponse(owner, transcript.text)
           }
-          return
+          continue
         } else {
           this.#record('volcengine.asr.partial', {epoch: owner.epoch})
           await this.#emit(owner, {
@@ -1054,7 +1066,11 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
 
   async #finishTts(owner: EpochOwner, active: ActiveResponse): Promise<void> {
     const state = active.tts
-    if (state === null || state.texts.length === 0) return
+    if (state === null) return
+    if (state.texts.length === 0) {
+      await this.#cancelTts(owner, active)
+      return
+    }
     try {
       const session = await this.#ensureTts(owner, state)
       await session.finish(combineSignals(state.responseSignal, state.controller.signal))
@@ -1284,16 +1300,31 @@ export class CascadedRealtimeAdapter implements RealtimeProvider {
       if (owner.asr === asr) owner.asr = null
     }
     successful = await this.#abandonPendingToolCall(owner) && successful
-    successful = await safeCallWithin(() => this.#closeLlm(), this.#settleTimeoutMs) && successful
+    successful = await safeCallWithin(() => this.#closeLlm(owner), this.#settleTimeoutMs) && successful
     successful = await safeCallWithin(
       async () => { await this.#endpointing.reset() }, this.#settleTimeoutMs,
     ) && successful
     return successful
   }
 
-  #closeLlm(): Promise<void> {
-    this.#llmClosePromise ??= Promise.resolve().then(() => this.#llm.close())
-    return this.#llmClosePromise
+  #openLlm(): CascadedLlmSession {
+    if (!this.#legacyLlmUsed) {
+      this.#legacyLlmUsed = true
+      return this.#llm
+    }
+    if (this.#llmFactory !== undefined) return this.#llmFactory.open()
+    throw new CascadedRealtimeError('state')
+  }
+
+  #closeLlm(owner: EpochOwner): Promise<void> {
+    owner.llmClosePromise ??= Promise.resolve().then(() => owner.llm.close())
+    return owner.llmClosePromise
+  }
+
+  #closeUnusedLegacyLlm(): Promise<void> {
+    if (this.#legacyLlmUsed) return Promise.resolve()
+    this.#legacyLlmClosePromise ??= Promise.resolve().then(() => this.#llm.close())
+    return this.#legacyLlmClosePromise
   }
 
   #requiredOwner(): EpochOwner {

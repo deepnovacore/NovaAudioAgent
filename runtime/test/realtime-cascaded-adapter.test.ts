@@ -19,6 +19,7 @@ import type {
 } from '../src/realtime/cascaded/ports.js'
 import type {
   CascadedLlmEvent,
+  CascadedLlmFactory,
   CascadedLlmSession,
 } from '../src/realtime/cascaded/llm.js'
 
@@ -128,6 +129,7 @@ class FakeLlm implements CascadedLlmSession {
   }
 
   async *stream(input: LlmStreamInput): AsyncIterable<CascadedLlmEvent> {
+    if (this.closed) throw new Error('fake LLM is closed')
     this.calls.push(structuredClone(input))
     await Promise.resolve()
     for (const event of this.#eventSets.shift() ?? []) yield structuredClone(event)
@@ -502,6 +504,95 @@ test('cascaded Guard policy is fixed and cannot inherit the Qwen reconnect polic
   assert.equal(Object.isFrozen(CASCADED_GUARD_POLICY), true)
 })
 
+test('one adapter reconnects with a fresh LLM epoch instead of reusing a closed session', async () => {
+  const first = new FakeLlm()
+  const second = new FakeLlm([
+    {kind: 'response_started', response_id: 'response-reconnected'},
+    {kind: 'response_completed', response_id: 'response-reconnected'},
+  ])
+  const sessions = [second]
+  const factory: CascadedLlmFactory = {
+    open: () => {
+      const session = sessions.shift()
+      if (session === undefined) throw new Error('LLM factory exhausted')
+      return session
+    },
+  }
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(),
+    asr: new FakeAsrClient(),
+    llm: first,
+    tts: new FakeTtsClient(),
+    idFactory: ids('session-first', 'session-second', 'provider-reconnected'),
+    llmFactory: factory,
+  })
+
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  await adapter.close()
+  const identity = await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('reconnected-host')
+  await adapter.injectHostItem(item, directOptions())
+  const collecting = collectThroughTerminal(adapter)
+  await adapter.createResponse(
+    {kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal,
+  )
+  const events = await settleWithin('reconnected response', collecting)
+
+  assert.equal(identity.epoch, 2)
+  assert.equal(first.closed, true)
+  assert.equal(second.calls.length, 1)
+  assert.equal(terminalStatus(events), 'completed')
+  await adapter.close()
+})
+
+test('every final ASR segment becomes its own user turn, matching the Python adapter', async () => {
+  const llm = new FakeLlm(
+    [
+      {kind: 'response_started', response_id: 'response-first-final'},
+      {kind: 'response_completed', response_id: 'response-first-final'},
+    ],
+    [
+      {kind: 'response_started', response_id: 'response-second-final'},
+      {kind: 'response_completed', response_id: 'response-second-final'},
+    ],
+  )
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(
+      [{kind: 'speech_start', pcm: new Uint8Array([0, 0])}],
+      [{kind: 'speech_end', commit: true}],
+    ),
+    asr: new FakeAsrClient(new FakeAsrSession(
+      {text: '第一段', final: true},
+      {text: '第二段', final: true},
+    )),
+    llm,
+    tts: new FakeTtsClient(new FakeTtsSession(), new FakeTtsSession()),
+    idFactory: ids(
+      'session-multi-final', 'speech-multi-final', 'item-multi-final',
+      'provider-first-final', 'provider-second-final',
+    ),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const watching = observe(adapter)
+
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await adapter.sendAudio(new Uint8Array([0, 0]), new AbortController().signal)
+  await waitFor('both ASR finals', () => llm.calls.length === 2)
+
+  assert.deepEqual(llm.calls.map(call => call.inputs), [
+    [{kind: 'user_text', text: '第一段'}],
+    [{kind: 'user_text', text: '第二段'}],
+  ])
+  assert.deepEqual(watching.events
+    .filter((event): event is Extract<RealtimeProviderEvent, {kind: 'user_transcript_final'}> => (
+      event.kind === 'user_transcript_final'
+    ))
+    .map(event => event.text), ['第一段', '第二段'])
+  await watching.stop()
+  await adapter.close()
+})
+
 test('host inputs and copied Responses tools preserve Python wording and caller ownership', async () => {
   const llm = new FakeLlm([
     {kind: 'response_started', response_id: 'response-host'},
@@ -836,6 +927,34 @@ test('tool-only output cancels prewarm, while both mixed-output orders fail with
     }
     assert.equal(ttsSession.cancelled, true)
   }
+})
+
+test('an empty text response releases its prewarmed TTS session', async () => {
+  const ttsSession = new FakeTtsSession()
+  const adapter = new CascadedRealtimeAdapter({
+    endpointing: new ScriptedEndpointing(), asr: new FakeAsrClient(),
+    llm: new FakeLlm([
+      {kind: 'response_started', response_id: 'response-empty-text'},
+      {kind: 'text_delta', text: ''},
+      {kind: 'response_completed', response_id: 'response-empty-text'},
+    ]),
+    tts: new FakeTtsClient(ttsSession),
+    idFactory: ids('session-empty-text', 'provider-empty-text'),
+  })
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+  const item = hostItem('empty-text')
+  await adapter.injectHostItem(item, directOptions())
+  const collecting = collectThroughTerminal(adapter)
+  await adapter.createResponse(
+    {kind: 'host_fact', item, task_summary: null, origin_spoken: false},
+    new AbortController().signal,
+  )
+  const events = await settleWithin('empty text response', collecting)
+
+  assert.equal(terminalStatus(events), 'completed')
+  assert.deepEqual(ttsSession.texts, [])
+  assert.equal(ttsSession.cancelled, true)
+  assert.equal(ttsSession.closed, true)
 })
 
 test('a common LLM failure uses a provider-neutral stable owner code', async () => {

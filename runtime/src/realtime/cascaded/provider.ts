@@ -88,6 +88,7 @@ export class CascadedRealtimeProvider implements RealtimeProvider {
         endpointing,
         asr,
         llm,
+        llmFactory: this.#llmFactory,
         tts,
         ...(this.#telemetry === undefined ? {} : {telemetry: this.#telemetry}),
         idFactory: this.#idFactory,
