@@ -1,9 +1,8 @@
 name: CI
 
-# Temporary manual-only debugging mode. Restore automatic triggers only after
-# cross-platform CI is explicitly re-enabled.
 on:
-  workflow_dispatch:
+  push:
+  pull_request:
 
 permissions:
   contents: read
@@ -12,10 +11,8 @@ jobs:
   python:
     strategy:
       fail-fast: false
-      # Temporary Windows-only debugging mode. Restore the other runners only
-      # after cross-platform CI is explicitly re-enabled.
       matrix:
-        os: [windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -42,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -65,6 +62,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: macos-latest
+            script: package:mac:candidate
+            artifact: ambient-orb-mac
+          - os: ubuntu-latest
+            script: package:linux
+            artifact: ambient-orb-linux
           - os: windows-latest
             script: package:win
             artifact: ambient-orb-win
