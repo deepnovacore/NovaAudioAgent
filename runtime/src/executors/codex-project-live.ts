@@ -242,7 +242,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     try {
       return await work
     } catch (error) {
-      if (error instanceof ProjectStateError) return failureHandoff(error.code, 'run')
+      if (error instanceof ProjectStateError) return projectProblemHandoff(error.code)
       throw error
     } finally {
       context.signal.removeEventListener('abort', onAbort)
@@ -448,11 +448,43 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
           })),
         })
       }
+      if (
+        action !== 'create_workspace'
+        && action !== 'select_workspace'
+        && action !== 'resume_session'
+      ) {
+        return failureHandoff('invalid_params', 'project')
+      }
       let workspace: WorkspaceRecord | null = null
       let session: ProjectSessionRecord | null = null
+      let publicAction:
+        | 'create_workspace'
+        | 'reuse_workspace'
+        | 'select_workspace'
+        | 'resume_session' = action
       if (action === 'create_workspace') {
         if (typeof request.workspace !== 'string') return failureHandoff('invalid_params', 'project')
-        await this.#store.validateManagedCreate(request.workspace)
+        if (typeof request.work_order === 'string') {
+          try {
+            workspace = await this.#store.resolveWorkspace(request.workspace)
+          } catch (error) {
+            if (!(error instanceof ProjectStateError) || error.code !== 'workspace_not_found') {
+              throw error
+            }
+          }
+          if (workspace !== null) {
+            const active = await this.activeCommittedWorkspace()
+            if (active?.workspace_id === workspace.workspace_id) {
+              return projectHandoff('workspace_reused', {
+                workspace: workspace.display_name,
+                next_action: 'start_session',
+                message: `将复用现有工作区“${workspace.display_name}”，不会创建新工作区。`,
+              })
+            }
+            publicAction = 'reuse_workspace'
+          }
+        }
+        if (workspace === null) await this.#store.validateManagedCreate(request.workspace)
       } else {
         workspace = await this.#store.resolveWorkspace(
           typeof request.workspace === 'string' ? request.workspace : null,
@@ -467,17 +499,12 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
           }
         }
       }
-      if (
-        action !== 'create_workspace'
-        && action !== 'select_workspace'
-        && action !== 'resume_session'
-      ) {
-        return failureHandoff('invalid_params', 'project')
-      }
       const proposal = this.#confirmation.prepare({
-        action: action === 'create_workspace'
+        action: publicAction === 'create_workspace'
           ? 'create'
-          : action === 'select_workspace' ? 'select' : 'resume',
+          : publicAction === 'reuse_workspace'
+            ? 'reuse'
+            : action === 'select_workspace' ? 'select' : 'resume',
         workspace_display_name: workspace?.display_name ?? String(request.workspace),
         workspace_id: workspace?.workspace_id ?? null,
         session_title: session?.display_title
@@ -489,7 +516,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       return projectHandoff('confirmation_required', {
         proposal_id: proposal.proposal_id,
         expires_at: proposal.expires_at,
-        action,
+        action: publicAction,
         workspace: proposal.workspace_display_name,
         session: proposal.session_title,
         confirmation_prompt: proposal.confirmation_prompt,
@@ -501,6 +528,8 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
 
   async #lookupFailure(code: string): Promise<ExecutorHandoff> {
     const content: Record<string, JsonValue> = {op: 'project', code}
+    const refused = PROJECT_REFUSAL_CODES.has(code)
+    if (refused) content.recoverable = true
     if (code === 'workspace_not_found') {
       try {
         content.candidates = recent(await this.#store.listWorkspaces()).map(item => item.display_name)
@@ -508,7 +537,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
         content.candidates = []
       }
     }
-    return {outcome: 'failed', trust: 'trusted_system', content}
+    return {outcome: refused ? 'refused' : 'failed', trust: 'trusted_system', content}
   }
 
   async #revalidateProposal(operation: ConfirmedProjectOperation): Promise<void> {
@@ -517,6 +546,17 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
         throw new ProjectStateError('workspace_boundary_changed')
       }
       await this.#store.validateManagedCreate(operation.workspace_display_name)
+      return
+    }
+    if (operation.action === 'reuse') {
+      if (operation.workspace_id === null || operation.session_id !== null) {
+        throw new ProjectStateError('workspace_boundary_changed')
+      }
+      const workspace = await this.#store.resolveWorkspace(operation.workspace_display_name)
+      if (workspace.workspace_id !== operation.workspace_id) {
+        throw new ProjectStateError('workspace_boundary_changed')
+      }
+      await this.#store.revalidateWorkspace(workspace.workspace_id)
       return
     }
     if (operation.action !== 'resume' || operation.workspace_id === null || operation.session_id === null) {
@@ -571,6 +611,18 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       }
       return result
     }
+    if (operation.action === 'reuse') {
+      if (operation.workspace_id === null || operation.session_id !== null) {
+        return failureHandoff('confirmation_binding_mismatch', 'run')
+      }
+      const workspace = await this.#store.resolveWorkspace(operation.workspace_display_name)
+      if (workspace.workspace_id !== operation.workspace_id) {
+        return failureHandoff('workspace_boundary_changed', 'run')
+      }
+      return await this.#runBound(
+        workspace, null, operation.session_title, workOrder, context, false,
+      )
+    }
     if (operation.action !== 'resume' || operation.workspace_id === null || operation.session_id === null) {
       return failureHandoff('confirmation_binding_mismatch', 'run')
     }
@@ -580,7 +632,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     }
     const session = await this.#store.resolveSession(workspace.workspace_id, operation.session_title)
     if (session.session_id !== operation.session_id || session.state !== 'ready') {
-      return failureHandoff('session_unavailable', 'run')
+      return projectProblemHandoff('session_unavailable')
     }
     return await this.#runBound(workspace, session, null, workOrder, context, false)
   }
@@ -877,6 +929,27 @@ function recent<T extends {readonly last_used_at: number; readonly created_at: n
 
 function projectHandoff(code: string, content: Readonly<Record<string, JsonValue>>): ExecutorHandoff {
   return {outcome: 'ok', trust: 'trusted_system', content: {op: 'project', code, ...content}}
+}
+
+const PROJECT_REFUSAL_CODES = new Set([
+  'workspace_name_conflict',
+  'workspace_not_found',
+  'session_not_found',
+  'session_unavailable',
+  'workspace_name_invalid',
+  'workspace_limit',
+  'session_limit',
+])
+
+function projectProblemHandoff(code: string): ExecutorHandoff {
+  if (PROJECT_REFUSAL_CODES.has(code)) {
+    return {
+      outcome: 'refused',
+      trust: 'trusted_system',
+      content: {op: 'project', code, recoverable: true},
+    }
+  }
+  return failureHandoff(code, 'run')
 }
 
 function projectNoActiveTurn(): ExecutorHandoff {

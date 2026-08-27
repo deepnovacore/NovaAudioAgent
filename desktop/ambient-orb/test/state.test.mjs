@@ -67,6 +67,23 @@ test('projects voice and Codex state into one compact visible line', () => {
   assert.equal(waiting.confirmationVisible, true)
 })
 
+test('describes workspace reuse as reuse rather than creation', () => {
+  const waiting = deriveOrbState({
+    ...base,
+    pendingConfirmation: true,
+    pendingAction: 'reuse_workspace',
+    pendingWorkspace: 'timer-app',
+    pendingSession: 'Initial',
+    pendingExpiresInSeconds: 360,
+  })
+
+  assert.equal(
+    waiting.codexLabel,
+    '使用现有工作区 “timer-app”并开始任务\n尚未执行 · 360 秒后自动取消',
+  )
+  assert.doesNotMatch(waiting.codexLabel, /创建/u)
+})
+
 test('explains incomplete configuration on the visible status line', () => {
   const state = deriveOrbState({ ...base, backendState: 'configuration_required' })
 

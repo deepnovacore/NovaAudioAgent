@@ -124,7 +124,7 @@ export interface TaskCompletionRelationCue {
 export interface TaskCompletionInput {
   readonly workspace_instance_id: string
   readonly summary: string | null
-  readonly outcome: 'ok' | 'unknown' | 'failed'
+  readonly outcome: 'ok' | 'refused' | 'unknown' | 'failed'
   readonly now: number
   readonly relation_cue?: TaskCompletionRelationCue | null
 }
@@ -132,7 +132,7 @@ export interface TaskCompletionInput {
 const taskCompletionInputSchema = z.object({
   workspace_instance_id: z.string().min(1).regex(/\S/u),
   summary: z.string().min(1).max(239).regex(/\S/u).nullable(),
-  outcome: z.enum(['ok', 'unknown', 'failed']),
+  outcome: z.enum(['ok', 'refused', 'unknown', 'failed']),
   now: z.number().finite().nonnegative(),
   relation_cue: z.object({
     target_logical_id: z.string().min(1).regex(/\S/u),

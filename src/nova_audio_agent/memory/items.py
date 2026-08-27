@@ -14,7 +14,7 @@ from typing import Any, Literal
 MemoryRef = str
 
 Trust = Literal["trusted_user", "trusted_system", "untrusted_external"]
-Outcome = Literal["ok", "unknown", "failed"]
+Outcome = Literal["ok", "refused", "unknown", "failed"]
 
 
 def make_ref(channel: str, seq: int) -> MemoryRef:

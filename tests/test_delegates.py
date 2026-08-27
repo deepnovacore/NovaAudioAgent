@@ -154,6 +154,17 @@ def test_routing_class_survives_termination() -> None:
     assert ledger.routing_class_of("d-1") == "user_awaited"
 
 
+def test_refused_handoff_is_definitive_and_reclaims_routing() -> None:
+    delegate = _delegate("d-1")
+    ledger = DelegateLedger()
+    ledger.dispatch(delegate)
+    event = _handoff(delegate.delegate_id, outcome="refused")
+    ledger.terminate(delegate.delegate_id, event=event)
+    ledger.after_routing(event)
+
+    assert ledger.find(delegate.delegate_id) is None
+
+
 def test_an_unknown_delegate_is_ambient() -> None:
     """Falls back to ambient when not found: a handoff nobody claims shouldn't have the standing to interrupt the user."""
     assert DelegateLedger().routing_class_of("d-404") == "ambient"

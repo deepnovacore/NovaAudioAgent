@@ -65,6 +65,30 @@ def test_codex_confirmation_speaks_only_the_approved_concise_question() -> None:
     assert "NEVER-EXPOSE" not in evidence
 
 
+def test_codex_reuse_confirmation_speaks_the_exact_approved_question() -> None:
+    evidence = final_speech_view(
+        "ok",
+        {
+            "code": "confirmation_required",
+            "action": "reuse_workspace",
+            "workspace": "timer-app",
+            "session": "Initial",
+            "confirmation_prompt": "是否使用现有工作区“timer-app”并开始任务？请确认或取消。",
+        },
+    )
+
+    assert evidence == "是否使用现有工作区“timer-app”并开始任务？请确认或取消。"
+
+
+def test_codex_refusal_is_not_spoken_as_failure_or_uncertainty() -> None:
+    evidence = final_speech_view(
+        "refused",
+        {"op": "project", "code": "workspace_name_conflict", "recoverable": True},
+    )
+
+    assert evidence == "Codex 未执行，需要选择或修正请求（workspace_name_conflict）"
+
+
 def test_codex_confirmation_does_not_repeat_a_forged_prompt() -> None:
     evidence = final_speech_view(
         "ok",

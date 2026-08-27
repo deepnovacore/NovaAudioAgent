@@ -72,6 +72,20 @@ test('memory opens configured channels and rejects unknown channel writes', () =
   }), /unknown memory channel/u)
 })
 
+test('memory preserves refused separately from failed and unknown', () => {
+  const memory = new Memory({policies: [slowPolicy]})
+  const item = memory.append('slow_sim', {
+    ts: 3,
+    trust: 'trusted_system',
+    priority: 50,
+    content: {code: 'needs_selection'},
+    outcome: 'refused',
+    refs: ['conversation:1'],
+  })
+
+  assert.equal(item.outcome, 'refused')
+})
+
 test('structured updates overwrite named fields and bump only their revision', () => {
   const initial = structuredStateSchema.parse({
     intent: {

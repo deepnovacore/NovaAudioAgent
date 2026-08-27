@@ -350,6 +350,218 @@ async def test_project_action_validation_and_proposal_only_dispatch(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_create_workspace_reuses_the_active_workspace_without_confirmation(
+    tmp_path: Path,
+) -> None:
+    adapter, store = _adapter(tmp_path)
+
+    result = await adapter.dispatch(
+        "project",
+        {
+            "action": "create_workspace",
+            "workspace": "ALPHA",
+            "session": "Initial",
+            "work_order": "build it",
+        },
+        _context(VirtualClock()),
+    )
+
+    assert result.outcome == "ok"
+    assert result.content == {
+        "op": "project",
+        "code": "workspace_reused",
+        "workspace": "alpha",
+        "next_action": "start_session",
+        "message": "将复用现有工作区“alpha”，不会创建新工作区。",
+    }
+    assert adapter.confirmation.pending is False
+    assert store.list_sessions(store.resolve_workspace("alpha")) == ()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_create_reuses_an_inactive_workspace_and_starts_once(
+    tmp_path: Path,
+) -> None:
+    clock = VirtualClock(start=10.0)
+    identifiers = iter(f"identifier-{index:03d}" for index in range(100))
+    store = CodexProjectStore(
+        tmp_path / "state", tmp_path / "managed", now=clock.now, id_factory=identifiers.__next__
+    )
+    alpha = store.create_managed("alpha")
+    beta = store.create_managed("beta")
+    factory = _ProjectFactory()
+    adapter = ProjectCodexAdapter(
+        store=store,
+        confirmation=ProjectConfirmationController(clock=clock, id_factory=lambda: "nonce"),
+        worker_factory=factory,
+    )
+
+    proposal = await adapter.dispatch(
+        "project",
+        {
+            "action": "create_workspace",
+            "workspace": "ALPHA",
+            "session": "Initial",
+            "work_order": "build it",
+        },
+        _context(clock),
+    )
+    assert proposal.content == {
+        "op": "project",
+        "code": "confirmation_required",
+        "proposal_id": "nonce",
+        "expires_at": 370.0,
+        "action": "reuse_workspace",
+        "workspace": "alpha",
+        "session": "Initial",
+        "confirmation_prompt": "是否使用现有工作区“alpha”并开始任务？请确认或取消。",
+    }
+    assert adapter.public_project_view(pending_confirmation=True).pending_action == "reuse_workspace"
+    assert adapter.confirmation.reserve_user_item(epoch=1, item_id="confirm")
+    decision = adapter.confirmation.accept_decision(
+        epoch=1,
+        item_id="confirm",
+        proposal_id="nonce",
+        confirmed=True,
+    )
+    assert decision.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="delegate-reuse")
+
+    committed = await adapter.commit_confirmed(
+        decision.operation,
+        origin_ref="conversation:1",
+        runtime_dispatch=dispatch,
+    )
+    assert committed.accepted is True
+    executed = await adapter.dispatch(
+        "project",
+        {"action": "execute_confirmed"},
+        _context(
+            clock,
+            delegate_id="delegate-reuse",
+            private=dispatched[0][0].private,
+        ),
+    )
+    replayed = await adapter.dispatch(
+        "project",
+        {"action": "execute_confirmed"},
+        _context(
+            clock,
+            delegate_id="delegate-reuse",
+            private=dispatched[0][0].private,
+        ),
+    )
+
+    assert executed.outcome == "ok"
+    assert replayed.content == {"error": "confirmation_binding_mismatch", "op": "project"}
+    assert store.resolve_workspace(None).workspace_id == alpha.workspace_id
+    sessions = store.list_sessions(alpha)
+    assert [(item.display_title, item.codex_thread_id) for item in sessions] == [
+        ("Initial", "thread-1")
+    ]
+    assert store.list_sessions(beta) == ()
+    assert len(store.list_workspaces()) == 2
+    assert len(factory.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_residual_create_race_is_refused_but_storage_failure_is_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, store = _adapter(tmp_path)
+    clock = VirtualClock()
+
+    async def execute_confirmed(workspace: str, delegate_id: str) -> Any:
+        proposal = await adapter.dispatch(
+            "project",
+            {"action": "create_workspace", "workspace": workspace, "work_order": "build it"},
+            _context(clock),
+        )
+        assert adapter.confirmation.reserve_user_item(epoch=1, item_id=delegate_id)
+        decision = adapter.confirmation.accept_decision(
+            epoch=1,
+            item_id=delegate_id,
+            proposal_id=str(proposal.content["proposal_id"]),
+            confirmed=True,
+        )
+        assert decision.operation is not None
+        dispatched: list[Any] = []
+
+        def dispatch(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+            dispatched.append((request, reason))
+            return RuntimeDispatchResult(accepted=True, delegate_id=delegate_id)
+
+        assert (
+            await adapter.commit_confirmed(
+                decision.operation,
+                origin_ref="conversation:1",
+                runtime_dispatch=dispatch,
+            )
+        ).accepted
+        return await adapter.dispatch(
+            "project",
+            {"action": "execute_confirmed"},
+            _context(clock, delegate_id=delegate_id, private=dispatched[0][0].private),
+        )
+
+    proposal = await adapter.dispatch(
+        "project",
+        {"action": "create_workspace", "workspace": "beta", "work_order": "build it"},
+        _context(clock),
+    )
+    assert adapter.confirmation.reserve_user_item(epoch=1, item_id="delegate-race")
+    decision = adapter.confirmation.accept_decision(
+        epoch=1,
+        item_id="delegate-race",
+        proposal_id=str(proposal.content["proposal_id"]),
+        confirmed=True,
+    )
+    assert decision.operation is not None
+    dispatched: list[Any] = []
+
+    def dispatch_race(request: Any, *, reason: Any) -> RuntimeDispatchResult:
+        dispatched.append((request, reason))
+        return RuntimeDispatchResult(accepted=True, delegate_id="delegate-race")
+
+    assert (
+        await adapter.commit_confirmed(
+            decision.operation,
+            origin_ref="conversation:1",
+            runtime_dispatch=dispatch_race,
+        )
+    ).accepted
+    store.create_managed("beta")
+    raced = await adapter.dispatch(
+        "project",
+        {"action": "execute_confirmed"},
+        _context(
+            clock,
+            delegate_id="delegate-race",
+            private=dispatched[0][0].private,
+        ),
+    )
+    assert raced.outcome == "refused"
+    assert raced.content == {
+        "op": "project",
+        "code": "workspace_name_conflict",
+        "recoverable": True,
+    }
+
+    def fail_create(_display_name: str) -> None:
+        raise ProjectStateError("workspace_create_failed")
+
+    monkeypatch.setattr(store, "create_managed", fail_create)
+    failed = await execute_confirmed("gamma", "delegate-storage")
+    assert failed.outcome == "failed"
+    assert failed.content == {"op": "run", "error": "workspace_create_failed"}
+
+
+@pytest.mark.asyncio
 async def test_select_and_resume_proposals_include_ids_expiry_and_resolved_names(
     tmp_path: Path,
 ) -> None:
@@ -421,9 +633,10 @@ async def test_invalid_create_is_rejected_before_confirmation(tmp_path: Path) ->
         _context(VirtualClock()),
     )
 
-    assert invalid.outcome == conflict.outcome == "failed"
+    assert invalid.outcome == conflict.outcome == "refused"
     assert invalid.content["code"] == "workspace_name_invalid"
     assert conflict.content["code"] == "workspace_name_conflict"
+    assert invalid.content["recoverable"] is conflict.content["recoverable"] is True
     assert adapter.confirmation.pending is False
 
 
@@ -486,10 +699,11 @@ async def test_lists_are_public_and_exact_names_are_required(tmp_path: Path) -> 
     missing = await adapter.dispatch(
         "project", {"action": "select_workspace", "workspace": "alp"}, ctx
     )
-    assert missing.outcome == "failed"
+    assert missing.outcome == "refused"
     assert missing.content == {
         "op": "project",
         "code": "workspace_not_found",
+        "recoverable": True,
         "candidates": ["alpha", "beta"],
     }
 
@@ -724,8 +938,12 @@ async def test_confirmed_resume_revalidates_ready_state_at_execution_time(
     )
 
     assert committed.accepted is True
-    assert resumed.outcome == "failed"
-    assert resumed.content["error"] == "session_unavailable"
+    assert resumed.outcome == "refused"
+    assert resumed.content == {
+        "op": "project",
+        "code": "session_unavailable",
+        "recoverable": True,
+    }
     assert len(factory.calls) == 1
 
 

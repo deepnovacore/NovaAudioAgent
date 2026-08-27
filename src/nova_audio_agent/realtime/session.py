@@ -39,7 +39,7 @@ from nova_audio_agent.realtime.protocol import (
     UserTranscriptFinal,
 )
 
-DelegateState = Literal["running", "completed", "failed", "unknown"]
+DelegateState = Literal["running", "completed", "refused", "failed", "unknown"]
 MAX_PREMAP_AUDIO_BYTES = 64 * 1024
 MAX_TRACKED_HOST_EVENTS = 500
 MAX_PENDING_HOST_EVENTS = 532

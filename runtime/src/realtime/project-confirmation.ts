@@ -12,7 +12,7 @@
 import type { Clock } from '../clock.js'
 import {codePointLengthLikePython} from '../python-text.js'
 
-export type ProjectAction = 'create' | 'select' | 'resume'
+export type ProjectAction = 'create' | 'reuse' | 'select' | 'resume'
 export type ConfirmationKind = 'confirmed' | 'cancelled' | 'invalid' | 'expired' | 'ignored'
 export const PROJECT_CONFIRMATION_TTL_SECONDS = 360
 
@@ -45,7 +45,12 @@ export interface ProjectConfirmationView {
   readonly pending_confirmation: boolean
   readonly workspace_display_name: string | null
   readonly session_title: string | null
-  readonly pending_action?: 'create_workspace' | 'select_workspace' | 'resume_session' | null
+  readonly pending_action?:
+    | 'create_workspace'
+    | 'reuse_workspace'
+    | 'select_workspace'
+    | 'resume_session'
+    | null
   readonly pending_workspace_display_name?: string | null
   readonly pending_session_title?: string | null
   readonly pending_expires_in_seconds?: number | null
@@ -361,8 +366,9 @@ export class ProjectConfirmationController {
 
 function publicProjectAction(
   action: ProjectAction,
-): 'create_workspace' | 'select_workspace' | 'resume_session' {
+): 'create_workspace' | 'reuse_workspace' | 'select_workspace' | 'resume_session' {
   if (action === 'create') return 'create_workspace'
+  if (action === 'reuse') return 'reuse_workspace'
   if (action === 'select') return 'select_workspace'
   return 'resume_session'
 }
@@ -407,7 +413,12 @@ function validatePrepared(input: {
   readonly work_order: string | null
   readonly origin_ref: string
 }): void {
-  if (input.action !== 'create' && input.action !== 'select' && input.action !== 'resume') {
+  if (
+    input.action !== 'create'
+    && input.action !== 'reuse'
+    && input.action !== 'select'
+    && input.action !== 'resume'
+  ) {
     throw new TypeError('invalid project action')
   }
   // Typed *and* non-empty, in that order, because this runs before any state moves. A caller
@@ -438,6 +449,12 @@ function validatePrepared(input: {
     throw new TypeError('select requires a resolved workspace')
   }
   if (
+    input.action === 'reuse'
+    && (input.workspace_id === null || input.session_id !== null || input.work_order === null)
+  ) {
+    throw new TypeError('reuse requires a resolved workspace and work order')
+  }
+  if (
     input.action === 'resume'
     && (input.workspace_id === null || input.session_id === null || input.work_order === null)
   ) {
@@ -455,6 +472,9 @@ function confirmationPrompt(
   if (action === 'resume') {
     if (session === null) throw new TypeError('resume requires a Session title')
     return `准备切换到${workspace}，并继续 Session“${session}”，请确认或取消。`
+  }
+  if (action === 'reuse') {
+    return `是否使用现有工作区“${workspace}”并开始任务？请确认或取消。`
   }
   if (action === 'create' && hasWorkOrder) {
     return `是否创建工作区“${workspace}”并开始任务？请确认或取消。`

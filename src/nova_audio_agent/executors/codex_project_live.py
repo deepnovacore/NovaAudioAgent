@@ -251,12 +251,35 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             if action == "start_session":
                 assert work_order is not None
                 return await self._dispatch_start_session(work_order, session_title, ctx)
+            public_action = action
             if action == "create_workspace":
                 assert workspace_name is not None
-                workspace_name = await _complete_sync(
-                    self.store.validate_managed_create, workspace_name
-                )
                 workspace = None
+                if work_order is not None:
+                    try:
+                        workspace = await _complete_sync(
+                            self.store.resolve_workspace, workspace_name
+                        )
+                    except ProjectStateError as failure:
+                        if failure.code != "workspace_not_found":
+                            raise
+                    if workspace is not None:
+                        active = await self._active_workspace_or_none()
+                        if active is not None and active.workspace_id == workspace.workspace_id:
+                            return _project_ok(
+                                code="workspace_reused",
+                                workspace=workspace.display_name,
+                                next_action="start_session",
+                                message=(
+                                    f"将复用现有工作区“{workspace.display_name}”，"
+                                    "不会创建新工作区。"
+                                ),
+                            )
+                        public_action = "reuse_workspace"
+                if workspace is None:
+                    workspace_name = await _complete_sync(
+                        self.store.validate_managed_create, workspace_name
+                    )
                 resolved_session = None
             else:
                 workspace = await _complete_sync(self.store.resolve_workspace, workspace_name)
@@ -274,9 +297,10 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             proposal = self.confirmation.prepare(
                 action={
                     "create_workspace": "create",
+                    "reuse_workspace": "reuse",
                     "select_workspace": "select",
                     "resume_session": "resume",
-                }[action],
+                }[public_action],
                 workspace_display_name=(
                     workspace_name if workspace is None else workspace.display_name
                 ),
@@ -294,7 +318,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             code="confirmation_required",
             proposal_id=proposal.proposal_id,
             expires_at=proposal.expires_at,
-            action=action,
+            action=public_action,
             workspace=proposal.workspace_display_name,
             session=proposal.session_title,
             confirmation_prompt=proposal.confirmation_prompt,
@@ -302,6 +326,9 @@ class ProjectCodexAdapter(CodexLiveAdapter):
 
     async def _lookup_failure(self, code: str) -> Handoff:
         content: dict[str, Any] = {"op": "project", "code": code}
+        refused = code in _PROJECT_REFUSAL_CODES
+        if refused:
+            content["recoverable"] = True
         if code == "workspace_not_found":
             # Candidate names are a courtesy; a busy or failing registry read
             # must not turn the bounded failure into an adapter exception.
@@ -310,7 +337,11 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             except ProjectStateError:
                 workspaces = ()
             content["candidates"] = [item.display_name for item in _most_recent(workspaces)]
-        return Handoff(outcome="failed", trust="trusted_system", content=content)
+        return Handoff(
+            outcome="refused" if refused else "failed",
+            trust="trusted_system",
+            content=content,
+        )
 
     async def _run_new(
         self,
@@ -322,7 +353,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             workspace = await _complete_sync(self.store.resolve_workspace, None)
             return await self._run_bound(workspace, None, session_title, work_order, ctx)
         except ProjectStateError as failure:
-            return _failure(failure.code, "run")
+            return _project_problem(failure.code)
 
     async def _run_confirmed(
         self,
@@ -361,6 +392,12 @@ class ProjectCodexAdapter(CodexLiveAdapter):
             )
             if workspace.workspace_id != operation.workspace_id:
                 raise ProjectStateError("workspace_boundary_changed")
+            if operation.action == "reuse":
+                if operation.session_id is not None:
+                    raise ProjectStateError("confirmation_binding_mismatch")
+                return await self._run_bound(
+                    workspace, None, operation.session_title, work_order, ctx
+                )
             if operation.action == "select":
                 previous = await _complete_sync(self.store.resolve_workspace, None)
                 selected = await _complete_sync(self.store.select_workspace, workspace.display_name)
@@ -385,7 +422,7 @@ class ProjectCodexAdapter(CodexLiveAdapter):
                 raise ProjectStateError("session_workspace_mismatch")
             return await self._run_bound(workspace, session, None, work_order, ctx)
         except ProjectStateError as failure:
-            return _failure(failure.code, "run")
+            return _project_problem(failure.code)
 
     async def _run_bound(
         self,
@@ -710,3 +747,26 @@ def _project_ok(*, code: str, **content: Any) -> Handoff:
         trust="trusted_system",
         content={"op": "project", "code": code, **content},
     )
+
+
+_PROJECT_REFUSAL_CODES = frozenset(
+    {
+        "workspace_name_conflict",
+        "workspace_not_found",
+        "session_not_found",
+        "session_unavailable",
+        "workspace_name_invalid",
+        "workspace_limit",
+        "session_limit",
+    }
+)
+
+
+def _project_problem(code: str) -> Handoff:
+    if code in _PROJECT_REFUSAL_CODES:
+        return Handoff(
+            outcome="refused",
+            trust="trusted_system",
+            content={"op": "project", "code": code, "recoverable": True},
+        )
+    return _failure(code, "run")

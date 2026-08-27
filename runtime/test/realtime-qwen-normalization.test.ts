@@ -160,6 +160,8 @@ test('Qwen project instructions route the six actions and structured confirmatio
   assert.match(FRONTEND_INSTRUCTIONS, /Session 候选上下文.*resume_session/su)
   assert.match(FRONTEND_INSTRUCTIONS, /独立.*create_workspace/su)
   assert.match(FRONTEND_INSTRUCTIONS, /当前.*start_session/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /workspace_reused.*next_action.*start_session/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /只有 code=confirmation_required.*待确认 proposal/su)
   assert.match(FRONTEND_INSTRUCTIONS, /历史任务或命名 Session.*list_sessions.*不要 list_workspaces/su)
   assert.match(FRONTEND_INSTRUCTIONS, /目标项目身份未知.*list_workspaces/su)
   assert.match(FRONTEND_INSTRUCTIONS, /同意、拒绝、取消或暂缓.*必须调用.*不得只做口头回应/su)

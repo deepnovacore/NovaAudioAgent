@@ -51,6 +51,23 @@ test('deadline is processed last at the same virtual instant', () => {
   assert.equal(queue.popReady(5)?.kind, 'deadline')
 })
 
+test('refused is a first-class terminal handoff outcome', () => {
+  const parsed = eventInputSchema.parse({
+    kind: 'handoff',
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      origin_ref: 'conversation:1',
+      outcome: 'refused',
+      trust: 'trusted_system',
+      content: {code: 'workspace_name_conflict', recoverable: true},
+    },
+  })
+
+  if (parsed.kind !== 'handoff') assert.fail('expected handoff')
+  assert.equal(parsed.payload.outcome, 'refused')
+})
+
 test('non-deadline events retain FIFO order at the same instant', () => {
   const queue = new EventQueue()
   queue.push({kind: 'compress', payload: {channel: 'conversation'}}, 2)

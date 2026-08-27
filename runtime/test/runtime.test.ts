@@ -642,6 +642,40 @@ test('an unknown handoff keeps awaited routing for a late definitive verdict', (
   assert.equal(duplicateReason, null)
 })
 
+test('a refused handoff is a late definitive verdict rather than another unknown', () => {
+  const {runtime} = runtimeWithCalls({
+    manifest: testManifest({wake: 'none'}),
+    delegateIds: ['d-1'],
+    slots: [],
+  })
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'user_awaited')
+  const unknown = runtime.postExecutorCompletion(0, {
+    outcome: 'unknown',
+    trust: 'trusted_system',
+    content: {error: 'transport_timeout'},
+  }, 1)
+  assert.equal(runtime.queue.popReady(1), unknown)
+  runtime.apply(unknown)
+  const refused = runtime.postExecutorCompletion(0, {
+    outcome: 'refused',
+    trust: 'trusted_system',
+    content: {code: 'needs_selection'},
+  }, 2)
+  assert.equal(runtime.queue.popReady(2), refused)
+  const refusedReason = runtime.apply(refused)
+  const duplicate = runtime.postExecutorCompletion(0, {
+    outcome: 'refused',
+    trust: 'trusted_system',
+    content: {code: 'duplicate'},
+  }, 3)
+  assert.equal(runtime.queue.popReady(3), duplicate)
+  const duplicateReason = runtime.apply(duplicate)
+
+  assert.equal(refusedReason?.routing_class, 'user_awaited')
+  assert.equal(duplicateReason, null)
+})
+
 test('an unknown result fences one identical retry and then releases it', () => {
   const {runtime} = runtimeWithCalls({
     manifest: testManifest({wake: 'none'}),

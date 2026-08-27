@@ -230,6 +230,20 @@ test('Codex project view accepts the full confirmation ttl', () => {
   }), DesktopProtocolError)
 })
 
+test('Codex project view carries workspace reuse confirmation', () => {
+  const parsed = JSON.parse(codexProjectMessage({
+    workspace_display_name: 'alpha',
+    session_title: null,
+    pending_confirmation: true,
+    pending_action: 'reuse_workspace',
+    pending_workspace_display_name: 'timer-app',
+    pending_session_title: 'Initial',
+    pending_expires_in_seconds: 360,
+  })) as Readonly<Record<string, unknown>>
+
+  assert.equal(parsed.pending_action, 'reuse_workspace')
+})
+
 test('every desktop wire case matches the Python-exported golden, byte for byte', () => {
   const divergent: string[] = []
   for (const [index, spec] of document.cases.entries()) {

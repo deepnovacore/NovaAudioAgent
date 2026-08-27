@@ -16,10 +16,11 @@ import {
 import { VirtualClock } from '../src/clock.js'
 import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
 import type {CodexAssemblyResource} from '../src/codex-factory.js'
-import type {
-  CodexProjectStore,
-  PublicProjectContext,
-  WorkspaceRecord,
+import {
+  ProjectStateError,
+  type CodexProjectStore,
+  type PublicProjectContext,
+  type WorkspaceRecord,
 } from '../src/codex-project-store.js'
 import { settingsSchema } from '../src/config.js'
 import type {ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff} from '../src/causal-runtime.js'
@@ -692,6 +693,9 @@ test('project proposal reaches provider and desktop before confirmation', async 
   })
   const validations: string[] = []
   const store = {
+    resolveWorkspace: (name: string | null) => name === null || name.toLowerCase() === 'alpha'
+      ? Promise.resolve(alpha)
+      : Promise.reject(new ProjectStateError('workspace_not_found')),
     validateManagedCreate: (name: string) => {
       validations.push(name)
       return Promise.resolve(name)

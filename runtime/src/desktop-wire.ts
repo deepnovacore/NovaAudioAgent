@@ -38,7 +38,12 @@ export interface PublicProjectView {
   readonly workspace_display_name: string | null
   readonly session_title: string | null
   readonly pending_confirmation: boolean
-  readonly pending_action?: 'create_workspace' | 'select_workspace' | 'resume_session' | null
+  readonly pending_action?:
+    | 'create_workspace'
+    | 'reuse_workspace'
+    | 'select_workspace'
+    | 'resume_session'
+    | null
   readonly pending_workspace_display_name?: string | null
   readonly pending_session_title?: string | null
   readonly pending_expires_in_seconds?: number | null
@@ -221,6 +226,7 @@ export function codexProjectMessage(view: PublicProjectView): string {
   if (
     pendingAction !== null
     && pendingAction !== 'create_workspace'
+    && pendingAction !== 'reuse_workspace'
     && pendingAction !== 'select_workspace'
     && pendingAction !== 'resume_session'
   ) {

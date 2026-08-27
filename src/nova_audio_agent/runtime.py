@@ -2136,10 +2136,10 @@ _APPLY: dict[str, Callable[[Runtime, Any], None]] = {
 # impersonation rather than source attribution.
 _EXECUTOR_TRUST = frozenset({"trusted_system", "untrusted_external"})
 
-# The two outcomes that definitively say whether the operation occurred. Use a
+# The outcomes that definitively say whether the operation occurred. Use a
 # positive allowlist rather than `!= "unknown"`: an arbitrary adapter value is still
 # unknown to us and therefore not definitive (R53).
-_DEFINITE_OUTCOMES = frozenset({"ok", "failed"})
+_DEFINITE_OUTCOMES = frozenset({"ok", "refused", "failed"})
 
 
 class ExecutorContractError(ValueError):

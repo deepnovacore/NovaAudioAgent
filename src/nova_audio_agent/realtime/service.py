@@ -2738,7 +2738,13 @@ class RealtimeService:
             suppress_unselected_suggestion = (
                 manifest.policy.suggest and event.outcome == "ok" and not direct_suggestion_handoff
             )
-            state = "completed" if event.outcome == "ok" else "failed"
+            state = (
+                "completed"
+                if event.outcome == "ok"
+                else "refused"
+                if event.outcome == "refused"
+                else "failed"
+            )
             self.session.register_delegate(
                 event.delegate_id,
                 summary=self._delegate_summary(event.delegate_id, display_name=display_name),

@@ -141,7 +141,7 @@ export class CoreRuntime {
   readonly #dispatches: Delegate[] = []
   readonly #routableDelegates = new Map<string, Delegate>()
   readonly #terminationKind = new Map<string, 'handoff' | 'deadline'>()
-  readonly #terminationOutcome = new Map<string, 'ok' | 'unknown' | 'failed'>()
+  readonly #terminationOutcome = new Map<string, 'ok' | 'refused' | 'unknown' | 'failed'>()
   readonly #handoffSeen = new Set<string>()
   /**
    * What the event currently being applied did to a delegate, for the observer that runs next.
@@ -285,7 +285,7 @@ export class CoreRuntime {
   postExecutorCompletion(
     dispatchIndex: number,
     completion: {
-      readonly outcome: 'ok' | 'unknown' | 'failed'
+      readonly outcome: 'ok' | 'refused' | 'unknown' | 'failed'
       readonly trust: 'trusted_user' | 'trusted_system' | 'untrusted_external'
       readonly content: Readonly<Record<string, JsonValue>>
       readonly refs?: readonly string[]
@@ -749,7 +749,9 @@ export class CoreRuntime {
     const previousOutcome = delegate === undefined
       ? undefined
       : this.#terminationOutcome.get(delegate.delegate_id)
-    const definitive = event.payload.outcome === 'ok' || event.payload.outcome === 'failed'
+    const definitive = event.payload.outcome === 'ok'
+      || event.payload.outcome === 'refused'
+      || event.payload.outcome === 'failed'
     let claimed: Delegate | undefined
     if (
       delegate !== undefined

@@ -35,7 +35,7 @@ export const ObservationSchema = z.object({
   workspace_instance_id: nonemptyStableIdSchema.nullable(),
   related_logical_workspace_id: nonemptyStableIdSchema.nullable(),
   summary: labelSchema.nullable(),
-  outcome: z.enum(['ok', 'unknown', 'failed']).nullable(),
+  outcome: z.enum(['ok', 'refused', 'unknown', 'failed']).nullable(),
   evidence_refs: z.array(EvidenceRefSchema),
 }).strict()
 

@@ -531,7 +531,203 @@ test('project create proposal validates without mutating state or constructing t
       {action: 'create_workspace', workspace: '../escape'},
       context('project', {}, value.clock),
     )
-    assert.deepEqual(invalid.content, {op: 'project', code: 'workspace_name_invalid'})
+    assert.equal(invalid.outcome, 'refused')
+    assert.deepEqual(invalid.content, {
+      op: 'project', code: 'workspace_name_invalid', recoverable: true,
+    })
+    assert.equal(value.factory.calls.length, 0)
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('create_workspace reuses the active workspace without confirmation', async () => {
+  const value = await fixture()
+  try {
+    const result = await value.adapter.dispatch(
+      'project',
+      {
+        action: 'create_workspace', workspace: 'ALPHA', session: 'Initial',
+        work_order: 'build it',
+      },
+      context('project', {}, value.clock),
+    )
+
+    assert.equal(result.outcome, 'ok')
+    assert.deepEqual(result.content, {
+      op: 'project',
+      code: 'workspace_reused',
+      workspace: 'alpha',
+      next_action: 'start_session',
+      message: '将复用现有工作区“alpha”，不会创建新工作区。',
+    })
+    assert.equal(value.confirmation.pending, false)
+    assert.deepEqual(await value.store.listSessions(await value.store.resolveWorkspace('alpha')), [])
+    assert.equal(value.factory.calls.length, 0)
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('confirmed create reuses an inactive workspace and starts exactly one Session', async () => {
+  const value = await fixture()
+  try {
+    const alpha = await value.store.resolveWorkspace('alpha')
+    const beta = await value.store.createManaged('beta')
+    const proposal = await value.adapter.dispatch(
+      'project',
+      {
+        action: 'create_workspace', workspace: 'ALPHA', session: 'Initial',
+        work_order: 'build it',
+      },
+      context('project', {}, value.clock),
+    )
+    assert.deepEqual(proposal.content, {
+      op: 'project', code: 'confirmation_required', proposal_id: 'nonce-1', expires_at: 370,
+      action: 'reuse_workspace', workspace: 'alpha', session: 'Initial',
+      confirmation_prompt: '是否使用现有工作区“alpha”并开始任务？请确认或取消。',
+    })
+    assert.equal(value.adapter.publicProjectView(true).pending_action, 'reuse_workspace')
+    assert.equal(value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm'}), true)
+    const decision = value.confirmation.acceptDecision({
+      epoch: 1,
+      itemId: 'confirm',
+      proposalId: proposalId(proposal.content),
+      confirmed: true,
+    })
+    assert.ok(decision.operation)
+    const committed = await value.adapter.commitConfirmed(
+      decision.operation,
+      'conversation:1',
+      () => ({accepted: true, delegate_id: 'delegate-reuse'}),
+    )
+    assert.equal(committed.accepted, true)
+    const executed = await value.adapter.dispatch(
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
+        private: decision.operation,
+        delegateId: 'delegate-reuse',
+      }),
+    )
+    const replayed = await value.adapter.dispatch(
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
+        private: decision.operation,
+        delegateId: 'delegate-reuse',
+      }),
+    )
+
+    assert.equal(executed.outcome, 'ok')
+    assert.deepEqual(replayed.content, {error: 'confirmation_binding_mismatch', op: 'project'})
+    assert.equal((await value.store.resolveWorkspace(null)).workspace_id, alpha.workspace_id)
+    assert.deepEqual(
+      (await value.store.listSessions(alpha)).map(item => [item.display_title, item.codex_thread_id]),
+      [['Initial', 'thread-1']],
+    )
+    assert.deepEqual(await value.store.listSessions(beta), [])
+    assert.equal((await value.store.listWorkspaces()).length, 2)
+    assert.equal(value.factory.calls.length, 1)
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('a residual create race is recoverably refused before effects', async () => {
+  const value = await fixture()
+  try {
+    const proposal = await value.adapter.dispatch(
+      'project',
+      {action: 'create_workspace', workspace: 'beta', work_order: 'build it'},
+      context('project', {}, value.clock),
+    )
+    value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm'})
+    const decision = value.confirmation.acceptDecision({
+      epoch: 1,
+      itemId: 'confirm',
+      proposalId: proposalId(proposal.content),
+      confirmed: true,
+    })
+    assert.ok(decision.operation)
+    assert.equal((await value.adapter.commitConfirmed(
+      decision.operation,
+      'conversation:1',
+      () => ({accepted: true, delegate_id: 'delegate-race'}),
+    )).accepted, true)
+    await value.store.createManaged('beta')
+
+    const result = await value.adapter.dispatch(
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
+        private: decision.operation,
+        delegateId: 'delegate-race',
+      }),
+    )
+
+    assert.equal(result.outcome, 'refused')
+    assert.deepEqual(result.content, {
+      op: 'project', code: 'workspace_name_conflict', recoverable: true,
+    })
+    assert.equal(value.factory.calls.length, 0)
+  } finally {
+    await value.adapter.close()
+    await rm(value.root, {recursive: true, force: true})
+  }
+})
+
+test('workspace storage creation failure remains failed', async () => {
+  let failCreate = false
+  const value = await fixture({
+    decorateStore: store => new Proxy(store, {
+      get(target, property) {
+        if (property === 'createManaged') {
+          return async (displayName: string) => {
+            if (failCreate) throw new ProjectStateError('workspace_create_failed')
+            return await target.createManaged(displayName)
+          }
+        }
+        const member: unknown = Reflect.get(target, property, target)
+        return typeof member === 'function' ? member.bind(target) as unknown : member
+      },
+    }),
+  })
+  try {
+    const proposal = await value.adapter.dispatch(
+      'project',
+      {action: 'create_workspace', workspace: 'beta', work_order: 'build it'},
+      context('project', {}, value.clock),
+    )
+    value.confirmation.reserveUserItem({epoch: 1, itemId: 'confirm'})
+    const decision = value.confirmation.acceptDecision({
+      epoch: 1,
+      itemId: 'confirm',
+      proposalId: proposalId(proposal.content),
+      confirmed: true,
+    })
+    assert.ok(decision.operation)
+    assert.equal((await value.adapter.commitConfirmed(
+      decision.operation,
+      'conversation:1',
+      () => ({accepted: true, delegate_id: 'delegate-storage'}),
+    )).accepted, true)
+    failCreate = true
+
+    const result = await value.adapter.dispatch(
+      'project',
+      {action: 'execute_confirmed'},
+      context('project', {action: 'execute_confirmed'}, value.clock, {
+        private: decision.operation,
+        delegateId: 'delegate-storage',
+      }),
+    )
+
+    assert.equal(result.outcome, 'failed')
+    assert.deepEqual(result.content, {op: 'run', error: 'workspace_create_failed'})
     assert.equal(value.factory.calls.length, 0)
   } finally {
     await value.adapter.close()
@@ -2025,7 +2221,10 @@ test('resume state changed after persistent-home setup is rejected before transp
         originRef: 'conversation:2',
       }),
     )
-    assert.deepEqual(result.content, {error: 'session_unavailable', op: 'run'})
+    assert.equal(result.outcome, 'refused')
+    assert.deepEqual(result.content, {
+      op: 'project', code: 'session_unavailable', recoverable: true,
+    })
     assert.equal(value.factory.calls.length, 1)
   } finally {
     await value.adapter.close()

@@ -193,7 +193,7 @@ async def _capture(adapter: AutoGlmAdapter, clock: RealClock) -> dict[str, objec
 def _browse_evidence(handoff: object) -> dict[str, object] | None:
     outcome = getattr(handoff, "outcome", None)
     content = getattr(handoff, "content", None)
-    if outcome not in {"ok", "failed", "unknown"} or type(content) is not dict:
+    if outcome not in {"ok", "refused", "failed", "unknown"} or type(content) is not dict:
         return None
     code = content.get("code", content.get("error"))
     effect = content.get("effect_verification")

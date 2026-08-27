@@ -235,14 +235,24 @@ test('task completion rejects an empty string but persists an explicit null summ
     now: 4,
     relation_cue: null,
   })
+  await service.recordTaskCompletion({
+    workspace_instance_id: opened.instance.instance_id,
+    summary: '需要选择工作区',
+    outcome: 'refused',
+    now: 5,
+    relation_cue: null,
+  })
 
   await service.close()
   await store.open()
   const completions = (await store.listObservations()).filter(observation => (
     observation.observation_type === 'task_completed'
   ))
-  assert.deepEqual(completions.map(observation => observation.summary), [null, '🚀'.repeat(119)])
-  assert.deepEqual(completions.map(observation => observation.outcome), ['ok', 'ok'])
+  assert.deepEqual(
+    completions.map(observation => observation.summary),
+    [null, '🚀'.repeat(119), '需要选择工作区'],
+  )
+  assert.deepEqual(completions.map(observation => observation.outcome), ['ok', 'ok', 'refused'])
 })
 
 test('task completion keeps redacted summaries inside the durable label boundary', async t => {

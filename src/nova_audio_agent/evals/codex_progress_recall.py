@@ -412,7 +412,7 @@ def _validate_payload(record: dict[str, object]) -> None:
         if (
             not _valid_id(payload["delegate_id"])
             or type(payload["outcome"]) is not str
-            or payload["outcome"] not in {"ok", "failed", "unknown"}
+            or payload["outcome"] not in {"ok", "refused", "failed", "unknown"}
         ):
             raise EvidenceValidationError("codex.handoff has invalid values")
     elif kind == "codex.dispatch":

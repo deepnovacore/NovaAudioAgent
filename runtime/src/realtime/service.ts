@@ -1863,7 +1863,9 @@ export class RealtimeService {
       && !directSuggestionHandoff
     this.session.registerDelegate(payload.delegate_id, {
       summary: this.#delegateSummary(payload.delegate_id, displayName),
-      state: payload.outcome === 'ok' ? 'completed' : 'failed',
+      state: payload.outcome === 'ok'
+        ? 'completed'
+        : payload.outcome === 'refused' ? 'refused' : 'failed',
       channel: payload.channel,
     })
     // CP1: a settled delegate leaves no dedup residue behind.

@@ -241,6 +241,25 @@ test('a workspace creation with work starts with the approved concise confirmati
   )
 })
 
+test('workspace reuse has its own exact confirmation and public action', () => {
+  const controller = createController()
+  const proposal = controller.prepare({
+    action: 'reuse',
+    workspace_display_name: 'timer-app',
+    workspace_id: 'workspace-private',
+    session_title: 'Initial',
+    session_id: null,
+    work_order: '实现计时器',
+    origin_ref: 'conversation:1',
+  })
+
+  assert.equal(
+    proposal.confirmation_prompt,
+    '是否使用现有工作区“timer-app”并开始任务？请确认或取消。',
+  )
+  assert.equal(controller.view.pending_action, 'reuse_workspace')
+})
+
 test('duplicate and replayed decisions fail closed', () => {
   const controller = createController()
   const proposal = prepareSelect(controller)

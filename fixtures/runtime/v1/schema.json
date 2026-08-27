@@ -505,6 +505,7 @@
                     "type": "string",
                     "enum": [
                       "ok",
+                      "refused",
                       "unknown",
                       "failed"
                     ]
@@ -1008,6 +1009,7 @@
                         "type": "string",
                         "enum": [
                           "ok",
+                          "refused",
                           "unknown",
                           "failed"
                         ]
@@ -1554,6 +1556,7 @@
                           "type": "string",
                           "enum": [
                             "ok",
+                            "refused",
                             "unknown",
                             "failed"
                           ]

@@ -20,7 +20,7 @@ export const trustSchema = z.enum([
   'trusted_system',
   'untrusted_external',
 ])
-export const outcomeSchema = z.enum(['ok', 'unknown', 'failed'])
+export const outcomeSchema = z.enum(['ok', 'refused', 'unknown', 'failed'])
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | {
   readonly [key: string]: JsonValue

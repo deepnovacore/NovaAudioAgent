@@ -37,7 +37,7 @@ export interface ExecutorObservation {
 
 /** An executor's report only; the runtime binds delegate and channel identity. */
 export interface ExecutorHandoff {
-  readonly outcome: 'ok' | 'unknown' | 'failed'
+  readonly outcome: 'ok' | 'refused' | 'unknown' | 'failed'
   readonly trust: 'trusted_user' | 'trusted_system' | 'untrusted_external'
   readonly content: Readonly<Record<string, JsonValue>>
   readonly refs?: readonly string[]

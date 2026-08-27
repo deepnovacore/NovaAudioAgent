@@ -120,7 +120,7 @@ export function checkParams(
 }
 
 export interface SimHandoff {
-  readonly outcome: 'ok' | 'unknown' | 'failed'
+  readonly outcome: 'ok' | 'refused' | 'unknown' | 'failed'
   readonly trust: 'trusted_system'
   readonly content: Readonly<Record<string, JsonValue>>
 }

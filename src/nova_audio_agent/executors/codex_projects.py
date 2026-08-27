@@ -100,7 +100,9 @@ class PublicProjectView:
     workspace_display_name: str | None
     session_title: str | None
     pending_confirmation: bool
-    pending_action: Literal["create_workspace", "select_workspace", "resume_session"] | None = None
+    pending_action: Literal[
+        "create_workspace", "reuse_workspace", "select_workspace", "resume_session"
+    ] | None = None
     pending_workspace_display_name: str | None = None
     pending_session_title: str | None = None
     pending_expires_in_seconds: float | None = None

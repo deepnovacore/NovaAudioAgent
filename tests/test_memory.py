@@ -99,6 +99,22 @@ def test_memory_append_routes_to_the_named_channel() -> None:
     assert item.refs == ("conversation:1",)
 
 
+def test_refused_is_preserved_as_a_distinct_terminal_outcome() -> None:
+    memory = _memory()
+
+    item = memory.append(
+        "slow_sim",
+        ts=3.0,
+        trust="trusted_system",
+        priority=50,
+        content={"code": "needs_selection"},
+        outcome="refused",
+        refs=("conversation:1",),
+    )
+
+    assert item.outcome == "refused"
+
+
 def test_memory_append_rejects_an_unknown_channel() -> None:
     """Only one executor loads at a time: writing to a channel that was never opened is a bug, not something to silently tolerate."""
     memory = _memory()

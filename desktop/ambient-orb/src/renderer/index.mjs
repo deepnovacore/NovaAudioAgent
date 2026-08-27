@@ -617,6 +617,7 @@ async function handleControl(message) {
     const pendingExpires = message.pending_expires_in_seconds
     const validAction = pendingAction === null
       || pendingAction === 'create_workspace'
+      || pendingAction === 'reuse_workspace'
       || pendingAction === 'select_workspace'
       || pendingAction === 'resume_session'
     const pendingMetadata = pendingAction !== null

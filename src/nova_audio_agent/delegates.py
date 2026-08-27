@@ -300,7 +300,7 @@ class DelegateLedger:
             self._forget_routing(delegate_id)
 
     def note_resolved(self, delegate_id: str) -> None:
-        """This task later got a verdict (`ok` / `failed`), so it no longer counts as an unknown (R53).
+        """This task later got a verdict (`ok` / `refused` / `failed`), so it no longer counts as an unknown (R53).
 
         **Why this needs a second table instead of amending the termination record.**
         Termination rule 3 says the first terminator isn't overridden, so `terminate`
@@ -321,7 +321,7 @@ class DelegateLedger:
           back, then dim it once more)" — a late `ok` is exactly a verdict, and at that
           point the fence contradicts its own rule.
 
-        Only `ok` / `failed` count as a verdict, using a **positive allowlist** rather than
+        Only `ok` / `refused` / `failed` count as a verdict, using a **positive allowlist** rather than
         `!= "unknown"`: the `Literal` type `Outcome` can't stop anything at runtime (R41),
         and when an adapter hands over `outcome="garbage input"`, we genuinely don't
         know whether that thing happened or not — when in doubt, don't let it through.
@@ -345,7 +345,7 @@ class DelegateLedger:
         if event.delegate_id not in self._terminated:
             return
         self._handoff_seen.add(event.delegate_id)
-        if event.outcome in {"ok", "failed"} or event.delegate_id in self._fenced:
+        if event.outcome in {"ok", "refused", "failed"} or event.delegate_id in self._fenced:
             self._forget_routing(event.delegate_id)
 
     def clear_routing_indexes(self) -> None:

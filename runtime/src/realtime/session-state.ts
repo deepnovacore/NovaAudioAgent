@@ -26,7 +26,7 @@ export const MAX_TRACKED_PROVIDER_TURNS = 500
 export const MAX_PREMAP_AUDIO_BYTES = 64 * 1_024
 export const MAX_CONTINUATION_TASK_SUMMARY = 240
 
-export const delegateStateSchema = z.enum(['running', 'completed', 'failed', 'unknown'])
+export const delegateStateSchema = z.enum(['running', 'completed', 'refused', 'failed', 'unknown'])
 export type DelegateState = z.infer<typeof delegateStateSchema>
 
 export const providerTurnPhaseSchema = z.enum([

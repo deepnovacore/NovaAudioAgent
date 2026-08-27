@@ -52,6 +52,9 @@ export function finalSpeechView(outcome: string, content: unknown): string {
       const failure = codexStartupFailureSpeech(category, stage)
       if (failure !== null) return failure
     }
+    if (outcome === 'refused') {
+      return `Codex 未执行，需要选择或修正请求（${category}）`
+    }
     return `Codex 任务未能确认完成（${category}）`
   }
   const prepared = prepareForSpeech(text, {limit: SPEECH_FINAL_LIMIT})
@@ -90,6 +93,8 @@ function codexConfirmationSpeech(content: unknown): string | null {
       `是否创建工作区“${workspace}”并开始任务？请确认或取消。`,
       `准备创建并切换到工作区${workspace}，请确认或取消。`,
     ]
+  } else if (action === 'reuse_workspace') {
+    expected = [`是否使用现有工作区“${workspace}”并开始任务？请确认或取消。`]
   } else if (action === 'select_workspace') {
     expected = [`准备切换到工作区${workspace}，请确认或取消。`]
   } else if (
@@ -157,6 +162,8 @@ export function genericFinalSpeechView(
       : `${displayName} 报告任务完成`
   } else if (outcome === 'failed') {
     text = `${displayName} 任务失败`
+  } else if (outcome === 'refused') {
+    text = `${displayName} 未执行，需要选择或修正请求`
   } else {
     text = `${displayName} 任务结果不确定`
   }

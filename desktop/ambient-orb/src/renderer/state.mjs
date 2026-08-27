@@ -149,6 +149,9 @@ function confirmationOperation(input) {
   if (input.pendingAction === 'create_workspace' && workspace) {
     return `创建工作区 “${workspace}”`
   }
+  if (input.pendingAction === 'reuse_workspace' && workspace) {
+    return `使用现有工作区 “${workspace}”并开始任务`
+  }
   if (input.pendingAction === 'select_workspace' && workspace) {
     return `切换到工作区 “${workspace}”`
   }

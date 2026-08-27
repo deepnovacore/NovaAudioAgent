@@ -116,6 +116,7 @@
                         "type": "string",
                         "enum": [
                           "ok",
+                          "refused",
                           "unknown",
                           "failed"
                         ]

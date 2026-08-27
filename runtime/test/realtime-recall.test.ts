@@ -29,7 +29,7 @@ interface ScenarioItem {
   readonly trust: 'trusted_user' | 'trusted_system' | 'untrusted_external'
   readonly priority: number
   readonly content: Record<string, unknown>
-  readonly outcome?: 'ok' | 'unknown' | 'failed'
+  readonly outcome?: 'ok' | 'refused' | 'unknown' | 'failed'
 }
 
 interface Scenario {

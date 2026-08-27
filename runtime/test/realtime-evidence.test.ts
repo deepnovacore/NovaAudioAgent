@@ -61,6 +61,24 @@ test('Codex confirmation results speak only the approved concise question', () =
   assert.doesNotMatch(evidence, /proposal-secret|NEVER-EXPOSE/u)
 })
 
+test('Codex reuse confirmation speaks the exact approved question', () => {
+  const evidence = finalSpeechView('ok', {
+    code: 'confirmation_required',
+    action: 'reuse_workspace',
+    workspace: 'timer-app',
+    session: 'Initial',
+    confirmation_prompt: '是否使用现有工作区“timer-app”并开始任务？请确认或取消。',
+  })
+
+  assert.equal(evidence, '是否使用现有工作区“timer-app”并开始任务？请确认或取消。')
+})
+
+test('Codex refusal is neither failure nor uncertainty', () => {
+  assert.equal(finalSpeechView('refused', {
+    op: 'project', code: 'workspace_name_conflict', recoverable: true,
+  }), 'Codex 未执行，需要选择或修正请求（workspace_name_conflict）')
+})
+
 test('Codex confirmation projection rejects a forged prompt instead of repeating it', () => {
   const evidence = finalSpeechView('ok', {
     code: 'confirmation_required',

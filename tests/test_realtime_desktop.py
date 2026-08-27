@@ -251,6 +251,24 @@ def test_codex_project_message_accepts_full_confirmation_ttl() -> None:
         )
 
 
+def test_codex_project_message_accepts_workspace_reuse_confirmation() -> None:
+    from nova_audio_agent.executors.codex_projects import PublicProjectView
+
+    message = codex_project_message(
+        PublicProjectView(
+            "alpha",
+            None,
+            True,
+            pending_action="reuse_workspace",
+            pending_workspace_display_name="timer-app",
+            pending_session_title="Initial",
+            pending_expires_in_seconds=360,
+        )
+    )
+
+    assert json.loads(message)["pending_action"] == "reuse_workspace"
+
+
 def test_delivery_events_exclude_suppressed_speech() -> None:
     """Words nobody heard must never be posted into the conversation."""
 

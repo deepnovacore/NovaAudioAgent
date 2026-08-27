@@ -256,6 +256,7 @@ def codex_project_message(view: PublicProjectView) -> str:
         or pending_action
         not in {
             "create_workspace",
+            "reuse_workspace",
             "select_workspace",
             "resume_session",
         }

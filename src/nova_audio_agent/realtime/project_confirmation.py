@@ -9,7 +9,7 @@ from typing import Literal, Protocol
 
 from nova_audio_agent.clock import Clock
 
-ProjectAction = Literal["create", "select", "resume"]
+ProjectAction = Literal["create", "reuse", "select", "resume"]
 ConfirmationKind = Literal["confirmed", "cancelled", "invalid", "expired", "ignored"]
 PROJECT_CONFIRMATION_TTL_SECONDS = 360.0
 
@@ -69,7 +69,9 @@ class ProjectConfirmationView:
     pending_confirmation: bool
     workspace_display_name: str | None = None
     session_title: str | None = None
-    pending_action: Literal["create_workspace", "select_workspace", "resume_session"] | None = None
+    pending_action: Literal[
+        "create_workspace", "reuse_workspace", "select_workspace", "resume_session"
+    ] | None = None
     pending_workspace_display_name: str | None = None
     pending_session_title: str | None = None
     pending_expires_in_seconds: float | None = None
@@ -112,6 +114,7 @@ class ProjectConfirmationController:
             session_title=proposal.session_title,
             pending_action={
                 "create": "create_workspace",
+                "reuse": "reuse_workspace",
                 "select": "select_workspace",
                 "resume": "resume_session",
             }[proposal.action],
@@ -339,7 +342,7 @@ def _validate_prepared(
     work_order: object,
     origin_ref: object,
 ) -> None:
-    if action not in {"create", "select", "resume"}:
+    if action not in {"create", "reuse", "select", "resume"}:
         raise ValueError("invalid project action")
     if type(workspace_display_name) is not str or not workspace_display_name:
         raise ValueError("workspace display name is required")
@@ -350,6 +353,10 @@ def _validate_prepared(
         raise ValueError("origin ref is required")
     if action == "select" and workspace_id is None:
         raise ValueError("select requires a resolved workspace")
+    if action == "reuse" and (
+        workspace_id is None or session_id is not None or work_order is None
+    ):
+        raise ValueError("reuse requires a resolved workspace and work order")
     if action == "resume" and (workspace_id is None or session_id is None or work_order is None):
         raise ValueError("resume requires resolved workspace, Session, and work order")
 
@@ -363,6 +370,8 @@ def _confirmation_prompt(
     if action == "resume":
         assert session is not None
         return f"准备切换到{workspace}，并继续 Session“{session}”，请确认或取消。"
+    if action == "reuse":
+        return f"是否使用现有工作区“{workspace}”并开始任务？请确认或取消。"
     if action == "create" and has_work_order:
         return f"是否创建工作区“{workspace}”并开始任务？请确认或取消。"
     if action == "create":

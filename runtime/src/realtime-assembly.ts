@@ -491,7 +491,7 @@ export class RealtimeAssembly {
       await this.workspaceGraph.recordTaskCompletion({
         workspace_instance_id: workspaceInstanceId,
         summary: boundedTaskCompletionSummary(event.work_order),
-        outcome: event.handoff.outcome === 'ok' ? 'ok' : 'failed',
+        outcome: event.handoff.outcome,
         now: this.#wallClockNow(),
         relation_cue: null,
       })

@@ -63,6 +63,8 @@ def final_speech_view(outcome: str, content: object) -> str:
             failure = _codex_startup_failure_speech(category, stage)
             if failure is not None:
                 return failure
+        if outcome == "refused":
+            return f"Codex 未执行，需要选择或修正请求（{category}）"
         return f"Codex 任务未能确认完成（{category}）"
     prepped, clipped = prepare_for_speech(text, limit=SPEECH_FINAL_LIMIT)
     note = "（结果较长，已截取要点）" if upstream_truncated or clipped else ""
@@ -95,6 +97,8 @@ def _codex_confirmation_speech(content: object) -> str | None:
             f"是否创建工作区“{workspace}”并开始任务？请确认或取消。",
             f"准备创建并切换到工作区{workspace}，请确认或取消。",
         }
+    elif action == "reuse_workspace":
+        expected = {f"是否使用现有工作区“{workspace}”并开始任务？请确认或取消。"}
     elif action == "select_workspace":
         expected = {f"准备切换到工作区{workspace}，请确认或取消。"}
     elif (
@@ -155,6 +159,8 @@ def generic_final_speech_view(display_name: str, outcome: str, content: object) 
         text = f"{display_name} 报告：{prose}" if prose else f"{display_name} 报告任务完成"
     elif outcome == "failed":
         text = f"{display_name} 任务失败"
+    elif outcome == "refused":
+        text = f"{display_name} 未执行，需要选择或修正请求"
     else:
         text = f"{display_name} 任务结果不确定"
     error = values.get("error")

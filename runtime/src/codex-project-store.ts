@@ -145,7 +145,12 @@ export interface PublicProjectView {
   readonly session_title: string | null
   readonly pending_confirmation: boolean
   /** Optional at the internal boundary so legacy store-only callers remain source compatible. */
-  readonly pending_action?: 'create_workspace' | 'select_workspace' | 'resume_session' | null
+  readonly pending_action?:
+    | 'create_workspace'
+    | 'reuse_workspace'
+    | 'select_workspace'
+    | 'resume_session'
+    | null
   readonly pending_workspace_display_name?: string | null
   readonly pending_session_title?: string | null
   readonly pending_expires_in_seconds?: number | null

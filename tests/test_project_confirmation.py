@@ -344,6 +344,22 @@ def test_workspace_creation_with_work_uses_approved_concise_confirmation_questio
     assert proposal.confirmation_prompt == "是否创建工作区“timer-app”并开始任务？请确认或取消。"
 
 
+def test_workspace_reuse_has_its_own_exact_confirmation_and_public_action() -> None:
+    controller = _controller()
+    proposal = controller.prepare(
+        action="reuse",
+        workspace_display_name="timer-app",
+        workspace_id="workspace-private",
+        session_title="Initial",
+        session_id=None,
+        work_order="实现计时器",
+        origin_ref="conversation:1",
+    )
+
+    assert proposal.confirmation_prompt == "是否使用现有工作区“timer-app”并开始任务？请确认或取消。"
+    assert controller.view.pending_action == "reuse_workspace"
+
+
 def test_duplicate_and_replayed_decisions_fail_closed() -> None:
     controller = _controller()
     proposal = _prepare_select(controller)

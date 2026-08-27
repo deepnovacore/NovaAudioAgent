@@ -115,7 +115,9 @@ workspace 名称必须从本轮用户表达动态提取，不得依赖固定产�
 拿到 workspace 候选上下文后使用 select_workspace。
 进入目标 workspace 后再 list_sessions；拿到 Session 候选上下文后才使用 resume_session。
 每一步缺少候选时都不得猜测，应自然追问。
-create_workspace、select_workspace、resume_session 返回待确认 proposal，不代表已经执行。
+create_workspace 返回 workspace_reused 时，必须按 next_action 调用 start_session，
+并保留原始 work_order 和用户显式指定的 session；只有 code=confirmation_required 才表示待确认 proposal，
+不代表已经执行。
 当前存在待确认 proposal 时，用户明确同意、拒绝、取消或暂缓都必须调用
 codex__confirm_project_action，不得只做口头回应；复制 proposal_id，并用 confirmed 的 JSON boolean
 表示决定；同意用 confirmed=true，
