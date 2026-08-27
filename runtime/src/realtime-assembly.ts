@@ -37,6 +37,8 @@ import type {
 import type {WorkspaceResolutionDecision} from './workspace-graph/identity.js'
 import type {PublishedGraphSnapshot} from './workspace-graph/store.js'
 import type {GraphContext} from './workspace-graph/context.js'
+import type {Suggestion} from './suggestions.js'
+import type {WakeReason} from './slots.js'
 
 export interface RealtimeWorkspaceGraph {
   readonly publishedSnapshot: PublishedGraphSnapshot
@@ -133,6 +135,7 @@ export class RealtimeAssembly {
   readonly #idFactory: () => string
   readonly #wallClockNow: () => number
   readonly #unbindGraphContext: (() => void) | undefined
+  readonly #unbindSuggestionSelected: (() => void) | undefined
   #workspaceGraphOpen = false
   #currentWorkspaceInstanceId: string | null = null
   #currentHostWorkspaceId: string | null = null
@@ -170,6 +173,7 @@ export class RealtimeAssembly {
     readonly workspaceGraph?: RealtimeWorkspaceGraph
     readonly idFactory: () => string
     readonly wallClockNow: () => number
+    readonly unbindSuggestionSelected?: () => void
   }) {
     this.core = input.core
     this.provider = input.provider
@@ -186,6 +190,7 @@ export class RealtimeAssembly {
     this.#codexResource = input.codexResource
     this.#idFactory = input.idFactory
     this.#wallClockNow = input.wallClockNow
+    this.#unbindSuggestionSelected = input.unbindSuggestionSelected
     this.#unbindGraphContext = input.workspaceGraph === undefined
       ? undefined
       : input.core.runtime.bindGraphContextProvider(({latest_user_text: utterance}) => {
@@ -332,10 +337,16 @@ export class RealtimeAssembly {
       }
       throw error
     }
-    await this.#cleanupWithinGrace(
+    const initialPublication = await this.#cleanupWithinGrace(
       () => this.#enqueueProjectContextPublication(),
       'workspace_graph_header_delivery_abandoned',
     )
+    if (initialPublication.kind === 'rejected') {
+      this.#diagnose('workspace_graph_header_delivery_failed')
+      void this.#enqueueProjectContextPublication().catch(() => {
+        this.#diagnose('workspace_graph_header_delivery_failed')
+      })
+    }
     if (this.#state === 'starting') {
       this.#state = 'started'
       if (this.#codexResource !== undefined) {
@@ -354,6 +365,7 @@ export class RealtimeAssembly {
     }
 
     this.#unbindGraphContext?.()
+    this.#unbindSuggestionSelected?.()
 
     let firstFailure: {readonly error: unknown} | null = null
     let cleanupComplete = true
@@ -814,6 +826,11 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       : {projectExpiryStepTimeoutMs: options.projectExpiryStepTimeoutMs}),
     onDiagnostic,
   })
+  const unbindSuggestionSelected = core.runtime.bindSuggestionSelected(
+    (suggestion: Suggestion, reason: WakeReason) => {
+      service.onSuggestionSelected(suggestion, reason)
+    },
+  )
   return new RealtimeAssembly({
     core,
     provider,
@@ -825,6 +842,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     onDiagnostic,
     idFactory,
     wallClockNow,
+    unbindSuggestionSelected,
     ...(projectAdapter === undefined ? {} : {projectAdapter}),
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),

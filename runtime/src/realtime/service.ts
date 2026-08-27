@@ -23,9 +23,12 @@
  * than silently taking the inert branch, so a test that gets there fails loudly.
  */
 
+import {randomUUID} from 'node:crypto'
 import type { Clock } from '../clock.js'
 import { validProgressSummary, type EventRecord, type JsonValue } from '../events.js'
-import { USER_PRIORITY, type MemoryItem } from '../memory.js'
+import { parseMemoryRef, USER_PRIORITY, type MemoryItem } from '../memory.js'
+import type {Suggestion} from '../suggestions.js'
+import type {WakeReason} from '../slots.js'
 import type { PlaybackCompletion, PlaybackGeneration } from '../playback.js'
 import type { CompiledTools } from '../tool-schema.js'
 import {requiresSynchronousResult} from './bridge.js'
@@ -120,6 +123,29 @@ function projectConfirmationDecisionArguments(
   return {proposalId: proposal.value, confirmed: confirmed.value}
 }
 
+function suggestionSpeechView(content: Readonly<Record<string, JsonValue>>): string {
+  for (const key of ['observation', 'summary', 'message'] as const) {
+    const value = content[key]
+    if (typeof value === 'string' && stripLikePython(value) !== '') {
+      return prepareForSpeech(value, {limit: SPEECH_FINAL_LIMIT}).text
+    }
+  }
+  return '有一条新的提醒'
+}
+
+/** Monitor hits are user-facing reminders, not executor reports. */
+function monitorHitSpeechView(content: Readonly<Record<string, JsonValue>>): string {
+  for (const key of ['observation', 'summary', 'message'] as const) {
+    const value = content[key]
+    if (typeof value === 'string' && stripLikePython(value) !== '') {
+      return prepareForSpeech(`检测到了：${stripLikePython(value)}`, {
+        limit: SPEECH_FINAL_LIMIT,
+      }).text
+    }
+  }
+  return '检测到了，提醒条件已经满足。'
+}
+
 /** The runtime surface the service reads. Thirteen call sites in the oracle, mostly reads. */
 /** What the projection needs to know about one dispatched delegate. */
 export interface DelegateLike {
@@ -167,6 +193,7 @@ export interface ServiceRuntime {
    * has no reason to expose it.
    */
   readonly memory?: {
+    readonly policies: ReadonlyMap<string, {readonly progress_via_surrogate?: boolean}>
     readonly channels: ReadonlyMap<string, {readonly items: readonly MemoryItem[]}>
   }
 }
@@ -325,6 +352,8 @@ export class RealtimeService {
   readonly #lateSync = new Map<string, string>()
   /** Reserved user items answering a proposal, keyed `epoch:item`. */
   readonly #projectConfirmationItems = new Set<string>()
+  /** Later utterances captured while another item owns the same confirmation. */
+  readonly #projectConfirmationShadowItems = new Set<string>()
   /** Items mid-close: no longer answerable, still blocking tool calls. */
   readonly #projectConfirmationClosingItems = new Set<string>()
   /** Responses a confirmation has blocked, so the block sticks for the whole turn. */
@@ -1429,6 +1458,45 @@ export class RealtimeService {
     }
   }
 
+  /** Project a suggestion chosen by Surrogate when no FastBrain owns the final speech turn. */
+  onSuggestionSelected(suggestion: Suggestion, reason: WakeReason): void {
+    const hit = suggestion.content.hit === true
+    this.queueHostItem(hostFactIntent({
+      kind: this.#isSelectedProgress(suggestion) ? 'progress' : 'final',
+      host_item_id: this.#idFactory(),
+      event_id: `suggestion:${suggestion.id}`,
+      content: suggestionSpeechView(suggestion.content),
+    }), {
+      priority: hit ? Math.max(reason.priority, HIT_ALERT_MIN_PRIORITY) : reason.priority,
+      preemptive: false,
+    })
+  }
+
+  /** Require the exact Memory item and policy that caused the selected working-progress suggestion. */
+  #isSelectedProgress(suggestion: Suggestion): boolean {
+    if (suggestion.evidence_refs.length !== 1) return false
+    const summary = suggestion.content.summary
+    if (typeof summary !== 'string') return false
+    const memory = this.#runtime.memory
+    if (memory === undefined) return false
+    const reference = suggestion.evidence_refs[0]
+    if (reference === undefined) return false
+    let channelName: string
+    let sequence: number
+    try {
+      [channelName, sequence] = parseMemoryRef(reference)
+    } catch {
+      return false
+    }
+    const policy = memory.policies.get(channelName)
+    const evidence = memory.channels.get(channelName)?.items[sequence - 1]
+    return policy?.progress_via_surrogate === true
+      && evidence?.channel === channelName
+      && evidence.seq === sequence
+      && evidence.content.phase === 'working'
+      && evidence.content.summary === summary
+  }
+
   /** Resolve a synchronous tool result before ordinary channel projection can consume it. */
   #resolveSyncResult(event: Extract<EventRecord, {kind: 'handoff'}>): boolean {
     const callKeyValue = this.#pendingSync.get(event.payload.delegate_id)
@@ -1612,7 +1680,10 @@ export class RealtimeService {
     this.#publishCodexState()
     if (event.payload.content.hit !== true) return
     if (manifest.policy.suggest === true && delegate.routing_class === 'ambient') return
-    const content = [...genericFinalSpeechView(displayName, 'ok', event.payload.content)]
+    const speechView = event.payload.channel === 'guard' || event.payload.channel === 'watch'
+      ? monitorHitSpeechView(event.payload.content)
+      : genericFinalSpeechView(displayName, 'ok', event.payload.content)
+    const content = [...speechView]
       .slice(0, MAX_HOST_FACT_CHARS)
       .join('')
     this.queueHostItem(hostFactIntent({
@@ -1695,6 +1766,12 @@ export class RealtimeService {
       elapsed: payload.elapsed,
     })
     this.#publishCodexState()
+    // A monitor's periodic heartbeat is operational state, not a new user-facing event. Speaking it
+    // creates a fresh model turn that can accidentally replay an older acknowledgement.
+    if (
+      (payload.channel === 'guard' || payload.channel === 'watch')
+      && payload.phase === 'working'
+    ) return
     if (manifest.policy.progress_via_surrogate === true && payload.phase === 'working') return
 
     let content: string
@@ -1976,6 +2053,7 @@ export class RealtimeService {
       }
       this.#bindRequestedSemanticAcknowledgement(event.response_id)
       this.#bindContinuation(event.response_id)
+      this.#suppressShadowConfirmationResponse(event.session_epoch, event.response_id)
     }
 
     if (this.#onCaption !== undefined) {
@@ -2045,6 +2123,9 @@ export class RealtimeService {
         }
         this.#endProjectConfirmationItem(event.session_epoch, itemId)
       }
+      if (itemId !== undefined) {
+        this.#projectConfirmationShadowItems.delete(callKey(event.session_epoch, itemId))
+      }
       // Released only when the terminal is *not* the current generation: if it is, playback is still
       // running and the owner is what keeps the alert's audio attributable.
       if (
@@ -2071,6 +2152,8 @@ export class RealtimeService {
           && this.#projectConfirmation?.pending !== true
         ) {
           await this.#closeConfirmationDeferredCalls(event.item_id)
+        } else if (this.#isProjectConfirmationShadowItem(event.session_epoch, event.item_id)) {
+          await this.#closeConfirmationDeferredCalls(event.item_id)
         } else {
           await this.#releaseDeferredOriginCalls(event.item_id, originRef)
         }
@@ -2089,6 +2172,8 @@ export class RealtimeService {
         if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
         if (this.#isProjectConfirmationItem(event.session_epoch, event.item_id)) {
           await this.#failProjectConfirmation(event.session_epoch, event.item_id)
+        } else if (this.#isProjectConfirmationShadowItem(event.session_epoch, event.item_id)) {
+          await this.#closeConfirmationDeferredCalls(event.item_id)
         } else {
           await this.#releaseDeferredOriginCalls(event.item_id, null)
         }
@@ -2129,6 +2214,14 @@ export class RealtimeService {
     const originItemId = observedResponseId === null
       ? undefined
       : this.#responseUserOriginItems.get(callKey(event.session_epoch, observedResponseId))
+
+    if (
+      originItemId !== undefined
+      && this.#isProjectConfirmationShadowItem(event.session_epoch, originItemId)
+    ) {
+      await this.#closeProjectConfirmationTool(event)
+      return
+    }
 
     if (originItemId !== undefined) {
       const originRef = this.#userOriginRefs.get(originItemId)
@@ -2867,7 +2960,12 @@ export class RealtimeService {
       this.#queueProjectConfirmationFact('缺少语音确认关联，本次操作已取消。')
       return
     }
-    if (!this.#projectConfirmation.reserveUserItem({epoch: event.session_epoch, itemId})) return
+    if (!this.#projectConfirmation.reserveUserItem({epoch: event.session_epoch, itemId})) {
+      if (!this.#isProjectConfirmationItem(event.session_epoch, itemId)) {
+        this.#projectConfirmationShadowItems.add(callKey(event.session_epoch, itemId))
+      }
+      return
+    }
     this.#projectConfirmationItems.add(callKey(event.session_epoch, itemId))
     this.#projectConfirmationBlocking = true
     // Cancel only a confirmation question whose host-requested response has not started yet. The
@@ -2911,6 +3009,17 @@ export class RealtimeService {
     const key = callKey(epoch, itemId)
     return this.#projectConfirmationItems.has(key)
       || this.#projectConfirmationClosingItems.has(key)
+  }
+
+  #isProjectConfirmationShadowItem(epoch: number, itemId: string): boolean {
+    return this.#projectConfirmationShadowItems.has(callKey(epoch, itemId))
+  }
+
+  /** A shadow turn is still transcribed into Memory, but it cannot speak or execute tools. */
+  #suppressShadowConfirmationResponse(epoch: number, responseId: string): void {
+    const itemId = this.#responseUserOriginItems.get(callKey(epoch, responseId))
+    if (itemId === undefined || !this.#isProjectConfirmationShadowItem(epoch, itemId)) return
+    this.session.suppressResponse(responseId)
   }
 
   /**
@@ -3007,7 +3116,14 @@ export class RealtimeService {
             }
           }
         }
-        if (text !== null && text !== '') this.#queueProjectConfirmationFact(text)
+        if (text !== null && text !== '') {
+          // The deterministic host fact is the sole acknowledgement owner. The tool continuation
+          // still receives its structured result, but no provider-authored paraphrase may race it.
+          const responseId = origin.observedProviderResponseId
+          if (responseId === null || this.session.suppressResponse(responseId)) {
+            this.#queueProjectConfirmationFact(text)
+          }
+        }
         this.#publishProjectView()
       }
       const item: HostContextItem = {
@@ -3304,6 +3420,7 @@ export class RealtimeService {
   #invalidateProjectConfirmation(reason: string): void {
     this.#projectConfirmation?.invalidate(reason)
     this.#projectConfirmationItems.clear()
+    this.#projectConfirmationShadowItems.clear()
     this.#projectConfirmationClosingItems.clear()
     this.#projectConfirmationResponses.clear()
     this.#projectConfirmationBlocking = false
@@ -4412,10 +4529,25 @@ class Signal {
     if (this.#set) return
     if (signal?.aborted === true) return
     await new Promise<void>(resolve => {
-      this.#waiting.push(resolve)
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        signal?.removeEventListener('abort', onAbort)
+        resolve()
+      }
+      const onAbort = (): void => {
+        const index = this.#waiting.indexOf(finish)
+        if (index >= 0) this.#waiting.splice(index, 1)
+        finish()
+      }
+      this.#waiting.push(finish)
       // Resolves rather than rejects: an interrupted wait is a normal shutdown, and the caller
       // re-reads the signal immediately afterwards.
-      signal?.addEventListener('abort', () => resolve(), {once: true})
+      signal?.addEventListener('abort', onAbort, {once: true})
+      // Abort may win between the early check and listener registration. EventTarget does not replay
+      // an already-fired abort event, so close that race explicitly.
+      if (signal?.aborted === true) onAbort()
     })
   }
 }
@@ -4534,7 +4666,7 @@ function diagnosticName(cause: unknown): string {
 
 function randomHex(): string {
   // 32 hex characters, matching the oracle's `uuid4().hex`.
-  return Array.from({length: 32}, () => Math.floor(Math.random() * 16).toString(16)).join('')
+  return randomUUID().replaceAll('-', '')
 }
 
 export type { HostContextItem, PlaybackCompletion }

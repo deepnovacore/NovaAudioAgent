@@ -716,9 +716,7 @@ async def test_first_completed_item_is_silent_and_first_spoken_progress_is_prose
 
     facts = [record for record in records if record["kind"] == "progress.fact"]
     selected_facts = [
-        record
-        for record in facts
-        if str(record["data"]["event_id"]).startswith("suggestion:")
+        record for record in facts if str(record["data"]["event_id"]).startswith("suggestion:")
     ]
     assert len(facts) == 2
     assert len(selected_facts) == 1

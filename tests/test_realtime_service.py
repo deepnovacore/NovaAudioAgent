@@ -597,9 +597,7 @@ async def test_confirmation_answer_response_stays_alive_until_structured_decisio
     )
     await service.handle_event(UserSpeechEnded(session_epoch=1, speech_id="speech-answer"))
 
-    await service.handle_event(
-        ResponseStarted(session_epoch=1, response_id="response-answer")
-    )
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="response-answer"))
     assert "cancel:response-answer" not in provider.actions
 
     await service.handle_event(
@@ -668,9 +666,7 @@ async def test_fenced_stale_question_cannot_consume_reserved_confirmation_answer
         )
     )
 
-    await service.handle_event(
-        ResponseStarted(session_epoch=1, response_id="response-answer")
-    )
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="response-answer"))
     assert "cancel:response-answer" not in provider.actions
     await service.handle_event(
         UserTranscriptFinal(session_epoch=1, item_id="user-answer", text="确认")
@@ -1101,9 +1097,7 @@ async def test_expiry_removes_retry_queued_while_user_holds_floor() -> None:
         )
     )
     await service.handle_event(UserSpeechEnded(session_epoch=1, speech_id="speech-near-expiry"))
-    await service.handle_event(
-        ResponseStarted(session_epoch=1, response_id="response-near-expiry")
-    )
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="response-near-expiry"))
     await service.handle_event(
         UserTranscriptFinal(session_epoch=1, item_id="near-expiry", text="我还在想")
     )
@@ -1168,9 +1162,7 @@ async def test_confirmation_function_may_arrive_before_user_transcript() -> None
         )
     )
     await service.handle_event(UserSpeechEnded(session_epoch=1, speech_id="speech-tool-first"))
-    await service.handle_event(
-        ResponseStarted(session_epoch=1, response_id="tool-first-response")
-    )
+    await service.handle_event(ResponseStarted(session_epoch=1, response_id="tool-first-response"))
     await service.handle_event(
         ToolCallReady(
             session_epoch=1,
@@ -7363,7 +7355,11 @@ async def test_non_preemptive_guard_events_do_not_cancel_assistant() -> None:
 
     await service.flush_host_items()
 
-    assert len(service._host_items) == 5
+    assert len(service._host_items) == 4
+    assert not any(
+        queued.intent.item.event_id.startswith("progress:d-progress:")
+        for queued in service._host_items
+    )
     assert not any(queued.preemptive for queued in service._host_items)
     assert not any(action.startswith(("clear:", "cancel:")) for action in provider.actions)
     assert service.session.active_provider_response_id == "assistant-active"
@@ -8079,7 +8075,7 @@ async def wait_for_stream_advance_without_service_stop(
     assert stop_wait not in done
 
 
-def test_non_codex_progress_uses_manifest_name_and_bound_identity() -> None:
+def test_watch_working_heartbeat_updates_state_without_queueing_speech() -> None:
     service, _provider, runtime, _frames = make_service(executor_names=("codex", "watch"))
     runtime.executors["watch"] = FakeExecutor("water-scout")
     runtime.delegates.bind("d-watch", executor="watch", op="start")
@@ -8095,8 +8091,7 @@ def test_non_codex_progress_uses_manifest_name_and_bound_identity() -> None:
         )
     )
 
-    queued = service._host_items[0]
-    assert queued.intent.item.content == "water-scout 正在执行：仍在寻找水杯（已进行5秒）"
+    assert service._host_items == []
     assert service.session.snapshot().active_delegates[0][1].channel == "watch"
 
 
@@ -8144,6 +8139,49 @@ def test_guard_observations_queue_unique_preemptive_hits_without_settling_delega
     ]
     assert all(item.priority == 90 and item.preemptive for item in service._host_items)
     assert runtime.delegates.in_flight_delegate("d-guard") is not None
+    assert service.session.delegate_state("d-guard") == "running"
+    assert [item.intent.item.content for item in service._host_items] == [
+        "检测到了：画面中出现白纸",
+        "检测到了：画面中出现白纸",
+    ]
+
+
+def test_watch_hit_uses_current_visual_evidence_without_executor_jargon() -> None:
+    service, _provider, runtime, _frames = make_service(executor_names=("watch",))
+    runtime.executors["watch"] = FakeExecutor(
+        "water-scout", ops=(WATCH_START,), priority=40, suggest=True
+    )
+    runtime.delegates.bind("d-guard", executor="watch", op="start")
+
+    service.project_runtime_event(_monitor_observation(channel="watch"))
+
+    assert [item.intent.item.content for item in service._host_items] == [
+        "检测到了：画面中出现白纸"
+    ]
+    assert service._host_items[0].priority == 55
+    assert service._host_items[0].preemptive is False
+
+
+def test_guard_working_heartbeat_updates_state_without_queueing_speech() -> None:
+    service, _provider, runtime, _frames = make_service(executor_names=("guard",))
+    runtime.executors["guard"] = FakeExecutor(
+        "guard", ops=(WATCH_START,), priority=90, suggest=False
+    )
+    runtime.delegates.bind("d-guard", executor="guard", op="start")
+
+    service.project_runtime_event(
+        ProgressEvent(
+            channel="guard",
+            delegate_id="d-guard",
+            op="start",
+            phase="working",
+            internal_activity=13,
+            elapsed=30.0,
+            summary="仍在监控：看到水杯",
+        )
+    )
+
+    assert service._host_items == []
     assert service.session.delegate_state("d-guard") == "running"
 
 

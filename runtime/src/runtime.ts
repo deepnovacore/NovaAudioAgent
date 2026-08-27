@@ -42,6 +42,7 @@ import {
   SELECTED_WAKE_KIND,
   SuggestionPool,
   isSuggestionAvailable,
+  type Suggestion,
 } from './suggestions.js'
 import {
   cloneGraphContext,
@@ -164,6 +165,7 @@ export class CoreRuntime {
   readonly #onModelCall: ((call: ModelCall) => void) | undefined
   readonly #onExecutorDispatch: ((dispatchIndex: number, delegate: Delegate) => void) | undefined
   #graphContextProvider: GraphContextProvider | null = null
+  #suggestionSelectedObserver: ((suggestion: Suggestion, reason: WakeReason) => void) | null = null
   readonly #jobs = new Map<string, ModelJob>()
   readonly #results = new Map<string, unknown>()
   readonly #preparedSpeech = new Map<string, PreparedSpeech>()
@@ -230,6 +232,22 @@ export class CoreRuntime {
       if (!bound) return
       bound = false
       if (this.#graphContextProvider === provider) this.#graphContextProvider = null
+    }
+  }
+
+  /** Bind the realtime speech outlet used when Surrogate is the final arbiter. */
+  bindSuggestionSelected(
+    observer: (suggestion: Suggestion, reason: WakeReason) => void,
+  ): () => void {
+    if (this.#suggestionSelectedObserver !== null) {
+      throw new Error('suggestion selected observer is already bound')
+    }
+    this.#suggestionSelectedObserver = observer
+    let bound = true
+    return () => {
+      if (!bound) return
+      bound = false
+      if (this.#suggestionSelectedObserver === observer) this.#suggestionSelectedObserver = null
     }
   }
 
@@ -1104,13 +1122,15 @@ export class CoreRuntime {
       : undefined
     this.#settleProgressTrigger(job.progressTrigger, valid?.id ?? null)
     if (valid === undefined) return
-    this.#wake('fast', wakeReasonSchema.parse({
+    const selectedReason = wakeReasonSchema.parse({
       kind: SELECTED_WAKE_KIND,
       priority: job.reason.priority,
       routing_class: job.reason.routing_class,
       origin: job.reason.origin,
       selected_suggestion: valid.id,
-    }))
+    })
+    if (this.#wiredSlots.has('fast')) this.#wake('fast', selectedReason)
+    else this.#suggestionSelectedObserver?.(valid, selectedReason)
   }
 
   #settleProgressTrigger(trigger: ProgressTrigger | null, selectedId: string | null): void {

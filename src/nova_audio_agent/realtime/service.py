@@ -124,6 +124,20 @@ def _suggestion_speech_view(content: object) -> str:
     return prepare_for_speech(text, limit=SPEECH_FINAL_LIMIT)[0]
 
 
+def _monitor_hit_speech_view(content: object) -> str:
+    values = content if type(content) is dict else {}
+    evidence = next(
+        (
+            value.strip()
+            for key in ("observation", "summary", "message")
+            if type(value := values.get(key)) is str and value.strip()
+        ),
+        None,
+    )
+    text = f"检测到了：{evidence}" if evidence is not None else "检测到了，提醒条件已经满足。"
+    return prepare_for_speech(text, limit=SPEECH_FINAL_LIMIT)[0]
+
+
 def _project_commit_failure_text(code: object) -> str:
     messages = {
         "workspace_name_conflict": "工作区名称已存在，本次操作未执行。",
@@ -2578,9 +2592,12 @@ class RealtimeService:
                 return
             if manifest.policy.suggest and delegate.routing_class == "ambient":
                 return
-            content = _generic_final_speech_view(display_name, "ok", event.content)[
-                :MAX_HOST_FACT_CHARS
-            ]
+            speech_view = (
+                _monitor_hit_speech_view(event.content)
+                if event.channel in {"guard", "watch"}
+                else _generic_final_speech_view(display_name, "ok", event.content)
+            )
+            content = speech_view[:MAX_HOST_FACT_CHARS]
             self._queue_host_item(
                 HostResponseIntent.host_fact(
                     HostContextItem.final(
@@ -2632,6 +2649,10 @@ class RealtimeService:
                 elapsed=float(event.elapsed),
             )
             self._publish_codex_state()
+            # A monitor heartbeat updates operational state but is not a new reminder. Speaking it
+            # creates another model turn that can replay an older acknowledgement.
+            if event.channel in {"guard", "watch"} and event.phase == "working":
+                return
             if manifest.policy.progress_via_surrogate and event.phase == "working":
                 return
             if event.phase == "started":

@@ -185,6 +185,23 @@ export class RealtimeSession {
     return responseId !== null && responseId === this.#spokenResponseId
   }
 
+  /**
+   * Give the host sole speech ownership of a provider response before it emits audio.
+   *
+   * Once a generation exists, provider audio has already crossed the attribution boundary even if
+   * the renderer has not acknowledged it yet. Refuse the transfer in that case rather than creating
+   * two competing owners for one turn.
+   */
+  suppressResponse(responseId: string): boolean {
+    const generation = this.#playback.current
+    if (
+      this.responseHasSpoken(responseId)
+      || (generation !== null && generation.response_id === responseId)
+    ) return false
+    this.#state.suppressResponse(responseId)
+    return true
+  }
+
   eventWasSpoken(eventId: string): boolean {
     return this.#state.eventWasSpoken(eventId)
   }

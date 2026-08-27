@@ -59,9 +59,7 @@ async def run_controller(spec: Mapping[str, Any]) -> dict[str, Any]:
     expiries: list[int] = []
     controller = ProjectConfirmationController(
         clock=clock,
-        id_factory=_ids(
-            spec.get("proposal_ids", ["proposal-1", "proposal-2", "proposal-3"])
-        ),
+        id_factory=_ids(spec.get("proposal_ids", ["proposal-1", "proposal-2", "proposal-3"])),
         on_change=lambda view: views.append(asdict(view)),
     )
     controller.observe_expiry(lambda: expiries.append(len(views)))

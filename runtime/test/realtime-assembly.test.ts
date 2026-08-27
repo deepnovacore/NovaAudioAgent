@@ -395,6 +395,11 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
     historyRecovery: 'packed',
     historyPairs: 2,
   })
+  assert.throws(
+    () => core.runtime.bindSuggestionSelected(() => undefined),
+    /already bound/u,
+    'the factory owns the Surrogate-to-realtime outlet',
+  )
 
   const generation = realtime.playback.openResponse({sessionEpoch: 1, responseId: 'identity'})
   assert.equal(generation.generation_id, 'factory-1')
@@ -420,6 +425,8 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
   await settleNamed('ordered assembly stop', realtime.stop())
   assert.ok(actions.indexOf('provider:close') < actions.indexOf('core:stop'))
   assert.equal(realtime.providerSession.state, 'closed')
+  const unbindSuggestion = core.runtime.bindSuggestionSelected(() => undefined)
+  unbindSuggestion()
 })
 
 test('provider tool view narrows schemas without copying host authority', async () => {
@@ -2089,6 +2096,71 @@ test('never-settling graph open is bounded and cannot block voice startup', asyn
   } finally {
     openGate.resolve(undefined)
     await Promise.allSettled([start])
+    await realtime.stop()
+  }
+})
+
+test('a rejected initial project context publication is diagnosed and retried once', async () => {
+  const diagnostics: string[] = []
+  const provider = new WorkspaceContextProvider()
+  let attempts = 0
+  provider.workspaceContextStep = () => {
+    attempts += 1
+    return attempts === 1
+      ? Promise.reject(new Error('sensitive initial delivery failure'))
+      : Promise.resolve()
+  }
+  const view = Object.freeze({
+    workspace_display_name: 'retry', session_title: null, pending_confirmation: false,
+  })
+  const workspace: WorkspaceRecord = Object.freeze({
+    workspace_id: 'workspace-retry', display_name: 'retry', normalized_name: 'retry',
+    canonical_path: '/safe/retry', origin: 'registered', codex_home_key: 'workspace-retry',
+    active_session_id: null, created_at: 10, last_used_at: 20,
+  })
+  const confirmation = new ProjectConfirmationController({
+    clock: new VirtualClock(50), idFactory: () => 'retry-confirmation',
+  })
+  const adapterShape: ExecutorAdapter & Record<string, unknown> = {
+    manifest: CODEX_PROJECT_MANIFEST,
+    confirmationController: confirmation,
+    dispatch: () => Promise.resolve({
+      outcome: 'ok', trust: 'trusted_system', content: {code: 'completed'}, refs: [],
+    }),
+    commitConfirmed: () => Promise.resolve({accepted: false, code: 'not_used'}),
+    publicProjectView: () => view,
+    publicProjectContext: () => Object.freeze({workspace_id: workspace.workspace_id, view}),
+    initialize: () => Promise.resolve(),
+    activeCommittedWorkspace: () => Promise.resolve(workspace),
+    observeProjectView: () => () => undefined,
+    observeProjectContext: () => () => undefined,
+    observeCommittedWorkspace: () => () => undefined,
+    observeTerminalWorkOrder: () => () => undefined,
+    close: () => Promise.resolve(),
+  }
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock: new VirtualClock(50),
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    executors: [adapterShape],
+  })
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider,
+    projectAdapter: adapterShape as unknown as ProjectCodexAdapter,
+    onDiagnostic: line => { diagnostics.push(line) },
+  })
+
+  await realtime.start()
+  try {
+    await waitNamed('initial project context retry', () => attempts === 2)
+    assert.equal(provider.workspaceItems.length, 2)
+    assert.deepEqual(diagnostics, [
+      '[realtime-diagnostic] workspace_graph_header_delivery_failed',
+    ])
+    assert.equal(diagnostics.join('\n').includes('sensitive'), false)
+  } finally {
     await realtime.stop()
   }
 })

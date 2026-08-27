@@ -11,6 +11,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { getEventListeners } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
@@ -20,6 +21,8 @@ import { CODEX_PROJECT_MANIFEST } from '../src/codex-contract.js'
 import type { EventRecord, JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
+import type {Suggestion} from '../src/suggestions.js'
+import type {WakeReason} from '../src/slots.js'
 import { RealtimeRuntimeBridge } from '../src/realtime/bridge.js'
 import type { HostContextItem, HostResponseIntent } from '../src/realtime/protocol.js'
 import { ItemDeliveryUncertainError } from '../src/realtime/protocol.js'
@@ -458,6 +461,57 @@ test('start after close works, because the stop flag is replaced rather than res
   assert.equal(signals[0]!.aborted, true)
   assert.equal(signals[1]!.aborted, false, 'the second run gets a signal that is not already aborted')
   assert.equal(service.stopped, false)
+  await service.close()
+})
+
+test('delivery wakeups do not retain abort listeners for the lifetime of the run', async () => {
+  let runSignal: AbortSignal | undefined
+  const options = queueOnlyOptions()
+  const service = new RealtimeService({
+    ...options,
+    session: {
+      connect: () => Promise.resolve(),
+      releaseStaleUserHold: () => false,
+      foregroundIdle: false,
+      floor: {state: 'idle'},
+    } as unknown as RealtimeSession,
+    provider: {
+      sendAudio: () => Promise.resolve(),
+      events: (signal: AbortSignal) => parkedStream(signal),
+      close: () => Promise.resolve(),
+    },
+    runtime: {
+      ...options.runtime,
+      serve: (signal: AbortSignal) => {
+        runSignal = signal
+        return new Promise<void>(resolve => {
+          signal.addEventListener('abort', () => resolve(), {once: true})
+        })
+      },
+    },
+  })
+  await service.start()
+  assert.ok(runSignal !== undefined)
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  const baseline = getEventListeners(runSignal, 'abort').length
+
+  for (let index = 0; index < 12; index += 1) {
+    service.queueHostItem({
+      kind: 'host_fact',
+      item: {
+        kind: 'final',
+        host_item_id: `listener-host-${index}`,
+        event_id: `listener-event-${index}`,
+        content: 'queued while the fake floor stays closed',
+        call_id: null,
+      },
+      task_summary: null,
+      origin_spoken: false,
+    })
+    await new Promise<void>(resolve => { setImmediate(resolve) })
+  }
+
+  assert.equal(getEventListeners(runSignal, 'abort').length, baseline)
   await service.close()
 })
 
@@ -1317,6 +1371,7 @@ function projectionService(options: {
   readonly service: RealtimeService
   readonly queued: () => readonly string[]
   readonly queuedItems: () => readonly QueuedHostResponse[]
+  readonly memory: Memory
 } {
   const delegate = options.delegate ?? {
     executor: 'codex',
@@ -1386,6 +1441,7 @@ function projectionService(options: {
       terminatedByDeadline: () => options.terminates ?? true,
       delegateFor: () => full,
       inFlightDelegate: () => (options.inFlight ?? true) ? full : undefined,
+      memory,
     },
     tools: compileToolSchema([manifest]),
     session: new RealtimeSession({
@@ -1427,6 +1483,7 @@ function projectionService(options: {
     service,
     queued: () => service.queuedHostItems().map(item => item.intent.item.content),
     queuedItems: () => service.queuedHostItems(),
+    memory,
   }
 }
 
@@ -2025,6 +2082,150 @@ test('a surrogate-reported channel does not also speak its own working progress'
     },
   })
   assert.equal(queued().length, 1)
+})
+
+test('Guard working heartbeats update state without creating another spoken turn', () => {
+  const {service, queued} = projectionService({
+    delegate: {executor: 'guard', op: 'start', routing_class: 'user_awaited'},
+    priority: 90,
+  })
+  service.projectRuntimeEvent({
+    kind: 'progress',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'guard',
+      delegate_id: 'd-1',
+      op: 'start',
+      phase: 'working',
+      internal_activity: 13,
+      elapsed: 30,
+      summary: '仍在监控：看到水杯',
+    },
+  })
+
+  assert.deepEqual(queued(), [])
+  assert.equal(service.session.delegateState('d-1'), 'running', 'the heartbeat still updates state')
+})
+
+test('monitor heartbeats stay in state without creating spoken turns', () => {
+  for (const executor of ['watch', 'guard']) {
+    const {service, queued} = projectionService({
+      delegate: {executor, op: 'start', routing_class: 'user_awaited'},
+    })
+    service.projectRuntimeEvent({
+      kind: 'progress',
+      seq: 1,
+      ts: 1,
+      payload: {
+        channel: executor,
+        delegate_id: 'd-1',
+        op: 'start',
+        phase: 'working',
+        internal_activity: 1,
+        elapsed: 30,
+        summary: '正在处理',
+      },
+    })
+
+    assert.deepEqual(queued(), [], `${executor} heartbeat stays silent`)
+    assert.equal(service.session.delegateState('d-1'), 'running')
+  }
+})
+
+test('monitor hits speak the current visual evidence instead of executor jargon', () => {
+  for (const [executor, priority] of [['watch', 40], ['guard', 90]] as const) {
+    const {service, queued, queuedItems} = projectionService({
+      delegate: {executor, op: 'start', routing_class: 'user_awaited'},
+      priority,
+    })
+    service.projectRuntimeEvent({
+      kind: 'observation',
+      seq: 2,
+      ts: 2,
+      payload: {
+        channel: executor,
+        delegate_id: 'd-1',
+        op: 'start',
+        origin_ref: 'conversation:1',
+        trust: 'untrusted_external',
+        content: {
+          hit: true,
+          condition: '看到水杯',
+          observation: '画面中一人正手持浅色带橙色把手的水杯喝水。',
+        },
+        refs: [],
+      },
+    })
+
+    assert.deepEqual(queued(), ['检测到了：画面中一人正手持浅色带橙色把手的水杯喝水。'])
+    assert.equal(queuedItems()[0]?.priority, executor === 'watch' ? 55 : 90)
+    assert.equal(queuedItems()[0]?.preemptive, executor === 'guard')
+  }
+})
+
+test('silencing monitor heartbeats does not silence ordinary executor progress', () => {
+  const {service, queued} = projectionService({
+    delegate: {executor: 'codex', op: 'start', routing_class: 'user_awaited'},
+  })
+  service.projectRuntimeEvent({
+    kind: 'progress',
+    seq: 1,
+    ts: 1,
+    payload: {
+      channel: 'codex',
+      delegate_id: 'd-1',
+      op: 'start',
+      phase: 'working',
+      internal_activity: 1,
+      elapsed: 30,
+      summary: '正在处理',
+    },
+  })
+
+  assert.equal(queued().length, 1)
+})
+
+test('a Surrogate-selected working progress becomes one realtime progress fact', () => {
+  const {service, queuedItems, memory} = projectionService({progressViaSurrogate: true})
+  const evidence = memory.append('codex', {
+    ts: 1,
+    trust: 'trusted_system',
+    priority: 50,
+    content: {
+      delegate_id: 'd-1',
+      op: 'start',
+      phase: 'working',
+      internal_activity: 1,
+      elapsed: 1,
+      summary: '正在运行回归测试',
+    },
+  })
+  const suggestion: Suggestion = {
+    id: 's-1',
+    origin: 'surrogate',
+    kind: 'notify',
+    content: {summary: '正在运行回归测试'},
+    evidence_refs: [`codex:${evidence.seq}`],
+    salience: 50,
+    cooldown_until: 0,
+    expires_at: 60,
+    status: 'pending',
+  }
+  const reason: WakeReason = {
+    kind: 'suggestion_selected',
+    priority: 50,
+    routing_class: 'user_awaited',
+    origin: 'd-1',
+    selected_suggestion: 's-1',
+  }
+  service.onSuggestionSelected(suggestion, reason)
+
+  const queued = queuedItems()
+  assert.equal(queued.length, 1)
+  assert.equal(queued[0]?.intent.item.kind, 'progress')
+  assert.equal(queued[0]?.intent.item.event_id, 'suggestion:s-1')
+  assert.equal(queued[0]?.intent.item.content, '正在运行回归测试')
 })
 
 test('a host fact is already bounded by speech preparation before the outer cap', () => {
@@ -3347,6 +3548,101 @@ test('the dedicated confirmation function commits the reserved proposal', async 
   ]
   assert.ok(confirmationFacts.includes('已确认，已创建并切换到工作区 研究项目。'))
   assert.equal(controller.pending, false)
+})
+
+test('a committed confirmation has one host-owned reply and suppresses the tool continuation', async () => {
+  const {service, controller, injected} = confirmationService({
+    commit: () => Promise.resolve({accepted: true, code: 'accepted'}),
+  })
+  await service.connect()
+  const proposal = propose(controller)
+
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'response-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+
+  assert.equal(
+    service.session.currentGeneration,
+    null,
+    'the provider continuation must not speak in parallel with the deterministic host fact',
+  )
+  const confirmationFacts = [
+    ...injected,
+    ...service.queuedHostItems().map(item => item.intent.item),
+  ].filter(item => item.event_id.startsWith('project-confirmation:'))
+  assert.equal(confirmationFacts.length, 1)
+  assert.equal(confirmationFacts[0]?.content, '已确认，已提交并正在启动。')
+})
+
+test('a second utterance captured during the reserved confirmation cannot produce another reply', async () => {
+  const {service, controller} = confirmationService({
+    commit: () => Promise.resolve({accepted: true, code: 'accepted'}),
+  })
+  await service.connect()
+  const proposal = propose(controller)
+
+  for (const itemId of ['first-confirmation', 'repeated-confirmation']) {
+    await service.handleEvent({
+      kind: 'user_speech_started',
+      session_epoch: 1,
+      speech_id: `speech-${itemId}`,
+      provider_item_id: itemId,
+    })
+    await service.handleEvent({
+      kind: 'user_speech_ended',
+      session_epoch: 1,
+      speech_id: `speech-${itemId}`,
+      provider_item_id: itemId,
+    })
+    await service.handleEvent({
+      kind: 'user_transcript_final',
+      session_epoch: 1,
+      item_id: itemId,
+      text: itemId === 'first-confirmation' ? '确认' : '可以啊，我确认',
+    })
+  }
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-1'})
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'confirm-1',
+    item_id: 'function-1',
+    response_id: 'response-1',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'response-1',
+    status: 'completed',
+    reason: 'completed',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-2'})
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'response-2',
+    status: 'completed',
+    reason: 'completed',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-3'})
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'response-3',
+    pcm: new Uint8Array([0, 1]),
+  })
+
+  assert.equal(
+    service.session.currentGeneration,
+    null,
+    'the unreserved duplicate turn is quarantined even after the proposal has been consumed',
+  )
 })
 
 test('a structured false decision cancels without committing', async () => {

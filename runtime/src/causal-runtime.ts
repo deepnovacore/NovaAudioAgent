@@ -16,6 +16,7 @@ import {
   type RuntimeDispatchResult,
 } from './runtime.js'
 import { SLOTS, type Slot, type WakeReason } from './slots.js'
+import type {Suggestion} from './suggestions.js'
 
 export interface ModelPort {
   complete(call: ModelCall, signal: AbortSignal): Promise<unknown>
@@ -235,6 +236,20 @@ export class CausalRuntime {
   /** Bind one host-owned, synchronous graph projection at the real model-call boundary. */
   bindGraphContextProvider(provider: GraphContextProvider): () => void {
     return this.core.bindGraphContextProvider(provider)
+  }
+
+  bindSuggestionSelected(
+    observer: (suggestion: Suggestion, reason: WakeReason) => void,
+  ): () => void {
+    return this.core.bindSuggestionSelected(observer)
+  }
+
+  suggestionFor(suggestionId: string): Suggestion | null {
+    return this.core.suggestions.get(suggestionId) ?? null
+  }
+
+  confirmSuggestionSpoken(suggestionId: string): void {
+    this.core.suggestions.fire(suggestionId, this.#clock.now())
   }
 
   async serve(signal: AbortSignal): Promise<void> {

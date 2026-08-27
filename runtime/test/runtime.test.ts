@@ -8,7 +8,7 @@ import {
 } from '../src/memory.js'
 import { executorManifestSchema, fastBrainOutputSchema, opSpecSchema } from '../src/ports.js'
 import { CoreRuntime, type ModelCall } from '../src/runtime.js'
-import { wakeReasonSchema, type Slot } from '../src/slots.js'
+import { wakeReasonSchema, type Slot, type WakeReason } from '../src/slots.js'
 import { fixtureSlowSimManifest as fixtureSlowSim } from '../src/sim.js'
 
 const manifest = executorManifestSchema.parse({
@@ -844,6 +844,52 @@ test('progress routed through Surrogate creates one bound candidate and only Fas
   runtime.apply(runtime.queue.popReady(1)!)
   assert.equal(calls[1]?.slot, 'fast')
   assert.equal(calls[1]?.reason.selected_suggestion, 's-1')
+})
+
+test('selected Surrogate progress leaves through the realtime outlet when FastBrain is absent', () => {
+  const selected: {readonly id: string; readonly reason: WakeReason}[] = []
+  const {runtime, calls} = runtimeWithCalls({
+    manifest: testManifest({wake: 'none', progressViaSurrogate: true}),
+    delegateIds: ['d-1'],
+    slots: ['surrogate.watch'],
+  })
+  runtime.bindSuggestionSelected((suggestion, reason) => {
+    selected.push({id: suggestion.id, reason})
+  })
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'ambient')
+  runtime.post({
+    kind: 'progress',
+    payload: {
+      channel: 'route_sim',
+      delegate_id: 'd-1',
+      op: 'run',
+      phase: 'working',
+      internal_activity: 1,
+      elapsed: 1,
+      summary: 'halfway',
+    },
+  }, 1)
+  runtime.apply(runtime.queue.popReady(1)!)
+
+  runtime.completeModelCall(calls[0]!.job_id, {
+    speak: true,
+    suggestion_id: 's-1',
+    reason: 'worth mentioning',
+  }, 1)
+  runtime.apply(runtime.queue.popReady(1)!)
+
+  assert.deepEqual(selected, [{
+    id: 's-1',
+    reason: {
+      kind: 'suggestion_selected',
+      priority: 50,
+      routing_class: 'ambient',
+      origin: 'd-1',
+      selected_suggestion: 's-1',
+    },
+  }])
+  assert.equal(calls.length, 1, 'the absent FastBrain is not treated as a speech destination')
 })
 
 test('an old Surrogate verdict cannot withdraw a replacement progress candidate', () => {

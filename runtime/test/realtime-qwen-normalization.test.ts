@@ -173,6 +173,11 @@ test('Qwen project instructions route the six actions and structured confirmatio
   assert.match(FRONTEND_INSTRUCTIONS, /普通澄清后的明确肯定.*只发起一次/su)
   assert.match(FRONTEND_INSTRUCTIONS, /已提交、正在启动.*host 生命周期事实.*已开始处理/su)
   assert.match(FRONTEND_INSTRUCTIONS, /没有工具事件或 host 事实.*不得声称已经提交/su)
+  assert.match(
+    FRONTEND_INSTRUCTIONS,
+    /只转述.*最后一条.*尚未转述.*不得.*重复更早的任务事实/su,
+  )
+  assert.match(FRONTEND_INSTRUCTIONS, /最后一条是结果.*不能改说.*提交.*启动/su)
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /codex__run/u)
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /确认语音由 host 判定/u)
 })
