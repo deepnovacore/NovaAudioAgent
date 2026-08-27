@@ -1,7 +1,10 @@
+// GENERATED FILE -- do not edit by hand.
+// Regenerate with: uv run python scripts/generate_casefold_table.py --export
+
 import {toLowerPinned} from './unicode-normalize.js'
 
 /*
- * Unicode 15.0 full-casefold mappings whose result differs from lowercase.
+ * Unicode 15.0.0 full-casefold mappings whose result differs from lowercase.
  * Generated from the same CPython Unicode database as the project fixtures. Ordinary mappings use
  * the already-pinned per-code-point lowercase helper; processing one scalar at a time deliberately
  * avoids JavaScript's contextual final-sigma lowercasing.
@@ -18,7 +21,7 @@ const exceptionMap: ReadonlyMap<number, string> = new Map(
   }),
 )
 
-/** CPython `str.casefold()` pinned to Unicode 15.0 for well-formed scalar text. */
+/** CPython `str.casefold()` pinned to Unicode 15.0.0 for well-formed scalar text. */
 export function casefoldLikePython(text: string): string {
   let result = ''
   for (const character of text) {

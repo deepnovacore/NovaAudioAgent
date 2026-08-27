@@ -14,6 +14,8 @@ fixture means.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import unicodedata
 from pathlib import Path
 
@@ -80,6 +82,13 @@ def test_project_casefold_exception_table_matches_every_python_scalar() -> None:
         and chr(code_point).casefold() != chr(code_point).lower()
     }
     assert declared == expected
+
+
+def test_project_casefold_helper_is_reproducible_from_its_generator() -> None:
+    subprocess.run(
+        [sys.executable, "scripts/generate_casefold_table.py", "--check"],
+        check=True,
+    )
 
 
 def test_code_points_assigned_after_the_pin_are_still_rejected() -> None:
