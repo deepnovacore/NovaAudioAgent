@@ -9,14 +9,18 @@
   </head>
   <body>
     <main id="shell" data-state="booting">
-      <button id="orb" type="button" aria-label="Nova Audio Agent 正在启动" aria-pressed="false">
+      <div id="orb" role="img" aria-label="Nova Audio Agent 正在启动">
         <canvas class="orb-canvas" aria-hidden="true"></canvas>
         <span id="capture-indicator" class="capture-indicator" aria-hidden="true"></span>
-      </button>
+      </div>
       <nav id="orb-rail" aria-label="快捷操作">
         <button id="mute-toggle" type="button" aria-label="闭麦" aria-pressed="false" disabled>
           <svg class="icon-mic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
           <svg class="icon-mic-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3 3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/></svg>
+        </button>
+        <button id="speaker-toggle" type="button" aria-label="关闭 Nova 声音" aria-pressed="true">
+          <svg class="icon-speaker" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3z"/><path d="M14 7.97v8.05A4.49 4.49 0 0 0 16.5 12 4.49 4.49 0 0 0 14 7.97z"/><path d="M14 3.23v2.06A7 7 0 0 1 19 12a7 7 0 0 1-5 6.71v2.06A9 9 0 0 0 21 12a9 9 0 0 0-7-8.77z"/></svg>
+          <svg class="icon-speaker-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63z"/><path d="M19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.9 8.9 0 0 0 21 12a9 9 0 0 0-7-8.77v2.06A7 7 0 0 1 19 12z"/><path d="M4.27 3 3 4.27 7.73 9H3v6h4l5 4v-6.73L16.73 17A6.9 6.9 0 0 1 14 18.71v2.06a8.9 8.9 0 0 0 4.18-2.3L19.73 20 21 18.73 4.27 3zM12 5 9.91 7.09 12 9.18V5z"/></svg>
         </button>
         <button id="camera-toggle" type="button" aria-label="打开摄像头" aria-pressed="false" disabled>
           <svg class="icon-camera" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 10.5V7c0-1.1-.9-2-2-2H5C3.9 5 3 5.9 3 7v10c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2v-3.5l4 4v-11l-4 4z"/></svg>

@@ -22,7 +22,7 @@ let activeTab = 'memory'
 
 function itemContent(raw) {
   try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
+    return JSON.stringify(typeof raw === 'string' ? JSON.parse(raw) : raw, null, 2)
   } catch {
     return String(raw)
   }
@@ -34,21 +34,25 @@ function renderItem(item) {
   const meta = document.createElement('div')
   meta.className = 'meta'
   const trust = document.createElement('span')
-  trust.className = `trust-${item.trust}`
+  trust.className = `tag tag-trust trust-${item.trust}`
   trust.textContent = item.trust
   const seq = document.createElement('span')
+  seq.className = 'item-ref'
   seq.textContent = `#${item.seq}`
   const ts = document.createElement('span')
+  ts.className = 'item-time'
   ts.textContent = `t=${Number(item.ts).toFixed(1)}s`
   meta.append(seq, trust, ts)
   if (item.outcome) {
     const outcome = document.createElement('span')
+    outcome.className = 'tag tag-outcome'
     outcome.textContent = item.outcome
     meta.append(outcome)
   }
   if (item.truncated) {
     const truncated = document.createElement('span')
-    truncated.textContent = '（已截断）'
+    truncated.className = 'tag tag-truncated'
+    truncated.textContent = '已截断'
     meta.append(truncated)
   }
   const content = document.createElement('pre')
@@ -57,27 +61,38 @@ function renderItem(item) {
   return article
 }
 
-function renderChannel(channel) {
+function renderChannel(channel, index) {
   const section = document.createElement('section')
-  section.className = 'channel'
+  section.className = 'channel-card'
+  const header = document.createElement('header')
+  header.className = 'channel-header'
   const title = document.createElement('h2')
+  title.id = `memory-channel-${index}`
+  section.setAttribute('aria-labelledby', title.id)
   const shown = channel.items.length
-  const suffix = channel.item_count > shown ? `（显示最近 ${shown} / ${channel.item_count} 条）` : `（${channel.item_count} 条）`
-  title.textContent = `${channel.name}${suffix}`
-  section.append(title)
-  if (channel.summary) {
-    const summary = document.createElement('p')
-    summary.className = 'summary'
-    summary.textContent = channel.summary
-    section.append(summary)
-  }
+  title.textContent = channel.name
+  const count = document.createElement('span')
+  count.className = 'channel-count'
+  count.textContent = channel.item_count > shown ? `${shown} / ${channel.item_count}` : String(channel.item_count)
+  count.setAttribute('aria-label', channel.item_count > shown
+    ? `显示最近 ${shown} 条，共 ${channel.item_count} 条`
+    : `共 ${channel.item_count} 条`)
+  header.append(title, count)
+
+  const summary = document.createElement('p')
+  summary.className = 'channel-summary'
+  summary.textContent = channel.summary || '尚未生成频道摘要'
+
+  const itemsRoot = document.createElement('div')
+  itemsRoot.className = 'channel-items'
   if (!channel.items.length) {
     const empty = document.createElement('p')
     empty.className = 'empty'
     empty.textContent = '暂无记录'
-    section.append(empty)
+    itemsRoot.append(empty)
   }
-  for (const item of channel.items) section.append(renderItem(item))
+  for (const item of channel.items) itemsRoot.append(renderItem(item))
+  section.append(header, summary, itemsRoot)
   return section
 }
 

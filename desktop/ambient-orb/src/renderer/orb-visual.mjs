@@ -129,8 +129,86 @@ const EMBER = Object.freeze({
   ringAlert: 'rgba(255, 106, 106, .3)',
 })
 
+const H_ALPHA = Object.freeze({
+  core: '#C87986',
+  highlight: '#E7B5BE',
+  deep: '#874857',
+  dust: '#6B4055',
+  dustAlpha: 0.24,
+  abyss: 'rgba(7, 5, 10, .95)',
+  mantle: 'rgba(29, 15, 23, .9)',
+  bloom: 'rgba(86, 39, 52, .74)',
+  bloomOffset: 0.1,
+  haze: Object.freeze([
+    Object.freeze({ x: -0.28, y: -0.25, radius: 0.6, color: '#9C5362', alpha: 0.18 }),
+    Object.freeze({ x: 0.3, y: 0.2, radius: 0.53, color: '#68465F', alpha: 0.14 }),
+    Object.freeze({ x: 0.08, y: 0.36, radius: 0.42, color: '#35465E', alpha: 0.1 }),
+  ]),
+  vignette: '#020205',
+  rim: 'rgba(231, 181, 190, .11)',
+  ring: 'rgba(231, 181, 190, .2)',
+  codexBand: '#DCADB6',
+  error: '#FF5A5A',
+  errorDeep: '#A8434F',
+  inactive: '#93878D',
+  inactiveDeep: '#595057',
+  ringAlert: 'rgba(255, 106, 106, .3)',
+})
+
+const ION = Object.freeze({
+  core: '#7F9FC5',
+  highlight: '#C5D8EE',
+  deep: '#456487',
+  dust: '#40526C',
+  dustAlpha: 0.24,
+  abyss: 'rgba(4, 6, 11, .95)',
+  mantle: 'rgba(13, 21, 34, .9)',
+  bloom: 'rgba(42, 66, 94, .74)',
+  bloomOffset: 0.1,
+  haze: Object.freeze([
+    Object.freeze({ x: -0.29, y: -0.25, radius: 0.61, color: '#52769D', alpha: 0.18 }),
+    Object.freeze({ x: 0.31, y: 0.2, radius: 0.53, color: '#405A78', alpha: 0.15 }),
+    Object.freeze({ x: 0.07, y: 0.37, radius: 0.43, color: '#51536E', alpha: 0.1 }),
+  ]),
+  vignette: '#010205',
+  rim: 'rgba(197, 216, 238, .11)',
+  ring: 'rgba(197, 216, 238, .2)',
+  codexBand: '#AFC8E2',
+  error: '#FF5A5A',
+  errorDeep: '#A8434F',
+  inactive: '#87919E',
+  inactiveDeep: '#505965',
+  ringAlert: 'rgba(255, 106, 106, .3)',
+})
+
+const VIOLET = Object.freeze({
+  core: '#9181A7',
+  highlight: '#D3C7DF',
+  deep: '#5F5079',
+  dust: '#514560',
+  dustAlpha: 0.24,
+  abyss: 'rgba(6, 5, 11, .95)',
+  mantle: 'rgba(21, 17, 31, .9)',
+  bloom: 'rgba(59, 48, 79, .74)',
+  bloomOffset: 0.1,
+  haze: Object.freeze([
+    Object.freeze({ x: -0.29, y: -0.25, radius: 0.61, color: '#6F5F88', alpha: 0.18 }),
+    Object.freeze({ x: 0.31, y: 0.21, radius: 0.53, color: '#584A70', alpha: 0.14 }),
+    Object.freeze({ x: 0.07, y: 0.37, radius: 0.43, color: '#3D506B', alpha: 0.1 }),
+  ]),
+  vignette: '#020105',
+  rim: 'rgba(211, 199, 223, .11)',
+  ring: 'rgba(211, 199, 223, .2)',
+  codexBand: '#C2B4D1',
+  error: '#FF5A5A',
+  errorDeep: '#A8434F',
+  inactive: '#8C8794',
+  inactiveDeep: '#55515C',
+  ringAlert: 'rgba(255, 106, 106, .3)',
+})
+
 const GRAPHITE = Object.freeze({
-  core: '#E8ECF2',
+  core: '#C7CED8',
   mid: '#9AA3AF',
   shadow: '#3A404A',
   abyss: 'rgba(4, 6, 10, .95)',
@@ -146,14 +224,22 @@ const GRAPHITE = Object.freeze({
   rim: 'rgba(232, 236, 242, .1)',
   ring: 'rgba(232, 236, 242, .18)',
   accent: '#FFC978',
-  error: '#FF6B6B',
-  errorDeep: '#9E4757',
+  error: '#FF5A5A',
+  errorDeep: '#A8434F',
   inactive: '#98A0AB',
   inactiveDeep: '#5E6774',
-  ringAlert: 'rgba(255, 128, 128, .26)',
+  ringAlert: 'rgba(255, 106, 106, .3)',
 })
 
-const PALETTES = Object.freeze({ ember: EMBER, graphite: GRAPHITE })
+const PALETTES = Object.freeze({
+  ember: EMBER,
+  halpha: H_ALPHA,
+  ion: ION,
+  violet: VIOLET,
+  graphite: GRAPHITE,
+})
+
+export const ORB_PALETTE_NAMES = Object.freeze(Object.keys(PALETTES))
 
 export function paletteColors(name) {
   return PALETTES[name] || EMBER
@@ -606,6 +692,7 @@ export function createOrbVisual(canvas, options = {}) {
   let paletteName = PALETTES[palette] ? palette : 'ember'
   let colors = paletteColors(paletteName)
   let atlas = renderAtlas(createCanvas, paletteName, pixelRatio)
+  let paletteTransition = null
 
   const total = Math.max(1, Math.round(count))
   const homeRadius = new Float32Array(total)
@@ -806,19 +893,44 @@ export function createOrbVisual(canvas, options = {}) {
     if (codexPhase > TAU) codexPhase -= TAU
   }
 
-  function blit(row, size, x, y, spriteAlpha) {
+  function blitFrom(sourceAtlas, row, size, x, y, spriteAlpha) {
     const half = SPRITE_SIZES[size] / 2
     context.globalAlpha = spriteAlpha
     context.drawImage(
-      atlas.canvas,
-      atlas.columnOffsets[size],
-      row * atlas.rowHeight,
-      atlas.columnWidths[size],
-      atlas.columnWidths[size],
+      sourceAtlas.canvas,
+      sourceAtlas.columnOffsets[size],
+      row * sourceAtlas.rowHeight,
+      sourceAtlas.columnWidths[size],
+      sourceAtlas.columnWidths[size],
       x - half,
       y - half,
       SPRITE_SIZES[size],
       SPRITE_SIZES[size],
+    )
+  }
+
+  function blit(row, size, x, y, spriteAlpha) {
+    if (!paletteTransition) {
+      blitFrom(atlas, row, size, x, y, spriteAlpha)
+      return
+    }
+    const progress = paletteTransition.progress
+    blitFrom(atlas, row, size, x, y, spriteAlpha * (1 - progress))
+    blitFrom(paletteTransition.atlas, row, size, x, y, spriteAlpha * progress)
+  }
+
+  function drawPlate(sourceAtlas, opacity) {
+    context.globalAlpha = opacity
+    context.drawImage(
+      sourceAtlas.canvas,
+      0,
+      sourceAtlas.plateTop,
+      sourceAtlas.plateSize,
+      sourceAtlas.plateSize,
+      0,
+      0,
+      ORB_SIZE,
+      ORB_SIZE,
     )
   }
 
@@ -831,28 +943,31 @@ export function createOrbVisual(canvas, options = {}) {
     // The pre-composited plate: one blit instead of a flat fill, so the disc gets
     // its whole depth stack — bloom, haze, vignette, rim light — at the same
     // per-frame cost the single arc used to pay.
-    context.drawImage(
-      atlas.canvas,
-      0,
-      atlas.plateTop,
-      atlas.plateSize,
-      atlas.plateSize,
-      0,
-      0,
-      ORB_SIZE,
-      ORB_SIZE,
-    )
+    if (paletteTransition) {
+      drawPlate(atlas, 1 - paletteTransition.progress)
+      drawPlate(paletteTransition.atlas, paletteTransition.progress)
+    } else {
+      drawPlate(atlas, 1)
+    }
 
     if (ringOpacity > 0.01) {
-      context.globalAlpha = ringOpacity
-      context.strokeStyle = params.tone === 'alert' ? colors.ringAlert : colors.ring
-      context.lineWidth = 1.5
-      context.beginPath()
-      // The smoothed target radius, not a constant: each terminal state
-      // collapses onto its own ring, and the stroke has to sit under the
-      // particles rather than at one fixed radius they no longer share.
-      context.arc(CENTER, CENTER, targetRadius, 0, TAU)
-      context.stroke()
+      const strokeRing = (ringColors, opacity) => {
+        context.globalAlpha = opacity
+        context.strokeStyle = params.tone === 'alert' ? ringColors.ringAlert : ringColors.ring
+        context.lineWidth = 1.5
+        context.beginPath()
+        // The smoothed target radius, not a constant: each terminal state
+        // collapses onto its own ring, and the stroke has to sit under the
+        // particles rather than at one fixed radius they no longer share.
+        context.arc(CENTER, CENTER, targetRadius, 0, TAU)
+        context.stroke()
+      }
+      if (paletteTransition) {
+        strokeRing(colors, ringOpacity * (1 - paletteTransition.progress))
+        strokeRing(paletteTransition.colors, ringOpacity * paletteTransition.progress)
+      } else {
+        strokeRing(colors, ringOpacity)
+      }
       context.globalAlpha = 1
     }
 
@@ -919,7 +1034,24 @@ export function createOrbVisual(canvas, options = {}) {
 
   function tickIntervalMs() {
     const fps = STATE_FPS[stateName]
-    return fps > 0 ? 1000 / fps : 0
+    const effectiveFps = paletteTransition ? Math.max(15, fps) : fps
+    return effectiveFps > 0 ? 1000 / effectiveFps : 0
+  }
+
+  function advancePaletteTransition(elapsedMs) {
+    if (!paletteTransition) return
+    paletteTransition.elapsedMs += elapsedMs
+    paletteTransition.progress = Math.min(
+      1,
+      paletteTransition.elapsedMs / paletteTransition.durationMs,
+    )
+    if (paletteTransition.progress < 1) return
+    const completed = paletteTransition
+    paletteName = completed.name
+    colors = completed.colors
+    atlas = completed.atlas
+    paletteTransition = null
+    completed.onComplete?.()
   }
 
   function tick(timestamp) {
@@ -940,6 +1072,7 @@ export function createOrbVisual(canvas, options = {}) {
       else frameHandle = schedule(tick)
       return
     }
+    const rawElapsedMs = lastTimestamp < 0 ? FIRST_FRAME_MS : Math.max(0, timestamp - lastTimestamp)
     const elapsedMs = lastTimestamp < 0
       ? FIRST_FRAME_MS
       // The stall guard has to leave room for the slowest tier's own interval,
@@ -947,6 +1080,7 @@ export function createOrbVisual(canvas, options = {}) {
       : Math.min(Math.max(MAX_FRAME_MS, interval * 2), Math.max(0, timestamp - lastTimestamp))
     lastTimestamp = timestamp
     const startedAt = clock()
+    advancePaletteTransition(rawElapsedMs)
     advance(elapsedMs)
     draw()
     sampleFrameCost(clock() - startedAt)
@@ -1148,6 +1282,9 @@ export function createOrbVisual(canvas, options = {}) {
     pixelRatio = nextRatio
     applyBackingStore()
     atlas = renderAtlas(createCanvas, paletteName, pixelRatio)
+    if (paletteTransition) {
+      paletteTransition.atlas = renderAtlas(createCanvas, paletteTransition.name, pixelRatio)
+    }
     // Resizing a canvas clears it, so a frame nobody else will draw is drawn
     // here: static mode, a static tier, and a hidden orb all have no loop.
     if (frameHandle === null) draw()
@@ -1162,7 +1299,8 @@ export function createOrbVisual(canvas, options = {}) {
   function setPalette(name) {
     if (destroyed) return
     const next = PALETTES[name] ? name : 'ember'
-    if (next === paletteName) return
+    if (next === paletteName && !paletteTransition) return
+    paletteTransition = null
     paletteName = next
     colors = paletteColors(next)
     atlas = renderAtlas(createCanvas, next, pixelRatio)
@@ -1170,9 +1308,31 @@ export function createOrbVisual(canvas, options = {}) {
     if (frameHandle === null) draw()
   }
 
+  function transitionPalette(name, { durationMs = 6000, onComplete } = {}) {
+    if (destroyed) return
+    const next = PALETTES[name] ? name : 'ember'
+    if (staticMode || next === paletteName || !Number.isFinite(durationMs) || durationMs <= 0) {
+      setPalette(next)
+      onComplete?.()
+      return
+    }
+    paletteTransition = {
+      name: next,
+      colors: paletteColors(next),
+      atlas: renderAtlas(createCanvas, next, pixelRatio),
+      durationMs,
+      elapsedMs: 0,
+      progress: 0,
+      onComplete,
+    }
+    if (timerHandle !== null) stopLoop()
+    startLoop()
+  }
+
   function destroy() {
     if (destroyed) return
     destroyed = true
+    paletteTransition = null
     stopLoop()
     documentRef?.removeEventListener?.('visibilitychange', handleVisibilityChange)
     ratioQuery?.removeEventListener?.('change', handleRatioChange)
@@ -1194,12 +1354,14 @@ export function createOrbVisual(canvas, options = {}) {
     setState,
     setLevel,
     setPalette,
+    transitionPalette,
     setAccessibility,
     interrupt,
     destroy,
     get state() { return stateName },
     get params() { return params },
     get palette() { return paletteName },
+    get transitioning() { return paletteTransition !== null },
     get level() { return level },
     get smoothedLevel() { return levelSmoothed },
     get fps() { return staticMode ? 0 : STATE_FPS[stateName] },
@@ -1215,12 +1377,14 @@ function createNoopVisual() {
     setState() {},
     setLevel() {},
     setPalette() {},
+    transitionPalette(name, { onComplete } = {}) { onComplete?.() },
     setAccessibility() {},
     interrupt() {},
     destroy() {},
     get state() { return DEFAULT_STATE },
     get params() { return STATE_PARAMS[DEFAULT_STATE] },
     get palette() { return 'ember' },
+    get transitioning() { return false },
     get level() { return 0 },
     get smoothedLevel() { return 0 },
     get fps() { return 0 },
@@ -1279,12 +1443,14 @@ export function createOrbVisualSafe(canvas, options = {}) {
     setState: guard('setState'),
     setLevel: guard('setLevel'),
     setPalette: guard('setPalette'),
+    transitionPalette: guard('transitionPalette'),
     setAccessibility: guard('setAccessibility'),
     interrupt: guard('interrupt'),
     destroy: guard('destroy'),
     get state() { return target.state },
     get params() { return target.params },
     get palette() { return target.palette },
+    get transitioning() { return target.transitioning },
     get level() { return target.level },
     get smoothedLevel() { return target.smoothedLevel },
     get fps() { return target.fps },

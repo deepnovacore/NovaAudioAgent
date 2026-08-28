@@ -73,6 +73,19 @@ test('macOS helper is pinned to Apple VoiceProcessingIO system AEC', async () =>
   assert.doesNotMatch(source, /BypassVoiceProcessing|bypassVoiceProcessing/)
 })
 
+test('macOS helper mute writes silence while preserving playback progress and receipts', async () => {
+  const source = await readFile(new URL('../native/macos_voice_io.swift', import.meta.url), 'utf8')
+  const renderStart = source.indexOf('func render(into output:')
+  const renderEnd = source.indexOf('\n}\n\nprivate final class VoiceIO', renderStart)
+  const render = source.slice(renderStart, renderEnd)
+
+  assert.match(render, /output\.baseAddress\?\.initialize\(repeating: 0, count: output\.count\)/)
+  assert.match(render, /if !muted \{[\s\S]*?output\.baseAddress\?\.advanced\(by: offset\)\.update/)
+  assert.match(render, /signals\.append\(\("playback\.started", identity, 0\)\)/)
+  assert.match(render, /offset \+= amount[\s\S]*?renderedSamples\[identity, default: 0\] \+= amount/)
+  assert.match(render, /signals\.append\(\("playback\.done", identity, rendered\)\)/)
+})
+
 test('uses VoiceProcessingIO readiness and preserves Nova Audio Agent generation identity', {
   skip: process.platform !== 'darwin',
 }, async () => {
@@ -143,6 +156,19 @@ test('uses VoiceProcessingIO readiness and preserves Nova Audio Agent generation
     generationEpoch: 3,
     playedMs: 25,
   }])
+})
+
+test('native playback mute is a bounded command that leaves the helper running', {
+  skip: process.platform !== 'darwin',
+}, async () => {
+  const { audio, commands } = await startReadyNativeAudio()
+
+  assert.equal(audio.setPlaybackMuted(true), true)
+  assert.equal(audio.setPlaybackMuted(false), true)
+  assert.deepEqual(commands, [
+    { type: 'playback_muted', enabled: true },
+    { type: 'playback_muted', enabled: false },
+  ])
 })
 
 test('bounds an unresponsive identity-qualified native clear', {
@@ -291,6 +317,60 @@ test('capture manager waits for native readiness and falls back on startup failu
     startImpl: async () => { throw new Error('permission denied') },
   })
   assert.deepEqual(await fallback.activate(), { audioMode: 'browser_aec' })
+})
+
+test('capture manager remembers output mute before activation and applies it to a new helper', async () => {
+  let resolveStart
+  const commands = []
+  const manager = nativeAudioModule.createNativeAudioManager({
+    binary: '/tmp/macos-voice-io',
+    startImpl: () => new Promise(resolve => { resolveStart = resolve }),
+  })
+
+  assert.equal(manager.setPlaybackMuted(true), true)
+  const activation = manager.activate()
+  resolveStart({
+    setPlaybackMuted: muted => { commands.push(['mute', muted]); return true },
+    setCaptureEnabled: enabled => { commands.push(['capture', enabled]); return true },
+    close: async () => {},
+  })
+
+  assert.deepEqual(await activation, { audioMode: 'voice_processing_io' })
+  assert.deepEqual(commands, [['mute', true], ['capture', true]])
+  assert.equal(manager.setPlaybackMuted(false), true)
+  assert.deepEqual(commands.at(-1), ['mute', false])
+})
+
+test('capture manager never remembers a mute command rejected by a live helper', async () => {
+  let helperId = 0
+  const commands = []
+  const manager = nativeAudioModule.createNativeAudioManager({
+    binary: '/tmp/macos-voice-io',
+    startImpl: async () => {
+      const id = ++helperId
+      return {
+        setPlaybackMuted: muted => {
+          commands.push([id, 'mute', muted])
+          return !(id === 1 && muted === false)
+        },
+        setCaptureEnabled: enabled => { commands.push([id, 'capture', enabled]); return true },
+        close: async () => {},
+      }
+    },
+  })
+
+  assert.equal(manager.setPlaybackMuted(true), true, 'pre-activation intent is remembered')
+  assert.deepEqual(await manager.activate(), { audioMode: 'voice_processing_io' })
+  assert.equal(manager.setPlaybackMuted(false), false, 'the live helper rejects unmute')
+  await manager.deactivate()
+  assert.deepEqual(await manager.activate(), { audioMode: 'voice_processing_io' })
+  assert.deepEqual(commands, [
+    [1, 'mute', true],
+    [1, 'capture', true],
+    [1, 'mute', false],
+    [2, 'mute', true],
+    [2, 'capture', true],
+  ])
 })
 
 test('capture manager stops advertising readiness after an unexpected helper exit', async () => {

@@ -8,6 +8,7 @@ import { checkJavaScriptFiles } from '../scripts/build-contract.mjs'
 import {
   createOrbVisual,
   createOrbVisualSafe,
+  ORB_PALETTE_NAMES,
   paletteColors,
   STATE_FPS,
   STATE_PARAMS,
@@ -374,7 +375,7 @@ test('paletteColors returns the exact graphite table', () => {
 
   assert.ok(Object.isFrozen(graphite))
   assert.deepEqual({ ...graphite }, {
-    core: '#E8ECF2',
+    core: '#C7CED8',
     mid: '#9AA3AF',
     shadow: '#3A404A',
     abyss: 'rgba(4, 6, 10, .95)',
@@ -390,11 +391,11 @@ test('paletteColors returns the exact graphite table', () => {
     rim: 'rgba(232, 236, 242, .1)',
     ring: 'rgba(232, 236, 242, .18)',
     accent: '#FFC978',
-    error: '#FF6B6B',
-    errorDeep: '#9E4757',
+    error: '#FF5A5A',
+    errorDeep: '#A8434F',
     inactive: '#98A0AB',
     inactiveDeep: '#5E6774',
-    ringAlert: 'rgba(255, 128, 128, .26)',
+    ringAlert: 'rgba(255, 106, 106, .3)',
   })
   assert.ok(Object.isFrozen(graphite.haze))
   for (const cloud of graphite.haze) assert.ok(Object.isFrozen(cloud))
@@ -402,8 +403,13 @@ test('paletteColors returns the exact graphite table', () => {
 
 // Both palettes feed the same renderPlate, so a field missing from one of them
 // would surface as a silently broken gradient stop rather than a throw.
-test('both palettes carry every layer renderPlate composites', () => {
-  for (const name of ['ember', 'graphite']) {
+test('all five nebula palettes carry every layer renderPlate composites', () => {
+  assert.deepEqual(ORB_PALETTE_NAMES, ['ember', 'halpha', 'ion', 'violet', 'graphite'])
+  assert.deepEqual(
+    ORB_PALETTE_NAMES.map(name => paletteColors(name).core),
+    ['#FFB454', '#C87986', '#7F9FC5', '#9181A7', '#C7CED8'],
+  )
+  for (const name of ORB_PALETTE_NAMES) {
     const colors = paletteColors(name)
     for (const field of ['abyss', 'mantle', 'bloom', 'vignette', 'rim']) {
       assert.equal(typeof colors[field], 'string', `${name}.${field} is a colour`)
@@ -725,6 +731,28 @@ test('setPalette re-renders the atlas and reports the active palette', () => {
   mounted.visual.destroy()
 })
 
+test('transitionPalette crossfades two atlases over the same particle geometry', () => {
+  const mounted = mount()
+  let completed = 0
+
+  mounted.visual.transitionPalette('halpha', {
+    durationMs: 100,
+    onComplete: () => { completed += 1 },
+  })
+  assert.equal(mounted.offscreen.length, 2, 'the target palette gets its own atlas')
+  mounted.step(50)
+
+  const plateBlits = mounted.context.calls.drawImage.filter(call => call.operation === 'source-over')
+  assert.ok(plateBlits.some(call => call.args[0] === mounted.offscreen[0] && call.alpha < 1))
+  assert.ok(plateBlits.some(call => call.args[0] === mounted.offscreen[1] && call.alpha > 0))
+
+  mounted.step(100)
+  assert.equal(completed, 1)
+  assert.equal(mounted.visual.palette, 'halpha')
+  assert.equal(mounted.visual.transitioning, false)
+  mounted.visual.destroy()
+})
+
 test('setPalette rebuilds only the offscreen atlas, never the visible canvas', () => {
   const mounted = mount()
   const visibleGradientsBefore = mounted.context.calls.gradients
@@ -1010,8 +1038,10 @@ test('the orb markup hosts the particle canvas instead of gradient spans', async
 
   assert.match(html, /<canvas class="orb-canvas" aria-hidden="true"><\/canvas>/)
   assert.doesNotMatch(html, /class="halo"|class="core"/)
-  // The tested contract around the button and its indicator is untouched.
+  // The orb is a status image and drag surface, not an activation button.
   assert.match(html, /<main id="shell" data-state="booting"/)
+  assert.match(html, /<div id="orb" role="img"/)
+  assert.doesNotMatch(html, /<button id="orb"/)
   assert.match(html, /id="capture-indicator"/)
   assert.match(html, /id="state-label"/)
 })
@@ -1020,6 +1050,7 @@ test('the orb rail carries the mute toggle and settings buttons', async () => {
   const html = await readFile(new URL('../src/renderer/index.html', import.meta.url), 'utf8')
   assert.match(html, /<nav id="orb-rail" aria-label="快捷操作">/)
   assert.match(html, /<button id="mute-toggle" type="button" aria-label="闭麦" aria-pressed="false" disabled>/)
+  assert.match(html, /<button id="speaker-toggle" type="button" aria-label="关闭 Nova 声音" aria-pressed="true"/)
   assert.match(html, /<button id="camera-toggle" type="button" aria-label="打开摄像头" aria-pressed="false" disabled>/)
   assert.match(html, /<button id="open-settings" type="button" aria-label="设置">/)
 
@@ -1041,6 +1072,11 @@ test('the stylesheet drops the gradient sphere but keeps the accessibility overr
   assert.doesNotMatch(css, /\.halo|\.core\b/)
   assert.match(css, /\.orb-canvas \{/)
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
+  assert.match(
+    css,
+    /#codex-label\[data-mode='project'\][\s\S]*?color:\s*var\(--palette-secondary\)/,
+    'project activity text follows the current nebula palette',
+  )
 
   // High contrast hides the nebula and shows a solid disc instead, keeping the
   // flat alert colour and the capture indicator that the old halo carried.
@@ -1079,12 +1115,23 @@ test('the renderer applies the bootstrap palette and future settings pushes', as
   assert.match(source, /palette: 'ember',/)
   // Once bootstrap resolves, the palette it carries (if any) is applied live;
   // optional chaining keeps this a no-op today instead of a throw.
-  assert.match(source, /visual\.setPalette\(bootstrap\.settings\?\.palette\)/)
+  assert.match(source, /paletteHover\.reset\(bootstrap\.settings\?\.palette\)/)
   // Future live pushes swap the palette the same way, guarded the same way.
   assert.match(
     source,
-    /window\.novaAudioAgentDesktop\.settings\?\.onChanged\?\.\(next => visual\.setPalette\(next\.palette\)\)/,
+    /window\.novaAudioAgentDesktop\.settings\?\.onChanged\?\.\(next => paletteHover\.reset\(next\.palette\)\)/,
   )
+})
+
+test('the renderer wires long-hover palette touring and live accessibility preferences', async () => {
+  const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /new OrbPaletteHoverController\(/)
+  assert.match(source, /transition: \(palette, options\) => visual\.transitionPalette\(palette, options\)/)
+  assert.match(source, /orb\.addEventListener\('pointerenter', \(\) => paletteHover\.enter\(\)\)/)
+  assert.match(source, /orb\.addEventListener\('pointerleave', \(\) => paletteHover\.leave\(\)\)/)
+  assert.match(source, /paletteHover\.setDisabled\(reducedMotionQuery\.matches \|\| highContrastQuery\.matches\)/)
+  assert.match(source, /paletteHover\.destroy\(\)/)
 })
 
 test('STATE_FPS covers every orb state and tiers them by how much they move', () => {

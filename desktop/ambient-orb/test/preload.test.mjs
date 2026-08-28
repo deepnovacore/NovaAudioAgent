@@ -108,6 +108,19 @@ test('preload exposes a bounded microphone permission lifecycle', async () => {
   assert.deepEqual(retries, ['retry'])
 })
 
+test('preload exposes one bounded native playback mute command', async () => {
+  const { exposed, invokes } = await loadPreload()
+
+  assert.equal(typeof exposed.nativeAudio.setPlaybackMuted, 'function')
+  await exposed.nativeAudio.setPlaybackMuted(true)
+  await exposed.nativeAudio.setPlaybackMuted(false)
+
+  assert.deepEqual(invokes, [
+    { channel: 'nova:native-audio:playback-muted', payload: true },
+    { channel: 'nova:native-audio:playback-muted', payload: false },
+  ])
+})
+
 test('preload exposes a distinct read-only workspace graph board relay', async () => {
   const { exposed, ipcRenderer, invokes, sends } = await loadPreload()
 

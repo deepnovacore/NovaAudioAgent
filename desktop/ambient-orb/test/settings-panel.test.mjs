@@ -615,7 +615,7 @@ test('the palette control offers both orb palettes with a live swatch', () => {
   assert.match(html, /class="swatch swatch-graphite"/)
   // The swatches preview the real orb colours rather than inventing new ones.
   assert.match(css, /#FFB454/i)
-  assert.match(css, /#E8ECF2/i)
+  assert.match(css, /#C7CED8/i)
 })
 
 test('the proactivity control offers three tiers explained in push-and-pull terms', () => {
@@ -808,19 +808,19 @@ test('the optional model gateway address is grouped with its API key', () => {
   assert.match(html, /FastBrain/)
 })
 
-test('the panel exposes backend state and opt-in microphone activation', () => {
-  assert.match(html, /id="backend-status"/)
-  assert.match(html, /id="backend-retry"/)
-  assert.match(html, /id="startListeningOnLaunch"/)
-  assert.match(html, /id="microphone-status"/)
-  assert.match(html, /id="microphone-retry"/)
-  assert.match(html, /启动时自动开始监听/)
-  assert.match(script, /backendStatus\.textContent/)
-  assert.match(script, /api\.retryBackend\(\)/)
-  assert.match(script, /api\.retryMicrophone\(\)/)
-  assert.match(script, /microphoneStatus\.textContent/)
-  assert.match(script, /startListeningOnLaunch\.checked = view\.startListeningOnLaunch === true/)
-  assert.match(script, /startListeningOnLaunch:\s*startListeningOnLaunch\.checked/)
+test('the panel omits the connection and microphone block while launch listening stays automatic', () => {
+  assert.doesNotMatch(html, /连接与麦克风/)
+  assert.doesNotMatch(html, /id="backend-status"/)
+  assert.doesNotMatch(html, /id="backend-retry"/)
+  assert.doesNotMatch(html, /id="microphone-status"/)
+  assert.doesNotMatch(html, /id="microphone-retry"/)
+  assert.doesNotMatch(html, /id="startListeningOnLaunch"/)
+  assert.doesNotMatch(html, /启动时自动开始监听/)
+  assert.doesNotMatch(script, /document\.querySelector\('#backend-status'\)/)
+  assert.doesNotMatch(script, /document\.querySelector\('#microphone-status'\)/)
+  assert.doesNotMatch(script, /api\.retryBackend\(\)/)
+  assert.doesNotMatch(script, /api\.retryMicrophone\(\)/)
+  assert.doesNotMatch(script, /startListeningOnLaunch/)
 })
 
 test('the panel talks to main only through the settings bridge', () => {

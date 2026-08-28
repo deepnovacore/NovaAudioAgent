@@ -7,6 +7,7 @@ const {
   AlertTone,
   GenerationPlayback,
   NativeLevelEnvelope,
+  OutputMuteController,
   PlaybackMeter,
   applyAlertCommand,
   decodeAudioFrame,
@@ -540,6 +541,51 @@ test('the playback meter inserts one unity master gain ahead of an analyser', ()
   const level = meter.level()
   assert.ok(Math.abs(level - 0.996) < 0.01, `a full-scale buffer reads ~1, got ${level}`)
   assert.equal(analyser.reads, 1)
+
+  meter.setMuted(true)
+  assert.equal(gain.gain.value, 0, 'muting silences the physical output')
+  assert.equal(meter.level(), 0, 'a muted speaker never animates as audible')
+  assert.equal(analyser.reads, 1, 'muted output does not read stale analyser samples')
+
+  meter.setMuted(false)
+  assert.equal(gain.gain.value, 1, 'unmuting restores the remaining timeline at unity')
+})
+
+test('output mute serializes rapid toggles and rolls back to the confirmed state', async () => {
+  let settle
+  const changes = []
+  const controller = new OutputMuteController({
+    apply: () => new Promise(resolve => { settle = resolve }),
+    onChange: (muted, pending) => changes.push({ muted, pending }),
+  })
+
+  const first = controller.toggle()
+  assert.equal(controller.muted, true, 'the requested state renders optimistically')
+  assert.equal(controller.pending, true)
+  assert.equal(await controller.toggle(), false, 'a second click cannot race the pending IPC')
+  assert.equal(controller.muted, true)
+
+  settle(false)
+  assert.equal(await first, false)
+  assert.equal(controller.muted, false, 'failure returns to the last confirmed state')
+  assert.equal(controller.pending, false)
+  assert.deepEqual(changes, [
+    { muted: true, pending: true },
+    { muted: false, pending: false },
+  ])
+})
+
+test('output mute commits an accepted request before allowing the next toggle', async () => {
+  const applied = []
+  const controller = new OutputMuteController({
+    apply: async muted => { applied.push(muted); return true },
+  })
+
+  assert.equal(await controller.toggle(), true)
+  assert.equal(controller.muted, true)
+  assert.equal(await controller.toggle(), true)
+  assert.equal(controller.muted, false)
+  assert.deepEqual(applied, [true, false])
 })
 
 test('the native level envelope replays each dispatched frame on the wall clock', () => {

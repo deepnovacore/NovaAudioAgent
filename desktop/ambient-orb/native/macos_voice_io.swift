@@ -80,6 +80,13 @@ private final class PlaybackQueue {
     private var renderedSamples: [Identity: Int] = [:]
     private var completedSamples: [Identity: Int] = [:]
     private var completedOrder: [Identity] = []
+    private var muted = false
+
+    func setMuted(_ value: Bool) {
+        lock.lock()
+        muted = value
+        lock.unlock()
+    }
 
     func append(_ samples: [Int16], identity: Identity) {
         guard !samples.isEmpty else { return }
@@ -148,11 +155,13 @@ private final class PlaybackQueue {
                     signals.append(("playback.started", identity, 0))
                 }
                 let amount = min(output.count - offset, samples.count - consumedOffset)
-                samples.withUnsafeBufferPointer { source in
-                    output.baseAddress?.advanced(by: offset).update(
-                        from: source.baseAddress!.advanced(by: consumedOffset),
-                        count: amount
-                    )
+                if !muted {
+                    samples.withUnsafeBufferPointer { source in
+                        output.baseAddress?.advanced(by: offset).update(
+                            from: source.baseAddress!.advanced(by: consumedOffset),
+                            count: amount
+                        )
+                    }
                 }
                 offset += amount
                 if amount > 0 {
@@ -271,6 +280,10 @@ private final class VoiceIO {
         captureLock.lock()
         captureEnabled = enabled
         captureLock.unlock()
+    }
+
+    func setPlaybackMuted(_ muted: Bool) {
+        playback.setMuted(muted)
     }
 
     private func shouldCapture() -> Bool {
@@ -435,6 +448,7 @@ do {
                 voice.clear()
             }
         case "capture": voice.setCapture(command.enabled == true)
+        case "playback_muted": voice.setPlaybackMuted(command.enabled == true)
         case "close": voice.stop(); exit(0)
         default: continue
         }

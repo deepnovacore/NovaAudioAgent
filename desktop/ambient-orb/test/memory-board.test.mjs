@@ -42,6 +42,24 @@ test('board presents accessible Memory and Graph tabs and never exports graph da
   assert.doesNotMatch(source, /graphBoard\.export|workspace_graph\.board\.(?:delete|edit|suppress|merge|switch|inspect)/u)
 })
 
+test('memory channels render as semantic cards with summary, count, tags, and a scroll region', async () => {
+  const source = await readFile(new URL('../src/renderer/memory-board.mjs', import.meta.url), 'utf8')
+  const css = await readFile(new URL('../src/renderer/memory-board.css', import.meta.url), 'utf8')
+
+  assert.match(source, /section\.className = 'channel-card'/)
+  assert.match(source, /header\.className = 'channel-header'/)
+  assert.match(source, /count\.className = 'channel-count'/)
+  assert.match(source, /summary\.className = 'channel-summary'/)
+  assert.match(source, /itemsRoot\.className = 'channel-items'/)
+  assert.match(source, /className = `tag tag-trust trust-\$\{item\.trust\}`/)
+  assert.match(source, /className = 'tag tag-outcome'/)
+  assert.match(source, /className = 'tag tag-truncated'/)
+  assert.match(css, /#channels\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*repeat\(2,/s)
+  assert.match(css, /\.channel-items\s*\{[^}]*overflow:\s*auto;/s)
+  assert.match(css, /font-family:\s*ui-monospace/)
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*grid-template-columns:\s*1fr/)
+})
+
 test('export handler saves through a dialog with the atomic write pattern', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 

@@ -320,7 +320,7 @@ legend {
 }
 
 .swatch-graphite {
-  background: radial-gradient(circle at 34% 30%, #E8ECF2, #9AA3AF 46%, #3A404A);
+  background: radial-gradient(circle at 34% 30%, #C7CED8, #9AA3AF 46%, #3A404A);
 }
 
 #integrated-pipeline,
@@ -470,8 +470,6 @@ button:hover:not(:disabled) {
 button:active:not(:disabled) { background: var(--surface); }
 button:disabled { cursor: default; opacity: .45; }
 
-#backend-retry,
-#microphone-retry,
 #codex-rescan,
 #projects-repair {
   display: block;

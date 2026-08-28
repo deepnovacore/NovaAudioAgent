@@ -44,6 +44,11 @@ test('pins BrowserWindow isolation sandbox and ephemeral partition', () => {
 test('memory board window shares the orb session with the same isolation walls', () => {
   const options = securityModule.boardWindowOptions('/app/preload.cjs', 'launch-1')
 
+  assert.equal(options.width, 1100)
+  assert.equal(options.height, 760)
+  assert.equal(options.minWidth, 720)
+  assert.equal(options.minHeight, 520)
+  assert.equal(options.title, 'Memory Board')
   assert.equal(options.frame, true)
   assert.equal(options.alwaysOnTop, undefined)
   assert.equal(options.show, false)

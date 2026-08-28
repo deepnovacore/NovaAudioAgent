@@ -66,6 +66,10 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
       'nova:native-audio:capture',
       enabled === true,
     ),
+    setPlaybackMuted: muted => ipcRenderer.invoke(
+      'nova:native-audio:playback-muted',
+      muted === true,
+    ),
     play: (pcm, utteranceId, generationEpoch) => ipcRenderer.send(
       'nova:native-audio:play',
       { pcm, utteranceId, generationEpoch },

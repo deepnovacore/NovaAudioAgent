@@ -146,6 +146,9 @@ export function startNativeAudio({ binary, spawnImpl = spawn, onEvent = () => {}
     setCaptureEnabled(enabled) {
       return send({ type: 'capture', enabled: enabled === true })
     },
+    setPlaybackMuted(muted) {
+      return send({ type: 'playback_muted', enabled: muted === true })
+    },
     play(pcm, utteranceId, generationEpoch) {
       const bytes = Buffer.from(pcm)
       if (!bytes.length || bytes.length > MAX_PCM_BYTES || bytes.length % 2) return false
@@ -209,6 +212,7 @@ export function createNativeAudioManager({
 }) {
   let audio = null
   let pending = null
+  let playbackMuted = false
 
   const ensure = async () => {
     if (audio) return audio
@@ -242,6 +246,9 @@ export function createNativeAudioManager({
     async activate() {
       try {
         const current = await ensure()
+        if (playbackMuted && current.setPlaybackMuted?.(true) !== true) {
+          throw new Error('native playback mute command failed')
+        }
         if (!current.setCaptureEnabled(true)) throw new Error('native capture command failed')
         return Object.freeze({ audioMode: 'voice_processing_io' })
       } catch {
@@ -252,6 +259,16 @@ export function createNativeAudioManager({
     async deactivate() {
       await closeCurrent()
       return Object.freeze({ audioMode: 'inactive' })
+    },
+    setPlaybackMuted(muted) {
+      const nextMuted = muted === true
+      if (!audio) {
+        playbackMuted = nextMuted
+        return true
+      }
+      if (audio.setPlaybackMuted?.(nextMuted) !== true) return false
+      playbackMuted = nextMuted
+      return true
     },
     play(pcm, utteranceId, generationEpoch) {
       return audio?.play(pcm, utteranceId, generationEpoch) === true

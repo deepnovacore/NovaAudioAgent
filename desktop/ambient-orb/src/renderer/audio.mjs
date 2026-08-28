@@ -259,6 +259,32 @@ export function measurePcmFrameLevel(pcm) {
 const ANALYSER_FFT_SIZE = 256
 const BYTE_TIME_DOMAIN_ZERO = 128
 
+export class OutputMuteController {
+  constructor({ apply, onChange = () => {}, muted = false }) {
+    if (typeof apply !== 'function') throw new TypeError('apply must be a function')
+    this.apply = apply
+    this.onChange = onChange
+    this.muted = muted === true
+    this.pending = false
+  }
+
+  async toggle() {
+    if (this.pending) return false
+    const previousMuted = this.muted
+    this.muted = !previousMuted
+    this.pending = true
+    this.onChange(this.muted, this.pending)
+    let accepted = false
+    try {
+      accepted = await this.apply(this.muted) === true
+    } catch { /* the confirmed state below remains authoritative */ }
+    if (!accepted) this.muted = previousMuted
+    this.pending = false
+    this.onChange(this.muted, this.pending)
+    return accepted
+  }
+}
+
 // Amplitude of what the user is actually hearing, for the browser playback path.
 // Every buffer source connects to one master gain at unity — the mix is
 // untouched — and that gain feeds an analyser before the speakers. Reading the
@@ -267,6 +293,7 @@ const BYTE_TIME_DOMAIN_ZERO = 128
 export class PlaybackMeter {
   constructor(context, isPlaying = () => true) {
     this.isPlaying = isPlaying
+    this.muted = false
     this.gain = context.createGain()
     this.gain.gain.value = 1
     this.analyser = context.createAnalyser()
@@ -280,11 +307,16 @@ export class PlaybackMeter {
     return this.gain
   }
 
+  setMuted(muted) {
+    this.muted = muted === true
+    this.gain.gain.value = this.muted ? 0 : 1
+  }
+
   // An analyser keeps returning the tail of its last window forever, so a
   // drained queue has to read as silence from the caller's own bookkeeping
   // rather than from the node.
   level() {
-    if (!this.isPlaying()) return 0
+    if (this.muted || !this.isPlaying()) return 0
     this.analyser.getByteTimeDomainData(this.samples)
     let power = 0
     for (let index = 0; index < this.samples.length; index += 1) {

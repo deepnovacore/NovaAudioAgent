@@ -802,6 +802,12 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     }
     return nativeAudio?.activate() || Object.freeze({ audioMode: 'browser_aec' })
   })
+  ipcMain.handle('nova:native-audio:playback-muted', (event, muted) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('native playback mute request rejected')
+    }
+    return nativeAudio?.setPlaybackMuted(muted === true) ?? true
+  })
   ipcMain.on('nova:native-audio:play', (event, payload) => {
     if (mainWindow && event.sender === mainWindow.webContents && payload) {
       nativeAudio?.play(payload.pcm, payload.utteranceId, payload.generationEpoch)

@@ -81,10 +81,11 @@ function panelWindowOptions(preload, launchId, panel) {
 
 export function boardWindowOptions(preload, launchId) {
   return panelWindowOptions(preload, launchId, {
-    width: 480,
-    height: 620,
-    minWidth: 360,
-    minHeight: 400,
+    width: 1100,
+    height: 760,
+    minWidth: 720,
+    minHeight: 520,
+    title: 'Memory Board',
   })
 }
 

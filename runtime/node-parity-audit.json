@@ -29,6 +29,7 @@
     "desktop/ambient-orb/src/renderer/memory-board.mjs",
     "desktop/ambient-orb/src/renderer/microphone-permission.mjs",
     "desktop/ambient-orb/src/renderer/orb-visual.mjs",
+    "desktop/ambient-orb/src/renderer/palette-hover.mjs",
     "desktop/ambient-orb/src/renderer/release-camera-contract.mjs",
     "desktop/ambient-orb/src/renderer/release-camera.mjs",
     "desktop/ambient-orb/src/renderer/secret-revisions.mjs",

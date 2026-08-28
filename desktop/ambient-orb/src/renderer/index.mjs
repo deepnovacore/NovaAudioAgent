@@ -10,6 +10,7 @@ import {
   NativeLevelEnvelope,
   observePcmOnset,
   OnsetTracker,
+  OutputMuteController,
   PlaybackMeter,
 } from './audio.mjs'
 import {
@@ -25,6 +26,7 @@ import {
 } from './camera.mjs'
 import { OrbDragGesture } from './drag-gesture.mjs'
 import { createOrbVisualSafe } from './orb-visual.mjs'
+import { OrbPaletteHoverController } from './palette-hover.mjs'
 import { ConfirmationCountdown } from './confirmation-countdown.mjs'
 import { ConfirmationDecisionController } from './confirmation-controls.mjs'
 import { deriveOrbState } from './state.mjs'
@@ -34,6 +36,7 @@ const PROJECT_CONFIRMATION_TTL_SECONDS = 360
 const shell = document.querySelector('#shell')
 const orb = document.querySelector('#orb')
 const muteToggle = document.querySelector('#mute-toggle')
+const speakerToggle = document.querySelector('#speaker-toggle')
 const cameraToggle = document.querySelector('#camera-toggle')
 const openSettingsButton = document.querySelector('#open-settings')
 const stateLabel = document.querySelector('#state-label')
@@ -62,6 +65,7 @@ let playbackMeter = null
 const nativeLevel = new NativeLevelEnvelope()
 
 function getPlaybackLevel() {
+  if (axes.outputMuted) return 0
   return Math.max(
     nativeLevel.level(performance.now()),
     playbackMeter ? playbackMeter.level() : 0,
@@ -82,17 +86,41 @@ function getPlaybackLevel() {
 // Guarded, not raw: the orb is the one decorative part of this renderer, and a
 // canvas it cannot acquire (or one that throws mid-draw) must not take the
 // socket, the drag handle, or the accessibility labels down with it.
+const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+const highContrastQuery = window.matchMedia('(prefers-contrast: more)')
 const visual = createOrbVisualSafe(document.querySelector('.orb-canvas'), {
-  reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-  highContrast: window.matchMedia('(prefers-contrast: more)').matches,
+  reducedMotion: reducedMotionQuery.matches,
+  highContrast: highContrastQuery.matches,
   palette: 'ember',
   getSpeakingLevel: () => getPlaybackLevel(),
 })
+
+function setTextPalette(palette, durationMs) {
+  shell.style.setProperty('--palette-transition-duration', `${durationMs}ms`)
+  shell.dataset.palette = palette
+}
+
+const paletteHover = new OrbPaletteHoverController({
+  initialPalette: 'ember',
+  transition: (palette, options) => visual.transitionPalette(palette, options),
+  setPalette: palette => visual.setPalette(palette),
+  setTextPalette,
+  disabled: reducedMotionQuery.matches || highContrastQuery.matches,
+})
+
+function syncPaletteAccessibility() {
+  paletteHover.setDisabled(reducedMotionQuery.matches || highContrastQuery.matches)
+}
+
+reducedMotionQuery.addEventListener('change', syncPaletteAccessibility)
+highContrastQuery.addEventListener('change', syncPaletteAccessibility)
 
 const axes = {
   booting: true,
   activated: false,
   muted: false,
+  outputMuted: false,
+  outputMutePending: false,
   capture: 'idle',
   playback: 'idle',
   codex: 'idle',
@@ -152,6 +180,16 @@ const dragGesture = new OrbDragGesture()
 
 const onsetTracker = new OnsetTracker({ mintId: () => crypto.randomUUID() })
 const alertTone = new AlertTone()
+const outputMuteController = new OutputMuteController({
+  apply: muted => window.novaAudioAgentDesktop.nativeAudio.setPlaybackMuted(muted),
+  onChange: (muted, pending) => {
+    axes.outputMuted = muted
+    axes.outputMutePending = pending
+    playbackMeter?.setMuted(muted)
+    if (muted) alertTone.stop()
+    render()
+  },
+})
 
 const playback = new GenerationPlayback({
   stopAll: () => {
@@ -203,10 +241,13 @@ function render() {
   confirmationCancel.disabled = !decisionEnabled
   setText(aecLabel, state.aecLabel)
   setAttribute(orb, 'aria-label', `${state.label}；${state.accessibleCodexLabel}`)
-  orb.setAttribute('aria-pressed', String(axes.activated))
+  orb.dataset.captureActive = String(axes.activated)
   muteToggle.disabled = !axes.activated
   muteToggle.setAttribute('aria-pressed', String(axes.muted))
   muteToggle.setAttribute('aria-label', axes.muted ? '取消闭麦' : '闭麦')
+  speakerToggle.disabled = axes.outputMutePending
+  speakerToggle.setAttribute('aria-pressed', String(!axes.outputMuted))
+  speakerToggle.setAttribute('aria-label', axes.outputMuted ? '开启 Nova 声音' : '关闭 Nova 声音')
   cameraToggle.hidden = axes.cameraSource === 'file'
   cameraToggle.disabled = axes.booting
     || axes.cameraSource !== 'local'
@@ -251,6 +292,7 @@ function send(value) {
 }
 
 function startAlertTone() {
+  if (axes.outputMuted) return
   try {
     context ||= new AudioContext()
     if (context.state !== 'running') void context.resume().catch(() => {})
@@ -262,7 +304,10 @@ function startAlertTone() {
 // the mix the user hears is unchanged, and the orb gets a real amplitude to
 // read instead of guessing from the queue.
 function playbackDestination() {
-  playbackMeter ||= new PlaybackMeter(context, () => playingSources.size > 0)
+  if (!playbackMeter) {
+    playbackMeter = new PlaybackMeter(context, () => playingSources.size > 0)
+    playbackMeter.setMuted(axes.outputMuted)
+  }
   return playbackMeter.destination
 }
 
@@ -385,6 +430,10 @@ function toggleMute() {
     muteDrainUntil = performance.now() + UNMUTE_DRAIN_MS
   }
   render()
+}
+
+function toggleOutputMuted() {
+  return outputMuteController.toggle()
 }
 
 async function activateCapture() {
@@ -808,6 +857,11 @@ async function refreshMicrophonePermission() {
   return axes.microphone
 }
 
+async function retryMicrophonePermission() {
+  const microphone = await refreshMicrophonePermission()
+  if (microphone === 'granted' && !axes.activated) await activateCapture()
+}
+
 async function boot() {
   try {
     const bootstrap = await window.novaAudioAgentDesktop.bootstrap()
@@ -821,7 +875,7 @@ async function boot() {
       : 'stopped'
     // Only the renderer-owned subset reaches the orb; credentials, executable
     // paths, and service endpoints stay in the main process/settings panel.
-    visual.setPalette(bootstrap.settings?.palette)
+    paletteHover.reset(bootstrap.settings?.palette)
     if (bootstrap.opaque === true) document.body.dataset.opaque = '1'
     nativeAvailable = bootstrap.nativeAvailable === true
     window.novaAudioAgentDesktop.onBackendExit(handleBackendExit)
@@ -832,11 +886,11 @@ async function boot() {
       render()
     })
     window.novaAudioAgentDesktop.microphone.onRetry(() => {
-      void refreshMicrophonePermission()
+      void retryMicrophonePermission()
     })
     // Palette updates are the only live renderer setting. Runtime settings
     // trigger a supervised backend restart in main.
-    window.novaAudioAgentDesktop.settings?.onChanged?.(next => visual.setPalette(next.palette))
+    window.novaAudioAgentDesktop.settings?.onChanged?.(next => paletteHover.reset(next.palette))
     window.novaAudioAgentDesktop.memoryBoard.onFetch(requestId => {
       send({ type: 'memory.board.request', request_id: requestId })
     })
@@ -878,7 +932,7 @@ async function boot() {
     if (bootstrap.backend) connectBackend(bootstrap.backend)
     else handleBackendExit()
     const microphone = await refreshMicrophonePermission()
-    if (microphone === 'granted' && bootstrap.settings?.startListeningOnLaunch === true) {
+    if (microphone === 'granted') {
       await activateCapture()
     }
   } catch {
@@ -916,14 +970,14 @@ function finishDrag(cancelled = false) {
 
 orb.addEventListener('pointerup', () => finishDrag(false))
 orb.addEventListener('pointercancel', () => finishDrag(true))
-orb.addEventListener('click', () => {
-  if (dragGesture.consumeClick()) void activateCapture()
-})
+orb.addEventListener('pointerenter', () => paletteHover.enter())
+orb.addEventListener('pointerleave', () => paletteHover.leave())
 orb.addEventListener('contextmenu', event => {
   event.preventDefault()
   window.novaAudioAgentDesktop.orbMenu.show()
 })
 muteToggle.addEventListener('click', () => toggleMute())
+speakerToggle.addEventListener('click', () => { void toggleOutputMuted() })
 cameraToggle.addEventListener('click', () => { void cameraToggleController.toggle() })
 openSettingsButton.addEventListener('click', () => window.novaAudioAgentDesktop.orbMenu.openSettings?.())
 confirmationConfirm.addEventListener('click', () => {
@@ -935,6 +989,9 @@ confirmationCancel.addEventListener('click', () => {
 window.addEventListener('beforeunload', () => {
   socketRouter.dispose()
   cameraController.dispose()
+  reducedMotionQuery.removeEventListener('change', syncPaletteAccessibility)
+  highContrastQuery.removeEventListener('change', syncPaletteAccessibility)
+  paletteHover.destroy()
   visual.destroy()
   void deactivateCapture()
 })

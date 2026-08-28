@@ -36,6 +36,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:native-audio:clear',
     'nova:native-audio:event',
     'nova:native-audio:play',
+    'nova:native-audio:playback-muted',
     'nova:native-audio:terminal',
     'nova:orb-menu:show',
     'nova:projects:repair',
@@ -537,9 +538,31 @@ test('drag and orb menu paths stay sender validated and bounded', async () => {
   assert.match(mainSource, /validDragDelta/)
   assert.match(mainSource, /label: '退出 Nova Audio Agent'/)
   assert.match(mainSource, /click: \(\) => app\.quit\(\)/)
-  assert.match(rendererSource, /dragGesture\.consumeClick\(\)/)
+  assert.doesNotMatch(rendererSource, /orb\.addEventListener\('click'/)
   assert.match(rendererSource, /event\.preventDefault\(\)/)
   assert.match(rendererSource, /window\.novaAudioAgentDesktop\.orbMenu\.show\(\)/)
+})
+
+test('renderer always activates after microphone preflight and never delegates activation to the orb', async () => {
+  const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  assert.match(renderer, /if \(microphone === 'granted'\) \{\s*await activateCapture\(\)\s*\}/)
+  assert.match(renderer, /async function retryMicrophonePermission\(\)/)
+  assert.match(renderer, /const microphone = await refreshMicrophonePermission\(\)/)
+  assert.match(renderer, /if \(microphone === 'granted' && !axes\.activated\) await activateCapture\(\)/)
+  assert.match(renderer, /microphone\.onRetry\(\(\) => \{\s*void retryMicrophonePermission\(\)\s*\}\)/)
+  assert.doesNotMatch(renderer, /startListeningOnLaunch/)
+  assert.doesNotMatch(renderer, /orb\.addEventListener\('click'/)
+})
+
+test('speaker output state serializes native mute and disables concurrent toggles', async () => {
+  const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
+
+  assert.match(renderer, /new OutputMuteController\(/)
+  assert.match(renderer, /apply: muted => window\.novaAudioAgentDesktop\.nativeAudio\.setPlaybackMuted\(muted\)/)
+  assert.match(renderer, /axes\.outputMutePending = pending/)
+  assert.match(renderer, /speakerToggle\.disabled = axes\.outputMutePending/)
+  assert.match(renderer, /speakerToggle\.addEventListener\('click', \(\) => \{ void toggleOutputMuted\(\) \}\)/)
 })
 
 test('the mute toggle drops microphone input at both ingress points', async () => {

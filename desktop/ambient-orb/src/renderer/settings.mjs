@@ -33,12 +33,7 @@ const SECRET_LABELS = {
 const secretRevisions = createSecretRevisions(SECRET_KEYS)
 
 const statusLabel = document.querySelector('#status')
-const backendStatus = document.querySelector('#backend-status')
 const restartNotice = document.querySelector('#restart-notice')
-const backendRetry = document.querySelector('#backend-retry')
-const microphoneStatus = document.querySelector('#microphone-status')
-const microphoneRetry = document.querySelector('#microphone-retry')
-const startListeningOnLaunch = document.querySelector('#startListeningOnLaunch')
 const warning = document.querySelector('#keyring-warning')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
 const proactivityInputs = [...document.querySelectorAll('input[name="proactivity"]')]
@@ -150,36 +145,6 @@ function renderCodexStatus(view) {
 
 function render(view, drafts) {
   if (!view) return
-  const backendCopy = {
-    connected: 'NovaAudioAgent 已连接',
-    starting: 'NovaAudioAgent 正在启动…',
-    reconnecting: `NovaAudioAgent 正在重连${view.backendRetryInMs === null ? '' : `（${view.backendRetryInMs} ms）`}…`,
-    configuration_required: '需要补全配置；保存设置后再重试。',
-    authentication_failed: '服务鉴权失败；请检查当前管线使用的 API Key。',
-    unavailable: '后台或 Codex 当前不可用；请检查安装后重试。',
-    stopped: 'NovaAudioAgent 后台已停止。',
-  }
-  const backendReady = view.backendStatus === 'connected'
-  backendStatus.textContent = backendCopy[view.backendStatus] ?? 'NovaAudioAgent 后台状态未知。'
-  backendStatus.dataset.ready = backendReady ? '1' : '0'
-  backendRetry.hidden = ![
-    'configuration_required', 'authentication_failed', 'unavailable', 'stopped',
-  ].includes(view.backendStatus)
-  const microphoneCopy = {
-    checking: '正在检查麦克风权限与输入设备…',
-    granted: '麦克风可用；检测已释放设备，不会持续监听。',
-    permission_denied: '麦克风权限被拒绝；请在系统隐私设置中允许 Nova Audio Agent，然后重启应用。',
-    restricted: '麦克风被系统策略限制；请联系设备管理员或检查家长控制。',
-    no_input_device: '未检测到麦克风；请连接或启用输入设备后重新检测。',
-    device_busy: '麦克风正被其他应用独占；关闭占用程序后重新检测。',
-    capture_unavailable: '当前环境无法启动麦克风采集；请检查音频驱动与系统服务。',
-    audio_pipeline_error: '麦克风已打开，但音频处理管线启动失败；请重新检测或重启应用。',
-  }
-  microphoneStatus.textContent = microphoneCopy[view.microphoneStatus]
-    ?? '尚未收到麦克风检测结果。'
-  microphoneStatus.dataset.ready = view.microphoneStatus === 'granted' ? '1' : '0'
-  microphoneRetry.hidden = ['checking', 'granted'].includes(view.microphoneStatus)
-  startListeningOnLaunch.checked = view.startListeningOnLaunch === true
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
   for (const input of pipelineModeInputs) input.checked = input.value === view.pipelineMode
@@ -350,10 +315,6 @@ for (const input of paletteInputs) {
     void push({ palette: input.value }, '配色已更新')
   })
 }
-startListeningOnLaunch.addEventListener('change', () => {
-  controller.applyLocal({ startListeningOnLaunch: startListeningOnLaunch.checked })
-  void push({ startListeningOnLaunch: startListeningOnLaunch.checked }, '麦克风启动设置已保存')
-})
 for (const input of proactivityInputs) {
   input.addEventListener('change', () => {
     controller.applyLocal({ proactivity: input.value })
@@ -399,24 +360,6 @@ codexRescan.addEventListener('click', async () => {
     statusLabel.textContent = 'Codex 扫描完成'
   } catch {
     statusLabel.textContent = 'Codex 扫描失败'
-  }
-})
-backendRetry.addEventListener('click', async () => {
-  statusLabel.textContent = '正在重试后台连接…'
-  try {
-    controller.syncView(await api.retryBackend(), {trackRestart: false})
-    statusLabel.textContent = '已发起后台重试'
-  } catch {
-    statusLabel.textContent = '后台重试失败'
-  }
-})
-microphoneRetry.addEventListener('click', async () => {
-  statusLabel.textContent = '正在重新检测麦克风…'
-  try {
-    controller.syncView(await api.retryMicrophone(), {trackRestart: false})
-    statusLabel.textContent = '已发起麦克风检测'
-  } catch {
-    statusLabel.textContent = '麦克风检测失败'
   }
 })
 document.querySelector('#projects-repair').addEventListener('click', async () => {

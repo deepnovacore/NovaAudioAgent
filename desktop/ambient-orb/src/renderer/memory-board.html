@@ -8,11 +8,17 @@
     <link rel="stylesheet" href="./memory-board.css">
   </head>
   <body>
-    <header>
-      <h1>Memory Board</h1>
-      <button id="refresh" type="button">刷新</button>
-      <button id="export" type="button" disabled>导出</button>
-      <span id="status" aria-live="polite"></span>
+    <header class="board-header">
+      <div class="board-title">
+        <span class="eyebrow">NOVA / CONTEXT OBSERVATORY</span>
+        <h1>Memory Board</h1>
+        <p>按频道查看 Nova 当前持有的上下文快照</p>
+      </div>
+      <div class="board-actions">
+        <span id="status" aria-live="polite"></span>
+        <button id="refresh" type="button">刷新</button>
+        <button id="export" type="button" disabled>导出</button>
+      </div>
     </header>
     <nav class="board-tabs" role="tablist" aria-label="Memory Board 视图">
       <button id="memory-tab" type="button" role="tab" aria-selected="true" aria-controls="memory-panel">Memory</button>
