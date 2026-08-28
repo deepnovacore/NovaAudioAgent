@@ -75,6 +75,7 @@ export interface SessionProvider {
   }>
   retireHostItem?(providerItemId: string): Promise<boolean>
   createResponse(intent: HostResponseIntent): Promise<void>
+  ensureResponse?(): Promise<void>
   cancelResponse(responseId: string): Promise<void>
   close(): Promise<void>
 }
@@ -205,6 +206,11 @@ export class RealtimeSession {
     ) return false
     this.#state.suppressResponse(responseId)
     return true
+  }
+
+  /** Revoke a response that belongs to a host-settled decision, even before its id is known. */
+  async quarantineActiveOrAwaitingResponse(): Promise<boolean> {
+    return this.#fenceAndCancelActiveResponse()
   }
 
   eventWasSpoken(eventId: string): boolean {
@@ -586,6 +592,26 @@ export class RealtimeSession {
     return this.#injectHostItem(item, {confirmationTimeout: null, asUserActivation: false})
   }
 
+  /** Request one normal provider response for the user turn that already reached transcript final. */
+  async requestUserResponse(): Promise<boolean> {
+    if (
+      this.#provider.ensureResponse === undefined
+      || this.#providerResponseId !== null
+      || this.#state.pendingResponseCount > 0
+      || this.#floor.state === 'user_speaking'
+      || this.#playback.current !== null
+      || this.#playback.hasUnreportedFence
+    ) return false
+    this.#awaitingUserResponse = true
+    try {
+      await this.#provider.ensureResponse()
+      return true
+    } catch (cause) {
+      this.#awaitingUserResponse = false
+      throw new RealtimeDeliveryError(`user response request failed: ${String(cause)}`)
+    }
+  }
+
   /** Retire one exact provider-visible host item without weakening the answered-event ledger. */
   async retireHostEvent(eventId: string): Promise<boolean> {
     const identity = this.#state.injectedProviderItem(eventId)
@@ -672,7 +698,10 @@ export class RealtimeSession {
    * The return value is the contract: a refusal is a decision, not an omission. Several guards
    * differ *only* in the boolean they return, which is why the fixtures record it per step.
    */
-  async accept(event: RealtimeProviderEvent): Promise<boolean> {
+  async accept(
+    event: RealtimeProviderEvent,
+    options: {readonly allowResponseStartDuringUserSpeech?: boolean} = {},
+  ): Promise<boolean> {
     // An event from another provider session describes a world this session no longer has.
     if (event.session_epoch !== this.sessionEpoch) return false
 
@@ -680,7 +709,10 @@ export class RealtimeSession {
       case 'tool_call_ready':
         return this.#acceptToolCall(event.response_id)
       case 'response_started':
-        return this.#acceptResponseStarted(event.response_id)
+        return this.#acceptResponseStarted(
+          event.response_id,
+          options.allowResponseStartDuringUserSpeech === true,
+        )
       case 'response_audio_delta':
         return this.#acceptAudioDelta(event.response_id, event.pcm)
       case 'response_transcript_final':
@@ -703,6 +735,10 @@ export class RealtimeSession {
 
   #acceptToolCall(eventResponseId: string | null): boolean {
     const responseId = eventResponseId ?? this.#providerResponseId
+    if (responseId !== null) {
+      const turn = this.#state.providerTurn(responseId)
+      if (turn !== undefined && (turn.locally_fenced || turn.phase !== 'active')) return false
+    }
     if (responseId !== null && this.#responseItems.has(this.#turnKey(responseId))) {
       // Host-created responses narrate an injected fact or continue an already accepted tool
       // protocol. They never authorize a new tool.
@@ -711,7 +747,10 @@ export class RealtimeSession {
     return true
   }
 
-  async #acceptResponseStarted(responseId: string): Promise<boolean> {
+  async #acceptResponseStarted(
+    responseId: string,
+    allowDuringUserSpeech: boolean,
+  ): Promise<boolean> {
     this.#awaitingUserResponse = false
     let turn = this.#state.providerTurn(responseId)
     if (turn !== undefined && (turn.locally_fenced || turn.phase !== 'active')) return false
@@ -730,7 +769,7 @@ export class RealtimeSession {
     }
     // The user holds the floor, so the queued host utterance loses its turn rather than talking
     // over them.
-    if (this.#floor.state === 'user_speaking') {
+    if (this.#floor.state === 'user_speaking' && !allowDuringUserSpeech) {
       await this.#fencePendingResponse(responseId)
       return false
     }
@@ -1094,6 +1133,11 @@ export class RealtimeSession {
       if (this.#state.pendingResponseCount > 0 && !this.#fenceNextResponse) {
         this.#fenceNextResponse = true
         this.#markHeadPendingFenced()
+        this.#state.advanceSnapshot()
+        return true
+      }
+      if (this.#awaitingUserResponse && !this.#fenceNextResponse) {
+        this.#fenceNextResponse = true
         this.#state.advanceSnapshot()
         return true
       }

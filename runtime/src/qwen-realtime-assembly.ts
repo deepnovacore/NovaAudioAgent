@@ -108,6 +108,7 @@ export function buildQwenRealtimeAssembly(
     realtimeFrontbrain: true,
     ...(options.sink === undefined ? {} : {sink: options.sink}),
     ...(options.metrics === undefined ? {} : {metrics: options.metrics}),
+    ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     ...(options.media === undefined ? {} : {media: options.media}),
     ...((options.executors === undefined && options.codexResource === undefined)
       ? {}

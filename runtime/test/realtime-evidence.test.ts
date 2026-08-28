@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { memoryItemSchema, type MemoryItem } from '../src/memory.js'
-import { finalSpeechView, safeMemoryEvidence } from '../src/realtime/evidence.js'
+import {
+  finalSpeechView,
+  genericFinalSpeechView,
+  safeMemoryEvidence,
+} from '../src/realtime/evidence.js'
 
 function item(
   channel: string,
@@ -78,6 +82,30 @@ test('Codex refusal is neither failure nor uncertainty', () => {
     op: 'project', code: 'workspace_name_conflict', recoverable: true,
     result: {final_message: {text: 'provider supplied refusal detail'}},
   }), 'Codex 未执行，需要选择或修正请求（workspace_name_conflict）')
+})
+
+test('a camera permission refusal speaks the host-provided recovery instruction', () => {
+  assert.equal(genericFinalSpeechView('Guard', 'refused', {
+    error: 'camera_permission_denied',
+    recoverable: true,
+    message: '权限不足，无法创建 Guard 任务。请授予摄像头权限后重试。',
+  }), '权限不足，无法创建 Guard 任务。请授予摄像头权限后重试。')
+})
+
+test('the safe Guard projection preserves only the trusted camera recovery fact', () => {
+  const refusal = {
+    error: 'camera_permission_denied',
+    recoverable: true,
+    message: '权限不足，无法创建 Guard 任务。请授予摄像头权限后重试。',
+  }
+  assert.equal(safeMemoryEvidence(item('guard', refusal, {
+    outcome: 'refused',
+    trust: 'trusted_system',
+  })), '权限不足，无法创建 Guard 任务。请授予摄像头权限后重试。')
+  assert.equal(safeMemoryEvidence(item('guard', {
+    ...refusal,
+    message: 'NEVER-TRUST-THIS',
+  }, {outcome: 'refused'})), 'guard 未执行，需要选择或修正请求')
 })
 
 test('Codex confirmation projection rejects a forged prompt instead of repeating it', () => {

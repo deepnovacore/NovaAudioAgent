@@ -89,6 +89,39 @@ test('a matching structured false decision cancels without authority', () => {
   assert.equal(controller.pending, false)
 })
 
+test('an exact banner decision shares proposal authority and stale clicks fail closed', () => {
+  const controller = createController()
+  const first = prepareSelect(controller)
+
+  assert.equal(controller.view.pending_confirmation_id, first.proposal_id)
+  assert.equal(controller.acceptDirectDecision({
+    proposalId: 'proposal-stale',
+    confirmed: true,
+  }).kind, 'ignored')
+  assert.equal(controller.pending, true)
+
+  const cancelled = controller.acceptDirectDecision({
+    proposalId: first.proposal_id,
+    confirmed: false,
+  })
+  assert.equal(cancelled.kind, 'cancelled')
+  assert.equal(controller.pending, false)
+  assert.equal(controller.view.pending_confirmation_id, undefined)
+
+  const second = prepareSelect(controller)
+  const confirmed = controller.acceptDirectDecision({
+    proposalId: second.proposal_id,
+    confirmed: true,
+  })
+  assert.equal(confirmed.kind, 'confirmed')
+  assert.ok(confirmed.operation)
+  assert.equal(controller.claimConfirmed(confirmed.operation), true)
+  assert.equal(controller.acceptDirectDecision({
+    proposalId: second.proposal_id,
+    confirmed: true,
+  }).kind, 'ignored')
+})
+
 test('wrong proposal ID and non-boolean decisions are invalid and never commit', () => {
   const controller = createController()
   const proposal = prepareSelect(controller)
@@ -344,6 +377,7 @@ test('public view and prompt expose labels but no private bindings', () => {
   assert.equal(proposal.confirmation_prompt, '准备切换到天气看板，并继续 Session“登录修复”，请确认或取消。')
   assert.deepEqual(controller.view, {
     pending_confirmation: true,
+    pending_confirmation_id: proposal.proposal_id,
     workspace_display_name: '天气看板',
     session_title: '登录修复',
     pending_action: 'resume_session',
@@ -353,7 +387,7 @@ test('public view and prompt expose labels but no private bindings', () => {
   })
   const rendered = JSON.stringify(controller.view)
   for (const privateValue of [
-    'workspace-secret', 'session-secret', proposal.proposal_id, 'user:1', '继续修复',
+    'workspace-secret', 'session-secret', 'user:1', '继续修复',
   ]) {
     assert.equal(rendered.includes(privateValue), false)
     assert.equal(proposal.confirmation_prompt.includes(privateValue), false)

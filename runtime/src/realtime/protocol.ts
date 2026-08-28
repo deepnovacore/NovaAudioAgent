@@ -398,6 +398,8 @@ export interface RealtimeProvider {
   /** Remove a previously confirmed host item from the provider conversation, when supported. */
   retireHostItem?(providerItemId: string, signal: AbortSignal): Promise<void>
   createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void>
+  /** Ask the provider to finish the current user turn with normal tool availability. */
+  ensureResponse?(signal: AbortSignal): Promise<void>
   cancelResponse(responseId: string, signal: AbortSignal): Promise<void>
   events(signal: AbortSignal): AsyncIterable<unknown>
   close(): Promise<void>

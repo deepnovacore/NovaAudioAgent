@@ -31,6 +31,9 @@ app.whenReady().then(async () => {
         const label = document.getElementById('codex-label')
         const operation = document.getElementById('codex-operation')
         const expiry = document.getElementById('codex-expiry')
+        const actions = document.getElementById('codex-confirmation-actions')
+        const confirm = document.getElementById('codex-confirm')
+        const cancel = document.getElementById('codex-cancel')
         label.dataset.mode = 'confirmation'
         operation.textContent = '恢复 “' + '工'.repeat(120) + ' / ' + '任'.repeat(120) + '”'
         expiry.textContent = '尚未执行 · 90 秒后自动取消'
@@ -54,6 +57,12 @@ app.whenReady().then(async () => {
               ...rect(expiry),
               clientWidth: expiry.clientWidth,
               scrollWidth: expiry.scrollWidth,
+            },
+            actions: rect(actions),
+            confirm: rect(confirm),
+            cancel: {
+              ...rect(cancel),
+              color: getComputedStyle(cancel).color,
             },
           })
         }))

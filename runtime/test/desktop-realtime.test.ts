@@ -56,6 +56,10 @@ function serviceHarness(): ServiceHarness {
         calls.push(`cleared:${utteranceId}:${epoch}:${playedMs ?? 'null'}`)
         return true
       },
+      projectConfirmationDecision: (proposalId, confirmed) => {
+        calls.push(`project-decision:${proposalId}:${confirmed}`)
+        return Promise.resolve()
+      },
     },
   }
 }

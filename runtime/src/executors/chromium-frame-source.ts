@@ -11,7 +11,7 @@ import {
   type CapturedCameraFrame,
 } from '../desktop.js'
 import {CameraError} from './camera.js'
-import type {Frame, FrameSource} from './watcher.js'
+import type {Frame, FrameSource, ObservationAdmission} from './watcher.js'
 
 export type ChromiumCameraSource = 'local' | 'file'
 
@@ -104,6 +104,24 @@ export class ChromiumFrameSource implements FrameSource {
       if (this.#source === 'local') return
       this.#epoch = readClock(this.#clock)
     })
+  }
+
+  /** Admit a user-requested monitoring task before Watch/Guard publishes `armed`. */
+  async admitObservation(): Promise<ObservationAdmission> {
+    if (this.#source === 'file') return 'granted'
+    if (this.#transport.requestCameraPermission === undefined) return 'unavailable'
+    try {
+      const status = await this.#transport.requestCameraPermission()
+      if (
+        status === 'granted'
+        || status === 'denied'
+        || status === 'restricted'
+        || status === 'unavailable'
+      ) return status
+    } catch {
+      // The authenticated desktop owner may disconnect while the OS prompt is open.
+    }
+    return 'unavailable'
   }
 
   #captureRequest(): CameraCaptureRequest {

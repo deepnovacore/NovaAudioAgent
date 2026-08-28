@@ -41,6 +41,43 @@ function cameraRequest(id) {
   return JSON.stringify({type: 'camera.capture', request_id: id, source: 'local'})
 }
 
+function permissionRequest(id) {
+  return JSON.stringify({type: 'camera.permission', request_id: id})
+}
+
+test('an open camera permission prompt cannot block playback and control traffic', async () => {
+  const permission = deferred()
+  const genericDone = deferred()
+  const seen = []
+  const router = new RendererSocketRouter({
+    cameraController: {enqueue() {}, closeGeneration() {}},
+    handleGeneric: async event => {
+      if (typeof event.data === 'string' && JSON.parse(event.data).type === 'camera.permission') {
+        seen.push('permission-start')
+        await permission.promise
+        seen.push('permission-done')
+        return
+      }
+      seen.push(typeof event.data === 'string' ? JSON.parse(event.data).type : 'pcm')
+      if (seen.includes('playback.clear') && seen.includes('pcm')) genericDone.resolve()
+    },
+  })
+  const connection = router.connect(new FakeSocket('permission'))
+  try {
+    connection.onMessage({data: permissionRequest('camera-permission')})
+    connection.onMessage({data: JSON.stringify({
+      type: 'playback.clear', utterance_id: 'u', generation_epoch: 1,
+    })})
+    connection.onMessage({data: new Uint8Array([0, 1]).buffer})
+
+    await settleWithin(genericDone.promise, 'generic traffic behind permission prompt')
+    assert.deepEqual(seen, ['permission-start', 'playback.clear', 'pcm'])
+  } finally {
+    permission.resolve()
+    router.dispose()
+  }
+})
+
 test('held camera enqueue never blocks generic traffic or the next camera request', async () => {
   const held = deferred()
   const secondCamera = deferred()

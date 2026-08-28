@@ -276,6 +276,19 @@ export class RealtimeProviderSession {
     }
   }
 
+  async ensureResponse(signal?: AbortSignal): Promise<void> {
+    if (this.#provider.ensureResponse === undefined) {
+      throw new RealtimeProtocolError('provider response ensuring is unavailable')
+    }
+    const owner = this.#requiredConnectionOwner()
+    try {
+      await this.#provider.ensureResponse(combinedSignal(owner.controller.signal, signal))
+      this.#assertCurrentConnection(owner)
+    } catch (error) {
+      throw protocolFailure('provider response ensuring failed', error)
+    }
+  }
+
   async cancelResponse(responseId: string, signal?: AbortSignal): Promise<void> {
     const parsed = realtimeIdentifierSchema.parse(responseId)
     const owner = this.#requiredConnectionOwner()

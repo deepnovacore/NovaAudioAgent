@@ -39,6 +39,7 @@ import {
   WATCH_MANIFEST,
   WatchAdapter,
   type FrameSource,
+  type ObservationAdmission,
 } from './executors/watcher.js'
 import { MediaStore } from './media-store.js'
 import type { ExecutorManifest } from './ports.js'
@@ -47,6 +48,7 @@ import { buildSimulator, simManifestRegistry } from './sims.js'
 import { compileToolSchema, type CompiledTools } from './tool-schema.js'
 import type { ModelCall } from './runtime.js'
 import type { Slot } from './slots.js'
+import type {RealtimeTelemetry} from './realtime/telemetry.js'
 
 export class AssemblyError extends Error {
   constructor(message: string) {
@@ -79,6 +81,7 @@ export interface AssemblyOptions {
   readonly includeMemoryRecall?: boolean
   /** Qwen/other provider frontbrains own the user turn, so no competing fast text port is built. */
   readonly realtimeFrontbrain?: boolean
+  readonly telemetry?: RealtimeTelemetry
 }
 
 export interface Assembly {
@@ -155,6 +158,14 @@ export function isFileBackedFrameSource(source: FrameSource): source is FileBack
     && typeof source.restart === 'function'
 }
 
+interface AdmissionGatedFrameSource extends FrameSource {
+  admitObservation(): Promise<ObservationAdmission>
+}
+
+function isAdmissionGatedFrameSource(source: FrameSource): source is AdmissionGatedFrameSource {
+  return 'admitObservation' in source && typeof source.admitObservation === 'function'
+}
+
 /**
  * Build the runtime the desktop entry serves.
  *
@@ -184,6 +195,26 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
 
   const search = new SearchAdapter(searchTransport)
   const camera = new CamAdapter(frameSource, mediaStore)
+  const admissionOptions = isAdmissionGatedFrameSource(frameSource)
+    ? {
+        admitObservation: () => frameSource.admitObservation(),
+        ...(options.telemetry === undefined
+          ? {}
+          : {onObservationAdmission: (
+              status: ObservationAdmission,
+              executor: 'watch' | 'guard',
+            ): void => {
+              try {
+                options.telemetry?.record('camera.admission', {
+                  executor,
+                  status,
+                  phase: 'pre_arm',
+                  admitted: status === 'granted',
+                })
+              } catch { /* telemetry cannot change admission */ }
+            }}),
+      }
+    : {}
   const watch = new WatchAdapter({
     manifest: WATCH_MANIFEST,
     source: frameSource,
@@ -191,6 +222,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     mediaStore,
     model: watchModel,
     captureEnabled,
+    ...admissionOptions,
   })
   const guard = new WatchAdapter({
     manifest: GUARD_MANIFEST,
@@ -199,6 +231,7 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
     mediaStore,
     model: watchModel,
     captureEnabled,
+    ...admissionOptions,
     ...(isFileBackedFrameSource(frameSource)
       ? {prepareObservation: () => frameSource.restart()}
       : {}),

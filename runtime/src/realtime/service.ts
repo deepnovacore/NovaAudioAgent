@@ -102,6 +102,13 @@ interface BoundToolOrigin {
   readonly originRef: string | null
 }
 
+interface ProjectConfirmationDecisionRetry {
+  readonly item_key: string
+  readonly source_response_id: string
+  requested: boolean
+  retry_response_id: string | null
+}
+
 function projectConfirmationDecisionArguments(
   value: unknown,
 ): {readonly proposalId: string; readonly confirmed: boolean} | null {
@@ -336,6 +343,8 @@ export class RealtimeService {
   readonly #continuationBatches = new Map<string, ContinuationBatch>()
   readonly #continuationFifo: string[] = []
   readonly #semanticAcknowledgements = new Map<string, SemanticAcknowledgement>()
+  /** Responses whose renderer generation was fenced because the user locally took the floor. */
+  readonly #localSpeechInterruptedResponses = new Map<string, null>()
   /** Provider-visible progress events and their owners, bounded in provider-ledger order. */
   readonly #delegateHostEvents = new Map<string, string>()
   /** Best-effort provider cleanup is observed so it cannot reject outside service ownership. */
@@ -369,11 +378,16 @@ export class RealtimeService {
   readonly #projectConfirmationClosingItems = new Set<string>()
   /** Responses a confirmation has blocked, so the block sticks for the whole turn. */
   readonly #projectConfirmationResponses = new Set<string>()
+  /** Settled UI decisions still quarantine their exact old response until its terminal arrives. */
+  readonly #projectConfirmationQuarantinedResponses = new Set<string>()
+  /** Epoch whose requested confirmation retry has not revealed its response id yet. */
+  #projectConfirmationPendingQuarantineEpoch: number | null = null
   readonly #projectConfirmationClosingCalls = new Set<string>()
   /** Insertion-ordered so the oldest closed call is the one evicted. */
   readonly #projectConfirmationClosedCalls = new Map<string, null>()
   #projectConfirmationBlocking = false
   #projectConfirmationFencePending = false
+  #projectConfirmationDecisionRetry: ProjectConfirmationDecisionRetry | null = null
   readonly #projectExpiryBatches: ProjectExpiryBatch[] = []
   #projectExpiryDraining: Promise<void> | null = null
   #unsubscribeProjectExpiry: (() => void) | null = null
@@ -565,7 +579,117 @@ export class RealtimeService {
   }
 
   async localSpeechOnset(speechId: string): Promise<void> {
+    const generation = this.session.currentGeneration
+    if (generation !== null) {
+      const key = callKey(generation.session_epoch, generation.response_id)
+      this.#localSpeechInterruptedResponses.delete(key)
+      this.#localSpeechInterruptedResponses.set(key, null)
+      while (
+        this.#localSpeechInterruptedResponses.size
+        > MAX_TRACKED_SEMANTIC_ACKNOWLEDGEMENTS
+      ) {
+        const oldest = this.#localSpeechInterruptedResponses.keys().next()
+        if (oldest.done) break
+        this.#localSpeechInterruptedResponses.delete(oldest.value)
+      }
+    }
     await this.session.localSpeechOnset(speechId)
+  }
+
+  /** Settle the exact proposal shown by the renderer; the controller remains the sole authority. */
+  async projectConfirmationDecision(proposalId: string, confirmed: boolean): Promise<void> {
+    const controller = this.#projectConfirmation
+    const lifecycleId = controller?.lifecycleId ?? 'none'
+    this.#telemetry?.record('project_confirmation.ui_decision_requested', {
+      proposal_id: proposalId,
+      confirmed,
+      lifecycle_id: lifecycleId,
+    })
+    if (controller === undefined) return
+    const outcome = controller.acceptDirectDecision({proposalId, confirmed})
+    if (outcome.kind === 'ignored') {
+      this.#telemetry?.record('project_confirmation.ui_decision_refused', {
+        proposal_id: proposalId,
+        reason: 'stale_or_not_pending',
+      })
+      return
+    }
+
+    // A click wins the same one-shot authority race as a function call. Close every voice carrier
+    // before awaiting commit I/O so a late provider call cannot act on the settled proposal.
+    const items = [...this.#projectConfirmationItems].map(parseCallKey)
+    const retry = this.#projectConfirmationDecisionRetry
+    const reconnectOutstandingRetry = retry?.requested === true
+      && retry.retry_response_id === null
+      && parseCallKey(retry.item_key).sessionEpoch === this.session.sessionEpoch
+    if (reconnectOutstandingRetry) {
+      this.#projectConfirmationPendingQuarantineEpoch = this.session.sessionEpoch
+    }
+    for (const item of items) this.#beginProjectConfirmationClose(item.sessionEpoch, item.id)
+    for (const response of this.#projectConfirmationResponses) {
+      const parsed = parseCallKey(response)
+      if (parsed.sessionEpoch === this.session.sessionEpoch) {
+        this.#projectConfirmationQuarantinedResponses.add(response)
+        this.session.suppressResponse(parsed.id)
+      }
+    }
+    this.session.armPendingResponseFence()
+    if (this.#projectConfirmationResponses.size > 0 || reconnectOutstandingRetry) {
+      try {
+        await this.session.quarantineActiveOrAwaitingResponse()
+      } catch (failure) {
+        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+          ? failure
+          : new RealtimeDeliveryError(String(failure)))
+      }
+    }
+
+    let state = outcome.kind === 'confirmed' ? 'accepted' : 'refused'
+    let text = outcome.response_text
+    try {
+      for (const item of items) await this.#closeConfirmationDeferredCalls(item.id)
+      if (outcome.kind === 'confirmed' && outcome.operation !== null) {
+        const committed = await this.#commitConfirmedProjectOperation(
+          outcome.operation,
+          outcome.operation.origin_ref,
+        )
+        state = committed.state
+        text = committed.text
+      }
+      if (reconnectOutstandingRetry) {
+        try {
+          await this.#reconnectProviderSession({expectedEpoch: this.session.sessionEpoch})
+        } catch (failure) {
+          this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+            ? failure
+            : new RealtimeDeliveryError(String(failure)))
+        }
+      }
+    } finally {
+      for (const item of items) this.#endProjectConfirmationClose(item.sessionEpoch, item.id)
+      this.#projectConfirmationItems.clear()
+      this.#projectConfirmationShadowItems.clear()
+      this.#projectConfirmationClosingItems.clear()
+      this.#projectConfirmationResponses.clear()
+      this.#projectConfirmationDecisionRetry = null
+      this.#projectConfirmationBlocking = false
+      this.#projectConfirmationFencePending = false
+    }
+    // Expiry publishes through its observer-owned cleanup batch. Queuing here as well would create
+    // two differently keyed host facts for the same deadline transition.
+    if (outcome.kind !== 'expired' && text !== null && text !== '') {
+      this.#queueProjectConfirmationFact(
+        text,
+        lifecycleId,
+        `ui-decision:${outcome.kind}:${state}`,
+      )
+    }
+    this.#publishProjectView()
+    this.#telemetry?.record('project_confirmation.ui_decision_completed', {
+      proposal_id: proposalId,
+      outcome: outcome.kind,
+      state,
+    })
   }
 
   async waitStopped(): Promise<void> {
@@ -1273,6 +1397,16 @@ export class RealtimeService {
           generation?.session_epoch === event.session_epoch
           && generation.response_id === event.response_id
         ) continue
+        // Only a standalone fallback owns its semantic event as a provider fact. Continuations leave
+        // `provider_event_id` null in `#bindContinuation`, so this equality is the explicit ownership
+        // boundary: preserve the injected fact, but return its response authority for another turn.
+        if (
+          acknowledgement.provider_event_id === acknowledgement.event_id
+          && !this.session.reopenHostResponse(acknowledgement.event_id)
+        ) {
+          this.#onDiagnostic('[realtime-diagnostic] semantic_ack_reopen_failed')
+          continue
+        }
         acknowledgement.phase = 'pending'
         acknowledgement.response_id = null
         acknowledgement.response_session_epoch = null
@@ -2145,8 +2279,32 @@ export class RealtimeService {
     const blockedConfirmationTool = event.kind === 'tool_call_ready'
       && this.#blocksProjectConfirmationTool(event)
       && !isConfirmationDecision
-    const accepted = blockedConfirmationTool ? false : await this.session.accept(event)
-
+    // Qwen may create the response that will emit the confirmation function before VAD reports
+    // speech end. That response is an authorization carrier, not an audible assistant turn. Let it
+    // acquire an origin while the user still owns the floor, but never bypass the one-shot fence for
+    // a stale host-requested confirmation question.
+    const confirmationFencePendingAtStart = this.#projectConfirmationFencePending
+    const confirmationResponseStartsDuringSpeech = event.kind === 'response_started'
+      && event.session_epoch === this.session.sessionEpoch
+      && this.session.floor.state === 'user_speaking'
+      && !this.#projectConfirmationFencePending
+      && [...this.#projectConfirmationItems]
+        .some(key => parseCallKey(key).sessionEpoch === event.session_epoch)
+    const accepted = blockedConfirmationTool
+      ? false
+      : await this.session.accept(event, {
+          allowResponseStartDuringUserSpeech: confirmationResponseStartsDuringSpeech,
+        })
+    if (
+      event.kind === 'response_started'
+      && this.#projectConfirmationPendingQuarantineEpoch === event.session_epoch
+    ) {
+      this.#projectConfirmationPendingQuarantineEpoch = null
+      this.#projectConfirmationQuarantinedResponses.add(
+        callKey(event.session_epoch, event.response_id),
+      )
+      this.session.suppressResponse(event.response_id)
+    }
     if (
       event.kind === 'response_started'
       && event.session_epoch === this.session.sessionEpoch
@@ -2157,13 +2315,38 @@ export class RealtimeService {
       if (accepted) {
         this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
         if (!this.#responseUserOriginItems.has(callKey(event.session_epoch, event.response_id))) {
-          this.#bindResponseUserOrigin(event.session_epoch, event.response_id)
+          if (!this.#bindProjectConfirmationRetryResponse(event.session_epoch, event.response_id)) {
+            this.#bindResponseUserOrigin(event.session_epoch, event.response_id)
+          }
+        }
+        if (confirmationResponseStartsDuringSpeech) {
+          // The provider may now finish its structured function call, but it must not start talking
+          // after the user's floor opens. The deterministic confirmation fact remains the reply owner.
+          this.session.suppressResponse(event.response_id)
         }
       }
       // The armed fence has been spent by this response, so it no longer holds the block open.
       this.#projectConfirmationFencePending = false
       this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
         || this.#projectConfirmationClosingItems.size > 0
+    }
+    if (
+      event.kind === 'response_started'
+      && [...this.#projectConfirmationItems]
+        .some(key => parseCallKey(key).sessionEpoch === event.session_epoch)
+    ) {
+      this.#telemetry?.record('project_confirmation.response_started', {
+        session_epoch: event.session_epoch,
+        response_id: event.response_id,
+        accepted,
+        started_during_user_speech: confirmationResponseStartsDuringSpeech,
+        fence_pending: confirmationFencePendingAtStart,
+        origin_bound: accepted && this.#responseUserOriginItems.has(
+          callKey(event.session_epoch, event.response_id),
+        ),
+        confirmation_item_count: this.#projectConfirmationItems.size,
+        proposal_id: this.#projectConfirmation?.lifecycleId ?? 'none',
+      })
     }
     if (event.kind === 'response_started' || event.kind === 'response_audio_delta') {
       const preemption = this.#guardPreemption
@@ -2255,21 +2438,44 @@ export class RealtimeService {
         && this.#isProjectConfirmationItem(event.session_epoch, itemId)
       ) {
         const controller = this.#projectConfirmation
-        const released = controller?.releaseUndecided({
-          epoch: event.session_epoch,
-          itemId,
-        }) === true
-        if (
-          released
-          && controller?.pending === true
-          && !this.session.responseHasSpoken(event.response_id)
-        ) {
-          this.#queueProjectConfirmationRetryFact(
-            this.#projectConfirmationLifecycleId(),
-            callKey(event.session_epoch, itemId),
-          )
+        const itemKey = callKey(event.session_epoch, itemId)
+        const retry = this.#projectConfirmationDecisionRetry
+        const isRetryTerminal = retry?.item_key === itemKey
+          && retry.retry_response_id === event.response_id
+        // A transport-level cancelled/failed terminal can be just as empty as completed. What
+        // matters at this boundary is whether the response supplied any audible decision, not the
+        // provider's terminal label.
+        const silentTerminal = !this.session.responseHasSpoken(event.response_id)
+        this.#telemetry?.record('project_confirmation.response_terminal', {
+          session_epoch: event.session_epoch,
+          response_id: event.response_id,
+          item_id: itemId,
+          status: event.status,
+          transcript_ready: this.#userOriginRefs.has(itemId),
+          decision_seen: false,
+          retry_attempt: isRetryTerminal ? 1 : 0,
+        })
+        if (silentTerminal && controller?.pending === true && !isRetryTerminal) {
+          this.#projectConfirmationDecisionRetry ??= {
+            item_key: itemKey,
+            source_response_id: event.response_id,
+            requested: false,
+            retry_response_id: null,
+          }
+          await this.#maybeRequestProjectConfirmationDecisionRetry(event.session_epoch, itemId)
+        } else {
+          controller?.releaseUndecided({epoch: event.session_epoch, itemId})
+          this.#endProjectConfirmationItem(event.session_epoch, itemId)
+          if (isRetryTerminal) {
+            this.#telemetry?.record('project_confirmation.decision_retry_exhausted', {
+              session_epoch: event.session_epoch,
+              item_id: itemId,
+              response_id: event.response_id,
+              proposal_id: controller?.lifecycleId ?? 'none',
+              reason: 'no_confirmation_function',
+            })
+          }
         }
-        this.#endProjectConfirmationItem(event.session_epoch, itemId)
       }
       if (itemId !== undefined) {
         this.#projectConfirmationShadowItems.delete(callKey(event.session_epoch, itemId))
@@ -2305,6 +2511,9 @@ export class RealtimeService {
         } else {
           await this.#releaseDeferredOriginCalls(event.item_id, originRef)
         }
+        if (this.#isProjectConfirmationItem(event.session_epoch, event.item_id)) {
+          await this.#maybeRequestProjectConfirmationDecisionRetry(event.session_epoch, event.item_id)
+        }
       }
     } else if (event.kind === 'user_transcript_failed') {
       if (accepted) {
@@ -2337,6 +2546,12 @@ export class RealtimeService {
     }
     if (event.kind === 'response_terminal') {
       this.#projectConfirmationResponses.delete(callKey(event.session_epoch, event.response_id))
+      this.#projectConfirmationQuarantinedResponses.delete(
+        callKey(event.session_epoch, event.response_id),
+      )
+      if (this.#projectConfirmationPendingQuarantineEpoch === event.session_epoch) {
+        this.#projectConfirmationPendingQuarantineEpoch = null
+      }
     }
 
     if (accepted) await this.driveContinuations()
@@ -3046,7 +3261,10 @@ export class RealtimeService {
         acknowledgement.phase = 'bound'
         acknowledgement.response_id = responseId
         acknowledgement.response_session_epoch = this.session.sessionEpoch
-        acknowledgement.provider_event_id = state.acceptance.host_item.event_id
+        // The continuation is carried by the tool output itself. That item is protocol state for the
+        // function call, not a provider-visible semantic acknowledgement fact, so the acknowledgement
+        // must never acquire authority to retire or reopen it.
+        acknowledgement.provider_event_id = null
         acknowledgement.binding = 'continuation'
       }
     }
@@ -3137,6 +3355,65 @@ export class RealtimeService {
     this.#publishProjectView()
   }
 
+  /** Bind the provider response created by the one bounded retry to its original user evidence. */
+  #bindProjectConfirmationRetryResponse(epoch: number, responseId: string): boolean {
+    const retry = this.#projectConfirmationDecisionRetry
+    if (retry === null || !retry.requested || retry.retry_response_id !== null) return false
+    const item = parseCallKey(retry.item_key)
+    if (item.sessionEpoch !== epoch) return false
+    const responseKey = callKey(epoch, responseId)
+    this.#responseUserOriginItems.set(responseKey, item.id)
+    retry.retry_response_id = responseId
+    this.#telemetry?.record('project_confirmation.decision_retry_started', {
+      session_epoch: epoch,
+      item_id: item.id,
+      response_id: responseId,
+      source_response_id: retry.source_response_id,
+      proposal_id: this.#projectConfirmation?.lifecycleId ?? 'none',
+    })
+    return true
+  }
+
+  /** Once the same turn's transcript exists, ask Qwen once more for the structured decision. */
+  async #maybeRequestProjectConfirmationDecisionRetry(epoch: number, itemId: string): Promise<void> {
+    const retry = this.#projectConfirmationDecisionRetry
+    const controller = this.#projectConfirmation
+    if (
+      retry?.item_key !== callKey(epoch, itemId)
+      || retry.requested
+      || !this.#userOriginRefs.has(itemId)
+      || controller?.pending !== true
+    ) return
+    retry.requested = true
+    this.#telemetry?.record('project_confirmation.decision_retry_requested', {
+      session_epoch: epoch,
+      item_id: itemId,
+      source_response_id: retry.source_response_id,
+      proposal_id: controller.lifecycleId ?? 'none',
+      transcript_ready: true,
+      retry_attempt: 1,
+    })
+    let requested = false
+    try {
+      requested = await this.session.requestUserResponse()
+    } catch (failure) {
+      this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+        ? failure
+        : new RealtimeDeliveryError(String(failure)))
+    }
+    if (requested) return
+
+    controller.releaseUndecided({epoch, itemId})
+    this.#endProjectConfirmationItem(epoch, itemId)
+    this.#telemetry?.record('project_confirmation.decision_retry_exhausted', {
+      session_epoch: epoch,
+      item_id: itemId,
+      response_id: retry.source_response_id,
+      proposal_id: controller.lifecycleId ?? 'none',
+      reason: 'provider_retry_unavailable',
+    })
+  }
+
   /**
    * Whether this tool call arrives in a turn that is supposed to be waiting for a confirmation.
    *
@@ -3148,10 +3425,16 @@ export class RealtimeService {
     readonly session_epoch: number
     readonly response_id: string | null
   }): boolean {
+    const effectiveResponseId = event.response_id ?? this.session.activeProviderResponseId
+    if (
+      effectiveResponseId !== null
+      && this.#projectConfirmationQuarantinedResponses.has(
+        callKey(event.session_epoch, effectiveResponseId),
+      )
+    ) return true
     for (const key of this.#projectConfirmationResponses) {
       if (parseCallKey(key).sessionEpoch === event.session_epoch) return true
     }
-    const effectiveResponseId = event.response_id ?? this.session.activeProviderResponseId
     if (
       effectiveResponseId !== null
       && this.#projectConfirmationResponses.has(callKey(event.session_epoch, effectiveResponseId))
@@ -3205,7 +3488,11 @@ export class RealtimeService {
   }
 
   #endProjectConfirmationItem(epoch: number, itemId: string): void {
-    this.#projectConfirmationItems.delete(callKey(epoch, itemId))
+    const key = callKey(epoch, itemId)
+    this.#projectConfirmationItems.delete(key)
+    if (this.#projectConfirmationDecisionRetry?.item_key === key) {
+      this.#projectConfirmationDecisionRetry = null
+    }
     this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
       || this.#projectConfirmationClosingItems.size > 0
       || this.#projectConfirmationFencePending
@@ -3227,6 +3514,42 @@ export class RealtimeService {
     try {
       const itemId = origin.originItemId
       const controller = this.#projectConfirmation
+      if (itemId === null) {
+        const recovered = await this.#recoverUnboundProjectConfirmation(event)
+        const proposalId = controller?.lifecycleId ?? 'none'
+        const responseId = event.response_id ?? 'none'
+        const activeResponseId = this.session.activeProviderResponseId ?? 'none'
+        const responsePhase = event.response_id === null
+          ? 'unknown'
+          : this.session.providerTurnPhase(event.response_id) ?? 'unknown'
+        const responseFenced = event.response_id !== null
+          && this.session.providerTurnWasFenced(event.response_id)
+        this.#onDiagnostic(
+          '[realtime-diagnostic] project_confirmation_binding_missing'
+          + ` session_epoch=${event.session_epoch}`
+          + ` call_id=${event.call_id}`
+          + ` response_id=${responseId}`
+          + ` active_response_id=${activeResponseId}`
+          + ` response_phase=${responsePhase}`
+          + ` response_fenced=${responseFenced}`
+          + ' origin_item_bound=false'
+          + ` pending=${controller?.pending === true}`
+          + ` recovered=${recovered}`
+          + ` proposal_id=${proposalId}`,
+        )
+        this.#telemetry?.record('project_confirmation.binding_missing', {
+          session_epoch: event.session_epoch,
+          call_id: event.call_id,
+          response_id: responseId,
+          active_response_id: activeResponseId,
+          response_phase: responsePhase,
+          response_fenced: responseFenced,
+          origin_item_bound: false,
+          pending: controller?.pending === true,
+          recovered,
+          proposal_id: proposalId,
+        })
+      }
       if (
         controller !== undefined
         && itemId !== null
@@ -3255,23 +3578,12 @@ export class RealtimeService {
             try {
               await this.#closeConfirmationDeferredCalls(itemId)
               if (outcome.kind === 'confirmed' && outcome.operation !== null) {
-                const callback = this.#commitProjectOperation
-                if (callback === undefined) {
-                  state = 'failed'
-                  text = '确认处理不可用，本次操作未执行。'
-                } else {
-                  try {
-                    const result = await callback(outcome.operation, origin.originRef)
-                    state = result.accepted ? 'accepted' : 'failed'
-                    text = result.accepted
-                      ? projectCommitSuccessText(outcome.operation, result.code)
-                      : projectCommitFailureText(result.code)
-                  } catch (failure) {
-                    if (isAbort(failure)) throw failure
-                    state = 'failed'
-                    text = '已确认，但操作未执行。'
-                  }
-                }
+                const committed = await this.#commitConfirmedProjectOperation(
+                  outcome.operation,
+                  origin.originRef,
+                )
+                state = committed.state
+                text = committed.text
               }
             } finally {
               this.#endProjectConfirmationClose(event.session_epoch, itemId)
@@ -3306,6 +3618,72 @@ export class RealtimeService {
     }
     this.#projectConfirmationClosingCalls.delete(call)
     this.#rememberClosedProjectConfirmationCall(call)
+  }
+
+  async #commitConfirmedProjectOperation(
+    operation: ConfirmedProjectOperation,
+    originRef: string,
+  ): Promise<{readonly state: 'accepted' | 'failed'; readonly text: string}> {
+    const callback = this.#commitProjectOperation
+    if (callback === undefined) {
+      return {state: 'failed', text: '确认处理不可用，本次操作未执行。'}
+    }
+    try {
+      const result = await callback(operation, originRef)
+      return {
+        state: result.accepted ? 'accepted' : 'failed',
+        text: result.accepted
+          ? projectCommitSuccessText(operation, result.code)
+          : projectCommitFailureText(result.code),
+      }
+    } catch (failure) {
+      if (isAbort(failure)) throw failure
+      return {state: 'failed', text: '已确认，但操作未执行。'}
+    }
+  }
+
+  /**
+   * End one answer whose confirmation function cannot be tied back to a provider response.
+   *
+   * Refusing the function is necessary but insufficient: leaving the controller reservation alive
+   * turns every later utterance into a shadow and makes a still-valid proposal impossible to answer.
+   * Recovery is deliberately narrow -- current epoch, one exact reserved item, and a live proposal --
+   * and grants no authority. It only lets the user make a fresh, bindable attempt.
+   */
+  async #recoverUnboundProjectConfirmation(event: ToolCallReady): Promise<boolean> {
+    const controller = this.#projectConfirmation
+    if (
+      controller?.pending !== true
+      || event.session_epoch !== this.session.sessionEpoch
+      || this.#projectConfirmationFencePending
+    ) return false
+    const reserved = [...this.#projectConfirmationItems]
+      .map(key => parseCallKey(key))
+      .filter(item => item.sessionEpoch === event.session_epoch)
+    if (reserved.length !== 1) return false
+    const itemId = reserved[0]?.id
+    if (itemId === undefined || !controller.releaseUndecided({
+      epoch: event.session_epoch,
+      itemId,
+    })) return false
+
+    this.#beginProjectConfirmationClose(event.session_epoch, itemId)
+    try {
+      await this.#closeConfirmationDeferredCalls(itemId)
+    } finally {
+      this.#endProjectConfirmationClose(event.session_epoch, itemId)
+    }
+    const unboundIndex = this.#unboundUserOriginItems.indexOf(itemId)
+    if (unboundIndex !== -1) this.#unboundUserOriginItems.splice(unboundIndex, 1)
+    this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
+    if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
+    this.#queueProjectConfirmationFact(
+      '我没能把这次语音和确认请求关联起来；请再说一次“确认”或“取消”。',
+      this.#projectConfirmationLifecycleId(),
+      `binding-missing:${callKey(event.session_epoch, itemId)}`,
+    )
+    this.#publishProjectView()
+    return true
   }
 
   /** Transcription failed, so the answer is unknowable and the proposal is cancelled. */
@@ -3414,32 +3792,6 @@ export class RealtimeService {
     return `session:${this.session.sessionEpoch}`
   }
 
-  /** Retry guidance remains truthful even if expiry wins after the item has already been injected. */
-  #queueProjectConfirmationRetryFact(lifecycleId: string, attemptKey: string): void {
-    this.queueHostItem(hostFactIntent({
-      kind: 'final',
-      host_item_id: this.#idFactory(),
-      event_id: projectConfirmationEventId(
-        'project-confirmation-retry',
-        lifecycleId,
-        `retry:${attemptKey}`,
-      ),
-      content: '我没有确认清楚；若界面仍显示等待确认，请明确说“确认”或“取消”。',
-    }), {priority: USER_PRIORITY - 1, preemptive: false})
-    this.#deliveryReady.set()
-  }
-
-  /** Expiry makes a not-yet-injected retry ineligible; retain all unrelated host facts in heap order. */
-  #discardQueuedProjectConfirmationRetries(): void {
-    const retained = this.#hostItems.filter(queued => (
-      !queued.intent.item.event_id.startsWith('project-confirmation-retry:')
-    ))
-    if (retained.length === this.#hostItems.length) return
-    retained.sort(compareQueuedHostResponses)
-    this.#hostItems.length = 0
-    this.#hostItems.push(...retained)
-  }
-
   /**
    * The proposal timed out on its own.
    *
@@ -3448,13 +3800,14 @@ export class RealtimeService {
    * awaiting either. A second expiry while one is draining joins the queue instead of racing it.
    */
   #projectConfirmationExpired(): void {
-    this.#discardQueuedProjectConfirmationRetries()
     const itemKeys = [...this.#projectConfirmationItems]
     const sourceEpoch = this.session.sessionEpoch
     const lifecycleId = this.#projectConfirmationLifecycleId()
     // A reconnect is needed when the confirmation armed a fence or blocked a response in this epoch:
     // either leaves provider state the next turn would otherwise inherit.
     const reconnect = this.#projectConfirmationFencePending
+      || (this.#projectConfirmationDecisionRetry?.requested === true
+        && this.#projectConfirmationDecisionRetry.retry_response_id === null)
       || [...this.#projectConfirmationResponses]
         .some(key => parseCallKey(key).sessionEpoch === sourceEpoch)
     for (const key of itemKeys) {
@@ -3615,6 +3968,9 @@ export class RealtimeService {
     this.#projectConfirmationShadowItems.clear()
     this.#projectConfirmationClosingItems.clear()
     this.#projectConfirmationResponses.clear()
+    this.#projectConfirmationQuarantinedResponses.clear()
+    this.#projectConfirmationPendingQuarantineEpoch = null
+    this.#projectConfirmationDecisionRetry = null
     this.#projectConfirmationBlocking = false
     this.#projectConfirmationFencePending = false
     this.#publishProjectView()
@@ -3690,6 +4046,9 @@ export class RealtimeService {
       : this.session.responseEventIds(generation.response_id)
     const completion = this.session.completePlayback(utteranceId, generationEpoch, playedMs)
     if (completion === null) return false
+    this.#localSpeechInterruptedResponses.delete(
+      callKey(completion.session_epoch, completion.response_id),
+    )
     this.#recordOriginDeliveryProof(completion)
     this.#recordSemanticAcknowledgementHeard(completion)
     this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
@@ -3710,9 +4069,15 @@ export class RealtimeService {
     const urgentOwner = this.#urgentOwnerForGeneration(utteranceId, generationEpoch)
     const completion = this.session.completePlaybackClear(utteranceId, generationEpoch, playedMs)
     if (completion === null) return false
+    const responseKey = callKey(completion.session_epoch, completion.response_id)
+    const interruptedByLocalSpeech = this.#localSpeechInterruptedResponses.delete(responseKey)
+    const audible = completion.played_ms === null
+      ? completion.started
+      : completion.played_ms > 0
     this.#reconcileAcknowledgementAfterPlaybackInterruption(
       completion.session_epoch,
       completion.response_id,
+      interruptedByLocalSpeech && audible,
     )
     // The acknowledgement arrived, so the deadline waiting for it has nothing left to retire.
     this.#cancelGuardClearDeadline(utteranceId, generationEpoch)
@@ -3738,6 +4103,9 @@ export class RealtimeService {
     // a cascaded provider can emit `response_terminal(cancelled)` while the cancel promise is still
     // pending, and that terminal deliberately removes the old continuation binding.
     if (namesCurrentGeneration) {
+      this.#localSpeechInterruptedResponses.delete(
+        callKey(generation.session_epoch, generation.response_id),
+      )
       this.#reconcileAcknowledgementAfterPlaybackInterruption(
         generation.session_epoch,
         generation.response_id,
@@ -3755,6 +4123,7 @@ export class RealtimeService {
   #reconcileAcknowledgementAfterPlaybackInterruption(
     sessionEpoch: number,
     responseId: string,
+    suppressReplay = false,
   ): void {
     for (const acknowledgement of this.#semanticAcknowledgements.values()) {
       if (
@@ -3763,6 +4132,17 @@ export class RealtimeService {
         || acknowledgement.response_id !== responseId
         || acknowledgement.heard
       ) continue
+      if (suppressReplay) {
+        // The renderer supplied audible evidence and local VAD says the user took the floor. The
+        // acknowledgement was interrupted rather than fully heard, but replaying the same sentence
+        // over the user's next turn is worse than retiring it. Device/window stops never enter here.
+        acknowledgement.phase = 'cancelled'
+        acknowledgement.response_id = null
+        acknowledgement.response_session_epoch = null
+        acknowledgement.binding = null
+        this.#retireSemanticAcknowledgementHostEvent(acknowledgement)
+        continue
+      }
       if (this.session.delegateState(acknowledgement.delegate_id) !== 'running') {
         acknowledgement.phase = 'cancelled'
         acknowledgement.response_id = null

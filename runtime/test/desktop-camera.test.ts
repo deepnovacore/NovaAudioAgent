@@ -14,8 +14,12 @@ import {
   encodeCameraFrame,
   parseCameraCapture,
   parseCameraError,
+  parseCameraPermissionRequest,
+  parseCameraPermissionResult,
   serializeCameraCapture,
   serializeCameraError,
+  serializeCameraPermissionRequest,
+  serializeCameraPermissionResult,
 } from '../src/desktop-camera.js'
 
 const REQUEST_ID = 'camera-17'
@@ -218,4 +222,41 @@ test('camera error text grammar has one stable credential-free error', () => {
     '{"type":"camera.error","request_id":"other-17","error":"capture_unavailable"}',
     '[]',
   ]) assert.throws(() => parseCameraError(invalid), errorIsSafe('/secret/file'))
+})
+
+test('camera permission request and result grammars are exact and bounded', () => {
+  const request = '{"type":"camera.permission","request_id":"camera-permission-17"}'
+  assert.equal(serializeCameraPermissionRequest({request_id: 'camera-permission-17'}), request)
+  assert.deepEqual(parseCameraPermissionRequest(request), {
+    type: 'camera.permission',
+    request_id: 'camera-permission-17',
+  })
+
+  for (const status of ['granted', 'denied', 'restricted', 'unavailable'] as const) {
+    const result = JSON.stringify({
+      type: 'camera.permission_result',
+      request_id: 'camera-permission-17',
+      status,
+    })
+    assert.equal(serializeCameraPermissionResult({
+      request_id: 'camera-permission-17',
+      status,
+    }), result)
+    assert.deepEqual(parseCameraPermissionResult(result), {
+      type: 'camera.permission_result',
+      request_id: 'camera-permission-17',
+      status,
+    })
+  }
+
+  for (const invalid of [
+    '{"type":"camera.permission","request_id":"camera-17","extra":true}',
+    '{"type":"camera.permission_result","request_id":"camera-permission-17","status":"prompt"}',
+    '{"type":"camera.permission_result","request_id":"camera-permission-/secret","status":"denied"}',
+    '[]',
+  ]) {
+    assert.throws(() => invalid.includes('permission_result')
+      ? parseCameraPermissionResult(invalid)
+      : parseCameraPermissionRequest(invalid))
+  }
 })

@@ -56,8 +56,9 @@ export interface DesktopCommand {
     | 'playback_cleared'
     | 'memory_board_request'
     | 'workspace_graph_board_request'
+    | 'project_confirmation_decision'
     | 'clock_pong'
-  readonly payload: Readonly<Record<string, string | number>>
+  readonly payload: Readonly<Record<string, string | number | boolean>>
 }
 
 /** The service surface the bridge drives. Narrow: six calls and one read. */
@@ -73,6 +74,7 @@ export interface BridgeService {
     playedMs: number | null,
   ): Promise<boolean>
   playbackCleared(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean
+  projectConfirmationDecision(proposalId: string, confirmed: boolean): Promise<void>
 }
 
 export interface DesktopBridgeOptions {
@@ -394,6 +396,15 @@ export class DesktopSocketBridge {
           this.#workspaceGraphOutbound = workspaceGraphBoardMessage(requestId, null, 'degraded')
         }
         this.#onOutboundAvailable?.()
+        return
+      }
+      case 'project_confirmation_decision': {
+        const proposalId = command.payload.proposal_id
+        if (typeof proposalId !== 'string') return
+        await this.#service.projectConfirmationDecision(
+          proposalId,
+          command.payload.confirmed === true,
+        )
         return
       }
       default:
@@ -718,6 +729,22 @@ export function parseClientMessage(
       payload: {request_id: requestId},
     }
   }
+  if (kind === 'project.confirmation_decision') {
+    if (Object.keys(value).sort().join(',') !== 'confirmed,proposal_id,type') {
+      throw new DesktopProtocolError('desktop control frame type is unsupported')
+    }
+    if (typeof value.confirmed !== 'boolean') {
+      throw new DesktopProtocolError('desktop project confirmation decision is invalid')
+    }
+    const proposalId = readIdentifier(value, 'proposal_id')
+    if (codePointLengthLikePython(proposalId) > 128) {
+      throw new DesktopProtocolError('desktop project confirmation decision is invalid')
+    }
+    return {
+      kind: 'project_confirmation_decision',
+      payload: {proposal_id: proposalId, confirmed: value.confirmed},
+    }
+  }
   if (kind === 'clock.pong') {
     const timestamp = value.t_render_ms
     if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp < 0) {
@@ -760,6 +787,11 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
       return {kind: 'memory_board_request', payload: {request_id: control.request_id}}
     case 'workspace_graph.board.request':
       return {kind: 'workspace_graph_board_request', payload: {request_id: control.request_id}}
+    case 'project.confirmation_decision':
+      return {
+        kind: 'project_confirmation_decision',
+        payload: {proposal_id: control.proposal_id, confirmed: control.confirmed},
+      }
     case 'clock.pong':
       return {
         kind: 'clock_pong',
@@ -769,9 +801,9 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
 }
 
 function withRenderTimestamp(
-  payload: Record<string, string | number>,
+  payload: Record<string, string | number | boolean>,
   timestamp: number | undefined,
-): Record<string, string | number> {
+): Record<string, string | number | boolean> {
   if (timestamp !== undefined) payload.t_render_ms = timestamp
   return payload
 }
@@ -805,7 +837,9 @@ function readIdentifier(value: Record<string, unknown>, field: string): string {
 }
 
 
-function optionalPlayedMs(payload: Readonly<Record<string, string | number>>): number | null {
+function optionalPlayedMs(
+  payload: Readonly<Record<string, string | number | boolean>>,
+): number | null {
   const value = payload.played_ms
   return value === undefined ? null : Number(value)
 }
@@ -818,6 +852,7 @@ function sameProjectView(
   return left.workspace_display_name === right.workspace_display_name
     && left.session_title === right.session_title
     && left.pending_confirmation === right.pending_confirmation
+    && left.pending_confirmation_id === right.pending_confirmation_id
     && (left.pending_action ?? null) === (right.pending_action ?? null)
     && (left.pending_workspace_display_name ?? null)
       === (right.pending_workspace_display_name ?? null)

@@ -123,6 +123,8 @@ let backendSupervisor = null
 let backendStatus = Object.freeze({
   state: 'stopped', connection: null, retryInMs: null, diagnostic: null,
 })
+let settingsApplyStatus = 'idle'
+let settingsApplyRevision = 0
 let mainWindow = null
 let boardWindow = null
 let settingsWindow = null
@@ -199,6 +201,7 @@ function settingsView() {
     backendStatus: backendStatus.state,
     backendDiagnostic: backendStatus.diagnostic,
     backendRetryInMs: backendStatus.retryInMs,
+    settingsApplyStatus,
     microphoneStatus,
     effectivePaths: desktopConfig ? Object.freeze({
       stateRoot: desktopConfig.stateRoot,
@@ -391,7 +394,7 @@ function decryptSecretsForSpawn(settings, codec) {
   return decrypted
 }
 
-async function refreshDesktopConfiguration() {
+async function refreshDesktopConfiguration(commitIf = () => true) {
   if (projectNativeHost === undefined) {
     projectNativeHost = loadProjectNativeHostFromResources({
       resourcesPath: app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'build'),
@@ -436,8 +439,10 @@ async function refreshDesktopConfiguration() {
       mkdir,
     }),
   })
+  if (!commitIf()) return false
   desktopConfig = prepared.config
   codexStatus = prepared.codexStatus
+  return true
 }
 
 async function launchBackend(backendKind, smokeChannel, onExit) {
@@ -753,9 +758,27 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     // Only the palette is live; pipeline, providers, models, voices,
     // proactivity, and keys are applied by a controlled backend restart.
     sendToOrb('nova:settings:changed', orbSettings(currentSettings))
-    void refreshDesktopConfiguration().then(
-      () => backendSupervisor?.restart(),
-      error => console.error(`[desktop-diagnostic] settings_apply_failure type=${error.name}`),
+    settingsApplyStatus = 'pending'
+    settingsApplyRevision += 1
+    const applyRevision = settingsApplyRevision
+    void refreshDesktopConfiguration(() => applyRevision === settingsApplyRevision).then(
+      refreshed => {
+        if (!refreshed || applyRevision !== settingsApplyRevision) return
+        if (!backendSupervisor) {
+          settingsApplyStatus = 'restart_failed'
+          sendToSettings('nova:settings:changed', settingsView())
+          return
+        }
+        settingsApplyStatus = 'restarting'
+        sendToSettings('nova:settings:changed', settingsView())
+        return backendSupervisor.restart()
+      },
+      error => {
+        console.error(`[desktop-diagnostic] settings_apply_failure type=${error.name}`)
+        if (applyRevision !== settingsApplyRevision) return
+        settingsApplyStatus = 'failed'
+        sendToSettings('nova:settings:changed', settingsView())
+      },
     )
     return { ...settingsView(), saved: true, rejectedSecrets }
   })
@@ -865,6 +888,15 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     },
     onStatus: status => {
       backendStatus = status
+      if (status.state === 'connected' && settingsApplyStatus === 'restarting') {
+        settingsApplyStatus = 'applied'
+      } else if (
+        settingsApplyStatus === 'restarting'
+        && ['configuration_required', 'authentication_failed', 'unavailable', 'stopped']
+          .includes(status.state)
+      ) {
+        settingsApplyStatus = 'restart_failed'
+      }
       sendToSettings('nova:settings:changed', settingsView())
       sendToOrb('nova:backend-status', status)
       if (status.state === 'connected' && status.connection) {

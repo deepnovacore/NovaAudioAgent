@@ -202,8 +202,18 @@ body:hover #orb-rail,
 
 #shell:has(#codex-label[data-mode='confirmation']) #orb,
 #shell:has(#codex-label[data-mode='confirmation']) .orb-canvas {
-  width: clamp(38px, calc(100vh - 96px), 88px);
-  height: clamp(38px, calc(100vh - 96px), 88px);
+  width: clamp(24px, calc(100vh - 111px), 88px);
+  height: clamp(24px, calc(100vh - 111px), 88px);
+}
+
+/* At 150% zoom the 184px utility window has only ~122 CSS pixels. The decision
+   card is the authoritative control, so yield the decorative orb before any
+   confirmation text or action can be clipped. */
+@media (max-height: 130px) {
+  #shell:has(#codex-label[data-mode='confirmation']) #orb,
+  #shell:has(#codex-label[data-mode='confirmation']) .orb-canvas {
+    display: none;
+  }
 }
 
 #shell:has(#codex-label[data-mode='confirmation']) #state-label {
@@ -239,6 +249,38 @@ body:hover #orb-rail,
 
 #codex-label[data-mode='confirmation'] #codex-summary {
   display: none;
+}
+
+#codex-confirmation-actions {
+  display: flex;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 4px;
+}
+
+#codex-confirmation-actions[hidden] { display: none; }
+
+#codex-confirmation-actions button {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, .24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .08);
+  color: rgba(224, 255, 232, .98);
+  font: 700 17px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+#codex-confirmation-actions #codex-cancel {
+  border-color: rgba(255, 103, 103, .46);
+  background: rgba(153, 32, 42, .28);
+  color: #ff777f;
+}
+
+#codex-confirmation-actions button:disabled {
+  cursor: default;
+  opacity: .42;
 }
 
 #codex-label[data-mode='project'] {

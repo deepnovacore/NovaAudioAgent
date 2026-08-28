@@ -41,6 +41,7 @@ function publicView(overrides = {}) {
     startListeningOnLaunch: false,
     backendStatus: 'connected',
     backendRetryInMs: null,
+    settingsApplyStatus: 'idle',
     integratedProvider: 'qwen',
     integratedModel: 'qwen-realtime',
     integratedVoice: 'longanqian',
@@ -225,15 +226,130 @@ test('a Main restart transition outranks the pending save response and completes
 
   const saving = controller.push({pipelineMode: 'cascaded'}, '语音管线已保存')
   await setStarted
-  controller.syncView(publicView({pipelineMode: 'cascaded', backendStatus: 'starting'}))
-  resolveSet(publicView({pipelineMode: 'cascaded', backendStatus: 'connected'}))
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded', backendStatus: 'starting', settingsApplyStatus: 'restarting',
+  }))
+  resolveSet(publicView({
+    pipelineMode: 'cascaded', backendStatus: 'connected', settingsApplyStatus: 'pending',
+  }))
   await saving
 
   assert.equal(renders.at(-1).backendStatus, 'starting', 'the older IPC response cannot roll Main back')
   assert.deepEqual(notices, ['restarting'])
 
-  controller.syncView(publicView({pipelineMode: 'cascaded', backendStatus: 'connected'}))
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded', backendStatus: 'connected', settingsApplyStatus: 'applied',
+  }))
   assert.deepEqual(notices, ['restarting', 'complete'])
+})
+
+test('an unrelated backend reconnect cannot complete settings that are still preparing', async () => {
+  const notices = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView({
+      pipelineMode: 'cascaded', settingsApplyStatus: 'pending',
+    })},
+    render: () => {},
+    status: () => {},
+    notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+
+  await controller.push({pipelineMode: 'cascaded'}, '语音管线已保存')
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded', backendStatus: 'starting', settingsApplyStatus: 'pending',
+  }))
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded', backendStatus: 'connected', settingsApplyStatus: 'pending',
+  }))
+
+  assert.deepEqual(notices, ['restarting'])
+})
+
+test('an explicit settings apply failure ends the restart notice without lying about backend state', async () => {
+  const notices = []
+  const renders = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView({
+      pipelineMode: 'cascaded',
+      settingsApplyStatus: 'pending',
+    })},
+    render: view => renders.push(view),
+    status: () => {},
+    notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+
+  await controller.push({pipelineMode: 'cascaded'}, '语音管线已保存')
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded',
+    backendStatus: 'connected',
+    settingsApplyStatus: 'failed',
+  }))
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded',
+    backendStatus: 'starting',
+    settingsApplyStatus: 'failed',
+  }))
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded',
+    backendStatus: 'connected',
+    settingsApplyStatus: 'failed',
+  }))
+
+  assert.deepEqual(notices, ['restarting', 'failed'])
+  assert.equal(renders.at(-1).backendStatus, 'connected')
+  assert.equal(renders.at(-1).settingsApplyStatus, 'failed')
+})
+
+test('a backend start failure is distinct from failing to prepare the saved configuration', async () => {
+  const notices = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView({
+      pipelineMode: 'cascaded', settingsApplyStatus: 'pending',
+    })},
+    render: () => {},
+    status: () => {},
+    notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+
+  await controller.push({pipelineMode: 'cascaded'}, '语音管线已保存')
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded',
+    backendStatus: 'authentication_failed',
+    settingsApplyStatus: 'restart_failed',
+  }))
+
+  assert.deepEqual(notices, ['restarting', 'restart_failed'])
+})
+
+test('a manual retry response cannot complete an unrelated settings restart lifecycle', async () => {
+  const notices = []
+  const controller = createSettingsController({
+    api: {set: async () => publicView({
+      pipelineMode: 'cascaded',
+      settingsApplyStatus: 'pending',
+    })},
+    render: () => {},
+    status: () => {},
+    notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+
+  await controller.push({pipelineMode: 'cascaded'}, '语音管线已保存')
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded',
+    backendStatus: 'starting',
+    settingsApplyStatus: 'pending',
+  }), {trackRestart: false})
+  controller.syncView(publicView({
+    pipelineMode: 'cascaded',
+    backendStatus: 'connected',
+    settingsApplyStatus: 'pending',
+  }))
+
+  assert.deepEqual(notices, ['restarting'])
 })
 
 test('presence metadata keeps only known own boolean data properties without invoking getters', async () => {
@@ -626,6 +742,8 @@ test('the panel states what applies immediately and what triggers a controlled r
   assert.match(html, /<p id="restart-notice" class="warning" hidden><\/p>/)
   assert.match(script, /已保存，后台正在重启并重新连接/u)
   assert.match(script, /已保存，后台已重启并重新连接/u)
+  assert.match(script, /已保存，但后台未能应用新配置；当前仍在使用旧配置/u)
+  assert.match(script, /已保存并载入新配置，但后台重启失败；请检查后台状态后重试/u)
   assert.match(controllerScript, /announce\('complete'\)/)
   assert.match(html, /<p id="keyring-warning"[^>]*hidden[^>]*>密钥将以明文保存\(系统未提供钥匙串\)<\/p>/)
 })

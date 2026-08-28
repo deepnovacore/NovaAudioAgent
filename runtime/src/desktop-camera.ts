@@ -9,6 +9,7 @@ export const MAX_CAMERA_JPEG_BYTES = 2 * 1024 * 1024
 export const MAX_CAMERA_WIRE_BYTES = CAMERA_FRAME_MAGIC.byteLength + 2
   + MAX_CAMERA_HEADER_BYTES + MAX_CAMERA_JPEG_BYTES
 export const CAMERA_CAPTURE_TIMEOUT_MS = 5_000
+export const CAMERA_PERMISSION_TIMEOUT_MS = 30_000
 export const MAX_PENDING_CAMERA_REQUESTS = 8
 export const MAX_CAMERA_POSITION_MS = 86_400_000
 export const MAX_CAMERA_LATE_RESPONSES = 32
@@ -19,6 +20,10 @@ const frameHeaderKeys = ['height', 'media_type', 'request_id', 'type', 'width'] 
 const cameraErrorKeys = ['error', 'request_id', 'type'] as const
 const localCaptureKeys = ['request_id', 'source', 'type'] as const
 const fileCaptureKeys = ['position_ms', 'request_id', 'source', 'type'] as const
+const cameraPermissionRequestKeys = ['request_id', 'type'] as const
+const cameraPermissionResultKeys = ['request_id', 'status', 'type'] as const
+
+export type CameraPermissionStatus = 'granted' | 'denied' | 'restricted' | 'unavailable'
 
 export class CameraWireError extends Error {
   constructor() {
@@ -64,6 +69,17 @@ export interface CameraErrorFrame {
   readonly type: 'camera.error'
   readonly request_id: string
   readonly error: 'capture_unavailable'
+}
+
+export interface CameraPermissionRequest {
+  readonly type: 'camera.permission'
+  readonly request_id: string
+}
+
+export interface CameraPermissionResult {
+  readonly type: 'camera.permission_result'
+  readonly request_id: string
+  readonly status: CameraPermissionStatus
 }
 
 export function encodeCameraFrame(input: CameraFrameInput): Uint8Array {
@@ -181,6 +197,45 @@ export function parseCameraError(raw: string): CameraErrorFrame {
   return {type: 'camera.error', request_id: value.request_id, error: 'capture_unavailable'}
 }
 
+export function serializeCameraPermissionRequest(input: {readonly request_id: string}): string {
+  validateRequestId(input.request_id)
+  return JSON.stringify({type: 'camera.permission', request_id: input.request_id})
+}
+
+export function parseCameraPermissionRequest(raw: string): CameraPermissionRequest {
+  const {value} = parseCameraJson(raw, [])
+  if (!isExactObject(value, cameraPermissionRequestKeys)) invalid()
+  if (value.type !== 'camera.permission') invalid()
+  validateRequestId(value.request_id)
+  return {type: 'camera.permission', request_id: value.request_id}
+}
+
+export function serializeCameraPermissionResult(input: {
+  readonly request_id: string
+  readonly status: CameraPermissionStatus
+}): string {
+  validateRequestId(input.request_id)
+  validateCameraPermissionStatus(input.status)
+  return JSON.stringify({
+    type: 'camera.permission_result',
+    request_id: input.request_id,
+    status: input.status,
+  })
+}
+
+export function parseCameraPermissionResult(raw: string): CameraPermissionResult {
+  const {value} = parseCameraJson(raw, [])
+  if (!isExactObject(value, cameraPermissionResultKeys)) invalid()
+  if (value.type !== 'camera.permission_result') invalid()
+  validateRequestId(value.request_id)
+  validateCameraPermissionStatus(value.status)
+  return {
+    type: 'camera.permission_result',
+    request_id: value.request_id,
+    status: value.status,
+  }
+}
+
 export function hasCameraFrameMagic(raw: Uint8Array): boolean {
   if (raw.byteLength < CAMERA_FRAME_MAGIC.byteLength) return false
   for (let index = 0; index < CAMERA_FRAME_MAGIC.byteLength; index += 1) {
@@ -198,6 +253,15 @@ function validateRequestId(value: unknown): asserts value is string {
 function validatePosition(value: unknown): asserts value is number {
   if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)
     || value < 0 || value > MAX_CAMERA_POSITION_MS) invalid()
+}
+
+function validateCameraPermissionStatus(value: unknown): asserts value is CameraPermissionStatus {
+  if (
+    value !== 'granted'
+    && value !== 'denied'
+    && value !== 'restricted'
+    && value !== 'unavailable'
+  ) invalid()
 }
 
 function validateJpeg(payload: unknown): asserts payload is Uint8Array {

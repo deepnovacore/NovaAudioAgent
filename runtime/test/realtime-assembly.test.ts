@@ -805,12 +805,13 @@ test('project proposal reaches provider and desktop before confirmation', async 
       workspace_display_name: 'alpha',
       session_title: null,
       pending_confirmation: true,
+      pending_confirmation_id: 'assembly-proposal',
       pending_action: 'create_workspace',
       pending_workspace_display_name: 'tetris-game',
       pending_session_title: null,
       pending_expires_in_seconds: 360,
     })
-    assert.equal(JSON.stringify(pending).includes('assembly-proposal'), false)
+    assert.equal(pending?.pending_confirmation_id, 'assembly-proposal')
 
     const item = provider.hostItems.find(candidate => candidate.call_id === 'call-project')
     assert.ok(item !== undefined)

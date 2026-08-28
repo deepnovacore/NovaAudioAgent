@@ -38,6 +38,7 @@ const MAIN_LIVE_VIEW_FIELDS = [
   'backendStatus',
   'backendDiagnostic',
   'backendRetryInMs',
+  'settingsApplyStatus',
   'microphoneStatus',
   'effectivePaths',
 ]
@@ -181,6 +182,12 @@ export function createSettingsController({ api, render, status, notice = () => {
     try { notice(phase) } catch { /* a UI observer cannot undo a committed settings write */ }
   }
 
+  function applyFailurePhase() {
+    if (confirmedView?.settingsApplyStatus === 'failed') return 'failed'
+    if (confirmedView?.settingsApplyStatus === 'restart_failed') return 'restart_failed'
+    return null
+  }
+
   async function flush() {
     if (inFlight || !pending) return
     const batch = pending
@@ -221,7 +228,16 @@ export function createSettingsController({ api, render, status, notice = () => {
           || (typeof confirmedView?.backendStatus === 'string'
             && confirmedView.backendStatus !== 'connected')
         announce('restarting')
-        if (restartTransitionSeen && confirmedView?.backendStatus === 'connected') {
+        const failurePhase = applyFailurePhase()
+        if (failurePhase !== null) {
+          restartPending = false
+          restartTransitionSeen = false
+          announce(failurePhase)
+        } else if (
+          confirmedView?.settingsApplyStatus === 'applied'
+          && restartTransitionSeen
+          && confirmedView?.backendStatus === 'connected'
+        ) {
           restartPending = false
           announce('complete')
         }
@@ -269,12 +285,13 @@ export function createSettingsController({ api, render, status, notice = () => {
   }
 
   /** Apply a newer Main push while preserving edits that have not reached Main yet. */
-  function syncView(nextView) {
+  function syncView(nextView, {trackRestart = true} = {}) {
     // Any Main push is newer than an initial get still in flight, so that get may no longer replace it.
     hasConfirmedSaveResponse = true
     mainSyncRevision += 1
     if (
-      inFlight !== null
+      trackRestart
+      && inFlight !== null
       && typeof nextView?.backendStatus === 'string'
       && nextView.backendStatus !== 'connected'
     ) inFlight.restartTransitionSeen = true
@@ -282,10 +299,21 @@ export function createSettingsController({ api, render, status, notice = () => {
     view = mergePatch(confirmedView, publicPatch(inFlight?.patch))
     view = composeView(view)
     renderCurrent()
-    if (!restartPending || typeof confirmedView?.backendStatus !== 'string') return
+    if (!restartPending) return
+    const failurePhase = applyFailurePhase()
+    if (failurePhase !== null) {
+      restartPending = false
+      restartTransitionSeen = false
+      announce(failurePhase)
+      return
+    }
+    if (!trackRestart || typeof confirmedView?.backendStatus !== 'string') return
     if (confirmedView.backendStatus !== 'connected') {
       restartTransitionSeen = true
-    } else if (restartTransitionSeen) {
+    } else if (
+      confirmedView.settingsApplyStatus === 'applied'
+      && restartTransitionSeen
+    ) {
       restartPending = false
       announce('complete')
     }

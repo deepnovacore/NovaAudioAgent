@@ -351,6 +351,7 @@ test('a local Chromium source is not exposed to Guard as file-restartable', asyn
         width: 1280,
         height: 720,
       }),
+      requestCameraPermission: () => Promise.resolve('granted'),
     },
   })
   const gateway = new ScriptedGateway(
@@ -377,6 +378,55 @@ test('a local Chromium source is not exposed to Guard as file-restartable', asyn
   } finally {
     await assembly.stop()
   }
+})
+
+test('assembly gates local Guard before armed and emits bounded camera admission telemetry', async () => {
+  const clock = new VirtualClock()
+  let captures = 0
+  let permissionRequests = 0
+  const telemetry: {readonly kind: string; readonly payload: unknown}[] = []
+  const source = new ChromiumFrameSource({
+    source: 'local',
+    clock,
+    transport: {
+      captureCamera: () => {
+        captures += 1
+        return Promise.reject(new Error('capture must not run before denied admission'))
+      },
+      requestCameraPermission: () => {
+        permissionRequests += 1
+        return Promise.resolve('denied')
+      },
+    },
+  })
+  const assembly = buildAssembly({
+    settings: settings(),
+    gateway: new ScriptedGateway([]),
+    searchTransport: new ScriptedSearchTransport(),
+    frameSource: source,
+    clock,
+    telemetry: {
+      record: (kind, payload) => telemetry.push({kind, payload}),
+      close: () => undefined,
+    },
+  })
+  const guard = assembly.runtime.executors.get('guard')
+  assert.ok(guard instanceof WatchAdapter)
+
+  const handoff = await guard.dispatch(
+    'start',
+    {condition: 'motion'},
+    watchContext('guard', clock),
+  )
+
+  assert.equal(handoff.outcome, 'refused')
+  assert.equal(handoff.content.error, 'camera_permission_denied')
+  assert.equal(permissionRequests, 1)
+  assert.equal(captures, 0)
+  assert.deepEqual(telemetry, [{
+    kind: 'camera.admission',
+    payload: {executor: 'guard', status: 'denied', phase: 'pre_arm', admitted: false},
+  }])
 })
 
 test('Watch keeps the Chromium file epoch while Guard resets it before observation', async () => {

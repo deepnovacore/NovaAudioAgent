@@ -1,4 +1,6 @@
-import { closeSync, openSync, writeSync } from 'node:fs'
+import { closeSync, fchmodSync, openSync, writeSync } from 'node:fs'
+import {homedir} from 'node:os'
+import {join} from 'node:path'
 import type { Clock } from '../clock.js'
 import { jsonValueSchema, type JsonValue } from '../events.js'
 
@@ -26,7 +28,16 @@ export class JsonlTelemetry implements RealtimeTelemetry, Disposable {
 
   constructor(path: string, options: {readonly clock: Clock}) {
     this.#clock = options.clock
-    this.#fileDescriptor = openSync(path, 'w')
+    const fileDescriptor = openSync(path, 'w', 0o600)
+    try {
+      // `mode` applies only when a file is created. Reused debug paths must not retain a looser
+      // permission from an older client; Windows does not expose POSIX owner bits.
+      if (process.platform !== 'win32') fchmodSync(fileDescriptor, 0o600)
+    } catch (cause) {
+      closeSync(fileDescriptor)
+      throw cause
+    }
+    this.#fileDescriptor = fileDescriptor
   }
 
   record(kind: string, payload: Readonly<Record<string, JsonValue>>): void {
@@ -47,4 +58,18 @@ export class JsonlTelemetry implements RealtimeTelemetry, Disposable {
   [Symbol.dispose](): void {
     this.close()
   }
+}
+
+/** Use the documented source-runtime path without creating telemetry by default. */
+export function createRealtimeTelemetry(
+  environment: Readonly<Record<string, string | undefined>>,
+  options: {readonly clock: Clock; readonly homeDirectory?: string},
+): RealtimeTelemetry {
+  const configured = environment.NOVA_AUDIO_AGENT_REALTIME_TELEMETRY?.trim() ?? ''
+  if (configured === '') return new NullTelemetry()
+  const homeDirectory = options.homeDirectory ?? homedir()
+  const path = configured === '~'
+    ? homeDirectory
+    : configured.startsWith('~/') ? join(homeDirectory, configured.slice(2)) : configured
+  return new JsonlTelemetry(path, {clock: options.clock})
 }

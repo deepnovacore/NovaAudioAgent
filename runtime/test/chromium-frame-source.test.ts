@@ -62,6 +62,8 @@ class MutableClock implements Clock {
 
 class RecordingCameraTransport implements CameraCaptureTransport {
   readonly calls: CameraCaptureRequest[] = []
+  permissionCalls = 0
+  permissionStatus: 'granted' | 'denied' | 'restricted' | 'unavailable' = 'granted'
   handler: (request: CameraCaptureRequest) => Promise<CapturedCameraFrame>
 
   constructor(handler: (
@@ -73,6 +75,11 @@ class RecordingCameraTransport implements CameraCaptureTransport {
   captureCamera(request: CameraCaptureRequest): Promise<CapturedCameraFrame> {
     this.calls.push({...request})
     return this.handler(request)
+  }
+
+  requestCameraPermission() {
+    this.permissionCalls += 1
+    return Promise.resolve(this.permissionStatus)
   }
 }
 
@@ -119,6 +126,28 @@ test('local Chromium source is lazy, lifecycle-bound, copying, and timestamps af
   await settleNamed('repeated local stops', Promise.all([source.stop(), source.stop()]))
   await assert.rejects(source.snapshot(), CameraError)
   assert.equal(transport.calls.length, 1)
+})
+
+test('local Chromium admission asks the desktop owner while file admission does not', async () => {
+  const localTransport = new RecordingCameraTransport()
+  localTransport.permissionStatus = 'denied'
+  const local = new ChromiumFrameSource({
+    source: 'local',
+    transport: localTransport,
+    clock: new MutableClock(),
+  })
+  assert.equal(await local.admitObservation(), 'denied')
+  assert.equal(localTransport.permissionCalls, 1)
+
+  const fileTransport = new RecordingCameraTransport()
+  fileTransport.permissionStatus = 'denied'
+  const file = new ChromiumFrameSource({
+    source: 'file',
+    transport: fileTransport,
+    clock: new MutableClock(),
+  })
+  assert.equal(await file.admitObservation(), 'granted')
+  assert.equal(fileTransport.permissionCalls, 0)
 })
 
 test('expected desktop capture failure becomes fresh safe CameraError and Cam unavailable', async () => {

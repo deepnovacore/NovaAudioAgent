@@ -239,6 +239,14 @@ function updateRestartNotice(phase) {
     restartNotice.textContent = '已保存，后台正在重启并重新连接'
     return
   }
+  if (phase === 'failed') {
+    restartNotice.textContent = '已保存，但后台未能应用新配置；当前仍在使用旧配置'
+    return
+  }
+  if (phase === 'restart_failed') {
+    restartNotice.textContent = '已保存并载入新配置，但后台重启失败；请检查后台状态后重试'
+    return
+  }
   restartNotice.textContent = '已保存，后台已重启并重新连接'
 }
 
@@ -387,7 +395,7 @@ modelBaseUrl.addEventListener('change', () => { void saveText('modelBaseUrl', mo
 codexRescan.addEventListener('click', async () => {
   statusLabel.textContent = '正在扫描 Codex…'
   try {
-    controller.syncView(await api.rescanCodex())
+    controller.syncView(await api.rescanCodex(), {trackRestart: false})
     statusLabel.textContent = 'Codex 扫描完成'
   } catch {
     statusLabel.textContent = 'Codex 扫描失败'
@@ -396,7 +404,7 @@ codexRescan.addEventListener('click', async () => {
 backendRetry.addEventListener('click', async () => {
   statusLabel.textContent = '正在重试后台连接…'
   try {
-    controller.syncView(await api.retryBackend())
+    controller.syncView(await api.retryBackend(), {trackRestart: false})
     statusLabel.textContent = '已发起后台重试'
   } catch {
     statusLabel.textContent = '后台重试失败'
@@ -405,7 +413,7 @@ backendRetry.addEventListener('click', async () => {
 microphoneRetry.addEventListener('click', async () => {
   statusLabel.textContent = '正在重新检测麦克风…'
   try {
-    controller.syncView(await api.retryMicrophone())
+    controller.syncView(await api.retryMicrophone(), {trackRestart: false})
     statusLabel.textContent = '已发起麦克风检测'
   } catch {
     statusLabel.textContent = '麦克风检测失败'

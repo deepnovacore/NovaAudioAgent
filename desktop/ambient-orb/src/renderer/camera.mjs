@@ -16,6 +16,8 @@ export const CAMERA_FINAL_FRAME_EPSILON_SECONDS = 0.001
 const requestIdPattern = /^camera-[A-Za-z0-9_-]+$/u
 const localKeys = ['request_id', 'source', 'type']
 const fileKeys = ['position_ms', 'request_id', 'source', 'type']
+const permissionRequestKeys = ['request_id', 'type']
+const permissionStatuses = new Set(['granted', 'denied', 'restricted', 'unavailable'])
 const encoder = new TextEncoder()
 
 export function parseCameraCapture(raw) {
@@ -42,6 +44,29 @@ export function parseCameraCapture(raw) {
     request_id: parsed.value.request_id,
     source: 'file',
     position_ms: parsed.value.position_ms,
+  })
+}
+
+export function parseCameraPermissionRequest(raw) {
+  const parsed = parseFlatJsonObject(raw)
+  if (!parsed
+    || !hasExactKeys(parsed.value, permissionRequestKeys)
+    || parsed.value.type !== 'camera.permission'
+    || !validRequestId(parsed.value.request_id)) return null
+  return Object.freeze({
+    type: 'camera.permission',
+    request_id: parsed.value.request_id,
+  })
+}
+
+export function cameraPermissionResultMessage(requestId, status) {
+  if (!validRequestId(requestId) || !permissionStatuses.has(status)) {
+    throw new TypeError('invalid camera permission result')
+  }
+  return JSON.stringify({
+    type: 'camera.permission_result',
+    request_id: requestId,
+    status,
   })
 }
 
@@ -104,6 +129,7 @@ export class RendererCameraToggle {
   #onState
   #state = 'off'
   #pending = null
+  #lastPermissionStatus = 'unavailable'
 
   constructor({cameraController, requestPermission, onState = () => {}} = {}) {
     if (!cameraController
@@ -127,6 +153,12 @@ export class RendererCameraToggle {
       this.#setState('off')
       return this.#state
     }
+    return this.ensureEnabled()
+  }
+
+  async ensureEnabled() {
+    if (this.#pending) return this.#pending
+    if (this.#state === 'on') return this.#state
     this.#setState('requesting')
     const pending = this.#enable()
     this.#pending = pending
@@ -137,16 +169,34 @@ export class RendererCameraToggle {
     }
   }
 
+  async admitForHost() {
+    await this.ensureEnabled()
+    if (this.#state === 'on') return 'granted'
+    if (this.#lastPermissionStatus === 'restricted') return 'restricted'
+    if (this.#state === 'denied') return 'denied'
+    return 'unavailable'
+  }
+
   async #enable() {
     try {
       const permission = await this.#requestPermission()
+      this.#lastPermissionStatus = permissionStatuses.has(permission?.status)
+        ? permission.status
+        : 'unavailable'
       if (permission?.status === 'denied' || permission?.status === 'restricted') {
         this.#setState('denied')
         return this.#state
       }
       const enabled = await this.#cameraController.enableLocal()
-      this.#setState(enabled ? 'on' : 'unavailable')
+      if (!enabled) {
+        this.#lastPermissionStatus = this.#cameraController.localAdmissionFailure
+          === 'permission_denied' ? 'denied' : 'unavailable'
+      }
+      this.#setState(enabled
+        ? 'on'
+        : this.#lastPermissionStatus === 'denied' ? 'denied' : 'unavailable')
     } catch {
+      this.#lastPermissionStatus = 'unavailable'
       this.#setState('unavailable')
     }
     return this.#state
@@ -164,6 +214,7 @@ export class RendererSocketRouter {
   #onGenericError
   #onCurrentClose
   #cameraTail = Promise.resolve()
+  #permissionTail = Promise.resolve()
   #genericTail = Promise.resolve()
   #current = null
   #disposed = false
@@ -236,6 +287,22 @@ export class RendererSocketRouter {
       this.#cameraTail = this.#cameraTail.then(runCamera, runCamera).catch(() => {})
       return
     }
+    if (typeof event?.data === 'string' && parseCameraPermissionRequest(event.data) !== null) {
+      // The OS permission sheet can remain open for tens of seconds. It owns its own FIFO so it
+      // cannot hold playback clears, PCM, captions, or control traffic behind the prompt.
+      const runPermission = () => {
+        if (!this.#isCurrent(record)) return undefined
+        return this.#handleGeneric(event, record.delivery)
+      }
+      this.#permissionTail = this.#permissionTail
+        .then(runPermission, runPermission)
+        .catch(error => {
+          if (!this.#isCurrent(record)) return
+          try { this.#onGenericError(error, record.delivery) } catch { /* renderer event boundary */ }
+        })
+        .catch(() => {})
+      return
+    }
     const runGeneric = () => {
       if (!this.#isCurrent(record)) return undefined
       return this.#handleGeneric(event, record.delivery)
@@ -291,6 +358,7 @@ export class RendererCameraController {
   #preparedLocal = null
   #enableEpoch = 0
   #stoppedTracks = new Set()
+  #localAdmissionFailure = 'unavailable'
 
   constructor({
     mediaDevices,
@@ -322,10 +390,15 @@ export class RendererCameraController {
     this.#sourceMode = source
   }
 
+  get localAdmissionFailure() {
+    return this.#localAdmissionFailure
+  }
+
   async enableLocal() {
     if (this.#disposed || this.#sourceMode !== 'local') return false
     if (this.#localEnabled) return true
     const epoch = ++this.#enableEpoch
+    this.#localAdmissionFailure = 'unavailable'
     let stream = null
     let timer
     try {
@@ -358,10 +431,14 @@ export class RendererCameraController {
       this.#releasePreparedLocal()
       this.#preparedLocal = {stream, imageCapture}
       this.#localEnabled = true
+      this.#localAdmissionFailure = null
       return true
-    } catch {
+    } catch (error) {
       if (stream) this.#stopStream(stream)
       if (epoch === this.#enableEpoch) this.#localEnabled = false
+      if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') {
+        this.#localAdmissionFailure = 'permission_denied'
+      }
       return false
     } finally {
       if (timer !== undefined) this.#clearTimeout?.(timer)

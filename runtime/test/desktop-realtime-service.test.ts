@@ -1724,6 +1724,7 @@ test('composition camera transport is one stable proxy to the final desktop serv
         height: 720,
       })
     },
+    requestCameraPermission: () => Promise.resolve('granted' as const),
   }
   const composition = buildDesktopRealtimeComposition({
     token: TOKEN,
@@ -1743,7 +1744,9 @@ test('composition camera transport is one stable proxy to the final desktop serv
   assert.equal(composition.desktop.server, fakeServer)
   const first = await capturedTransport!.captureCamera({source: 'local'})
   const second = await capturedTransport!.captureCamera({source: 'file', positionMs: 25})
+  const permission = await capturedTransport!.requestCameraPermission?.()
   assert.deepEqual(requests, [{source: 'local'}, {source: 'file', positionMs: 25}])
   assert.deepEqual(first.payload, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]))
   assert.deepEqual(second.payload, first.payload)
+  assert.equal(permission, 'granted')
 })

@@ -208,7 +208,7 @@ test('audio is appended as base64 and a closed socket is swallowed', async () =>
   )
 })
 
-test('a host fact carries the Python wording and a Guard activation is labelled', async () => {
+test('a host fact uses the official user-role activation shape and keeps host provenance', async () => {
   for (const asUserActivation of [false, true]) {
     const scripted = scriptedSocket([...handshake])
     const adapter = adapterFor(scripted)
@@ -228,14 +228,11 @@ test('a host fact carries the Python wording and a Guard activation is labelled'
     assert.ok(create !== undefined, 'the item create frame must be sent')
     const item = create.item as Record<string, unknown>
     assert.equal(item.type, 'message')
-    assert.equal(item.role, asUserActivation ? 'user' : 'system')
+    assert.equal(item.role, 'user')
     const content = item.content as {text: string}[]
-    if (asUserActivation) {
-      assert.ok(content[0]!.text.startsWith(GUARD_ACTIVATION_PREFIX))
-      assert.match(content[0]!.text, /以下内容不是用户说的话/u)
-    } else {
-      assert.equal(content[0]!.text, 'Nova Audio Agent 任务进度事实：任务正在处理')
-    }
+    assert.ok(content[0]!.text.startsWith(GUARD_ACTIVATION_PREFIX))
+    assert.match(content[0]!.text, /以下内容不是用户说的话/u)
+    assert.match(content[0]!.text, /Nova Audio Agent 任务进度事实：任务正在处理/u)
 
     scripted.push({type: 'conversation.item.created', item: {id: item.id}})
     const identity = await injection
@@ -244,6 +241,74 @@ test('a host fact carries the Python wording and a Guard activation is labelled'
       host_item_id: 'host-1',
       provider_item_id: item.id,
     })
+  }
+})
+
+test('a host response disables tools and targets only the injected fact', async () => {
+  const scripted = scriptedSocket([...handshake])
+  const adapter = adapterFor(scripted)
+  await adapter.connect({tools: [], signal: new AbortController().signal})
+
+  await adapter.createResponse({
+    kind: 'host_fact',
+    item: {
+      kind: 'final',
+      host_item_id: 'guard-result-host',
+      event_id: 'guard-result-event',
+      content: '检测到水杯已移动。',
+      call_id: null,
+    },
+    task_summary: null,
+    origin_spoken: false,
+  }, new AbortController().signal)
+
+  const frame = scripted.sent.at(-1)
+  assert.equal(typeof frame?.event_id, 'string')
+  assert.deepEqual(frame, {
+    event_id: frame?.event_id,
+    type: 'response.create',
+    response: {
+      modalities: ['audio', 'text'],
+      tool_choice: 'none',
+      instructions: 'Nova Audio Agent host 已注入一条新事实。只转述最后一条尚未转述的 host 事实一次；不得调用工具，不得重复更早的提交、启动、进度或确认结果。',
+    },
+  })
+
+  await adapter.ensureResponse(new AbortController().signal)
+  const retry = scripted.sent.at(-1)
+  assert.deepEqual(retry, {
+    event_id: retry?.event_id,
+    type: 'response.create',
+    response: {modalities: ['audio', 'text']},
+  }, 'a same-user-turn retry keeps the confirmation tool available')
+})
+
+test('a final host fact carries an item-local one-shot response instruction', async () => {
+  for (const asUserActivation of [false, true]) {
+    const scripted = scriptedSocket([...handshake])
+    const adapter = adapterFor(scripted)
+    await adapter.connect({tools: [], signal: new AbortController().signal})
+
+    const injection = adapter.injectHostItem({
+      kind: 'final',
+      host_item_id: 'final-host-1',
+      event_id: 'final-event-1',
+      content: '摄像头画面不可用，监控任务未启动。',
+      call_id: null,
+    }, {confirmationTimeout: 1, asUserActivation, signal: new AbortController().signal})
+
+    await Promise.resolve()
+    const create = scripted.sent.find(frame => frame.type === 'conversation.item.create')
+    assert.ok(create !== undefined)
+    const item = create.item as Record<string, unknown>
+    const content = item.content as {text: string}[]
+    assert.match(content[0]!.text, /摄像头画面不可用，监控任务未启动。/u)
+    assert.match(content[0]!.text, /只转述这条结果一次/u)
+    assert.match(content[0]!.text, /不得.*重复此前的任务提交、启动或进度/u)
+    assert.match(content[0]!.text, /不要调用工具/u)
+
+    scripted.push({type: 'conversation.item.created', item: {id: item.id}})
+    await injection
   }
 })
 

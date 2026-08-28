@@ -19,7 +19,7 @@ import {
   buildProductionRealtimeAssembly,
   type BuildProductionRealtimeAssemblyOptions,
 } from './production-realtime-assembly.js'
-import {NullTelemetry} from './realtime/telemetry.js'
+import {createRealtimeTelemetry} from './realtime/telemetry.js'
 
 type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource}
 
@@ -44,9 +44,9 @@ process.exitCode = await runDesktopEntryWithStopSources({
   onDiagnostic,
   construct: async ownership => {
     const settings = loadSettings()
-    const telemetry = new NullTelemetry()
-    ownership.own(() => telemetry.close())
     const clock = new RealClock()
+    const telemetry = createRealtimeTelemetry(process.env, {clock})
+    ownership.own(() => telemetry.close())
     const sourceResourcesPath = process.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH
     const codexHost = createProductionCodexHost(settings, sourceResourcesPath === undefined
       ? {}

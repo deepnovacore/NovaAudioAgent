@@ -5,6 +5,7 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws'
 import {
   CAMERA_CAPTURE_TIMEOUT_MS,
   CAMERA_HEIGHT,
+  CAMERA_PERMISSION_TIMEOUT_MS,
   CAMERA_WIDTH,
   MAX_CAMERA_LATE_RESPONSES,
   MAX_CAMERA_POSITION_MS,
@@ -14,7 +15,10 @@ import {
   decodeCameraFrame,
   hasCameraFrameMagic,
   parseCameraError,
+  parseCameraPermissionResult,
   serializeCameraCapture,
+  serializeCameraPermissionRequest,
+  type CameraPermissionStatus,
 } from './desktop-camera.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 import {hasUnpairedSurrogate} from './realtime/workspace-graph-board.js'
@@ -78,6 +82,11 @@ export const desktopControlSchema = z.discriminatedUnion('type', [
     request_id: graphRequestIdentifierSchema,
   }).strict(),
   z.object({
+    type: z.literal('project.confirmation_decision'),
+    proposal_id: identifierSchema.refine(value => codePointLengthLikePython(value) <= 128),
+    confirmed: z.boolean(),
+  }).strict(),
+  z.object({
     type: z.literal('clock.pong'),
     ping_id: identifierSchema,
     t_render_ms: z.number().finite().nonnegative(),
@@ -121,6 +130,7 @@ export interface CapturedCameraFrame {
 /** The authenticated, bounded camera request surface exposed by the desktop owner. */
 export interface CameraCaptureTransport {
   captureCamera(request: CameraCaptureRequest): Promise<CapturedCameraFrame>
+  requestCameraPermission?(): Promise<CameraPermissionStatus>
 }
 
 export interface DesktopCameraTimer {
@@ -159,7 +169,9 @@ export class NodeDesktopServer {
   #closing: Promise<void> | undefined
   #connectionGeneration = 0
   #cameraSequence = 0n
+  #cameraPermissionSequence = 0n
   readonly #pendingCamera = new Map<string, PendingCameraCapture>()
+  #pendingCameraPermission: PendingCameraPermission | undefined
   readonly #lateCameraIds = new Map<string, CameraResponseOwner>()
   readonly #lateCameraOrder: string[] = []
   #inboundBytes = 0
@@ -220,6 +232,28 @@ export class NodeDesktopServer {
     void this.#enqueueSend(socket, raw).catch(() => {
       this.#rejectCameraCapture(pending, cameraUnavailableError())
     })
+    return pending.promise
+  }
+
+  requestCameraPermission(): Promise<CameraPermissionStatus> {
+    if (!this.#canSend() || this.#pendingCameraPermission !== undefined) {
+      return Promise.reject(cameraUnavailableError())
+    }
+    const socket = this.#active!
+    const generation = this.#connectionGeneration
+    this.#cameraPermissionSequence += 1n
+    const requestId = `camera-permission-${this.#cameraPermissionSequence}`
+    const pending = new PendingCameraPermission(requestId, socket, generation)
+    this.#pendingCameraPermission = pending
+    const timer = this.#options.cameraTimer ?? defaultCameraTimer
+    pending.timerHandle = timer.set(CAMERA_PERMISSION_TIMEOUT_MS, () => {
+      if (this.#pendingCameraPermission !== pending) return
+      this.#pendingCameraPermission = undefined
+      this.#rememberLateCameraId(pending)
+      pending.reject(cameraUnavailableError())
+    })
+    void this.#enqueueSend(socket, serializeCameraPermissionRequest({request_id: requestId}))
+      .catch(() => this.#rejectCameraPermission(pending))
     return pending.promise
   }
 
@@ -346,6 +380,16 @@ export class NodeDesktopServer {
         const cameraError = maybeCameraError(raw)
         if (cameraError !== undefined) {
           this.#receiveCameraError(socket, generation, cameraError.request_id)
+          return
+        }
+        const cameraPermission = maybeCameraPermissionResult(raw)
+        if (cameraPermission !== undefined) {
+          this.#receiveCameraPermission(
+            socket,
+            generation,
+            cameraPermission.request_id,
+            cameraPermission.status,
+          )
           return
         }
         const control = parseDesktopControl(raw)
@@ -503,9 +547,44 @@ export class NodeDesktopServer {
     for (const pending of [...this.#pendingCamera.values()]) {
       if (pending.socket === socket) this.#rejectCameraCapture(pending, cameraUnavailableError())
     }
+    if (this.#pendingCameraPermission?.socket === socket) {
+      this.#rejectCameraPermission(this.#pendingCameraPermission)
+    }
   }
 
-  #rememberLateCameraId(pending: PendingCameraCapture): void {
+  #receiveCameraPermission(
+    socket: WebSocket,
+    generation: number,
+    requestId: string,
+    status: CameraPermissionStatus,
+  ): void {
+    const pending = this.#pendingCameraPermission
+    if (pending?.requestId !== requestId) {
+      const lateOwner = this.#lateCameraIds.get(requestId)
+      if (lateOwner?.socket === socket && lateOwner.generation === generation) return
+      throw new DesktopProtocolError('desktop camera permission response is unsolicited')
+    }
+    if (pending.socket !== socket || pending.generation !== generation) {
+      throw new DesktopProtocolError('desktop camera permission response has wrong owner')
+    }
+    this.#settleCameraPermission(pending)
+    pending.resolve(status)
+  }
+
+  #settleCameraPermission(pending: PendingCameraPermission): void {
+    if (this.#pendingCameraPermission !== pending) return
+    this.#pendingCameraPermission = undefined
+    const timer = this.#options.cameraTimer ?? defaultCameraTimer
+    if (pending.timerHandle !== undefined) timer.clear(pending.timerHandle)
+  }
+
+  #rejectCameraPermission(pending: PendingCameraPermission): void {
+    if (this.#pendingCameraPermission !== pending) return
+    this.#settleCameraPermission(pending)
+    pending.reject(cameraUnavailableError())
+  }
+
+  #rememberLateCameraId(pending: CameraResponseOwner & {readonly requestId: string}): void {
     this.#lateCameraIds.set(pending.requestId, {
       socket: pending.socket,
       generation: pending.generation,
@@ -562,6 +641,28 @@ class PendingCameraCapture {
       reject = promiseReject
     })
     this.resolve = resolve as (frame: CapturedCameraFrame) => void
+    this.reject = reject as (error: DesktopCameraError) => void
+  }
+}
+
+class PendingCameraPermission {
+  readonly promise: Promise<CameraPermissionStatus>
+  readonly resolve: (status: CameraPermissionStatus) => void
+  readonly reject: (error: DesktopCameraError) => void
+  timerHandle: unknown
+
+  constructor(
+    readonly requestId: string,
+    readonly socket: WebSocket,
+    readonly generation: number,
+  ) {
+    let resolve: ((status: CameraPermissionStatus) => void) | undefined
+    let reject: ((error: DesktopCameraError) => void) | undefined
+    this.promise = new Promise<CameraPermissionStatus>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve
+      reject = promiseReject
+    })
+    this.resolve = resolve as (status: CameraPermissionStatus) => void
     this.reject = reject as (error: DesktopCameraError) => void
   }
 }
@@ -637,6 +738,21 @@ function maybeCameraError(raw: string): {readonly request_id: string} | undefine
   if (typeof value !== 'object' || value === null || Array.isArray(value)
     || (value as Record<string, unknown>).type !== 'camera.error') return undefined
   return parseCameraError(raw)
+}
+
+function maybeCameraPermissionResult(raw: string): {
+  readonly request_id: string
+  readonly status: CameraPermissionStatus
+} | undefined {
+  let value: unknown
+  try {
+    value = JSON.parse(raw) as unknown
+  } catch {
+    return undefined
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)
+    || (value as Record<string, unknown>).type !== 'camera.permission_result') return undefined
+  return parseCameraPermissionResult(raw)
 }
 
 function sendWebSocketFrame(socket: WebSocket, raw: string | Uint8Array): Promise<void> {

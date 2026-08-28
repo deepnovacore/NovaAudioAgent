@@ -17,6 +17,8 @@ import {
   preflightMicrophone,
 } from './microphone-permission.mjs'
 import {
+  cameraPermissionResultMessage,
+  parseCameraPermissionRequest,
   RendererCameraController,
   RendererCameraToggle,
   RendererSocketRouter,
@@ -24,6 +26,7 @@ import {
 import { OrbDragGesture } from './drag-gesture.mjs'
 import { createOrbVisualSafe } from './orb-visual.mjs'
 import { ConfirmationCountdown } from './confirmation-countdown.mjs'
+import { ConfirmationDecisionController } from './confirmation-controls.mjs'
 import { deriveOrbState } from './state.mjs'
 
 const PROJECT_CONFIRMATION_TTL_SECONDS = 360
@@ -38,6 +41,9 @@ const codexLabel = document.querySelector('#codex-label')
 const codexSummary = document.querySelector('#codex-summary')
 const codexOperation = document.querySelector('#codex-operation')
 const codexExpiry = document.querySelector('#codex-expiry')
+const confirmationActions = document.querySelector('#codex-confirmation-actions')
+const confirmationConfirm = document.querySelector('#codex-confirm')
+const confirmationCancel = document.querySelector('#codex-cancel')
 const confirmationAnnouncement = document.querySelector('#confirmation-announcement')
 const aecLabel = document.querySelector('#aec-label')
 const captionLabel = document.querySelector('#caption')
@@ -93,6 +99,7 @@ const axes = {
   workspace: '',
   session: '',
   pendingConfirmation: false,
+  pendingConfirmationId: null,
   pendingAction: null,
   pendingWorkspace: '',
   pendingSession: '',
@@ -125,6 +132,8 @@ const confirmationCountdown = new ConfirmationCountdown({
     render()
   },
 })
+
+const confirmationDecision = new ConfirmationDecisionController({send})
 
 let socket
 let activeConnection = null
@@ -163,7 +172,7 @@ const playback = new GenerationPlayback({
 
 const socketRouter = new RendererSocketRouter({
   cameraController,
-  handleGeneric: event => handleSocketMessage(event),
+  handleGeneric: (event, delivery) => handleSocketMessage(event, delivery),
   onGenericError: () => {
     axes.error = 'playback'
     render()
@@ -172,6 +181,7 @@ const socketRouter = new RendererSocketRouter({
     if (socket !== closedSocket) return
     socket = undefined
     axes.connected = false
+    confirmationDecision.deliveryLost()
     alertTone.stop()
     playback.stopAll()
     clearCaption()
@@ -187,6 +197,10 @@ function render() {
   setText(codexOperation, state.confirmationOperation)
   setText(codexExpiry, state.confirmationStatus)
   codexLabel.dataset.mode = state.codexMode
+  const decisionEnabled = confirmationDecision.enabled && axes.connected
+  confirmationActions.hidden = !axes.pendingConfirmation || axes.pendingConfirmationId === null
+  confirmationConfirm.disabled = !decisionEnabled
+  confirmationCancel.disabled = !decisionEnabled
   setText(aecLabel, state.aecLabel)
   setAttribute(orb, 'aria-label', `${state.label}；${state.accessibleCodexLabel}`)
   orb.setAttribute('aria-pressed', String(axes.activated))
@@ -231,7 +245,9 @@ function markPlaybackInterrupted() {
 }
 
 function send(value) {
-  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value))
+  if (socket?.readyState !== WebSocket.OPEN) return false
+  socket.send(JSON.stringify(value))
+  return true
 }
 
 function startAlertTone() {
@@ -612,6 +628,7 @@ async function handleControl(message) {
     const workspace = message.workspace_display_name
     const session = message.session_title
     const pendingAction = message.pending_action
+    const pendingConfirmationId = message.pending_confirmation_id
     const pendingWorkspace = message.pending_workspace_display_name
     const pendingSession = message.pending_session_title
     const pendingExpires = message.pending_expires_in_seconds
@@ -624,7 +641,7 @@ async function handleControl(message) {
       || pendingWorkspace !== null
       || pendingSession !== null
       || pendingExpires !== null
-    const valid = keys === [
+    const baseKeys = [
       'pending_action',
       'pending_confirmation',
       'pending_expires_in_seconds',
@@ -633,10 +650,19 @@ async function handleControl(message) {
       'session_title',
       'type',
       'workspace_display_name',
-    ].join(',')
+    ]
+    const validKeys = keys === baseKeys.join(',')
+      || keys === [...baseKeys, 'pending_confirmation_id'].sort().join(',')
+    const validConfirmationId = pendingConfirmationId === undefined
+      || (typeof pendingConfirmationId === 'string'
+        && [...pendingConfirmationId].length > 0
+        && [...pendingConfirmationId].length <= 128)
+    const valid = validKeys
       && (workspace === null || (typeof workspace === 'string' && [...workspace].length <= 120))
       && (session === null || (typeof session === 'string' && [...session].length <= 120))
       && typeof message.pending_confirmation === 'boolean'
+      && validConfirmationId
+      && (message.pending_confirmation || pendingConfirmationId === undefined)
       && validAction
       && (pendingWorkspace === null
         || (typeof pendingWorkspace === 'string' && [...pendingWorkspace].length <= 120))
@@ -657,10 +683,15 @@ async function handleControl(message) {
       axes.workspace = workspace || ''
       axes.session = session || ''
       axes.pendingConfirmation = message.pending_confirmation
+      axes.pendingConfirmationId = message.pending_confirmation ? pendingConfirmationId ?? null : null
       axes.pendingAction = pendingAction
       axes.pendingWorkspace = pendingWorkspace || ''
       axes.pendingSession = pendingSession || ''
       axes.pendingExpiresInSeconds = pendingExpires
+      confirmationDecision.sync({
+        pending: message.pending_confirmation,
+        proposalId: axes.pendingConfirmationId,
+      })
       if (message.pending_confirmation) {
         confirmationCountdown.start(pendingExpires)
         const state = deriveOrbState(axes)
@@ -679,8 +710,19 @@ async function handleControl(message) {
   render()
 }
 
-async function handleSocketMessage(event) {
+async function handleSocketMessage(event, delivery) {
   if (typeof event.data === 'string') {
+    const permission = parseCameraPermissionRequest(event.data)
+    if (permission !== null) {
+      const status = axes.cameraSource === 'local'
+        ? await cameraToggleController.admitForHost()
+        : 'unavailable'
+      if (delivery?.isCurrent?.()) {
+        delivery.sendText(cameraPermissionResultMessage(permission.request_id, status))
+      }
+      render()
+      return
+    }
     await handleControl(JSON.parse(event.data))
     return
   }
@@ -709,6 +751,7 @@ async function handleSocketMessage(event) {
 function handleBackendExit() {
   axes.connected = false
   axes.error = ''
+  confirmationDecision.deliveryLost()
   alertTone.stop()
   playback.stopAll()
   render()
@@ -883,6 +926,12 @@ orb.addEventListener('contextmenu', event => {
 muteToggle.addEventListener('click', () => toggleMute())
 cameraToggle.addEventListener('click', () => { void cameraToggleController.toggle() })
 openSettingsButton.addEventListener('click', () => window.novaAudioAgentDesktop.orbMenu.openSettings?.())
+confirmationConfirm.addEventListener('click', () => {
+  if (confirmationDecision.decide(true)) render()
+})
+confirmationCancel.addEventListener('click', () => {
+  if (confirmationDecision.decide(false)) render()
+})
 window.addEventListener('beforeunload', () => {
   socketRouter.dispose()
   cameraController.dispose()

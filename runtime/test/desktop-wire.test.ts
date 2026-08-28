@@ -181,6 +181,7 @@ test('Codex project view carries a bounded public confirmation description', () 
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_id: 'proposal-public-1',
     pending_action: 'create_workspace',
     pending_workspace_display_name: 'tetris-game',
     pending_session_title: null,
@@ -191,6 +192,7 @@ test('Codex project view carries a bounded public confirmation description', () 
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_id: 'proposal-public-1',
     pending_action: 'create_workspace',
     pending_workspace_display_name: 'tetris-game',
     pending_session_title: null,
@@ -200,6 +202,7 @@ test('Codex project view carries a bounded public confirmation description', () 
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_id: 'proposal-stale',
     pending_action: 'select_workspace',
     pending_workspace_display_name: 'beta',
     pending_session_title: null,
@@ -207,11 +210,27 @@ test('Codex project view carries a bounded public confirmation description', () 
   }), DesktopProtocolError)
 })
 
+test('Codex project view rejects an invalid banner decision binding', () => {
+  for (const pendingConfirmationId of ['', 'x'.repeat(129)]) {
+    assert.throws(() => codexProjectMessage({
+      workspace_display_name: 'alpha',
+      session_title: null,
+      pending_confirmation: true,
+      pending_confirmation_id: pendingConfirmationId,
+      pending_action: 'create_workspace',
+      pending_workspace_display_name: 'timer-app',
+      pending_session_title: null,
+      pending_expires_in_seconds: 360,
+    }), DesktopProtocolError)
+  }
+})
+
 test('Codex project view accepts the full confirmation ttl', () => {
   const parsed = JSON.parse(codexProjectMessage({
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_id: 'proposal-public-1',
     pending_action: 'create_workspace',
     pending_workspace_display_name: 'timer-app',
     pending_session_title: null,

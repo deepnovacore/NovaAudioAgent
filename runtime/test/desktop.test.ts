@@ -26,6 +26,7 @@ import {
   MAX_PENDING_CAMERA_REQUESTS,
   encodeCameraFrame,
   serializeCameraError,
+  serializeCameraPermissionResult,
 } from '../src/desktop-camera.js'
 
 const TOKEN = '0123456789abcdef0123456789abcdef'
@@ -303,6 +304,24 @@ test('desktop parses only the bounded read-only workspace graph request shape', 
   })), /workspace graph request is invalid/u)
 })
 
+test('desktop accepts only an exact bounded project confirmation decision', () => {
+  assert.deepEqual(parseDesktopControl(JSON.stringify({
+    type: 'project.confirmation_decision',
+    proposal_id: 'proposal-1',
+    confirmed: false,
+  })), {
+    type: 'project.confirmation_decision',
+    proposal_id: 'proposal-1',
+    confirmed: false,
+  })
+  for (const decision of [
+    {type: 'project.confirmation_decision', proposal_id: '', confirmed: true},
+    {type: 'project.confirmation_decision', proposal_id: 'x'.repeat(129), confirmed: true},
+    {type: 'project.confirmation_decision', proposal_id: 'proposal-1', confirmed: 'true'},
+    {type: 'project.confirmation_decision', proposal_id: 'proposal-1', confirmed: true, extra: 1},
+  ]) assert.throws(() => parseDesktopControl(JSON.stringify(decision)), /unsupported/u)
+})
+
 test('a malformed graph request is ignored without tearing down authenticated voice transport', async () => {
   let receivedSpeech = false
   let acknowledge: (() => void) | undefined
@@ -527,6 +546,40 @@ test('authenticated desktop camera capture correlates one exact framed JPEG', as
   } finally {
     await closeDesktopClientAndServer(socket, server)
   }
+})
+
+test('authenticated desktop camera permission admission correlates one exact result', async () => {
+  const timer = new FakeCameraTimer()
+  const server = new NodeDesktopServer({token: TOKEN, cameraTimer: timer})
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    const rendererRequest = nextTextFrames(socket, 1)
+    const admission = server.requestCameraPermission()
+    const [request] = await settleWithin('desktop camera permission request', rendererRequest)
+    assert.equal(
+      request,
+      '{"type":"camera.permission","request_id":"camera-permission-1"}',
+    )
+    socket.send(serializeCameraPermissionResult({
+      request_id: 'camera-permission-1',
+      status: 'denied',
+    }))
+    assert.equal(await settleWithin('desktop camera permission result', admission), 'denied')
+    assert.equal(timer.active, 0)
+  } finally {
+    await closeDesktopClientAndServer(socket, server)
+  }
+})
+
+test('camera permission admission is unavailable without an authenticated desktop owner', async () => {
+  const server = new NodeDesktopServer({token: TOKEN})
+  await assert.rejects(
+    settleWithin('disconnected camera permission', server.requestCameraPermission()),
+    captureError,
+  )
+  await server.close()
 })
 
 test('camera errors isolate requests and concurrent frames may settle out of order', async () => {

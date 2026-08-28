@@ -43,6 +43,8 @@ export interface ConfirmedProjectOperation {
 
 export interface ProjectConfirmationView {
   readonly pending_confirmation: boolean
+  /** Opaque proposal binding for an exact renderer decision. Present only while pending. */
+  readonly pending_confirmation_id?: string
   readonly workspace_display_name: string | null
   readonly session_title: string | null
   readonly pending_action?:
@@ -100,6 +102,7 @@ export class ProjectConfirmationController {
     }
     return {
       pending_confirmation: true,
+      pending_confirmation_id: proposal.proposal_id,
       workspace_display_name: proposal.workspace_display_name,
       session_title: proposal.session_title,
       pending_action: publicProjectAction(proposal.action),
@@ -210,28 +213,28 @@ export class ProjectConfirmationController {
     if (proposal === null || !this.#isReserved(input.epoch, input.itemId)) {
       return outcome('ignored')
     }
-    if (this.#isExpired(proposal)) {
-      this.#clearAll()
-      this.#publish()
-      this.#publishExpiry()
-      return outcome('expired', {responseText: '确认已过期，本次操作已取消。'})
-    }
+    if (this.#isExpired(proposal)) return this.#expireDecision()
     if (typeof input.proposalId !== 'string') return outcome('ignored')
     if (input.proposalId !== proposal.proposal_id || typeof input.confirmed !== 'boolean') {
       return outcome('invalid', {responseText: '确认请求无效，操作尚未执行。'})
     }
-    if (!input.confirmed) {
-      this.#clearAll()
-      this.#publish()
-      return outcome('cancelled', {responseText: '已取消。'})
-    }
-    const operation = confirmedFrom(proposal)
-    this.#proposal = null
-    this.#reserved = null
-    // Deliberately not `clearAll`: this is where commit authority is *granted*.
-    this.#commitAuthority = operation
-    this.#publish()
-    return outcome('confirmed', {operation})
+    return this.#settle(proposal, input.confirmed)
+  }
+
+  /** Accept one renderer click bound to the exact visible proposal, without inventing speech evidence. */
+  acceptDirectDecision(input: {
+    readonly proposalId: string
+    readonly confirmed: boolean
+  }): ConfirmationOutcome {
+    const proposal = this.#proposal
+    if (
+      proposal === null
+      || typeof input.proposalId !== 'string'
+      || typeof input.confirmed !== 'boolean'
+      || input.proposalId !== proposal.proposal_id
+    ) return outcome('ignored')
+    if (this.#isExpired(proposal)) return this.#expireDecision()
+    return this.#settle(proposal, input.confirmed)
   }
 
   /** Release an undecided item without extending or discarding the proposal. */
@@ -306,6 +309,28 @@ export class ProjectConfirmationController {
   #isExpired(proposal: ProjectProposal): boolean {
     // `>=` so the instant of expiry is expired, matching the oracle.
     return this.#clock.now() >= proposal.expires_at
+  }
+
+  #expireDecision(): ConfirmationOutcome {
+    this.#clearAll()
+    this.#publish()
+    this.#publishExpiry()
+    return outcome('expired', {responseText: '确认已过期，本次操作已取消。'})
+  }
+
+  #settle(proposal: ProjectProposal, confirmed: boolean): ConfirmationOutcome {
+    if (!confirmed) {
+      this.#clearAll()
+      this.#publish()
+      return outcome('cancelled', {responseText: '已取消。'})
+    }
+    const operation = confirmedFrom(proposal)
+    this.#proposal = null
+    this.#reserved = null
+    // Deliberately not `clearAll`: this is where commit authority is *granted*.
+    this.#commitAuthority = operation
+    this.#publish()
+    return outcome('confirmed', {operation})
   }
 
   #clearAll(): void {

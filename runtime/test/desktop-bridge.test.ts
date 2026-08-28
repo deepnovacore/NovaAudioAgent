@@ -91,6 +91,10 @@ function harness(
       calls.push(`cleared:${utteranceId}:${epoch}:${playedMs ?? 'null'}`)
       return true
     },
+    projectConfirmationDecision: (proposalId, confirmed) => {
+      calls.push(`project-decision:${proposalId}:${confirmed}`)
+      return Promise.resolve()
+    },
   }
   const {withoutClock, codexState, ...bridgeOverrides} = overrides
   // Consumed above as the service's initial state; not a bridge option.
@@ -427,6 +431,26 @@ test('each renderer control frame reaches its service call', async () => {
     'stopped:u-1:1:null',
     'cleared:u-1:1:0',
   ])
+})
+
+test('a banner decision carries the exact proposal binding to the service', async () => {
+  const {bridge, calls} = harness()
+  await bridge.receive(
+    '{"type":"project.confirmation_decision","proposal_id":"proposal-1","confirmed":true}',
+    {authenticated: true},
+  )
+  await bridge.receive(
+    '{"type":"project.confirmation_decision","proposal_id":"proposal-2","confirmed":false}',
+    {authenticated: true},
+  )
+  assert.deepEqual(calls, [
+    'project-decision:proposal-1:true',
+    'project-decision:proposal-2:false',
+  ])
+  await assert.rejects(() => bridge.receive(
+    '{"type":"project.confirmation_decision","proposal_id":"proposal-1","confirmed":true,"extra":1}',
+    {authenticated: true},
+  ), DesktopProtocolError)
 })
 
 test('a memory board request is answered when a provider is wired, and ignored otherwise', async () => {

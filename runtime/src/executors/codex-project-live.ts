@@ -353,6 +353,9 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     return Object.freeze({
       ...this.#publicView,
       pending_confirmation: true,
+      ...(confirmation?.pending_confirmation_id === undefined
+        ? {}
+        : {pending_confirmation_id: confirmation.pending_confirmation_id}),
       pending_action: confirmation?.pending_action ?? null,
       pending_workspace_display_name: confirmation?.pending_workspace_display_name ?? null,
       pending_session_title: confirmation?.pending_session_title ?? null,

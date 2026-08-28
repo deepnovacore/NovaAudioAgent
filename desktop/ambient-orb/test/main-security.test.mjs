@@ -347,6 +347,18 @@ test('supervisor publishes live connection state to an open settings panel', asy
   assert.match(statusHandler.slice(0, statusHandler.indexOf('\n    },')), /sendToSettings\('nova:settings:changed', settingsView\(\)\)/)
 })
 
+test('a saved configuration reports an explicit apply failure without falsifying backend status', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
+  const handler = set.slice(0, set.indexOf('\n  })'))
+
+  assert.match(source, /settingsApplyStatus/)
+  assert.match(handler, /settingsApplyStatus = 'pending'/)
+  assert.match(handler, /settingsApplyStatus = 'failed'/)
+  assert.match(handler, /sendToSettings\('nova:settings:changed', settingsView\(\)\)/)
+  assert.doesNotMatch(handler, /backendStatus\s*=/)
+})
+
 test('native VoiceProcessingIO starts only after explicit capture activation', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 

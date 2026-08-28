@@ -87,6 +87,7 @@ export const GUARD_MANIFEST: ExecutorManifest = executorManifestSchema.parse({
 })
 
 export type WatchState = 'idle' | 'armed' | 'cooling' | 'waiting_reset'
+export type ObservationAdmission = 'granted' | 'denied' | 'restricted' | 'unavailable'
 
 export interface WatchVerdict {
   readonly hit: boolean
@@ -181,8 +182,14 @@ export class WatchAdapter implements ExecutorAdapter {
   readonly #model: string
   readonly #captureEnabled: boolean
   readonly #prepareObservation: (() => Promise<void>) | undefined
+  readonly #admitObservation: (() => Promise<ObservationAdmission>) | undefined
+  readonly #onObservationAdmission: ((
+    status: ObservationAdmission,
+    executor: 'watch' | 'guard',
+  ) => void) | undefined
   #source: FrameSource
   #gateway: ModelGateway
+  #admissionPending = false
   #running = false
   #stopRequested = false
   #status: WatchStatus = idleStatus()
@@ -195,6 +202,11 @@ export class WatchAdapter implements ExecutorAdapter {
     readonly model: string
     readonly captureEnabled: boolean
     readonly prepareObservation?: () => Promise<void>
+    readonly admitObservation?: () => Promise<ObservationAdmission>
+    readonly onObservationAdmission?: (
+      status: ObservationAdmission,
+      executor: 'watch' | 'guard',
+    ) => void
   }) {
     if (options.manifest.name !== 'watch' && options.manifest.name !== 'guard') {
       throw new TypeError('watch adapter manifest 必须是 watch 或 guard')
@@ -206,6 +218,8 @@ export class WatchAdapter implements ExecutorAdapter {
     this.#model = options.model
     this.#captureEnabled = options.captureEnabled
     this.#prepareObservation = options.prepareObservation
+    this.#admitObservation = options.admitObservation
+    this.#onObservationAdmission = options.onObservationAdmission
   }
 
   get status(): WatchStatus {
@@ -240,7 +254,7 @@ export class WatchAdapter implements ExecutorAdapter {
     }
     if (op === 'stop') {
       if (Object.keys(request).length > 0) return failure('invalid_params', op)
-      const wasRunning = this.#running
+      const wasRunning = this.#running || this.#admissionPending
       if (wasRunning) this.#stopRequested = true
       // `stopped` reports whether there was anything to stop, which is what tells the model the
       // difference between "I stopped it" and "nothing was running".
@@ -252,9 +266,46 @@ export class WatchAdapter implements ExecutorAdapter {
     if (normalized === null) return failure('invalid_params', op)
     if (!this.#captureEnabled) return unknown('capture_unavailable')
     // One window at a time: two would compete for the camera and each would see half the frames.
-    if (this.#running) return failure('busy', op)
+    if (this.#running || this.#admissionPending) return failure('busy', op)
     // Without an observation channel a hit has nowhere to go, so the window would run blind.
     if (ctx.observe === undefined) return unknown('observation_unavailable')
+    if (this.#admitObservation !== undefined) {
+      let admission: ObservationAdmission
+      this.#admissionPending = true
+      try {
+        admission = await this.#admitObservation()
+      } catch {
+        admission = 'unavailable'
+      } finally {
+        this.#admissionPending = false
+      }
+      if (ctx.signal.aborted) {
+        // Stop and runtime cancellation may race while the OS prompt is open. Cancellation wins,
+        // but its abandoned stop must not poison the next admission attempt.
+        this.#stopRequested = false
+        ctx.signal.throwIfAborted()
+      }
+      if (this.#stopRequested) {
+        this.#stopRequested = false
+        return this.#terminal('stopped')
+      }
+      try {
+        this.#onObservationAdmission?.(admission, this.manifest.name as 'watch' | 'guard')
+      } catch { /* telemetry is advisory */ }
+      if (admission === 'denied' || admission === 'restricted') {
+        const task = this.manifest.name === 'guard' ? 'Guard' : 'Watch'
+        return {
+          outcome: 'refused',
+          trust: 'trusted_system',
+          content: {
+            error: 'camera_permission_denied',
+            recoverable: true,
+            message: `权限不足，无法创建 ${task} 任务。请授予摄像头权限后重试。`,
+          },
+        }
+      }
+      if (admission !== 'granted') return unknown('capture_unavailable')
+    }
 
     this.#running = true
     this.#stopRequested = false

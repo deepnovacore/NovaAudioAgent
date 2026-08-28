@@ -14,6 +14,7 @@ import {
   type CapturedCameraFrame,
   type DesktopReadiness,
 } from './desktop.js'
+import type {CameraPermissionStatus} from './desktop-camera.js'
 import {deliveryToEvent} from './desktop-wire.js'
 import type {PlaybackCompletion, PlaybackFrame} from './playback.js'
 import type {RealtimeAssembly} from './realtime-assembly.js'
@@ -97,6 +98,20 @@ export function buildDesktopRealtimeComposition(
       }
       return server.captureCamera(request)
     },
+    requestCameraPermission(): Promise<CameraPermissionStatus> {
+      let server: DesktopServerTransport
+      try {
+        server = requireDesktop().server
+      } catch (error) {
+        return Promise.reject(error instanceof Error
+          ? error
+          : new Error('desktop realtime bridge is unavailable during construction'))
+      }
+      if (!isCameraPermissionTransport(server)) {
+        return Promise.reject(new Error('desktop camera permission transport is unavailable'))
+      }
+      return server.requestCameraPermission()
+    },
   }
   const realtime = options.buildRealtime({
     onAudioFrame: frame => requireDesktop().bridge.onAudioFrame(frame),
@@ -152,6 +167,13 @@ function isCameraCaptureTransport(
   server: DesktopServerTransport,
 ): server is DesktopServerTransport & CameraCaptureTransport {
   return 'captureCamera' in server && typeof server.captureCamera === 'function'
+}
+
+function isCameraPermissionTransport(
+  server: DesktopServerTransport,
+): server is DesktopServerTransport & Required<Pick<CameraCaptureTransport, 'requestCameraPermission'>> {
+  return 'requestCameraPermission' in server
+    && typeof server.requestCameraPermission === 'function'
 }
 
 export interface RealtimeDesktopServiceOptions {

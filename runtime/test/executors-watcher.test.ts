@@ -195,6 +195,7 @@ function gateway(verdicts: readonly (boolean | 'error' | 'malformed')[]): ModelG
 
 interface Harness {
   readonly adapter: WatchAdapter
+  readonly abort: AbortController
   readonly observations: {readonly trust: string; readonly content: Record<string, unknown>}[]
   readonly progress: {readonly elapsed: number; readonly summary: string | null}[]
   readonly clock: VirtualClock
@@ -238,10 +239,12 @@ function harness(options: {
   readonly withoutObserve?: boolean
   readonly gateway?: ModelGateway
   readonly mediaStore?: MediaStore
+  readonly admitObservation?: () => Promise<'granted' | 'denied' | 'restricted' | 'unavailable'>
 } = {}): Harness {
   const clock = new VirtualClock()
   const observations: {readonly trust: string; readonly content: Record<string, unknown>}[] = []
   const progress: {readonly elapsed: number; readonly summary: string | null}[] = []
+  const abort = new AbortController()
   const adapter = new WatchAdapter({
     manifest: manifestFor(options.manifestName ?? 'watch'),
     source: frameSource(
@@ -255,6 +258,9 @@ function harness(options: {
     mediaStore: options.mediaStore ?? new MediaStore(1_024 * 1_024, {idFactory: nextFrameId}),
     model: 'test-model',
     captureEnabled: options.captureEnabled ?? true,
+    ...(options.admitObservation === undefined
+      ? {}
+      : {admitObservation: options.admitObservation}),
   })
   const ctx: ExecutorDispatchContext = {
     clock,
@@ -263,7 +269,7 @@ function harness(options: {
       origin_ref: 'conversation:1', deadline: 1_860, routing_class: 'user_awaited',
       dispatched_at: 0,
     }),
-    signal: new AbortController().signal,
+    signal: abort.signal,
     ...(options.withoutObserve === true
       ? {}
       : {observe: payload => {
@@ -273,7 +279,7 @@ function harness(options: {
       progress.push(payload)
     },
   }
-  return {adapter, observations, progress, clock, ctx}
+  return {adapter, abort, observations, progress, clock, ctx}
 }
 
 function manifestFor(name: string): ExecutorManifest {
@@ -377,6 +383,117 @@ test('a window with no capture or no observation channel reports unknown, not fa
   const b = await noObserve.adapter.dispatch('start', {condition: 'c'}, noObserve.ctx)
   assert.equal(b.outcome, 'unknown')
   assert.equal(b.content.error, 'observation_unavailable')
+})
+
+test('camera permission denial refuses before the watcher becomes armed', async () => {
+  let admissionCalls = 0
+  const denied = harness({
+    manifestName: 'guard',
+    admitObservation: () => {
+      admissionCalls += 1
+      return Promise.resolve('denied')
+    },
+  })
+
+  const handoff = await denied.adapter.dispatch('start', {condition: '有人进入'}, denied.ctx)
+
+  assert.equal(admissionCalls, 1)
+  assert.equal(handoff.outcome, 'refused')
+  assert.deepEqual(handoff.content, {
+    error: 'camera_permission_denied',
+    recoverable: true,
+    message: '权限不足，无法创建 Guard 任务。请授予摄像头权限后重试。',
+  })
+  assert.equal(denied.observations.some(entry => entry.content.state === 'armed'), false)
+  assert.equal(denied.adapter.status.state, 'idle')
+})
+
+test('camera admission transport failure stays distinct from permission denial and never arms', async () => {
+  const unavailable = harness({
+    admitObservation: () => Promise.resolve('unavailable'),
+  })
+
+  const handoff = await unavailable.adapter.dispatch(
+    'start',
+    {condition: '有人进入'},
+    unavailable.ctx,
+  )
+
+  assert.equal(handoff.outcome, 'unknown')
+  assert.deepEqual(handoff.content, {error: 'capture_unavailable'})
+  assert.equal(unavailable.observations.some(entry => entry.content.state === 'armed'), false)
+  assert.equal(unavailable.adapter.status.state, 'idle')
+})
+
+test('camera admission reserves the pre-arm slot against concurrent starts', async () => {
+  let resolveAdmission: ((status: 'denied') => void) | undefined
+  const admission = new Promise<'denied'>(resolve => { resolveAdmission = resolve })
+  const pending = harness({admitObservation: () => admission})
+
+  const first = pending.adapter.dispatch('start', {condition: '有人进入'}, pending.ctx)
+  await Promise.resolve()
+  const second = await pending.adapter.dispatch('start', {condition: '门被打开'}, pending.ctx)
+
+  assert.equal(second.outcome, 'failed')
+  assert.deepEqual(second.content, {error: 'busy', op: 'start'})
+  assert.equal(pending.adapter.status.state, 'idle')
+  resolveAdmission?.('denied')
+  assert.equal((await first).outcome, 'refused')
+})
+
+test('stop during camera admission wins before the watcher can arm', async () => {
+  let resolveAdmission: ((status: 'granted') => void) | undefined
+  const admission = new Promise<'granted'>(resolve => { resolveAdmission = resolve })
+  const pending = harness({admitObservation: () => admission})
+
+  const start = pending.adapter.dispatch('start', {condition: '有人进入'}, pending.ctx)
+  await Promise.resolve()
+  const stopped = await pending.adapter.dispatch('stop', {}, pending.ctx)
+  assert.deepEqual(stopped.content, {stopped: true})
+  resolveAdmission?.('granted')
+
+  const result = await start
+  assert.equal(result.outcome, 'ok')
+  assert.equal(result.content.reason, 'stopped')
+  assert.equal(pending.observations.some(entry => entry.content.state === 'armed'), false)
+  assert.equal(pending.adapter.status.state, 'idle')
+})
+
+test('runtime cancellation during camera admission wins over its late verdict', async () => {
+  let resolveAdmission: ((status: 'denied') => void) | undefined
+  const admission = new Promise<'denied'>(resolve => { resolveAdmission = resolve })
+  const pending = harness({admitObservation: () => admission})
+
+  const start = pending.adapter.dispatch('start', {condition: '有人进入'}, pending.ctx)
+  await Promise.resolve()
+  pending.abort.abort()
+  resolveAdmission?.('denied')
+
+  await assert.rejects(start, error => error instanceof DOMException && error.name === 'AbortError')
+  assert.equal(pending.observations.some(entry => entry.content.state === 'armed'), false)
+  assert.equal(pending.adapter.status.state, 'idle')
+})
+
+test('combined stop and cancellation during admission cannot poison a fresh start', async () => {
+  const admissions: ((status: 'granted' | 'denied') => void)[] = []
+  const pending = harness({
+    admitObservation: () => new Promise<'granted' | 'denied'>(resolve => admissions.push(resolve)),
+  })
+
+  const first = pending.adapter.dispatch('start', {condition: '有人进入'}, pending.ctx)
+  await Promise.resolve()
+  assert.deepEqual((await pending.adapter.dispatch('stop', {}, pending.ctx)).content, {stopped: true})
+  pending.abort.abort()
+  admissions.shift()?.('granted')
+  await assert.rejects(first, error => error instanceof DOMException && error.name === 'AbortError')
+
+  const freshContext = harness().ctx
+  const second = pending.adapter.dispatch('start', {condition: '有人进入'}, freshContext)
+  await Promise.resolve()
+  admissions.shift()?.('denied')
+  const result = await second
+  assert.equal(result.outcome, 'refused')
+  assert.equal(pending.adapter.status.state, 'idle')
 })
 
 test('a hit stores the frame and announces it with a citable ref', async () => {

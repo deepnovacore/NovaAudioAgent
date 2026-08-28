@@ -38,6 +38,8 @@ export interface PublicProjectView {
   readonly workspace_display_name: string | null
   readonly session_title: string | null
   readonly pending_confirmation: boolean
+  /** Opaque proposal binding exposed only while the confirmation banner is actionable. */
+  readonly pending_confirmation_id?: string
   readonly pending_action?:
     | 'create_workspace'
     | 'reuse_workspace'
@@ -205,6 +207,7 @@ export function codexStateMessage(state: CodexState): string {
  * would triple the frame to no benefit.
  */
 export function codexProjectMessage(view: PublicProjectView): string {
+  const pendingConfirmationId = view.pending_confirmation_id
   const pendingAction = view.pending_action ?? null
   const pendingWorkspace = view.pending_workspace_display_name ?? null
   const pendingSession = view.pending_session_title ?? null
@@ -223,6 +226,14 @@ export function codexProjectMessage(view: PublicProjectView): string {
   if (typeof view.pending_confirmation !== 'boolean') {
     throw new DesktopProtocolError('desktop Codex project view is invalid')
   }
+  if (
+    pendingConfirmationId !== undefined
+    && (
+      typeof pendingConfirmationId !== 'string'
+      || pendingConfirmationId === ''
+      || codePointLengthLikePython(pendingConfirmationId) > 128
+    )
+  ) throw new DesktopProtocolError('desktop Codex project view is invalid')
   if (
     pendingAction !== null
     && pendingAction !== 'create_workspace'
@@ -247,7 +258,7 @@ export function codexProjectMessage(view: PublicProjectView): string {
     || pendingWorkspace !== null
     || pendingSession !== null
     || pendingExpires !== null
-  if (!view.pending_confirmation && hasPendingMetadata) {
+  if (!view.pending_confirmation && (hasPendingMetadata || pendingConfirmationId !== undefined)) {
     throw new DesktopProtocolError('desktop Codex project view is invalid')
   }
   if (
@@ -265,6 +276,9 @@ export function codexProjectMessage(view: PublicProjectView): string {
     workspace_display_name: view.workspace_display_name,
     session_title: view.session_title,
     pending_confirmation: view.pending_confirmation,
+    ...(pendingConfirmationId === undefined
+      ? {}
+      : {pending_confirmation_id: pendingConfirmationId}),
     pending_action: pendingAction,
     pending_workspace_display_name: pendingWorkspace,
     pending_session_title: pendingSession,

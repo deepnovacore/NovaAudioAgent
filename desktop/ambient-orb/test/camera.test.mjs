@@ -16,6 +16,8 @@ import {
   classifyCameraCaptureText,
   encodeCameraFrame,
   parseCameraCapture,
+  parseCameraPermissionRequest,
+  cameraPermissionResultMessage,
 } from '../src/renderer/camera.mjs'
 
 const {RendererCameraToggle} = cameraModule
@@ -345,6 +347,25 @@ test('camera unavailable response is compact, ordered, and leak-free', () => {
   assert.doesNotMatch(text, /device|DOMException|nova:\/\/|credential|\/Users\//u)
 })
 
+test('renderer camera permission wire messages are exact and bounded', () => {
+  assert.deepEqual(
+    parseCameraPermissionRequest(
+      '{"type":"camera.permission","request_id":"camera-permission-17"}',
+    ),
+    {type: 'camera.permission', request_id: 'camera-permission-17'},
+  )
+  assert.equal(
+    cameraPermissionResultMessage('camera-permission-17', 'restricted'),
+    '{"type":"camera.permission_result","request_id":"camera-permission-17","status":"restricted"}',
+  )
+  for (const invalid of [
+    '{"type":"camera.permission","request_id":"camera-permission-17","extra":true}',
+    '{"type":"camera.permission","request_id":"camera-/private/device"}',
+    '[]',
+  ]) assert.equal(parseCameraPermissionRequest(invalid), null)
+  assert.throws(() => cameraPermissionResultMessage('camera-permission-17', 'prompt'))
+})
+
 test('local camera starts privacy-gated and rejects capture without touching the device', async () => {
   const harness = makeLocalHarness()
   const controller = new RendererCameraController(harness)
@@ -457,6 +478,63 @@ test('camera toggle keeps the hard gate closed when system permission is denied'
     (await settleWithin(response.response.promise, 'denied camera capture')).value,
     cameraUnavailableMessage('camera-denied'),
   )
+  controller.dispose()
+})
+
+test('voice-triggered camera admission enables idempotently instead of toggling an active camera off', async () => {
+  const harness = makeLocalHarness()
+  const controller = new RendererCameraController(harness)
+  controller.setSourceMode('local')
+  let permissionRequests = 0
+  const toggle = new RendererCameraToggle({
+    cameraController: controller,
+    requestPermission: async () => {
+      permissionRequests += 1
+      return {status: 'granted'}
+    },
+  })
+
+  assert.equal(await toggle.ensureEnabled(), 'on')
+  assert.equal(await toggle.ensureEnabled(), 'on')
+  assert.equal(permissionRequests, 1)
+  assert.deepEqual(harness.calls.constraints, [{video: true, audio: false}])
+  controller.dispose()
+})
+
+test('voice-triggered camera admission preserves restricted as a permission verdict', async () => {
+  const harness = makeLocalHarness()
+  const controller = new RendererCameraController(harness)
+  controller.setSourceMode('local')
+  const toggle = new RendererCameraToggle({
+    cameraController: controller,
+    requestPermission: async () => ({status: 'restricted'}),
+  })
+
+  assert.equal(await toggle.admitForHost(), 'restricted')
+  assert.equal(toggle.state, 'denied')
+  assert.deepEqual(harness.calls.constraints, [])
+  controller.dispose()
+})
+
+test('browser permission denial remains a denied admission when system status is unknown', async () => {
+  const denied = Object.assign(new Error('do not expose this browser detail'), {
+    name: 'NotAllowedError',
+  })
+  const harness = makeLocalHarness({
+    getUserMedia: () => Promise.reject(denied),
+  })
+  const controller = new RendererCameraController(harness)
+  controller.setSourceMode('local')
+  const states = []
+  const toggle = new RendererCameraToggle({
+    cameraController: controller,
+    requestPermission: async () => ({status: 'unknown'}),
+    onState: state => states.push(state),
+  })
+
+  assert.equal(await toggle.admitForHost(), 'denied')
+  assert.equal(toggle.state, 'denied')
+  assert.deepEqual(states, ['requesting', 'denied'])
   controller.dispose()
 })
 

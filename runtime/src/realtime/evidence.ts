@@ -163,11 +163,20 @@ export function genericFinalSpeechView(
   } else if (outcome === 'failed') {
     text = `${displayName} 任务失败`
   } else if (outcome === 'refused') {
-    text = `${displayName} 未执行，需要选择或修正请求`
+    text = values.error === 'camera_permission_denied'
+      && values.recoverable === true
+      && typeof prose === 'string'
+      ? stripLikePython(prose)
+      : `${displayName} 未执行，需要选择或修正请求`
   } else {
     text = `${displayName} 任务结果不确定`
   }
-  if (outcome !== 'ok' && typeof values.error === 'string' && stripLikePython(values.error) !== '') {
+  if (
+    outcome !== 'ok'
+    && values.error !== 'camera_permission_denied'
+    && typeof values.error === 'string'
+    && stripLikePython(values.error) !== ''
+  ) {
     const category = prepareForSpeech(stripLikePython(values.error), {limit: 80}).text
     text += `（${category}）`
   }
@@ -193,6 +202,15 @@ export function safeMemoryEvidence(item: MemoryItem): string | null {
   if (item.channel === 'search') return searchEvidence(content)
 
   if (item.channel === 'watch' || item.channel === 'guard') {
+    if (
+      item.trust === 'trusted_system'
+      && outcome === 'refused'
+      && content.error === 'camera_permission_denied'
+      && content.recoverable === true
+    ) {
+      const task = item.channel === 'guard' ? 'Guard' : 'Watch'
+      return nonemptyPrepared(`权限不足，无法创建 ${task} 任务。请授予摄像头权限后重试。`)
+    }
     return genericFinalSpeechView(item.channel, outcome, selectKeys(content, [
       'condition',
       'hit',

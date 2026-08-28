@@ -3249,6 +3249,8 @@ test('a batch already spoken before the reconnect keeps its terminal phase', asy
     status: 'completed',
     reason: '',
   })
+  const toolOutputEventId = service.toolCallAcceptances()[0]?.acceptance.host_item.event_id
+  assert.notEqual(toolOutputEventId, undefined, 'the tool output crossed the provider boundary')
   // The continuation turn runs to audible renderer completion, so the batch is truly spoken.
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
   await service.handleEvent({
@@ -3274,9 +3276,15 @@ test('a batch already spoken before the reconnect keeps its terminal phase', asy
     service.playbackDone(generation!.utterance_id, generation!.generation_epoch, 250),
     true,
   )
-  assert.ok(
-    actions.some(action => action.startsWith('retire:provider:id-')),
-    `audibly delivered acknowledgement is removed from provider history: ${JSON.stringify(actions)}`,
+  assert.equal(
+    actions.includes(`retire:provider:${toolOutputEventId}`),
+    false,
+    `hearing a continuation must not delete its function_call_output: ${JSON.stringify(actions)}`,
+  )
+  assert.equal(
+    session.hostEventIsDeduplicated(toolOutputEventId!),
+    true,
+    'the tool output remains answered after its continuation is heard',
   )
   assert.equal(
     service.toolCallDispositionsForTest[0],
@@ -3336,7 +3344,7 @@ test('an acknowledgement bound to an unfinished continuation is reopened by the 
   // Its turn was speaking when the session died, so the user heard part of nothing. Left `bound` it
   // would never be queued again -- the queue helper refuses anything already bound -- and the user
   // would simply never be told the work started.
-  const {service, actions} = pipelineService()
+  const {service, actions, session} = pipelineService()
   await service.connect()
   await twoTurns(service)
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
@@ -3362,6 +3370,8 @@ test('an acknowledgement bound to an unfinished continuation is reopened by the 
     status: 'completed',
     reason: '',
   })
+  const toolOutputEventId = service.toolCallAcceptances()[0]?.acceptance.host_item.event_id
+  assert.notEqual(toolOutputEventId, undefined, 'the continuation owns a real tool output')
   // The continuation turn starts -- binding the acknowledgement to it -- and then never finishes.
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
   assert.equal(
@@ -3369,9 +3379,15 @@ test('an acknowledgement bound to an unfinished continuation is reopened by the 
     'bound',
     'bound to a turn that is still speaking',
   )
+  assert.equal(session.hostEventIsDeduplicated(toolOutputEventId!), true)
   const before = actions.filter(action => action === 'inject:background:d-1').length
 
   await service.reconnectForTest()
+  assert.equal(
+    session.hostEventIsDeduplicated(toolOutputEventId!),
+    true,
+    'reopening the semantic acknowledgement must not release the tool output ledger',
+  )
   assert.equal(
     actions.filter(action => action === 'inject:background:d-1').length,
     before + 1,
@@ -3410,6 +3426,48 @@ test('an acknowledgement bound to an unfinished fallback is reopened by the reco
     before + 1,
     'the dead fallback binding is re-offered in the replacement session',
   )
+})
+
+test('a zero-audio fallback completion reopens response authority without reinjection', async () => {
+  const {service, actions} = pipelineService()
+  await service.connect()
+  await twoTurns(service)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-item-1', text: 'compile the runtime',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    call_id: 'call-1', item_id: 'tool-1', name: 'codex__start',
+    arguments: {work_order: 'compile the runtime'}, response_id: 'r-1',
+  })
+
+  await service.reconnectForTest()
+  const fallbackEpoch = service.session.sessionEpoch
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: fallbackEpoch, response_id: 'r-fallback-1',
+  })
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'bound')
+  const responsesBefore = actions.filter(action => action === 'create_response:host_fact').length
+  const injectionsBefore = actions.filter(action => action === 'inject:background:d-1').length
+
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: fallbackEpoch,
+    response_id: 'r-fallback-1', status: 'completed', reason: '',
+  })
+
+  assert.equal(
+    actions.filter(action => action === 'create_response:host_fact').length,
+    responsesBefore + 1,
+    'the same provider fact can request a replacement response after zero audio',
+  )
+  assert.equal(
+    actions.filter(action => action === 'inject:background:d-1').length,
+    injectionsBefore,
+    'reopening response authority preserves the confirmed provider item',
+  )
+  assert.equal(service.acknowledgementPhasesForTest['background:d-1'], 'requested')
 })
 
 test('an acknowledgement heard from its continuation is not reopened by a reconnect', async () => {
@@ -3545,6 +3603,32 @@ test('playback clear reopens an unheard acknowledgement until its delegate settl
     actions.filter(action => action === 'inject:background:d-1').length,
     before,
     'settlement prevents the interrupted acknowledgement from returning after reconnect',
+  )
+})
+
+test('local speech after partial acknowledgement playback suppresses a repeated acknowledgement', async () => {
+  const {service, session, actions} = pipelineService()
+  await service.connect()
+  const generation = await openCompletedAcknowledgementPlayback(service, session)
+
+  await service.localSpeechOnset('local-speech-1')
+  assert.equal(
+    service.playbackCleared(generation.utterance_id, generation.generation_epoch, 4_000),
+    true,
+  )
+  assert.equal(
+    service.acknowledgementPhasesForTest['background:d-1'],
+    'cancelled',
+    'the user already heard part of this acknowledgement and then took the floor',
+  )
+  const before = actions.filter(action => action === 'inject:background:d-1').length
+
+  await service.reconnectForTest()
+
+  assert.equal(
+    actions.filter(action => action === 'inject:background:d-1').length,
+    before,
+    'a user-interrupted acknowledgement is not replayed after provider replacement',
   )
 })
 
@@ -3756,6 +3840,10 @@ function guardService(options: {
     },
     createResponse: (intent: {readonly kind: string}) => {
       actions.push(`create:${intent.kind}`)
+      return Promise.resolve()
+    },
+    ensureResponse: () => {
+      actions.push('ensure-response')
       return Promise.resolve()
     },
     cancelResponse: (responseId: string) => {
@@ -4064,6 +4152,8 @@ function confirmationService(options: {
   readonly actions: string[]
   readonly injected: HostContextItem[]
   readonly views: ProjectConfirmationView[]
+  readonly diagnostics: string[]
+  readonly telemetry: {readonly kind: string; readonly payload: Readonly<Record<string, JsonValue>>}[]
   readonly clock: VirtualClock
 } {
   const manifest = executorManifestSchema.parse({
@@ -4102,6 +4192,8 @@ function confirmationService(options: {
   const actions: string[] = []
   const injected: HostContextItem[] = []
   const views: ProjectConfirmationView[] = []
+  const diagnostics: string[] = []
+  const telemetry: {kind: string; payload: Readonly<Record<string, JsonValue>>}[] = []
   let ids = 0
   const defaultNextId = (): string => `id-${++ids}`
   const nextId = options.idFactory ?? defaultNextId
@@ -4120,6 +4212,10 @@ function confirmationService(options: {
     },
     createResponse: (intent: {readonly kind: string}) => {
       actions.push(`create:${intent.kind}`)
+      return Promise.resolve()
+    },
+    ensureResponse: () => {
+      actions.push('ensure-response')
       return Promise.resolve()
     },
     cancelResponse: (responseId: string) => {
@@ -4192,9 +4288,13 @@ function confirmationService(options: {
       : {projectExpiryStepTimeoutMs: options.expiryStepTimeoutMs}),
     ...(commit === undefined ? {} : {commitProjectOperation: commit}),
     onProjectView: view => views.push(view),
-    onDiagnostic: () => undefined,
+    onDiagnostic: line => diagnostics.push(line),
+    telemetry: {
+      record: (kind, payload) => telemetry.push({kind, payload}),
+      close: () => undefined,
+    },
   })
-  return {service, controller, actions, injected, views, clock}
+  return {service, controller, actions, injected, views, diagnostics, telemetry, clock}
 }
 
 /**
@@ -4676,8 +4776,113 @@ test('malformed confirmation arguments preserve the proposal and reservation', a
   }
 })
 
-test('a terminal without a confirmation function releases the item for the next utterance', async () => {
+test('a desktop banner decision commits through the same one-shot controller path', async () => {
+  const {service, controller, actions, telemetry} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+
+  await service.projectConfirmationDecision('stale-proposal', true)
+  assert.equal(actions.includes('commit'), false)
+  assert.equal(controller.pending, true)
+
+  await service.projectConfirmationDecision(proposal.proposal_id, true)
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+  assert.equal(controller.pending, false)
+  await service.projectConfirmationDecision(proposal.proposal_id, true)
+  assert.equal(actions.filter(action => action === 'commit').length, 1, 'a replay cannot commit twice')
+  assert.ok(telemetry.some(record => (
+    record.kind === 'project_confirmation.ui_decision_completed'
+    && record.payload.proposal_id === proposal.proposal_id
+    && record.payload.state === 'accepted'
+  )))
+})
+
+test('a banner decision fences an active confirmation response until its terminal', async () => {
   const {service, controller, actions, injected} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'ui-active-item',
+    responseId: 'ui-active-response',
+    transcript: '确认',
+  })
+
+  await service.projectConfirmationDecision(proposal.proposal_id, true)
+  assert.equal(actions.includes('cancel:ui-active-response'), true)
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    call_id: 'late-active-tool', item_id: 'late-active-function',
+    response_id: 'ui-active-response', name: 'codex__start',
+    arguments: {work_order: 'must not run'},
+  })
+  assert.match(
+    injected.find(item => item.call_id === 'late-active-tool')?.content ?? '',
+    /confirmation_reserved/u,
+  )
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+})
+
+test('a banner decision revokes a requested retry whose response id has not arrived', async () => {
+  const {service, controller, actions, injected} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'ui-retry-speech', provider_item_id: 'ui-retry-item',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'ui-retry-speech', provider_item_id: 'ui-retry-item',
+  })
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'ui-retry-source',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'ui-retry-source',
+    status: 'completed', reason: '',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'ui-retry-item', text: '确认',
+  })
+  assert.equal(actions.filter(action => action === 'ensure-response').length, 1)
+
+  await service.projectConfirmationDecision(proposal.proposal_id, true)
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 2)
+
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'ui-retry-late',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    call_id: 'late-retry-tool', item_id: 'late-retry-function',
+    response_id: 'ui-retry-late', name: 'codex__start',
+    arguments: {work_order: 'must not run'},
+  })
+  assert.equal(
+    injected.some(item => item.call_id === 'late-retry-tool'),
+    false,
+    'events from the replaced provider epoch are ignored rather than admitted',
+  )
+})
+
+test('a banner click at the exact deadline produces only the expiry-owned fact', async () => {
+  const {service, controller, clock, injected} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  clock.advanceTo(360)
+
+  await service.projectConfirmationDecision(proposal.proposal_id, true)
+  await new Promise(resolve => setImmediate(resolve))
+  const facts = [
+    ...injected,
+    ...service.queuedHostItems().map(item => item.intent.item),
+  ].filter(item => item.content === '确认已过期，本次操作已取消。')
+  assert.equal(facts.length, 1)
+})
+
+test('a confirmation terminal before transcript final retries the same user turn once', async () => {
+  const {service, controller, actions, injected, telemetry} = confirmationService()
   await service.connect()
   const proposal = propose(controller)
   await service.handleEvent({
@@ -4694,9 +4899,6 @@ test('a terminal without a confirmation function releases the item for the next 
   })
   await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-first'})
   await service.handleEvent({
-    kind: 'user_transcript_final', session_epoch: 1, item_id: 'first', text: '我没说清楚',
-  })
-  await service.handleEvent({
     kind: 'response_terminal',
     session_epoch: 1,
     response_id: 'response-first',
@@ -4704,44 +4906,95 @@ test('a terminal without a confirmation function releases the item for the next 
     reason: '',
   })
   assert.equal(controller.pending, true, 'the proposal remains live')
-  const retryPrompt = '我没有确认清楚；若界面仍显示等待确认，请明确说“确认”或“取消”。'
+  assert.equal(service.projectConfirmationBlockingForTest, true)
+  assert.equal(actions.includes('ensure-response'), false, 'the transcript is not available yet')
   assert.equal(
     [
       ...injected.map(item => item.content),
       ...service.queuedHostItems().map(item => item.intent.item.content),
-    ].filter(content => content === retryPrompt).length,
-    1,
-    'a silent model turn gets exactly one deterministic retry prompt',
+    ].some(content => content.includes('请明确说')),
+    false,
+    'the host does not ask for another unusable utterance',
   )
   await service.handleEvent({
-    kind: 'user_speech_started', session_epoch: 1,
-    speech_id: 'speech-second', provider_item_id: 'second',
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'first', text: '确认',
   })
+  assert.equal(actions.filter(action => action === 'ensure-response').length, 1)
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-retry'})
   await service.handleEvent({
-    kind: 'user_speech_ended', session_epoch: 1,
-    speech_id: 'speech-second', provider_item_id: 'second',
-  })
-  await service.handleEvent({
-    kind: 'response_started', session_epoch: 1, response_id: 'response-retry-prompt',
-  })
-  assert.ok(actions.includes('cancel:response-retry-prompt'))
-  await service.handleEvent({
-    kind: 'response_terminal', session_epoch: 1, response_id: 'response-retry-prompt',
-    status: 'cancelled', reason: 'cancelled',
-  })
-  await service.handleEvent({
-    kind: 'response_started', session_epoch: 1, response_id: 'response-second',
-  })
-  await service.handleEvent({
-    kind: 'user_transcript_final', session_epoch: 1, item_id: 'second', text: '确认',
-  })
-  await service.handleEvent({
-    kind: 'tool_call_ready', session_epoch: 1,
-    call_id: 'confirm-second', item_id: 'function-second', response_id: 'response-second',
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'confirm-retry',
+    item_id: 'function-retry', response_id: 'response-retry',
     name: 'codex__confirm_project_action',
     arguments: {proposal_id: proposal.proposal_id, confirmed: true},
   })
   assert.equal(actions.filter(action => action === 'commit').length, 1)
+  assert.ok(telemetry.some(record => record.kind === 'project_confirmation.decision_retry_requested'))
+})
+
+for (const status of ['cancelled', 'failed'] as const) {
+  test(`a silent ${status} confirmation terminal preserves the same-turn retry`, async () => {
+    const {service, controller, actions} = confirmationService()
+    await service.connect()
+    propose(controller)
+    await service.handleEvent({
+      kind: 'user_speech_started', session_epoch: 1,
+      speech_id: `speech-${status}`, provider_item_id: `item-${status}`,
+    })
+    await service.handleEvent({
+      kind: 'user_speech_ended', session_epoch: 1,
+      speech_id: `speech-${status}`, provider_item_id: `item-${status}`,
+    })
+    await service.handleEvent({
+      kind: 'response_started', session_epoch: 1, response_id: `response-${status}`,
+    })
+    await service.handleEvent({
+      kind: 'response_terminal', session_epoch: 1, response_id: `response-${status}`,
+      status, reason: status,
+    })
+    assert.equal(controller.pending, true)
+    assert.equal(service.projectConfirmationBlockingForTest, true)
+    await service.handleEvent({
+      kind: 'user_transcript_final', session_epoch: 1,
+      item_id: `item-${status}`, text: '确认',
+    })
+    assert.equal(actions.filter(action => action === 'ensure-response').length, 1)
+  })
+}
+
+test('one empty confirmation retry releases voice isolation but keeps the banner actionable', async () => {
+  const {service, controller, actions, injected, telemetry} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'empty-answer',
+    responseId: 'empty-first-response',
+    transcript: '确认',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'empty-first-response',
+    status: 'completed', reason: '',
+  })
+  assert.equal(actions.filter(action => action === 'ensure-response').length, 1)
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'empty-retry-response',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'empty-retry-response',
+    status: 'completed', reason: '',
+  })
+
+  assert.equal(controller.pending, true, 'the proposal and its banner remain available for a click')
+  assert.equal(service.projectConfirmationBlockingForTest, false, 'voice isolation no longer hangs')
+  assert.equal(
+    [
+      ...injected.map(item => item.content),
+      ...service.queuedHostItems().map(item => item.intent.item.content),
+    ].some(content => content.includes('请明确说')),
+    false,
+  )
+  assert.ok(telemetry.some(record => (
+    record.kind === 'project_confirmation.decision_retry_exhausted'
+  )))
 })
 
 test('a confirmation response that already spoke gets no duplicate retry prompt', async () => {
@@ -4805,40 +5058,6 @@ test('a silent confirmation terminal at expiry cannot offer an impossible retry'
     ].some(content => content.includes('我没有确认清楚')),
     false,
   )
-})
-
-test('expiry removes a retry prompt that was queued while the user held the floor', async () => {
-  const {service, controller, clock} = confirmationService()
-  await service.connect()
-  propose(controller)
-  await reserveConfirmationTurn(service, {
-    itemId: 'near-expiry-answer',
-    responseId: 'near-expiry-response',
-    transcript: '我还在想',
-  })
-  clock.advanceTo(89)
-  await service.handleEvent({
-    kind: 'user_speech_started',
-    session_epoch: 1,
-    speech_id: 'speech-holds-floor',
-    provider_item_id: 'floor-holder',
-  })
-  await service.handleEvent({
-    kind: 'response_terminal',
-    session_epoch: 1,
-    response_id: 'near-expiry-response',
-    status: 'completed',
-    reason: '',
-  })
-  assert.ok(service.queuedHostItems().some(item => (
-    item.intent.item.event_id.startsWith('project-confirmation-retry:')
-  )))
-
-  clock.advanceTo(360)
-  assert.equal(controller.expire(), true)
-  assert.equal(service.queuedHostItems().some(item => (
-    item.intent.item.event_id.startsWith('project-confirmation-retry:')
-  )), false)
 })
 
 test('the confirmation function may arrive before its user transcript', async () => {
@@ -5085,6 +5304,141 @@ test('a confirmation answer response stays alive long enough to emit its decisio
     arguments: {proposal_id: proposal.proposal_id, confirmed: true},
   })
 
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+})
+
+test('a confirmation response created before speech end remains tool-only and can commit', async () => {
+  const {service, controller, actions, telemetry} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-overlap',
+    provider_item_id: 'user-overlap',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'response-overlap',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-overlap',
+    provider_item_id: 'user-overlap',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-overlap',
+    text: '确认',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'confirm-overlap',
+    item_id: 'function-overlap',
+    response_id: 'response-overlap',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+
+  assert.equal(actions.includes('cancel:response-overlap'), false)
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+  assert.equal(controller.pending, false)
+  assert.deepEqual(telemetry.find(record => (
+    record.kind === 'project_confirmation.response_started'
+  )), {
+    kind: 'project_confirmation.response_started',
+    payload: {
+      session_epoch: 1,
+      response_id: 'response-overlap',
+      accepted: true,
+      started_during_user_speech: true,
+      fence_pending: false,
+      origin_bound: true,
+      confirmation_item_count: 1,
+      proposal_id: proposal.proposal_id,
+    },
+  })
+})
+
+test('an unbound confirmation call fails visibly and releases the proposal for a retry', async () => {
+  const {service, controller, actions, injected, diagnostics, telemetry} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-unbound',
+    provider_item_id: 'user-unbound',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-unbound',
+    provider_item_id: 'user-unbound',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'user-unbound',
+    text: '确认',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'confirm-unbound',
+    item_id: 'function-unbound',
+    response_id: 'response-without-start',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+
+  assert.equal(actions.includes('commit'), false, 'an unbound call never authorizes a commit')
+  assert.equal(controller.pending, true, 'the proposal remains available for a fresh answer')
+  assert.deepEqual(service.confirmationItemsForTest, [], 'the stale answer no longer owns the proposal')
+  assert.match(
+    diagnostics.find(line => line.includes('project_confirmation_binding_missing')) ?? '',
+    /response_id=response-without-start.*origin_item_bound=false.*recovered=true/u,
+  )
+  assert.deepEqual(telemetry.find(record => (
+    record.kind === 'project_confirmation.binding_missing'
+  )), {
+    kind: 'project_confirmation.binding_missing',
+    payload: {
+      session_epoch: 1,
+      call_id: 'confirm-unbound',
+      response_id: 'response-without-start',
+      active_response_id: 'none',
+      response_phase: 'unknown',
+      response_fenced: false,
+      origin_item_bound: false,
+      pending: true,
+      recovered: true,
+      proposal_id: proposal.proposal_id,
+    },
+  })
+  const retryPrompt = '我没能把这次语音和确认请求关联起来；请再说一次“确认”或“取消”。'
+  assert.equal(
+    [
+      ...injected.map(item => item.content),
+      ...service.queuedHostItems().map(item => item.intent.item.content),
+    ].filter(content => content === retryPrompt).length,
+    1,
+  )
+
+  await confirmationTurn(service, {
+    proposalId: proposal.proposal_id,
+    confirmed: true,
+    itemId: 'user-retry',
+    responseId: 'response-retry',
+    callId: 'confirm-retry',
+    transcript: '确认',
+  })
   assert.equal(actions.filter(action => action === 'commit').length, 1)
 })
 
@@ -5350,6 +5704,39 @@ test('an expiry reconnects while a pending confirmation question fence remains',
   // was never spent -- the user never finished speaking -- and an unspent fence is still holding the
   // question open. That distinction is what `_end_project_confirmation_close` encodes.
   assert.deepEqual(service.confirmationClosingItemsForTest, [], 'the item is no longer closing')
+})
+
+test('an expiry reconnects when a requested confirmation retry still has no response id', async () => {
+  const {service, controller, actions, clock} = confirmationService()
+  await service.connect()
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'expiry-retry-speech', provider_item_id: 'expiry-retry-item',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'expiry-retry-speech', provider_item_id: 'expiry-retry-item',
+  })
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'expiry-retry-source',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'expiry-retry-source',
+    status: 'completed', reason: '',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'expiry-retry-item', text: '确认',
+  })
+  assert.equal(actions.filter(action => action === 'ensure-response').length, 1)
+  const connects = actions.filter(action => action.startsWith('connect:')).length
+
+  clock.advanceTo(400)
+  assert.equal(controller.expire(), true)
+  for (let index = 0; index < 30; index += 1) await Promise.resolve()
+  await new Promise<void>(resolve => setTimeout(resolve, 30))
+  assert.ok(actions.filter(action => action.startsWith('connect:')).length > connects)
 })
 
 test('a terminal releases the response from the confirmation block', async () => {
