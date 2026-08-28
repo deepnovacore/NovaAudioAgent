@@ -41,6 +41,15 @@ body[data-opaque="1"] {
   --palette-technical: rgba(202, 218, 211, .78);
   --palette-caption: rgba(255, 244, 230, .86);
   --palette-user: rgba(207, 230, 239, .9);
+  /* Confirmation-popup accents: unlike the five vars above, these are the
+     ones the hover tour should still visibly re-theme (see index.css text
+     labels, which are deliberately NOT wired to any --palette-* anymore). */
+  --palette-confirm-title: #ffe1a3;
+  --palette-confirm-text: rgba(255, 222, 164, .9);
+  --palette-confirm-border: rgba(255, 193, 94, .34);
+  --palette-confirm-bg-1: rgba(49, 36, 18, .9);
+  --palette-confirm-bg-2: rgba(20, 17, 18, .88);
+  --palette-confirm-glow: rgba(255, 181, 71, .24);
   position: relative;
   width: 100%;
   height: 100%;
@@ -58,6 +67,12 @@ body[data-opaque="1"] {
   --palette-technical: rgba(199, 205, 213, .78);
   --palette-caption: rgba(235, 211, 217, .88);
   --palette-user: rgba(205, 220, 231, .9);
+  --palette-confirm-title: #ffd0dc;
+  --palette-confirm-text: rgba(255, 208, 220, .9);
+  --palette-confirm-border: rgba(255, 148, 178, .34);
+  --palette-confirm-bg-1: rgba(54, 22, 32, .9);
+  --palette-confirm-bg-2: rgba(20, 15, 17, .88);
+  --palette-confirm-glow: rgba(255, 120, 158, .24);
 }
 
 #shell[data-palette='ion'] {
@@ -66,6 +81,12 @@ body[data-opaque="1"] {
   --palette-technical: rgba(174, 214, 220, .78);
   --palette-caption: rgba(218, 230, 242, .88);
   --palette-user: rgba(190, 224, 239, .9);
+  --palette-confirm-title: #bfe0ff;
+  --palette-confirm-text: rgba(200, 227, 255, .9);
+  --palette-confirm-border: rgba(110, 180, 255, .34);
+  --palette-confirm-bg-1: rgba(16, 32, 54, .9);
+  --palette-confirm-bg-2: rgba(14, 18, 22, .88);
+  --palette-confirm-glow: rgba(94, 170, 255, .24);
 }
 
 #shell[data-palette='violet'] {
@@ -74,6 +95,12 @@ body[data-opaque="1"] {
   --palette-technical: rgba(190, 207, 214, .78);
   --palette-caption: rgba(225, 216, 234, .88);
   --palette-user: rgba(202, 221, 235, .9);
+  --palette-confirm-title: #ddc2ff;
+  --palette-confirm-text: rgba(224, 210, 247, .9);
+  --palette-confirm-border: rgba(186, 138, 255, .34);
+  --palette-confirm-bg-1: rgba(40, 22, 54, .9);
+  --palette-confirm-bg-2: rgba(18, 15, 22, .88);
+  --palette-confirm-glow: rgba(170, 108, 255, .24);
 }
 
 #shell[data-palette='graphite'] {
@@ -82,6 +109,12 @@ body[data-opaque="1"] {
   --palette-technical: rgba(188, 211, 210, .78);
   --palette-caption: rgba(231, 235, 240, .88);
   --palette-user: rgba(199, 223, 235, .9);
+  --palette-confirm-title: #e2e6ec;
+  --palette-confirm-text: rgba(220, 225, 232, .9);
+  --palette-confirm-border: rgba(178, 190, 204, .34);
+  --palette-confirm-bg-1: rgba(34, 37, 42, .9);
+  --palette-confirm-bg-2: rgba(16, 17, 19, .88);
+  --palette-confirm-glow: rgba(190, 200, 214, .24);
 }
 
 #orb {
@@ -219,18 +252,35 @@ body:hover #orb-rail,
   text-overflow: ellipsis;
   font-size: 11px;
   line-height: 1.25;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, .8);
-  transition: color var(--palette-transition-duration) linear;
+  /* Caption-style hard outline, not a soft colour glow: this text sits
+     directly on the real desktop with no backdrop, so it needs a crisp,
+     high-contrast edge rather than a blur halo (a blurred shadow reads as a
+     gray smear at this font size, and stops helping once the fill itself
+     isn't fully opaque). Four zero-blur offset shadows draw the outline;
+     the stroke reinforces diagonals a plain N/E/S/W offset set can leave
+     thin. */
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, .95),
+    1px -1px 0 rgba(0, 0, 0, .95),
+    -1px 1px 0 rgba(0, 0, 0, .95),
+    1px 1px 0 rgba(0, 0, 0, .95),
+    0 0 3px rgba(0, 0, 0, .7);
+  -webkit-text-stroke: .6px rgba(0, 0, 0, .9);
 }
 
-#state-label { color: var(--palette-primary); }
-#codex-label { color: var(--palette-secondary); font-size: 10px; }
-#aec-label { color: var(--palette-technical); font-size: 9px; }
+/* Fixed, palette-independent brightness tiers: deliberately NOT wired to
+   --palette-* so the hover palette tour (which still re-themes the orb
+   canvas and the confirmation popup) never rotates this text's colour.
+   Fully opaque (no alpha) - a translucent fill blends into a light desktop
+   background no matter how strong the outline is. */
+#state-label { color: #ffffff; }
+#codex-label { color: #e9e9e9; font-size: 10px; }
+#aec-label { color: #cfcfcf; font-size: 9px; }
 
 #caption {
   margin: 2px 0 0;
   max-width: 176px;
-  color: var(--palette-caption);
+  color: #f5f5f5;
   font-size: 10px;
   line-height: 1.3;
   text-align: center;
@@ -238,11 +288,16 @@ body:hover #orb-rail,
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, .8);
-  transition: color var(--palette-transition-duration) linear;
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, .95),
+    1px -1px 0 rgba(0, 0, 0, .95),
+    -1px 1px 0 rgba(0, 0, 0, .95),
+    1px 1px 0 rgba(0, 0, 0, .95),
+    0 0 3px rgba(0, 0, 0, .7);
+  -webkit-text-stroke: .6px rgba(0, 0, 0, .9);
 }
 
-#caption[data-role='user'] { color: var(--palette-user); }
+#caption[data-role='user'] { color: #cfe6ef; }
 
 /* Errors and permission failures are semantic, so palette touring never
    softens their fixed warning colour. Confirmation keeps its amber treatment
@@ -283,11 +338,14 @@ body:hover #orb-rail,
 }
 
 #shell:has(#codex-label[data-mode='confirmation']) #state-label {
-  color: #ffe1a3;
+  color: var(--palette-confirm-title);
   font-size: 12px;
   font-weight: 680;
   letter-spacing: .02em;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, .9), 0 0 12px rgba(255, 181, 71, .24);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .9), 0 0 12px var(--palette-confirm-glow);
+  -webkit-text-stroke: .5px rgba(0, 0, 0, .85);
+  transition: color var(--palette-transition-duration) linear,
+              text-shadow var(--palette-transition-duration) linear;
 }
 
 #codex-label[data-mode='confirmation'] {
@@ -296,14 +354,19 @@ body:hover #orb-rail,
   max-width: calc(100vw - 10px);
   padding: 6px 9px 7px;
   overflow: hidden;
-  border: 1px solid rgba(255, 193, 94, .34);
+  border: 1px solid var(--palette-confirm-border);
   border-radius: 10px;
-  background: linear-gradient(145deg, rgba(49, 36, 18, .9), rgba(20, 17, 18, .88));
+  background: linear-gradient(145deg, var(--palette-confirm-bg-1), var(--palette-confirm-bg-2));
   box-shadow: 0 7px 20px rgba(0, 0, 0, .28), inset 0 1px rgba(255, 237, 196, .08);
-  color: rgba(255, 222, 164, .9);
+  color: var(--palette-confirm-text);
   font-size: 10px;
   line-height: 1.4;
   text-shadow: 0 1px 4px rgba(0, 0, 0, .86);
+  /* background-image (the gradient) isn't animatable, so only these two
+     crossfade with the hover tour; the card's tint still snaps, which reads
+     fine given how low-alpha/dark that gradient already is. */
+  transition: color var(--palette-transition-duration) linear,
+              border-color var(--palette-transition-duration) linear;
 }
 
 #codex-summary,
@@ -353,7 +416,7 @@ body:hover #orb-rail,
   display: block;
   width: min(172px, calc(100vw - 12px));
   max-width: calc(100vw - 12px);
-  color: var(--palette-secondary);
+  color: rgba(255, 255, 255, .82);
   text-align: center;
   white-space: normal;
 }
@@ -366,13 +429,17 @@ body:hover #orb-rail,
   overflow-wrap: anywhere;
 }
 
+/* Only ever populated during confirmation mode (state.mjs sets this text
+   exclusively from the pending-confirmation operation), so it tracks the
+   card's palette colour rather than a fixed tone. */
 #codex-operation {
   overflow: hidden;
-  color: rgba(255, 249, 236, .98);
+  color: var(--palette-confirm-text);
   font-size: 11px;
   font-weight: 650;
   white-space: nowrap;
   text-overflow: ellipsis;
+  transition: color var(--palette-transition-duration) linear;
 }
 
 #codex-expiry {
@@ -417,7 +484,16 @@ body:hover #orb-rail,
   [data-state="audio-pipeline-error"] #orb::after,
   [data-state="permission-denied"] #orb::after { background: #ff3b30; }
   .capture-indicator { z-index: 1; }
-  #state-label, #codex-label, #aec-label, #caption { color: white; text-shadow: none; }
+  #state-label, #codex-label, #aec-label, #caption { color: white; text-shadow: none; -webkit-text-stroke: 0; }
+  /* The confirmation title override (index.css, outside this media query)
+     out-specifies the plain #state-label rule above (#shell:has(...) adds
+     two more ID selectors), so it must be neutralized here explicitly with
+     matching specificity or it keeps its palette colour/glow/stroke. */
+  #shell:has(#codex-label[data-mode='confirmation']) #state-label {
+    color: white;
+    text-shadow: none;
+    -webkit-text-stroke: 0;
+  }
   #codex-label[data-mode='confirmation'] {
     border: 2px solid white;
     background: black;
