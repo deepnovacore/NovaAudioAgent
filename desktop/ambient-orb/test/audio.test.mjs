@@ -514,6 +514,76 @@ test('onset tracker ignores a one-frame level spike', () => {
   assert.equal(minted, 0)
 })
 
+test('onset tracker leaves listening after its audio callback stream stops', () => {
+  let now = 10
+  let scheduled = null
+  let cleared = 0
+  let inactive = 0
+  const tracker = new audioModule.OnsetTracker({
+    mintId: () => 'speech-1',
+    clock: () => now,
+    schedule: (callback, delay) => {
+      scheduled = {callback, delay}
+      return scheduled
+    },
+    cancel: handle => {
+      assert.equal(handle, scheduled)
+      cleared += 1
+      scheduled = null
+    },
+    onInactive: () => { inactive += 1 },
+  })
+
+  assert.equal(tracker.observe(0.1, 10, 50)?.type, 'onset')
+  assert.equal(tracker.active, true)
+  assert.equal(scheduled?.delay, 181)
+
+  now = 191
+  const deadline = scheduled
+  scheduled = null
+  deadline.callback()
+
+  assert.equal(tracker.active, false)
+  assert.equal(inactive, 1)
+  assert.equal(scheduled, null)
+  assert.equal(cleared, 0, 'the fired timer owns its own completion')
+})
+
+test('onset idle fallback follows newer speech instead of expiring its old deadline', () => {
+  let now = 10
+  let scheduled = null
+  let inactive = 0
+  const tracker = new audioModule.OnsetTracker({
+    mintId: () => 'speech-1',
+    clock: () => now,
+    schedule: (callback, delay) => {
+      scheduled = {callback, delay}
+      return scheduled
+    },
+    cancel: () => { scheduled = null },
+    onInactive: () => { inactive += 1 },
+  })
+
+  tracker.observe(0.1, 10, 50)
+  now = 150
+  tracker.observe(0.1, 150, 10)
+  now = 191
+  const firstDeadline = scheduled
+  scheduled = null
+  firstDeadline.callback()
+
+  assert.equal(tracker.active, true)
+  assert.equal(inactive, 0)
+  assert.equal(scheduled?.delay, 140)
+
+  now = 331
+  const secondDeadline = scheduled
+  scheduled = null
+  secondDeadline.callback()
+  assert.equal(tracker.active, false)
+  assert.equal(inactive, 1)
+})
+
 for (const sampleRate of [44_100, 48_000]) {
   test(`browser onset verdict arrives within 60 ms at ${sampleRate} Hz`, () => {
     let minted = 0

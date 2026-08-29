@@ -137,12 +137,19 @@ export class OnsetTracker {
   // periodic detector/telemetry refresh; provider VAD alone owns Floor hold.
   // A new id is minted only after the local hangover expires.
   constructor({ mintId, level = ONSET_LEVEL, attackMs = ONSET_ATTACK_MS,
-    hangoverMs = ONSET_HANGOVER_MS, refreshMs = ONSET_REFRESH_MS } = {}) {
+    hangoverMs = ONSET_HANGOVER_MS, refreshMs = ONSET_REFRESH_MS,
+    clock = () => performance.now(), schedule = (callback, delay) => setTimeout(callback, delay),
+    cancel = handle => clearTimeout(handle), onInactive = null } = {}) {
     this.mintId = mintId
     this.level = level
     this.attackMs = attackMs
     this.hangoverMs = hangoverMs
     this.refreshMs = refreshMs
+    this.clock = clock
+    this.schedule = schedule
+    this.cancel = cancel
+    this.onInactive = typeof onInactive === 'function' ? onInactive : null
+    this.idleTimer = null
     this.active = false
     this.candidateMs = 0
     this.speechId = null
@@ -168,8 +175,10 @@ export class OnsetTracker {
         this.candidateMs = 0
         this.speechId = this.mintId()
         this.lastSentAt = now
+        this.#armIdleDeadline()
         return { type: 'onset', speechId: this.speechId }
       }
+      this.#armIdleDeadline()
       if (now - this.lastSentAt >= this.refreshMs) {
         this.lastSentAt = now
         return { type: 'refresh', speechId: this.speechId }
@@ -179,14 +188,39 @@ export class OnsetTracker {
     this.candidateMs = 0
     if (this.active && now - this.lastSpeechAt > this.hangoverMs) {
       this.active = false
+      this.#clearIdleDeadline()
     }
     return null
   }
 
   reset() {
+    this.#clearIdleDeadline()
     this.active = false
     this.candidateMs = 0
     this.speechId = null
+  }
+
+  #armIdleDeadline() {
+    if (!this.active || this.onInactive === null || this.idleTimer !== null) return
+    const remaining = this.hangoverMs - (this.clock() - this.lastSpeechAt)
+    this.idleTimer = this.schedule(() => {
+      this.idleTimer = null
+      const now = this.clock()
+      if (this.active && now - this.lastSpeechAt > this.hangoverMs) {
+        this.active = false
+        this.candidateMs = 0
+        this.onInactive()
+      } else {
+        this.#armIdleDeadline()
+      }
+    }, Math.max(1, remaining + 1))
+  }
+
+  #clearIdleDeadline() {
+    if (this.idleTimer === null) return
+    const timer = this.idleTimer
+    this.idleTimer = null
+    this.cancel(timer)
   }
 }
 

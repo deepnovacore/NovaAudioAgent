@@ -185,7 +185,14 @@ const playingSources = new Set()
 const nativeFrames = new Map()
 const dragGesture = new OrbDragGesture()
 
-const onsetTracker = new OnsetTracker({ mintId: () => crypto.randomUUID() })
+const onsetTracker = new OnsetTracker({
+  mintId: () => crypto.randomUUID(),
+  onInactive: () => {
+    axes.capture = 'idle'
+    visual.setLevel(0)
+    render()
+  },
+})
 const alertTone = new AlertTone()
 const outputMuteController = new OutputMuteController({
   apply: muted => window.novaAudioAgentDesktop.nativeAudio.setPlaybackMuted(muted),
