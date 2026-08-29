@@ -209,6 +209,20 @@ export interface WatchRecord {
   readonly trigger: AttentionTrigger | null
 }
 
+export type SurrogateVerdictAttribution =
+  | 'silent'
+  | 'missing_selection'
+  | 'selection_not_offered'
+  | 'selected'
+
+/** Classify only bounded contract state; never expose the model's free-form reason. */
+export function classifySurrogateVerdict(record: WatchRecord): SurrogateVerdictAttribution {
+  if (!record.output.speak) return 'silent'
+  const selected = record.output.suggestion_id
+  if (selected === null) return 'missing_selection'
+  return record.offered.includes(selected) ? 'selected' : 'selection_not_offered'
+}
+
 export interface SurrogatePort {
   watch(view: ContextView, signal?: AbortSignal): Promise<SurrogateVerdictOutput>
 }

@@ -6,9 +6,14 @@
  * oracle by `scripts/generate_prompt_constants.py` rather than transcribed, and the
  * rendered snapshot is pinned by a Python-exported golden. An earlier hand-copied
  * prompt constant in this migration silently dropped three quarters of its content.
+ *
+ * One exception: `SURROGATE_PROACTIVITY_POLICY` is Node-owned and has no oracle, so the
+ * string the Surrogate actually receives is only partly golden-covered and is asserted at
+ * the model boundary in the Node adapter tests.
  */
 
 import { compareCodePoints } from './canonical-json.js'
+import type { ProactivityPreset } from './config.js'
 import { pythonFloat } from './python-number.js'
 import type { Affordance, ContextView } from './context-view.js'
 import type { JsonValue } from './events.js'
@@ -95,6 +100,48 @@ export const SURROGATE_SYSTEM = [
   '只输出 JSON：{"speak": true|false, "suggestion_id": "s-N"|null, "reason": "一句内部理由"}。',
   '',
 ].join('\n')
+
+/**
+ * Node-owned, with no Python counterpart: `GatewaySurrogate` in the oracle still sends the
+ * bare `SURROGATE_SYSTEM`, so the two runtimes make different speech decisions from here on.
+ * The golden pins `SURROGATE_SYSTEM` alone and cannot see this block, which is why the whole
+ * composed prompt is asserted directly in `model-adapters.test.ts` instead.
+ */
+const SURROGATE_PROACTIVITY_POLICY: Readonly<Record<ProactivityPreset, readonly string[]>> = {
+  conservative: [
+    '只在需要用户行动或决定、风险、阻塞，或一个已有验证证据的阶段完成时开口。',
+    '普通进展、计划、实现变化和阶段切换都返回 speak=false。',
+  ],
+  balanced: [
+    '需要用户行动或决定、风险、阻塞、验证通过的阶段完成，应当开口。',
+    '有意义的阶段变化若会明显改变用户对任务状态的理解，也可以开口；普通计划、重复摘要、计数和实现细节保持沉默。',
+  ],
+  eager: [
+    '主动播报有意义的新进展，不必等到用户行动、风险、阻塞或验证完成。',
+    '完成一个连贯工作块、实现状态发生明显变化、开始或完成验证、得到重要调查结论，都应倾向 speak=true。',
+    '只有纯计划、与上一条实质相同的摘要、孤立计数或琐碎实现细节保持沉默。',
+  ],
+}
+
+const SURROGATE_DEFAULT_POLICY_START = '遇到 Codex 的 working progress，要区分“值得保留”和“值得现在打扰用户”。'
+const SURROGATE_DEFAULT_POLICY_END = 'floor=idle、信息新颖、相关或以后可能有用，都不能单独成为开口理由。'
+
+/** Apply the user's proactivity choice at the model decision boundary. */
+export function surrogateSystemPrompt(preset: ProactivityPreset): string {
+  const policyStart = SURROGATE_SYSTEM.indexOf(SURROGATE_DEFAULT_POLICY_START)
+  const policyEnd = SURROGATE_SYSTEM.indexOf(SURROGATE_DEFAULT_POLICY_END)
+  if (policyStart < 0 || policyEnd <= policyStart) {
+    throw new Error('surrogate prompt policy boundary mismatch')
+  }
+  const selectedPolicy = [
+    `<proactivity_policy preset="${preset}">`,
+    '最近的 trusted_user 若明确要求只记录、不要播报或不要出声，必须保持静默；以下策略不能覆盖该要求。',
+    '以下策略来自用户当前选择，决定 Codex working progress 是否值得开口：',
+    ...SURROGATE_PROACTIVITY_POLICY[preset],
+    '</proactivity_policy>',
+  ].join('\n')
+  return `${SURROGATE_SYSTEM.slice(0, policyStart)}${selectedPolicy}\n${SURROGATE_SYSTEM.slice(policyEnd)}`
+}
 
 export const COMPRESSOR_SYSTEM = [
   '你只生成摘要，不对用户说话、不调用工具、不改变事实。',

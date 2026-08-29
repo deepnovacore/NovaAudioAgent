@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  classifySurrogateVerdict,
   NO_ACTION,
   runFastBrainCall,
   runSurrogateCall,
@@ -202,6 +203,30 @@ test('the Surrogate table is captured before the call, not after it', async () =
 
   assert.deepEqual(record.offered, ['s-1', 's-2'])
   assert.ok(!record.offered.includes('s-3-arrived-late'))
+})
+
+test('Surrogate verdict attribution distinguishes silence from invalid and selected output', () => {
+  const base = {reason, trigger: null} as const
+  assert.equal(classifySurrogateVerdict({
+    ...base,
+    offered: ['s-1'],
+    output: {speak: false, suggestion_id: null, reason: 'routine'},
+  }), 'silent')
+  assert.equal(classifySurrogateVerdict({
+    ...base,
+    offered: ['s-1'],
+    output: {speak: true, suggestion_id: null, reason: 'missing'},
+  }), 'missing_selection')
+  assert.equal(classifySurrogateVerdict({
+    ...base,
+    offered: ['s-1'],
+    output: {speak: true, suggestion_id: 's-2', reason: 'wrong'},
+  }), 'selection_not_offered')
+  assert.equal(classifySurrogateVerdict({
+    ...base,
+    offered: ['s-1'],
+    output: {speak: true, suggestion_id: 's-1', reason: 'selected'},
+  }), 'selected')
 })
 
 /** Records Floor traffic so a stranded reservation is visible. */

@@ -429,6 +429,53 @@ test('assembly gates local Guard before armed and emits bounded camera admission
   }])
 })
 
+test('assembly emits bounded Surrogate verdict attribution without model reason text', async () => {
+  const telemetry: {readonly kind: string; readonly payload: unknown}[] = []
+  const gateway = new ScriptedGateway([], {
+    'qwen-flash': '{"speak":false,"suggestion_id":null,"reason":"private summary echo"}',
+  })
+  const assembly = buildAssembly({
+    settings: settings({proactivity_preset: 'eager'}),
+    gateway,
+    realtimeFrontbrain: true,
+    telemetry: {
+      record: (kind, payload) => telemetry.push({kind, payload}),
+      close: () => undefined,
+    },
+  })
+  const stop = new AbortController()
+  const applied: EventRecord[] = []
+  assembly.runtime.observe(event => applied.push(event))
+  const serving = assembly.runtime.serve(stop.signal)
+
+  assembly.runtime.post({
+    kind: 'handoff',
+    payload: {
+      channel: 'watch',
+      delegate_id: 'ambient-watch-1',
+      origin_ref: 'conversation:1',
+      outcome: 'ok',
+      trust: 'trusted_system',
+      content: {hit: true},
+      refs: [],
+    },
+  })
+  await waitFor(() => applied.some(event => event.kind === 'model_done'))
+  stop.abort()
+  await serving
+
+  assert.deepEqual(telemetry, [{
+    kind: 'surrogate.verdict',
+    payload: {
+      disposition: 'silent',
+      offered_count: 0,
+      preset: 'eager',
+      trigger_kind: 'handoff',
+    },
+  }])
+  assert.doesNotMatch(JSON.stringify(telemetry), /private summary echo/u)
+})
+
 test('Watch keeps the Chromium file epoch while Guard resets it before observation', async () => {
   const clock = new VirtualClock()
   const captures: unknown[] = []

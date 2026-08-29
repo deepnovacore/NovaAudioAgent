@@ -211,14 +211,52 @@ test('the Surrogate rejects output that is not contract-shaped', async () => {
   const good = new GatewaySurrogate({
     gateway: new ScriptedGateway([], '{"speak":true,"suggestion_id":"s-1","reason":"因为"}'),
     model: 'm',
+    proactivityPreset: 'balanced',
   })
   assert.deepEqual(await good.watch(emptyView),
     {speak: true, suggestion_id: 's-1', reason: '因为'})
 
   for (const text of ['not json', '{}', '{"speak":"yes","suggestion_id":null,"reason":"r"}',
     '{"speak":true,"suggestion_id":7,"reason":"r"}', '{"speak":true,"suggestion_id":null}']) {
-    const bad = new GatewaySurrogate({gateway: new ScriptedGateway([], text), model: 'm'})
+    const bad = new GatewaySurrogate({
+      gateway: new ScriptedGateway([], text),
+      model: 'm',
+      proactivityPreset: 'balanced',
+    })
     await assert.rejects(bad.watch(emptyView), TypeError, text)
+  }
+})
+
+test('the Surrogate receives the selected proactivity policy at its model boundary', async () => {
+  const systems = new Map<string, string>()
+  for (const preset of ['conservative', 'balanced', 'eager'] as const) {
+    const gateway = new ScriptedGateway(
+      [],
+      '{"speak":false,"suggestion_id":null,"reason":"routine"}',
+    )
+    const surrogate = new GatewaySurrogate({gateway, model: 'm', proactivityPreset: preset})
+
+    await surrogate.watch(emptyView)
+
+    const system = gateway.completions[0]?.system
+    assert.ok(system !== undefined)
+    assert.match(system, new RegExp(`<proactivity_policy preset="${preset}">`, 'u'))
+    systems.set(preset, system)
+  }
+
+  assert.equal(new Set(systems.values()).size, 3)
+  assert.match(systems.get('conservative') ?? '', /只在需要用户行动或决定、风险、阻塞/u)
+  assert.match(systems.get('balanced') ?? '', /有意义的阶段变化/u)
+  assert.match(systems.get('eager') ?? '', /主动播报有意义的新进展/u)
+
+  for (const system of systems.values()) {
+    const policy = /<proactivity_policy[^>]*>([\s\S]*?)<\/proactivity_policy>/u.exec(system)?.[1]
+    assert.match(policy ?? '', /trusted_user.*静默/u)
+  }
+  for (const preset of ['balanced', 'eager'] as const) {
+    const system = systems.get(preset) ?? ''
+    assert.doesNotMatch(system, /常规调查结论、实现细节、计划、计数和中间解释/u)
+    assert.doesNotMatch(system, /只有需要用户行动或决定、出现风险或阻塞/u)
   }
 })
 

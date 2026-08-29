@@ -69,6 +69,11 @@ interface ProgressTrigger {
   readonly delegateId: string
 }
 
+interface AppliedProgress {
+  readonly delegate: Delegate
+  readonly surrogateCandidateCreated: boolean
+}
+
 interface ModelJob {
   readonly jobId: string
   readonly slot: Slot
@@ -170,6 +175,7 @@ export class CoreRuntime {
   readonly #results = new Map<string, unknown>()
   readonly #preparedSpeech = new Map<string, PreparedSpeech>()
   readonly #latestProgressSuggestion = new Map<string, string>()
+  readonly #latestProgressSummary = new Map<string, string>()
   readonly #latestObservationSuggestion = new Map<string, string>()
   readonly #compressBacklog: string[] = []
   readonly #compressScheduled = new Set<string>()
@@ -446,11 +452,12 @@ export class CoreRuntime {
         break
       }
       case 'progress': {
-        const delegate = this.#applyProgress(event)
+        const applied = this.#applyProgress(event)
+        const delegate = applied?.delegate
         const policy = delegate === undefined ? undefined : this.memory.policies.get(delegate.executor)
-        if (delegate === undefined || policy === undefined) break
+        if (applied === undefined || delegate === undefined || policy === undefined) break
         if (policy.progress_via_surrogate) {
-          if (event.payload.phase === 'working' && event.payload.summary !== null) {
+          if (applied.surrogateCandidateCreated) {
             target = {
               slot: 'surrogate.watch',
               reason: wakeReasonSchema.parse({
@@ -777,6 +784,7 @@ export class CoreRuntime {
     if (delegate !== undefined) {
       this.#latestObservationSuggestion.delete(delegate.delegate_id)
       this.#withdrawProgressSuggestion(delegate.delegate_id)
+      this.#latestProgressSummary.delete(delegate.delegate_id)
     }
     const policy = this.memory.policies.get(event.payload.channel)
     if (policy === undefined) throw new Error(`missing policy for handoff: ${event.payload.channel}`)
@@ -835,6 +843,7 @@ export class CoreRuntime {
     ]))
     this.#latestObservationSuggestion.delete(delegate.delegate_id)
     this.#withdrawProgressSuggestion(delegate.delegate_id)
+    this.#latestProgressSummary.delete(delegate.delegate_id)
     this.#appendMemory(delegate.executor, {
       ts: event.ts,
       trust: 'trusted_system',
@@ -849,7 +858,7 @@ export class CoreRuntime {
     return delegate
   }
 
-  #applyProgress(event: Extract<EventRecord, {kind: 'progress'}>): Delegate | undefined {
+  #applyProgress(event: Extract<EventRecord, {kind: 'progress'}>): AppliedProgress | undefined {
     if (!validProgress(event.payload)) return undefined
     const delegate = this.#inFlight.get(event.payload.delegate_id)
     if (delegate?.executor !== event.payload.channel || delegate.op !== event.payload.op) {
@@ -872,7 +881,20 @@ export class CoreRuntime {
       refs: [delegate.origin_ref],
     })
     this.suggestions.rearmFrom(delegate.executor, event.ts)
-    if (policy.progress_via_surrogate && event.payload.phase === 'working' && event.payload.summary !== null) {
+    // The summary comparison is Node-only: `Runtime._apply_progress` in the oracle builds a
+    // candidate for every working summary and `_wake_progress` wakes on every one of them. A
+    // Codex heartbeat repeats an unchanged summary for as long as a stage runs, and each repeat
+    // cost a Surrogate call that had already been declined. No committed fixture repeats a
+    // summary, so the oracle-generated expectations still agree; the first one that does will
+    // diverge here rather than in the fixture.
+    let surrogateCandidateCreated = false
+    if (
+      policy.progress_via_surrogate
+      && event.payload.phase === 'working'
+      && event.payload.summary !== null
+      && this.#latestProgressSummary.get(delegate.delegate_id) !== event.payload.summary
+    ) {
+      this.#latestProgressSummary.set(delegate.delegate_id, event.payload.summary)
       this.#withdrawProgressSuggestion(delegate.delegate_id)
       const suggestion = this.suggestions.add({
         origin: 'executor',
@@ -883,8 +905,9 @@ export class CoreRuntime {
         expires_at: event.ts + DEFAULT_COOLDOWN,
       })
       this.#latestProgressSuggestion.set(delegate.delegate_id, suggestion.id)
+      surrogateCandidateCreated = true
     }
-    return delegate
+    return {delegate, surrogateCandidateCreated}
   }
 
   #applyObservation(event: Extract<EventRecord, {kind: 'observation'}>): Delegate | undefined {

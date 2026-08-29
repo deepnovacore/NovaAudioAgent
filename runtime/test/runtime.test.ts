@@ -962,6 +962,45 @@ test('an old Surrogate verdict cannot withdraw a replacement progress candidate'
   assert.equal(runtime.suggestions.get('s-2')?.status, 'pending')
 })
 
+test('an unchanged progress summary does not replace or re-run its Surrogate candidate', () => {
+  const {runtime, calls} = runtimeWithCalls({
+    manifest: testManifest({wake: 'none', progressViaSurrogate: true}),
+    delegateIds: ['d-1'],
+  })
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'ambient')
+  for (const [at, internalActivity] of [[1, 1], [2, 8]] as const) {
+    runtime.post({
+      kind: 'progress',
+      payload: {
+        channel: 'route_sim',
+        delegate_id: 'd-1',
+        op: 'run',
+        phase: 'working',
+        internal_activity: internalActivity,
+        elapsed: at,
+        summary: 'still validating the same stage',
+      },
+    }, at)
+    runtime.apply(runtime.queue.popReady(at)!)
+  }
+
+  assert.equal(calls.length, 1)
+  assert.equal(runtime.suggestions.all().length, 1)
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'pending')
+
+  runtime.completeModelCall(calls[0]!.job_id, {
+    speak: true,
+    suggestion_id: 's-1',
+    reason: 'meaningful once',
+  }, 2)
+  runtime.apply(runtime.queue.popReady(2)!)
+
+  assert.equal(calls.length, 2, 'only the selected FastBrain wake follows the one verdict')
+  assert.equal(calls[1]?.slot, 'fast')
+  assert.equal(calls[1]?.reason.selected_suggestion, 's-1')
+})
+
 test('new user input keeps old speech but voids the old model action before dispatch', () => {
   const {runtime, calls} = runtimeWithCalls({
     manifest: testManifest({wake: 'fast'}),

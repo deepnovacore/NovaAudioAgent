@@ -26,7 +26,12 @@ import {
   type MediaSelector,
 } from './model-adapters.js'
 import { OpenAIModelGateway, type MetricsSink, type ModelGateway } from './model-gateway.js'
-import { runFastBrainCall, runSurrogateCall, type SpeechSink } from './calls.js'
+import {
+  classifySurrogateVerdict,
+  runFastBrainCall,
+  runSurrogateCall,
+  type SpeechSink,
+} from './calls.js'
 import { CamAdapter } from './executors/camera.js'
 import { DisabledFrameSource } from './executors/frame-source.js'
 import {
@@ -245,7 +250,11 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
       : (options.includeMemoryRecall ?? false),
   })
 
-  const surrogate = new GatewaySurrogate({gateway, model: settings.surrogate_model})
+  const surrogate = new GatewaySurrogate({
+    gateway,
+    model: settings.surrogate_model,
+    proactivityPreset: settings.proactivity_preset,
+  })
   const compressor = new GatewayCompressor({gateway, model: settings.compressor_model})
 
   const proactivity = resolveProactivity(settings)
@@ -263,6 +272,14 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
         const view = call.context_view
         if (view === undefined) throw new AssemblyError('surrogate slot requires a ContextView')
         const record = await runSurrogateCall(surrogate, {view, reason: call.reason, signal})
+        try {
+          options.telemetry?.record('surrogate.verdict', {
+            disposition: classifySurrogateVerdict(record),
+            offered_count: record.offered.length,
+            preset: settings.proactivity_preset,
+            trigger_kind: call.reason.kind,
+          })
+        } catch { /* telemetry cannot change arbitration */ }
         return record.output
       },
     },

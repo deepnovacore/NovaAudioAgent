@@ -9,6 +9,7 @@
 
 import { z } from 'zod'
 import type { ContextView } from './context-view.js'
+import type { ProactivityPreset } from './config.js'
 import type { JsonValue } from './events.js'
 import type { MemoryItem } from './memory.js'
 import type { GatewayImage, ModelGateway } from './model-gateway.js'
@@ -16,10 +17,10 @@ import type { UpdateSpec } from './ports.js'
 import {
   COMPRESSOR_SYSTEM,
   FASTBRAIN_SYSTEM,
-  SURROGATE_SYSTEM,
   pythonJsonDumps,
   renderContextView,
   renderFastBrainContext,
+  surrogateSystemPrompt,
 } from './prompting.js'
 import type { CompiledTools, ToolBinding } from './tool-schema.js'
 import {stripLikePython} from './python-text.js'
@@ -254,16 +255,22 @@ export interface SurrogateVerdict {
 export class GatewaySurrogate {
   readonly #gateway: ModelGateway
   readonly #model: string
+  readonly #proactivityPreset: ProactivityPreset
 
-  constructor(options: {readonly gateway: ModelGateway, readonly model: string}) {
+  constructor(options: {
+    readonly gateway: ModelGateway
+    readonly model: string
+    readonly proactivityPreset: ProactivityPreset
+  }) {
     this.#gateway = options.gateway
     this.#model = options.model
+    this.#proactivityPreset = options.proactivityPreset
   }
 
   async watch(view: ContextView, signal?: AbortSignal): Promise<SurrogateVerdict> {
     const response = await this.#gateway.complete({
       model: this.#model,
-      system: SURROGATE_SYSTEM,
+      system: surrogateSystemPrompt(this.#proactivityPreset),
       prompt: renderContextView(view),
       jsonSchema: SURROGATE_SCHEMA,
       ...(signal === undefined ? {} : {signal}),
