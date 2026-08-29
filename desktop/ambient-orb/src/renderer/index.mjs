@@ -51,6 +51,10 @@ const confirmationCancel = document.querySelector('#codex-cancel')
 const confirmationAnnouncement = document.querySelector('#confirmation-announcement')
 const aecLabel = document.querySelector('#aec-label')
 const captionLabel = document.querySelector('#caption')
+const stopConfirmationPlacement = window.novaAudioAgentDesktop.windowLayout
+  .onConfirmationPlacement(placement => {
+    shell.dataset.confirmationPlacement = placement
+  })
 const cameraController = new RendererCameraController({
   mediaDevices: navigator.mediaDevices,
   ImageCapture: globalThis.ImageCapture,
@@ -164,6 +168,7 @@ const confirmationCountdown = new ConfirmationCountdown({
 })
 
 const confirmationDecision = new ConfirmationDecisionController({send})
+let lastReportedConfirmationMode = null
 
 let socket
 let activeConnection = null
@@ -235,8 +240,13 @@ function render() {
   setText(stateLabel, state.statusLine)
   setText(codexSummary, state.projectLabel)
   setText(codexOperation, state.confirmationOperation)
-  setText(codexExpiry, state.confirmationStatus)
+  setText(codexExpiry, state.confirmationCompactStatus)
   codexLabel.dataset.mode = state.codexMode
+  setAttribute(codexLabel, 'aria-label', state.codexLabel)
+  if (lastReportedConfirmationMode !== state.confirmationVisible) {
+    window.novaAudioAgentDesktop.windowLayout.setConfirmationMode(state.confirmationVisible)
+    lastReportedConfirmationMode = state.confirmationVisible
+  }
   const decisionEnabled = confirmationDecision.enabled
     && axes.connected
     && !axes.pendingConfirmationBusy
@@ -1004,6 +1014,7 @@ confirmationCancel.addEventListener('click', () => {
   if (confirmationDecision.decide(false)) render()
 })
 window.addEventListener('beforeunload', () => {
+  stopConfirmationPlacement()
   socketRouter.dispose()
   cameraController.dispose()
   reducedMotionQuery.removeEventListener('change', syncPaletteAccessibility)

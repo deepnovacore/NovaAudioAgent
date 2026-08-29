@@ -71,6 +71,7 @@ import {
 } from './settings-store.mjs'
 import {
   clampWindowPosition,
+  createConfirmationWindowController,
   loadWindowPosition,
   saveWindowPosition,
   validDragDelta,
@@ -551,6 +552,14 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
         mainWindow.once('closed', () => rejectShown(new Error('source_startup_window_closed')))
       })
     : null
+  const confirmationWindow = createConfirmationWindowController({
+    getBounds: () => mainWindow.getBounds(),
+    setBounds: bounds => mainWindow.setBounds(bounds),
+    getZoomFactor: () => mainWindow.webContents.getZoomFactor(),
+    getWorkAreaForPoint: point => screen.getDisplayNearestPoint(point).workArea,
+    onPlacement: placement => sendToOrb('nova:confirmation-placement', placement),
+  })
+
   const dragController = createDragController({
     getCursor: () => screen.getCursorScreenPoint(),
     getWindowPosition: () => {
@@ -558,7 +567,10 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       return { x, y }
     },
     setWindowPosition: position => mainWindow.setPosition(position.x, position.y),
-    clamp: clampToNearestWorkArea,
+    clamp: candidate => confirmationWindow.clampDragPosition(candidate),
+  })
+  mainWindow.webContents.on('zoom-changed', () => {
+    if (confirmationWindow.active) setTimeout(() => confirmationWindow.sync(), 0)
   })
   const readBootstrap = createBootstrapAccess(bootstrap, mainWindow.webContents)
   ipcMain.handle('nova:camera:permission', async event => {
@@ -834,6 +846,11 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     return nativeAudio?.clear(payload.utteranceId, payload.generationEpoch)
       || Object.freeze({ playedMs: 0 })
   })
+  ipcMain.on('nova:confirmation-mode', (event, active) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return
+    if (typeof active !== 'boolean') return
+    confirmationWindow.setMode(active)
+  })
   ipcMain.on('nova:window-drag:start', event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
     dragController.start()
@@ -852,7 +869,8 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
     const { moved, position } = dragController.end()
     if (!moved || !position) return
-    void saveWindowPosition(windowPositionFile(), position).catch(error => {
+    const naturalPosition = confirmationWindow.finishDrag(position)
+    void saveWindowPosition(windowPositionFile(), naturalPosition).catch(error => {
       console.error(`[desktop-diagnostic] window_position_save_failure type=${error.name}`)
     })
   })

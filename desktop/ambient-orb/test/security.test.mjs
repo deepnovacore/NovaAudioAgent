@@ -32,6 +32,10 @@ test('pins BrowserWindow isolation sandbox and ephemeral partition', () => {
 
   assert.equal(options.width, 160)
   assert.equal(options.height, 160)
+  assert.equal(options.minWidth, 160)
+  assert.equal(options.maxWidth, 160)
+  assert.equal(options.minHeight, 160)
+  assert.equal(options.maxHeight, undefined)
   assert.equal(options.transparent, true)
   assert.equal(options.frame, false)
   assert.equal(options.webPreferences.contextIsolation, true)

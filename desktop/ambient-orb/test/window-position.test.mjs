@@ -6,7 +6,10 @@ import test from 'node:test'
 
 import {
   clampWindowPosition,
+  confirmationWindowLayout,
+  createConfirmationWindowController,
   loadWindowPosition,
+  naturalWindowPositionAfterTemporaryDrag,
   saveWindowPosition,
   validDragDelta,
 } from '../src/main/window-position.mjs'
@@ -38,6 +41,89 @@ test('anchors a larger window to the work area top-left', () => {
     ),
     { x: 12, y: 34 },
   )
+})
+
+test('confirmation layout keeps 100% at 160 square and expands only height at 125% and 150%', () => {
+  const normalBounds = {x: 600, y: 200, width: 160, height: 160}
+  const workArea = {x: 0, y: 0, width: 1440, height: 900}
+  const layouts = [1, 1.25, 1.5].map(zoomFactor => confirmationWindowLayout({
+    normalBounds,
+    zoomFactor,
+    workArea,
+  }))
+
+  assert.deepEqual(layouts.map(layout => layout.bounds.width), [160, 160, 160])
+  assert.deepEqual(layouts.map(layout => layout.bounds.height), [160, 200, 240])
+  assert.deepEqual(layouts.map(layout => layout.placement), ['below', 'below', 'below'])
+  for (const layout of layouts) {
+    assert.deepEqual(layout.orbScreenCenter, {x: 680, y: 280})
+    assert.ok(Math.abs(layout.renderedOrbScreenCenter.y - 280) <= 1)
+  }
+})
+
+test('confirmation layout flips above near the bottom and preserves the orb screen center', () => {
+  const layout = confirmationWindowLayout({
+    normalBounds: {x: 600, y: 740, width: 160, height: 160},
+    zoomFactor: 1.5,
+    workArea: {x: 0, y: 0, width: 1440, height: 900},
+  })
+
+  assert.equal(layout.placement, 'above')
+  assert.equal(layout.bounds.height, 240)
+  assert.ok(layout.bounds.y >= 0)
+  assert.ok(layout.bounds.y + layout.bounds.height <= 900)
+  assert.ok(Math.abs(layout.renderedOrbScreenCenter.y - layout.orbScreenCenter.y) <= 1)
+})
+
+test('confirmation layout stays inside the selected negative-coordinate display work area', () => {
+  const workArea = {x: -1920, y: 24, width: 1920, height: 1056}
+  const layout = confirmationWindowLayout({
+    normalBounds: {x: -1800, y: 800, width: 160, height: 160},
+    zoomFactor: 1.25,
+    workArea,
+  })
+
+  assert.ok(layout.bounds.x >= workArea.x)
+  assert.ok(layout.bounds.x + layout.bounds.width <= workArea.x + workArea.width)
+  assert.ok(layout.bounds.y >= workArea.y)
+  assert.ok(layout.bounds.y + layout.bounds.height <= workArea.y + workArea.height)
+})
+
+test('a temporary confirmation drag persists the translated natural 160 square anchor', () => {
+  const natural = naturalWindowPositionAfterTemporaryDrag({
+    normalBounds: {x: 600, y: 740, width: 160, height: 160},
+    temporaryBounds: {x: 600, y: 660, width: 160, height: 240},
+    draggedPosition: {x: 500, y: 560},
+    workArea: {x: 0, y: 0, width: 1440, height: 900},
+  })
+
+  assert.deepEqual(natural, {x: 500, y: 640})
+})
+
+test('confirmation window controller restores bounds and persists only a dragged natural anchor', () => {
+  let bounds = {x: 600, y: 740, width: 160, height: 160}
+  const applied = []
+  const placements = []
+  const controller = createConfirmationWindowController({
+    getBounds: () => bounds,
+    setBounds: next => {
+      bounds = next
+      applied.push(next)
+    },
+    getZoomFactor: () => 1.5,
+    getWorkAreaForPoint: () => ({x: 0, y: 0, width: 1440, height: 900}),
+    onPlacement: placement => placements.push(placement),
+  })
+
+  controller.setMode(true)
+  assert.deepEqual(bounds, {x: 600, y: 659, width: 160, height: 240})
+  const dragged = controller.finishDrag({x: 500, y: 559})
+  assert.deepEqual(dragged, {x: 500, y: 640})
+  assert.deepEqual(bounds, {x: 500, y: 640, width: 160, height: 240})
+  controller.setMode(false)
+  assert.deepEqual(bounds, {x: 500, y: 640, width: 160, height: 160})
+  assert.deepEqual(placements, ['above', 'below', 'below'])
+  assert.equal(applied.length, 3)
 })
 
 test('returns null for a missing position file', async () => {

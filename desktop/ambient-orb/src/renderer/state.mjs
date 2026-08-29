@@ -94,12 +94,20 @@ export function deriveOrbState(input) {
   else if (input.playback === 'speaking') name = 'speaking'
   else name = 'idle'
   const pendingConfirmation = input.pendingConfirmation === true
-  const pendingExpiry = Number.isFinite(input.pendingExpiresInSeconds)
-    ? `${Math.ceil(Math.max(0, input.pendingExpiresInSeconds)).toFixed(0)} 秒后自动取消`
+  const pendingSeconds = Number.isFinite(input.pendingExpiresInSeconds)
+    ? Math.ceil(Math.max(0, input.pendingExpiresInSeconds)).toFixed(0)
     : ''
+  const pendingExpiry = pendingSeconds === '' ? '' : `${pendingSeconds} 秒后自动取消`
   const pendingOperation = pendingConfirmation ? confirmationOperation(input) : ''
   const pendingStatus = pendingConfirmation
     ? ['尚未执行', pendingExpiry].filter(Boolean).join(' · ')
+    : ''
+  const confirmationCompactStatus = pendingConfirmation
+    ? input.pendingConfirmationBusy === true
+      ? '处理中'
+      : pendingSeconds !== ''
+        ? `${pendingSeconds} 秒`
+        : '待确认'
     : ''
   const project = pendingConfirmation
     ? [
@@ -143,6 +151,7 @@ export function deriveOrbState(input) {
     confirmationVisible: pendingConfirmation,
     confirmationOperation: pendingOperation,
     confirmationStatus: pendingStatus,
+    confirmationCompactStatus,
     aecLabel: input.audioMode === 'voice_processing_io'
       ? '系统级 AEC'
       : input.audioMode === 'browser_aec'

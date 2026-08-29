@@ -36,6 +36,8 @@ test('renderer accepts the closed public Codex project message', async () => {
   assert.match(source, /pending_confirmation_id/)
   assert.match(source, /pending_confirmation_busy/)
   assert.match(source, /ConfirmationDecisionController/)
+  assert.match(source, /windowLayout\.setConfirmationMode\(state\.confirmationVisible\)/u)
+  assert.match(source, /shell\.dataset\.confirmationPlacement = placement/u)
   const markup = await readFile(new URL('../src/renderer/index.html', import.meta.url), 'utf8')
   assert.match(markup, /id="codex-confirm"[^>]*aria-label="确认工作区操作"/u)
   assert.match(markup, /id="codex-cancel"[^>]*aria-label="取消工作区操作"/u)
@@ -48,4 +50,15 @@ test('renderer accepts the closed public Codex project message', async () => {
   assert.match(source, /pendingExpires <= PROJECT_CONFIRMATION_TTL_SECONDS/)
   assert.match(source, /setText\(codexSummary, state\.projectLabel\)/)
   assert.match(source, /codexLabel\.dataset\.mode = state\.codexMode/)
+  assert.match(source, /setAttribute\(codexLabel, 'aria-label', state\.codexLabel\)/u)
+})
+
+test('confirmation uses a fixed natural orb and a compact text-section capsule', async () => {
+  const css = await readFile(new URL('../src/renderer/index.css', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(css, /#shell:has\(#codex-label\[data-mode='confirmation'\]\)[\s\S]{0,220}clamp\(/u)
+  assert.doesNotMatch(css, /@media \(max-height:[\s\S]{0,260}#orb[\s\S]{0,100}display:\s*none/u)
+  assert.match(css, /#codex-label\[data-mode='confirmation'\]\s*\{[^}]*height:\s*48px;[^}]*border-radius:\s*999px;/su)
+  assert.match(css, /#codex-label\[data-mode='confirmation'\] #codex-operation\s*\{[^}]*white-space:\s*nowrap;[^}]*text-overflow:\s*ellipsis;/su)
+  assert.match(css, /#shell:has\(#codex-label\[data-mode='confirmation'\]\) #state-label\s*\{[^}]*display:\s*none;/su)
 })

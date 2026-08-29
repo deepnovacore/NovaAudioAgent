@@ -322,50 +322,60 @@ body:hover #orb-rail,
 
 #codex-label, #aec-label, #caption { display: none; }
 #shell:has(#codex-label[data-mode='confirmation']) {
-  gap: 5px;
+  display: block;
 }
 
-#shell:has(#codex-label[data-mode='confirmation']) #orb,
-#shell:has(#codex-label[data-mode='confirmation']) .orb-canvas {
-  width: clamp(24px, calc(100vh - 111px), 76px);
-  height: clamp(24px, calc(100vh - 111px), 76px);
+#shell:has(#codex-label[data-mode='confirmation']) #orb {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 98px;
+  height: 98px;
+  transform: translateX(-50%);
 }
 
-/* At 125% zoom the 160px utility window has only 128 CSS pixels. The decision
-   card is the authoritative control, so yield the decorative orb before any
-   confirmation text or action can be clipped. */
-@media (max-height: 130px) {
-  #shell:has(#codex-label[data-mode='confirmation']) #orb,
-  #shell:has(#codex-label[data-mode='confirmation']) .orb-canvas {
-    display: none;
-  }
+#shell[data-confirmation-placement='above']:has(#codex-label[data-mode='confirmation']) #orb {
+  top: 58px;
 }
 
 #shell:has(#codex-label[data-mode='confirmation']) #state-label {
-  max-width: calc(100vw - 10px);
-  color: var(--palette-confirm-title);
-  font-size: 11px;
-  font-weight: 680;
-  letter-spacing: .02em;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, .86);
-  transition: color var(--palette-transition-duration) linear,
-              text-shadow var(--palette-transition-duration) linear;
+  display: none;
+}
+
+#shell:has(#codex-label[data-mode='confirmation']) #orb-rail {
+  top: 53px;
+  transform: translateY(-50%);
+}
+
+#shell[data-confirmation-placement='above']:has(#codex-label[data-mode='confirmation']) #orb-rail {
+  top: 107px;
 }
 
 #codex-label[data-mode='confirmation'] {
   display: grid;
+  position: absolute;
+  top: 108px;
+  left: 50%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 17px 20px;
+  column-gap: 4px;
+  row-gap: 2px;
+  align-items: center;
   width: min(151px, calc(100vw - 10px));
+  height: 48px;
   max-width: calc(100vw - 10px);
-  padding: 6px 9px 7px;
+  margin: 0;
+  padding: 3px 5px 4px 8px;
   overflow: hidden;
   border: 1px solid var(--palette-confirm-border);
-  border-radius: 10px;
+  border-radius: 999px;
   background: linear-gradient(145deg, var(--palette-confirm-bg-1), var(--palette-confirm-bg-2));
   box-shadow: 0 7px 20px rgba(0, 0, 0, .28), inset 0 1px rgba(255, 237, 196, .08);
   color: var(--palette-confirm-text);
   font-size: 10px;
-  line-height: 1.4;
+  line-height: 1;
   text-shadow: 0 1px 4px rgba(0, 0, 0, .86);
+  transform: translateX(-50%);
   /* background-image (the gradient) isn't animatable, so only these two
      crossfade with the hover tour; the card's tint still snaps, which reads
      fine given how low-alpha/dark that gradient already is. */
@@ -373,35 +383,57 @@ body:hover #orb-rail,
               border-color var(--palette-transition-duration) linear;
 }
 
-#codex-summary,
-#codex-operation,
-#codex-expiry {
-  display: block;
-  min-width: 0;
+#shell[data-confirmation-placement='above'] #codex-label[data-mode='confirmation'] {
+  top: 4px;
 }
 
 #codex-label[data-mode='confirmation'] #codex-summary {
   display: none;
 }
 
+#codex-label[data-mode='confirmation'] #codex-operation {
+  display: block;
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--palette-confirm-text);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 17px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#codex-label[data-mode='confirmation'] #codex-expiry {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(255, 255, 255, .68);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 #codex-confirmation-actions {
   display: flex;
-  justify-content: center;
-  gap: 9px;
-  margin-top: 4px;
+  justify-content: flex-end;
+  gap: 3px;
+  margin: 0;
 }
 
 #codex-confirmation-actions[hidden] { display: none; }
 
 #codex-confirmation-actions button {
-  width: 28px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, .24);
-  border-radius: 8px;
+  border-radius: 50%;
   background: rgba(255, 255, 255, .08);
   color: rgba(224, 255, 232, .98);
-  font: 700 17px/1 system-ui, sans-serif;
+  font: 700 13px/1 system-ui, sans-serif;
   cursor: pointer;
 }
 
@@ -414,27 +446,6 @@ body:hover #orb-rail,
 #codex-confirmation-actions button:disabled {
   cursor: default;
   opacity: .42;
-}
-
-/* At 150% zoom the card becomes narrow enough for the complete expiry copy to
-   wrap. Reclaim vertical space without shrinking or clipping either decision.
-   This comes after the base card rules so the compact values win the cascade. */
-@media (max-height: 113px) {
-  #shell:has(#codex-label[data-mode='confirmation']) #state-label {
-    padding-block: 2px;
-  }
-
-  #codex-label[data-mode='confirmation'] {
-    padding-block: 4px 5px;
-  }
-
-  #codex-confirmation-actions {
-    margin-top: 2px;
-  }
-
-  #codex-confirmation-actions button {
-    height: 22px;
-  }
 }
 
 #codex-label[data-mode='project'] {

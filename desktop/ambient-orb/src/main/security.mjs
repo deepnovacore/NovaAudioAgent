@@ -33,7 +33,6 @@ export function browserWindowOptions(preload, launchId, { opaque = false } = {})
     minWidth: 160,
     minHeight: 160,
     maxWidth: 160,
-    maxHeight: 160,
     frame: false,
     // Compositors without a working transparent-visuals path (opted into via
     // NOVA_ORB_OPAQUE) get a solid plate instead of a broken/black surface.

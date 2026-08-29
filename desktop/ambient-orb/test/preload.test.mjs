@@ -121,6 +121,26 @@ test('preload exposes one bounded native playback mute command', async () => {
   ])
 })
 
+test('preload reports confirmation mode as a strict boolean and sanitizes placement pushes', async () => {
+  const {exposed, ipcRenderer, sends} = await loadPreload()
+
+  assert.equal(exposed.windowLayout.setConfirmationMode(true), true)
+  assert.equal(exposed.windowLayout.setConfirmationMode(false), true)
+  assert.equal(exposed.windowLayout.setConfirmationMode('true'), false)
+  assert.deepEqual(sends, [
+    {channel: 'nova:confirmation-mode', payload: true},
+    {channel: 'nova:confirmation-mode', payload: false},
+  ])
+
+  const placements = []
+  const unsubscribe = exposed.windowLayout.onConfirmationPlacement(value => placements.push(value))
+  ipcRenderer.emit('nova:confirmation-placement', {}, 'above')
+  ipcRenderer.emit('nova:confirmation-placement', {}, 'forged')
+  ipcRenderer.emit('nova:confirmation-placement', {}, 'below')
+  unsubscribe()
+  assert.deepEqual(placements, ['above', 'below'])
+})
+
 test('preload exposes a distinct read-only workspace graph board relay', async () => {
   const { exposed, ipcRenderer, invokes, sends } = await loadPreload()
 
@@ -147,7 +167,7 @@ test('preload exposes a distinct read-only workspace graph board relay', async (
 test('preload declares each bridge namespace exactly once', async () => {
   const { source } = await loadPreload()
 
-  for (const namespace of ['orbMenu', 'releaseCamera', 'microphone', 'memoryBoard', 'graphBoard', 'nativeAudio', 'windowDrag', 'settings']) {
+  for (const namespace of ['orbMenu', 'releaseCamera', 'microphone', 'memoryBoard', 'graphBoard', 'nativeAudio', 'windowDrag', 'windowLayout', 'settings']) {
     const declarations = source.match(new RegExp(`^  ${namespace}: `, 'gm')) || []
     assert.equal(declarations.length, 1, `${namespace} is declared once`)
   }

@@ -38,7 +38,7 @@ test('transparent orb hides every secondary text row', {
   })
 })
 
-test('confirmation card keeps its decision and expiry visible for long targets at 150% zoom', {
+test('confirmation capsule keeps a natural orb and compact controls visible through 150% zoom', {
   skip: process.platform !== 'darwin',
 }, async () => {
   const { stdout } = await execFileAsync(electron, [probe], {
@@ -52,7 +52,12 @@ test('confirmation card keeps its decision and expiry visible for long targets a
     assert.ok(layout.card.left >= -tolerance, `${layout.zoomFactor}: card left`)
     assert.ok(layout.card.right <= layout.viewport.width + tolerance, `${layout.zoomFactor}: card right`)
     assert.ok(layout.orb.top >= -tolerance, `${layout.zoomFactor}: orb top`)
+    assert.ok(Math.abs(layout.orb.width - 98) <= tolerance, `${layout.zoomFactor}: orb width`)
+    assert.ok(Math.abs(layout.orb.height - 98) <= tolerance, `${layout.zoomFactor}: orb height`)
     assert.ok(layout.card.bottom <= layout.viewport.height + tolerance, `${layout.zoomFactor}: card bottom`)
+    assert.ok(Math.abs(layout.card.height - 48) <= tolerance, `${layout.zoomFactor}: capsule height`)
+    assert.equal(layout.card.borderRadius, '999px', `${layout.zoomFactor}: capsule radius`)
+    assert.equal(layout.state.display, 'none', `${layout.zoomFactor}: duplicate state pill hidden`)
     assert.ok(layout.actions.left >= layout.card.left - tolerance, `${layout.zoomFactor}: actions left`)
     assert.ok(layout.actions.right <= layout.card.right + tolerance, `${layout.zoomFactor}: actions right`)
     assert.ok(layout.confirm.bottom <= layout.card.bottom + tolerance, `${layout.zoomFactor}: confirm bottom`)
@@ -62,9 +67,6 @@ test('confirmation card keeps its decision and expiry visible for long targets a
       layout.operation.scrollWidth > layout.operation.clientWidth,
       `${layout.zoomFactor}: the long target must be visibly ellipsized`,
     )
-    assert.ok(
-      layout.expiry.scrollWidth <= layout.expiry.clientWidth,
-      `${layout.zoomFactor}: expiry must remain complete`,
-    )
+    assert.ok(layout.expiry.scrollWidth <= layout.expiry.clientWidth, `${layout.zoomFactor}: compact expiry`)
   }
 })

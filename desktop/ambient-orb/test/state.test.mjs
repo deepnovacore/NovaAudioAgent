@@ -54,20 +54,26 @@ test('projects voice and Codex state into one compact visible line', () => {
   assert.equal(state.projectLabel, '工作区 alpha · Session Task 1')
   assert.equal(state.codexMode, 'project')
 
-  const waiting = deriveOrbState({
+  const waitingInput = {
     ...base,
     pendingConfirmation: true,
     pendingAction: 'create_workspace',
     pendingWorkspace: 'tetris-game',
     pendingExpiresInSeconds: 89.25,
-  })
+  }
+  const waiting = deriveOrbState(waitingInput)
   assert.equal(waiting.statusLine, '需要你的确认')
   assert.equal(
     waiting.codexLabel,
     '创建工作区 “tetris-game”\n尚未执行 · 90 秒后自动取消',
   )
+  assert.equal(waiting.confirmationCompactStatus, '90 秒')
   assert.equal(waiting.confirmationVisible, true)
   assert.equal(waiting.codexMode, 'confirmation')
+  assert.equal(deriveOrbState({
+    ...waitingInput,
+    pendingConfirmationBusy: true,
+  }).confirmationCompactStatus, '处理中')
 })
 
 test('hides the project row only when neither workspace nor session is known', () => {

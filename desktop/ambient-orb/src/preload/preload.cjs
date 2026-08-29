@@ -96,6 +96,21 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     move: (dx, dy) => ipcRenderer.send('nova:window-drag:move', { dx, dy }),
     end: () => ipcRenderer.send('nova:window-drag:end'),
   }),
+  windowLayout: Object.freeze({
+    setConfirmationMode: value => {
+      if (typeof value !== 'boolean') return false
+      ipcRenderer.send('nova:confirmation-mode', value)
+      return true
+    },
+    onConfirmationPlacement: callback => {
+      if (typeof callback !== 'function') return () => {}
+      const listener = (_event, value) => {
+        if (value === 'above' || value === 'below') callback(value)
+      }
+      ipcRenderer.on('nova:confirmation-placement', listener)
+      return () => ipcRenderer.removeListener('nova:confirmation-placement', listener)
+    },
+  }),
   settings: Object.freeze({
     get: () => ipcRenderer.invoke('nova:settings:get'),
     rescanCodex: () => ipcRenderer.invoke('nova:codex:rescan'),
