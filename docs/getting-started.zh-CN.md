@@ -4,7 +4,7 @@
 
 ## 当前发布边界
 
-Node.js 与 TypeScript 是当前主运行时。Codex 只使用 app-server；JSONL 仅为
+Node.js 与 TypeScript 是唯一的产品运行时。Codex 只使用 app-server；JSONL 仅为
 fixture-parser-only，不再拥有生产进程执行路径。Search、Camera、Watch 和 Guard 始终装配，
 不属于执行器选择项。遗留 HA 或 AutoGLM 配置会在 provider、进程、设备和桌面构造前返回稳定且
 不泄露凭据的迁移错误。
@@ -43,15 +43,6 @@ npm run start:client
 `https://dashscope.aliyuncs.com/compatible-mode/v1` 时，才可以改用
 `NOVA_AUDIO_AGENT_MODEL_API_KEY`；不同地址不会让通用密钥成为 Qwen realtime 凭据。两种凭据同时设置时，
 `DASHSCOPE_API_KEY` 优先。
-
-### 并行维护的 Python 后端（仅开发用）
-
-Python 后端（`src/nova_audio_agent`）处于并行维护状态：未打包的 Electron 应用在未设置
-`NOVA_AUDIO_AGENT_BACKEND` 时仍默认使用它；`npm run start:client` 会显式钉住 Node 后端，
-打包版则拒绝 Python 后端。开发 Python 后端的人可以用 `./scripts/start_ambient_orb.sh` 启动
-（需要一个可以 `import nova_audio_agent` 的 Python 环境）。Python CLI 另提供
-`nova-audio-agent workspace register`，用于把已有目录注册为 Workspace；Node CLI 目前还没有
-workspace 子命令。
 
 ## 始终开启的 Codex project mode
 

@@ -17,5 +17,5 @@ npm run build
 npm test
 ```
 
-The co-maintained Python backend keeps its own `uv`-driven suite (ruff, pytest); it is exercised
-separately and is not the public verification gate for changes to this repository.
+These Node and Electron commands are the complete repository verification gate; no secondary
+runtime toolchain is required.

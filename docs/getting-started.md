@@ -4,7 +4,7 @@
 
 ## Current release boundary
 
-Node.js and TypeScript are the primary runtime. Codex is app-server-only; JSONL is
+Node.js and TypeScript are the only product runtime. Codex is app-server-only; JSONL is
 fixture-parser-only and has no production process execution path. Search, Camera, Watch, and Guard
 are always assembled and are not executor selector values. Legacy HA and AutoGLM settings produce
 a stable, credential-safe migration error before provider, process, device, or desktop
@@ -47,16 +47,6 @@ For integrated-Qwen source startup, `DASHSCOPE_API_KEY` is the normal realtime c
 `https://dashscope.aliyuncs.com/compatible-mode/v1`; a different base URL does not make the
 generic key a Qwen realtime credential. When both credentials are set, `DASHSCOPE_API_KEY` takes
 precedence.
-
-### Co-maintained Python backend (development only)
-
-The Python backend (`src/nova_audio_agent`) is co-maintained and remains the default backend when
-the unpackaged Electron app is launched without `NOVA_AUDIO_AGENT_BACKEND`; `npm run start:client`
-pins the Node backend explicitly, and packaged builds refuse the Python backend. Developers
-working on the Python backend can launch it with `./scripts/start_ambient_orb.sh` (it requires a
-Python environment that can `import nova_audio_agent`). The Python CLI also provides
-`nova-audio-agent workspace register` for registering an existing directory as a Workspace; the
-Node CLI has no workspace subcommand yet.
 
 ## Always-on Codex project mode
 
