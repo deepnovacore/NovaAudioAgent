@@ -20,6 +20,7 @@
     "desktop/ambient-orb/src/main/startup-diagnostics.mjs",
     "desktop/ambient-orb/src/main/window-position.mjs",
     "desktop/ambient-orb/src/renderer/audio.mjs",
+    "desktop/ambient-orb/src/renderer/board-auto-scroll.mjs",
     "desktop/ambient-orb/src/renderer/camera.mjs",
     "desktop/ambient-orb/src/renderer/capture-worklet.mjs",
     "desktop/ambient-orb/src/renderer/confirmation-controls.mjs",

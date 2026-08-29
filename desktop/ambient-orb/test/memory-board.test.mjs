@@ -2,6 +2,34 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
+import { createBoardAutoScroller } from '../src/renderer/board-auto-scroll.mjs'
+
+test('board auto-scroll follows the document and every marked scroll region after refresh', () => {
+  const page = {scrollHeight: 840, scrollTop: 12}
+  const memory = {scrollHeight: 420, scrollTop: 0}
+  const diagnostics = {scrollHeight: 250, scrollTop: 30}
+  const frames = []
+  const document = {
+    scrollingElement: page,
+    querySelectorAll: selector => {
+      assert.equal(selector, '[data-auto-scroll-bottom]')
+      return [memory, diagnostics]
+    },
+  }
+  const scrollAfterRefresh = createBoardAutoScroller({
+    document,
+    requestFrame: callback => { frames.push(callback) },
+  })
+
+  scrollAfterRefresh()
+  scrollAfterRefresh()
+
+  assert.equal(frames.length, 1, 'same-turn refreshes share one post-layout frame')
+  assert.deepEqual([page.scrollTop, memory.scrollTop, diagnostics.scrollTop], [12, 0, 30])
+  frames.shift()()
+  assert.deepEqual([page.scrollTop, memory.scrollTop, diagnostics.scrollTop], [840, 420, 250])
+})
+
 test('board auto-refresh is renderer-owned, guarded, and visibility-aware', async () => {
   const source = await readFile(new URL('../src/renderer/memory-board.mjs', import.meta.url), 'utf8')
 

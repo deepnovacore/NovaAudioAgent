@@ -3,6 +3,7 @@ import {
   createGraphTabController,
   renderWorkspaceGraphBoard,
 } from './workspace-graph-board.mjs'
+import { createBoardAutoScroller } from './board-auto-scroll.mjs'
 
 const channelsRoot = document.querySelector('#channels')
 const statusLabel = document.querySelector('#status')
@@ -22,6 +23,7 @@ let latestPayload = null
 let inFlight = false
 let exportInFlight = false
 let activeTab = 'memory'
+const scrollAfterRefresh = createBoardAutoScroller({document})
 
 function itemContent(raw) {
   try {
@@ -92,6 +94,7 @@ function renderChannel(channel, index) {
 
   const itemsRoot = document.createElement('div')
   itemsRoot.className = 'channel-items'
+  itemsRoot.dataset.autoScrollBottom = ''
   if (!channel.items.length) {
     const empty = document.createElement('p')
     empty.className = 'empty'
@@ -113,6 +116,7 @@ function renderDiagnostic(record) {
   timestamp.textContent = boardTime(record)
   header.append(kind, timestamp)
   const payload = document.createElement('pre')
+  payload.dataset.autoScrollBottom = ''
   payload.textContent = JSON.stringify(record.payload, null, 2)
   article.append(header, payload)
   return article
@@ -155,6 +159,7 @@ async function load() {
       diagnosticsRoot.append(empty)
     }
     statusLabel.textContent = `更新于 ${new Date().toLocaleTimeString()}`
+    scrollAfterRefresh()
   } catch {
     statusLabel.textContent = '加载失败'
   } finally {
@@ -192,6 +197,7 @@ const graphController = createGraphTabController({
       status: graphState,
     })
     statusLabel.textContent = `更新于 ${new Date().toLocaleTimeString()}`
+    scrollAfterRefresh()
   },
   failure: reason => {
     graphRoot.replaceChildren()
