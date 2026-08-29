@@ -1074,9 +1074,12 @@ test('the stylesheet drops the gradient sphere but keeps the accessibility overr
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
   assert.match(
     css,
-    /#codex-label\[data-mode='project'\][\s\S]*?color:\s*var\(--palette-secondary\)/,
-    'project activity text follows the current nebula palette',
+    /#codex-label\[data-mode='project'\][\s\S]*?background:\s*rgba\(23,\s*23,\s*29,\s*\.88\)/,
+    'project activity text sits on the same dark pill as the status label',
   )
+  assert.doesNotMatch(css, /-webkit-text-stroke/)
+  assert.match(css, /font-family:\s*Inter,\s*"PingFang SC"/)
+  assert.match(css, /#orb \{[\s\S]*?width:\s*98px/)
 
   // High contrast hides the nebula and shows a solid disc instead, keeping the
   // flat alert colour and the capture indicator that the old halo carried.

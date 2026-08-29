@@ -28,12 +28,12 @@ export function browserWindowOptions(preload, launchId, { opaque = false } = {})
   if (typeof preload !== 'string' || !preload) throw new Error('preload is required')
   if (!/^[A-Za-z0-9_-]+$/.test(launchId)) throw new Error('launch id is invalid')
   return {
-    width: 184,
-    height: 184,
-    minWidth: 184,
-    minHeight: 184,
-    maxWidth: 184,
-    maxHeight: 184,
+    width: 160,
+    height: 160,
+    minWidth: 160,
+    minHeight: 160,
+    maxWidth: 160,
+    maxHeight: 160,
     frame: false,
     // Compositors without a working transparent-visuals path (opted into via
     // NOVA_ORB_OPAQUE) get a solid plate instead of a broken/black surface.

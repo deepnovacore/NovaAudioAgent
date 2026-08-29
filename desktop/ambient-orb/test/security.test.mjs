@@ -30,6 +30,8 @@ test('accepts only loopback websocket bootstrap with a 128-bit token', () => {
 test('pins BrowserWindow isolation sandbox and ephemeral partition', () => {
   const options = browserWindowOptions('/app/preload.cjs', 'launch-1')
 
+  assert.equal(options.width, 160)
+  assert.equal(options.height, 160)
   assert.equal(options.transparent, true)
   assert.equal(options.frame, false)
   assert.equal(options.webPreferences.contextIsolation, true)

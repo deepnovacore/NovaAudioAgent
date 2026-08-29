@@ -1,7 +1,7 @@
 const { app, BrowserWindow } = require('electron')
 const { join } = require('node:path')
 
-const WINDOW_SIZE = 184
+const WINDOW_SIZE = 160
 
 app.whenReady().then(async () => {
   const window = new BrowserWindow({

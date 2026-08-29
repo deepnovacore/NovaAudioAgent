@@ -106,7 +106,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, '../..')
 const rendererRoot = resolve(packageRoot, 'src/renderer')
 const preload = resolve(packageRoot, 'src/preload/preload.cjs')
-const WINDOW_SIZE = Object.freeze({ width: 184, height: 184 })
+const WINDOW_SIZE = Object.freeze({ width: 160, height: 160 })
 // Long-standing Chromium/X11 quirk: the ARGB visual backing a transparent,
 // frameless window isn't reliably available the instant 'ready' fires, so
 // window creation is delayed a beat on linux only.
