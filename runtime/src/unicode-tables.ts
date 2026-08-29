@@ -1,10 +1,10 @@
 // GENERATED FILE -- do not edit by hand.
-// Regenerate with: uv run python scripts/generate_unicode_tables.py
+// Immutable Unicode 15.0.0 compatibility data retained from the completed runtime migration.
 //
 // Unicode general-category tables pinned to Unicode 15.0.0, the version CPython
 // bundles and therefore the version every committed fixture was exported against. V8 resolves
 // `\p{...}` against ICU's Unicode version instead, which is newer and classifies recently
-// assigned code points differently, so these tables replace those escapes. See scripts/generate_unicode_tables.py.
+// assigned code points differently, so these tables replace those escapes.
 //
 // Ranges are encoded as `gapFromPreviousEnd.rangeLength` hex pairs, which keeps a table that covers
 // most of the code space to a few lines of reviewable diff.

@@ -19,8 +19,6 @@
     "check:node-parity": "node runtime/scripts/node-parity-audit.mjs --check",
     "fixtures:schema": "npm run build --workspace @nova-audio-agent/runtime && node runtime/scripts/generate-fixture-schema.mjs",
     "fixtures:schema:session": "npm run build --workspace @nova-audio-agent/runtime && node runtime/scripts/generate-session-fixture-schema.mjs",
-    "fixtures:nfkc": "uv run python scripts/generate_nfkc_vectors.py --export",
-    "fixtures:casefold": "uv run python scripts/generate_casefold_table.py --check",
     "package:linux": "npm run package:linux --workspace @nova-audio-agent/ambient-orb",
     "package:mac": "npm run package:mac --workspace @nova-audio-agent/ambient-orb",
     "package:win": "npm run package:win --workspace @nova-audio-agent/ambient-orb",

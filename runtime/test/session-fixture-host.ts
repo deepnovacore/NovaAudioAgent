@@ -2,7 +2,7 @@
  * The Node leg of the realtime session fixture harness.
  *
  * Replays a committed scenario through the real `RealtimeSession` and produces the same
- * observation shape `scripts/realtime_session_oracle.py` exports, so the two can be compared as
+ * observation shape retained in the committed migration fixtures, so results can be compared as
  * canonical JSON. Every recording decision here mirrors one there: the shared action log, reading
  * the fence interruption once per step, and the id sequence being a hard error in both directions.
  */

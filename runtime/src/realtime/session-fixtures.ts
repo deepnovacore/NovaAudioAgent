@@ -12,8 +12,8 @@
  * tell those apart; going through the provider session would not even reach the epoch guard,
  * because that layer already drops events whose epoch does not match.
  *
- * Python exports every golden here (`scripts/realtime_session_oracle.py export`) and both
- * runtimes then check the same committed bytes.
+ * The completed runtime migration exported every golden here; the Node runtime now checks those
+ * same committed bytes directly.
  */
 
 import { readFile } from 'node:fs/promises'

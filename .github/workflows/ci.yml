@@ -8,33 +8,6 @@ permissions:
   contents: read
 
 jobs:
-  python:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    env:
-      NOVA_AUDIO_AGENT_TEST_TIME_BUDGET: "14.0"
-      NOVA_AUDIO_AGENT_FIXTURE_REPLAY_BUDGET: "6.0"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - run: uv sync --locked --dev
-      - run: uv run ruff check src tests scripts
-      - run: uv run ruff format --check src tests scripts
-      - run: uv run pytest -q
-      - run: uv build
-      - run: uv run nova-audio-agent --help
-
   electron:
     strategy:
       fail-fast: false

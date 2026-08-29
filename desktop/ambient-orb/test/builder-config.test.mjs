@@ -12,6 +12,7 @@ import test from 'node:test'
 
 const CONFIG_PATH = resolve(import.meta.dirname, '../electron-builder.yml')
 const PACKAGE_JSON_PATH = resolve(import.meta.dirname, '../package.json')
+const ROOT_PACKAGE_JSON_PATH = resolve(import.meta.dirname, '../../../package.json')
 const CI_WORKFLOW_PATH = resolve(import.meta.dirname, '../../../.github/workflows/ci.yml')
 const UNSIGNED_WORKFLOW_PATH = resolve(import.meta.dirname, '../../../.github/workflows/unsigned-packages.yml')
 const ENTITLEMENTS_PATH = resolve(import.meta.dirname, '../resources/entitlements.mac.plist')
@@ -414,7 +415,7 @@ test('CI runs checks and packaging across the supported automatic runner matrix'
   const workflow = parseYaml(text)
 
   assert.deepEqual(Object.keys(workflow.on), ['push', 'pull_request'])
-  assert.deepEqual(workflow.jobs.python.strategy.matrix.os, ['ubuntu-latest', 'windows-latest'])
+  assert.equal('python' in workflow.jobs, false)
   assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, [
     'macos-latest', 'ubuntu-latest', 'windows-latest',
   ])
@@ -435,6 +436,13 @@ test('CI runs checks and packaging across the supported automatic runner matrix'
       artifact: 'ambient-orb-win',
     },
   ])
+})
+
+test('root npm commands require only the Node toolchain', async () => {
+  const pkg = JSON.parse(await readFile(ROOT_PACKAGE_JSON_PATH, 'utf8'))
+  const commands = Object.values(pkg.scripts).join('\n')
+
+  assert.doesNotMatch(commands, /\b(?:python|pytest|uv)\b/u)
 })
 
 test('unsigned Windows workflow closes the native package through digest-bound installed smoke', async () => {

@@ -2,7 +2,7 @@
  * The Node leg of the recall parity suite.
  *
  * Replays the committed scenarios through the real `compileMemoryRecall` and compares against the
- * bytes `scripts/recall_oracle.py` exported. Recall decides which memories a model is shown, so both
+ * bytes retained in the committed migration fixtures. Recall decides which memories a model is shown, so both
  * the selection and the encoded envelope have to match exactly -- the encoding is text a model reads,
  * not an internal representation.
  */

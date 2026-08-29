@@ -1,10 +1,8 @@
 /**
  * Prompt rendering for the three model ports.
  *
- * Ported from `src/nova_audio_agent/prompting.py`. Every string here is
- * model-visible behavior, so the four system prompts are generated from the Python
- * oracle by `scripts/generate_prompt_constants.py` rather than transcribed, and the
- * rendered snapshot is pinned by a Python-exported golden. An earlier hand-copied
+ * Preserves the retired runtime's model-visible prompt contract. The four system prompts
+ * and rendered snapshots are pinned by committed migration fixtures. An earlier hand-copied
  * prompt constant in this migration silently dropped three quarters of its content.
  *
  * One exception: `SURROGATE_PROACTIVITY_POLICY` is Node-owned and has no oracle, so the

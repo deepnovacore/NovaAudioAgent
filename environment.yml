@@ -1,7 +1,0 @@
-name: nova-audio-agent
-channels:
-  - conda-forge
-dependencies:
-  - python=3.12
-  - pip
-  - uv>=0.8,<1

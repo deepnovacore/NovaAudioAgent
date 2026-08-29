@@ -1,11 +1,11 @@
 // GENERATED FILE -- do not edit by hand.
-// Regenerate with: uv run python scripts/generate_casefold_table.py --export
+// Immutable Unicode 15.0.0 compatibility data retained from the completed runtime migration.
 
 import {toLowerPinned} from './unicode-normalize.js'
 
 /*
  * Unicode 15.0.0 full-casefold mappings whose result differs from lowercase.
- * Generated from the same CPython Unicode database as the project fixtures. Ordinary mappings use
+ * Derived from the same Unicode 15.0.0 database as the committed project fixtures. Ordinary mappings use
  * the already-pinned per-code-point lowercase helper; processing one scalar at a time deliberately
  * avoids JavaScript's contextual final-sigma lowercasing.
  */
