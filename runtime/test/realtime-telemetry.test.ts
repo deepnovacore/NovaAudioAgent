@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import { VirtualClock } from '../src/clock.js'
 import { jsonValueSchema } from '../src/events.js'
 import {
+  MAX_REALTIME_DIAGNOSTICS,
   JsonlTelemetry,
   NullTelemetry,
   createRealtimeTelemetry,
@@ -34,7 +35,7 @@ test('JSONL telemetry uses the injected clock and is readable before close', asy
   assert.throws(() => telemetry.record('late', {}), /closed/u)
 })
 
-test('telemetry rejects non-finite JSON and null telemetry discards records', async t => {
+test('telemetry rejects non-finite JSON and keeps bounded body-free diagnostics without JSONL', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-telemetry-'))
   t.after(async () => rm(directory, {recursive: true, force: true}))
   using telemetry = new JsonlTelemetry(join(directory, 'telemetry.jsonl'), {
@@ -42,9 +43,46 @@ test('telemetry rejects non-finite JSON and null telemetry discards records', as
   })
   assert.throws(() => telemetry.record('bad', {value: Number.NaN}), /invalid_union/u)
 
-  const nullTelemetry = new NullTelemetry()
-  nullTelemetry.record('anything', {value: 1})
+  const clock = new VirtualClock()
+  const nullTelemetry = new NullTelemetry({clock})
+  for (let index = 0; index < MAX_REALTIME_DIAGNOSTICS + 5; index += 1) {
+    clock.advanceTo(index)
+    nullTelemetry.record('confirmation.binding', {
+      item_id: `item-${index}`,
+      transcript: `private transcript ${index}`,
+      work_order: `private work ${index}`,
+      nested: {content: 'private body', revision: index},
+    })
+  }
+  const diagnostics = nullTelemetry.diagnostics()
+  assert.equal(diagnostics.version, 1)
+  assert.equal(diagnostics.records.length, MAX_REALTIME_DIAGNOSTICS)
+  assert.equal(diagnostics.records[0]?.payload.item_id, 'item-5')
+  assert.equal(JSON.stringify(diagnostics).includes('private'), false)
+  assert.deepEqual(diagnostics.records.at(-1)?.payload.nested, {revision: 132})
+  assert.ok(Object.isFrozen(diagnostics.records.at(-1)?.payload.nested))
   nullTelemetry.close()
+})
+
+test('JSONL keeps full opt-in telemetry while its Memory Board snapshot is redacted', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-telemetry-full-'))
+  t.after(async () => rm(directory, {recursive: true, force: true}))
+  const path = join(directory, 'telemetry.jsonl')
+  const telemetry = new JsonlTelemetry(path, {clock: new VirtualClock(7)})
+  telemetry.record('project_confirmation.commit_started', {
+    proposal_id: 'proposal-1',
+    origin_ref: 'conversation:10',
+    transcript: '确认',
+    work_order: '实现俄罗斯方块',
+  })
+  telemetry.close()
+
+  const jsonl = await readFile(path, 'utf8')
+  assert.match(jsonl, /实现俄罗斯方块/u)
+  const diagnostics = telemetry.diagnostics()
+  assert.equal(diagnostics.records[0]?.payload.origin_ref, 'conversation:10')
+  assert.equal(JSON.stringify(diagnostics).includes('俄罗斯方块'), false)
+  assert.equal(JSON.stringify(diagnostics).includes('确认'), false)
 })
 
 test('desktop telemetry honors the documented optional path and expands home', async t => {
@@ -53,6 +91,8 @@ test('desktop telemetry honors the documented optional path and expands home', a
   const clock = new VirtualClock()
   const disabled = createRealtimeTelemetry({}, {clock, homeDirectory: directory})
   assert.ok(disabled instanceof NullTelemetry)
+  disabled.record('always.available', {revision: 1})
+  assert.equal(disabled.diagnostics().records.length, 1)
 
   const enabled = createRealtimeTelemetry({
     NOVA_AUDIO_AGENT_REALTIME_TELEMETRY: '~/desktop-telemetry.jsonl',

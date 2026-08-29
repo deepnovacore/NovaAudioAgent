@@ -250,7 +250,11 @@ export interface RealtimeServiceOptions {
   readonly projectConfirmation?: ProjectConfirmationController
   readonly commitProjectOperation?: (
     operation: ConfirmedProjectOperation,
-  ) => Promise<{readonly accepted: boolean; readonly code: string}>
+  ) => Promise<{
+    readonly accepted: boolean
+    readonly code: string
+    readonly delegate_id?: string
+  }>
   readonly onProjectView?: (view: ProjectConfirmationView) => void
   readonly projectViewProvider?: (pendingConfirmation: boolean) => ProjectConfirmationView
   /**
@@ -296,6 +300,7 @@ export class RealtimeService {
     | ((operation: ConfirmedProjectOperation) => Promise<{
       readonly accepted: boolean
       readonly code: string
+      readonly delegate_id?: string
     }>)
     | undefined
   readonly #onProjectView: ((view: ProjectConfirmationView) => void) | undefined
@@ -2263,9 +2268,7 @@ export class RealtimeService {
     }
 
     if (this.#telemetry !== undefined) {
-      if (event.kind === 'response_started') {
-        this.#telemetry.record('provider.response_started', {response_id: event.response_id})
-      } else if (event.kind === 'response_audio_delta') {
+      if (event.kind === 'response_audio_delta') {
         // First delta only: the metric is time-to-first-audio, and recording every delta would make
         // it a throughput counter instead.
         if (!this.#audioStarted.has(event.response_id)) {
@@ -2357,6 +2360,13 @@ export class RealtimeService {
           && this.#userOrigins.itemForResponse(event.session_epoch, event.response_id) !== undefined,
         confirmation_item_count: this.#projectConfirmationItems.size,
         proposal_id: this.#projectConfirmation?.lifecycleId ?? 'none',
+        proposal_origin_ref: this.#projectConfirmation?.proposalOriginRef ?? 'none',
+        delegate_origin_ref: this.#projectConfirmation?.proposalOriginRef ?? 'none',
+        user_input_revision: this.session.providerTurnUserInputRevision(event.response_id) ?? -1,
+        item_id: this.#userOrigins.itemForResponse(
+          event.session_epoch,
+          event.response_id,
+        ) ?? 'none',
       })
     }
     if (event.kind === 'response_started' || event.kind === 'response_audio_delta') {
@@ -2393,6 +2403,18 @@ export class RealtimeService {
       this.#bindRequestedSemanticAcknowledgement(event.response_id)
       this.#bindContinuation(event.response_id)
       this.#suppressShadowConfirmationResponse(event.session_epoch, event.response_id)
+    }
+    if (event.kind === 'response_started') {
+      this.#telemetry?.record('provider.response_started', {
+        session_epoch: event.session_epoch,
+        response_id: event.response_id,
+        accepted,
+        user_input_revision: this.session.providerTurnUserInputRevision(event.response_id) ?? -1,
+        item_id: this.#userOrigins.itemForResponse(
+          event.session_epoch,
+          event.response_id,
+        ) ?? 'none',
+      })
     }
 
     if (this.#onCaption !== undefined) {
@@ -2478,6 +2500,13 @@ export class RealtimeService {
           transcript_ready: this.#userOrigins.hasOriginRef(event.session_epoch, itemId),
           decision_seen: false,
           retry_attempt: isRetryTerminal ? 1 : 0,
+          user_input_revision: this.#userOrigins.revisionForItem(
+            event.session_epoch,
+            itemId,
+          ) ?? -1,
+          proposal_id: controller?.lifecycleId ?? 'none',
+          proposal_origin_ref: controller?.proposalOriginRef ?? 'none',
+          delegate_origin_ref: controller?.proposalOriginRef ?? 'none',
         })
         if (silentTerminal && controller?.pending === true && !isRetryTerminal) {
           this.#projectConfirmationDecisionRetry ??= {
@@ -2496,6 +2525,12 @@ export class RealtimeService {
               item_id: itemId,
               response_id: event.response_id,
               proposal_id: controller?.lifecycleId ?? 'none',
+              proposal_origin_ref: controller?.proposalOriginRef ?? 'none',
+              delegate_origin_ref: controller?.proposalOriginRef ?? 'none',
+              user_input_revision: this.#userOrigins.revisionForItem(
+                event.session_epoch,
+                itemId,
+              ) ?? -1,
               reason: 'no_confirmation_function',
             })
           }
@@ -2547,7 +2582,7 @@ export class RealtimeService {
         // The transcript will never arrive, so anything waiting on it is waiting forever. Released
         // with a null ref: the calls still need an answer, and the bridge refuses them for want of
         // evidence rather than this layer dropping them silently.
-        this.#userOrigins.failTranscript(event.session_epoch, event.item_id)
+        this.#failUserOriginTranscript(event.session_epoch, event.item_id)
         this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
           event.session_epoch,
           this.session.userInputRevision,
@@ -2728,17 +2763,36 @@ export class RealtimeService {
 
   /** Register one provider item against the exact user revision that introduced it. */
   #rememberUnboundUserOrigin(epoch: number, revision: number, itemId: string): void {
-    this.#userOrigins.registerUserItem({epoch, revision, itemId})
+    const registered = this.#userOrigins.registerUserItem({epoch, revision, itemId})
+    this.#telemetry?.record('user_origin.item_registered', {
+      session_epoch: epoch,
+      user_input_revision: revision,
+      item_id: itemId,
+      registered,
+    })
   }
 
   /**
    * Claim only the user item from the revision this provider response captured at open.
    */
   #bindResponseUserOrigin(epoch: number, responseId: string): boolean {
-    if (epoch !== this.session.sessionEpoch) return false
+    if (epoch !== this.session.sessionEpoch) {
+      this.#recordUserOriginResponseBinding(epoch, responseId, -1, 'epoch_mismatch', 'none')
+      return false
+    }
     const revision = this.session.providerTurnUserInputRevision(responseId)
-    if (revision === undefined) return false
+    if (revision === undefined) {
+      this.#recordUserOriginResponseBinding(epoch, responseId, -1, 'revision_missing', 'none')
+      return false
+    }
     const result = this.#userOrigins.bindResponse({epoch, responseId, revision})
+    this.#recordUserOriginResponseBinding(
+      epoch,
+      responseId,
+      revision,
+      result.status,
+      result.status === 'bound' ? result.item_id : 'none',
+    )
     this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
       epoch,
       this.session.userInputRevision,
@@ -2747,9 +2801,47 @@ export class RealtimeService {
     return result.status === 'bound'
   }
 
+  #recordUserOriginResponseBinding(
+    epoch: number,
+    responseId: string,
+    revision: number,
+    status: string,
+    itemId: string,
+  ): void {
+    this.#telemetry?.record('user_origin.response_binding', {
+      session_epoch: epoch,
+      user_input_revision: revision,
+      response_id: responseId,
+      item_id: itemId,
+      status,
+      proposal_id: this.#projectConfirmation?.lifecycleId ?? 'none',
+      proposal_origin_ref: this.#projectConfirmation?.proposalOriginRef ?? 'none',
+    })
+  }
+
   /** Record the Memory ref produced by the transcript for this exact provider item. */
   #rememberUserOriginRef(epoch: number, itemId: string, originRef: string): void {
-    this.#userOrigins.resolveTranscript({epoch, itemId, originRef})
+    const resolved = this.#userOrigins.resolveTranscript({epoch, itemId, originRef})
+    this.#telemetry?.record('user_origin.transcript_resolution', {
+      session_epoch: epoch,
+      user_input_revision: this.#userOrigins.revisionForItem(epoch, itemId) ?? -1,
+      item_id: itemId,
+      origin_ref: originRef,
+      status: resolved ? 'resolved' : 'rejected',
+    })
+  }
+
+  #failUserOriginTranscript(epoch: number, itemId: string): boolean {
+    const revision = this.#userOrigins.revisionForItem(epoch, itemId) ?? -1
+    const failed = this.#userOrigins.failTranscript(epoch, itemId)
+    this.#telemetry?.record('user_origin.transcript_resolution', {
+      session_epoch: epoch,
+      user_input_revision: revision,
+      item_id: itemId,
+      origin_ref: 'none',
+      status: failed ? 'failed' : 'missing',
+    })
+    return failed
   }
 
   /**
@@ -3374,6 +3466,9 @@ export class RealtimeService {
       response_id: responseId,
       source_response_id: retry.source_response_id,
       proposal_id: this.#projectConfirmation?.lifecycleId ?? 'none',
+      proposal_origin_ref: this.#projectConfirmation?.proposalOriginRef ?? 'none',
+      delegate_origin_ref: this.#projectConfirmation?.proposalOriginRef ?? 'none',
+      user_input_revision: this.#userOrigins.revisionForItem(epoch, item.id) ?? -1,
     })
     return true
   }
@@ -3396,6 +3491,9 @@ export class RealtimeService {
       proposal_id: controller.lifecycleId ?? 'none',
       transcript_ready: true,
       retry_attempt: 1,
+      proposal_origin_ref: controller.proposalOriginRef ?? 'none',
+      delegate_origin_ref: controller.proposalOriginRef ?? 'none',
+      user_input_revision: this.#userOrigins.revisionForItem(epoch, itemId) ?? -1,
     })
     let requested = false
     try {
@@ -3415,6 +3513,9 @@ export class RealtimeService {
       response_id: retry.source_response_id,
       proposal_id: controller.lifecycleId ?? 'none',
       reason: 'provider_retry_unavailable',
+      proposal_origin_ref: controller.proposalOriginRef ?? 'none',
+      delegate_origin_ref: controller.proposalOriginRef ?? 'none',
+      user_input_revision: this.#userOrigins.revisionForItem(epoch, itemId) ?? -1,
     })
   }
 
@@ -3554,6 +3655,12 @@ export class RealtimeService {
           pending: controller?.pending === true,
           recovered,
           proposal_id: proposalId,
+          proposal_origin_ref: controller?.proposalOriginRef ?? 'none',
+          delegate_origin_ref: controller?.proposalOriginRef ?? 'none',
+          user_input_revision: event.response_id === null
+            ? -1
+            : this.session.providerTurnUserInputRevision(event.response_id) ?? -1,
+          item_id: 'none',
         })
       }
       if (
@@ -3638,21 +3745,67 @@ export class RealtimeService {
     operation: ConfirmedProjectOperation,
   ): Promise<{readonly state: 'accepted' | 'failed'; readonly text: string}> {
     const callback = this.#commitProjectOperation
+    this.#telemetry?.record('project_confirmation.commit_started', {
+      session_epoch: this.session.sessionEpoch,
+      proposal_id: operation.proposal_id,
+      proposal_origin_ref: operation.origin_ref,
+      delegate_origin_ref: operation.origin_ref,
+      expires_at: operation.expires_at,
+    })
     if (callback === undefined) {
       this.#projectConfirmation?.rollbackConfirmed(operation)
+      this.#telemetry?.record(this.#projectConfirmation?.pending === true
+        ? 'project_confirmation.commit_rollback'
+        : 'project_confirmation.commit_settled', {
+        session_epoch: this.session.sessionEpoch,
+        proposal_id: operation.proposal_id,
+        proposal_origin_ref: operation.origin_ref,
+        delegate_origin_ref: operation.origin_ref,
+        code: 'callback_missing',
+      })
       return {state: 'failed', text: '确认处理不可用，本次操作未执行。'}
     }
     try {
       const result = await callback(operation)
       const controller = this.#projectConfirmation
+      this.#telemetry?.record('project_confirmation.commit_admission', {
+        session_epoch: this.session.sessionEpoch,
+        proposal_id: operation.proposal_id,
+        proposal_origin_ref: operation.origin_ref,
+        delegate_origin_ref: operation.origin_ref,
+        accepted: result.accepted,
+        code: result.code,
+        delegate_id: result.delegate_id ?? 'none',
+      })
       if (result.accepted && controller?.committing === true) {
         controller.rejectConfirmed(operation)
+        this.#telemetry?.record('project_confirmation.commit_settled', {
+          session_epoch: this.session.sessionEpoch,
+          proposal_id: operation.proposal_id,
+          proposal_origin_ref: operation.origin_ref,
+          delegate_origin_ref: operation.origin_ref,
+          accepted: false,
+          code: 'confirmation_invalid',
+          delegate_id: result.delegate_id ?? 'none',
+        })
         return {state: 'failed', text: '确认处理无效，本次操作未执行。'}
       }
       if (!result.accepted && controller?.committing === true) {
         if (result.code === 'runtime_rejected') controller.rollbackConfirmed(operation)
         else controller.rejectConfirmed(operation)
       }
+      const transitionKind = controller?.pending === true
+        ? 'project_confirmation.commit_rollback'
+        : 'project_confirmation.commit_settled'
+      this.#telemetry?.record(transitionKind, {
+        session_epoch: this.session.sessionEpoch,
+        proposal_id: operation.proposal_id,
+        proposal_origin_ref: operation.origin_ref,
+        delegate_origin_ref: operation.origin_ref,
+        accepted: result.accepted,
+        code: result.code,
+        delegate_id: result.delegate_id ?? 'none',
+      })
       return {
         state: result.accepted ? 'accepted' : 'failed',
         text: result.accepted
@@ -3662,6 +3815,15 @@ export class RealtimeService {
     } catch (failure) {
       if (isAbort(failure)) throw failure
       this.#projectConfirmation?.rollbackConfirmed(operation)
+      this.#telemetry?.record(this.#projectConfirmation?.pending === true
+        ? 'project_confirmation.commit_rollback'
+        : 'project_confirmation.commit_settled', {
+        session_epoch: this.session.sessionEpoch,
+        proposal_id: operation.proposal_id,
+        proposal_origin_ref: operation.origin_ref,
+        delegate_origin_ref: operation.origin_ref,
+        code: 'callback_failed',
+      })
       return {state: 'failed', text: '已确认，但操作未执行。'}
     }
   }
@@ -3697,7 +3859,7 @@ export class RealtimeService {
     } finally {
       this.#endProjectConfirmationClose(event.session_epoch, itemId)
     }
-    this.#userOrigins.failTranscript(event.session_epoch, itemId)
+    this.#failUserOriginTranscript(event.session_epoch, itemId)
     this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
       event.session_epoch,
       this.session.userInputRevision,

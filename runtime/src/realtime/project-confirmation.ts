@@ -131,6 +131,10 @@ export class ProjectConfirmationController {
     return this.#lifecycleId
   }
 
+  get proposalOriginRef(): string | null {
+    return this.#proposal?.origin_ref ?? null
+  }
+
   /** A proposal that has passed its deadline is not pending, even before anything expires it. */
   get pending(): boolean {
     return this.#state === 'pending'

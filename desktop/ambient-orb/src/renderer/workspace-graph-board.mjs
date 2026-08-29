@@ -105,13 +105,16 @@ export function parseWorkspaceGraphBoardPayload(value) {
 }
 
 export function boardTabForKey(activeTab, key) {
+  const tabs = ['memory', 'diagnostics', 'graph']
   if (key === 'Home') return 'memory'
   if (key === 'End') return 'graph'
+  const current = tabs.indexOf(activeTab)
+  if (current === -1) return null
   if (key === 'ArrowLeft' || key === 'ArrowUp') {
-    return activeTab === 'memory' ? 'graph' : 'memory'
+    return tabs[(current + tabs.length - 1) % tabs.length]
   }
   if (key === 'ArrowRight' || key === 'ArrowDown') {
-    return activeTab === 'memory' ? 'graph' : 'memory'
+    return tabs[(current + 1) % tabs.length]
   }
   return null
 }

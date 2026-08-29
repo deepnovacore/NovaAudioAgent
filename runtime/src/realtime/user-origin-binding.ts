@@ -150,6 +150,10 @@ export class UserOriginBindingLedger {
     return item?.origin_ref ?? undefined
   }
 
+  revisionForItem(epoch: number, itemId: string): number | undefined {
+    return this.#itemFor(epoch, itemId)?.revision
+  }
+
   hasOriginRef(epoch: number, itemId: string): boolean {
     return this.originRefForItem(epoch, itemId) !== undefined
   }

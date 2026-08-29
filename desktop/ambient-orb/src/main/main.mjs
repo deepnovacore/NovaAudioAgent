@@ -653,9 +653,25 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!boardWindow || event.sender !== boardWindow.webContents) {
       throw new Error('memory board export rejected')
     }
-    if (!payload || !Array.isArray(payload.channels)) return { error: 'invalid_payload' }
+    if (!payload || !Array.isArray(payload.channels)
+      || payload.diagnostics?.version !== 1
+      || !Array.isArray(payload.diagnostics.records)
+      || payload.diagnostics.records.length > 128
+      || !payload.diagnostics.records.every(record => (
+        record !== null
+        && typeof record === 'object'
+        && Number.isFinite(record.ts)
+        && typeof record.kind === 'string'
+        && record.payload !== null
+        && typeof record.payload === 'object'
+        && !Array.isArray(record.payload)
+      ))) return { error: 'invalid_payload' }
     const body = JSON.stringify(
-      { exported_at: new Date().toISOString(), channels: payload.channels },
+      {
+        exported_at: new Date().toISOString(),
+        channels: payload.channels,
+        diagnostics: payload.diagnostics,
+      },
       null,
       2,
     )

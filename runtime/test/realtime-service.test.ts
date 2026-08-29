@@ -5180,7 +5180,7 @@ test('a desktop banner decision commits through the same one-shot controller pat
 
 test('a runtime-rejected banner decision restores the same authority and original ttl', async () => {
   let attempts = 0
-  const {service, controller, views, clock} = confirmationService({
+  const {service, controller, views, clock, telemetry} = confirmationService({
     commit: () => {
       attempts += 1
       return Promise.resolve(attempts === 1
@@ -5211,6 +5211,22 @@ test('a runtime-rejected banner decision restores the same authority and origina
   await service.projectConfirmationDecision(proposal.proposal_id, true)
   assert.equal(attempts, 2)
   assert.equal(controller.pending, false, 'the restored authority is consumed after admission')
+  assert.deepEqual(telemetry.filter(record => record.kind.startsWith(
+    'project_confirmation.commit_',
+  )).map(record => record.kind), [
+    'project_confirmation.commit_started',
+    'project_confirmation.commit_admission',
+    'project_confirmation.commit_rollback',
+    'project_confirmation.commit_started',
+    'project_confirmation.commit_admission',
+    'project_confirmation.commit_settled',
+  ])
+  const admission = telemetry.find(record => (
+    record.kind === 'project_confirmation.commit_admission'
+    && record.payload.accepted === true
+  ))
+  assert.equal(admission?.payload.proposal_origin_ref, 'conversation:1')
+  assert.equal(admission?.payload.delegate_origin_ref, 'conversation:1')
 })
 
 test('a delayed banner commit publishes busy and a bare failed callback cannot strand it', async () => {
@@ -5828,8 +5844,27 @@ test('a confirmation response created before speech end remains tool-only and ca
       origin_bound: true,
       confirmation_item_count: 1,
       proposal_id: proposal.proposal_id,
+      proposal_origin_ref: 'conversation:1',
+      delegate_origin_ref: 'conversation:1',
+      user_input_revision: 1,
+      item_id: 'user-overlap',
     },
   })
+  assert.ok(telemetry.some(record => (
+    record.kind === 'user_origin.item_registered'
+    && record.payload.user_input_revision === 1
+    && record.payload.item_id === 'user-overlap'
+  )))
+  assert.ok(telemetry.some(record => (
+    record.kind === 'user_origin.response_binding'
+    && record.payload.response_id === 'response-overlap'
+    && record.payload.item_id === 'user-overlap'
+  )))
+  assert.ok(telemetry.some(record => (
+    record.kind === 'user_origin.transcript_resolution'
+    && record.payload.origin_ref === 'conversation:1'
+    && record.payload.status === 'resolved'
+  )))
 })
 
 test('an unbound confirmation call fails visibly and releases the proposal for a retry', async () => {
@@ -5887,6 +5922,10 @@ test('an unbound confirmation call fails visibly and releases the proposal for a
       pending: true,
       recovered: true,
       proposal_id: proposal.proposal_id,
+      proposal_origin_ref: 'conversation:1',
+      delegate_origin_ref: 'conversation:1',
+      user_input_revision: -1,
+      item_id: 'none',
     },
   })
   const retryPrompt = '我没能把这次语音和确认请求关联起来；请再说一次“确认”或“取消”。'

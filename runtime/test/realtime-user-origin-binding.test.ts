@@ -13,6 +13,7 @@ test('origin ledger binds responses by epoch and exact user revision', () => {
     status: 'bound', item_id: 'current', revision: 2,
   })
   assert.equal(ledger.itemForResponse(1, 'response'), 'current')
+  assert.equal(ledger.revisionForItem(1, 'current'), 2)
   assert.equal(ledger.unboundCount, 1)
   assert.equal(
     ledger.bindResponse({epoch: 1, revision: 1, responseId: 'late-response'}).status,

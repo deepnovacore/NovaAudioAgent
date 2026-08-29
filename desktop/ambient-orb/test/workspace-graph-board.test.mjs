@@ -97,9 +97,11 @@ test('graph payload validator enforces the aggregate 16 KiB frame boundary', () 
 })
 
 test('tab keyboard mapping keeps both tabs reachable with the standard roving pattern', () => {
-  assert.equal(boardTabForKey('memory', 'ArrowRight'), 'graph')
+  assert.equal(boardTabForKey('memory', 'ArrowRight'), 'diagnostics')
   assert.equal(boardTabForKey('memory', 'End'), 'graph')
-  assert.equal(boardTabForKey('graph', 'ArrowLeft'), 'memory')
+  assert.equal(boardTabForKey('diagnostics', 'ArrowRight'), 'graph')
+  assert.equal(boardTabForKey('graph', 'ArrowRight'), 'memory')
+  assert.equal(boardTabForKey('graph', 'ArrowLeft'), 'diagnostics')
   assert.equal(boardTabForKey('graph', 'Home'), 'memory')
   assert.equal(boardTabForKey('memory', 'Enter'), null)
 })

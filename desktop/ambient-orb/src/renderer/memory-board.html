@@ -22,11 +22,15 @@
     </header>
     <nav class="board-tabs" role="tablist" aria-label="Memory Board 视图">
       <button id="memory-tab" type="button" role="tab" aria-selected="true" aria-controls="memory-panel">Memory</button>
+      <button id="diagnostics-tab" type="button" role="tab" aria-selected="false" aria-controls="diagnostics-panel" tabindex="-1">Diagnostics</button>
       <button id="graph-tab" type="button" role="tab" aria-selected="false" aria-controls="graph-panel" tabindex="-1">Graph</button>
     </nav>
     <main>
       <section id="memory-panel" role="tabpanel" aria-labelledby="memory-tab">
         <div id="channels"></div>
+      </section>
+      <section id="diagnostics-panel" role="tabpanel" aria-labelledby="diagnostics-tab" hidden>
+        <div id="diagnostics"></div>
       </section>
       <section id="graph-panel" role="tabpanel" aria-labelledby="graph-tab" hidden>
         <p id="graph-state" class="graph-state" aria-live="polite"></p>

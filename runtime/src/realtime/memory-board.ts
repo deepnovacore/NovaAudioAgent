@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
 import type { Channel, Memory, MemoryItem } from '../memory.js'
+import type {RealtimeDiagnosticsSnapshot} from './telemetry.js'
 
 export const MAX_BOARD_MESSAGE_BYTES = 256 * 1024
 export const MAX_BOARD_ITEMS_PER_CHANNEL = 50
@@ -25,12 +26,26 @@ interface BoardChannel {
   items: BoardItem[]
 }
 
-export function memoryBoardMessage(requestId: string, memory: Memory): string {
+export function memoryBoardMessage(
+  requestId: string,
+  memory: Memory,
+  diagnosticSnapshot: RealtimeDiagnosticsSnapshot = {version: 1, records: []},
+): string {
   const channels = [...memory.channels.values()].map(channelView)
+  const diagnostics = {
+    version: 1 as const,
+    records: [...diagnosticSnapshot.records],
+  }
   let summariesDropped = false
   while (true) {
-    const message = JSON.stringify({type: 'memory.board', request_id: requestId, channels})
+    const message = JSON.stringify({
+      type: 'memory.board', request_id: requestId, diagnostics, channels,
+    })
     if (Buffer.byteLength(message, 'utf8') <= MAX_BOARD_MESSAGE_BYTES) return message
+    if (diagnostics.records.length > 0) {
+      diagnostics.records = diagnostics.records.slice(1)
+      continue
+    }
     const populated = channels.filter(channel => channel.items.length > 0)
     if (populated.length > 0) {
       const largest = populated.reduce((current, candidate) => (

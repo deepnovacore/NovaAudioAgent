@@ -169,6 +169,41 @@ button:focus-visible {
   align-items: stretch;
 }
 
+#diagnostics {
+  display: grid;
+  gap: 10px;
+}
+
+.diagnostic-record {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+
+.diagnostic-record header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.diagnostic-record strong { color: var(--text); font-weight: 650; }
+
+.diagnostic-record pre {
+  margin: 0;
+  padding: 12px 14px 14px;
+  overflow: auto;
+  color: var(--text);
+  font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .channel-card {
   --channel-accent: #7f9fc5;
   display: grid;
