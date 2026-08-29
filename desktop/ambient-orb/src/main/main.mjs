@@ -17,7 +17,7 @@ import {
 import { loadProjectNativeHostFromResources } from '@nova-audio-agent/runtime/desktop'
 import { randomBytes } from 'node:crypto'
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path, { dirname, resolve } from 'node:path'
@@ -26,11 +26,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   backendLaunchSpec,
   createReadinessListener,
-  fallbackPython,
   nodeRuntimeEntry,
   selectedBackend,
   shutdownBackend,
-  venvPython,
   watchBackendExit,
 } from './backend.mjs'
 import {
@@ -157,12 +155,6 @@ const MICROPHONE_STATUSES = new Set([
   'capture_unavailable',
   'audio_pipeline_error',
 ])
-
-function pythonExecutable() {
-  if (process.env.NOVA_AUDIO_AGENT_PYTHON) return process.env.NOVA_AUDIO_AGENT_PYTHON
-  if (process.env.VIRTUAL_ENV) return venvPython(process.env.VIRTUAL_ENV)
-  return fallbackPython()
-}
 
 // Every push to the orb goes through here. `mainWindow` is never nulled — the orb has no
 // 'closed' handler because it is not meant to close before the app quits — so a send after
@@ -467,7 +459,6 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
     const decryptedSecrets = decryptSecretsForSpawn(currentSettings, secretCodec)
     const spec = backendLaunchSpec({
       backend: backendKind,
-      python: backendKind === 'python' ? pythonExecutable() : undefined,
       nodeEntry: nodeRuntimeEntry({
         isPackaged: app.isPackaged,
         appPath: app.getAppPath(),
@@ -484,20 +475,12 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       decryptedSecrets,
       resolvedConfig: desktopConfig,
     })
-    if (spec.kind === 'node') {
-      spawnedBackend = utilityProcess.fork(spec.entry, spec.argv, {
-        cwd: workspace,
-        env: spec.env,
-        stdio: spec.stdio,
-        serviceName: 'Nova Audio Agent Runtime',
-      })
-    } else {
-      spawnedBackend = spawn(spec.command, spec.argv, {
-        cwd: workspace,
-        env: spec.env,
-        stdio: spec.stdio,
-      })
-    }
+    spawnedBackend = utilityProcess.fork(spec.entry, spec.argv, {
+      cwd: workspace,
+      env: spec.env,
+      stdio: spec.stdio,
+      serviceName: 'Nova Audio Agent Runtime',
+    })
     backend = spawnedBackend
     spawnedBackend.stderr?.on('data', chunk => {
       const code = diagnostic.push(chunk.toString('utf8'))
@@ -507,9 +490,8 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       const code = diagnostic.push(chunk.toString('utf8'))
       if (code) console.error(`[backend-diagnostic] ${code}`)
     })
-    // Covers both deaths: the child that exits, and the child that never started
-    // at all (a missing interpreter emits 'error' and no 'exit' — unlistened, it
-    // would be thrown into this process). Either way the handshake is failed now
+    // Covers both deaths: the child that exits, and the utility process that never
+    // starts. Either way the handshake is failed now
     // instead of waiting out the timeout, and `launchBackend` rejects, which the
     // whenReady().catch() below turns into a quit exactly as a timeout does.
     watchBackendExit(spawnedBackend, {

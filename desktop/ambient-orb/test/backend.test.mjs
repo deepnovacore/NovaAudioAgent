@@ -10,12 +10,10 @@ import {
   READINESS_SOCKET_AUTH_TIMEOUT_MS,
   backendLaunchSpec,
   createReadinessListener,
-  fallbackPython,
   nodeRuntimeEntry,
   parseReadiness,
   selectedBackend,
   shutdownBackend,
-  venvPython,
   watchBackendExit,
 } from '../src/main/backend.mjs'
 
@@ -39,6 +37,15 @@ const SETTINGS_V2 = Object.freeze({
   cascadedTtsProvider: 'volcengine',
   cascadedTtsVoice: 'zh_female_vv_uranus_bigtts',
 })
+
+function nodeLaunchSpec(options) {
+  return backendLaunchSpec({
+    backend: 'node',
+    nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
+    nodeResourcesPath: '/repo/desktop/ambient-orb/build',
+    ...options,
+  })
+}
 
 function readinessLine(overrides = {}) {
   return `${JSON.stringify({ token: TOKEN, host: '127.0.0.1', port: 49152, ...overrides })}\n`
@@ -114,30 +121,33 @@ function fakeChild() {
 }
 
 test('passes token only through environment and dials back over loopback', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: { PATH: '/usr/bin' },
   })
 
-  assert.deepEqual(spec.argv, ['-m', 'nova_audio_agent.realtime.desktop'])
+  assert.deepEqual(spec.argv, [])
   assert.equal(spec.env.NOVA_AUDIO_AGENT_DESKTOP_TOKEN, TOKEN)
   assert.equal(spec.env.NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT, '127.0.0.1:49152')
   assert.equal('NOVA_AUDIO_AGENT_DESKTOP_READY_FD' in spec.env, false)
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_WORKSPACE, '/workspace')
-  assert.deepEqual(spec.stdio, ['pipe', 'pipe', 'pipe'])
+  assert.deepEqual(spec.stdio, ['ignore', 'pipe', 'pipe'])
   assert.equal(spec.stdio.length, 3)
   assert.equal(JSON.stringify(spec.argv).includes(TOKEN), false)
-  assert.equal(spec.kind, 'python')
-  assert.equal(spec.env.NOVA_AUDIO_AGENT_BACKEND, 'python')
+  assert.equal(spec.kind, 'node')
+  assert.equal(spec.env.NOVA_AUDIO_AGENT_BACKEND, 'node')
 })
 
-test('backend selection keeps the source Python default and explicit Node opt-in', () => {
-  assert.equal(selectedBackend({}), 'python')
-  assert.equal(selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'python' }), 'python')
+test('backend selection is Node-only and refuses the retired Python rollback', () => {
+  assert.equal(selectedBackend({}), 'node')
   assert.equal(selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'node' }), 'node')
+  assert.throws(
+    () => selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'python' }),
+    error => error?.code === 'source_rollback_unavailable'
+      && error.message === 'source_rollback_unavailable',
+  )
   assert.throws(
     () => selectedBackend({ NOVA_AUDIO_AGENT_BACKEND: 'private-invalid-value' }),
     error => !error.message.includes('private-invalid-value'),
@@ -164,10 +174,21 @@ test('packaged backend selection refuses explicit Python before resolving an int
   )
 })
 
+test('launch spec cannot construct the retired Python process', () => {
+  assert.throws(() => nodeLaunchSpec({
+    backend: 'python',
+    python: '/private/poison/python',
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+  }), /backend kind is invalid/)
+})
+
 test('Node launch uses the compiled utility-process entry and no writable stdin', () => {
   const nodeEntry = '/repo/runtime/dist/src/desktop-entry.js'
   const nodeResourcesPath = '/repo/desktop/ambient-orb/build'
-  const spec = backendLaunchSpec({
+  const spec = nodeLaunchSpec({
     backend: 'node',
     nodeEntry,
     nodeResourcesPath,
@@ -185,7 +206,7 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH, nodeResourcesPath)
   assert.equal(JSON.stringify(spec).includes(TOKEN), true)
   assert.equal(JSON.stringify(spec.argv).includes(TOKEN), false)
-  assert.throws(() => backendLaunchSpec({
+  assert.throws(() => nodeLaunchSpec({
     backend: 'node',
     nodeEntry: 'relative-entry.js',
     nodeResourcesPath,
@@ -194,7 +215,7 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
     readyEndpoint: '127.0.0.1:49152',
     parentEnv: {},
   }), /absolute Node runtime entry/)
-  assert.throws(() => backendLaunchSpec({
+  assert.throws(() => nodeLaunchSpec({
     backend: 'node',
     nodeEntry,
     nodeResourcesPath: 'relative-resources',
@@ -206,7 +227,7 @@ test('Node launch uses the compiled utility-process entry and no writable stdin'
 })
 
 test('resolved desktop settings override inherited Codex and model configuration', () => {
-  const spec = backendLaunchSpec({
+  const spec = nodeLaunchSpec({
     backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
     nodeResourcesPath: '/repo/desktop/ambient-orb/build',
@@ -242,7 +263,7 @@ test('resolved desktop settings override inherited Codex and model configuration
 })
 
 test('resolved desktop configuration removes an invalid inherited Codex binary', () => {
-  const spec = backendLaunchSpec({
+  const spec = nodeLaunchSpec({
     backend: 'node',
     nodeEntry: '/repo/runtime/dist/src/desktop-entry.js',
     nodeResourcesPath: '/repo/desktop/ambient-orb/build',
@@ -282,8 +303,7 @@ test('runtime entry resolves inside the workspace for dev and the asar for packa
 })
 
 test('launch spec strips a stale inherited readiness pipe', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -294,8 +314,7 @@ test('launch spec strips a stale inherited readiness pipe', () => {
 })
 
 test('integrated launch injects all active public settings and only its platform credential', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -346,8 +365,7 @@ test('cascaded Qwen launch injects active selectors, remembered model, and Douba
     cascadedLlmModels: { qwen: 'qwen-flash', ark: 'ark-remembered' },
     cascadedTtsVoice: 'zh_female_custom',
   }
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -388,8 +406,7 @@ test('cascaded Ark launch selects the remembered Ark model without injecting Das
     cascadedLlmProvider: 'ark',
     cascadedLlmModels: { qwen: 'qwen-remembered', ark: 'ark-selected' },
   }
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -415,8 +432,7 @@ test('cascaded Ark launch selects the remembered Ark model without injecting Das
 })
 
 test('absent cascaded ASR override does not duplicate the big-model secret', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -431,8 +447,7 @@ test('absent cascaded ASR override does not duplicate the big-model secret', () 
 })
 
 test('launch spec falls back to the settings-store defaults when settings is missing', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -448,8 +463,7 @@ test('launch spec falls back to the settings-store defaults when settings is mis
 })
 
 test('launch spec falls back per-field for a partially-populated settings object', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -466,8 +480,7 @@ test('launch spec falls back per-field for a partially-populated settings object
 })
 
 test('launch spec injects decrypted secrets as env overrides when present', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -493,8 +506,7 @@ test('launch spec injects decrypted secrets as env overrides when present', () =
 })
 
 test('launch spec omits a secret env var entirely when absent, empty, or undefined', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -510,8 +522,7 @@ test('launch spec omits a secret env var entirely when absent, empty, or undefin
   assert.equal('DOUBAO_BIGMODEL_API_KEY' in spec.env, false)
   assert.equal('DOUBAO_ASR_API_KEY' in spec.env, false)
 
-  const noSecretsAtAll = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const noSecretsAtAll = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -521,8 +532,7 @@ test('launch spec omits a secret env var entirely when absent, empty, or undefin
 })
 
 test('launch spec omits a whitespace-only decrypted secret, letting the parent value survive', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -537,8 +547,7 @@ test('launch spec omits a whitespace-only decrypted secret, letting the parent v
 })
 
 test('launch spec omits a decrypted secret carrying a control character', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -569,8 +578,7 @@ test('integrated launch rejects raw boundary controls in every active secret ove
     NOVA_AUDIO_AGENT_MODEL_API_KEY: 'parent-model',
     NOVA_AUDIO_AGENT_CODEX_API_KEY: 'parent-codex',
   }
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -596,8 +604,7 @@ test('cascaded Ark launch rejects raw boundary controls in every new secret over
     DOUBAO_BIGMODEL_API_KEY: 'parent-doubao',
     DOUBAO_ASR_API_KEY: 'parent-asr',
   }
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -620,8 +627,7 @@ test('cascaded Ark launch rejects raw boundary controls in every new secret over
 })
 
 test('launch spec injects a decrypted secret with its surrounding whitespace trimmed', () => {
-  const spec = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const spec = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -635,8 +641,7 @@ test('launch spec injects a decrypted secret with its surrounding whitespace tri
 })
 
 test('a parent-env api key survives when the panel key is absent, and is overridden when present', () => {
-  const withoutPanelKey = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const withoutPanelKey = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -644,8 +649,7 @@ test('a parent-env api key survives when the panel key is absent, and is overrid
   })
   assert.equal(withoutPanelKey.env.DASHSCOPE_API_KEY, 'from-dotenv')
 
-  const withEmptyPanelKey = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const withEmptyPanelKey = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -654,8 +658,7 @@ test('a parent-env api key survives when the panel key is absent, and is overrid
   })
   assert.equal(withEmptyPanelKey.env.DASHSCOPE_API_KEY, 'from-dotenv')
 
-  const withPanelKey = backendLaunchSpec({
-    python: '/venv/bin/python',
+  const withPanelKey = nodeLaunchSpec({
     workspace: '/workspace',
     token: TOKEN,
     readyEndpoint: '127.0.0.1:49152',
@@ -667,7 +670,6 @@ test('a parent-env api key survives when the panel key is absent, and is overrid
 
 test('launch spec refuses any readiness endpoint that is not a loopback port', () => {
   const base = {
-    python: '/venv/bin/python',
     workspace: '/workspace',
     token: TOKEN,
     parentEnv: {},
@@ -682,7 +684,7 @@ test('launch spec refuses any readiness endpoint that is not a loopback port', (
     '',
   ]) {
     assert.throws(
-      () => backendLaunchSpec({ ...base, readyEndpoint }),
+      () => nodeLaunchSpec({ ...base, readyEndpoint }),
       /readiness endpoint/,
       `expected ${JSON.stringify(readyEndpoint)} to be rejected`,
     )
@@ -1102,8 +1104,7 @@ test('shutting down an already exited backend never waits out the grace', async 
 test('a spawned backend reaches readiness through the launch spec environment', async () => {
   const listener = createReadinessListener({ token: TOKEN })
   const endpoint = await listener.endpoint
-  const spec = backendLaunchSpec({
-    python: process.execPath,
+  const spec = nodeLaunchSpec({
     workspace: process.cwd(),
     token: TOKEN,
     readyEndpoint: endpoint,
@@ -1122,7 +1123,7 @@ test('a spawned backend reaches readiness through the launch spec environment', 
     socket.on('close', () => process.exit(0))
     socket.on('error', () => process.exit(1))
   `
-  const child = spawn(spec.command, ['-e', script], { env: spec.env, stdio: spec.stdio })
+  const child = spawn(process.execPath, ['-e', script], { env: spec.env, stdio: spec.stdio })
 
   try {
     assert.deepEqual(await listener.readiness, {
@@ -1136,29 +1137,4 @@ test('a spawned backend reaches readiness through the launch spec environment', 
     listener.close()
     if (child.exitCode === null) child.kill('SIGKILL')
   }
-})
-
-test('venvPython resolves the venv interpreter per platform', () => {
-  assert.equal(venvPython('/opt/venv', 'darwin'), '/opt/venv/bin/python')
-  assert.equal(venvPython('/opt/venv', 'linux'), '/opt/venv/bin/python')
-  assert.equal(venvPython('C:\\venv', 'win32'), 'C:\\venv\\Scripts\\python.exe')
-})
-
-test('venvPython defaults to the current process platform', () => {
-  assert.equal(venvPython('/opt/venv'), venvPython('/opt/venv', process.platform))
-})
-
-test('venvPython requires a venv directory', () => {
-  assert.throws(() => venvPython(''), /venvDir/)
-  assert.throws(() => venvPython(undefined), /venvDir/)
-})
-
-test('fallbackPython names the bare interpreter per platform', () => {
-  assert.equal(fallbackPython('darwin'), 'python3')
-  assert.equal(fallbackPython('linux'), 'python3')
-  assert.equal(fallbackPython('win32'), 'python')
-})
-
-test('fallbackPython defaults to the current process platform', () => {
-  assert.equal(fallbackPython(), fallbackPython(process.platform))
 })

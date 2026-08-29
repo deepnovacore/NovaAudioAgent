@@ -1,6 +1,6 @@
 import { createServer } from 'node:net'
 import { timingSafeEqual } from 'node:crypto'
-import { isAbsolute, posix, resolve, win32 } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 
 const MAX_READINESS_BYTES = 4096
 const TOKEN_PATTERN = /^[a-f0-9]{32}$/
@@ -40,7 +40,7 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 // decryptedSecrets key -> env var name. Only a non-empty decrypted string maps
 // to an override; an absent/empty key is omitted entirely so the user's own
 // `.env` (or parent environment) keeps winning. Names match the Settings
-// aliases in src/nova_audio_agent/config.py exactly.
+// aliases accepted by the Node runtime configuration contract exactly.
 const SECRET_ENV_MAP = Object.freeze({
   dashscopeApiKey: 'DASHSCOPE_API_KEY',
   tavilyApiKey: 'TAVILY_API_KEY',
@@ -71,43 +71,23 @@ export const READINESS_SOCKET_AUTH_TIMEOUT_MS = 3000
 /**
  * How long the backend gets to drain after the stdin-EOF sentinel before it is force killed.
  *
- * This has to outlast the teardown it is waiting on, not merely feel generous. The Python
- * side answers EOF with `assembly.stop()`, which runs the codex app-server shutdown:
+ * This has to outlast the teardown it is waiting on, not merely feel generous. The runtime
+ * answers the drain request with `assembly.stop()`, which runs the codex app-server shutdown:
  * INTERRUPT_GRACE (2s) for the in-flight turn plus EXIT_GRACE (5s) for the process tree to
  * go. Anything shorter SIGKILLs the backend *during* its own cleanup and orphans exactly the
  * codex tree it was reaping. 5 + 2 + 1s of margin.
  */
 export const BACKEND_DRAIN_GRACE_MS = 8000
 
-/**
- * Resolve the interpreter inside a virtualenv rooted at `venvDir`, per platform.
- *
- * `platform` is an explicit parameter (not read from `process.platform` inside
- * a shared `path` import) so the Windows branch is testable from any host: the
- * separators must follow the *target* platform, not the one running the test.
- */
-export function venvPython(venvDir, platform = process.platform) {
-  if (typeof venvDir !== 'string' || !venvDir) throw new Error('venvDir is required')
-  return platform === 'win32'
-    ? win32.join(venvDir, 'Scripts', 'python.exe')
-    : posix.join(venvDir, 'bin', 'python')
-}
-
-/** Bare interpreter name to fall back on when no venv is configured. */
-export function fallbackPython(platform = process.platform) {
-  return platform === 'win32' ? 'python' : 'python3'
-}
-
 export function selectedBackend(env = process.env, { isPackaged = false } = {}) {
-  const value = env?.NOVA_AUDIO_AGENT_BACKEND ?? (isPackaged ? 'node' : 'python')
-  if (value !== 'python' && value !== 'node') {
-    throw new Error('NOVA_AUDIO_AGENT_BACKEND must be python or node')
-  }
-  if (value === 'python' && isPackaged) {
+  void isPackaged
+  const value = env?.NOVA_AUDIO_AGENT_BACKEND ?? 'node'
+  if (value === 'python') {
     const error = new Error('source_rollback_unavailable')
     error.code = 'source_rollback_unavailable'
     throw error
   }
+  if (value !== 'node') throw new Error('NOVA_AUDIO_AGENT_BACKEND must be node')
   return value
 }
 
@@ -127,8 +107,7 @@ export function nodeRuntimeEntry({ isPackaged, appPath, packageRoot }) {
 }
 
 export function backendLaunchSpec({
-  backend = 'python',
-  python,
+  backend = 'node',
   nodeEntry,
   nodeResourcesPath,
   workspace,
@@ -139,17 +118,13 @@ export function backendLaunchSpec({
   decryptedSecrets,
   resolvedConfig,
 }) {
-  if (backend !== 'python' && backend !== 'node') throw new Error('backend kind is invalid')
-  if (backend === 'python' && (typeof python !== 'string' || !python)) {
-    throw new Error('python is required')
-  }
-  if (backend === 'node' && (typeof nodeEntry !== 'string' || !isAbsolute(nodeEntry))) {
+  if (backend !== 'node') throw new Error('backend kind is invalid')
+  if (typeof nodeEntry !== 'string' || !isAbsolute(nodeEntry)) {
     throw new Error('absolute Node runtime entry is required')
   }
-  if (
-    backend === 'node'
-    && (typeof nodeResourcesPath !== 'string' || !isAbsolute(nodeResourcesPath))
-  ) throw new Error('absolute Node resource root is required')
+  if (typeof nodeResourcesPath !== 'string' || !isAbsolute(nodeResourcesPath)) {
+    throw new Error('absolute Node resource root is required')
+  }
   const effectiveWorkspace = resolvedConfig?.workspace ?? workspace
   if (typeof effectiveWorkspace !== 'string' || !effectiveWorkspace) {
     throw new Error('workspace is required')
@@ -179,9 +154,7 @@ export function backendLaunchSpec({
     NOVA_AUDIO_AGENT_PROACTIVITY_PRESET: proactivity,
     NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),
     NOVA_AUDIO_AGENT_PIPELINE_MODE: pipelineMode,
-    ...(backend === 'node'
-      ? {NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH: nodeResourcesPath}
-      : {}),
+    NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH: nodeResourcesPath,
   }
   if (resolvedConfig && typeof resolvedConfig === 'object') {
     delete env.NOVA_AUDIO_AGENT_CODEX_BIN
@@ -273,21 +246,13 @@ export function backendLaunchSpec({
       if (trimmed) env[envName] = trimmed
     }
   }
-  return backend === 'node'
-    ? {
-      kind: 'node',
-      entry: nodeEntry,
-      argv: [],
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }
-    : {
-      kind: 'python',
-      command: python,
-      argv: ['-m', 'nova_audio_agent.realtime.desktop'],
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }
+  return {
+    kind: 'node',
+    entry: nodeEntry,
+    argv: [],
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }
 }
 
 export function parseReadiness(raw, token) {

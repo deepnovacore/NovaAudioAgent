@@ -710,7 +710,7 @@
       "snippet_sha256": "2363322a01e8cbed64d90a151d3ded281b44f3080329426ebc7dad3791c32103",
       "disposition": "host_only_unicode",
       "test": "runtime/test/config.test.ts",
-      "behavior": "backend defaults to Python and supports the explicit Node development switch"
+      "behavior": "runtime settings do not expose the retired backend selector"
     },
     {
       "file": "runtime/src/config.ts",
@@ -719,7 +719,7 @@
       "snippet_sha256": "d2b2b67bf54e29ae1a0eb274df76d51711b783ad02c28cbfe2b212be100f56f5",
       "disposition": "host_only_unicode",
       "test": "runtime/test/config.test.ts",
-      "behavior": "backend defaults to Python and supports the explicit Node development switch"
+      "behavior": "runtime settings do not expose the retired backend selector"
     },
     {
       "file": "runtime/src/config.ts",
@@ -728,7 +728,7 @@
       "snippet_sha256": "9bda2509223eb60f1da77b84d8512fd9a0449d39cf6aa6cc5e2ceb108ab5871c",
       "disposition": "host_only_unicode",
       "test": "runtime/test/config.test.ts",
-      "behavior": "backend defaults to Python and supports the explicit Node development switch"
+      "behavior": "runtime settings do not expose the retired backend selector"
     },
     {
       "file": "runtime/src/context-view.ts",

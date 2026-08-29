@@ -13,7 +13,7 @@ const MESSAGE_CODES = new Set([
 export function startupFailureCode(error) {
   if (MESSAGE_CODES.has(error?.message)) return error.message
   if (error?.name === 'MainCameraConfigurationError') return 'camera_configuration_invalid'
-  if (error?.message === 'NOVA_AUDIO_AGENT_BACKEND must be python or node') {
+  if (error?.message === 'NOVA_AUDIO_AGENT_BACKEND must be node') {
     return 'backend_selection_invalid'
   }
   return 'startup_failed'

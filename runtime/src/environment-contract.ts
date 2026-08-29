@@ -3,7 +3,7 @@ import {casefoldLikePython} from './unicode-casefold.js'
 
 export type EnvironmentOwner =
   | 'core' | 'qwen' | 'ark' | 'volcengine' | 'codex' | 'search' | 'camera'
-  | 'telemetry' | 'source_rollback' | 'host_private'
+  | 'telemetry' | 'host_private'
   | 'retired_realtime' | 'retired_ha' | 'retired_autoglm'
 
 export interface EnvironmentVariableContract {
@@ -29,7 +29,7 @@ type Row = readonly [
 ]
 
 const rows: readonly Row[] = [
-  ['NOVA_AUDIO_AGENT_BACKEND', 'source_rollback', false, false, 'never', null, 'Internal legacy backend selector.', '内部遗留后端选择器。'],
+  ['NOVA_AUDIO_AGENT_BACKEND', 'host_private', false, false, 'never', 'node', 'Node-only desktop backend guard.', '仅 Node 的桌面后端守卫。'],
   ['NOVA_AUDIO_AGENT_MODEL_BASE_URL', 'core', false, true, 'never', 'DashScope compatible endpoint', 'FastBrain compatible API endpoint.', 'FastBrain 兼容 API 地址。'],
   ['NOVA_AUDIO_AGENT_MODEL_API_KEY', 'core', true, true, 'never', null, 'Optional generic support-model API credential override.', '可选的通用辅助模型 API 凭据覆盖。'],
   ['NOVA_AUDIO_AGENT_FAST_MODEL', 'core', false, true, 'never', 'qwen3-vl-plus', 'FastBrain model.', 'FastBrain 模型。'],
@@ -92,8 +92,6 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_REALTIME_TELEMETRY', 'telemetry', false, true, 'never', null, 'Source-runtime telemetry output path.', '源码运行时遥测输出路径。'],
   ['NOVA_AUDIO_AGENT_REALTIME_TRACE', 'telemetry', false, true, 'never', '0', 'Enable source-runtime trace records.', '启用源码运行时跟踪记录。'],
   ['NOVA_ORB_OPAQUE', 'core', false, true, 'never', '0', 'Use an opaque desktop orb window.', '使用不透明桌面悬浮球窗口。'],
-  ['NOVA_AUDIO_AGENT_PYTHON', 'source_rollback', false, false, 'never', null, 'Host-selected Python for source rollback only.', '仅供源码回滚的主机 Python。'],
-  ['VIRTUAL_ENV', 'source_rollback', false, false, 'never', null, 'Source-development Python environment.', '源码开发 Python 环境。'],
   ['NOVA_AUDIO_AGENT_DESKTOP_TOKEN', 'host_private', true, false, 'when_selected', null, 'Desktop transport handshake token.', '桌面传输握手令牌。'],
   ['NOVA_AUDIO_AGENT_DESKTOP_READY_ENDPOINT', 'host_private', false, false, 'when_selected', null, 'Desktop readiness endpoint.', '桌面就绪端点。'],
   ['NOVA_AUDIO_AGENT_DESKTOP_READY_FD', 'host_private', false, false, 'never', null, 'Legacy desktop readiness descriptor.', '旧桌面就绪描述符。'],

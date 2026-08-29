@@ -2,7 +2,6 @@ import { z } from 'zod'
 import { stripLikePython } from './python-text.js'
 import {findRetiredConfiguration} from './environment-contract.js'
 
-const backendSchema = z.enum(['python', 'node'])
 export const proactivityPresetSchema = z.enum(['conservative', 'balanced', 'eager'])
 const pipelineModeSchema = z.enum(['integrated', 'cascaded'])
 const integratedProviderNameSchema = z.enum(['qwen'])
@@ -35,7 +34,6 @@ export const DASHSCOPE_COMPATIBLE_BASE_URL =
   'https://dashscope.aliyuncs.com/compatible-mode/v1'
 
 export const settingsSchema = z.object({
-  backend: backendSchema.default('python'),
   model_base_url: z.url().default(DASHSCOPE_COMPATIBLE_BASE_URL),
   model_api_key: z.string().nullable().default(null),
   tavily_api_key: z.string().nullable().default(null),
@@ -223,7 +221,6 @@ export function loadSettings(environment: NodeJS.ProcessEnv = process.env): Sett
   const executors = parseExecutors(environment.NOVA_AUDIO_AGENT_EXECUTORS, executor)
   const codexSelected = executors.includes('codex')
   const candidate = {
-    backend: optionalString(environment.NOVA_AUDIO_AGENT_BACKEND),
     model_base_url: optionalString(environment.NOVA_AUDIO_AGENT_MODEL_BASE_URL),
     model_api_key: optionalSecret(environment.NOVA_AUDIO_AGENT_MODEL_API_KEY),
     tavily_api_key: optionalSecret(environment.TAVILY_API_KEY),

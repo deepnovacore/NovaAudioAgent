@@ -251,7 +251,7 @@ test('readSecret is wired at the spawn site, decrypting only what backendLaunchS
   // Now consciously wired: the pin from before Task 20 (`doesNotMatch(/readSecret/)`)
   // is gone, because secrets must reach the spawned backend somehow.
   const readSecretSite = source.indexOf('readSecret(')
-  const spawnSite = source.indexOf('spawnedBackend = spawn(')
+  const spawnSite = source.indexOf('spawnedBackend = utilityProcess.fork(')
   assert.ok(readSecretSite >= 0, 'readSecret must be wired now that spawn needs decrypted secrets')
   assert.ok(spawnSite >= 0, 'the backend is still spawned here')
   assert.ok(readSecretSite < spawnSite, 'secrets are decrypted before the backend is spawned')
@@ -289,7 +289,7 @@ test('quitting drains the backend on the stdin sentinel instead of killing it', 
 test('a backend that fails to spawn is handled rather than thrown at the main process', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
-  const spawnSite = source.indexOf('spawnedBackend = spawn(')
+  const spawnSite = source.indexOf('spawnedBackend = utilityProcess.fork(')
   const watchSite = source.indexOf('watchBackendExit(spawnedBackend')
   assert.ok(spawnSite >= 0, 'the backend is still spawned here')
   assert.ok(watchSite > spawnSite, "the death hooks must be registered right after spawn")

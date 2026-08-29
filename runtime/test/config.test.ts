@@ -192,9 +192,9 @@ test('cascaded Qwen resolution never reads ARK_API_KEY', () => {
   assert.equal(requireCascadedCredentials(settings, selection).llmApiKey, 'dashscope-key')
 })
 
-test('backend defaults to Python and supports the explicit Node development switch', () => {
-  assert.equal(loadSettings({}).backend, 'python')
-  assert.equal(loadSettings({NOVA_AUDIO_AGENT_BACKEND: 'node'}).backend, 'node')
+test('runtime settings do not expose the retired backend selector', () => {
+  assert.equal('backend' in loadSettings({}), false)
+  assert.equal('backend' in loadSettings({NOVA_AUDIO_AGENT_BACKEND: 'python'}), false)
 })
 
 test('workspace graph settings default off and accept only loopback MyContext endpoints', () => {
@@ -439,13 +439,13 @@ test('configuration failures never echo secret values', () => {
   try {
     loadSettings({
       NOVA_AUDIO_AGENT_MODEL_API_KEY: secret,
-      NOVA_AUDIO_AGENT_BACKEND: 'invalid',
+      NOVA_AUDIO_AGENT_PIPELINE_MODE: 'invalid',
     })
   } catch (error) {
     message = error instanceof Error ? error.message : String(error)
   }
   assert.equal(message.includes(secret), false)
-  assert.match(message, /BACKEND/u)
+  assert.match(message, /PIPELINE_MODE/u)
 })
 
 test('a non-Codex configuration never reads the Codex credential environment slot', () => {
