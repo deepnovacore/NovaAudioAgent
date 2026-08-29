@@ -238,11 +238,11 @@
     },
     {
       "name": "project-empty",
-      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":null,\"session_title\":null,\"pending_confirmation\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
+      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":null,\"session_title\":null,\"pending_confirmation\":false,\"pending_confirmation_busy\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
     },
     {
       "name": "project-named",
-      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":\"研究项目\",\"session_title\":\"上次的会话\",\"pending_confirmation\":true,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
+      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":\"研究项目\",\"session_title\":\"上次的会话\",\"pending_confirmation\":true,\"pending_confirmation_busy\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
     },
     {
       "name": "project-empty-name",
@@ -254,7 +254,7 @@
     },
     {
       "name": "project-at-name-bound",
-      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"session_title\":null,\"pending_confirmation\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
+      "text": "{\"type\":\"codex.project\",\"workspace_display_name\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"session_title\":null,\"pending_confirmation\":false,\"pending_confirmation_busy\":false,\"pending_action\":null,\"pending_workspace_display_name\":null,\"pending_session_title\":null,\"pending_expires_in_seconds\":null}"
     },
     {
       "name": "caption-user-partial",

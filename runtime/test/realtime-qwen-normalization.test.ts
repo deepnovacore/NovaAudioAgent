@@ -147,6 +147,7 @@ test('active project context renders only the authoritative current display name
     workspace_display_name: 'alpha',
     session_title: 'Login fix',
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   }), [
     '<active_project_context>',
     'workspace="alpha"',
@@ -161,6 +162,7 @@ test('active project context neutralizes hostile legal titles at the serializati
     workspace_display_name: hostile,
     session_title: hostile,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   })
   assert.equal(rendered.match(/<active_project_context>/gu)?.length, 1)
   assert.equal(rendered.match(/<\/active_project_context>/gu)?.length, 1)

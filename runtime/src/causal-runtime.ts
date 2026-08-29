@@ -187,13 +187,30 @@ export class CausalRuntime {
   dispatchExternal(
     request: DelegateRequest,
     reason: WakeReason,
-    hostCapability?: object,
   ): RuntimeDispatchResult {
     if (this.#state === 'closed') return {accepted: false, delegate_id: null, problem: 'closed'}
     const admission = this.core.dispatchExternal(request, reason)
     if (admission.accepted) {
-      if (hostCapability !== undefined && admission.delegate_id !== null) {
-        this.#hostExecutorCapabilities.set(admission.delegate_id, hostCapability)
+      this.#notifyWork()
+    }
+    return admission
+  }
+
+  /** Admit and privately carry the exact one-shot confirmed project capability. */
+  dispatchConfirmedExternal(
+    request: DelegateRequest,
+    reason: WakeReason,
+    capability: object,
+  ): RuntimeDispatchResult {
+    if (this.#state === 'closed') return {accepted: false, delegate_id: null, problem: 'closed'}
+    const admission = this.core.dispatchConfirmedExternal(
+      request,
+      reason,
+      capability,
+    )
+    if (admission.accepted) {
+      if (admission.delegate_id !== null) {
+        this.#hostExecutorCapabilities.set(admission.delegate_id, capability)
       }
       this.#notifyWork()
     }

@@ -90,7 +90,6 @@ export interface RealtimeAssemblyOptions {
   readonly projectAdapter?: ProjectCodexAdapter
   readonly commitProjectOperation?: (
     operation: ConfirmedProjectOperation,
-    originRef: string,
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly projectExpiryStepTimeoutMs?: number
   readonly codexResource?: CodexAssemblyResource
@@ -772,10 +771,9 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
   const projectConfirmation = projectAdapter?.confirmationController ?? options.projectConfirmation
   const commitProjectOperation = projectAdapter === undefined
     ? options.commitProjectOperation
-    : ((operation: ConfirmedProjectOperation, originRef: string) => projectAdapter.commitConfirmed(
+    : ((operation: ConfirmedProjectOperation) => projectAdapter.commitConfirmed(
         operation,
-        originRef,
-        (request, reason, capability) => core.runtime.dispatchExternal(
+        (request, reason, capability) => core.runtime.dispatchConfirmedExternal(
           request,
           reason,
           capability,

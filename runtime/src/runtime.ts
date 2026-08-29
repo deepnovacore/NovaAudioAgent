@@ -17,6 +17,10 @@ import { Floor } from './floor.js'
 import type { IdFactory } from './ids.js'
 import {stripLikePython} from './python-text.js'
 import {
+  beginConfirmedProjectAdmission,
+  finishConfirmedProjectAdmission,
+} from './confirmed-project-capability.js'
+import {
   CONVERSATION_CHANNEL,
   USER_PRIORITY,
   Memory,
@@ -577,6 +581,46 @@ export class CoreRuntime {
       accepted: admission.accepted,
       delegate_id: admission.delegate_id,
       problem: admission.problem,
+    }
+  }
+
+  /**
+   * Admit the one private confirmed-project operation with its immutable proposal capability.
+   *
+   * Only this path may keep a real proposal origin visible after it leaves RECENT_LIMIT. Every other
+   * external dispatch continues to compile the ordinary recent view above.
+   */
+  dispatchConfirmedExternal(
+    request: unknown,
+    reason: WakeReason,
+    capability: object,
+  ): RuntimeDispatchResult {
+    const parsed = delegateRequestSchema.safeParse(request)
+    if (!parsed.success || !beginConfirmedProjectAdmission(capability, parsed.data)) {
+      const refused = this.#refuseDelegate(
+        refusalDelegateRequest(request),
+        'confirmed_capability_invalid',
+        reason,
+      )
+      return {
+        accepted: refused.accepted,
+        delegate_id: refused.delegate_id,
+        problem: refused.problem,
+      }
+    }
+    let accepted = false
+    try {
+      // The capability pins only its exact origin. #dispatch still validates that the Memory item
+      // exists and applies duplicate, executor, operation and deadline guards normally.
+      const admission = this.#dispatch(parsed.data, reason, new Set([parsed.data.origin_ref]))
+      accepted = admission.accepted
+      return {
+        accepted: admission.accepted,
+        delegate_id: admission.delegate_id,
+        problem: admission.problem,
+      }
+    } finally {
+      finishConfirmedProjectAdmission(capability, accepted)
     }
   }
 
@@ -1472,6 +1516,18 @@ function sameDelegateRequest(left: Delegate, right: DelegateRequest): boolean {
 
 function boundedModelText(value: string): string {
   return [...value].slice(0, 128).join('')
+}
+
+function refusalDelegateRequest(value: unknown): DelegateRequest {
+  const record = typeof value === 'object' && value !== null
+    ? value as Readonly<Record<string, unknown>>
+    : {}
+  return {
+    executor: typeof record.executor === 'string' ? record.executor : 'invalid',
+    op: typeof record.op === 'string' ? record.op : 'invalid',
+    request: {},
+    origin_ref: typeof record.origin_ref === 'string' ? record.origin_ref : 'invalid',
+  }
 }
 
 function executorTrust(

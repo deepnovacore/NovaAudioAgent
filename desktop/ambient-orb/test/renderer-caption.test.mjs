@@ -34,6 +34,7 @@ test('renderer accepts the closed public Codex project message', async () => {
   assert.match(source, /workspace_display_name/)
   assert.match(source, /pending_confirmation/)
   assert.match(source, /pending_confirmation_id/)
+  assert.match(source, /pending_confirmation_busy/)
   assert.match(source, /ConfirmationDecisionController/)
   const markup = await readFile(new URL('../src/renderer/index.html', import.meta.url), 'utf8')
   assert.match(markup, /id="codex-confirm"[^>]*aria-label="确认工作区操作"/u)

@@ -256,6 +256,7 @@ test('delivery envelopes identify required, droppable, and latest policy without
     workspace_display_name: 'project',
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   }})
   bridge.onAudioFrame(frame(1, 0))
   bridge.onCaption({role: 'user', text: 'caption', final: true})
@@ -353,18 +354,21 @@ test('the project view is deduplicated by value, not by identity', () => {
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   })
   assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"codex.project"'))
   bridge.onCodexProject({
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   })
   assert.equal(bridge.takeNextFrame(), null, 'an equal view is not resent')
   bridge.onCodexProject({
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_busy: false,
     pending_action: 'create_workspace',
     pending_workspace_display_name: 'tetris-game',
     pending_session_title: null,
@@ -378,6 +382,7 @@ test('the project view is deduplicated by value, not by identity', () => {
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_busy: false,
     pending_action: 'select_workspace',
     pending_workspace_display_name: 'beta',
     pending_session_title: null,
@@ -784,6 +789,7 @@ test('the project dedup is value-based in both places it is checked', () => {
     workspace_display_name: '研究项目',
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   }
   bridge.onCodexProject(view)
   assert.ok(String(bridge.takeNextFrame()).startsWith('{"type":"codex.project"'))

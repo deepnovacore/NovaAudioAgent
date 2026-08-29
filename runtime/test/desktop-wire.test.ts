@@ -45,6 +45,7 @@ interface Case {
   readonly workspace_display_name?: string | null
   readonly session_title?: string | null
   readonly pending_confirmation?: boolean
+  readonly pending_confirmation_busy?: boolean
   readonly role?: string
   readonly text?: string
   readonly final?: boolean
@@ -130,6 +131,7 @@ function runCase(spec: Case): Record<string, unknown> {
             workspace_display_name: spec.workspace_display_name ?? null,
             session_title: spec.session_title ?? null,
             pending_confirmation: spec.pending_confirmation!,
+            pending_confirmation_busy: spec.pending_confirmation_busy ?? false,
           }),
         }
       case 'parse_client': {
@@ -166,6 +168,7 @@ test('Codex project view bounds Python code points rather than UTF-16 units', ()
     workspace_display_name: workspace,
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   })) as {readonly workspace_display_name: string}
   assert.equal(parsed.workspace_display_name, workspace)
 
@@ -173,6 +176,7 @@ test('Codex project view bounds Python code points rather than UTF-16 units', ()
     workspace_display_name: '𐐀'.repeat(121),
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   }), DesktopProtocolError)
 })
 
@@ -181,6 +185,7 @@ test('Codex project view carries a bounded public confirmation description', () 
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_busy: false,
     pending_confirmation_id: 'proposal-public-1',
     pending_action: 'create_workspace',
     pending_workspace_display_name: 'tetris-game',
@@ -192,6 +197,7 @@ test('Codex project view carries a bounded public confirmation description', () 
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_busy: false,
     pending_confirmation_id: 'proposal-public-1',
     pending_action: 'create_workspace',
     pending_workspace_display_name: 'tetris-game',
@@ -202,6 +208,7 @@ test('Codex project view carries a bounded public confirmation description', () 
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
     pending_confirmation_id: 'proposal-stale',
     pending_action: 'select_workspace',
     pending_workspace_display_name: 'beta',
@@ -216,6 +223,7 @@ test('Codex project view rejects an invalid banner decision binding', () => {
       workspace_display_name: 'alpha',
       session_title: null,
       pending_confirmation: true,
+      pending_confirmation_busy: false,
       pending_confirmation_id: pendingConfirmationId,
       pending_action: 'create_workspace',
       pending_workspace_display_name: 'timer-app',
@@ -230,6 +238,7 @@ test('Codex project view accepts the full confirmation ttl', () => {
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_busy: false,
     pending_confirmation_id: 'proposal-public-1',
     pending_action: 'create_workspace',
     pending_workspace_display_name: 'timer-app',
@@ -242,6 +251,7 @@ test('Codex project view accepts the full confirmation ttl', () => {
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_busy: false,
     pending_action: 'create_workspace',
     pending_workspace_display_name: 'timer-app',
     pending_session_title: null,
@@ -254,6 +264,7 @@ test('Codex project view carries workspace reuse confirmation', () => {
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: true,
+    pending_confirmation_busy: false,
     pending_action: 'reuse_workspace',
     pending_workspace_display_name: 'timer-app',
     pending_session_title: 'Initial',

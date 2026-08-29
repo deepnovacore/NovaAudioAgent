@@ -56,3 +56,21 @@ test('a dropped send stays retryable and reconnect releases an uncertain click',
   assert.equal(controller.decide(false), true)
   assert.deepEqual(sent.map(frame => frame.confirmed), [true, true, false])
 })
+
+test('host busy disables decisions and a runtime rollback re-enables the same proposal', () => {
+  const sent = []
+  const controller = new ConfirmationDecisionController({send: frame => {
+    sent.push(frame)
+    return true
+  }})
+
+  controller.sync({pending: true, proposalId: 'proposal-busy', busy: false})
+  assert.equal(controller.decide(true), true)
+  assert.equal(controller.enabled, false)
+  controller.sync({pending: true, proposalId: 'proposal-busy', busy: true})
+  assert.equal(controller.enabled, false)
+  controller.sync({pending: true, proposalId: 'proposal-busy', busy: false})
+  assert.equal(controller.enabled, true)
+  assert.equal(controller.decide(false), true)
+  assert.deepEqual(sent.map(frame => frame.confirmed), [true, false])
+})

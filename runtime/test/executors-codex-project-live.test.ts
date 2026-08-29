@@ -56,7 +56,10 @@ import type {
   ProjectRootFileResult,
 } from '../src/project-root-file.js'
 import {delegateSchema, type DelegateRequest} from '../src/ports.js'
-import {ProjectConfirmationController} from '../src/realtime/project-confirmation.js'
+import {
+  ProjectConfirmationController,
+  type ConfirmedProjectOperation,
+} from '../src/realtime/project-confirmation.js'
 import type {WakeReason} from '../src/slots.js'
 import {compileToolSchema} from '../src/tool-schema.js'
 
@@ -600,7 +603,6 @@ test('confirmed create reuses an inactive workspace and starts exactly one Sessi
     assert.ok(decision.operation)
     const committed = await value.adapter.commitConfirmed(
       decision.operation,
-      'conversation:1',
       () => ({accepted: true, delegate_id: 'delegate-reuse'}),
     )
     assert.equal(committed.accepted, true)
@@ -698,7 +700,6 @@ test('failed confirmed reuse restores the previous active workspace', async () =
     assert.ok(decision.operation)
     const committed = await value.adapter.commitConfirmed(
       decision.operation,
-      'conversation:1',
       () => ({accepted: true, delegate_id: 'delegate-reuse-failure'}),
     )
     assert.equal(committed.accepted, true)
@@ -739,7 +740,6 @@ test('a residual create race is recoverably refused before effects', async () =>
     assert.ok(decision.operation)
     assert.equal((await value.adapter.commitConfirmed(
       decision.operation,
-      'conversation:1',
       () => ({accepted: true, delegate_id: 'delegate-race'}),
     )).accepted, true)
     await value.store.createManaged('beta')
@@ -796,7 +796,6 @@ test('workspace storage creation failure remains failed', async () => {
     assert.ok(decision.operation)
     assert.equal((await value.adapter.commitConfirmed(
       decision.operation,
-      'conversation:1',
       () => ({accepted: true, delegate_id: 'delegate-storage'}),
     )).accepted, true)
     failCreate = true
@@ -905,6 +904,7 @@ test('select and resume proposals expose public action IDs, expiry, and resolved
       workspace_display_name: 'alpha',
       session_title: 'Existing',
       pending_confirmation: true,
+      pending_confirmation_busy: false,
       pending_confirmation_id: 'nonce-2',
       pending_action: 'resume_session',
       pending_workspace_display_name: 'alpha',
@@ -942,6 +942,7 @@ test('a prepared proposal publishes cached target metadata when the registry ref
         workspace_display_name: 'alpha',
         session_title: null,
         pending_confirmation: true,
+        pending_confirmation_busy: false,
         pending_confirmation_id: 'nonce-1',
         pending_action: 'create_workspace',
         pending_workspace_display_name: 'beta',
@@ -966,6 +967,7 @@ test('initialize publishes the pre-existing active project using only its commit
       workspace_display_name: 'alpha',
       session_title: 'Existing',
       pending_confirmation: false,
+      pending_confirmation_busy: false,
     })
     assert.deepEqual(views.at(-1), value.adapter.publicProjectView(false))
     await value.adapter.dispatch(
@@ -1099,7 +1101,6 @@ test('confirmed resume binds one exact capability, delegate, origin, work order,
     let delegatedCapability: object | null = null
     const committed = await value.adapter.commitConfirmed(
       confirmed.operation,
-      'conversation:2',
       (request, reason, capability) => {
         delegated = request
         delegatedReason = reason
@@ -1123,7 +1124,7 @@ test('confirmed resume binds one exact capability, delegate, origin, work order,
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-resume',
-        originRef: 'conversation:2',
+        originRef: confirmed.operation.origin_ref,
       }),
     )
     assert.equal(resumed.outcome, 'ok')
@@ -1135,7 +1136,7 @@ test('confirmed resume binds one exact capability, delegate, origin, work order,
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-resume',
-        originRef: 'conversation:2',
+        originRef: confirmed.operation.origin_ref,
       }),
     )
     assert.deepEqual(replay.content, {error: 'confirmation_binding_mismatch', op: 'project'})
@@ -1171,7 +1172,6 @@ test('confirmed reuse revalidates workspace identity before dispatch', async () 
 
     const committed = await value.adapter.commitConfirmed(
       confirmed.operation,
-      'conversation:1',
       request => {
         dispatched.push(request)
         return {accepted: true, delegate_id: 'delegate-reuse-identity'}
@@ -1213,7 +1213,6 @@ test('confirmed resume revalidates ready state before runtime dispatch', async (
 
     const committed = await value.adapter.commitConfirmed(
       confirmed.operation,
-      'conversation:1',
       request => {
         dispatched.push(request)
         return {accepted: true, delegate_id: 'delegate-resume-state'}
@@ -1267,8 +1266,7 @@ test('real external dispatch carries one opaque confirmation identity outside ev
     })
     const committed = await value.adapter.commitConfirmed(
       confirmed.operation,
-      originRef,
-      (request, reason, capability) => runtime.dispatchExternal(
+      (request, reason, capability) => runtime.dispatchConfirmedExternal(
         request,
         reason,
         capability,
@@ -1311,7 +1309,6 @@ test('wrong delegate, origin, copied capability, rejection, and replay have zero
     assert.ok(outcome.operation)
     const rejected = await value.adapter.commitConfirmed(
       outcome.operation,
-      'conversation:2',
       () => ({accepted: false, delegate_id: null}),
     )
     assert.deepEqual(rejected, {accepted: false, code: 'runtime_rejected'})
@@ -1324,7 +1321,7 @@ test('wrong delegate, origin, copied capability, rejection, and replay have zero
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: outcome.operation,
         delegateId: 'delegate-rejected',
-        originRef: 'conversation:2',
+        originRef: outcome.operation.origin_ref,
       }),
     )
     assert.deepEqual(replayAfterRejection.content, {
@@ -1344,7 +1341,6 @@ test('wrong delegate, origin, copied capability, rejection, and replay have zero
     assert.ok(second.operation)
     await value.adapter.commitConfirmed(
       second.operation,
-      'conversation:3',
       () => ({accepted: true, delegate_id: 'delegate-exact'}),
     )
     const copied = {...second.operation}
@@ -1369,7 +1365,7 @@ test('wrong delegate, origin, copied capability, rejection, and replay have zero
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: second.operation,
         delegateId: 'delegate-exact',
-        originRef: 'conversation:3',
+        originRef: second.operation.origin_ref,
       }),
     )
     assert.equal(accepted.outcome, 'ok')
@@ -1413,7 +1409,6 @@ test('new-run missing thread rolls back provisional session and failed confirmed
     assert.ok(outcome.operation)
     await value.adapter.commitConfirmed(
       outcome.operation,
-      'conversation:2',
       () => ({accepted: true, delegate_id: 'delegate-create'}),
     )
     const result = await value.adapter.dispatch(
@@ -1422,7 +1417,7 @@ test('new-run missing thread rolls back provisional session and failed confirmed
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: outcome.operation,
         delegateId: 'delegate-create',
-        originRef: 'conversation:2',
+        originRef: outcome.operation.origin_ref,
       }),
     )
     assert.equal(result.outcome, 'failed')
@@ -1434,9 +1429,11 @@ test('new-run missing thread rolls back provisional session and failed confirmed
       workspace_display_name: 'alpha',
       session_title: null,
       pending_confirmation: false,
+      pending_confirmation_busy: false,
     })
     assert.deepEqual(Object.keys(publicView).sort(), [
-      'pending_confirmation', 'session_title', 'workspace_display_name',
+      'pending_confirmation', 'pending_confirmation_busy', 'session_title',
+      'workspace_display_name',
     ])
     assert.equal(JSON.stringify(publicView).includes('thread'), false)
     assert.equal(JSON.stringify(publicView).includes('nonce'), false)
@@ -1787,7 +1784,6 @@ test('critical resume publication failure restores the previously active workspa
       assert.ok(confirmed.operation)
       assert.equal((await value.adapter.commitConfirmed(
         confirmed.operation,
-        'conversation:2',
         () => ({accepted: true, delegate_id: 'delegate-resume-barrier'}),
       )).accepted, true)
 
@@ -1797,7 +1793,7 @@ test('critical resume publication failure restores the previously active workspa
         context('project', {action: 'execute_confirmed'}, value.clock, {
           private: confirmed.operation,
           delegateId: 'delegate-resume-barrier',
-          originRef: 'conversation:2',
+          originRef: confirmed.operation.origin_ref,
         }),
       )
 
@@ -1863,7 +1859,6 @@ test('same-id concurrent resume revision prevents an older failed publication fr
       assert.ok(confirmed.operation)
       assert.equal((await value.adapter.commitConfirmed(
         confirmed.operation,
-        'conversation:2',
         () => ({accepted: true, delegate_id: 'delegate-resume-aba'}),
       )).accepted, true)
 
@@ -1873,7 +1868,7 @@ test('same-id concurrent resume revision prevents an older failed publication fr
         context('project', {action: 'execute_confirmed'}, value.clock, {
           private: confirmed.operation,
           delegateId: 'delegate-resume-aba',
-          originRef: 'conversation:2',
+          originRef: confirmed.operation.origin_ref,
         }),
       )
 
@@ -1926,7 +1921,6 @@ test('critical confirmed-create publication failure removes the workspace and re
       assert.ok(confirmed.operation)
       assert.equal((await value.adapter.commitConfirmed(
         confirmed.operation,
-        'conversation:2',
         () => ({accepted: true, delegate_id: 'delegate-create-barrier'}),
       )).accepted, true)
 
@@ -1936,7 +1930,7 @@ test('critical confirmed-create publication failure removes the workspace and re
         context('project', {action: 'execute_confirmed'}, value.clock, {
           private: confirmed.operation,
           delegateId: 'delegate-create-barrier',
-          originRef: 'conversation:2',
+          originRef: confirmed.operation.origin_ref,
         }),
       )
 
@@ -1977,7 +1971,6 @@ test('confirmed select publishes one atomic context before committed graph notif
     assert.ok(confirmed.operation)
     const committed = await value.adapter.commitConfirmed(
       confirmed.operation,
-      'conversation:2',
       () => ({accepted: false, delegate_id: null}),
     )
     assert.deepEqual(committed, {accepted: true, code: 'committed'})
@@ -2024,7 +2017,6 @@ test('confirmed resume publishes atomic Session before graph notification and tr
     assert.ok(confirmed.operation)
     assert.equal((await value.adapter.commitConfirmed(
       confirmed.operation,
-      'conversation:2',
       () => ({accepted: true, delegate_id: 'delegate-resume-order'}),
     )).accepted, true)
     const result = await value.adapter.dispatch(
@@ -2033,7 +2025,7 @@ test('confirmed resume publishes atomic Session before graph notification and tr
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-resume-order',
-        originRef: 'conversation:2',
+        originRef: confirmed.operation.origin_ref,
       }),
     )
     assert.equal(result.outcome, 'ok')
@@ -2101,7 +2093,6 @@ test('busy project work reports the unified project op for public and confirmed 
     assert.ok(confirmed.operation)
     await value.adapter.commitConfirmed(
       confirmed.operation,
-      'conversation:2',
       () => ({accepted: true, delegate_id: 'delegate-confirmed'}),
     )
     const running = value.adapter.dispatch(
@@ -2122,7 +2113,7 @@ test('busy project work reports the unified project op for public and confirmed 
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-confirmed',
-        originRef: 'conversation:2',
+        originRef: confirmed.operation.origin_ref,
       }),
     )
 
@@ -2239,7 +2230,7 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
     const workspace = await value.store.resolveWorkspace('alpha')
     const session = await value.store.resolveSession(workspace.workspace_id, 'Task')
 
-    const proposeAndCommit = async (delegateId: string): Promise<object> => {
+    const proposeAndCommit = async (delegateId: string): Promise<ConfirmedProjectOperation> => {
       const proposal = await value.adapter.dispatch(
         'project',
         {action: 'resume_session', workspace: 'alpha', session: 'Task', work_order: 'continue'},
@@ -2253,7 +2244,6 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
       assert.ok(confirmed.operation)
       await value.adapter.commitConfirmed(
         confirmed.operation,
-        'conversation:2',
         () => ({accepted: true, delegate_id: delegateId}),
       )
       return confirmed.operation
@@ -2270,7 +2260,7 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: transientOperation,
         delegateId: 'delegate-transient',
-        originRef: 'conversation:2',
+        originRef: transientOperation.origin_ref,
       }),
     )
     assert.equal(transient.outcome, 'failed')
@@ -2286,7 +2276,7 @@ test('resume exact-thread mismatch marks unavailable while transient transport r
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: mismatchOperation,
         delegateId: 'delegate-mismatch',
-        originRef: 'conversation:2',
+        originRef: mismatchOperation.origin_ref,
       }),
     )
     assert.deepEqual(mismatch.content, {
@@ -2321,7 +2311,6 @@ test('private resume-unavailable disposition marks the exact stored session unav
     assert.ok(confirmed.operation)
     await value.adapter.commitConfirmed(
       confirmed.operation,
-      'conversation:2',
       () => ({accepted: true, delegate_id: 'delegate-unavailable'}),
     )
     value.factory.reportThread = false
@@ -2334,7 +2323,7 @@ test('private resume-unavailable disposition marks the exact stored session unav
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-unavailable',
-        originRef: 'conversation:2',
+        originRef: confirmed.operation.origin_ref,
       }),
     )
     assert.equal(unavailable.content.code, 'worker_refused')
@@ -2373,7 +2362,6 @@ test('resume state changed after persistent-home setup is rejected before transp
     assert.ok(confirmed.operation)
     await value.adapter.commitConfirmed(
       confirmed.operation,
-      'conversation:2',
       () => ({accepted: true, delegate_id: 'delegate-late-state'}),
     )
     invalidate = async () => {
@@ -2386,7 +2374,7 @@ test('resume state changed after persistent-home setup is rejected before transp
       context('project', {action: 'execute_confirmed'}, value.clock, {
         private: confirmed.operation,
         delegateId: 'delegate-late-state',
-        originRef: 'conversation:2',
+        originRef: confirmed.operation.origin_ref,
       }),
     )
     assert.equal(result.outcome, 'refused')

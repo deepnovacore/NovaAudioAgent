@@ -926,6 +926,7 @@ function sameProjectView(
   return left.workspace_display_name === right.workspace_display_name
     && left.session_title === right.session_title
     && left.pending_confirmation === right.pending_confirmation
+    && left.pending_confirmation_busy === right.pending_confirmation_busy
     && left.pending_confirmation_id === right.pending_confirmation_id
     && (left.pending_action ?? null) === (right.pending_action ?? null)
     && (left.pending_workspace_display_name ?? null)

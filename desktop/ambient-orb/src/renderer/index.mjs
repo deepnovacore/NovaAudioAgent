@@ -128,6 +128,7 @@ const axes = {
   workspace: '',
   session: '',
   pendingConfirmation: false,
+  pendingConfirmationBusy: false,
   pendingConfirmationId: null,
   pendingAction: null,
   pendingWorkspace: '',
@@ -236,7 +237,9 @@ function render() {
   setText(codexOperation, state.confirmationOperation)
   setText(codexExpiry, state.confirmationStatus)
   codexLabel.dataset.mode = state.codexMode
-  const decisionEnabled = confirmationDecision.enabled && axes.connected
+  const decisionEnabled = confirmationDecision.enabled
+    && axes.connected
+    && !axes.pendingConfirmationBusy
   confirmationActions.hidden = !axes.pendingConfirmation || axes.pendingConfirmationId === null
   confirmationConfirm.disabled = !decisionEnabled
   confirmationCancel.disabled = !decisionEnabled
@@ -678,6 +681,7 @@ async function handleControl(message) {
     const workspace = message.workspace_display_name
     const session = message.session_title
     const pendingAction = message.pending_action
+    const pendingBusy = message.pending_confirmation_busy
     const pendingConfirmationId = message.pending_confirmation_id
     const pendingWorkspace = message.pending_workspace_display_name
     const pendingSession = message.pending_session_title
@@ -694,6 +698,7 @@ async function handleControl(message) {
     const baseKeys = [
       'pending_action',
       'pending_confirmation',
+      'pending_confirmation_busy',
       'pending_expires_in_seconds',
       'pending_session_title',
       'pending_workspace_display_name',
@@ -711,6 +716,8 @@ async function handleControl(message) {
       && (workspace === null || (typeof workspace === 'string' && [...workspace].length <= 120))
       && (session === null || (typeof session === 'string' && [...session].length <= 120))
       && typeof message.pending_confirmation === 'boolean'
+      && typeof pendingBusy === 'boolean'
+      && (message.pending_confirmation || !pendingBusy)
       && validConfirmationId
       && (message.pending_confirmation || pendingConfirmationId === undefined)
       && validAction
@@ -733,6 +740,7 @@ async function handleControl(message) {
       axes.workspace = workspace || ''
       axes.session = session || ''
       axes.pendingConfirmation = message.pending_confirmation
+      axes.pendingConfirmationBusy = pendingBusy
       axes.pendingConfirmationId = message.pending_confirmation ? pendingConfirmationId ?? null : null
       axes.pendingAction = pendingAction
       axes.pendingWorkspace = pendingWorkspace || ''
@@ -741,6 +749,7 @@ async function handleControl(message) {
       confirmationDecision.sync({
         pending: message.pending_confirmation,
         proposalId: axes.pendingConfirmationId,
+        busy: pendingBusy,
       })
       if (message.pending_confirmation) {
         confirmationCountdown.start(pendingExpires)

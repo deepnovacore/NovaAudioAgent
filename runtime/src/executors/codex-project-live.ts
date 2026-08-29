@@ -121,6 +121,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     workspace_display_name: null,
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   })
   #publicWorkspaceId: string | null = null
   #refreshSequence = 0
@@ -255,12 +256,18 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
 
   async commitConfirmed(
     operation: ConfirmedProjectOperation,
-    originRef: string,
     runtimeDispatch: ProjectRuntimeDispatch,
   ): Promise<ProjectCommitResult> {
-    if (!this.#confirmation.claimConfirmed(operation)) return commitResult(false, 'confirmation_invalid')
+    if (!this.#confirmation.ownsConfirmed(operation)) {
+      return commitResult(false, 'confirmation_invalid')
+    }
     const workOrder = operation.work_order
     if (workOrder === null) {
+      // Workspace-only changes have no runtime delegate admission. Claim immediately; every
+      // validation or store failure after this boundary is terminal rather than retryable.
+      if (!this.#confirmation.claimConfirmed(operation)) {
+        return commitResult(false, 'confirmation_invalid')
+      }
       let committedWorkspace: WorkspaceRecord
       let previousWorkspace: WorkspaceRecord | null = null
       try {
@@ -310,11 +317,14 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       action: 'start_session', work_order: workOrder,
     })
     if (!normalized.ok || normalized.value.work_order !== workOrder || this.#runActive) {
+      if (this.#runActive) this.#confirmation.rollbackConfirmed(operation)
+      else this.#confirmation.rejectConfirmed(operation)
       return commitResult(false, this.#runActive ? 'busy' : 'invalid_operation')
     }
     try {
       await this.#revalidateProposal(operation)
     } catch (error) {
+      this.#confirmation.rejectConfirmed(operation)
       return commitResult(false, projectErrorCode(error))
     }
     const admission = runtimeDispatch(
@@ -322,7 +332,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
         executor: 'codex',
         op: 'project',
         request: {action: 'execute_confirmed'},
-        origin_ref: originRef,
+        origin_ref: operation.origin_ref,
       },
       {
         kind: 'realtime_tool',
@@ -334,12 +344,19 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       operation,
     )
     if (!admission.accepted || admission.delegate_id === null) {
+      this.#confirmation.rollbackConfirmed(operation)
       return commitResult(false, 'runtime_rejected')
+    }
+    if (!this.#confirmation.recordRuntimeAdmission(operation)) {
+      return commitResult(false, 'confirmation_invalid')
+    }
+    if (!this.#confirmation.claimConfirmed(operation)) {
+      return commitResult(false, 'confirmation_invalid')
     }
     this.#confirmedBindings.set(operation, Object.freeze({
       operation,
       delegateId: admission.delegate_id,
-      originRef,
+      originRef: operation.origin_ref,
       workOrder,
     }))
     return commitResult(true, 'accepted', admission.delegate_id)
@@ -347,12 +364,17 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
 
   publicProjectView(pendingConfirmation: boolean): PublicProjectView {
     if (!pendingConfirmation) {
-      return Object.freeze({...this.#publicView, pending_confirmation: false})
+      return Object.freeze({
+        ...this.#publicView,
+        pending_confirmation: false,
+        pending_confirmation_busy: false,
+      })
     }
     const confirmation = pendingConfirmation ? this.#confirmation.view : null
     return Object.freeze({
       ...this.#publicView,
       pending_confirmation: true,
+      pending_confirmation_busy: confirmation?.pending_confirmation_busy ?? false,
       ...(confirmation?.pending_confirmation_id === undefined
         ? {}
         : {pending_confirmation_id: confirmation.pending_confirmation_id}),

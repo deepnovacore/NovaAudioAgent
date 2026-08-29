@@ -665,6 +665,7 @@ test('callbacks route once through the single playback, session, bridge, and ser
   assert.deepEqual(codexStates, ['running'])
   assert.deepEqual(projectViews, [{
     pending_confirmation: false,
+    pending_confirmation_busy: false,
     workspace_display_name: null,
     session_title: null,
   }])
@@ -706,6 +707,7 @@ test('project proposal reaches provider and desktop before confirmation', async 
         workspace_display_name: alpha.display_name,
         session_title: null,
         pending_confirmation: false,
+        pending_confirmation_busy: false,
       }),
     })),
     snapshot: () => Promise.resolve(Object.freeze({
@@ -805,6 +807,7 @@ test('project proposal reaches provider and desktop before confirmation', async 
       workspace_display_name: 'alpha',
       session_title: null,
       pending_confirmation: true,
+      pending_confirmation_busy: false,
       pending_confirmation_id: 'assembly-proposal',
       pending_action: 'create_workspace',
       pending_workspace_display_name: 'tetris-game',
@@ -890,17 +893,14 @@ test('project adapter wiring carries one confirmed identity through the real rea
         outcome: 'ok', trust: 'trusted_system', content: {op, code: 'completed'}, refs: [],
       })
     },
-    commitConfirmed: (operation, originRef, runtimeDispatch) => {
+    commitConfirmed: (operation, runtimeDispatch) => {
       captured.operation = operation
-      captured.origin = originRef
-      if (!confirmation.claimConfirmed(operation)) {
-        return Promise.resolve({accepted: false, code: 'confirmation_invalid'})
-      }
+      captured.origin = operation.origin_ref
       const admission = runtimeDispatch({
         executor: 'codex',
         op: 'project',
         request: {action: 'execute_confirmed'},
-        origin_ref: originRef,
+        origin_ref: operation.origin_ref,
       }, {
         kind: 'realtime_tool',
         priority: 100,
@@ -909,6 +909,15 @@ test('project adapter wiring carries one confirmed identity through the real rea
         selected_suggestion: null,
       }, operation)
       captured.admission = {accepted: admission.accepted, delegate_id: admission.delegate_id}
+      if (!admission.accepted || admission.delegate_id === null) {
+        confirmation.rollbackConfirmed(operation)
+      } else {
+        confirmation.recordRuntimeAdmission(operation)
+      }
+      if (admission.accepted && admission.delegate_id !== null
+        && !confirmation.claimConfirmed(operation)) {
+        return Promise.resolve({accepted: false, code: 'confirmation_invalid'})
+      }
       return Promise.resolve({
         accepted: admission.accepted,
         code: admission.accepted ? 'accepted' : 'runtime_rejected',
@@ -919,6 +928,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
       workspace_display_name: activeWorkspace,
       session_title: activeSession,
       pending_confirmation: pending,
+      pending_confirmation_busy: false,
     }),
     publicProjectContext: pending => Object.freeze({
       workspace_id: `host-${activeWorkspace}`,
@@ -959,6 +969,9 @@ test('project adapter wiring carries one confirmed identity through the real rea
   })
   await realtime.start()
   try {
+    const proposalOrigin = await core.runtime.ingestUserInput({
+      text: 'create beta with the exact work order',
+    })
     const proposal = confirmation.prepare({
       action: 'create',
       workspace_display_name: 'beta',
@@ -966,7 +979,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
       session_title: null,
       session_id: null,
       work_order: 'exact work',
-      origin_ref: 'conversation:proposal',
+      origin_ref: proposalOrigin,
     })
     await realtime.service.handleEvent({
       kind: 'user_speech_started',
@@ -1017,9 +1030,11 @@ test('project adapter wiring carries one confirmed identity through the real rea
       workspace_display_name: 'alpha',
       session_title: 'Task',
       pending_confirmation: false,
+      pending_confirmation_busy: false,
     })
     assert.deepEqual(Object.keys(views.at(-1) ?? {}).sort(), [
-      'pending_confirmation', 'session_title', 'workspace_display_name',
+      'pending_confirmation', 'pending_confirmation_busy', 'session_title',
+      'workspace_display_name',
     ])
     activeWorkspace = 'beta'
     activeSession = 'New task'
@@ -1028,6 +1043,7 @@ test('project adapter wiring carries one confirmed identity through the real rea
       workspace_display_name: 'beta',
       session_title: 'New task',
       pending_confirmation: false,
+      pending_confirmation_busy: false,
     })
   } finally {
     await realtime.stop()
@@ -1051,6 +1067,7 @@ test('active project views replace one provider context without publishing histo
     workspace_display_name: 'alpha',
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   })
   let contextWorkspaceId = 'host-alpha'
   const alpha: WorkspaceRecord = Object.freeze({
@@ -1157,6 +1174,7 @@ test('active project views replace one provider context without publishing histo
     contextWorkspaceId = 'host-beta'
     view = Object.freeze({
       workspace_display_name: 'beta', session_title: null, pending_confirmation: false,
+      pending_confirmation_busy: false,
     })
     for (const observer of viewObservers) observer(view)
     await publishAtomicContext()
@@ -1340,6 +1358,7 @@ test('delayed atomic view never pairs an immediate new graph with the prior work
       workspace_id: alpha.workspace_id,
       view: Object.freeze({
         workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+        pending_confirmation_busy: false,
       }),
     })
     const adapterShape: ExecutorAdapter & Record<string, unknown> = {
@@ -1450,6 +1469,7 @@ test('delayed atomic view never pairs an immediate new graph with the prior work
         workspace_id: beta.workspace_id,
         view: Object.freeze({
           workspace_display_name: 'beta', session_title: null, pending_confirmation: false,
+          pending_confirmation_busy: false,
         }),
       })
       await Promise.all([...contextObservers].map(async observer => {
@@ -1484,11 +1504,13 @@ test('project-mode startup fails closed before core/provider work without contex
       commitConfirmed: () => Promise.resolve({accepted: false, code: 'unused'}),
       publicProjectView: () => Object.freeze({
         workspace_display_name: null, session_title: null, pending_confirmation: false,
+        pending_confirmation_busy: false,
       }),
       publicProjectContext: () => Object.freeze({
         workspace_id: null,
         view: Object.freeze({
           workspace_display_name: null, session_title: null, pending_confirmation: false,
+          pending_confirmation_busy: false,
         }),
       }),
       initialize: () => Promise.resolve(),
@@ -1546,11 +1568,13 @@ test('workspace graph opens before project initialization, injects only the curr
     commitConfirmed: () => Promise.resolve({accepted: false, code: 'not_used'}),
     publicProjectView: () => Object.freeze({
       workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+      pending_confirmation_busy: false,
     }),
     publicProjectContext: () => Object.freeze({
       workspace_id: workspace.workspace_id,
       view: Object.freeze({
         workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+        pending_confirmation_busy: false,
       }),
     }),
     initialize: () => {
@@ -1946,11 +1970,13 @@ test('real assembly and graph service infer only weak metadata from committed ad
     commitConfirmed: () => Promise.resolve({accepted: false, code: 'not_used'}),
     publicProjectView: () => Object.freeze({
       workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+      pending_confirmation_busy: false,
     }),
     publicProjectContext: () => Object.freeze({
       workspace_id: alpha.workspace_id,
       view: Object.freeze({
         workspace_display_name: 'alpha', session_title: null, pending_confirmation: false,
+        pending_confirmation_busy: false,
       }),
     }),
     initialize: () => Promise.resolve(),
@@ -2192,6 +2218,7 @@ test('a rejected initial project context publication is diagnosed and retried on
   }
   const view = Object.freeze({
     workspace_display_name: 'retry', session_title: null, pending_confirmation: false,
+    pending_confirmation_busy: false,
   })
   const workspace: WorkspaceRecord = Object.freeze({
     workspace_id: 'workspace-retry', display_name: 'retry', normalized_name: 'retry',
@@ -2277,11 +2304,13 @@ test('never-settling initial Header delivery cannot block voice startup', async 
     commitConfirmed: () => Promise.resolve({accepted: false, code: 'not_used'}),
     publicProjectView: () => Object.freeze({
       workspace_display_name: 'header', session_title: null, pending_confirmation: false,
+      pending_confirmation_busy: false,
     }),
     publicProjectContext: () => Object.freeze({
       workspace_id: workspace.workspace_id,
       view: Object.freeze({
         workspace_display_name: 'header', session_title: null, pending_confirmation: false,
+        pending_confirmation_busy: false,
       }),
     }),
     initialize: () => Promise.resolve(),

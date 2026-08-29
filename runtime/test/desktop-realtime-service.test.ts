@@ -1039,6 +1039,7 @@ async function assertDesktopControlOutputs(
   callbacks.onCodexState('running')
   callbacks.onProjectView({
     workspace_display_name: '项目甲', session_title: '会话乙', pending_confirmation: true,
+    pending_confirmation_busy: false,
   })
   const payloads: unknown[] = (await frames)
     .map(frame => JSON.parse(text(frame)) as unknown)
@@ -1048,7 +1049,7 @@ async function assertDesktopControlOutputs(
     {type: 'codex.state', state: 'running'},
     {
       type: 'codex.project', workspace_display_name: '项目甲',
-      session_title: '会话乙', pending_confirmation: true,
+      session_title: '会话乙', pending_confirmation: true, pending_confirmation_busy: false,
       pending_action: null,
       pending_workspace_display_name: null,
       pending_session_title: null,
@@ -1595,6 +1596,7 @@ test('captured composition callbacks preserve clear alert Codex project clock an
   callbacks!.onCodexState('running')
   callbacks!.onProjectView({
     workspace_display_name: '项目甲', session_title: '会话乙', pending_confirmation: true,
+    pending_confirmation_busy: false,
   })
   assert.deepEqual(composition.desktop.bridge.sendClockPings(1), ['ping-0'])
   clock.advanceTo(30.25)
@@ -1613,7 +1615,7 @@ test('captured composition callbacks preserve clear alert Codex project clock an
     '{"type":"playback.alert","utterance_id":"utterance-alert","generation_epoch":3}',
     '{"type":"clock.ping","ping_id":"ping-0"}',
     '{"type":"codex.state","state":"running"}',
-    '{"type":"codex.project","workspace_display_name":"项目甲","session_title":"会话乙","pending_confirmation":true,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
+      '{"type":"codex.project","workspace_display_name":"项目甲","session_title":"会话乙","pending_confirmation":true,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
   ])
   assert.deepEqual(telemetryRecords.map(record => record.kind), [
     'playback.clear_sent',

@@ -2604,6 +2604,7 @@ test('project state reloads under a descriptor lock and persists ready sessions 
       workspace_display_name: 'Alpha',
       session_title: '登录修复',
       pending_confirmation: true,
+      pending_confirmation_busy: false,
     })
     await first.close()
     first = null

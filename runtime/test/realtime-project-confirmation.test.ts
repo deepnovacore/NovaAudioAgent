@@ -55,6 +55,80 @@ test('a matching structured true decision grants one-shot identity authority', (
   assert.equal(controller.claimConfirmed(accepted.operation), false)
 })
 
+test('confirmation admission is busy until success and a runtime rejection rolls back without extending TTL', () => {
+  const clock = new VirtualClock(10)
+  const controller = createController(clock)
+  const proposal = controller.prepare({
+    action: 'create',
+    workspace_display_name: '俄罗斯方块',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: '实现俄罗斯方块',
+    origin_ref: 'conversation:10',
+  })
+  controller.reserveUserItem({epoch: 1, itemId: 'voice-confirmation'})
+  const first = controller.acceptDecision({
+    epoch: 1,
+    itemId: 'voice-confirmation',
+    proposalId: proposal.proposal_id,
+    confirmed: true,
+  })
+  assert.ok(first.operation)
+  assert.equal(first.operation.origin_ref, 'conversation:10')
+  assert.equal(first.operation.expires_at, proposal.expires_at)
+  assert.equal(controller.pending, false, 'another voice or click cannot enter the committing lock')
+  assert.equal(controller.committing, true)
+  assert.equal(controller.view.pending_confirmation, true, 'the banner remains visible during admission')
+  assert.equal(controller.view.pending_confirmation_busy, true)
+  assert.equal(controller.acceptDirectDecision({
+    proposalId: proposal.proposal_id, confirmed: true,
+  }).kind, 'ignored')
+
+  clock.advanceTo(25)
+  assert.equal(controller.rollbackConfirmed(first.operation), true)
+  assert.equal(controller.pending, true)
+  assert.equal(controller.committing, false)
+  assert.equal(controller.view.pending_confirmation_busy, false)
+  assert.equal(controller.view.pending_expires_in_seconds, 345, 'rollback keeps the original TTL')
+  assert.equal(controller.claimConfirmed(first.operation), false, 'rolled-back authority cannot replay')
+  assert.equal(
+    controller.reserveUserItem({epoch: 1, itemId: 'voice-retry'}),
+    true,
+    'the failed voice reservation is released for a fresh retry',
+  )
+})
+
+test('late transcript failure and the expiry timer cannot revoke an in-flight decision', () => {
+  const clock = new VirtualClock(10)
+  const controller = createController(clock)
+  const proposal = controller.prepare({
+    action: 'create', workspace_display_name: '俄罗斯方块', workspace_id: null,
+    session_title: null, session_id: null, work_order: '实现俄罗斯方块',
+    origin_ref: 'conversation:10',
+  })
+  controller.reserveUserItem({epoch: 1, itemId: 'voice-confirmation'})
+  const accepted = controller.acceptDirectDecision({
+    proposalId: proposal.proposal_id,
+    confirmed: true,
+  })
+  assert.ok(accepted.operation)
+
+  assert.equal(controller.failTranscript({epoch: 1, itemId: 'voice-confirmation'}).kind, 'ignored')
+  clock.advanceTo(proposal.expires_at)
+  assert.equal(controller.expire(), false, 'a decision already committing does not expire mid-flight')
+  assert.equal(controller.committing, true)
+  assert.equal(controller.view.pending_confirmation, true)
+  assert.equal(controller.view.pending_confirmation_busy, true)
+  assert.equal(
+    controller.rollbackConfirmed(accepted.operation),
+    true,
+    'a rejection after the original ttl closes rather than stranding the commit lock',
+  )
+  assert.equal(controller.pending, false)
+  assert.equal(controller.committing, false)
+})
+
 test('a reconstructed operation cannot claim identity authority', () => {
   const controller = createController()
   const proposal = prepareSelect(controller)
@@ -377,6 +451,7 @@ test('public view and prompt expose labels but no private bindings', () => {
   assert.equal(proposal.confirmation_prompt, '准备切换到天气看板，并继续 Session“登录修复”，请确认或取消。')
   assert.deepEqual(controller.view, {
     pending_confirmation: true,
+    pending_confirmation_busy: false,
     pending_confirmation_id: proposal.proposal_id,
     workspace_display_name: '天气看板',
     session_title: '登录修复',

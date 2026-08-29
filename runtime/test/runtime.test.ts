@@ -6,10 +6,17 @@ import {
   USER_PRIORITY,
   handoffPolicySchema,
 } from '../src/memory.js'
-import { executorManifestSchema, fastBrainOutputSchema, opSpecSchema } from '../src/ports.js'
+import {
+  executorManifestSchema,
+  fastBrainOutputSchema,
+  opSpecSchema,
+} from '../src/ports.js'
 import { CoreRuntime, type ModelCall } from '../src/runtime.js'
 import { wakeReasonSchema, type Slot, type WakeReason } from '../src/slots.js'
 import { fixtureSlowSimManifest as fixtureSlowSim } from '../src/sim.js'
+import {CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
+import {VirtualClock} from '../src/clock.js'
+import {ProjectConfirmationController} from '../src/realtime/project-confirmation.js'
 
 const manifest = executorManifestSchema.parse({
   name: 'slow_sim',
@@ -1509,6 +1516,117 @@ test('an external dispatch may only cite evidence that is still visible', () => 
     externalReason,
   )
   assert.equal(current.accepted, true, 'a visible reference is still admitted')
+})
+
+test('confirmed external dispatch narrowly admits one aged proposal origin capability', () => {
+  const clock = new VirtualClock(20)
+  const runtime = new CoreRuntime({
+    manifests: [CODEX_PROJECT_MANIFEST],
+    ids: new MonotonicIdFactory(),
+  })
+  const refs = Array.from({length: 8}, (_, index) => appendTurn(
+    runtime,
+    index + 1,
+    `turn ${index + 1}`,
+  ))
+  const controller = new ProjectConfirmationController({
+    clock,
+    idFactory: () => 'proposal-confirmed-external',
+  })
+  const proposal = controller.prepare({
+    action: 'create',
+    workspace_display_name: '俄罗斯方块',
+    workspace_id: null,
+    session_title: null,
+    session_id: null,
+    work_order: '实现俄罗斯方块',
+    origin_ref: refs[0]!,
+  })
+  const outcome = controller.acceptDirectDecision({
+    proposalId: proposal.proposal_id,
+    confirmed: true,
+  })
+  assert.ok(outcome.operation)
+  const request = {
+    executor: 'codex',
+    op: 'project',
+    request: {action: 'execute_confirmed'},
+    origin_ref: refs[0]!,
+  } as const
+
+  for (const invalid of [
+    {...request, op: 'status'},
+    {...request, origin_ref: refs[1]!},
+  ]) {
+    const rejected = runtime.dispatchConfirmedExternal(
+      invalid,
+      externalReason,
+      outcome.operation,
+    )
+    assert.equal(rejected.accepted, false)
+    assert.equal(rejected.problem, 'confirmed_capability_invalid')
+  }
+  assert.equal(runtime.dispatchConfirmedExternal(
+    request,
+    externalReason,
+    {...outcome.operation},
+  ).accepted, false, 'a copied capability has no authority')
+
+  const admitted = runtime.dispatchConfirmedExternal(
+    request,
+    externalReason,
+    outcome.operation,
+  )
+  assert.equal(admitted.accepted, true, 'the exact operation may cite its aged but existing origin')
+  assert.equal(runtime.dispatchConfirmedExternal(
+    request,
+    externalReason,
+    outcome.operation,
+  ).problem, 'confirmed_capability_invalid', 'the capability is consumed exactly once')
+
+  const expiredController = new ProjectConfirmationController({
+    clock,
+    idFactory: () => 'proposal-expired-external',
+  })
+  const expiring = expiredController.prepare({
+    action: 'create', workspace_display_name: '过期项目', workspace_id: null,
+    session_title: null, session_id: null, work_order: 'do it', origin_ref: refs[2]!,
+  })
+  const expired = expiredController.acceptDirectDecision({
+    proposalId: expiring.proposal_id, confirmed: true,
+  })
+  assert.ok(expired.operation)
+  clock.advanceTo(expiring.expires_at)
+  assert.equal(runtime.dispatchConfirmedExternal(
+    {...request, origin_ref: refs[2]!},
+    externalReason,
+    expired.operation,
+  ).problem, 'confirmed_capability_invalid')
+
+  const malformedController = new ProjectConfirmationController({
+    clock,
+    idFactory: () => 'proposal-malformed-external',
+  })
+  const malformedProposal = malformedController.prepare({
+    action: 'create', workspace_display_name: '安全测试', workspace_id: null,
+    session_title: null, session_id: null, work_order: 'do it', origin_ref: refs[3]!,
+  })
+  const malformedOperation = malformedController.acceptDirectDecision({
+    proposalId: malformedProposal.proposal_id,
+    confirmed: true,
+  }).operation
+  assert.ok(malformedOperation)
+  for (const malformed of [null, {}, {request: null}, {...request, request: null}]) {
+    assert.doesNotThrow(() => {
+      const refused = runtime.dispatchConfirmedExternal(
+        malformed,
+        externalReason,
+        malformedOperation,
+      )
+      assert.equal(refused.accepted, false)
+      assert.equal(refused.problem, 'confirmed_capability_invalid')
+    })
+  }
 })
 
 test('an external dispatch distinguishes a malformed reference from a missing item', () => {

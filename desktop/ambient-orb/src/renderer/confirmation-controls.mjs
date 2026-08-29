@@ -11,21 +11,23 @@ export class ConfirmationDecisionController {
   #send
   #proposalId = null
   #busy = false
+  #hostBusy = false
 
   constructor({send}) {
     if (typeof send !== 'function') throw new TypeError('send is required')
     this.#send = send
   }
 
-  sync({pending, proposalId}) {
+  sync({pending, proposalId, busy = false}) {
     const next = pending === true && validProposalId(proposalId) ? proposalId : null
     if (next !== this.#proposalId) this.#busy = false
     this.#proposalId = next
-    if (next === null) this.#busy = false
+    this.#hostBusy = busy === true
+    if (next === null || busy === false) this.#busy = false
   }
 
   get enabled() {
-    return this.#proposalId !== null && !this.#busy
+    return this.#proposalId !== null && !this.#busy && !this.#hostBusy
   }
 
   decide(confirmed) {

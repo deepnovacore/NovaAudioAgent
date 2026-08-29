@@ -38,6 +38,7 @@ export interface PublicProjectView {
   readonly workspace_display_name: string | null
   readonly session_title: string | null
   readonly pending_confirmation: boolean
+  readonly pending_confirmation_busy: boolean
   /** Opaque proposal binding exposed only while the confirmation banner is actionable. */
   readonly pending_confirmation_id?: string
   readonly pending_action?:
@@ -223,7 +224,11 @@ export function codexProjectMessage(view: PublicProjectView): string {
       throw new DesktopProtocolError('desktop Codex project view is invalid')
     }
   }
-  if (typeof view.pending_confirmation !== 'boolean') {
+  if (
+    typeof view.pending_confirmation !== 'boolean'
+    || typeof view.pending_confirmation_busy !== 'boolean'
+    || (!view.pending_confirmation && view.pending_confirmation_busy)
+  ) {
     throw new DesktopProtocolError('desktop Codex project view is invalid')
   }
   if (
@@ -276,6 +281,7 @@ export function codexProjectMessage(view: PublicProjectView): string {
     workspace_display_name: view.workspace_display_name,
     session_title: view.session_title,
     pending_confirmation: view.pending_confirmation,
+    pending_confirmation_busy: view.pending_confirmation_busy,
     ...(pendingConfirmationId === undefined
       ? {}
       : {pending_confirmation_id: pendingConfirmationId}),

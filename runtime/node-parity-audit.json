@@ -61,6 +61,7 @@
     "runtime/src/codex-turn-projection.ts",
     "runtime/src/codex-windows-guardian.ts",
     "runtime/src/config.ts",
+    "runtime/src/confirmed-project-capability.ts",
     "runtime/src/context-view.ts",
     "runtime/src/demos.ts",
     "runtime/src/desktop-bridge.ts",
@@ -129,6 +130,7 @@
     "runtime/src/realtime/session.ts",
     "runtime/src/realtime/speech-prep.ts",
     "runtime/src/realtime/telemetry.ts",
+    "runtime/src/realtime/user-origin-binding.ts",
     "runtime/src/realtime/volcengine/ark.ts",
     "runtime/src/realtime/volcengine/asr.ts",
     "runtime/src/realtime/volcengine/audio.ts",
@@ -1922,6 +1924,39 @@
       "disposition": "intentional_utf16",
       "test": "runtime/test/realtime-speech-prep.test.ts",
       "behavior": "speech preparation uses Python regex boundaries around Unicode prose"
+    },
+    {
+      "file": "runtime/src/realtime/user-origin-binding.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 0,
+      "line": 63,
+      "snippet": "String(input.revision)",
+      "snippet_sha256": "585cc26bcec94bcf63e7954443e2d4c5f706ab9292ad42ab7e1e13e611932383",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-user-origin-binding.test.ts",
+      "behavior": "origin ledger binds responses by epoch and exact user revision"
+    },
+    {
+      "file": "runtime/src/realtime/user-origin-binding.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 1,
+      "line": 95,
+      "snippet": "String(input.revision)",
+      "snippet_sha256": "585cc26bcec94bcf63e7954443e2d4c5f706ab9292ad42ab7e1e13e611932383",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-user-origin-binding.test.ts",
+      "behavior": "origin ledger binds responses by epoch and exact user revision"
+    },
+    {
+      "file": "runtime/src/realtime/user-origin-binding.ts",
+      "kind": "numeric_string",
+      "occurrence_index": 2,
+      "line": 159,
+      "snippet": "String(revision)",
+      "snippet_sha256": "a67cf055bca73d48f023698deb028766e363a5f0da5466de5d2a4e8bc97f30f1",
+      "disposition": "wire_json",
+      "test": "runtime/test/realtime-user-origin-binding.test.ts",
+      "behavior": "origin ledger binds responses by epoch and exact user revision"
     },
     {
       "file": "runtime/src/realtime/workspace-graph-board.ts",

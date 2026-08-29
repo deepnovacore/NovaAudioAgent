@@ -4226,7 +4226,6 @@ test('a cancel rejection for a turn that already spoke is ignored', async () => 
 function confirmationService(options: {
   readonly commit?: (
     operation: ConfirmedProjectOperation,
-    originRef: string,
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly withoutCommit?: boolean
   /** Make the provider's injection hang, so an expiry outlives the shutdown grace period. */
@@ -4328,12 +4327,30 @@ function confirmationService(options: {
   })
   const controller = new ProjectConfirmationController({clock, idFactory: nextId})
   let ingested = 0
+  const externalCommit = options.commit ?? ((): Promise<{
+    readonly accepted: boolean
+    readonly code: string
+  }> => {
+    actions.push('commit')
+    return Promise.resolve({accepted: true, code: 'ok'})
+  })
   const commit = options.withoutCommit === true
     ? undefined
-    : options.commit ?? ((): Promise<{readonly accepted: boolean; readonly code: string}> => {
-      actions.push('commit')
-      return Promise.resolve({accepted: true, code: 'ok'})
-    })
+    : async (operation: ConfirmedProjectOperation): Promise<{
+      readonly accepted: boolean
+      readonly code: string
+    }> => {
+      const result = await externalCommit(operation)
+      // The production adapter records successful runtime admission before consuming the
+      // controller authority. This fixture supplies the same boundary for lightweight callbacks.
+      if (result.accepted) {
+        controller.recordRuntimeAdmission(operation)
+        assert.equal(controller.claimConfirmed(operation), true)
+      } else if (result.code === 'runtime_rejected') {
+        assert.equal(controller.rollbackConfirmed(operation), true)
+      }
+      return result
+    }
   const service = new RealtimeService({
     provider,
     runtime: {
@@ -5159,6 +5176,73 @@ test('a desktop banner decision commits through the same one-shot controller pat
     && record.payload.proposal_id === proposal.proposal_id
     && record.payload.state === 'accepted'
   )))
+})
+
+test('a runtime-rejected banner decision restores the same authority and original ttl', async () => {
+  let attempts = 0
+  const {service, controller, views, clock} = confirmationService({
+    commit: () => {
+      attempts += 1
+      return Promise.resolve(attempts === 1
+        ? {accepted: false, code: 'runtime_rejected'}
+        : {accepted: true, code: 'accepted'})
+    },
+  })
+  await service.connect()
+  const proposal = propose(controller)
+  clock.advanceTo(15)
+
+  await service.projectConfirmationDecision(proposal.proposal_id, true)
+  assert.equal(attempts, 1)
+  assert.equal(controller.pending, true, 'the banner remains actionable')
+  assert.equal(controller.committing, false, 'the shared committing lock is released')
+  assert.deepEqual(views.at(-1), {
+    workspace_display_name: '研究项目',
+    session_title: null,
+    pending_confirmation: true,
+    pending_confirmation_busy: false,
+    pending_confirmation_id: proposal.proposal_id,
+    pending_action: 'create_workspace',
+    pending_workspace_display_name: '研究项目',
+    pending_session_title: null,
+    pending_expires_in_seconds: 345,
+  })
+
+  await service.projectConfirmationDecision(proposal.proposal_id, true)
+  assert.equal(attempts, 2)
+  assert.equal(controller.pending, false, 'the restored authority is consumed after admission')
+})
+
+test('a delayed banner commit publishes busy and a bare failed callback cannot strand it', async () => {
+  let releaseCommit: (() => void) | undefined
+  let commitReached: (() => void) | undefined
+  const held = new Promise<void>(resolve => { releaseCommit = resolve })
+  const reached = new Promise<void>(resolve => { commitReached = resolve })
+  const delayed = confirmationService({
+    commit: async () => {
+      commitReached?.()
+      await held
+      return {accepted: true, code: 'accepted'}
+    },
+  })
+  await delayed.service.connect()
+  const proposal = propose(delayed.controller)
+  const decision = delayed.service.projectConfirmationDecision(proposal.proposal_id, true)
+  await reached
+  assert.equal(delayed.views.at(-1)?.pending_confirmation, true)
+  assert.equal(delayed.views.at(-1)?.pending_confirmation_busy, true)
+  releaseCommit?.()
+  await decision
+  assert.equal(delayed.views.at(-1)?.pending_confirmation, false)
+
+  const failed = confirmationService({
+    commit: () => Promise.resolve({accepted: false, code: 'busy'}),
+  })
+  await failed.service.connect()
+  const failedProposal = propose(failed.controller)
+  await failed.service.projectConfirmationDecision(failedProposal.proposal_id, true)
+  assert.equal(failed.controller.pending, false)
+  assert.equal(failed.controller.committing, false, 'manual callback failure is terminal, not stuck')
 })
 
 test('a banner decision fences an active confirmation response until its terminal', async () => {

@@ -10,6 +10,12 @@
  */
 
 import type { Clock } from '../clock.js'
+import {
+  confirmedProjectCapabilityWasAdmitted,
+  issueConfirmedProjectCapability,
+  recordConfirmedProjectAdmission,
+  revokeConfirmedProjectCapability,
+} from '../confirmed-project-capability.js'
 import {codePointLengthLikePython} from '../python-text.js'
 
 export type ProjectAction = 'create' | 'reuse' | 'select' | 'resume'
@@ -39,10 +45,12 @@ export interface ConfirmedProjectOperation {
   readonly work_order: string | null
   readonly origin_ref: string
   readonly proposal_id: string
+  readonly expires_at: number
 }
 
 export interface ProjectConfirmationView {
   readonly pending_confirmation: boolean
+  readonly pending_confirmation_busy: boolean
   /** Opaque proposal binding for an exact renderer decision. Present only while pending. */
   readonly pending_confirmation_id?: string
   readonly workspace_display_name: string | null
@@ -83,6 +91,7 @@ export class ProjectConfirmationController {
   /** The one user item allowed to answer the proposal, as `epoch:itemId`. */
   #reserved: string | null = null
   #commitAuthority: ConfirmedProjectOperation | null = null
+  #state: 'pending' | 'committing' | 'settled' = 'settled'
   #expiryAbort: AbortController | null = null
 
   constructor(options: ProjectConfirmationOptions) {
@@ -92,16 +101,22 @@ export class ProjectConfirmationController {
   }
 
   get view(): ProjectConfirmationView {
-    const proposal = this.pending ? this.#proposal : null
+    const proposal = this.#proposal !== null
+      && this.#state !== 'settled'
+      && (this.#state === 'committing' || !this.#isExpired(this.#proposal))
+      ? this.#proposal
+      : null
     if (proposal === null) {
       return {
         pending_confirmation: false,
+        pending_confirmation_busy: false,
         workspace_display_name: null,
         session_title: null,
       }
     }
     return {
       pending_confirmation: true,
+      pending_confirmation_busy: this.#state === 'committing',
       pending_confirmation_id: proposal.proposal_id,
       workspace_display_name: proposal.workspace_display_name,
       session_title: proposal.session_title,
@@ -118,7 +133,14 @@ export class ProjectConfirmationController {
 
   /** A proposal that has passed its deadline is not pending, even before anything expires it. */
   get pending(): boolean {
-    return this.#proposal !== null && !this.#isExpired(this.#proposal)
+    return this.#state === 'pending'
+      && this.#proposal !== null
+      && !this.#isExpired(this.#proposal)
+  }
+
+  get committing(): boolean {
+    return this.#state === 'committing'
+      && this.#proposal !== null
   }
 
   /**
@@ -159,7 +181,9 @@ export class ProjectConfirmationController {
     this.#proposal = proposal
     this.#lifecycleId = proposal.proposal_id
     this.#reserved = null
+    if (this.#commitAuthority !== null) revokeConfirmedProjectCapability(this.#commitAuthority)
     this.#commitAuthority = null
+    this.#state = 'pending'
     this.#scheduleExpiry(proposal)
     this.#publish()
     return proposal
@@ -183,7 +207,7 @@ export class ProjectConfirmationController {
    */
   reserveUserItem(input: {readonly epoch: number; readonly itemId: string}): boolean {
     const proposal = this.#proposal
-    if (proposal === null) return false
+    if (proposal === null || this.#state !== 'pending') return false
     if (this.#isExpired(proposal)) {
       this.expire()
       return false
@@ -210,7 +234,11 @@ export class ProjectConfirmationController {
     readonly confirmed: boolean
   }): ConfirmationOutcome {
     const proposal = this.#proposal
-    if (proposal === null || !this.#isReserved(input.epoch, input.itemId)) {
+    if (
+      proposal === null
+      || this.#state !== 'pending'
+      || !this.#isReserved(input.epoch, input.itemId)
+    ) {
       return outcome('ignored')
     }
     if (this.#isExpired(proposal)) return this.#expireDecision()
@@ -229,6 +257,7 @@ export class ProjectConfirmationController {
     const proposal = this.#proposal
     if (
       proposal === null
+      || this.#state !== 'pending'
       || typeof input.proposalId !== 'string'
       || typeof input.confirmed !== 'boolean'
       || input.proposalId !== proposal.proposal_id
@@ -239,7 +268,11 @@ export class ProjectConfirmationController {
 
   /** Release an undecided item without extending or discarding the proposal. */
   releaseUndecided(input: {readonly epoch: number; readonly itemId: string}): boolean {
-    if (this.#proposal === null || !this.#isReserved(input.epoch, input.itemId)) return false
+    if (
+      this.#proposal === null
+      || this.#state !== 'pending'
+      || !this.#isReserved(input.epoch, input.itemId)
+    ) return false
     this.#reserved = null
     return true
   }
@@ -251,15 +284,77 @@ export class ProjectConfirmationController {
    * reconstructed operation with the same fields cannot commit. That is what makes replaying a
    * confirmation impossible.
    */
+  ownsConfirmed(operation: ConfirmedProjectOperation): boolean {
+    return operation === this.#commitAuthority
+      && this.#state === 'committing'
+      && this.#proposal !== null
+      && !this.#isExpired(this.#proposal)
+  }
+
+  /** Record acceptance returned by the host's narrow confirmed-project dispatch port. */
+  recordRuntimeAdmission(operation: ConfirmedProjectOperation): boolean {
+    return operation === this.#commitAuthority
+      && this.#state === 'committing'
+      && recordConfirmedProjectAdmission(operation)
+  }
+
   claimConfirmed(operation: ConfirmedProjectOperation): boolean {
-    if (operation !== this.#commitAuthority) return false
+    if (
+      operation !== this.#commitAuthority
+      || this.#state !== 'committing'
+      || (
+        operation.work_order !== null
+        && !confirmedProjectCapabilityWasAdmitted(operation)
+      )
+    ) return false
+    this.#clearAll()
+    this.#publish()
+    return true
+  }
+
+  /** A non-retryable validation failure consumes the exact committing proposal terminally. */
+  rejectConfirmed(operation: ConfirmedProjectOperation): boolean {
+    if (
+      operation !== this.#commitAuthority
+      || this.#state !== 'committing'
+      || confirmedProjectCapabilityWasAdmitted(operation)
+    ) {
+      return false
+    }
+    this.#clearAll()
+    this.#publish()
+    return true
+  }
+
+  /** A transient runtime rejection restores the same proposal and original deadline for retry. */
+  rollbackConfirmed(operation: ConfirmedProjectOperation): boolean {
+    if (
+      operation !== this.#commitAuthority
+      || this.#state !== 'committing'
+      || confirmedProjectCapabilityWasAdmitted(operation)
+      || this.#proposal === null
+    ) return false
+    if (this.#isExpired(this.#proposal)) {
+      this.#clearAll()
+      this.#publish()
+      this.#publishExpiry()
+      return true
+    }
+    revokeConfirmedProjectCapability(operation)
     this.#commitAuthority = null
+    this.#reserved = null
+    this.#state = 'pending'
+    this.#publish()
     return true
   }
 
   /** Transcription failed, so the answer is unknowable and the operation is cancelled. */
   failTranscript(input: {readonly epoch: number; readonly itemId: string}): ConfirmationOutcome {
-    if (this.#proposal === null || !this.#isReserved(input.epoch, input.itemId)) {
+    if (
+      this.#proposal === null
+      || this.#state !== 'pending'
+      || !this.#isReserved(input.epoch, input.itemId)
+    ) {
       return outcome('ignored')
     }
     this.#clearAll()
@@ -270,7 +365,7 @@ export class ProjectConfirmationController {
   /** Expire a proposal that is past its deadline. A proposal still in time is left alone. */
   expire(): boolean {
     const proposal = this.#proposal
-    if (proposal === null || !this.#isExpired(proposal)) return false
+    if (proposal === null || this.#state !== 'pending' || !this.#isExpired(proposal)) return false
     this.#clearAll()
     this.#publish()
     this.#publishExpiry()
@@ -287,7 +382,9 @@ export class ProjectConfirmationController {
     // The reason is taken for the caller's benefit -- it names the event at the call site -- and
     // deliberately not acted on: every reason invalidates identically.
     void reason
-    const changed = this.#proposal !== null || this.#commitAuthority !== null
+    const changed = this.#state !== 'settled'
+      || this.#proposal !== null
+      || this.#commitAuthority !== null
     if (!changed) return false
     this.#clearAll()
     this.#publish()
@@ -324,19 +421,21 @@ export class ProjectConfirmationController {
       this.#publish()
       return outcome('cancelled', {responseText: '已取消。'})
     }
-    const operation = confirmedFrom(proposal)
-    this.#proposal = null
-    this.#reserved = null
-    // Deliberately not `clearAll`: this is where commit authority is *granted*.
+    const operation = confirmedFrom(proposal, () => this.#clock.now())
+    // Keep the immutable proposal visible while admission is in flight. The committing state is the
+    // shared click/voice lock; only runtime rejection may move it back to pending.
     this.#commitAuthority = operation
+    this.#state = 'committing'
     this.#publish()
     return outcome('confirmed', {operation})
   }
 
   #clearAll(): void {
+    if (this.#commitAuthority !== null) revokeConfirmedProjectCapability(this.#commitAuthority)
     this.#proposal = null
     this.#reserved = null
     this.#commitAuthority = null
+    this.#state = 'settled'
     const abort = this.#expiryAbort
     this.#expiryAbort = null
     abort?.abort()
@@ -423,8 +522,8 @@ function outcome(
   }
 }
 
-function confirmedFrom(proposal: ProjectProposal): ConfirmedProjectOperation {
-  return Object.freeze({
+function confirmedFrom(proposal: ProjectProposal, now: () => number): ConfirmedProjectOperation {
+  const operation: ConfirmedProjectOperation = Object.freeze({
     action: proposal.action,
     workspace_display_name: proposal.workspace_display_name,
     workspace_id: proposal.workspace_id,
@@ -433,7 +532,15 @@ function confirmedFrom(proposal: ProjectProposal): ConfirmedProjectOperation {
     work_order: proposal.work_order,
     origin_ref: proposal.origin_ref,
     proposal_id: proposal.proposal_id,
+    expires_at: proposal.expires_at,
   })
+  issueConfirmedProjectCapability(operation, {
+    proposalId: operation.proposal_id,
+    originRef: operation.origin_ref,
+    expiresAt: operation.expires_at,
+    now,
+  })
+  return operation
 }
 
 function validatePrepared(input: {

@@ -157,6 +157,7 @@ export interface PublicProjectView {
   readonly workspace_display_name: string | null
   readonly session_title: string | null
   readonly pending_confirmation: boolean
+  readonly pending_confirmation_busy: boolean
   readonly pending_confirmation_id?: string
   /** Optional at the internal boundary so legacy store-only callers remain source compatible. */
   readonly pending_action?:
@@ -1075,6 +1076,7 @@ export class CodexProjectStore {
         workspace_display_name: workspace?.display_name ?? null,
         session_title: session?.display_title ?? null,
         pending_confirmation: pendingConfirmation,
+        pending_confirmation_busy: false,
       }),
     })
   }

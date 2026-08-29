@@ -250,7 +250,6 @@ export interface RealtimeServiceOptions {
   readonly projectConfirmation?: ProjectConfirmationController
   readonly commitProjectOperation?: (
     operation: ConfirmedProjectOperation,
-    originRef: string,
   ) => Promise<{readonly accepted: boolean; readonly code: string}>
   readonly onProjectView?: (view: ProjectConfirmationView) => void
   readonly projectViewProvider?: (pendingConfirmation: boolean) => ProjectConfirmationView
@@ -294,7 +293,7 @@ export class RealtimeService {
   readonly #guardHistoryPairs: number
   readonly #projectConfirmation: ProjectConfirmationController | undefined
   readonly #commitProjectOperation:
-    | ((operation: ConfirmedProjectOperation, originRef: string) => Promise<{
+    | ((operation: ConfirmedProjectOperation) => Promise<{
       readonly accepted: boolean
       readonly code: string
     }>)
@@ -633,6 +632,7 @@ export class RealtimeService {
       })
       return
     }
+    this.#publishProjectView()
 
     // A click wins the same one-shot authority race as a function call. Close every voice carrier
     // before awaiting commit I/O so a late provider call cannot act on the settled proposal.
@@ -655,10 +655,7 @@ export class RealtimeService {
     try {
       for (const item of items) await this.#closeConfirmationDeferredCalls(item.id)
       if (outcome.kind === 'confirmed' && outcome.operation !== null) {
-        const committed = await this.#commitConfirmedProjectOperation(
-          outcome.operation,
-          outcome.operation.origin_ref,
-        )
+        const committed = await this.#commitConfirmedProjectOperation(outcome.operation)
         state = committed.state
         text = committed.text
       }
@@ -3582,15 +3579,13 @@ export class RealtimeService {
           code = outcome.kind === 'ignored' ? 'confirmation_not_pending' : outcome.kind
           state = outcome.kind === 'confirmed' ? 'accepted' : 'refused'
           text = outcome.response_text
+          this.#publishProjectView()
           if (outcome.kind !== 'invalid' && outcome.kind !== 'ignored') {
             this.#beginProjectConfirmationClose(event.session_epoch, itemId)
             try {
               await this.#closeConfirmationDeferredCalls(itemId)
               if (outcome.kind === 'confirmed' && outcome.operation !== null) {
-                const committed = await this.#commitConfirmedProjectOperation(
-                  outcome.operation,
-                  origin.originRef,
-                )
+                const committed = await this.#commitConfirmedProjectOperation(outcome.operation)
                 state = committed.state
                 text = committed.text
               }
@@ -3641,14 +3636,23 @@ export class RealtimeService {
 
   async #commitConfirmedProjectOperation(
     operation: ConfirmedProjectOperation,
-    originRef: string,
   ): Promise<{readonly state: 'accepted' | 'failed'; readonly text: string}> {
     const callback = this.#commitProjectOperation
     if (callback === undefined) {
+      this.#projectConfirmation?.rollbackConfirmed(operation)
       return {state: 'failed', text: '确认处理不可用，本次操作未执行。'}
     }
     try {
-      const result = await callback(operation, originRef)
+      const result = await callback(operation)
+      const controller = this.#projectConfirmation
+      if (result.accepted && controller?.committing === true) {
+        controller.rejectConfirmed(operation)
+        return {state: 'failed', text: '确认处理无效，本次操作未执行。'}
+      }
+      if (!result.accepted && controller?.committing === true) {
+        if (result.code === 'runtime_rejected') controller.rollbackConfirmed(operation)
+        else controller.rejectConfirmed(operation)
+      }
       return {
         state: result.accepted ? 'accepted' : 'failed',
         text: result.accepted
@@ -3657,6 +3661,7 @@ export class RealtimeService {
       }
     } catch (failure) {
       if (isAbort(failure)) throw failure
+      this.#projectConfirmation?.rollbackConfirmed(operation)
       return {state: 'failed', text: '已确认，但操作未执行。'}
     }
   }
@@ -4139,7 +4144,7 @@ export class RealtimeService {
     if (controller === undefined) return
     try {
       this.#onProjectView?.(
-        this.#projectViewProvider?.(controller.pending) ?? controller.view,
+        this.#projectViewProvider?.(controller.pending || controller.committing) ?? controller.view,
       )
     } catch {
       // A renderer that cannot accept the view must not prevent the state change that produced it.

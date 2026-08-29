@@ -148,6 +148,7 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
       workspace_display_name: 'project-a',
       session_title: 'session-a',
       pending_confirmation: false,
+      pending_confirmation_busy: false,
     },
     memoryBoard: requestId => JSON.stringify({type: 'memory.board', request_id: requestId}),
     clock,
@@ -167,7 +168,7 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
       '{"type":"desktop.ready"}',
       '{"type":"playback.clear","utterance_id":"stale","generation_epoch":1}',
       '{"type":"codex.state","state":"running"}',
-      '{"type":"codex.project","workspace_display_name":"project-a","session_title":"session-a","pending_confirmation":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
+      '{"type":"codex.project","workspace_display_name":"project-a","session_title":"session-a","pending_confirmation":false,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
     ])
 
     const downlink = nextFrames(socket, 6, 'desktop bridge downlink families')
@@ -179,6 +180,7 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
     realtime.bridge.onCodexState('idle')
     realtime.bridge.onCodexProject({
       workspace_display_name: 'project-b', session_title: null, pending_confirmation: true,
+      pending_confirmation_busy: false,
     })
     realtime.bridge.onAudioAlert(null, null)
     const frames = await downlink
@@ -232,7 +234,10 @@ test('renderer reconnect receives current state and project without aborting the
     token: TOKEN,
     service,
     stop,
-    projectView: {workspace_display_name: 'one', session_title: null, pending_confirmation: false},
+    projectView: {
+      workspace_display_name: 'one', session_title: null, pending_confirmation: false,
+      pending_confirmation_busy: false,
+    },
     onConnectionReleased: () => released?.(),
   })
   const readiness = await settleWithin('reconnect desktop server start', realtime.server.start())
@@ -245,6 +250,7 @@ test('renderer reconnect receives current state and project without aborting the
     realtime.bridge.onCodexState('idle')
     realtime.bridge.onCodexProject({
       workspace_display_name: 'two', session_title: 'current', pending_confirmation: true,
+      pending_confirmation_busy: false,
     })
     const changed = await changedFrames
     assert.equal(text(changed[0]!), '{"type":"codex.state","state":"idle"}')
@@ -259,7 +265,7 @@ test('renderer reconnect receives current state and project without aborting the
       assert.deepEqual((await current).map(frame => text(frame)), [
         '{"type":"desktop.ready"}',
         '{"type":"codex.state","state":"idle"}',
-        '{"type":"codex.project","workspace_display_name":"two","session_title":"current","pending_confirmation":true,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
+        '{"type":"codex.project","workspace_display_name":"two","session_title":"current","pending_confirmation":true,"pending_confirmation_busy":false,"pending_action":null,"pending_workspace_display_name":null,"pending_session_title":null,"pending_expires_in_seconds":null}',
       ])
     } finally {
       await closeDesktop(second)

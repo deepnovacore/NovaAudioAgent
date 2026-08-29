@@ -451,6 +451,7 @@ test('realtime mode always opens one project store and exposes only project tool
     workspace_display_name: 'workspace',
     session_title: null,
     pending_confirmation: false,
+    pending_confirmation_busy: false,
   })
   assert.deepEqual(views.at(-1), resource.projectView)
   const state = JSON.parse(readFileSync(join(stateRoot, 'codex-projects-v1.json'), 'utf8')) as {
