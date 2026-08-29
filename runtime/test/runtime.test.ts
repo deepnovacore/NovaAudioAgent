@@ -1584,25 +1584,6 @@ test('confirmed external dispatch narrowly admits one aged proposal origin capab
     outcome.operation,
   ).problem, 'confirmed_capability_invalid', 'the capability is consumed exactly once')
 
-  const expiredController = new ProjectConfirmationController({
-    clock,
-    idFactory: () => 'proposal-expired-external',
-  })
-  const expiring = expiredController.prepare({
-    action: 'create', workspace_display_name: '过期项目', workspace_id: null,
-    session_title: null, session_id: null, work_order: 'do it', origin_ref: refs[2]!,
-  })
-  const expired = expiredController.acceptDirectDecision({
-    proposalId: expiring.proposal_id, confirmed: true,
-  })
-  assert.ok(expired.operation)
-  clock.advanceTo(expiring.expires_at)
-  assert.equal(runtime.dispatchConfirmedExternal(
-    {...request, origin_ref: refs[2]!},
-    externalReason,
-    expired.operation,
-  ).problem, 'confirmed_capability_invalid')
-
   const malformedController = new ProjectConfirmationController({
     clock,
     idFactory: () => 'proposal-malformed-external',
@@ -1627,6 +1608,46 @@ test('confirmed external dispatch narrowly admits one aged proposal origin capab
       assert.equal(refused.problem, 'confirmed_capability_invalid')
     })
   }
+})
+
+test('a confirmation issued before its ttl stays admissible while the commit is in flight', async () => {
+  const clock = new VirtualClock(20)
+  const runtime = new CoreRuntime({
+    manifests: [CODEX_PROJECT_MANIFEST],
+    ids: new MonotonicIdFactory(),
+  })
+  const originRef = appendTurn(runtime, 1, 'create a workspace')
+  const controller = new ProjectConfirmationController({
+    clock,
+    idFactory: () => 'proposal-in-flight-external',
+  })
+  const proposal = controller.prepare({
+    action: 'create', workspace_display_name: '提交中项目', workspace_id: null,
+    session_title: null, session_id: null, work_order: 'do it', origin_ref: originRef,
+  })
+  const confirmed = controller.acceptDirectDecision({
+    proposalId: proposal.proposal_id,
+    confirmed: true,
+  })
+  assert.ok(confirmed.operation)
+
+  clock.advanceTo(proposal.expires_at)
+  await Promise.resolve()
+
+  assert.equal(
+    controller.ownsConfirmed(confirmed.operation),
+    true,
+    'the user spent the proposal ttl by confirming before its deadline',
+  )
+  const admission = runtime.dispatchConfirmedExternal({
+    executor: 'codex',
+    op: 'project',
+    request: {action: 'execute_confirmed'},
+    origin_ref: originRef,
+  }, externalReason, confirmed.operation)
+  assert.equal(admission.accepted, true)
+  assert.equal(controller.recordRuntimeAdmission(confirmed.operation), true)
+  assert.equal(controller.claimConfirmed(confirmed.operation), true)
 })
 
 test('an external dispatch distinguishes a malformed reference from a missing item', () => {

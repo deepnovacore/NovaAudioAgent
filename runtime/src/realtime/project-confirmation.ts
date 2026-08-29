@@ -292,7 +292,6 @@ export class ProjectConfirmationController {
     return operation === this.#commitAuthority
       && this.#state === 'committing'
       && this.#proposal !== null
-      && !this.#isExpired(this.#proposal)
   }
 
   /** Record acceptance returned by the host's narrow confirmed-project dispatch port. */
@@ -425,7 +424,7 @@ export class ProjectConfirmationController {
       this.#publish()
       return outcome('cancelled', {responseText: '已取消。'})
     }
-    const operation = confirmedFrom(proposal, () => this.#clock.now())
+    const operation = confirmedFrom(proposal)
     // Keep the immutable proposal visible while admission is in flight. The committing state is the
     // shared click/voice lock; only runtime rejection may move it back to pending.
     this.#commitAuthority = operation
@@ -469,8 +468,13 @@ export class ProjectConfirmationController {
       return
     }
     // Re-checked rather than trusted: the timer may have been overtaken by a replacement proposal
-    // that happens to share a deadline, and identity is what distinguishes them.
-    if (this.#proposal !== proposal || !this.#isExpired(proposal)) return
+    // that happens to share a deadline, and identity is what distinguishes them. A decision already
+    // in committing spent the TTL in time; claim, rollback, rejection or invalidation must settle it.
+    if (
+      this.#proposal !== proposal
+      || this.#state !== 'pending'
+      || !this.#isExpired(proposal)
+    ) return
     this.#clearAll()
     this.#publish()
     this.#publishExpiry()
@@ -526,7 +530,7 @@ function outcome(
   }
 }
 
-function confirmedFrom(proposal: ProjectProposal, now: () => number): ConfirmedProjectOperation {
+function confirmedFrom(proposal: ProjectProposal): ConfirmedProjectOperation {
   const operation: ConfirmedProjectOperation = Object.freeze({
     action: proposal.action,
     workspace_display_name: proposal.workspace_display_name,
@@ -541,8 +545,6 @@ function confirmedFrom(proposal: ProjectProposal, now: () => number): ConfirmedP
   issueConfirmedProjectCapability(operation, {
     proposalId: operation.proposal_id,
     originRef: operation.origin_ref,
-    expiresAt: operation.expires_at,
-    now,
   })
   return operation
 }

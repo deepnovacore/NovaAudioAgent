@@ -99,7 +99,7 @@ test('confirmation admission is busy until success and a runtime rejection rolls
   )
 })
 
-test('late transcript failure and the expiry timer cannot revoke an in-flight decision', () => {
+test('late transcript failure and the expiry timer cannot revoke an in-flight decision', async () => {
   const clock = new VirtualClock(10)
   const controller = createController(clock)
   const proposal = controller.prepare({
@@ -116,6 +116,7 @@ test('late transcript failure and the expiry timer cannot revoke an in-flight de
 
   assert.equal(controller.failTranscript({epoch: 1, itemId: 'voice-confirmation'}).kind, 'ignored')
   clock.advanceTo(proposal.expires_at)
+  await Promise.resolve()
   assert.equal(controller.expire(), false, 'a decision already committing does not expire mid-flight')
   assert.equal(controller.committing, true)
   assert.equal(controller.view.pending_confirmation, true)

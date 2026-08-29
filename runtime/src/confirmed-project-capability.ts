@@ -5,44 +5,39 @@ type CapabilityPhase = 'ready' | 'admitting' | 'admitted' | 'revoked'
 interface ConfirmedProjectCapabilityState {
   readonly proposal_id: string
   readonly origin_ref: string
-  readonly expires_at: number
-  readonly now: () => number
   phase: CapabilityPhase
 }
 
 const CAPABILITIES = new WeakMap<object, ConfirmedProjectCapabilityState>()
 
-/** Register the exact frozen operation object issued by the confirmation controller. */
+/** Register the exact frozen operation object after the controller accepts a decision before its TTL. */
 export function issueConfirmedProjectCapability(
   capability: object,
   input: {
     readonly proposalId: string
     readonly originRef: string
-    readonly expiresAt: number
-    readonly now: () => number
   },
 ): void {
   CAPABILITIES.set(capability, {
     proposal_id: input.proposalId,
     origin_ref: input.originRef,
-    expires_at: input.expiresAt,
-    now: input.now,
     phase: 'ready',
   })
 }
 
-/** Lock one exact capability for the one private confirmed-project admission shape. */
+/**
+ * Lock one exact capability for the one private confirmed-project admission shape.
+ *
+ * The proposal TTL gates capability issuance, not completion of an in-flight commit. Provider
+ * replacement, service close, terminal rejection and replay still revoke the identity explicitly.
+ */
 export function beginConfirmedProjectAdmission(
   capability: object,
   request: DelegateRequest,
 ): boolean {
   const state = CAPABILITIES.get(capability)
-  const now = state?.now()
   if (
     state?.phase !== 'ready'
-    || now === undefined
-    || !Number.isFinite(now)
-    || now >= state.expires_at
     || request.executor !== 'codex'
     || request.op !== 'project'
     || request.origin_ref !== state.origin_ref
@@ -74,13 +69,7 @@ export function confirmedProjectCapabilityWasAdmitted(capability: object): boole
 export function recordConfirmedProjectAdmission(capability: object): boolean {
   const state = CAPABILITIES.get(capability)
   if (state?.phase === 'admitted') return true
-  const now = state?.now()
-  if (
-    state?.phase !== 'ready'
-    || now === undefined
-    || !Number.isFinite(now)
-    || now >= state.expires_at
-  ) return false
+  if (state?.phase !== 'ready') return false
   state.phase = 'admitted'
   return true
 }
