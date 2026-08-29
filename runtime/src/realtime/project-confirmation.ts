@@ -162,6 +162,9 @@ export class ProjectConfirmationController {
     readonly work_order: string | null
     readonly origin_ref: string
   }): ProjectProposal {
+    if (this.#state === 'committing') {
+      throw new TypeError('confirmation commit is in progress')
+    }
     validatePrepared(input)
     const proposalId = this.#idFactory()
     if (

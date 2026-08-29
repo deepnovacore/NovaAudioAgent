@@ -130,6 +130,24 @@ test('late transcript failure and the expiry timer cannot revoke an in-flight de
   assert.equal(controller.committing, false)
 })
 
+test('a new proposal cannot replace an in-flight confirmation commit', () => {
+  const controller = createController()
+  const proposal = prepareSelect(controller)
+  const accepted = controller.acceptDirectDecision({
+    proposalId: proposal.proposal_id,
+    confirmed: true,
+  })
+  assert.ok(accepted.operation)
+
+  assert.throws(
+    () => prepareSelect(controller),
+    /confirmation commit is in progress/u,
+  )
+  assert.equal(controller.committing, true)
+  assert.equal(controller.view.pending_confirmation_id, proposal.proposal_id)
+  assert.equal(controller.claimConfirmed(accepted.operation), true)
+})
+
 test('a reconstructed operation cannot claim identity authority', () => {
   const controller = createController()
   const proposal = prepareSelect(controller)

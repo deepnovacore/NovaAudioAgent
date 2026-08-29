@@ -440,6 +440,28 @@ function storeWithPersistentHomeHook(
   })
 }
 
+function storeWithManagedValidationHook(
+  store: CodexProjectStore,
+  beforeValidation: (attempt: number) => Promise<void>,
+): CodexProjectStore {
+  let attempts = 0
+  return new Proxy(store, {
+    get(target, property) {
+      if (property === 'validateManagedCreate') {
+        return async (displayName: string) => {
+          attempts += 1
+          await beforeValidation(attempts)
+          return await target.validateManagedCreate(displayName)
+        }
+      }
+      const value: unknown = Reflect.get(target, property, target)
+      if (typeof value !== 'function') return value
+      const bound: unknown = value.bind(target)
+      return bound
+    },
+  })
+}
+
 function storeWithBusyPublicContext(
   store: CodexProjectStore,
   busy: () => boolean,
@@ -544,6 +566,120 @@ test('project create proposal validates without mutating state or constructing t
     await rm(value.root, {recursive: true, force: true})
   }
 })
+
+test('a workspace-only commit rejects a replacement proposal until its store mutation settles',
+  async () => {
+    let releaseValidation: (() => void) | undefined
+    let validationReached: (() => void) | undefined
+    const held = new Promise<void>(resolve => { releaseValidation = resolve })
+    const reached = new Promise<void>(resolve => { validationReached = resolve })
+    const value = await fixture({
+      decorateStore: store => storeWithManagedValidationHook(store, async attempt => {
+        if (attempt !== 2) return
+        validationReached?.()
+        await held
+      }),
+    })
+    try {
+      const proposed = await value.adapter.dispatch(
+        'project',
+        {action: 'create_workspace', workspace: 'beta'},
+        context('project', {}, value.clock),
+      )
+      const confirmed = value.confirmation.acceptDirectDecision({
+        proposalId: proposalId(proposed.content),
+        confirmed: true,
+      })
+      assert.ok(confirmed.operation)
+
+      const committing = value.adapter.commitConfirmed(
+        confirmed.operation,
+        () => assert.fail('workspace-only confirmation must not dispatch a runtime delegate'),
+      )
+      await reached
+      assert.equal(value.confirmation.committing, false, 'the workspace-only authority is claimed')
+
+      const replacement = await value.adapter.dispatch(
+        'project',
+        {action: 'create_workspace', workspace: 'gamma'},
+        context('project', {}, value.clock),
+      )
+      assert.equal(replacement.outcome, 'refused')
+      assert.deepEqual(replacement.content, {
+        op: 'project', code: 'state_busy', recoverable: true,
+      })
+      assert.equal(value.confirmation.pending, false)
+
+      releaseValidation?.()
+      assert.deepEqual(await committing, {accepted: true, code: 'committed'})
+      assert.deepEqual(
+        (await value.store.listWorkspaces()).map(item => item.display_name).sort(),
+        ['alpha', 'beta'],
+      )
+      const after = await value.adapter.dispatch(
+        'project',
+        {action: 'create_workspace', workspace: 'gamma'},
+        context('project', {}, value.clock),
+      )
+      assert.equal(after.content.code, 'confirmation_required', 'the commit lock is released')
+    } finally {
+      releaseValidation?.()
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
+
+test('a duplicate commit attempt cannot revoke the authority owned by the in-flight commit',
+  async () => {
+    let releaseValidation: (() => void) | undefined
+    let validationReached: (() => void) | undefined
+    const held = new Promise<void>(resolve => { releaseValidation = resolve })
+    const reached = new Promise<void>(resolve => { validationReached = resolve })
+    const value = await fixture({
+      decorateStore: store => storeWithManagedValidationHook(store, async attempt => {
+        if (attempt !== 2) return
+        validationReached?.()
+        await held
+      }),
+    })
+    try {
+      const proposed = await value.adapter.dispatch(
+        'project',
+        {action: 'create_workspace', workspace: 'beta', work_order: 'build it'},
+        context('project', {}, value.clock),
+      )
+      const confirmed = value.confirmation.acceptDirectDecision({
+        proposalId: proposalId(proposed.content),
+        confirmed: true,
+      })
+      assert.ok(confirmed.operation)
+      let dispatches = 0
+      const first = value.adapter.commitConfirmed(confirmed.operation, () => {
+        dispatches += 1
+        return {accepted: true, delegate_id: 'delegate-first'}
+      })
+      await reached
+
+      const duplicate = await value.adapter.commitConfirmed(confirmed.operation, () => {
+        dispatches += 1
+        return {accepted: true, delegate_id: 'delegate-duplicate'}
+      })
+      assert.deepEqual(duplicate, {accepted: false, code: 'confirmation_in_progress'})
+      assert.equal(value.confirmation.committing, true)
+      assert.equal(dispatches, 0)
+
+      releaseValidation?.()
+      assert.deepEqual(await first, {
+        accepted: true, code: 'accepted', delegate_id: 'delegate-first',
+      })
+      assert.equal(value.confirmation.committing, false)
+      assert.equal(dispatches, 1)
+    } finally {
+      releaseValidation?.()
+      await value.adapter.close()
+      await rm(value.root, {recursive: true, force: true})
+    }
+  })
 
 test('create_workspace reuses the active workspace without confirmation', async () => {
   const value = await fixture()

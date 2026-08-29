@@ -127,6 +127,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   #refreshSequence = 0
   #initializePromise: Promise<void> | null = null
   #runActive = false
+  #projectCommitActive = false
   #runController: AbortController | null = null
   #runTask: Promise<ExecutorHandoff> | null = null
   #closed = false
@@ -261,105 +262,111 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
     if (!this.#confirmation.ownsConfirmed(operation)) {
       return commitResult(false, 'confirmation_invalid')
     }
-    const workOrder = operation.work_order
-    if (workOrder === null) {
-      // Workspace-only changes have no runtime delegate admission. Claim immediately; every
-      // validation or store failure after this boundary is terminal rather than retryable.
-      if (!this.#confirmation.claimConfirmed(operation)) {
-        return commitResult(false, 'confirmation_invalid')
-      }
-      let committedWorkspace: WorkspaceRecord
-      let previousWorkspace: WorkspaceRecord | null = null
-      try {
-        previousWorkspace = await this.activeCommittedWorkspace()
-        if (operation.action === 'create') {
-          await this.#store.validateManagedCreate(operation.workspace_display_name)
-          committedWorkspace = await this.#store.createManaged(operation.workspace_display_name)
-        } else if (operation.action === 'select' && operation.workspace_id !== null) {
-          committedWorkspace = await this.#store.selectWorkspaceExact(
-            operation.workspace_display_name,
-            operation.workspace_id,
-          )
-        } else {
-          return commitResult(false, 'invalid_operation')
+    if (this.#projectCommitActive) return commitResult(false, 'confirmation_in_progress')
+    this.#projectCommitActive = true
+    try {
+      const workOrder = operation.work_order
+      if (workOrder === null) {
+        // Workspace-only changes have no runtime delegate admission. Claim immediately; every
+        // validation or store failure after this boundary is terminal rather than retryable.
+        if (!this.#confirmation.claimConfirmed(operation)) {
+          return commitResult(false, 'confirmation_invalid')
         }
-      } catch (error) {
-        return commitResult(false, projectErrorCode(error))
-      }
-      try {
-        await this.#refreshProjectContextBarrier()
-      } catch (error) {
-        if (operation.action === 'create') {
-          const rolledBack = await this.#store.rollbackManagedCreate(
-            committedWorkspace.workspace_id, {wait: true},
-          ).catch(() => false)
-          if (rolledBack && previousWorkspace !== null) {
+        let committedWorkspace: WorkspaceRecord
+        let previousWorkspace: WorkspaceRecord | null = null
+        try {
+          previousWorkspace = await this.activeCommittedWorkspace()
+          if (operation.action === 'create') {
+            await this.#store.validateManagedCreate(operation.workspace_display_name)
+            committedWorkspace = await this.#store.createManaged(operation.workspace_display_name)
+          } else if (operation.action === 'select' && operation.workspace_id !== null) {
+            committedWorkspace = await this.#store.selectWorkspaceExact(
+              operation.workspace_display_name,
+              operation.workspace_id,
+            )
+          } else {
+            return commitResult(false, 'invalid_operation')
+          }
+        } catch (error) {
+          return commitResult(false, projectErrorCode(error))
+        }
+        try {
+          await this.#refreshProjectContextBarrier()
+        } catch (error) {
+          if (operation.action === 'create') {
+            const rolledBack = await this.#store.rollbackManagedCreate(
+              committedWorkspace.workspace_id, {wait: true},
+            ).catch(() => false)
+            if (rolledBack && previousWorkspace !== null) {
+              await this.#store.selectWorkspaceExact(
+                previousWorkspace.display_name, previousWorkspace.workspace_id,
+              ).catch(() => undefined)
+            }
+          } else if (previousWorkspace !== null) {
             await this.#store.selectWorkspaceExact(
               previousWorkspace.display_name, previousWorkspace.workspace_id,
             ).catch(() => undefined)
           }
-        } else if (previousWorkspace !== null) {
-          await this.#store.selectWorkspaceExact(
-            previousWorkspace.display_name, previousWorkspace.workspace_id,
-          ).catch(() => undefined)
+          try {
+            await this.#refreshProjectContextBarrier()
+          } catch (recoveryError) {
+            return commitResult(false, projectErrorCode(recoveryError))
+          }
+          return commitResult(false, projectErrorCode(error))
         }
-        try {
-          await this.#refreshProjectContextBarrier()
-        } catch (recoveryError) {
-          return commitResult(false, projectErrorCode(recoveryError))
-        }
+        await this.#notifyCommittedWorkspace(committedWorkspace)
+        return commitResult(true, 'committed')
+      }
+      const normalized = validateCodexRequest('project', 'project', {
+        action: 'start_session', work_order: workOrder,
+      })
+      if (!normalized.ok || normalized.value.work_order !== workOrder || this.#runActive) {
+        if (this.#runActive) this.#confirmation.rollbackConfirmed(operation)
+        else this.#confirmation.rejectConfirmed(operation)
+        return commitResult(false, this.#runActive ? 'busy' : 'invalid_operation')
+      }
+      try {
+        await this.#revalidateProposal(operation)
+      } catch (error) {
+        this.#confirmation.rejectConfirmed(operation)
         return commitResult(false, projectErrorCode(error))
       }
-      await this.#notifyCommittedWorkspace(committedWorkspace)
-      return commitResult(true, 'committed')
+      const admission = runtimeDispatch(
+        {
+          executor: 'codex',
+          op: 'project',
+          request: {action: 'execute_confirmed'},
+          origin_ref: operation.origin_ref,
+        },
+        {
+          kind: 'realtime_tool',
+          priority: USER_PRIORITY,
+          routing_class: 'user_awaited',
+          origin: null,
+          selected_suggestion: null,
+        },
+        operation,
+      )
+      if (!admission.accepted || admission.delegate_id === null) {
+        this.#confirmation.rollbackConfirmed(operation)
+        return commitResult(false, 'runtime_rejected')
+      }
+      if (!this.#confirmation.recordRuntimeAdmission(operation)) {
+        return commitResult(false, 'confirmation_invalid')
+      }
+      if (!this.#confirmation.claimConfirmed(operation)) {
+        return commitResult(false, 'confirmation_invalid')
+      }
+      this.#confirmedBindings.set(operation, Object.freeze({
+        operation,
+        delegateId: admission.delegate_id,
+        originRef: operation.origin_ref,
+        workOrder,
+      }))
+      return commitResult(true, 'accepted', admission.delegate_id)
+    } finally {
+      this.#projectCommitActive = false
     }
-    const normalized = validateCodexRequest('project', 'project', {
-      action: 'start_session', work_order: workOrder,
-    })
-    if (!normalized.ok || normalized.value.work_order !== workOrder || this.#runActive) {
-      if (this.#runActive) this.#confirmation.rollbackConfirmed(operation)
-      else this.#confirmation.rejectConfirmed(operation)
-      return commitResult(false, this.#runActive ? 'busy' : 'invalid_operation')
-    }
-    try {
-      await this.#revalidateProposal(operation)
-    } catch (error) {
-      this.#confirmation.rejectConfirmed(operation)
-      return commitResult(false, projectErrorCode(error))
-    }
-    const admission = runtimeDispatch(
-      {
-        executor: 'codex',
-        op: 'project',
-        request: {action: 'execute_confirmed'},
-        origin_ref: operation.origin_ref,
-      },
-      {
-        kind: 'realtime_tool',
-        priority: USER_PRIORITY,
-        routing_class: 'user_awaited',
-        origin: null,
-        selected_suggestion: null,
-      },
-      operation,
-    )
-    if (!admission.accepted || admission.delegate_id === null) {
-      this.#confirmation.rollbackConfirmed(operation)
-      return commitResult(false, 'runtime_rejected')
-    }
-    if (!this.#confirmation.recordRuntimeAdmission(operation)) {
-      return commitResult(false, 'confirmation_invalid')
-    }
-    if (!this.#confirmation.claimConfirmed(operation)) {
-      return commitResult(false, 'confirmation_invalid')
-    }
-    this.#confirmedBindings.set(operation, Object.freeze({
-      operation,
-      delegateId: admission.delegate_id,
-      originRef: operation.origin_ref,
-      workOrder,
-    }))
-    return commitResult(true, 'accepted', admission.delegate_id)
   }
 
   publicProjectView(pendingConfirmation: boolean): PublicProjectView {
@@ -481,6 +488,7 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
       ) {
         return failureHandoff('invalid_params', 'project')
       }
+      if (this.#projectCommitActive) return projectCommitBusyHandoff()
       let workspace: WorkspaceRecord | null = null
       let session: ProjectSessionRecord | null = null
       let publicAction:
@@ -979,6 +987,14 @@ function projectProblemHandoff(code: string): ExecutorHandoff {
     }
   }
   return failureHandoff(code, 'run')
+}
+
+function projectCommitBusyHandoff(): ExecutorHandoff {
+  return {
+    outcome: 'refused',
+    trust: 'trusted_system',
+    content: {op: 'project', code: 'state_busy', recoverable: true},
+  }
 }
 
 function projectNoActiveTurn(): ExecutorHandoff {

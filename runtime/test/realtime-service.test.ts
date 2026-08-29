@@ -6675,6 +6675,53 @@ test('an expiry that outlives the shutdown grace period still cannot reconnect',
   )
 })
 
+test('an abandoned confirmation cleanup cannot block a later expiry batch', async () => {
+  const {service, controller, injected, clock} = confirmationService({
+    hangInjection: true,
+    expiryStepTimeoutMs: 5,
+  })
+  await service.connect()
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'stuck-speech', provider_item_id: 'stuck-user',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'stuck-speech', provider_item_id: 'stuck-user',
+  })
+  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'stuck-r'})
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    call_id: 'stuck-call', item_id: 'stuck-tool', response_id: 'stuck-r',
+    name: 'codex__start', arguments: {work_order: 'deferred'},
+  })
+
+  propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'confirmation-speech', provider_item_id: 'confirmation-user',
+  })
+  clock.advanceTo(clock.now() + 400)
+  assert.equal(controller.expire(), true)
+  await new Promise<void>(resolve => setTimeout(resolve, 30))
+  const firstExpiryEvents = new Set(injected
+    .filter(item => item.content === '确认已过期，本次操作已取消。')
+    .map(item => item.event_id))
+  assert.equal(firstExpiryEvents.size, 1)
+
+  propose(controller)
+  clock.advanceTo(clock.now() + 400)
+  assert.equal(controller.expire(), true)
+  await new Promise<void>(resolve => setTimeout(resolve, 30))
+  const expiryEvents = new Set([
+    ...injected,
+    ...service.queuedHostItems().map(item => item.intent.item),
+  ].filter(item => item.content === '确认已过期，本次操作已取消。')
+    .map(item => item.event_id))
+  assert.equal(expiryEvents.size, 2, 'the later lifecycle reaches its own expiry fact')
+  await service.close()
+})
+
 test('a shutdown mid-cleanup stops the expiry before it reconnects', async () => {
   // The inner signal checks, isolated. They matter when the drain is *already* inside cleanup when the
   // service closes: `close` waits only boundedly, so a step that hangs leaves the rest of the chain to

@@ -399,6 +399,8 @@ export class RealtimeService {
   /** Epoch whose requested confirmation retry has not revealed its response id yet. */
   #projectConfirmationPendingQuarantineEpoch: number | null = null
   readonly #projectConfirmationClosingCalls = new Set<string>()
+  /** Voice decision handlers whose exact tool output must precede expiry cleanup when possible. */
+  readonly #projectConfirmationDecisionGates = new Map<string, Promise<void>>()
   /** Insertion-ordered so the oldest closed call is the one evicted. */
   readonly #projectConfirmationClosedCalls = new Map<string, null>()
   #projectConfirmationBlocking = false
@@ -3619,6 +3621,9 @@ export class RealtimeService {
       || this.#projectConfirmationClosedCalls.has(call)
     ) return
     this.#projectConfirmationClosingCalls.add(call)
+    let releaseDecisionGate: (() => void) | undefined
+    const decisionGate = new Promise<void>(resolve => { releaseDecisionGate = resolve })
+    this.#projectConfirmationDecisionGates.set(call, decisionGate)
 
     let code = 'confirmation_not_pending'
     let state = 'refused'
@@ -3743,13 +3748,15 @@ export class RealtimeService {
         }
       }
     } catch (cause) {
+      releaseDecisionGate?.()
+      this.#projectConfirmationDecisionGates.delete(call)
       this.#projectConfirmationClosingCalls.delete(call)
-      this.#startProjectConfirmationExpiryDrain()
       throw cause
     }
+    releaseDecisionGate?.()
+    this.#projectConfirmationDecisionGates.delete(call)
     this.#projectConfirmationClosingCalls.delete(call)
     this.#rememberClosedProjectConfirmationCall(call)
-    this.#startProjectConfirmationExpiryDrain()
   }
 
   async #commitConfirmedProjectOperation(
@@ -3815,11 +3822,13 @@ export class RealtimeService {
       }
       if (!result.accepted && controller?.committing === true) {
         if (result.code === 'runtime_rejected') controller.rollbackConfirmed(operation)
-        else controller.rejectConfirmed(operation)
+        else if (result.code !== 'confirmation_in_progress') controller.rejectConfirmed(operation)
       }
-      const transitionKind = controller?.pending === true
-        ? 'project_confirmation.commit_rollback'
-        : 'project_confirmation.commit_settled'
+      const transitionKind = result.code === 'confirmation_in_progress'
+        ? 'project_confirmation.commit_duplicate_suppressed'
+        : controller?.pending === true
+          ? 'project_confirmation.commit_rollback'
+          : 'project_confirmation.commit_settled'
       this.#telemetry?.record(transitionKind, {
         session_epoch: this.session.sessionEpoch,
         proposal_id: operation.proposal_id,
@@ -3833,7 +3842,9 @@ export class RealtimeService {
         state: result.accepted ? 'accepted' : 'failed',
         text: result.accepted
           ? projectCommitSuccessText(operation, result.code)
-          : projectCommitFailureText(result.code),
+          : result.code === 'confirmation_in_progress'
+            ? ''
+            : projectCommitFailureText(result.code),
       })
     } catch (failure) {
       if (isAbort(failure)) {
@@ -3967,12 +3978,10 @@ export class RealtimeService {
       await this.session.injectToolOutput(item)
     } catch (cause) {
       this.#projectConfirmationClosingCalls.delete(key)
-      this.#startProjectConfirmationExpiryDrain()
       throw cause
     }
     this.#projectConfirmationClosingCalls.delete(key)
     this.#rememberClosedProjectConfirmationCall(key)
-    this.#startProjectConfirmationExpiryDrain()
   }
 
   #rememberClosedProjectConfirmationCall(key: string): void {
@@ -4232,7 +4241,6 @@ export class RealtimeService {
     if (
       this.#projectExpiryDraining !== null
       || this.#projectExpiryBatches.length === 0
-      || this.#projectConfirmationClosingCalls.size > 0
     ) return
     const signal = this.#stop.signal
     this.#projectExpiryDraining = this.#drainProjectConfirmationExpiries(signal)
@@ -4272,6 +4280,13 @@ export class RealtimeService {
     signal: AbortSignal,
   ): Promise<void> {
     let closeFailed = false
+    const decisionGates = [...this.#projectConfirmationDecisionGates]
+      .filter(([key]) => parseCallKey(key).sessionEpoch === batch.source_epoch)
+      .map(([, gate]) => gate)
+    if (decisionGates.length > 0) {
+      const completed = await this.#runProjectExpiryStep(Promise.all(decisionGates))
+      closeFailed = closeFailed || !completed
+    }
     for (;;) {
       // Checked at every resumption point, not just on entry: each close awaits the provider, and the
       // service can be closed during any of them. Reconnecting or injecting after that would be a
