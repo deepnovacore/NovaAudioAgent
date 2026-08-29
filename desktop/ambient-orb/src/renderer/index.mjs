@@ -12,6 +12,7 @@ import {
   OnsetTracker,
   OutputMuteController,
   PlaybackMeter,
+  playbackTelemetryControl,
 } from './audio.mjs'
 import {
   classifyMicrophoneFailure,
@@ -924,6 +925,13 @@ async function boot() {
         if (acknowledgement) send(acknowledgement)
         axes.playback = 'idle'
         render()
+      } else if (event.type === 'playback.telemetry') {
+        const rejectionMetrics = playback.telemetryFor(
+          event.utteranceId,
+          event.generationEpoch,
+          {final: event.final === true},
+        )
+        send(playbackTelemetryControl(event, rejectionMetrics))
       } else if (event.type === 'error' || event.type === 'exit') {
         void fallBackAfterNativeFailure()
       }

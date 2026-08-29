@@ -9,7 +9,6 @@ private let processingRate = 48_000.0
 private let captureRate = 16_000.0
 private let playbackRate = 24_000.0
 private let maxAudioBytes = 65_536
-private let maxCompletedPlayback = 32
 
 private struct Command: Decodable {
     let type: String
@@ -20,15 +19,6 @@ private struct Command: Decodable {
     let requestId: String?
 }
 
-private struct Identity: Hashable {
-    let utteranceId: String
-    let generationEpoch: Int
-}
-
-private enum Entry {
-    case audio(Identity, [Int16], Int)
-    case terminal(Identity)
-}
 
 private func check(_ status: OSStatus, _ operation: String) throws {
     guard status == noErr else {
@@ -73,114 +63,6 @@ private func convert(
     }
 }
 
-private final class PlaybackQueue {
-    private let lock = NSLock()
-    private var entries: [Entry] = []
-    private var started = Set<Identity>()
-    private var renderedSamples: [Identity: Int] = [:]
-    private var completedSamples: [Identity: Int] = [:]
-    private var completedOrder: [Identity] = []
-    private var muted = false
-
-    func setMuted(_ value: Bool) {
-        lock.lock()
-        muted = value
-        lock.unlock()
-    }
-
-    func append(_ samples: [Int16], identity: Identity) {
-        guard !samples.isEmpty else { return }
-        lock.lock()
-        completedSamples.removeValue(forKey: identity)
-        completedOrder.removeAll { $0 == identity }
-        entries.append(.audio(identity, samples, 0))
-        lock.unlock()
-    }
-
-    func terminal(_ identity: Identity) {
-        lock.lock()
-        entries.append(.terminal(identity))
-        lock.unlock()
-    }
-
-    func clear(_ identity: Identity? = nil) -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let identity else {
-            entries.removeAll(keepingCapacity: true)
-            started.removeAll(keepingCapacity: true)
-            renderedSamples.removeAll(keepingCapacity: true)
-            completedSamples.removeAll(keepingCapacity: true)
-            completedOrder.removeAll(keepingCapacity: true)
-            return 0
-        }
-        entries.removeAll { entry in
-            switch entry {
-            case .audio(let candidate, _, _): return candidate == identity
-            case .terminal(let candidate): return candidate == identity
-            }
-        }
-        started.remove(identity)
-        let rendered = max(
-            renderedSamples.removeValue(forKey: identity) ?? 0,
-            completedSamples.removeValue(forKey: identity) ?? 0
-        )
-        completedOrder.removeAll { $0 == identity }
-        return rendered
-    }
-
-    func render(into output: UnsafeMutableBufferPointer<Int16>) -> [(String, Identity, Int)] {
-        output.baseAddress?.initialize(repeating: 0, count: output.count)
-        var signals: [(String, Identity, Int)] = []
-        var offset = 0
-        var consumedIdentities = Set<Identity>()
-        lock.lock()
-        renderLoop: while offset < output.count, !entries.isEmpty {
-            switch entries[0] {
-            case .terminal(let identity):
-                if consumedIdentities.contains(identity) { break renderLoop }
-                entries.removeFirst()
-                started.remove(identity)
-                let rendered = renderedSamples.removeValue(forKey: identity) ?? 0
-                completedSamples[identity] = rendered
-                completedOrder.removeAll { $0 == identity }
-                completedOrder.append(identity)
-                while completedOrder.count > maxCompletedPlayback {
-                    completedSamples.removeValue(forKey: completedOrder.removeFirst())
-                }
-                signals.append(("playback.done", identity, rendered))
-            case .audio(let identity, let samples, let consumedOffset):
-                if !started.contains(identity) {
-                    started.insert(identity)
-                    signals.append(("playback.started", identity, 0))
-                }
-                let amount = min(output.count - offset, samples.count - consumedOffset)
-                if !muted {
-                    samples.withUnsafeBufferPointer { source in
-                        output.baseAddress?.advanced(by: offset).update(
-                            from: source.baseAddress!.advanced(by: consumedOffset),
-                            count: amount
-                        )
-                    }
-                }
-                offset += amount
-                if amount > 0 {
-                    consumedIdentities.insert(identity)
-                    renderedSamples[identity, default: 0] += amount
-                }
-                let next = consumedOffset + amount
-                if next == samples.count {
-                    entries.removeFirst()
-                } else {
-                    entries[0] = .audio(identity, samples, next)
-                }
-            }
-        }
-        lock.unlock()
-        return signals
-    }
-}
-
 private final class VoiceIO {
     private let playback = PlaybackQueue()
     private let captureLock = NSLock()
@@ -188,6 +70,7 @@ private final class VoiceIO {
     private var captureEnabled = false
     private var unit: AudioUnit?
     private var running = false
+    private var telemetryTimer: DispatchSourceTimer?
 
     func start() throws {
         var description = AudioComponentDescription(
@@ -267,6 +150,11 @@ private final class VoiceIO {
         try check(AudioUnitInitialize(created), "initialize VoiceProcessingIO")
         try check(AudioOutputUnitStart(created), "start VoiceProcessingIO")
         running = true
+        let timer = DispatchSource.makeTimerSource(queue: output)
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak self] in self?.emitPlaybackTelemetry() }
+        telemetryTimer = timer
+        timer.resume()
         emit([
             "type": "ready",
             "aecMode": "voice_processing_io",
@@ -286,13 +174,41 @@ private final class VoiceIO {
         playback.setMuted(muted)
     }
 
+    func emitPlaybackTelemetry(_ snapshot: PlaybackTelemetrySnapshot? = nil) {
+        if let snapshot {
+            emitPlaybackTelemetrySnapshot(snapshot)
+            return
+        }
+        for stats in playback.takeTelemetrySnapshots() {
+            emitPlaybackTelemetrySnapshot(stats)
+        }
+    }
+
+    private func emitPlaybackTelemetrySnapshot(_ stats: PlaybackTelemetrySnapshot) {
+        emit([
+            "type": "playback.telemetry",
+            "utteranceId": stats.identity.utteranceId,
+            "generationEpoch": stats.identity.generationEpoch,
+            "final": stats.final,
+            "windowMs": min(stats.windowMs, 86_400_000),
+            "queuedSamples": stats.queuedSamples,
+            "queuedSamplesMax": stats.queuedSamplesMax,
+            "underrunSamples": stats.underrunSamples,
+            "underrunCallbacks": stats.underrunCallbacks,
+            "maxConsecutiveUnderrunSamples": stats.maxConsecutiveUnderrunSamples,
+            "renderCallbacks": stats.renderCallbacks,
+            "maxCallbackUs": stats.maxCallbackUs,
+            "pcmNearSilenceMsMax": stats.pcmNearSilenceSamplesMax / 48,
+        ])
+    }
+
     private func shouldCapture() -> Bool {
         captureLock.lock()
         defer { captureLock.unlock() }
         return captureEnabled
     }
 
-    func enqueue(_ data: Data, identity: Identity) {
+    func enqueue(_ data: Data, identity: PlaybackIdentity) {
         guard !data.isEmpty, data.count <= maxAudioBytes, data.count % 2 == 0 else { return }
         let samples = data.withUnsafeBytes { bytes in
             convert(bytes.bindMemory(to: Int16.self), from: playbackRate, to: processingRate)
@@ -300,16 +216,17 @@ private final class VoiceIO {
         playback.append(samples, identity: identity)
     }
 
-    func terminal(_ identity: Identity) { playback.terminal(identity) }
-    func clear(_ identity: Identity? = nil, requestId: String? = nil) {
-        let renderedSamples = playback.clear(identity)
+    func terminal(_ identity: PlaybackIdentity) { playback.terminal(identity) }
+    func clear(_ identity: PlaybackIdentity? = nil, requestId: String? = nil) {
+        let result = playback.clear(identity)
+        for telemetry in result.telemetry { emitPlaybackTelemetry(telemetry) }
         guard let identity, let requestId else { return }
         emit([
             "type": "playback.cleared",
             "requestId": requestId,
             "utteranceId": identity.utteranceId,
             "generationEpoch": identity.generationEpoch,
-            "renderedSamples": renderedSamples,
+            "renderedSamples": result.renderedSamples,
         ])
     }
 
@@ -319,18 +236,25 @@ private final class VoiceIO {
             guard let data = buffer.mData else { continue }
             let count = Int(buffer.mDataByteSize) / MemoryLayout<Int16>.size
             let destination = data.bindMemory(to: Int16.self, capacity: count)
-            for (type, identity, renderedSamples) in playback.render(
+            for signal in playback.render(
                 into: UnsafeMutableBufferPointer(start: destination, count: count)
             ) {
-                var payload: [String: Any] = [
-                    "type": type,
-                    "utteranceId": identity.utteranceId,
-                    "generationEpoch": identity.generationEpoch,
-                ]
-                if type == "playback.done" {
-                    payload["renderedSamples"] = renderedSamples
+                switch signal {
+                case .started(let identity):
+                    emit([
+                        "type": "playback.started",
+                        "utteranceId": identity.utteranceId,
+                        "generationEpoch": identity.generationEpoch,
+                    ])
+                case .done(let identity, let renderedSamples, let telemetry):
+                    emit([
+                        "type": "playback.done",
+                        "utteranceId": identity.utteranceId,
+                        "generationEpoch": identity.generationEpoch,
+                        "renderedSamples": renderedSamples,
+                    ])
+                    emitPlaybackTelemetry(telemetry)
                 }
-                emit(payload)
             }
         }
         return noErr
@@ -364,6 +288,8 @@ private final class VoiceIO {
     }
 
     func stop() {
+        telemetryTimer?.cancel()
+        telemetryTimer = nil
         guard let unit else { return }
         if running { AudioOutputUnitStop(unit) }
         AudioUnitUninitialize(unit)
@@ -407,7 +333,7 @@ private func captureCallback(
     )
 }
 
-private func identity(_ command: Command) -> Identity? {
+private func identity(_ command: Command) -> PlaybackIdentity? {
     guard
         let utteranceId = command.utteranceId,
         !utteranceId.isEmpty,
@@ -415,50 +341,56 @@ private func identity(_ command: Command) -> Identity? {
         let generationEpoch = command.generationEpoch,
         generationEpoch > 0
     else { return nil }
-    return Identity(utteranceId: utteranceId, generationEpoch: generationEpoch)
+    return PlaybackIdentity(utteranceId: utteranceId, generationEpoch: generationEpoch)
 }
 
-do {
-    let voice = VoiceIO()
-    try voice.start()
-    while let line = readLine() {
-        guard
-            line.utf8.count <= 100_000,
-            let data = line.data(using: .utf8),
-            let command = try? JSONDecoder().decode(Command.self, from: data)
-        else { continue }
-        switch command.type {
-        case "play":
-            if
-                let encoded = command.audio,
-                let audio = Data(base64Encoded: encoded),
-                let identity = identity(command)
-            { voice.enqueue(audio, identity: identity) }
-        case "terminal":
-            if let identity = identity(command) { voice.terminal(identity) }
-        case "clear":
-            if
-                let requestId = command.requestId,
-                !requestId.isEmpty,
-                requestId.count <= 128,
-                let identity = identity(command)
-            {
-                voice.clear(identity, requestId: requestId)
-            } else {
-                voice.clear()
+@main
+private enum VoiceIOProgram {
+    static func main() {
+        do {
+            let voice = VoiceIO()
+            try voice.start()
+            while let line = readLine() {
+                guard
+                    line.utf8.count <= 100_000,
+                    let data = line.data(using: .utf8),
+                    let command = try? JSONDecoder().decode(Command.self, from: data)
+                else { continue }
+                switch command.type {
+                case "play":
+                    if
+                        let encoded = command.audio,
+                        let audio = Data(base64Encoded: encoded),
+                        let identity = identity(command)
+                    { voice.enqueue(audio, identity: identity) }
+                case "terminal":
+                    if let identity = identity(command) { voice.terminal(identity) }
+                case "clear":
+                    if
+                        let requestId = command.requestId,
+                        !requestId.isEmpty,
+                        requestId.count <= 128,
+                        let identity = identity(command)
+                    {
+                        voice.clear(identity, requestId: requestId)
+                    } else {
+                        voice.clear()
+                    }
+                case "capture": voice.setCapture(command.enabled == true)
+                case "playback_muted": voice.setPlaybackMuted(command.enabled == true)
+                case "playback_stats": voice.emitPlaybackTelemetry()
+                case "close": voice.stop(); exit(0)
+                default: continue
+                }
             }
-        case "capture": voice.setCapture(command.enabled == true)
-        case "playback_muted": voice.setPlaybackMuted(command.enabled == true)
-        case "close": voice.stop(); exit(0)
-        default: continue
+            voice.stop()
+        } catch {
+            let payload: [String: Any] = ["type": "error", "code": "voice_processing_unavailable"]
+            if let data = try? JSONSerialization.data(withJSONObject: payload) {
+                FileHandle.standardOutput.write(data)
+                FileHandle.standardOutput.write(Data([0x0A]))
+            }
+            exit(1)
         }
     }
-    voice.stop()
-} catch {
-    let payload: [String: Any] = ["type": "error", "code": "voice_processing_unavailable"]
-    if let data = try? JSONSerialization.data(withJSONObject: payload) {
-        FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.write(Data([0x0A]))
-    }
-    exit(1)
 }

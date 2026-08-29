@@ -4,7 +4,12 @@ const MAX_PCM_BYTES = 64 * 1024
 const MAX_LINE_BYTES = 100 * 1024
 const NATIVE_CLEAR_TIMEOUT_MS = 250
 
-export function startNativeAudio({ binary, spawnImpl = spawn, onEvent = () => {} }) {
+export function startNativeAudio({
+  binary,
+  spawnImpl = spawn,
+  onEvent = () => {},
+  now = () => performance.now(),
+}) {
   if (process.platform !== 'darwin') throw new Error('VoiceProcessingIO requires macOS')
   const child = spawnImpl(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] })
   let stdout = ''
@@ -14,6 +19,8 @@ export function startNativeAudio({ binary, spawnImpl = spawn, onEvent = () => {}
   let clearSequence = 0
   const pendingClears = new Map()
   const completedPlayback = new Map()
+  const generationMetrics = new Map()
+  const awaitingDrain = new Set()
   let resolveReady
   let rejectReady
   const readyPromise = new Promise((resolve, reject) => {
@@ -34,11 +41,54 @@ export function startNativeAudio({ binary, spawnImpl = spawn, onEvent = () => {}
     if (error) rejectReady(error)
     else resolveReady(value)
   }
-  const send = value => {
+  const metricsFor = (utteranceId, generationEpoch) => {
+    const key = `${utteranceId}:${generationEpoch}`
+    let metrics = generationMetrics.get(key)
+    if (!metrics) {
+      metrics = {
+        lastPlayAt: null,
+        frameGapMsMax: 0,
+        stdinBufferedBytesMax: 0,
+        stdinBackpressureCount: 0,
+        stdinDrainMsMax: 0,
+        drainStartedAt: null,
+      }
+      generationMetrics.set(key, metrics)
+      while (generationMetrics.size > 32) {
+        generationMetrics.delete(generationMetrics.keys().next().value)
+      }
+    }
+    return metrics
+  }
+  const send = (value, metrics = null) => {
     if (!child.stdin.writable || child.stdin.destroyed) return false
-    child.stdin.write(`${JSON.stringify(value)}\n`)
+    const accepted = child.stdin.write(`${JSON.stringify(value)}\n`)
+    if (metrics) {
+      metrics.stdinBufferedBytesMax = Math.max(
+        metrics.stdinBufferedBytesMax,
+        Number(child.stdin.writableLength) || 0,
+      )
+      if (accepted === false) {
+        metrics.stdinBackpressureCount += 1
+        if (metrics.drainStartedAt === null) metrics.drainStartedAt = now()
+        awaitingDrain.add(metrics)
+      }
+    }
     return true
   }
+  child.stdin.on('drain', () => {
+    const drainedAt = now()
+    for (const metrics of awaitingDrain) {
+      if (metrics.drainStartedAt !== null) {
+        metrics.stdinDrainMsMax = Math.max(
+          metrics.stdinDrainMsMax,
+          drainedAt - metrics.drainStartedAt,
+        )
+        metrics.drainStartedAt = null
+      }
+    }
+    awaitingDrain.clear()
+  })
   const settlePendingClear = (requestId, {
     renderedSamples = 0,
     includePlaybackEvidence = false,
@@ -117,6 +167,24 @@ export function startNativeAudio({ binary, spawnImpl = spawn, onEvent = () => {}
         playbackEvent.playedMs = Math.round(event.renderedSamples / 48)
       }
       onEvent(playbackEvent)
+    } else if (event.type === 'playback.telemetry') {
+      const native = readNativePlaybackTelemetry(event)
+      if (!native) return
+      const key = `${native.utteranceId}:${native.generationEpoch}`
+      const metrics = generationMetrics.get(key)
+      if (!metrics) return
+      onEvent({
+        type: 'playback.telemetry',
+        ...native,
+        frameGapMsMax: metrics.frameGapMsMax,
+        stdinBufferedBytesMax: metrics.stdinBufferedBytesMax,
+        stdinBackpressureCount: metrics.stdinBackpressureCount,
+        stdinDrainMsMax: Math.max(
+          metrics.stdinDrainMsMax,
+          metrics.drainStartedAt === null ? 0 : now() - metrics.drainStartedAt,
+        ),
+      })
+      if (native.final) generationMetrics.delete(key)
     }
   }
   child.stdout.on('data', chunk => {
@@ -152,13 +220,22 @@ export function startNativeAudio({ binary, spawnImpl = spawn, onEvent = () => {}
     play(pcm, utteranceId, generationEpoch) {
       const bytes = Buffer.from(pcm)
       if (!bytes.length || bytes.length > MAX_PCM_BYTES || bytes.length % 2) return false
+      const metrics = metricsFor(utteranceId, generationEpoch)
+      const playedAt = now()
+      if (metrics.lastPlayAt !== null) {
+        metrics.frameGapMsMax = Math.max(metrics.frameGapMsMax, playedAt - metrics.lastPlayAt)
+      }
+      metrics.lastPlayAt = playedAt
       completedPlayback.delete(`${utteranceId}:${generationEpoch}`)
       return send({
         type: 'play',
         audio: bytes.toString('base64'),
         utteranceId,
         generationEpoch,
-      })
+      }, metrics)
+    },
+    requestPlaybackStats() {
+      return send({ type: 'playback_stats' })
     },
     terminal(utteranceId, generationEpoch) {
       return send({ type: 'terminal', utteranceId, generationEpoch })
@@ -189,6 +266,8 @@ export function startNativeAudio({ binary, spawnImpl = spawn, onEvent = () => {}
     async close() {
       closing = true
       settlePendingClears()
+      awaitingDrain.clear()
+      generationMetrics.clear()
       if (!send({ type: 'close' })) child.kill('SIGTERM')
       let closeTimer
       await Promise.race([
@@ -203,6 +282,43 @@ export function startNativeAudio({ binary, spawnImpl = spawn, onEvent = () => {}
       clearTimeout(closeTimer)
     },
   }))
+}
+
+function readNativePlaybackTelemetry(event) {
+  const integer = (value, max = 4_294_967_295) => (
+    Number.isInteger(value) && value >= 0 && value <= max
+  )
+  if (
+    typeof event.utteranceId !== 'string'
+    || !event.utteranceId
+    || event.utteranceId.length > 256
+    || !Number.isInteger(event.generationEpoch)
+    || event.generationEpoch < 1
+    || typeof event.final !== 'boolean'
+    || !integer(event.windowMs, 86_400_000)
+    || !integer(event.queuedSamples, 16_777_216)
+    || !integer(event.queuedSamplesMax, 16_777_216)
+    || !integer(event.underrunSamples)
+    || !integer(event.underrunCallbacks)
+    || !integer(event.maxConsecutiveUnderrunSamples)
+    || !integer(event.renderCallbacks)
+    || !integer(event.maxCallbackUs, 60_000_000)
+    || !integer(event.pcmNearSilenceMsMax, 86_400_000)
+  ) return null
+  return {
+    utteranceId: event.utteranceId,
+    generationEpoch: event.generationEpoch,
+    final: event.final,
+    windowMs: event.windowMs,
+    queuedSamples: event.queuedSamples,
+    queuedSamplesMax: event.queuedSamplesMax,
+    underrunSamples: event.underrunSamples,
+    underrunCallbacks: event.underrunCallbacks,
+    maxConsecutiveUnderrunSamples: event.maxConsecutiveUnderrunSamples,
+    renderCallbacks: event.renderCallbacks,
+    maxCallbackUs: event.maxCallbackUs,
+    pcmNearSilenceMsMax: event.pcmNearSilenceMsMax,
+  }
 }
 
 export function createNativeAudioManager({

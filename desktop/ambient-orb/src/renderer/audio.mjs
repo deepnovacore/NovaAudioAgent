@@ -366,6 +366,30 @@ export class NativeLevelEnvelope {
   }
 }
 
+export function playbackTelemetryControl(event, rejectionMetrics = null) {
+  return {
+    type: 'playback.telemetry',
+    utterance_id: event.utteranceId,
+    generation_epoch: event.generationEpoch,
+    final: event.final,
+    window_ms: event.windowMs,
+    queued_samples: event.queuedSamples,
+    queued_samples_max: event.queuedSamplesMax,
+    underrun_samples: event.underrunSamples,
+    underrun_callbacks: event.underrunCallbacks,
+    max_consecutive_underrun_samples: event.maxConsecutiveUnderrunSamples,
+    render_callbacks: event.renderCallbacks,
+    max_callback_us: event.maxCallbackUs,
+    frame_gap_ms_max: event.frameGapMsMax,
+    pcm_near_silence_ms_max: event.pcmNearSilenceMsMax,
+    sequence_gaps: rejectionMetrics?.sequenceGaps ?? 0,
+    rejected_frames: rejectionMetrics?.rejectedFrames ?? 0,
+    stdin_buffered_bytes_max: event.stdinBufferedBytesMax,
+    stdin_backpressure_count: event.stdinBackpressureCount,
+    stdin_drain_ms_max: event.stdinDrainMsMax,
+  }
+}
+
 export class GenerationPlayback {
   constructor({ maxQueuedBytes = DEFAULT_MAX_QUEUED_BYTES, stopAll = () => {} } = {}) {
     this.maxQueuedBytes = maxQueuedBytes
@@ -380,13 +404,14 @@ export class GenerationPlayback {
     this.started = false
     this.playedMs = 0
     this.lastCompletion = null
+    this.telemetry = new Map()
   }
 
   accept(frame, backend = 'browser') {
-    if (!['browser', 'native'].includes(backend)) return false
-    if (!frame || frame.generationEpoch <= this.fencedEpoch) return false
+    if (!['browser', 'native'].includes(backend)) return this.#reject(frame, false)
+    if (!frame || frame.generationEpoch <= this.fencedEpoch) return this.#reject(frame, false)
     if (this.current === null) {
-      if (frame.sequence !== 0) return false
+      if (frame.sequence !== 0) return this.#reject(frame, true)
       this.current = {
         utteranceId: frame.utteranceId,
         generationEpoch: frame.generationEpoch,
@@ -397,18 +422,29 @@ export class GenerationPlayback {
       this.acknowledged = false
       this.started = false
       this.playedMs = 0
+      this.#metrics(frame)
     }
-    if (
-      frame.utteranceId !== this.current.utteranceId
-      || frame.generationEpoch !== this.current.generationEpoch
-      || frame.sequence !== this.current.nextSequence
-      || backend !== this.current.backend
-      || this.queuedBytes + frame.pcm.byteLength > this.maxQueuedBytes
-    ) return false
+    const sameGeneration = frame.utteranceId === this.current.utteranceId
+      && frame.generationEpoch === this.current.generationEpoch
+    if (!sameGeneration) return this.#reject(frame, false)
+    if (frame.sequence !== this.current.nextSequence) return this.#reject(frame, true)
+    if (backend !== this.current.backend) return this.#reject(frame, false)
+    if (this.queuedBytes + frame.pcm.byteLength > this.maxQueuedBytes) {
+      return this.#reject(frame, false)
+    }
     this.current.nextSequence += 1
     this.queue.push(frame)
     this.queuedBytes += frame.pcm.byteLength
     return true
+  }
+
+  telemetryFor(utteranceId, generationEpoch, { final = false } = {}) {
+    const key = `${utteranceId}:${generationEpoch}`
+    const metrics = this.telemetry.get(key)
+    if (!metrics) return null
+    const snapshot = {...metrics}
+    if (final) this.telemetry.delete(key)
+    return snapshot
   }
 
   dequeue() {
@@ -467,6 +503,27 @@ export class GenerationPlayback {
       && this.current.utteranceId === utteranceId
       && this.current.generationEpoch === generationEpoch,
     )
+  }
+
+  #metrics(frame) {
+    const key = `${frame.utteranceId}:${frame.generationEpoch}`
+    let metrics = this.telemetry.get(key)
+    if (!metrics) {
+      metrics = {rejectedFrames: 0, sequenceGaps: 0}
+      this.telemetry.set(key, metrics)
+      while (this.telemetry.size > 32) this.telemetry.delete(this.telemetry.keys().next().value)
+    }
+    return metrics
+  }
+
+  #reject(frame, sequenceGap) {
+    if (!frame || typeof frame.utteranceId !== 'string' || !Number.isInteger(frame.generationEpoch)) {
+      return false
+    }
+    const metrics = this.#metrics(frame)
+    metrics.rejectedFrames += 1
+    if (sequenceGap) metrics.sequenceGaps += 1
+    return false
   }
 
   #completion() {

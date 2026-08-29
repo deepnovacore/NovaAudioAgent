@@ -14,6 +14,7 @@ const {
   floatToPcm16,
   measurePcmLevel,
   observePcmOnset,
+  playbackTelemetryControl,
 } = audioModule
 
 // A full-scale square wave: the loudest signal PCM16 can carry, so its RMS is
@@ -69,6 +70,72 @@ test('fences locally and rejects stale or out-of-order PCM', () => {
   assert.equal(playback.accept(decodeAudioFrame(audioFrame({
     utterance: 'u-2', epoch: 2, sequence: 0,
   }))), true)
+})
+
+test('playback rejection telemetry counts sequence gaps and stays generation-scoped', () => {
+  const playback = new GenerationPlayback()
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame())), true)
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame({ sequence: 2 }))), false)
+  assert.deepEqual(playback.telemetryFor('u-1', 1), {
+    rejectedFrames: 1,
+    sequenceGaps: 1,
+  })
+
+  playback.clear('u-1', 1)
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame({
+    utterance: 'u-2', epoch: 2, sequence: 0,
+  }))), true)
+  assert.deepEqual(playback.telemetryFor('u-2', 2), {
+    rejectedFrames: 0,
+    sequenceGaps: 0,
+  })
+  assert.deepEqual(playback.telemetryFor('u-1', 1, {final: true}), {
+    rejectedFrames: 1,
+    sequenceGaps: 1,
+  })
+  assert.equal(playback.telemetryFor('u-1', 1), null, 'final snapshots retire old metrics')
+})
+
+test('native playback telemetry maps to the authenticated control frame without content', () => {
+  assert.deepEqual(playbackTelemetryControl({
+    type: 'playback.telemetry',
+    utteranceId: 'u-1',
+    generationEpoch: 2,
+    final: true,
+    windowMs: 850,
+    queuedSamples: 0,
+    queuedSamplesMax: 960,
+    underrunSamples: 480,
+    underrunCallbacks: 1,
+    maxConsecutiveUnderrunSamples: 240,
+    renderCallbacks: 10,
+    maxCallbackUs: 1200,
+    frameGapMsMax: 83.25,
+    pcmNearSilenceMsMax: 20,
+    stdinBufferedBytesMax: 4096,
+    stdinBackpressureCount: 1,
+    stdinDrainMsMax: 8.5,
+  }, {sequenceGaps: 1, rejectedFrames: 2}), {
+    type: 'playback.telemetry',
+    utterance_id: 'u-1',
+    generation_epoch: 2,
+    final: true,
+    window_ms: 850,
+    queued_samples: 0,
+    queued_samples_max: 960,
+    underrun_samples: 480,
+    underrun_callbacks: 1,
+    max_consecutive_underrun_samples: 240,
+    render_callbacks: 10,
+    max_callback_us: 1200,
+    frame_gap_ms_max: 83.25,
+    pcm_near_silence_ms_max: 20,
+    sequence_gaps: 1,
+    rejected_frames: 2,
+    stdin_buffered_bytes_max: 4096,
+    stdin_backpressure_count: 1,
+    stdin_drain_ms_max: 8.5,
+  })
 })
 
 test('acknowledges done only after provider terminal and local drain', () => {

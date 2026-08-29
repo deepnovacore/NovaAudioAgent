@@ -107,6 +107,7 @@ if (process.platform === 'darwin') {
   const buildDirectory = resolve(root, 'build')
   await mkdir(buildDirectory, { recursive: true })
   const native = spawnSync('/usr/bin/swiftc', [
+    resolve(root, 'native/playback_queue.swift'),
     resolve(root, 'native/macos_voice_io.swift'),
     '-O',
     '-target',

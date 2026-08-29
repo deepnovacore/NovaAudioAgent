@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { readFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import test from 'node:test'
 
 import * as nativeAudioModule from '../src/main/native-audio.mjs'
 
 const { startNativeAudio } = nativeAudioModule
 
-async function startReadyNativeAudio({ onCommand = () => {} } = {}) {
+async function startReadyNativeAudio({ onCommand = () => {}, now } = {}) {
   const child = new EventEmitter()
   child.stdin = new PassThrough()
   child.stdout = new PassThrough()
@@ -30,6 +33,7 @@ async function startReadyNativeAudio({ onCommand = () => {} } = {}) {
       return child
     },
     onEvent: event => events.push(event),
+    ...(now === undefined ? {} : {now}),
   })
   return { audio, child, commands, events }
 }
@@ -73,17 +77,201 @@ test('macOS helper is pinned to Apple VoiceProcessingIO system AEC', async () =>
   assert.doesNotMatch(source, /BypassVoiceProcessing|bypassVoiceProcessing/)
 })
 
-test('macOS helper mute writes silence while preserving playback progress and receipts', async () => {
+test('macOS helper tracks playback underruns and callback latency for telemetry', async () => {
   const source = await readFile(new URL('../native/macos_voice_io.swift', import.meta.url), 'utf8')
+  assert.match(source, /underrunSamples/)
+  assert.match(source, /maxCallbackUs/)
+  assert.match(source, /playback\.telemetry/)
+  assert.match(source, /playback_stats/)
+})
+
+test('macOS playback queue counts only active underruns and isolates final generation metrics', {
+  skip: process.platform !== 'darwin',
+}, async () => {
+  const temporary = await mkdtemp(resolve(tmpdir(), 'nova-playback-telemetry-'))
+  try {
+    const main = resolve(temporary, 'main.swift')
+    const executable = resolve(temporary, 'playback-telemetry-test')
+    await copyFile(
+      new URL('./fixtures/playback_queue_telemetry.swift', import.meta.url),
+      main,
+    )
+    const compiled = spawnSync('/usr/bin/swiftc', [
+      resolve(import.meta.dirname, '../native/playback_queue.swift'),
+      main,
+      '-o',
+      executable,
+    ], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CLANG_MODULE_CACHE_PATH: resolve(temporary, 'clang-cache'),
+        SWIFT_MODULECACHE_PATH: resolve(temporary, 'swift-cache'),
+      },
+    })
+    assert.equal(compiled.status, 0, compiled.stderr)
+    const result = spawnSync(executable, [], {encoding: 'utf8'})
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout.trim(), 'playback telemetry behavior passed')
+  } finally {
+    await rm(temporary, {recursive: true, force: true})
+  }
+})
+
+test('native audio forwards generation-scoped periodic and final playback telemetry', async () => {
+  let currentTime = 100
+  const { audio, child, events } = await startReadyNativeAudio({
+    now: () => currentTime,
+    onCommand: (command, emitter) => {
+      if (command.type !== 'playback_stats') return
+      emitter.stdout.write(`${JSON.stringify({
+        type: 'playback.telemetry',
+        utteranceId: 'u-1',
+        generationEpoch: 1,
+        final: false,
+        windowMs: 800,
+        queuedSamples: 960,
+        queuedSamplesMax: 1440,
+        underrunSamples: 480,
+        underrunCallbacks: 1,
+        maxConsecutiveUnderrunSamples: 240,
+        renderCallbacks: 10,
+        maxCallbackUs: 1200,
+        pcmNearSilenceMsMax: 20,
+      })}\n`)
+    },
+  })
+  audio.play(new Uint8Array([0, 0, 1, 0]), 'u-1', 1)
+  currentTime = 125
+  audio.play(new Uint8Array([0, 0, 2, 0]), 'u-1', 1)
+  audio.requestPlaybackStats()
+  await new Promise(resolve => setImmediate(resolve))
+  const telemetry = events.find(event => event.type === 'playback.telemetry')
+  assert.deepEqual(telemetry, {
+    type: 'playback.telemetry',
+    utteranceId: 'u-1',
+    generationEpoch: 1,
+    final: false,
+    windowMs: 800,
+    queuedSamples: 960,
+    queuedSamplesMax: 1440,
+    underrunSamples: 480,
+    underrunCallbacks: 1,
+    maxConsecutiveUnderrunSamples: 240,
+    renderCallbacks: 10,
+    maxCallbackUs: 1200,
+    frameGapMsMax: 25,
+    pcmNearSilenceMsMax: 20,
+    stdinBufferedBytesMax: 0,
+    stdinBackpressureCount: 0,
+    stdinDrainMsMax: 0,
+  })
+
+  currentTime = 200
+  audio.play(new Uint8Array([0, 0]), 'u-2', 2)
+  child.stdout.write(`${JSON.stringify({
+    type: 'playback.telemetry',
+    utteranceId: 'u-2', generationEpoch: 2, final: true, windowMs: 4,
+    queuedSamples: 0, queuedSamplesMax: 2, underrunSamples: 0,
+    underrunCallbacks: 0, maxConsecutiveUnderrunSamples: 0,
+    renderCallbacks: 1, maxCallbackUs: 50, pcmNearSilenceMsMax: 1,
+  })}\n`)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(events.at(-1), {
+    type: 'playback.telemetry',
+    utteranceId: 'u-2',
+    generationEpoch: 2,
+    final: true,
+    windowMs: 4,
+    queuedSamples: 0,
+    queuedSamplesMax: 2,
+    underrunSamples: 0,
+    underrunCallbacks: 0,
+    maxConsecutiveUnderrunSamples: 0,
+    renderCallbacks: 1,
+    maxCallbackUs: 50,
+    frameGapMsMax: 0,
+    pcmNearSilenceMsMax: 1,
+    stdinBufferedBytesMax: 0,
+    stdinBackpressureCount: 0,
+    stdinDrainMsMax: 0,
+  })
+  child.stdout.destroy()
+})
+
+test('native audio attributes stdin backpressure and drain latency to one generation', async () => {
+  let currentTime = 50
+  const child = new EventEmitter()
+  const commands = []
+  child.stdin = Object.assign(new EventEmitter(), {
+    writable: true,
+    destroyed: false,
+    writableLength: 4096,
+    write(raw) {
+      commands.push(JSON.parse(raw.trim()))
+      return false
+    },
+  })
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.kill = () => {}
+  const events = []
+  const audio = await startNativeAudio({
+    binary: '/tmp/macos-voice-io',
+    spawnImpl: () => {
+      queueMicrotask(() => child.stdout.write(
+        '{"type":"ready","aecMode":"voice_processing_io","systemAEC":true}\n',
+      ))
+      return child
+    },
+    onEvent: event => events.push(event),
+    now: () => currentTime,
+  })
+
+  assert.equal(audio.play(new Uint8Array([0, 0]), 'u-backpressure', 3), true)
+  currentTime = 63.5
+  child.stdin.writableLength = 0
+  child.stdin.emit('drain')
+  child.stdout.write(`${JSON.stringify({
+    type: 'playback.telemetry',
+    utteranceId: 'u-backpressure', generationEpoch: 3, final: true, windowMs: 20,
+    queuedSamples: 0, queuedSamplesMax: 2, underrunSamples: 0,
+    underrunCallbacks: 0, maxConsecutiveUnderrunSamples: 0,
+    renderCallbacks: 1, maxCallbackUs: 20, pcmNearSilenceMsMax: 1,
+  })}\n`)
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(commands.length, 1)
+  assert.equal(events.at(-1).stdinBufferedBytesMax, 4096)
+  assert.equal(events.at(-1).stdinBackpressureCount, 1)
+  assert.equal(events.at(-1).stdinDrainMsMax, 13.5)
+
+  currentTime = 100
+  child.stdin.writableLength = 2048
+  assert.equal(audio.play(new Uint8Array([0, 0]), 'u-pending-drain', 4), true)
+  currentTime = 121
+  child.stdout.write(`${JSON.stringify({
+    type: 'playback.telemetry',
+    utteranceId: 'u-pending-drain', generationEpoch: 4, final: true, windowMs: 20,
+    queuedSamples: 0, queuedSamplesMax: 2, underrunSamples: 0,
+    underrunCallbacks: 0, maxConsecutiveUnderrunSamples: 0,
+    renderCallbacks: 1, maxCallbackUs: 20, pcmNearSilenceMsMax: 1,
+  })}\n`)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(events.at(-1).stdinDrainMsMax, 21, 'an in-flight drain is visible in a final snapshot')
+})
+
+test('macOS helper mute writes silence while preserving playback progress and receipts', async () => {
+  const source = await readFile(new URL('../native/playback_queue.swift', import.meta.url), 'utf8')
   const renderStart = source.indexOf('func render(into output:')
-  const renderEnd = source.indexOf('\n}\n\nprivate final class VoiceIO', renderStart)
+  const renderEnd = source.length
   const render = source.slice(renderStart, renderEnd)
 
   assert.match(render, /output\.baseAddress\?\.initialize\(repeating: 0, count: output\.count\)/)
   assert.match(render, /if !muted \{[\s\S]*?output\.baseAddress\?\.advanced\(by: offset\)\.update/)
-  assert.match(render, /signals\.append\(\("playback\.started", identity, 0\)\)/)
+  assert.match(render, /signals\.append\(\.started\(identity\)\)/)
   assert.match(render, /offset \+= amount[\s\S]*?renderedSamples\[identity, default: 0\] \+= amount/)
-  assert.match(render, /signals\.append\(\("playback\.done", identity, rendered\)\)/)
+  assert.match(render, /signals\.append\(\.done\(/)
 })
 
 test('uses VoiceProcessingIO readiness and preserves Nova Audio Agent generation identity', {
