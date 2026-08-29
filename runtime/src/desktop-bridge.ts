@@ -32,7 +32,7 @@ import {
   type PublicProjectView,
 } from './desktop-wire.js'
 import type { Clock } from './clock.js'
-import type { DesktopControl } from './desktop.js'
+import {playbackTelemetrySchema, type DesktopControl} from './desktop.js'
 import type { PlaybackFrame } from './playback.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
@@ -57,6 +57,8 @@ export interface DesktopCommand {
     | 'memory_board_request'
     | 'workspace_graph_board_request'
     | 'project_confirmation_decision'
+    | 'playback_telemetry'
+    | 'playback_telemetry_rejected'
     | 'clock_pong'
   readonly payload: Readonly<Record<string, string | number | boolean>>
 }
@@ -144,6 +146,7 @@ export class DesktopSocketBridge {
   #uplinkFlushedAt: number
   readonly #pingSent = new Map<string, number>()
   #firstFrameSeen: string | null = null
+  #playbackTelemetryRejected = 0
 
   constructor(options: DesktopBridgeOptions) {
     // 128 bits of hex, exactly. A shorter token is a weaker one, and a longer one means the caller is
@@ -340,10 +343,21 @@ export class DesktopSocketBridge {
       this.#telemetry !== undefined
       && command.kind !== 'memory_board_request'
       && command.kind !== 'workspace_graph_board_request'
+      && command.kind !== 'playback_telemetry'
+      && command.kind !== 'playback_telemetry_rejected'
     ) {
       this.#telemetry.record('renderer.ack', {kind: command.kind, ...command.payload})
     }
     switch (command.kind) {
+      case 'playback_telemetry_rejected':
+        this.#playbackTelemetryRejected += 1
+        this.#telemetry?.record('playback.telemetry_rejected', {
+          count: this.#playbackTelemetryRejected,
+        })
+        return
+      case 'playback_telemetry':
+        this.#telemetry?.record('playback.native', command.payload)
+        return
       case 'clock_pong':
         this.#recordSyncSample(
           String(command.payload.ping_id),
@@ -641,11 +655,64 @@ export function parseClientMessage(
   if (new TextEncoder().encode(raw).length > MAX_DESKTOP_JSON_BYTES) {
     throw new DesktopProtocolError('desktop control frame is too large')
   }
+  let preliminary: unknown
+  try {
+    preliminary = JSON.parse(raw) as unknown
+  } catch {
+    throw new DesktopProtocolError('desktop control frame is invalid JSON')
+  }
+  if (
+    options.authenticated
+    && isPlainObject(preliminary)
+    && preliminary.type === 'playback.telemetry'
+  ) {
+    try {
+      const telemetryValue = parseJsonWithIntegerFields(raw, [
+        'generation_epoch',
+        'window_ms',
+        'queued_samples',
+        'queued_samples_max',
+        'underrun_samples',
+        'underrun_callbacks',
+        'max_consecutive_underrun_samples',
+        'render_callbacks',
+        'max_callback_us',
+        'pcm_near_silence_ms_max',
+        'sequence_gaps',
+        'rejected_frames',
+        'stdin_buffered_bytes_max',
+        'stdin_backpressure_count',
+      ], () => new DesktopProtocolError('desktop playback telemetry is invalid'))
+      const result = playbackTelemetrySchema.safeParse(telemetryValue)
+      if (!result.success) return {kind: 'playback_telemetry_rejected', payload: {}}
+      const {type, ...payload} = result.data
+      void type
+      return {kind: 'playback_telemetry', payload}
+    } catch {
+      return {kind: 'playback_telemetry_rejected', payload: {}}
+    }
+  }
   let value: unknown
   try {
     // Only the fields the oracle type-checks as `int`. `t_render_ms` is deliberately absent: it accepts
     // an int or a float there and coerces with `float()`, so both spellings are legal input.
-    value = parseJsonWithIntegerFields(raw, ['generation_epoch', 'played_ms'], field =>
+    value = parseJsonWithIntegerFields(raw, [
+      'generation_epoch',
+      'played_ms',
+      'window_ms',
+      'queued_samples',
+      'queued_samples_max',
+      'underrun_samples',
+      'underrun_callbacks',
+      'max_consecutive_underrun_samples',
+      'render_callbacks',
+      'max_callback_us',
+      'pcm_near_silence_ms_max',
+      'sequence_gaps',
+      'rejected_frames',
+      'stdin_buffered_bytes_max',
+      'stdin_backpressure_count',
+    ], field =>
       new DesktopProtocolError(
         field === 'generation_epoch'
           ? 'desktop playback generation is invalid'
@@ -797,6 +864,13 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
         kind: 'clock_pong',
         payload: {ping_id: control.ping_id, t_render_ms: control.t_render_ms},
       }
+    case 'playback.telemetry': {
+      const {type, ...payload} = control
+      void type
+      return {kind: 'playback_telemetry', payload}
+    }
+    case 'playback.telemetry_rejected':
+      return {kind: 'playback_telemetry_rejected', payload: {}}
   }
 }
 

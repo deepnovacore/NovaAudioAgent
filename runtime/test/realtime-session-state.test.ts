@@ -11,6 +11,8 @@ import {
   MAX_TRACKED_PROVIDER_TURNS,
   MAX_TRACKED_USER_TRANSCRIPTS,
   RealtimeSessionState,
+  activeExecutorContextData,
+  activeExecutorContextRecords,
   truncateCaption,
   type PendingResponse,
 } from '../src/realtime/session-state.js'
@@ -218,6 +220,47 @@ test('only running delegates are visible, and the snapshot version advances', ()
   assert.ok(snapshot.version > before)
   assert.equal(state.delegateState('d-2'), 'completed')
   assert.equal(state.delegateState('missing'), undefined)
+})
+
+test('active executor context buckets volatile heartbeat counters into one canonical record', () => {
+  const first = activeExecutorContextRecords([['d-1', {
+    summary: '跑测试', state: 'running', channel: 'codex', progress_summary: '编译中',
+    internal_activity: 9, elapsed: 16,
+  }]])
+  const sameWindow = activeExecutorContextRecords([['d-1', {
+    summary: '跑测试', state: 'running', channel: 'codex', progress_summary: '编译中',
+    internal_activity: 15, elapsed: 29.9,
+  }]])
+  const nextWindow = activeExecutorContextRecords([['d-1', {
+    summary: '跑测试', state: 'running', channel: 'codex', progress_summary: '编译中',
+    internal_activity: 16, elapsed: 30,
+  }]])
+
+  assert.deepEqual(first, sameWindow)
+  assert.equal(first[0]?.host_state.elapsed_s, 15)
+  assert.equal(first[0]?.host_state.internal_activity, 8)
+  assert.notDeepEqual(first, nextWindow)
+})
+
+test('active executor dedup data contains exactly the bounded provider-visible records', () => {
+  const delegates = Array.from({length: 4}, (_unused, index) => [
+    `d-${index}`,
+    {
+      summary: `任务 ${index}`,
+      state: 'running' as const,
+      channel: 'codex',
+      progress_summary: `进度 ${index}`,
+      internal_activity: 0,
+      elapsed: 0,
+    },
+  ] as const)
+  const changedOmitted = delegates.map((entry, index) => index === 3
+    ? [entry[0], {...entry[1], progress_summary: '不可见的新进度'}] as const
+    : entry)
+
+  assert.deepEqual(activeExecutorContextData(delegates), activeExecutorContextData(changedOmitted))
+  assert.equal(activeExecutorContextData(delegates).delegates.length, 3)
+  assert.equal(activeExecutorContextData(delegates).omitted_count, 1)
 })
 
 test('a delegate needs both an id and a summary', () => {

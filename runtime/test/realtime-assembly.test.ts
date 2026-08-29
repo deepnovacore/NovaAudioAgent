@@ -1232,6 +1232,81 @@ test('active project views replace one provider context without publishing histo
     provider.workspaceContextStep = null
     await publishAtomicContext()
     assert.equal(provider.currentWorkspaceItem?.content, epochTwo[0]?.content)
+
+    const beforeProgress: number = provider.workspaceItems.length
+    realtime.session.registerDelegate('delegate-progress', {
+      summary: '实现计时器',
+      state: 'running',
+      channel: 'codex',
+      progress_summary: '正在写计时逻辑',
+      internal_activity: 3,
+      elapsed: 12.5,
+    })
+    await realtime.enqueueActiveWorkContextPublication()
+    assert.equal(provider.workspaceItems.length, beforeProgress + 1)
+    assert.match(provider.currentWorkspaceItem?.content ?? '', /<active_executor_context>/u)
+    assert.match(provider.currentWorkspaceItem?.content ?? '', /正在写计时逻辑/u)
+
+    await realtime.enqueueActiveWorkContextPublication()
+    assert.equal(provider.workspaceItems.length, beforeProgress + 1,
+      'an identical active executor record must not republish provider context')
+
+    realtime.session.registerDelegate('delegate-progress', {
+      summary: '实现计时器',
+      state: 'running',
+      channel: 'codex',
+      progress_summary: '正在运行测试',
+      internal_activity: 4,
+      elapsed: 18,
+    })
+    await realtime.enqueueActiveWorkContextPublication()
+    assert.equal(provider.workspaceItems.length, beforeProgress + 2)
+    assert.match(provider.currentWorkspaceItem?.content ?? '', /正在运行测试/u)
+    assert.equal(provider.currentWorkspaceItem?.content.includes('正在写计时逻辑'), false)
+
+    realtime.session.registerDelegate('delegate-progress', {
+      summary: '实现计时器',
+      state: 'completed',
+    })
+    await realtime.enqueueActiveWorkContextPublication()
+    assert.equal(provider.workspaceItems.length, beforeProgress + 3)
+    assert.equal(provider.currentWorkspaceItem?.content.includes('<active_executor_context>'), false,
+      'terminal delegates must be removed from the active provider block')
+  } finally {
+    await realtime.stop()
+  }
+})
+
+test('active executor context is published even when no project workspace is committed', async () => {
+  const core = realCore()
+  const provider = new WorkspaceContextProvider()
+  const realtime = buildRealtimeAssembly({core, provider, onDiagnostic: () => undefined})
+  await realtime.start()
+  try {
+    assert.equal(provider.workspaceItems.length, 0)
+    realtime.session.registerDelegate('standalone-watch', {
+      summary: '观察桌面状态',
+      state: 'running',
+      channel: 'watch',
+      progress_summary: '正在等待画面变化',
+      internal_activity: 1,
+      elapsed: 4,
+    })
+
+    await realtime.enqueueActiveWorkContextPublication()
+
+    assert.equal(provider.workspaceItems.length, 1)
+    assert.match(provider.currentWorkspaceItem?.content ?? '', /<active_executor_context>/u)
+    assert.match(provider.currentWorkspaceItem?.content ?? '', /正在等待画面变化/u)
+    assert.equal(provider.currentWorkspaceItem?.workspace_instance_id, 'active-executor-context')
+
+    realtime.session.registerDelegate('standalone-watch', {
+      summary: '观察桌面状态', state: 'completed',
+    })
+    await realtime.enqueueActiveWorkContextPublication()
+    assert.equal(provider.workspaceItems.length, 2)
+    assert.equal(provider.currentWorkspaceItem?.content.includes('<active_executor_context>'), false)
+    assert.match(provider.currentWorkspaceItem?.content ?? '', /active_executor=false/u)
   } finally {
     await realtime.stop()
   }

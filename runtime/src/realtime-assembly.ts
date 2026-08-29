@@ -28,7 +28,7 @@ import type { CodexState, GuardHistoryRecovery } from './realtime/service-state.
 import { RealtimeSession } from './realtime/session.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
-import {renderActiveProjectContext} from './realtime/qwen.js'
+import {renderActiveExecutorContext, renderActiveProjectContext} from './realtime/qwen.js'
 import type {
   OpenWorkspaceInput,
   TaskCompletionInput,
@@ -142,6 +142,7 @@ export class RealtimeAssembly {
   #latestProjectView: ProjectConfirmationView | null = null
   #projectContextRevision = 0
   #lastProjectContextKey: string | null = null
+  #lastProjectContextScopeId: string | null = null
   #projectContextOwnershipUncertain = false
   #providerConnectionObserved = false
   #projectContextTail: Promise<void> = Promise.resolve()
@@ -277,6 +278,11 @@ export class RealtimeAssembly {
       },
     )
     return operation
+  }
+
+  /** Refresh provider workspace context when in-flight delegate progress changes. */
+  enqueueActiveWorkContextPublication(): Promise<void> {
+    return this.#enqueueProjectContextPublication()
   }
 
   async #startFresh(): Promise<void> {
@@ -600,9 +606,13 @@ export class RealtimeAssembly {
     workspaceInstanceId: string | null,
     requireDelivery: boolean,
   ): Promise<void> {
+    const activeExecutorContext = renderActiveExecutorContext(
+      this.session.snapshot().active_delegates,
+    )
     if (
       view === null
-      || hostWorkspaceId === null
+      && activeExecutorContext === null
+      && this.#lastProjectContextScopeId === null
     ) return
     if (this.provider.injectWorkspaceContext === undefined) {
       if (requireDelivery) throw new AssemblyError('active project context delivery is unavailable')
@@ -613,6 +623,7 @@ export class RealtimeAssembly {
       if (requireDelivery) throw new AssemblyError('active project context provider is disconnected')
       return
     }
+    const contextScopeId = hostWorkspaceId ?? 'active-executor-context'
     let graphHeader: string | null = null
     if (
       this.#workspaceGraphOpen
@@ -631,14 +642,20 @@ export class RealtimeAssembly {
       }
     }
     const content = [
-      renderActiveProjectContext(view),
+      view === null ? null : renderActiveProjectContext(view),
+      activeExecutorContext,
       graphHeader === null
         ? null
         : `<workspace_graph_context>\n${graphHeader}\n</workspace_graph_context>`,
-    ].filter((part): part is string => part !== null).join('\n')
+    ].filter((part): part is string => part !== null).join('\n') || [
+      '<runtime_context>',
+      'active_project=false',
+      'active_executor=false',
+      '</runtime_context>',
+    ].join('\n')
     const contextKey = canonicalJson({
       session_epoch: identity.epoch,
-      workspace_instance_id: hostWorkspaceId,
+      workspace_instance_id: contextScopeId,
       content,
     })
     if (!this.#projectContextOwnershipUncertain && contextKey === this.#lastProjectContextKey) return
@@ -651,7 +668,7 @@ export class RealtimeAssembly {
         content,
         call_id: null,
         session_epoch: identity.epoch,
-        workspace_instance_id: hostWorkspaceId,
+        workspace_instance_id: contextScopeId,
         revision: this.#projectContextRevision,
       })
     } catch (error) {
@@ -660,6 +677,7 @@ export class RealtimeAssembly {
       throw error
     }
     this.#lastProjectContextKey = contextKey
+    this.#lastProjectContextScopeId = contextScopeId
     this.#projectContextOwnershipUncertain = false
   }
 
@@ -790,6 +808,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     tools: core.tools,
     idFactory,
   })
+  const assemblyHolder: {current: RealtimeAssembly | null} = {current: null}
   const service = new RealtimeService({
     provider: providerSession,
     runtime: core.runtime,
@@ -802,6 +821,11 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       options.onAudioTerminal?.(generation.utterance_id, generation.generation_epoch)
     },
     ...(options.onCodexState === undefined ? {} : {onCodexState: options.onCodexState}),
+    onActiveWorkChanged: () => {
+      void assemblyHolder.current?.enqueueActiveWorkContextPublication().catch(() => {
+        onDiagnostic('[realtime-diagnostic] active_executor_context_delivery_failed')
+      })
+    },
     ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
     ...(options.telemetry === undefined ? {} : {telemetry: options.telemetry}),
     ...(options.controlledGuardReconnect === undefined
@@ -831,7 +855,7 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
       service.onSuggestionSelected(suggestion, reason)
     },
   )
-  return new RealtimeAssembly({
+  return assignAssembly(new RealtimeAssembly({
     core,
     provider,
     providerSession,
@@ -847,7 +871,15 @@ export function buildRealtimeAssembly(options: RealtimeAssemblyOptions): Realtim
     ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     ...(options.codexResource === undefined ? {} : {codexResource: options.codexResource}),
     ...(options.workspaceGraph === undefined ? {} : {workspaceGraph: options.workspaceGraph}),
-  })
+  }), assemblyHolder)
+}
+
+function assignAssembly(
+  assembly: RealtimeAssembly,
+  holder: {current: RealtimeAssembly | null},
+): RealtimeAssembly {
+  holder.current = assembly
+  return assembly
 }
 
 function asProjectAdapter(adapter: unknown): ProjectCodexAdapter {

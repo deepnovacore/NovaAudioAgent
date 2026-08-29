@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "contexts": {
+    "active": "<active_project_context>\nworkspace=\"Qwen 路由验证\"\nsession=\"进度测试\"\n</active_project_context>\n<active_executor_context>\ndelegate={\"delegate_id\":\"routing-smoke\",\"host_state\":{\"channel\":\"codex\",\"elapsed_s\":15,\"internal_activity\":0,\"state\":\"running\"},\"progress_summary\":{\"executable\":false,\"text\":\"正在运行定向测试\"}}\n</active_executor_context>",
+    "project_only": "<active_project_context>\nworkspace=\"Qwen 路由验证\"\nsession=\"进度测试\"\n</active_project_context>"
+  },
+  "cases": [
+    {
+      "id": "ordinary_progress",
+      "utterance": "现在做到哪了？",
+      "context": "active",
+      "memory_evidence": true,
+      "min_recall_calls": 0,
+      "max_recall_calls": 0,
+      "min_status_calls": 0,
+      "max_status_calls": 0
+    },
+    {
+      "id": "explicit_liveness",
+      "utterance": "Codex 进程还活着吗？",
+      "context": "active",
+      "memory_evidence": true,
+      "min_recall_calls": 0,
+      "max_recall_calls": 0,
+      "min_status_calls": 1,
+      "max_status_calls": 1
+    },
+    {
+      "id": "memory_progress",
+      "utterance": "这个任务进展怎么样？",
+      "context": "project_only",
+      "memory_evidence": true,
+      "min_recall_calls": 1,
+      "max_recall_calls": 1,
+      "min_status_calls": 0,
+      "max_status_calls": 0
+    },
+    {
+      "id": "no_progress_evidence",
+      "utterance": "这个任务现在做到哪了？",
+      "context": "project_only",
+      "memory_evidence": false,
+      "min_recall_calls": 1,
+      "max_recall_calls": 1,
+      "min_status_calls": 1,
+      "max_status_calls": 1
+    }
+  ],
+  "forbidden_transcript_terms": [
+    "我来检查",
+    "我来查一下",
+    "process",
+    "protocol",
+    "preflight",
+    "prewarm"
+  ],
+  "max_transcript_codepoints": 160
+}

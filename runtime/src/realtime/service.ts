@@ -24,6 +24,7 @@
  */
 
 import {createHash, randomUUID} from 'node:crypto'
+import {canonicalJson} from '../canonical-json.js'
 import type { Clock } from '../clock.js'
 import { validProgressSummary, type EventRecord, type JsonValue } from '../events.js'
 import { parseMemoryRef, USER_PRIORITY, type MemoryItem } from '../memory.js'
@@ -49,6 +50,7 @@ import { RealtimeDeliveryError, type RealtimeSession } from './session.js'
 import {
   MAX_CONTINUATION_TASK_SUMMARY,
   MAX_PENDING_HOST_EVENTS,
+  activeExecutorContextData,
   type CaptionFrame,
 } from './session-state.js'
 import {codePointLengthLikePython, stripLikePython} from '../python-text.js'
@@ -95,6 +97,7 @@ import { SPEECH_FINAL_LIMIT, prepareForSpeech } from './speech-prep.js'
 import type { RealtimeTelemetry } from './telemetry.js'
 
 const PROJECT_CONFIRMATION_TOOL = 'codex__confirm_project_action'
+const PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S = 3
 
 interface BoundToolOrigin {
   readonly observedProviderResponseId: string | null
@@ -235,6 +238,8 @@ export interface RealtimeServiceOptions {
   readonly idFactory?: () => string
   readonly onProviderTerminal?: (generation: PlaybackGeneration) => void
   readonly onCodexState?: (state: CodexState) => void
+  /** Fired when active delegate progress changes so provider context can refresh. */
+  readonly onActiveWorkChanged?: () => void
   readonly onCaption?: (frame: CaptionFrame) => void
   readonly telemetry?: RealtimeTelemetry
   readonly controlledGuardReconnect?: boolean
@@ -279,6 +284,7 @@ export class RealtimeService {
   readonly #idFactory: () => string
   readonly #onProviderTerminal: (generation: PlaybackGeneration) => void
   readonly #onCodexState: (state: CodexState) => void
+  readonly #onActiveWorkChanged: () => void
   readonly #onCaption: ((frame: CaptionFrame) => void) | undefined
   readonly #telemetry: RealtimeTelemetry | undefined
   readonly #onDiagnostic: (line: string) => void
@@ -335,6 +341,8 @@ export class RealtimeService {
   #connected = false
   #providerFailed = false
   #codexState: CodexState = 'idle'
+  /** Compact fingerprint of delegate progress for context refresh. */
+  #activeWorkFingerprint = canonicalJson(activeExecutorContextData([]))
 
   /** Insertion-ordered, oldest evicted: a retry already attempted must not be attempted again. */
   readonly #uncertainDeliveryRetries = new Map<string, null>()
@@ -380,6 +388,13 @@ export class RealtimeService {
   readonly #projectConfirmationResponses = new Set<string>()
   /** Settled UI decisions still quarantine their exact old response until its terminal arrives. */
   readonly #projectConfirmationQuarantinedResponses = new Set<string>()
+  /** Bounded carrier cancel/watchdog work, observed so it cannot outlive service shutdown silently. */
+  readonly #projectConfirmationCarrierReleaseTasks = new Set<Promise<void>>()
+  /** Carrier recovery waits here while a newer user turn is still being transcribed. */
+  readonly #projectConfirmationCarrierReconnectAfterUser = new Map<
+    string,
+    {readonly sessionEpoch: number; readonly responseId: string; readonly reason: string}
+  >()
   /** Epoch whose requested confirmation retry has not revealed its response id yet. */
   #projectConfirmationPendingQuarantineEpoch: number | null = null
   readonly #projectConfirmationClosingCalls = new Set<string>()
@@ -433,6 +448,7 @@ export class RealtimeService {
     this.#idFactory = options.idFactory ?? (() => `host_${randomHex()}`)
     this.#onProviderTerminal = options.onProviderTerminal ?? noop
     this.#onCodexState = options.onCodexState ?? noop
+    this.#onActiveWorkChanged = options.onActiveWorkChanged ?? noop
     this.#onCaption = options.onCaption
     this.#telemetry = options.telemetry
     this.#onDiagnostic = options.onDiagnostic ?? ((line: string): void => {
@@ -556,9 +572,12 @@ export class RealtimeService {
     if (closeAbandoned) {
       this.#onDiagnostic('[realtime-diagnostic] shutdown_provider_close_abandoned')
     }
-    const tasks = draining === null
-      ? [...this.#tasks, ...this.#providerRetirementTasks]
-      : [...this.#tasks, draining, ...this.#providerRetirementTasks]
+    const backgroundTasks = [
+      ...this.#tasks,
+      ...this.#providerRetirementTasks,
+      ...this.#projectConfirmationCarrierReleaseTasks,
+    ]
+    const tasks = draining === null ? backgroundTasks : [...backgroundTasks, draining]
     this.#tasks = []
     // Bounded. A promise cannot be cancelled from outside the way an asyncio task can, so a loop that
     // ignores the abort would make `close` wait forever -- and a service that never finishes closing
@@ -626,23 +645,10 @@ export class RealtimeService {
       this.#projectConfirmationPendingQuarantineEpoch = this.session.sessionEpoch
     }
     for (const item of items) this.#beginProjectConfirmationClose(item.sessionEpoch, item.id)
-    for (const response of this.#projectConfirmationResponses) {
-      const parsed = parseCallKey(response)
-      if (parsed.sessionEpoch === this.session.sessionEpoch) {
-        this.#projectConfirmationQuarantinedResponses.add(response)
-        this.session.suppressResponse(parsed.id)
-      }
+    if (reconnectOutstandingRetry) {
+      this.#projectConfirmationPendingQuarantineEpoch = this.session.sessionEpoch
     }
-    this.session.armPendingResponseFence()
-    if (this.#projectConfirmationResponses.size > 0 || reconnectOutstandingRetry) {
-      try {
-        await this.session.quarantineActiveOrAwaitingResponse()
-      } catch (failure) {
-        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
-          ? failure
-          : new RealtimeDeliveryError(String(failure)))
-      }
-    }
+    await this.#quarantineProjectConfirmationResponses(this.session.sessionEpoch)
 
     let state = outcome.kind === 'confirmed' ? 'accepted' : 'refused'
     let text = outcome.response_text
@@ -2219,8 +2225,9 @@ export class RealtimeService {
    * origin *and* a semantic acknowledgement *and* a continuation -- so a switch that ran one arm per
    * event would have to duplicate the shared tail.
    *
-   * Two events never reach the session at all. A cancel rejection is Guard's to arbitrate, and a
-   * provider error is about the transport rather than the conversation.
+   * Two events never reach the session at all. A cancel rejection is routed by response ownership:
+   * confirmation carriers recover their provider epoch, while every other rejection is Guard's to
+   * arbitrate. A provider error is about the transport rather than the conversation.
    *
    * The tail is the part worth reading twice: after everything an event implies has been recorded,
    * continuations are driven (only if the session accepted it -- a rejected event changed nothing to
@@ -2229,6 +2236,16 @@ export class RealtimeService {
    */
   async handleEvent(event: RealtimeProviderEvent): Promise<void> {
     if (event.kind === 'response_cancel_rejected') {
+      if (this.#projectConfirmationQuarantinedResponses.has(
+        callKey(event.session_epoch, event.response_id),
+      )) {
+        await this.#recoverProjectConfirmationCarrier(
+          event.session_epoch,
+          event.response_id,
+          'cancel_rejected',
+        )
+        return
+      }
       // The provider kept speaking through a preemption. Guard's to arbitrate, and it does not reach
       // the session at all: this is about the transport, not the conversation.
       await this.#handleGuardCancelRejected(event)
@@ -2543,6 +2560,9 @@ export class RealtimeService {
         return
       }
       await this.#routeToolCall(event)
+    }
+    if (event.kind === 'user_transcript_final' || event.kind === 'user_transcript_failed') {
+      await this.#resumeProjectConfirmationCarrierRecoveryAfterUser()
     }
     if (event.kind === 'response_terminal') {
       this.#projectConfirmationResponses.delete(callKey(event.session_epoch, event.response_id))
@@ -3158,8 +3178,19 @@ export class RealtimeService {
    * this layer does not see.
    */
   #publishCodexState(): void {
-    const next: CodexState = this.session.snapshot().active_delegates
-      .some(([, record]) => record.channel === 'codex')
+    const delegates = this.session.snapshot().active_delegates
+    const fingerprint = canonicalJson(activeExecutorContextData(delegates))
+    if (fingerprint !== this.#activeWorkFingerprint) {
+      this.#activeWorkFingerprint = fingerprint
+      try {
+        this.#onActiveWorkChanged()
+      } catch (cause) {
+        this.#onDiagnostic(
+          `[realtime-diagnostic] active_work_observer_failed type=${diagnosticName(cause)}`,
+        )
+      }
+    }
+    const next: CodexState = delegates.some(([, record]) => record.channel === 'codex')
       ? 'running'
       : 'idle'
     if (next === this.#codexState) return
@@ -3511,6 +3542,8 @@ export class RealtimeService {
 
     let code = 'confirmation_not_pending'
     let state = 'refused'
+    let confirmationText: string | null = null
+    let confirmationResponseId: string | null = null
     try {
       const itemId = origin.originItemId
       const controller = this.#projectConfirmation
@@ -3590,17 +3623,14 @@ export class RealtimeService {
             }
           }
         }
-        if (text !== null && text !== '') {
-          // The deterministic host fact is the sole acknowledgement owner. The tool continuation
-          // still receives its structured result, but no provider-authored paraphrase may race it.
-          const responseId = origin.observedProviderResponseId
-          if (responseId === null || this.session.suppressResponse(responseId)) {
-            this.#queueProjectConfirmationFact(
-              text,
-              this.#projectConfirmationLifecycleId(),
-              `decision:${code}:${state}`,
-            )
-          }
+        if (
+          text !== null
+          && text !== ''
+          && code !== 'confirmation_invalid'
+          && code !== 'confirmation_not_pending'
+        ) {
+          confirmationText = text
+          confirmationResponseId = origin.observedProviderResponseId
         }
         this.#publishProjectView()
       }
@@ -3612,6 +3642,19 @@ export class RealtimeService {
         content: JSON.stringify({code, state}),
       }
       await this.session.injectToolOutput(item)
+      if (confirmationText !== null) {
+        const carrierNeedsCancellation = confirmationResponseId === null
+          ? false
+          : this.#prepareProjectConfirmationCarrier(event.session_epoch, confirmationResponseId)
+        this.#queueProjectConfirmationFact(
+          confirmationText,
+          this.#projectConfirmationLifecycleId(),
+          `decision:${code}:${state}`,
+        )
+        if (carrierNeedsCancellation && confirmationResponseId !== null) {
+          this.#cancelProjectConfirmationCarrier(event.session_epoch, confirmationResponseId)
+        }
+      }
     } catch (cause) {
       this.#projectConfirmationClosingCalls.delete(call)
       throw cause
@@ -3782,6 +3825,175 @@ export class RealtimeService {
       content: [...text].slice(0, MAX_HOST_FACT_CHARS).join(''),
     }), {priority: USER_PRIORITY - 1, preemptive: false})
     this.#deliveryReady.set()
+  }
+
+  #abandonProjectConfirmationContinuation(sessionEpoch: number, responseId: string): void {
+    const batch = this.#continuationBatches.get(callKey(sessionEpoch, responseId))
+    if (batch === undefined) return
+    batch.origin_status = 'cancelled'
+    batch.phase = 'ready'
+  }
+
+  /** Transfer reply ownership locally before any provider I/O can delay the deterministic fact. */
+  #prepareProjectConfirmationCarrier(sessionEpoch: number, responseId: string): boolean {
+    const key = callKey(sessionEpoch, responseId)
+    const phase = this.session.providerTurnPhase(responseId)
+    const generation = this.session.currentGeneration
+    const live = sessionEpoch === this.session.sessionEpoch && (
+      this.session.activeProviderResponseId === responseId
+      || phase === 'active'
+      || phase === 'cancel_requested'
+      || (
+        generation !== null
+        && generation.session_epoch === sessionEpoch
+        && generation.response_id === responseId
+      )
+    )
+    if (live) this.#projectConfirmationQuarantinedResponses.add(key)
+    this.session.suppressResponse(responseId)
+    this.#abandonProjectConfirmationContinuation(sessionEpoch, responseId)
+    return live
+  }
+
+  /** Cancel the carrier without holding up the event that queued its host-owned reply. */
+  #cancelProjectConfirmationCarrier(sessionEpoch: number, responseId: string): void {
+    const cancellation = (async (): Promise<void> => {
+      try {
+        const targeted = await this.session.quarantineResponse(responseId)
+        if (!targeted) {
+          this.#projectConfirmationQuarantinedResponses.delete(callKey(sessionEpoch, responseId))
+          return
+        }
+        if (this.session.providerTurnPhase(responseId) !== 'cancel_requested') {
+          // The carrier may have reached terminal while tool output was being confirmed even though
+          // its audio was still queued. The exact fence was still required, but no provider terminal
+          // remains to release a quarantine entry or justify a reconnect watchdog.
+          this.#projectConfirmationQuarantinedResponses.delete(callKey(sessionEpoch, responseId))
+          return
+        }
+      } catch (failure) {
+        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+          ? failure
+          : new RealtimeDeliveryError(String(failure)))
+        await this.#recoverProjectConfirmationCarrier(
+          sessionEpoch,
+          responseId,
+          'cancel_failed',
+        )
+        return
+      }
+      await this.#projectConfirmationCarrierReleaseWatchdog(sessionEpoch, responseId)
+    })()
+    this.#trackProjectConfirmationCarrierRelease(cancellation)
+  }
+
+  #trackProjectConfirmationCarrierRelease(work: Promise<void>): void {
+    const task = work.catch((failure: unknown) => {
+      if (!isAbort(failure)) {
+        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+          ? failure
+          : new RealtimeDeliveryError(String(failure)))
+      }
+    }).finally(() => {
+      this.#projectConfirmationCarrierReleaseTasks.delete(task)
+    })
+    this.#projectConfirmationCarrierReleaseTasks.add(task)
+  }
+
+  async #projectConfirmationCarrierReleaseWatchdog(
+    sessionEpoch: number,
+    responseId: string,
+  ): Promise<void> {
+    await this.#clock.sleep(PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S, this.#stop.signal)
+    await this.#recoverProjectConfirmationCarrier(sessionEpoch, responseId, 'terminal_timeout')
+  }
+
+  async #recoverProjectConfirmationCarrier(
+    sessionEpoch: number,
+    responseId: string,
+    reason: string,
+  ): Promise<void> {
+    const key = callKey(sessionEpoch, responseId)
+    if (
+      sessionEpoch !== this.session.sessionEpoch
+      || !this.#projectConfirmationQuarantinedResponses.has(key)
+      || this.session.providerTurnPhase(responseId) !== 'cancel_requested'
+    ) return
+    if (this.session.floor.state === 'user_speaking') {
+      const alreadyDeferred = this.#projectConfirmationCarrierReconnectAfterUser.has(key)
+      this.#projectConfirmationCarrierReconnectAfterUser.set(key, {
+        sessionEpoch,
+        responseId,
+        reason,
+      })
+      if (!alreadyDeferred) {
+        this.#trackProjectConfirmationCarrierRelease(
+          this.#recoverProjectConfirmationCarrierAfterStaleUserHold(key),
+        )
+      }
+      return
+    }
+    this.#projectConfirmationCarrierReconnectAfterUser.delete(key)
+    this.#telemetry?.record('project_confirmation.carrier_recovery', {
+      session_epoch: sessionEpoch,
+      response_id: responseId,
+      reason,
+    })
+    await this.#reconnectProviderSession({expectedEpoch: sessionEpoch})
+  }
+
+  async #recoverProjectConfirmationCarrierAfterStaleUserHold(key: string): Promise<void> {
+    if (!await this.session.waitForStaleHold(USER_HOLD_MAX_S)) return
+    const pending = this.#projectConfirmationCarrierReconnectAfterUser.get(key)
+    if (pending === undefined) return
+    if (this.session.releaseStaleUserHold(USER_HOLD_MAX_S)) {
+      this.#onDiagnostic('[realtime-diagnostic] project_confirmation_stale_user_hold_released')
+    }
+    await this.#recoverProjectConfirmationCarrier(
+      pending.sessionEpoch,
+      pending.responseId,
+      pending.reason,
+    )
+  }
+
+  async #resumeProjectConfirmationCarrierRecoveryAfterUser(): Promise<void> {
+    if (this.session.floor.state === 'user_speaking') return
+    const pending = [...this.#projectConfirmationCarrierReconnectAfterUser.values()]
+    this.#projectConfirmationCarrierReconnectAfterUser.clear()
+    for (const carrier of pending) {
+      await this.#recoverProjectConfirmationCarrier(
+        carrier.sessionEpoch,
+        carrier.responseId,
+        carrier.reason,
+      )
+    }
+  }
+
+  async #quarantineProjectConfirmationResponses(sessionEpoch: number): Promise<void> {
+    const carriers: string[] = []
+    for (const response of this.#projectConfirmationResponses) {
+      const parsed = parseCallKey(response)
+      if (parsed.sessionEpoch !== sessionEpoch) continue
+      if (this.#prepareProjectConfirmationCarrier(sessionEpoch, parsed.id)) {
+        carriers.push(parsed.id)
+      }
+    }
+    this.session.armPendingResponseFence()
+    if (
+      this.#projectConfirmationPendingQuarantineEpoch !== null
+      && this.#projectConfirmationPendingQuarantineEpoch === sessionEpoch
+    ) {
+      try {
+        await this.session.quarantineActiveOrAwaitingResponse()
+      } catch (failure) {
+        this.#reportDeliveryFailure(failure instanceof RealtimeDeliveryError
+          ? failure
+          : new RealtimeDeliveryError(String(failure)))
+      }
+    }
+    for (const responseId of carriers) {
+      this.#cancelProjectConfirmationCarrier(sessionEpoch, responseId)
+    }
   }
 
   /** The proposal id is the lifecycle key; settlement deliberately does not erase it. */
@@ -3969,6 +4181,7 @@ export class RealtimeService {
     this.#projectConfirmationClosingItems.clear()
     this.#projectConfirmationResponses.clear()
     this.#projectConfirmationQuarantinedResponses.clear()
+    this.#projectConfirmationCarrierReconnectAfterUser.clear()
     this.#projectConfirmationPendingQuarantineEpoch = null
     this.#projectConfirmationDecisionRetry = null
     this.#projectConfirmationBlocking = false

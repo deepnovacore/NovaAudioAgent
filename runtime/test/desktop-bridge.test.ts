@@ -9,6 +9,9 @@
  */
 
 import assert from 'node:assert/strict'
+import {mkdtemp, readFile, rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import { test } from 'node:test'
 import { VirtualClock } from '../src/clock.js'
 import {
@@ -20,6 +23,7 @@ import { DesktopProtocolError, encodeAudioFrame } from '../src/desktop-wire.js'
 import type { CodexState } from '../src/realtime/service-state.js'
 import type { JsonValue } from '../src/events.js'
 import type { RealtimeTelemetry } from '../src/realtime/telemetry.js'
+import {JsonlTelemetry} from '../src/realtime/telemetry.js'
 
 interface TelemetryRecord {
   readonly kind: string
@@ -610,6 +614,92 @@ test('only the first frame of a generation is timed', () => {
   bridge.onAudioFrame(frame(2, 0))
   const timed = telemetry.records.filter(r => r.kind === 'playback.first_frame_enqueued')
   assert.deepEqual(timed.map(r => r.payload.generation_epoch), [1, 2])
+})
+
+test('authenticated playback telemetry is recorded as bounded native evidence', async () => {
+  const {bridge, telemetry, calls} = harness()
+  const payload = {
+    type: 'playback.telemetry',
+    utterance_id: 'utterance-1',
+    generation_epoch: 7,
+    final: true,
+    window_ms: 850,
+    queued_samples: 0,
+    queued_samples_max: 960,
+    underrun_samples: 480,
+    underrun_callbacks: 1,
+    max_consecutive_underrun_samples: 240,
+    render_callbacks: 10,
+    max_callback_us: 1200,
+    frame_gap_ms_max: 120_000,
+    pcm_near_silence_ms_max: 20,
+    sequence_gaps: 1,
+    rejected_frames: 2,
+    stdin_buffered_bytes_max: 4096,
+    stdin_backpressure_count: 1,
+    stdin_drain_ms_max: 120_000,
+  }
+
+  await bridge.receive(JSON.stringify(payload), {authenticated: true})
+
+  assert.deepEqual(calls, [])
+  assert.deepEqual(telemetry.records.filter(record => record.kind === 'playback.native'), [{
+    kind: 'playback.native',
+    payload: Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'type')),
+  }])
+  assert.equal(telemetry.records.some(record => (
+    record.kind === 'renderer.ack' && record.payload.kind === 'playback_telemetry'
+  )), false)
+})
+
+test('rejected playback telemetry is counted without invoking service controls', async () => {
+  const {bridge, telemetry, calls} = harness()
+  await bridge.receiveControl({type: 'playback.telemetry_rejected'})
+  await bridge.receiveControl({type: 'playback.telemetry_rejected'})
+
+  assert.deepEqual(calls, [])
+  assert.deepEqual(
+    telemetry.records.filter(record => record.kind === 'playback.telemetry_rejected'),
+    [
+      {kind: 'playback.telemetry_rejected', payload: {count: 1}},
+      {kind: 'playback.telemetry_rejected', payload: {count: 2}},
+    ],
+  )
+})
+
+test('authenticated playback telemetry reaches the configured JSONL sink', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-playback-telemetry-'))
+  t.after(async () => { await rm(directory, {recursive: true, force: true}) })
+  const path = join(directory, 'telemetry.jsonl')
+  const clock = new VirtualClock(4.5)
+  const telemetry = new JsonlTelemetry(path, {clock})
+  const {bridge} = harness({clock, telemetry})
+  await bridge.receive(JSON.stringify({
+    type: 'playback.telemetry', utterance_id: 'u-jsonl', generation_epoch: 1,
+    final: true, window_ms: 10, queued_samples: 0, queued_samples_max: 480,
+    underrun_samples: 0, underrun_callbacks: 0, render_callbacks: 1,
+    max_consecutive_underrun_samples: 0,
+    max_callback_us: 40, frame_gap_ms_max: 0, pcm_near_silence_ms_max: 0,
+    sequence_gaps: 0, rejected_frames: 0, stdin_buffered_bytes_max: 0,
+    stdin_backpressure_count: 0, stdin_drain_ms_max: 0,
+  }), {authenticated: true})
+  telemetry.close()
+
+  const records: unknown[] = (await readFile(path, 'utf8')).trim().split('\n')
+    .map(line => JSON.parse(line) as unknown)
+  assert.deepEqual(records, [{
+    ts: 4.5,
+    kind: 'playback.native',
+    payload: {
+      utterance_id: 'u-jsonl', generation_epoch: 1, final: true, window_ms: 10,
+      queued_samples: 0, queued_samples_max: 480, underrun_samples: 0,
+      underrun_callbacks: 0, max_consecutive_underrun_samples: 0,
+      render_callbacks: 1, max_callback_us: 40,
+      frame_gap_ms_max: 0, pcm_near_silence_ms_max: 0,
+      sequence_gaps: 0, rejected_frames: 0,
+      stdin_buffered_bytes_max: 0, stdin_backpressure_count: 0, stdin_drain_ms_max: 0,
+    },
+  }])
 })
 
 test('telemetry is inert without a clock, because every sample it takes is a duration', () => {

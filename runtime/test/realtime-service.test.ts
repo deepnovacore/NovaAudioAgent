@@ -1381,6 +1381,7 @@ function projectionService(options: {
   readonly priority?: number
   readonly progressViaSurrogate?: boolean
   readonly syncResultOps?: boolean
+  readonly onActiveWorkChanged?: () => void
   /** What the runtime's lookups return. Each default is the permissive answer, so a test that needs a
    * guard to fire says so explicitly rather than relying on a double that happens to refuse. */
   readonly claims?: boolean
@@ -1503,6 +1504,9 @@ function projectionService(options: {
     }),
     idFactory: nextId,
     onDiagnostic: () => undefined,
+    ...(options.onActiveWorkChanged === undefined
+      ? {}
+      : {onActiveWorkChanged: options.onActiveWorkChanged}),
   })
   return {
     service,
@@ -1546,6 +1550,41 @@ test('an executor repeating the same progress summary does not make the agent re
   assert.equal(queued().length, 2, 'but a changed summary is')
   service.projectRuntimeEvent(progressEvent({seq: 4, summary: 'running tests', activity: 4}))
   assert.equal(queued().length, 3, 'and so is going back to an earlier one')
+})
+
+test('identical active executor state publishes once and terminal state publishes removal', () => {
+  let publications = 0
+  const {service} = projectionService({
+    progressViaSurrogate: true,
+    onActiveWorkChanged: () => { publications += 1 },
+  })
+  const progress = progressEvent({seq: 1, summary: 'running tests', activity: 1, elapsed: 2})
+  service.projectRuntimeEvent(progress)
+  assert.equal(publications, 1)
+
+  service.projectRuntimeEvent({...progress, seq: 2, ts: 2})
+  assert.equal(publications, 1, 'the same normalized provider context is not republished')
+
+  service.projectRuntimeEvent(progressEvent({
+    seq: 3, summary: 'running tests', activity: 7, elapsed: 14.9,
+  }))
+  assert.equal(publications, 1, 'volatile heartbeats inside one bucket do not republish context')
+
+  service.projectRuntimeEvent(progressEvent({
+    seq: 4, summary: 'running tests', activity: 8, elapsed: 15,
+  }))
+  assert.equal(publications, 2, 'the next bounded freshness window publishes once')
+
+  service.projectRuntimeEvent({
+    kind: 'handoff',
+    seq: 5,
+    ts: 5,
+    payload: {
+      channel: 'codex', delegate_id: 'd-1', origin_ref: 'conversation:1',
+      outcome: 'ok', trust: 'trusted_system', content: {done: true}, refs: [],
+    },
+  })
+  assert.equal(publications, 3, 'terminal state publishes removal of the active block')
 })
 
 test('a summary-less progress event is never deduped by the summary mechanism', () => {
@@ -4144,6 +4183,7 @@ function confirmationService(options: {
   readonly withoutCommit?: boolean
   /** Make the provider's injection hang, so an expiry outlives the shutdown grace period. */
   readonly hangInjection?: boolean
+  readonly beforeInjection?: (item: HostContextItem) => Promise<void>
   readonly expiryStepTimeoutMs?: number
   readonly idFactory?: () => string
 } = {}): {
@@ -4204,11 +4244,12 @@ function confirmationService(options: {
       actions.push(`connect:${epoch}`)
       return Promise.resolve({epoch})
     },
-    injectHostItem: (item: {readonly host_item_id: string; readonly event_id: string}) => {
+    injectHostItem: async (item: {readonly host_item_id: string; readonly event_id: string}) => {
       actions.push(`inject:${item.event_id}`)
       injected.push(item as HostContextItem)
       if (options.hangInjection === true) return new Promise<never>(() => undefined)
-      return Promise.resolve({session_epoch: epoch, host_item_id: item.host_item_id})
+      await options.beforeInjection?.(item as HostContextItem)
+      return {session_epoch: epoch, host_item_id: item.host_item_id}
     },
     createResponse: (intent: {readonly kind: string}) => {
       actions.push(`create:${intent.kind}`)
@@ -4423,13 +4464,14 @@ test('the dedicated confirmation function commits the reserved proposal', async 
 })
 
 test('a committed confirmation has one host-owned reply and suppresses the tool continuation', async () => {
-  const {service, controller, injected} = confirmationService({
+  const {service, controller, injected, actions} = confirmationService({
     commit: () => Promise.resolve({accepted: true, code: 'accepted'}),
   })
   await service.connect()
   const proposal = propose(controller)
 
   await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
+  assert.equal(actions.includes('cancel:response-1'), true)
   await service.handleEvent({
     kind: 'response_audio_delta',
     session_epoch: 1,
@@ -4448,6 +4490,275 @@ test('a committed confirmation has one host-owned reply and suppresses the tool 
   ].filter(item => item.event_id.startsWith('project-confirmation:'))
   assert.equal(confirmationFacts.length, 1)
   assert.equal(confirmationFacts[0]?.content, '已确认，已提交并正在启动。')
+})
+
+test('a voice confirmation quarantines the carrier and delivers the host fact after terminal', async () => {
+  const {service, controller, injected, actions} = confirmationService({
+    commit: () => Promise.resolve({accepted: true, code: 'accepted'}),
+  })
+  await service.connect()
+  const proposal = propose(controller)
+
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
+  assert.equal(actions.includes('cancel:response-1'), true)
+  assert.ok(
+    service.queuedHostItems().some(item => (
+      item.intent.item.content === '已确认，已提交并正在启动。'
+    )),
+    'the confirmation fact is queued immediately',
+  )
+
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'response-1',
+    status: 'cancelled',
+    reason: '',
+  })
+
+  assert.ok(
+    injected.some(item => item.content === '已确认，已提交并正在启动。'),
+    'the confirmation fact is delivered once the carrier turn ends',
+  )
+  assert.equal(controller.pending, false)
+})
+
+test('a settled voice confirmation still owns its host reply after the carrier started speaking', async () => {
+  const {service, controller, actions, injected} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'spoken-confirmation',
+    responseId: 'spoken-carrier',
+  })
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'spoken-carrier',
+    pcm: new Uint8Array([0, 1]),
+  })
+
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'spoken-confirmation-call',
+    item_id: 'spoken-confirmation-function',
+    response_id: 'spoken-carrier',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+  assert.equal(actions.includes('cancel:spoken-carrier'), true)
+  assert.equal(toldAboutConfirmation(service, actions), true)
+  assert.equal([
+    ...injected,
+    ...service.queuedHostItems().map(item => item.intent.item),
+  ].filter(item => item.event_id.startsWith('project-confirmation:')).length, 1)
+})
+
+test('a confirmation carrier cancel rejection reconnects without the Guard gate', async () => {
+  const {service, controller, actions, injected} = confirmationService()
+  await service.connect()
+  service.session.registerDelegate('delegate-survives-confirmation-reconnect', {
+    summary: '继续实现计时器',
+    state: 'running',
+    channel: 'codex',
+    progress_summary: '正在运行测试',
+    internal_activity: 2,
+    elapsed: 8,
+  })
+  const proposal = propose(controller)
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
+
+  await service.handleEvent({
+    kind: 'response_cancel_rejected',
+    session_epoch: 1,
+    response_id: 'response-1',
+    cancel_request_id: 'cancel-confirmation-1',
+    reason: 'no_active_response',
+  })
+
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 2)
+  assert.equal(service.session.snapshot().active_delegates.some(([delegateId]) => (
+    delegateId === 'delegate-survives-confirmation-reconnect'
+  )), true, 'active delegate recovery survives the controlled reconnect')
+  assert.equal([
+    ...injected,
+    ...service.queuedHostItems().map(item => item.intent.item),
+  ].filter(item => item.event_id.startsWith('project-confirmation:')).length, 1,
+  'the queued confirmation receipt survives reconnect exactly once')
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'response-1',
+    pcm: new Uint8Array([0, 1]),
+  })
+  assert.equal(service.session.currentGeneration, null, 'late audio from the replaced epoch is ignored')
+})
+
+test('a confirmation carrier that never reaches terminal reconnects after three seconds', async () => {
+  const {service, controller, actions, clock} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
+
+  clock.advanceTo(2.999)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 1)
+  clock.advanceTo(3)
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 2)
+})
+
+test('confirmation carrier recovery waits for a concurrent user transcript', async () => {
+  const {service, controller, actions, clock} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'follow-up-speech',
+    provider_item_id: 'follow-up-item',
+  })
+
+  clock.advanceTo(3)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 1)
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'follow-up-speech',
+    provider_item_id: 'follow-up-item',
+  })
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 1)
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'follow-up-item',
+    text: '你在写吗？',
+  })
+
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 2)
+})
+
+test('confirmation carrier recovery escapes a user hold whose transcript never terminates', async () => {
+  const {service, controller, actions, clock} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await confirmationTurn(service, {proposalId: proposal.proposal_id, confirmed: true})
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'stuck-follow-up',
+    provider_item_id: 'stuck-follow-up-item',
+  })
+
+  clock.advanceTo(3)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 1)
+  clock.advanceTo(31)
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 2)
+})
+
+test('confirmation cancellation never targets a newer response after tool output injection races', async () => {
+  let releaseInjection: (() => void) | undefined
+  let injectionReached: (() => void) | undefined
+  const blocked = new Promise<void>(resolve => { releaseInjection = resolve })
+  const reached = new Promise<void>(resolve => { injectionReached = resolve })
+  const {service, controller, actions} = confirmationService({
+    beforeInjection: item => {
+      if (item.kind !== 'tool_output' || item.call_id !== 'racing-confirmation-call') {
+        return Promise.resolve()
+      }
+      injectionReached?.()
+      return blocked
+    },
+  })
+  await service.connect()
+  const proposal = propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'racing-confirmation-item',
+    responseId: 'old-confirmation-carrier',
+  })
+  const decision = service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'racing-confirmation-call',
+    item_id: 'racing-confirmation-function',
+    response_id: 'old-confirmation-carrier',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+  await reached
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'old-confirmation-carrier',
+    status: 'completed', reason: '',
+  })
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'new-user-response',
+  })
+  releaseInjection?.()
+  await decision
+
+  assert.equal(actions.includes('cancel:new-user-response'), false)
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+})
+
+test('a terminal carrier is fenced without arming a reconnect watchdog for queued audio', async () => {
+  let releaseInjection: (() => void) | undefined
+  let injectionReached: (() => void) | undefined
+  const blocked = new Promise<void>(resolve => { releaseInjection = resolve })
+  const reached = new Promise<void>(resolve => { injectionReached = resolve })
+  const {service, controller, actions, clock} = confirmationService({
+    beforeInjection: item => {
+      if (item.kind !== 'tool_output' || item.call_id !== 'terminal-carrier-call') {
+        return Promise.resolve()
+      }
+      injectionReached?.()
+      return blocked
+    },
+  })
+  await service.connect()
+  const proposal = propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'terminal-carrier-item',
+    responseId: 'terminal-carrier',
+  })
+  const decision = service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'terminal-carrier-call',
+    item_id: 'terminal-carrier-function',
+    response_id: 'terminal-carrier',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+  await reached
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'terminal-carrier',
+    pcm: new Uint8Array([0, 1]),
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'terminal-carrier',
+    status: 'completed', reason: '',
+  })
+  releaseInjection?.()
+  await decision
+
+  assert.equal(service.session.currentGeneration, null, 'queued carrier audio is fenced')
+  assert.equal(actions.includes('cancel:terminal-carrier'), false, 'a terminal turn is not cancelled')
+  clock.advanceTo(4)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 1)
 })
 
 test('a confirmation transition has a stable event id within its proposal lifecycle', async () => {
@@ -5173,6 +5484,23 @@ test('a failed transcript cancels the confirmation', async () => {
   assert.equal(controller.pending, false)
 })
 
+test('a banner decision reconnects when its quarantined carrier never reaches terminal', async () => {
+  const {service, controller, actions, clock} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'banner-timeout-item',
+    responseId: 'banner-timeout-response',
+  })
+
+  await service.projectConfirmationDecision(proposal.proposal_id, true)
+  clock.advanceTo(3)
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(actions.filter(action => action.startsWith('connect:')).length, 2)
+})
+
 test('a reconnect invalidates a pending proposal', async () => {
   // It described a provider session that no longer exists, so confirming it would commit against a
   // context the user never saw.
@@ -5304,6 +5632,7 @@ test('a confirmation answer response stays alive long enough to emit its decisio
     arguments: {proposal_id: proposal.proposal_id, confirmed: true},
   })
 
+  assert.equal(actions.includes('cancel:response-answer'), true)
   assert.equal(actions.filter(action => action === 'commit').length, 1)
 })
 
@@ -5323,6 +5652,7 @@ test('a confirmation response created before speech end remains tool-only and ca
     session_epoch: 1,
     response_id: 'response-overlap',
   })
+  assert.equal(actions.includes('cancel:response-overlap'), false)
   await service.handleEvent({
     kind: 'user_speech_ended',
     session_epoch: 1,
@@ -5345,7 +5675,7 @@ test('a confirmation response created before speech end remains tool-only and ca
     arguments: {proposal_id: proposal.proposal_id, confirmed: true},
   })
 
-  assert.equal(actions.includes('cancel:response-overlap'), false)
+  assert.equal(actions.includes('cancel:response-overlap'), true)
   assert.equal(actions.filter(action => action === 'commit').length, 1)
   assert.equal(controller.pending, false)
   assert.deepEqual(telemetry.find(record => (

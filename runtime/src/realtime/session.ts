@@ -213,6 +213,12 @@ export class RealtimeSession {
     return this.#fenceAndCancelActiveResponse()
   }
 
+  /** Fence and cancel one exact response without ever consuming or cancelling a newer turn. */
+  async quarantineResponse(responseId: string): Promise<boolean> {
+    if (responseId === '') throw new TypeError('responseId must be a non-empty string')
+    return this.#fenceAndCancelActiveResponse(responseId)
+  }
+
   eventWasSpoken(eventId: string): boolean {
     return this.#state.eventWasSpoken(eventId)
   }
@@ -1078,8 +1084,17 @@ export class RealtimeSession {
    * *not* do: the cancelled response keeps the provider slot until its own terminal arrives, so a
    * second `response.create` cannot go out while this cancellation is in flight.
    */
-  async #fenceAndCancelActiveResponse(): Promise<boolean> {
-    const generation = this.#playback.fenceCurrent()
+  async #fenceAndCancelActiveResponse(expectedResponseId: string | null = null): Promise<boolean> {
+    const currentGeneration = this.#playback.current
+    const generationMatches = currentGeneration !== null
+      && (
+        expectedResponseId === null
+        || (
+          currentGeneration.session_epoch === this.sessionEpoch
+          && currentGeneration.response_id === expectedResponseId
+        )
+      )
+    const generation = generationMatches ? this.#playback.fenceCurrent() : null
     const fenced = generation !== null
     const generationOwnsProvider = generation !== null
       && generation.session_epoch === this.sessionEpoch
@@ -1091,6 +1106,7 @@ export class RealtimeSession {
 
     const activeResponseId = this.#providerResponseId
     if (activeResponseId !== null) {
+      if (expectedResponseId !== null && activeResponseId !== expectedResponseId) return fenced
       // A generation from an older epoch that shares this response id is not this response's
       // audio; fencing it was right, cancelling on that coincidence would not be.
       if (
@@ -1106,7 +1122,7 @@ export class RealtimeSession {
         // happened, so the deferral is spent and must not fence a later generation.
         turn.defer_playback_fence = false
         if (this.#hostPreemptResponseId === activeResponseId) this.#hostPreemptResponseId = null
-        return fenced
+        return expectedResponseId === null ? fenced : true
       }
       turn.locally_fenced = true
       turn.phase = 'cancel_requested'
@@ -1125,18 +1141,23 @@ export class RealtimeSession {
     }
 
     const premapResponseId = this.#state.premapResponseId
+    if (expectedResponseId !== null && premapResponseId !== expectedResponseId) return fenced
     if (premapResponseId === null) {
       // `response.create` may already be in flight with no provider response id yet. Arm a
       // one-shot fence so the next unowned start or pre-map delta is fenced instead of played.
       // The fenced pending stays queued: it still owns the one inference slot, so no second
       // create can go out until a consumption event pops it.
-      if (this.#state.pendingResponseCount > 0 && !this.#fenceNextResponse) {
+      if (
+        expectedResponseId === null
+        && this.#state.pendingResponseCount > 0
+        && !this.#fenceNextResponse
+      ) {
         this.#fenceNextResponse = true
         this.#markHeadPendingFenced()
         this.#state.advanceSnapshot()
         return true
       }
-      if (this.#awaitingUserResponse && !this.#fenceNextResponse) {
+      if (expectedResponseId === null && this.#awaitingUserResponse && !this.#fenceNextResponse) {
         this.#fenceNextResponse = true
         this.#state.advanceSnapshot()
         return true

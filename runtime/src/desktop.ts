@@ -43,11 +43,36 @@ const identifierSchema = z.string()
   .refine(value => stripLikePython(value) !== '')
 const graphRequestIdentifierSchema = identifierSchema.refine(value => !hasUnpairedSurrogate(value))
 const renderTimestampSchema = z.number().finite().nonnegative().optional()
+const playbackTelemetryCountSchema = z.number().int().nonnegative().max(4_294_967_295)
+const playbackTelemetryQueueSchema = z.number().int().nonnegative().max(16_777_216)
+const playbackTelemetryDurationSchema = z.number().finite().nonnegative().max(86_400_000)
 
 const helloSchema = z.object({
   type: z.literal('hello'),
   token: z.string(),
 })
+
+export const playbackTelemetrySchema = z.object({
+  type: z.literal('playback.telemetry'),
+  utterance_id: identifierSchema,
+  generation_epoch: z.number().int().positive(),
+  final: z.boolean(),
+  window_ms: playbackTelemetryDurationSchema.int(),
+  queued_samples: playbackTelemetryQueueSchema,
+  queued_samples_max: playbackTelemetryQueueSchema,
+  underrun_samples: playbackTelemetryCountSchema,
+  underrun_callbacks: playbackTelemetryCountSchema,
+  max_consecutive_underrun_samples: playbackTelemetryCountSchema,
+  render_callbacks: playbackTelemetryCountSchema,
+  max_callback_us: z.number().int().nonnegative().max(60_000_000),
+  frame_gap_ms_max: playbackTelemetryDurationSchema,
+  pcm_near_silence_ms_max: playbackTelemetryDurationSchema.int(),
+  sequence_gaps: z.number().int().nonnegative().max(1_000_000),
+  rejected_frames: z.number().int().nonnegative().max(1_000_000),
+  stdin_buffered_bytes_max: playbackTelemetryQueueSchema,
+  stdin_backpressure_count: z.number().int().nonnegative().max(1_000_000),
+  stdin_drain_ms_max: playbackTelemetryDurationSchema,
+}).strict()
 const DEFAULT_BOOTSTRAP_TEXT_FRAMES = [
   '{"type":"desktop.ready"}',
   '{"type":"codex.state","state":"idle"}',
@@ -91,9 +116,11 @@ export const desktopControlSchema = z.discriminatedUnion('type', [
     ping_id: identifierSchema,
     t_render_ms: z.number().finite().nonnegative(),
   }),
+  playbackTelemetrySchema,
 ])
 
 export type DesktopControl = z.infer<typeof desktopControlSchema>
+  | {readonly type: 'playback.telemetry_rejected'}
 
 export class DesktopProtocolError extends Error {
   constructor(message: string) {
@@ -781,8 +808,13 @@ export function parseDesktopControl(raw: string): DesktopControl {
       typeof value === 'object'
       && value !== null
       && !Array.isArray(value)
-      && (value as Record<string, unknown>).type === 'workspace_graph.board.request'
-    ) throw new DesktopGraphRequestError('desktop workspace graph request is invalid')
+    ) {
+      const type = (value as Record<string, unknown>).type
+      if (type === 'playback.telemetry') return {type: 'playback.telemetry_rejected'}
+      if (type === 'workspace_graph.board.request') {
+        throw new DesktopGraphRequestError('desktop workspace graph request is invalid')
+      }
+    }
     throw new DesktopProtocolError('desktop control frame is unsupported')
   }
   return result.data

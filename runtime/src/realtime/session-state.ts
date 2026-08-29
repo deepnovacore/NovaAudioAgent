@@ -25,6 +25,8 @@ export const MAX_PENDING_HOST_EVENTS = 532
 export const MAX_TRACKED_PROVIDER_TURNS = 500
 export const MAX_PREMAP_AUDIO_BYTES = 64 * 1_024
 export const MAX_CONTINUATION_TASK_SUMMARY = 240
+export const ACTIVE_EXECUTOR_ELAPSED_BUCKET_S = 15
+export const ACTIVE_EXECUTOR_ACTIVITY_BUCKET = 8
 
 export const delegateStateSchema = z.enum(['running', 'completed', 'refused', 'failed', 'unknown'])
 export type DelegateState = z.infer<typeof delegateStateSchema>
@@ -62,6 +64,64 @@ export interface RealtimeSnapshot {
   readonly active_delegates: readonly (readonly [string, DelegateRecord])[]
   readonly spoken_event_ids: readonly string[]
   readonly interrupted_event_ids: readonly string[]
+}
+
+export interface ActiveExecutorContextRecord {
+  readonly delegate_id: string
+  readonly host_state: {
+    readonly channel: string
+    readonly state: DelegateState
+    readonly elapsed_s: number
+    readonly internal_activity: number
+  }
+  readonly progress_summary: {
+    readonly executable: false
+    readonly text: string | null
+  }
+}
+
+export interface ActiveExecutorContextData {
+  readonly delegates: readonly ActiveExecutorContextRecord[]
+  readonly omitted_count: number
+}
+
+/**
+ * Canonical data boundary shared by provider context rendering and change detection.
+ *
+ * Host-owned state is intentionally nested away from executor-authored progress text. The latter
+ * remains useful evidence for a concise status answer, but can never acquire instruction authority.
+ */
+export function activeExecutorContextRecords(
+  delegates: readonly (readonly [string, DelegateRecord])[],
+): readonly ActiveExecutorContextRecord[] {
+  return delegates.map(([delegateId, record]) => Object.freeze({
+    delegate_id: delegateId,
+    host_state: Object.freeze({
+      channel: record.channel,
+      state: record.state,
+      elapsed_s: Math.floor(record.elapsed / ACTIVE_EXECUTOR_ELAPSED_BUCKET_S)
+        * ACTIVE_EXECUTOR_ELAPSED_BUCKET_S,
+      internal_activity: Math.floor(record.internal_activity / ACTIVE_EXECUTOR_ACTIVITY_BUCKET)
+        * ACTIVE_EXECUTOR_ACTIVITY_BUCKET,
+    }),
+    progress_summary: Object.freeze({
+      executable: false as const,
+      text: record.progress_summary === null || record.progress_summary === ''
+        ? null
+        : [...record.progress_summary].slice(0, 120).join(''),
+    }),
+  }))
+}
+
+/** Exact bounded structure visible to the provider and used for publication deduplication. */
+export function activeExecutorContextData(
+  delegates: readonly (readonly [string, DelegateRecord])[],
+): ActiveExecutorContextData {
+  const records = activeExecutorContextRecords(delegates)
+  return Object.freeze({
+    delegates: Object.freeze(records.slice(0, 3)),
+    omitted_count: Math.max(0, records.length - 3),
+  })
 }
 
 /**

@@ -322,6 +322,44 @@ test('desktop accepts only an exact bounded project confirmation decision', () =
   ]) assert.throws(() => parseDesktopControl(JSON.stringify(decision)), /unsupported/u)
 })
 
+test('desktop accepts only a strict bounded playback telemetry frame', () => {
+  const frame = {
+    type: 'playback.telemetry',
+    utterance_id: 'utterance-1',
+    generation_epoch: 7,
+    final: true,
+    window_ms: 850,
+    queued_samples: 0,
+    queued_samples_max: 960,
+    underrun_samples: 480,
+    underrun_callbacks: 1,
+    max_consecutive_underrun_samples: 240,
+    render_callbacks: 10,
+    max_callback_us: 1200,
+    frame_gap_ms_max: 120_000,
+    pcm_near_silence_ms_max: 20,
+    sequence_gaps: 1,
+    rejected_frames: 2,
+    stdin_buffered_bytes_max: 4096,
+    stdin_backpressure_count: 1,
+    stdin_drain_ms_max: 120_000,
+  } as const
+  assert.deepEqual(parseDesktopControl(JSON.stringify(frame)), frame)
+
+  for (const invalid of [
+    {...frame, extra: 'must be rejected'},
+    {...frame, generation_epoch: 0},
+    {...frame, queued_samples: -1},
+    {...frame, max_callback_us: Number.POSITIVE_INFINITY},
+    {...frame, frame_gap_ms_max: 86_400_001},
+    {...frame, stdin_buffered_bytes_max: 16_777_217},
+  ]) {
+    assert.deepEqual(parseDesktopControl(JSON.stringify(invalid)), {
+      type: 'playback.telemetry_rejected',
+    })
+  }
+})
+
 test('a malformed graph request is ignored without tearing down authenticated voice transport', async () => {
   let receivedSpeech = false
   let acknowledge: (() => void) | undefined
@@ -345,6 +383,37 @@ test('a malformed graph request is ignored without tearing down authenticated vo
     socket.send(JSON.stringify({type: 'speech.onset', speech_id: 'still-live'}))
     await settleWithin('post-malformed graph control', acknowledged)
     assert.equal(receivedSpeech, true)
+    assert.equal(socket.readyState, WebSocket.OPEN)
+  } finally {
+    await closeDesktopClientAndServer(socket, server)
+  }
+})
+
+test('a malformed telemetry frame is diagnostic-only and does not close voice transport', async () => {
+  const controls: string[] = []
+  let acknowledge: (() => void) | undefined
+  const acknowledged = new Promise<void>(resolve => { acknowledge = resolve })
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onControl: control => {
+      controls.push(control.type)
+      if (control.type === 'speech.onset' && control.speech_id === 'still-live') acknowledge?.()
+    },
+  })
+  const readiness = await startDesktopServer(server)
+  const socket = await connectDesktopClient(server, readiness.port)
+  try {
+    await authenticate(socket)
+    socket.send(JSON.stringify({
+      type: 'playback.telemetry',
+      utterance_id: 'u-malformed',
+      generation_epoch: 1,
+      final: false,
+      frame_gap_ms_max: 86_400_001,
+    }))
+    socket.send(JSON.stringify({type: 'speech.onset', speech_id: 'still-live'}))
+    await settleWithin('post-malformed telemetry control', acknowledged)
+    assert.deepEqual(controls, ['playback.telemetry_rejected', 'speech.onset'])
     assert.equal(socket.readyState, WebSocket.OPEN)
   } finally {
     await closeDesktopClientAndServer(socket, server)
