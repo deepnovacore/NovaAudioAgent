@@ -2944,6 +2944,61 @@ test('responses claim user turns oldest first', () => {
   })()
 })
 
+test('responses bind to the exact user revision across orphaned and interrupted turns', async () => {
+  const {service} = pipelineService()
+  await service.connect()
+
+  const userTurn = async (sequence: number, text: string): Promise<void> => {
+    const itemId = `user-item-${sequence}`
+    await service.handleEvent({
+      kind: 'user_speech_started',
+      session_epoch: 1,
+      speech_id: `speech-${sequence}`,
+      provider_item_id: itemId,
+    })
+    await service.handleEvent({
+      kind: 'user_speech_ended',
+      session_epoch: 1,
+      speech_id: `speech-${sequence}`,
+      provider_item_id: itemId,
+    })
+    await service.handleEvent({
+      kind: 'user_transcript_final',
+      session_epoch: 1,
+      item_id: itemId,
+      text,
+    })
+  }
+  const response = async (id: string): Promise<void> => {
+    await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: id})
+    await service.handleEvent({
+      kind: 'response_terminal',
+      session_epoch: 1,
+      response_id: id,
+      status: 'completed',
+      reason: '',
+    })
+  }
+
+  // #4 is an orphaned duplicate request. The later provider responses belong to the revisions
+  // current when those responses started, not to the oldest item left in a global FIFO.
+  await userTurn(4, '继续监控这个水杯')
+  await userTurn(7, '搜索上海今天的天气')
+  await response('response-search')
+  await userTurn(8, '简单讲讲。')
+  await response('response-simple')
+  await userTurn(10, '帮我做一个俄罗斯方块项目')
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'response-project',
+  })
+
+  assert.deepEqual(service.boundOriginsForTest, [
+    ['1:response-search', 'user-item-7'],
+    ['1:response-simple', 'user-item-8'],
+    ['1:response-project', 'user-item-10'],
+  ])
+})
+
 test('a continuation batch speaks before a later one, whatever finished first', async () => {
   // FIFO is why the agent narrates work in the order it was asked for. Two batches are the smallest
   // shape that can tell it from last-in-first-out.
