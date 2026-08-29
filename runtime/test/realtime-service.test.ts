@@ -5229,6 +5229,74 @@ test('a runtime-rejected banner decision restores the same authority and origina
   assert.equal(admission?.payload.delegate_origin_ref, 'conversation:1')
 })
 
+test('a runtime rejection after the ttl publishes only the expiry-owned fact', async () => {
+  let releaseCommit: (() => void) | undefined
+  let commitReached: (() => void) | undefined
+  const held = new Promise<void>(resolve => { releaseCommit = resolve })
+  const reached = new Promise<void>(resolve => { commitReached = resolve })
+  const {service, controller, clock, injected} = confirmationService({
+    commit: async () => {
+      commitReached?.()
+      await held
+      return {accepted: false, code: 'runtime_rejected'}
+    },
+  })
+  await service.connect()
+  const proposal = propose(controller)
+
+  const decision = service.projectConfirmationDecision(proposal.proposal_id, true)
+  await reached
+  clock.advanceTo(proposal.expires_at)
+  releaseCommit?.()
+  await decision
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+
+  const facts = [
+    ...injected,
+    ...service.queuedHostItems().map(item => item.intent.item),
+  ].map(item => item.content)
+  assert.equal(controller.pending, false, 'an expired rejection is terminal rather than retryable')
+  assert.equal(facts.filter(text => text === '确认已过期，本次操作已取消。').length, 1)
+  assert.equal(facts.filter(text => text === 'Codex 当前正忙，本次操作未执行。').length, 0)
+})
+
+test('a voice runtime rejection after the ttl publishes only the expiry-owned fact', async () => {
+  let releaseCommit: (() => void) | undefined
+  let commitReached: (() => void) | undefined
+  const held = new Promise<void>(resolve => { releaseCommit = resolve })
+  const reached = new Promise<void>(resolve => { commitReached = resolve })
+  const {service, controller, clock, injected} = confirmationService({
+    commit: async () => {
+      commitReached?.()
+      await held
+      return {accepted: false, code: 'runtime_rejected'}
+    },
+  })
+  await service.connect()
+  const proposal = propose(controller)
+
+  const turn = confirmationTurn(service, {
+    proposalId: proposal.proposal_id,
+    confirmed: true,
+    transcript: '确认',
+  })
+  await reached
+  clock.advanceTo(proposal.expires_at)
+  releaseCommit?.()
+  await turn
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+
+  const facts = [
+    ...injected,
+    ...service.queuedHostItems().map(item => item.intent.item),
+  ].map(item => item.content)
+  assert.equal(controller.pending, false, 'an expired rejection is terminal rather than retryable')
+  assert.equal(facts.filter(text => text === '确认已过期，本次操作已取消。').length, 1)
+  assert.equal(facts.filter(text => text === 'Codex 当前正忙，本次操作未执行。').length, 0)
+})
+
 test('a delayed banner commit publishes busy and a bare failed callback cannot strand it', async () => {
   let releaseCommit: (() => void) | undefined
   let commitReached: (() => void) | undefined

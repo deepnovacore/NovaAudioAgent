@@ -404,6 +404,10 @@ export class RealtimeService {
   #projectConfirmationBlocking = false
   #projectConfirmationFencePending = false
   #projectConfirmationDecisionRetry: ProjectConfirmationDecisionRetry | null = null
+  /** Confirmation commits whose terminal user-facing fact has not been selected yet. */
+  readonly #projectConfirmationCommittingLifecycles = new Set<string>()
+  /** Active commits for which the expiry observer owns the terminal fact. */
+  readonly #projectConfirmationExpiryFactOwners = new Set<string>()
   readonly #projectExpiryBatches: ProjectExpiryBatch[] = []
   #projectExpiryDraining: Promise<void> | null = null
   #unsubscribeProjectExpiry: (() => void) | null = null
@@ -657,12 +661,14 @@ export class RealtimeService {
 
     let state = outcome.kind === 'confirmed' ? 'accepted' : 'refused'
     let text = outcome.response_text
+    let expiryOwnsFact = false
     try {
       for (const item of items) await this.#closeConfirmationDeferredCalls(item.id)
       if (outcome.kind === 'confirmed' && outcome.operation !== null) {
         const committed = await this.#commitConfirmedProjectOperation(outcome.operation)
         state = committed.state
         text = committed.text
+        expiryOwnsFact = committed.expiryOwnsFact
       }
       if (reconnectOutstandingRetry) {
         try {
@@ -685,7 +691,7 @@ export class RealtimeService {
     }
     // Expiry publishes through its observer-owned cleanup batch. Queuing here as well would create
     // two differently keyed host facts for the same deadline transition.
-    if (outcome.kind !== 'expired' && text !== null && text !== '') {
+    if (outcome.kind !== 'expired' && !expiryOwnsFact && text !== null && text !== '') {
       this.#queueProjectConfirmationFact(
         text,
         lifecycleId,
@@ -3672,6 +3678,7 @@ export class RealtimeService {
         && this.#isProjectConfirmationItem(event.session_epoch, itemId)
       ) {
         let text: string | null = null
+        let expiryOwnsFact = false
         const decision = projectConfirmationDecisionArguments(event.arguments)
         if (decision === null) {
           code = 'confirmation_invalid'
@@ -3695,6 +3702,7 @@ export class RealtimeService {
                 const committed = await this.#commitConfirmedProjectOperation(outcome.operation)
                 state = committed.state
                 text = committed.text
+                expiryOwnsFact = committed.expiryOwnsFact
               }
             } finally {
               this.#endProjectConfirmationClose(event.session_epoch, itemId)
@@ -3704,6 +3712,7 @@ export class RealtimeService {
         if (
           text !== null
           && text !== ''
+          && !expiryOwnsFact
           && code !== 'confirmation_invalid'
           && code !== 'confirmation_not_pending'
         ) {
@@ -3735,16 +3744,24 @@ export class RealtimeService {
       }
     } catch (cause) {
       this.#projectConfirmationClosingCalls.delete(call)
+      this.#startProjectConfirmationExpiryDrain()
       throw cause
     }
     this.#projectConfirmationClosingCalls.delete(call)
     this.#rememberClosedProjectConfirmationCall(call)
+    this.#startProjectConfirmationExpiryDrain()
   }
 
   async #commitConfirmedProjectOperation(
     operation: ConfirmedProjectOperation,
-  ): Promise<{readonly state: 'accepted' | 'failed'; readonly text: string}> {
+  ): Promise<{
+    readonly state: 'accepted' | 'failed'
+    readonly text: string
+    readonly expiryOwnsFact: boolean
+  }> {
     const callback = this.#commitProjectOperation
+    const lifecycleId = operation.proposal_id
+    this.#projectConfirmationCommittingLifecycles.add(lifecycleId)
     this.#telemetry?.record('project_confirmation.commit_started', {
       session_epoch: this.session.sessionEpoch,
       proposal_id: operation.proposal_id,
@@ -3763,7 +3780,10 @@ export class RealtimeService {
         delegate_origin_ref: operation.origin_ref,
         code: 'callback_missing',
       })
-      return {state: 'failed', text: '确认处理不可用，本次操作未执行。'}
+      return this.#finishConfirmedProjectCommit(lifecycleId, {
+        state: 'failed',
+        text: '确认处理不可用，本次操作未执行。',
+      })
     }
     try {
       const result = await callback(operation)
@@ -3788,7 +3808,10 @@ export class RealtimeService {
           code: 'confirmation_invalid',
           delegate_id: result.delegate_id ?? 'none',
         })
-        return {state: 'failed', text: '确认处理无效，本次操作未执行。'}
+        return this.#finishConfirmedProjectCommit(lifecycleId, {
+          state: 'failed',
+          text: '确认处理无效，本次操作未执行。',
+        })
       }
       if (!result.accepted && controller?.committing === true) {
         if (result.code === 'runtime_rejected') controller.rollbackConfirmed(operation)
@@ -3806,14 +3829,18 @@ export class RealtimeService {
         code: result.code,
         delegate_id: result.delegate_id ?? 'none',
       })
-      return {
+      return this.#finishConfirmedProjectCommit(lifecycleId, {
         state: result.accepted ? 'accepted' : 'failed',
         text: result.accepted
           ? projectCommitSuccessText(operation, result.code)
           : projectCommitFailureText(result.code),
-      }
+      })
     } catch (failure) {
-      if (isAbort(failure)) throw failure
+      if (isAbort(failure)) {
+        this.#projectConfirmationCommittingLifecycles.delete(lifecycleId)
+        this.#projectConfirmationExpiryFactOwners.delete(lifecycleId)
+        throw failure
+      }
       this.#projectConfirmation?.rollbackConfirmed(operation)
       this.#telemetry?.record(this.#projectConfirmation?.pending === true
         ? 'project_confirmation.commit_rollback'
@@ -3824,7 +3851,21 @@ export class RealtimeService {
         delegate_origin_ref: operation.origin_ref,
         code: 'callback_failed',
       })
-      return {state: 'failed', text: '已确认，但操作未执行。'}
+      return this.#finishConfirmedProjectCommit(lifecycleId, {
+        state: 'failed',
+        text: '已确认，但操作未执行。',
+      })
+    }
+  }
+
+  #finishConfirmedProjectCommit(
+    lifecycleId: string,
+    result: {readonly state: 'accepted' | 'failed'; readonly text: string},
+  ): {readonly state: 'accepted' | 'failed'; readonly text: string; readonly expiryOwnsFact: boolean} {
+    this.#projectConfirmationCommittingLifecycles.delete(lifecycleId)
+    return {
+      ...result,
+      expiryOwnsFact: this.#projectConfirmationExpiryFactOwners.delete(lifecycleId),
     }
   }
 
@@ -3926,10 +3967,12 @@ export class RealtimeService {
       await this.session.injectToolOutput(item)
     } catch (cause) {
       this.#projectConfirmationClosingCalls.delete(key)
+      this.#startProjectConfirmationExpiryDrain()
       throw cause
     }
     this.#projectConfirmationClosingCalls.delete(key)
     this.#rememberClosedProjectConfirmationCall(key)
+    this.#startProjectConfirmationExpiryDrain()
   }
 
   #rememberClosedProjectConfirmationCall(key: string): void {
@@ -4160,6 +4203,9 @@ export class RealtimeService {
     const itemKeys = [...this.#projectConfirmationItems]
     const sourceEpoch = this.session.sessionEpoch
     const lifecycleId = this.#projectConfirmationLifecycleId()
+    if (this.#projectConfirmationCommittingLifecycles.has(lifecycleId)) {
+      this.#projectConfirmationExpiryFactOwners.add(lifecycleId)
+    }
     // A reconnect is needed when the confirmation armed a fence or blocked a response in this epoch:
     // either leaves provider state the next turn would otherwise inherit.
     const reconnect = this.#projectConfirmationFencePending
@@ -4177,19 +4223,28 @@ export class RealtimeService {
       reconnect,
       lifecycle_id: lifecycleId,
     })
-    if (this.#projectExpiryDraining === null) {
-      const signal = this.#stop.signal
-      this.#projectExpiryDraining = this.#drainProjectConfirmationExpiries(signal)
-        .catch((failure: unknown) => {
-          this.#onDiagnostic(
-            `[realtime-diagnostic] project_expiry_failure type=${diagnosticName(failure)}`,
-          )
-        })
-        .finally(() => {
-          this.#projectExpiryDraining = null
-        })
-    }
+    this.#startProjectConfirmationExpiryDrain()
     this.#publishProjectView()
+  }
+
+  /** Do not reconnect or inject expiry facts beside an in-flight confirmation tool output. */
+  #startProjectConfirmationExpiryDrain(): void {
+    if (
+      this.#projectExpiryDraining !== null
+      || this.#projectExpiryBatches.length === 0
+      || this.#projectConfirmationClosingCalls.size > 0
+    ) return
+    const signal = this.#stop.signal
+    this.#projectExpiryDraining = this.#drainProjectConfirmationExpiries(signal)
+      .catch((failure: unknown) => {
+        this.#onDiagnostic(
+          `[realtime-diagnostic] project_expiry_failure type=${diagnosticName(failure)}`,
+        )
+      })
+      .finally(() => {
+        this.#projectExpiryDraining = null
+        this.#startProjectConfirmationExpiryDrain()
+      })
   }
 
   async #drainProjectConfirmationExpiries(signal: AbortSignal): Promise<void> {
