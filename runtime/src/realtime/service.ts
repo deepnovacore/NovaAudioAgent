@@ -95,6 +95,7 @@ import {
 import { finalSpeechView, genericFinalSpeechView } from './evidence.js'
 import { SPEECH_FINAL_LIMIT, prepareForSpeech } from './speech-prep.js'
 import type { RealtimeTelemetry } from './telemetry.js'
+import {UserOriginBindingLedger} from './user-origin-binding.js'
 
 const PROJECT_CONFIRMATION_TOOL = 'codex__confirm_project_action'
 const PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S = 3
@@ -366,12 +367,8 @@ export class RealtimeService {
    * back cannot both be promised a slot only one of them can have.
    */
   #semanticAcknowledgementReservations = 0
-  /** User items whose transcript has not arrived, oldest first. */
-  readonly #unboundUserOriginItems: string[] = []
-  /** `(epoch, response)` -> the user item that response is answering. */
-  readonly #responseUserOriginItems = new Map<string, string>()
-  /** User item -> the memory ref its transcript produced. LRU by touch. */
-  readonly #userOriginRefs = new Map<string, string>()
+  /** Exact revision-scoped join from provider user items to responses and Memory origins. */
+  readonly #userOrigins = new UserOriginBindingLedger(MAX_TRACKED_TOOL_CALLS)
   /** Tool calls waiting for the transcript that would justify them. */
   readonly #originDeferredToolCalls: DeferredOriginToolCall[] = []
   /** R105: delegate id -> the call key waiting on its synchronous result. */
@@ -502,6 +499,9 @@ export class RealtimeService {
   async connect(): Promise<void> {
     if (this.#connected) return
     await this.session.connect({tools: structuredClone(this.#providerSchemas)})
+    if (Number.isInteger(this.session.sessionEpoch) && this.session.sessionEpoch >= 0) {
+      this.#userOrigins.beginEpoch(this.session.sessionEpoch)
+    }
     this.#unsubscribe = this.#runtime.observe(event => {
       this.projectRuntimeEvent(event)
     })
@@ -1543,9 +1543,7 @@ export class RealtimeService {
       // tool call cite evidence the new provider has never seen.
       this.#awaitingUserOrigin = false
       this.#userOriginPreexistingResponseId = null
-      this.#unboundUserOriginItems.length = 0
-      this.#responseUserOriginItems.clear()
-      this.#userOriginRefs.clear()
+      this.#userOrigins.beginEpoch(this.session.sessionEpoch)
       this.#originDeferredToolCalls.length = 0
 
       this.#releaseUrgentHostResponseForEpoch(oldEpoch)
@@ -2331,7 +2329,7 @@ export class RealtimeService {
       // their answer. It spends the one-shot fence but must not bind or release the reserved item.
       if (accepted) {
         this.#projectConfirmationResponses.add(callKey(event.session_epoch, event.response_id))
-        if (!this.#responseUserOriginItems.has(callKey(event.session_epoch, event.response_id))) {
+        if (this.#userOrigins.itemForResponse(event.session_epoch, event.response_id) === undefined) {
           if (!this.#bindProjectConfirmationRetryResponse(event.session_epoch, event.response_id)) {
             this.#bindResponseUserOrigin(event.session_epoch, event.response_id)
           }
@@ -2358,9 +2356,8 @@ export class RealtimeService {
         accepted,
         started_during_user_speech: confirmationResponseStartsDuringSpeech,
         fence_pending: confirmationFencePendingAtStart,
-        origin_bound: accepted && this.#responseUserOriginItems.has(
-          callKey(event.session_epoch, event.response_id),
-        ),
+        origin_bound: accepted
+          && this.#userOrigins.itemForResponse(event.session_epoch, event.response_id) !== undefined,
         confirmation_item_count: this.#projectConfirmationItems.size,
         proposal_id: this.#projectConfirmation?.lifecycleId ?? 'none',
       })
@@ -2429,9 +2426,24 @@ export class RealtimeService {
       this.#awaitingUserOrigin = true
       this.#userOriginPreexistingResponseId = this.session.activeProviderResponseId
       if (event.provider_item_id !== null) {
-        this.#rememberUnboundUserOrigin(event.provider_item_id)
+        this.#rememberUnboundUserOrigin(
+          event.session_epoch,
+          this.session.userInputRevision,
+          event.provider_item_id,
+        )
       }
       this.#reserveProjectConfirmation(event)
+    }
+    if (
+      event.kind === 'user_speech_ended'
+      && accepted
+      && event.provider_item_id !== null
+    ) {
+      this.#rememberUnboundUserOrigin(
+        event.session_epoch,
+        this.session.userInputRevision,
+        event.provider_item_id,
+      )
     }
 
     if (event.kind === 'response_terminal' && accepted) {
@@ -2447,9 +2459,7 @@ export class RealtimeService {
       this.#finishSemanticAcknowledgement(event)
       this.#finishContinuation(event)
       this.#finishOrigin(event.response_id)
-      const itemId = this.#responseUserOriginItems.get(
-        callKey(event.session_epoch, event.response_id),
-      )
+      const itemId = this.#userOrigins.itemForResponse(event.session_epoch, event.response_id)
       if (
         itemId !== undefined
         && this.#isProjectConfirmationItem(event.session_epoch, itemId)
@@ -2468,7 +2478,7 @@ export class RealtimeService {
           response_id: event.response_id,
           item_id: itemId,
           status: event.status,
-          transcript_ready: this.#userOriginRefs.has(itemId),
+          transcript_ready: this.#userOrigins.hasOriginRef(event.session_epoch, itemId),
           decision_seen: false,
           retry_attempt: isRetryTerminal ? 1 : 0,
         })
@@ -2515,8 +2525,11 @@ export class RealtimeService {
         }
         this.#providerReconnectSourceEpoch = null
         const originRef = await this.#bridge.acceptUserTranscript(event.text)
-        this.#rememberUserOriginRef(event.item_id, originRef)
-        this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
+        this.#rememberUserOriginRef(event.session_epoch, event.item_id, originRef)
+        this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
+          event.session_epoch,
+          this.session.userInputRevision,
+        )
         if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
         if (
           this.#isProjectConfirmationItem(event.session_epoch, event.item_id)
@@ -2537,12 +2550,11 @@ export class RealtimeService {
         // The transcript will never arrive, so anything waiting on it is waiting forever. Released
         // with a null ref: the calls still need an answer, and the bridge refuses them for want of
         // evidence rather than this layer dropping them silently.
-        const index = this.#unboundUserOriginItems.indexOf(event.item_id)
-        if (index !== -1) this.#unboundUserOriginItems.splice(index, 1)
-        for (const [key, itemId] of [...this.#responseUserOriginItems.entries()]) {
-          if (itemId === event.item_id) this.#responseUserOriginItems.delete(key)
-        }
-        this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
+        this.#userOrigins.failTranscript(event.session_epoch, event.item_id)
+        this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
+          event.session_epoch,
+          this.session.userInputRevision,
+        )
         if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
         if (this.#isProjectConfirmationItem(event.session_epoch, event.item_id)) {
           await this.#failProjectConfirmation(event.session_epoch, event.item_id)
@@ -2596,7 +2608,7 @@ export class RealtimeService {
     const observedResponseId = event.response_id ?? activeResponseId
     const originItemId = observedResponseId === null
       ? undefined
-      : this.#responseUserOriginItems.get(callKey(event.session_epoch, observedResponseId))
+      : this.#userOrigins.itemForResponse(event.session_epoch, observedResponseId)
 
     if (
       originItemId !== undefined
@@ -2607,7 +2619,7 @@ export class RealtimeService {
     }
 
     if (originItemId !== undefined) {
-      const originRef = this.#userOriginRefs.get(originItemId)
+      const originRef = this.#userOrigins.originRefForItem(event.session_epoch, originItemId)
       if (originRef !== undefined) {
         await this.#handleBoundToolCall(event, {
           observedProviderResponseId: observedResponseId,
@@ -2717,65 +2729,30 @@ export class RealtimeService {
   // *previous* user turn, which is precisely the kind of citation the origin check exists to stop.
   // ---------------------------------------------------------------------------------------------
 
-  /**
-   * Remember a user item whose transcript has not arrived, so a later response can claim it.
-   *
-   * Three ways an item is already accounted for, and all three have to be refused. Still waiting is
-   * the obvious one. Already having a transcript means the item is *spent* -- a replayed
-   * `user_speech_started` would otherwise put it back in the queue and let a future response bind to
-   * a turn the user has moved past, admitting a tool call on stale evidence. And already bound to a
-   * response is the same problem one step later.
-   *
-   * The bound is the refusal budget, not the tool-call budget: these are items waiting on a
-   * transcript, and a provider that has produced thirty-two of them without delivering one is not
-   * going to be fixed by remembering more.
-   */
-  #rememberUnboundUserOrigin(itemId: string): void {
-    if (this.#unboundUserOriginItems.includes(itemId)) return
-    if (this.#userOriginRefs.has(itemId)) return
-    for (const bound of this.#responseUserOriginItems.values()) {
-      if (bound === itemId) return
-    }
-    this.#unboundUserOriginItems.push(itemId)
-    while (this.#unboundUserOriginItems.length > MAX_PENDING_TOOL_REFUSALS) {
-      this.#unboundUserOriginItems.shift()
-    }
+  /** Register one provider item against the exact user revision that introduced it. */
+  #rememberUnboundUserOrigin(epoch: number, revision: number, itemId: string): void {
+    this.#userOrigins.registerUserItem({epoch, revision, itemId})
   }
 
   /**
-   * Claim the oldest unbound user item for this response.
-   *
-   * Oldest first, and only once per response: responses and user turns pair up in order, and a
-   * response that grabbed a newer item would leave the older one to be claimed by a later response
-   * that did not cause it.
+   * Claim only the user item from the revision this provider response captured at open.
    */
   #bindResponseUserOrigin(epoch: number, responseId: string): boolean {
     if (epoch !== this.session.sessionEpoch) return false
-    if (this.#unboundUserOriginItems.length === 0) return false
-    const key = callKey(epoch, responseId)
-    if (this.#responseUserOriginItems.has(key)) return false
-    const itemId = this.#unboundUserOriginItems.shift()
-    if (itemId === undefined) return false
-    this.#responseUserOriginItems.set(key, itemId)
-    this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
+    const revision = this.session.providerTurnUserInputRevision(responseId)
+    if (revision === undefined) return false
+    const result = this.#userOrigins.bindResponse({epoch, responseId, revision})
+    this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
+      epoch,
+      this.session.userInputRevision,
+    )
     if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
-    while (this.#responseUserOriginItems.size > MAX_TRACKED_TOOL_CALLS) {
-      const oldest = this.#responseUserOriginItems.keys().next()
-      if (oldest.done === true) break
-      this.#responseUserOriginItems.delete(oldest.value)
-    }
-    return true
+    return result.status === 'bound'
   }
 
-  /** Record the memory ref a transcript produced, LRU by touch. */
-  #rememberUserOriginRef(itemId: string, originRef: string): void {
-    this.#userOriginRefs.delete(itemId)
-    this.#userOriginRefs.set(itemId, originRef)
-    while (this.#userOriginRefs.size > MAX_TRACKED_TOOL_CALLS) {
-      const oldest = this.#userOriginRefs.keys().next()
-      if (oldest.done === true) break
-      this.#userOriginRefs.delete(oldest.value)
-    }
+  /** Record the Memory ref produced by the transcript for this exact provider item. */
+  #rememberUserOriginRef(epoch: number, itemId: string, originRef: string): void {
+    this.#userOrigins.resolveTranscript({epoch, itemId, originRef})
   }
 
   /**
@@ -3392,8 +3369,7 @@ export class RealtimeService {
     if (retry === null || !retry.requested || retry.retry_response_id !== null) return false
     const item = parseCallKey(retry.item_key)
     if (item.sessionEpoch !== epoch) return false
-    const responseKey = callKey(epoch, responseId)
-    this.#responseUserOriginItems.set(responseKey, item.id)
+    if (!this.#userOrigins.bindRetryResponse({epoch, responseId, itemId: item.id})) return false
     retry.retry_response_id = responseId
     this.#telemetry?.record('project_confirmation.decision_retry_started', {
       session_epoch: epoch,
@@ -3412,7 +3388,7 @@ export class RealtimeService {
     if (
       retry?.item_key !== callKey(epoch, itemId)
       || retry.requested
-      || !this.#userOriginRefs.has(itemId)
+      || !this.#userOrigins.hasOriginRef(epoch, itemId)
       || controller?.pending !== true
     ) return
     retry.requested = true
@@ -3493,7 +3469,7 @@ export class RealtimeService {
 
   /** A shadow turn is still transcribed into Memory, but it cannot speak or execute tools. */
   #suppressShadowConfirmationResponse(epoch: number, responseId: string): void {
-    const itemId = this.#responseUserOriginItems.get(callKey(epoch, responseId))
+    const itemId = this.#userOrigins.itemForResponse(epoch, responseId)
     if (itemId === undefined || !this.#isProjectConfirmationShadowItem(epoch, itemId)) return
     this.session.suppressResponse(responseId)
   }
@@ -3716,9 +3692,11 @@ export class RealtimeService {
     } finally {
       this.#endProjectConfirmationClose(event.session_epoch, itemId)
     }
-    const unboundIndex = this.#unboundUserOriginItems.indexOf(itemId)
-    if (unboundIndex !== -1) this.#unboundUserOriginItems.splice(unboundIndex, 1)
-    this.#awaitingUserOrigin = this.#unboundUserOriginItems.length > 0
+    this.#userOrigins.failTranscript(event.session_epoch, itemId)
+    this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
+      event.session_epoch,
+      this.session.userInputRevision,
+    )
     if (!this.#awaitingUserOrigin) this.#userOriginPreexistingResponseId = null
     this.#queueProjectConfirmationFact(
       '我没能把这次语音和确认请求关联起来；请再说一次“确认”或“取消”。',
@@ -4653,9 +4631,7 @@ export class RealtimeService {
           }
           this.#awaitingUserOrigin = false
           this.#userOriginPreexistingResponseId = null
-          this.#unboundUserOriginItems.length = 0
-          this.#responseUserOriginItems.clear()
-          this.#userOriginRefs.clear()
+          this.#userOrigins.beginEpoch(this.session.sessionEpoch)
           this.#originDeferredToolCalls.length = 0
           this.#releaseUrgentHostResponseForEpoch(oldEpoch)
           this.#clearCaptions()
@@ -5142,7 +5118,7 @@ export class RealtimeService {
    * shows up later, as a tool call admitted against a turn the user has moved past.
    */
   get unboundUserOriginCountForTest(): number {
-    return this.#unboundUserOriginItems.length
+    return this.#userOrigins.unboundCount
   }
 
   /**
@@ -5249,7 +5225,7 @@ export class RealtimeService {
 
   /** Which response holds which user turn, in binding order. */
   get boundOriginsForTest(): readonly (readonly [string, string])[] {
-    return [...this.#responseUserOriginItems.entries()]
+    return this.#userOrigins.boundResponses
   }
 
   /** The continuation queue, head first. Order is the contract, so it has to be observable. */
@@ -5264,7 +5240,7 @@ export class RealtimeService {
 
   /** How many responses hold a user turn as their evidence. */
   get boundOriginCountForTest(): number {
-    return this.#responseUserOriginItems.size
+    return this.#userOrigins.boundResponseCount
   }
 
   /** What the provider was handed at connect. Exposed so the copy can be checked, not assumed. */

@@ -2892,14 +2892,9 @@ test('failed handoff suppresses a requested acknowledgement when its response st
   assert.deepEqual(service.queuedHostItems().map(item => item.intent.item.event_id), ['final:d-1'])
 })
 
-/**
- * Two user turns and two responses, which is the smallest shape that can tell binding order apart.
- *
- * With one of each, oldest-first and newest-first produce the same answer -- which is why the earlier
- * version of this suite could not see a mutation that reversed it.
- */
-async function twoTurns(service: RealtimeService): Promise<void> {
-  for (const index of [1, 2]) {
+/** Seed causal user input for the continuation tests; pass two to exercise an orphaned revision. */
+async function twoTurns(service: RealtimeService, count = 1): Promise<void> {
+  for (const index of [1, 2].slice(0, count)) {
     await service.handleEvent({
       kind: 'user_speech_started',
       session_epoch: 1,
@@ -2915,19 +2910,16 @@ async function twoTurns(service: RealtimeService): Promise<void> {
   }
 }
 
-test('responses claim user turns oldest first', () => {
-  // Responses and user turns pair up in order. A response that grabbed the newer item would leave the
-  // older one for a later response that did not cause it, and every tool call after that would cite
-  // the wrong turn.
+test('a response claims only the current revision and never reuses an orphan', () => {
   return (async (): Promise<void> => {
     const {service} = pipelineService()
     await service.connect()
-    await twoTurns(service)
+    await twoTurns(service, 2)
     assert.equal(service.unboundUserOriginCountForTest, 2)
 
     await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-1'})
     assert.equal(service.unboundUserOriginCountForTest, 1, 'one claimed')
-    assert.deepEqual(service.boundOriginsForTest, [['1:r-1', 'user-item-1']], 'the oldest')
+    assert.deepEqual(service.boundOriginsForTest, [['1:r-1', 'user-item-2']], 'the exact revision')
 
     await service.handleEvent({
       kind: 'response_terminal',
@@ -2937,10 +2929,11 @@ test('responses claim user turns oldest first', () => {
       reason: '',
     })
     await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'r-2'})
-    assert.deepEqual(service.boundOriginsForTest, [
-      ['1:r-1', 'user-item-1'],
-      ['1:r-2', 'user-item-2'],
-    ], 'the second response gets the second turn')
+    assert.deepEqual(
+      service.boundOriginsForTest,
+      [['1:r-1', 'user-item-2']],
+      'a second response in the same revision cannot inherit the orphan',
+    )
   })()
 })
 
@@ -3183,7 +3176,7 @@ test('a reconnect drops every origin binding from the dead session', async () =>
     text: 'compile the runtime',
   })
   assert.equal(service.boundOriginsForTest.length, 1)
-  assert.equal(service.unboundUserOriginCountForTest, 1)
+  assert.equal(service.unboundUserOriginCountForTest, 0)
 
   await service.reconnectForTest()
   assert.deepEqual(service.boundOriginsForTest, [], 'no response holds a dead turn')
@@ -4904,8 +4897,13 @@ test('a second utterance captured during the reserved confirmation cannot produc
       item_id: itemId,
       text: itemId === 'first-confirmation' ? '确认' : '可以啊，我确认',
     })
+    if (itemId === 'first-confirmation') {
+      // The carrier captured the first revision before the repeated utterance interrupted it.
+      await service.handleEvent({
+        kind: 'response_started', session_epoch: 1, response_id: 'response-1',
+      })
+    }
   }
-  await service.handleEvent({kind: 'response_started', session_epoch: 1, response_id: 'response-1'})
   await service.handleEvent({
     kind: 'tool_call_ready',
     session_epoch: 1,
