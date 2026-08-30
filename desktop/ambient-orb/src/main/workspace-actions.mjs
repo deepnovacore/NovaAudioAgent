@@ -34,6 +34,7 @@ export function publicManagedWorkspaceCapabilities(capabilities) {
 
 export function createManagedWorkspaceBackendRecovery({
   getCapabilities,
+  hasMaintenanceAuthority = () => false,
   refreshCapabilities,
   startBackend,
   restartBackend,
@@ -41,11 +42,22 @@ export function createManagedWorkspaceBackendRecovery({
   stopBackend,
 }) {
   let recoveryStatus = 'idle'
-  let rollbackGeneration = 0
+  let recoveryGeneration = 0
+  let lastHazard = null
 
-  const observe = async capabilities => {
-    if (capabilities?.health !== 'rollback_pending') return bounded(recoveryStatus)
-    rollbackGeneration += 1
+  const observe = async (
+    capabilities,
+    authorityPresent = hasMaintenanceAuthority() === true,
+  ) => {
+    const hazardous = capabilities?.health === 'rollback_pending'
+      || (capabilities?.health === 'unavailable' && authorityPresent)
+    if (!hazardous) {
+      if (recoveryStatus === 'idle') lastHazard = null
+      return bounded(recoveryStatus)
+    }
+    if (capabilities === lastHazard) return bounded(recoveryStatus)
+    lastHazard = capabilities
+    recoveryGeneration += 1
     const alreadyFailed = recoveryStatus === 'failed'
     recoveryStatus = alreadyFailed ? 'failed' : 'required'
     let stopped = false
@@ -60,8 +72,17 @@ export function createManagedWorkspaceBackendRecovery({
 
   const activate = async (action, status) => {
     const capabilities = getCapabilities()
-    if (capabilities?.health === 'rollback_pending') await observe(capabilities)
-    if (recoveryStatus !== 'idle') return bounded('rollback_pending')
+    await observe(capabilities)
+    if (recoveryStatus !== 'idle') {
+      if (recoveryStatus === 'failed') {
+        try {
+          await stopBackend()
+        } catch {
+          // A failed recovery remains latched even if re-quiescing also fails.
+        }
+      }
+      return bounded('rollback_pending')
+    }
     await action()
     return bounded(status)
   }
@@ -72,11 +93,9 @@ export function createManagedWorkspaceBackendRecovery({
     restart: () => activate(restartBackend, 'restarted'),
     retry: async () => {
       const current = getCapabilities()
-      if (current?.health === 'rollback_pending' && recoveryStatus === 'idle') {
-        await observe(current)
-      }
+      if (recoveryStatus === 'idle') await observe(current)
       const recoveryRequired = recoveryStatus !== 'idle'
-      const attemptGeneration = rollbackGeneration
+      const attemptGeneration = recoveryGeneration
       let capabilities
       try {
         capabilities = await refreshCapabilities()
@@ -84,18 +103,11 @@ export function createManagedWorkspaceBackendRecovery({
         if (recoveryRequired) recoveryStatus = 'failed'
         return bounded('recovery_failed')
       }
-      if (capabilities?.health === 'rollback_pending') await observe(capabilities)
+      await observe(capabilities)
       if (recoveryRequired || recoveryStatus !== 'idle') {
         const safe = capabilities?.health === 'ready' || capabilities?.health === 'degraded'
-        if (!safe || rollbackGeneration !== attemptGeneration) {
+        if (!safe || recoveryGeneration !== attemptGeneration) {
           recoveryStatus = 'failed'
-          if (rollbackGeneration !== attemptGeneration) {
-            try {
-              await stopBackend()
-            } catch {
-              // A stale recovery never becomes successful even if quiescing fails.
-            }
-          }
           return bounded('recovery_failed')
         }
         let activated = false
@@ -104,7 +116,7 @@ export function createManagedWorkspaceBackendRecovery({
         } catch {
           activated = false
         }
-        if (!activated || rollbackGeneration !== attemptGeneration) {
+        if (!activated || recoveryGeneration !== attemptGeneration) {
           recoveryStatus = 'failed'
           try {
             await stopBackend()
@@ -114,12 +126,18 @@ export function createManagedWorkspaceBackendRecovery({
           return bounded('recovery_failed')
         }
         recoveryStatus = 'idle'
+        lastHazard = null
         return bounded('retried')
       }
       await retryBackend()
       return bounded('retried')
     },
   })
+}
+
+export async function coordinateBackendRetry({coordinator, retry}) {
+  const coordinated = await coordinator.run('backend_retry', retry)
+  return coordinated.status === 'busy' ? bounded('busy') : coordinated.value
 }
 
 function firstDialog(preview) {

@@ -96,8 +96,10 @@ function recoveryFixture(overrides = {}) {
     current: {available: true, displayName: 'Alpha'},
     all: {available: true, count: 1},
   }
+  let maintenancePresent = overrides.maintenancePresent ?? true
   const recovery = workspaceActionModule.createManagedWorkspaceBackendRecovery({
     getCapabilities: () => current,
+    hasMaintenanceAuthority: () => maintenancePresent,
     refreshCapabilities: async () => {
       events.push('refresh')
       return overrides.refreshCapabilities?.() ?? current
@@ -119,7 +121,12 @@ function recoveryFixture(overrides = {}) {
       return overrides.stopBackend?.() ?? true
     },
   })
-  return {events, recovery, setCapabilities: value => { current = value }}
+  return {
+    events,
+    recovery,
+    setCapabilities: value => { current = value },
+    setMaintenancePresent: value => { maintenancePresent = value },
+  }
 }
 
 test('known rollback remains latched across passive ready refresh and fails closed on unavailable retry', async () => {
@@ -159,7 +166,7 @@ test('known rollback remains latched across passive ready refresh and fails clos
 
   assert.deepEqual(await value.recovery.retry(), {status: 'recovery_failed'})
   assert.equal(value.recovery.status(), 'failed')
-  assert.deepEqual(value.events, ['stop', 'refresh'])
+  assert.deepEqual(value.events, ['stop', 'refresh', 'stop'])
 })
 
 test('explicit safe retry activates once and clears recovery only after success', async () => {
@@ -231,14 +238,46 @@ test('failed safe activation remains latched and blocks ordinary restart', async
   assert.deepEqual(value.events, ['stop', 'refresh', 'retry', 'stop', 'stop'])
 })
 
-test('unsupported maintenance remains distinct from known rollback and permits normal startup', async () => {
+test('absent maintenance authority remains distinct from service failure and permits startup', async () => {
   const unavailable = workspaceActionModule.publicManagedWorkspaceCapabilities()
-  const value = recoveryFixture({capabilities: unavailable})
+  const value = recoveryFixture({capabilities: unavailable, maintenancePresent: false})
 
   assert.deepEqual(await value.recovery.observe(unavailable), {status: 'idle'})
   assert.deepEqual(await value.recovery.start(), {status: 'started'})
   assert.equal(value.recovery.status(), 'idle')
   assert.deepEqual(value.events, ['start'])
+})
+
+test('present maintenance service unavailable stops and latches backend until a safe recovery', async () => {
+  const unavailable = workspaceActionModule.publicManagedWorkspaceCapabilities()
+  const value = recoveryFixture({
+    capabilities: unavailable,
+    maintenancePresent: true,
+    refreshCapabilities: () => ({health: 'ready'}),
+  })
+
+  assert.deepEqual(await value.recovery.observe(unavailable), {status: 'required'})
+  assert.deepEqual(await value.recovery.start(), {status: 'rollback_pending'})
+  assert.equal(value.recovery.status(), 'required')
+  assert.deepEqual(value.events, ['stop'])
+
+  assert.deepEqual(await value.recovery.retry(), {status: 'retried'})
+  assert.equal(value.recovery.status(), 'idle')
+  assert.deepEqual(value.events, ['stop', 'refresh', 'retry'])
+})
+
+test('a recovered service relatches even when the same unavailable snapshot is observed again', async () => {
+  const unavailable = workspaceActionModule.publicManagedWorkspaceCapabilities()
+  const value = recoveryFixture({
+    capabilities: unavailable,
+    maintenancePresent: true,
+    refreshCapabilities: () => ({health: 'ready'}),
+  })
+
+  assert.deepEqual(await value.recovery.observe(unavailable), {status: 'required'})
+  assert.deepEqual(await value.recovery.retry(), {status: 'retried'})
+  assert.deepEqual(await value.recovery.observe(unavailable), {status: 'required'})
+  assert.deepEqual(value.events, ['stop', 'refresh', 'retry', 'stop'])
 })
 
 test('observing rollback stops a connected supervisor and cancels an armed retry', async () => {
@@ -326,6 +365,39 @@ test('busy after confirmation consumes preparation and performs no stop', async 
   await active
 })
 
+test('backend retry is busy while clear owns lifecycle after stop and before execute', async () => {
+  assert.equal(typeof workspaceActionModule.coordinateBackendRetry, 'function')
+  const coordinator = createLifecycleCoordinator()
+  let enteredExecute
+  const executeEntered = new Promise(resolve => { enteredExecute = resolve })
+  let releaseExecute
+  const executeGate = new Promise(resolve => { releaseExecute = resolve })
+  const value = fixture({
+    coordinator,
+    maintenance: {
+      execute: async (preparation, authorization) => {
+        value.calls.push(`execute:${Boolean(preparation)}:${Boolean(authorization)}`)
+        enteredExecute()
+        await executeGate
+        return {status: 'cleared', committed: true, cleanup_pending: false}
+      },
+    },
+  })
+  const clearing = value.actions.clearCurrent()
+  await executeEntered
+  let retryCalls = 0
+  try {
+    assert.deepEqual(await workspaceActionModule.coordinateBackendRetry({
+      coordinator,
+      retry: async () => { retryCalls += 1; return {status: 'retried'} },
+    }), {status: 'busy'})
+    assert.equal(retryCalls, 0)
+  } finally {
+    releaseExecute()
+  }
+  assert.deepEqual(await clearing, {status: 'cleared'})
+})
+
 test('stale authorization and stop failure mutate nothing', async () => {
   const stale = fixture({maintenance: {authorize: () => { throw new Error('stale') }}})
   assert.deepEqual(await stale.actions.clearCurrent(), {status: 'clear_failed'})
@@ -337,6 +409,31 @@ test('stale authorization and stop failure mutate nothing', async () => {
   assert.deepEqual(await stopped.actions.clearCurrent(), {status: 'stop_failed'})
   assert.equal(stopped.calls.some(call => call.startsWith('execute:')), false)
   assert.equal(stopped.calls.includes('restart'), false)
+})
+
+test('clear through a real supervisor seam aborts when child termination is unconfirmed', async () => {
+  const supervisor = createBackendSupervisor({
+    start: async () => ({backend: {id: 'old'}, connection: {endpoint: 'ws://127.0.0.1:12/'}}),
+    stopBackend: async () => { throw new Error('backend termination unconfirmed') },
+    onStatus: () => {},
+  })
+  await supervisor.start()
+  const value = fixture({dependencies: {
+    stopBackendCleanly: async () => {
+      value.calls.push('stop')
+      try {
+        await supervisor.stop()
+      } catch {
+        return false
+      }
+      return supervisor.status().state === 'stopped'
+    },
+  }})
+
+  assert.deepEqual(await value.actions.clearCurrent(), {status: 'stop_failed'})
+  assert.equal(value.calls.some(call => call.startsWith('execute:')), false)
+  assert.equal(value.calls.includes('restart'), false)
+  assert.notEqual(supervisor.status().state, 'stopped')
 })
 
 test('every post-stop clear outcome makes one bounded recovery attempt', async () => {

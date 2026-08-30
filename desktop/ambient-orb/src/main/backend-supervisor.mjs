@@ -42,6 +42,7 @@ export function createBackendSupervisor({
   let backend = null
   let timer = null
   let retryAttempt = 0
+  const activeAttempts = new Set()
   let current = Object.freeze({
     state: 'stopped', connection: null, retryInMs: null, diagnostic: null,
   })
@@ -53,6 +54,15 @@ export function createBackendSupervisor({
   const cancelRetry = () => {
     if (timer !== null) cancel(timer)
     timer = null
+  }
+  const stopConfirmed = async candidate => {
+    try {
+      const result = await stopBackend(candidate)
+      if (result === false) throw new Error('backend termination unconfirmed')
+    } catch (error) {
+      publish('unavailable', null, null, 'backend_stop_failed')
+      throw error
+    }
   }
   const retryDelay = () => {
     const exponential = Math.min(policy.capMs, policy.baseMs * (2 ** retryAttempt))
@@ -75,7 +85,7 @@ export function createBackendSupervisor({
     publish('reconnecting', null, delay, failure.code)
     timer = schedule(() => {
       timer = null
-      return attempt(expectedGeneration)
+      void runAttempt(expectedGeneration).catch(() => {})
     }, delay)
   }
   const attempt = async expectedGeneration => {
@@ -83,6 +93,7 @@ export function createBackendSupervisor({
     publish('starting')
     let returnedBackend = null
     let earlyFailure = null
+    let cleanupStarted = false
     const onExit = failure => {
       if (!running || expectedGeneration !== generation) return
       if (returnedBackend === null) {
@@ -99,7 +110,8 @@ export function createBackendSupervisor({
         throw failureOf({kind: 'unavailable', code: 'backend_start_failed'})
       }
       if (!running || expectedGeneration !== generation || earlyFailure !== null) {
-        await stopBackend(returnedBackend).catch(() => {})
+        cleanupStarted = true
+        await stopConfirmed(returnedBackend)
         if (earlyFailure !== null) handleFailure(earlyFailure, expectedGeneration)
         return
       }
@@ -107,9 +119,21 @@ export function createBackendSupervisor({
       retryAttempt = 0
       publish('connected', Object.freeze({...result.connection}))
     } catch (error) {
-      if (returnedBackend !== null) await stopBackend(returnedBackend).catch(() => {})
+      if (cleanupStarted) throw error
+      if (returnedBackend !== null && !cleanupStarted) await stopConfirmed(returnedBackend)
       handleFailure(earlyFailure ?? error, expectedGeneration)
     }
+  }
+  const runAttempt = expectedGeneration => {
+    const started = attempt(expectedGeneration)
+    activeAttempts.add(started)
+    const remove = () => activeAttempts.delete(started)
+    started.then(remove, remove)
+    return started
+  }
+  const settleStaleAttempts = async () => {
+    const stale = [...activeAttempts]
+    if (stale.length > 0) await Promise.all(stale)
   }
   const restart = async () => {
     running = true
@@ -118,17 +142,23 @@ export function createBackendSupervisor({
     cancelRetry()
     retryAttempt = 0
     const previous = backend
-    backend = null
-    if (previous !== null) await stopBackend(previous).catch(() => {})
-    await attempt(expectedGeneration)
+    if (previous !== null) {
+      await stopConfirmed(previous)
+      if (backend === previous) backend = null
+    }
+    await settleStaleAttempts()
+    await runAttempt(expectedGeneration)
   }
   const stop = async () => {
     running = false
     generation += 1
     cancelRetry()
     const previous = backend
-    backend = null
-    if (previous !== null) await stopBackend(previous).catch(() => {})
+    if (previous !== null) {
+      await stopConfirmed(previous)
+      if (backend === previous) backend = null
+    }
+    await settleStaleAttempts()
     publish('stopped')
   }
   return Object.freeze({

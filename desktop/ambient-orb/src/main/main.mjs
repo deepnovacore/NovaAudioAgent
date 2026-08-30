@@ -33,6 +33,7 @@ import {
   nodeRuntimeEntry,
   selectedBackend,
   shutdownBackend,
+  shutdownBackendBestEffort,
   watchBackendExit,
 } from './backend.mjs'
 import {
@@ -80,6 +81,7 @@ import {
   sameBackendLaunchConfiguration,
 } from './settings-apply.mjs'
 import {
+  coordinateBackendRetry,
   createManagedWorkspaceBackendRecovery,
   createWorkspaceActions,
   publicManagedWorkspaceCapabilities,
@@ -504,7 +506,7 @@ async function refreshManagedWorkspaceCapabilities() {
   const maintenance = managedWorkspaceMaintenance
   if (maintenance === null) {
     managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
-    await managedWorkspaceBackendRecovery.observe(managedWorkspaceCapabilities)
+    await managedWorkspaceBackendRecovery.observe(managedWorkspaceCapabilities, maintenance !== null)
     return managedWorkspaceCapabilities
   }
   try {
@@ -516,12 +518,13 @@ async function refreshManagedWorkspaceCapabilities() {
       managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
     }
   }
-  await managedWorkspaceBackendRecovery.observe(managedWorkspaceCapabilities)
+  await managedWorkspaceBackendRecovery.observe(managedWorkspaceCapabilities, maintenance !== null)
   return managedWorkspaceCapabilities
 }
 
 const managedWorkspaceBackendRecovery = createManagedWorkspaceBackendRecovery({
   getCapabilities: () => managedWorkspaceCapabilities,
+  hasMaintenanceAuthority: () => managedWorkspaceMaintenance !== null,
   refreshCapabilities: refreshManagedWorkspaceCapabilities,
   startBackend: async () => {
     if (!backendSupervisor) throw new Error('backend supervisor unavailable')
@@ -576,7 +579,7 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
   const listener = createReadinessListener({
     token,
     onTimeout: () => {
-      if (spawnedBackend) void shutdownBackend(spawnedBackend)
+      if (spawnedBackend) void shutdownBackendBestEffort(spawnedBackend)
     },
   })
   let ready
@@ -858,8 +861,13 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
       throw new Error('backend retry rejected')
     }
-    await managedWorkspaceBackendRecovery.retry()
-    return settingsView()
+    const recovery = await coordinateBackendRetry({
+      coordinator: lifecycleCoordinator,
+      retry: () => managedWorkspaceBackendRecovery.retry(),
+    })
+    return recovery.status === 'busy'
+      ? {...settingsView(), operationStatus: 'busy'}
+      : {...settingsView(), operationStatus: recovery.status}
   })
   ipcMain.handle('nova:microphone:retry', event => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
@@ -1207,7 +1215,7 @@ app.on('before-quit', event => {
   if (quitDrain) return
   const backendDrain = backendSupervisor
     ? backendSupervisor.stop()
-    : backend ? shutdownBackend(backend) : Promise.resolve()
+    : backend ? shutdownBackendBestEffort(backend) : Promise.resolve()
   const maintenance = managedWorkspaceMaintenance
   managedWorkspaceMaintenance = null
   const maintenanceDrain = maintenance?.close() ?? Promise.resolve()

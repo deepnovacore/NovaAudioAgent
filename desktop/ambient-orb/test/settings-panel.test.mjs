@@ -155,24 +155,63 @@ test('the complete successful apply sequence clears only the submitted draft', a
   assert.deepEqual(notices, ['restarting', 'complete'])
 })
 
-test('an apply failure retains public and secret drafts for an explicit retry', async () => {
+test('a durable save clears accepted drafts and secrets while reporting restart failure separately', async () => {
+  const statuses = []
+  const notices = []
   const controller = createSettingsController({
     api: {set: async () => publicView({
       palette: 'graphite',
       saved: true,
-      operationStatus: 'failed',
-      settingsApplyStatus: 'failed',
+      operationStatus: 'restart_failed',
+      settingsApplyStatus: 'restart_failed',
     })},
     render: () => {},
-    status: () => {},
+    status: value => statuses.push(value),
+    notice: phase => notices.push(phase),
   })
   controller.setView(publicView())
   controller.stage({palette: 'graphite'})
   const result = await controller.save({dashscopeApiKey: 'write-only'})
+  assert.equal(result.saved, true)
+  assert.equal(controller.dirty, false)
+  assert.deepEqual(controller.snapshot().drafts, {})
+  assert.deepEqual(result.acceptedSecrets, ['dashscopeApiKey'])
+  assert.equal(statuses.at(-1), '设置已保存，但后台重启失败')
+  assert.deepEqual(notices, ['restart_failed'])
+})
+
+test('apply failure retains only rejected leaves and edits newer than the durable save', async () => {
+  const response = deferred()
+  const controller = createSettingsController({
+    api: {set: () => response.promise},
+    render: () => {},
+    status: () => {},
+  })
+  controller.setView(publicView())
+  controller.stage({
+    palette: 'graphite',
+    codexHeartbeatSeconds: 45,
+    integratedModel: 'submitted-model',
+  })
+  const saving = controller.save({dashscopeApiKey: 'write-only'})
+  controller.stage({integratedModel: 'newer-model'})
+  response.resolve(publicView({
+    palette: 'graphite',
+    codexHeartbeatSeconds: 30,
+    integratedModel: 'submitted-model',
+    saved: true,
+    operationStatus: 'failed',
+    settingsApplyStatus: 'failed',
+  }))
+
+  const result = await saving
   assert.equal(result.saved, false)
-  assert.equal(controller.dirty, true)
-  assert.deepEqual(controller.snapshot().drafts, {palette: 'graphite'})
-  assert.deepEqual(result.acceptedSecrets, [])
+  assert.deepEqual(result.rejectedPublicFields, ['codexHeartbeatSeconds'])
+  assert.deepEqual(result.acceptedSecrets, ['dashscopeApiKey'])
+  assert.deepEqual(controller.snapshot().drafts, {
+    codexHeartbeatSeconds: 45,
+    integratedModel: 'newer-model',
+  })
 })
 
 test('accepted leaves clear independently while rejected nested leaves stay dirty', async () => {

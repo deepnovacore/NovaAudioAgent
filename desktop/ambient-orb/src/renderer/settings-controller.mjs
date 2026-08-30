@@ -247,11 +247,6 @@ export function createSettingsController({ api, render, status, notice = () => {
     try {
       const remoteView = publicPatch(await api.set(outbound))
       const persisted = remoteView?.saved !== false
-      const failedPhase = remoteView?.operationStatus === 'failed'
-        || remoteView?.operationStatus === 'restart_failed'
-        || remoteView?.settingsApplyStatus === 'failed'
-        || remoteView?.settingsApplyStatus === 'restart_failed'
-      const bridgeSaved = persisted && !failedPhase
       const rejectedPaths = persisted
         ? publicRejectionPaths(publicSubmitted, remoteView)
         : []
@@ -263,7 +258,7 @@ export function createSettingsController({ api, render, status, notice = () => {
           : mainLiveViewPatch(confirmedView)
         confirmedView = mergePatch(liveMainState, remoteView)
       }
-      if (bridgeSaved) {
+      if (persisted) {
         const rejected = new Set(rejectedPaths.map(leafPathKey))
         for (const [key, submittedDraft] of submitted) {
           const current = drafts.get(key)
@@ -274,12 +269,16 @@ export function createSettingsController({ api, render, status, notice = () => {
         }
       }
       renderCurrent()
-      status(!bridgeSaved ? '保存失败'
-        : rejectedPublicFields.length > 0 ? '部分设置未保存' : '设置已保存')
       const failurePhase = applyFailurePhase()
+      status(!persisted ? '保存失败'
+        : rejectedPublicFields.length > 0 ? '部分设置未保存'
+        : failurePhase === 'restart_failed' ? '设置已保存，但后台重启失败'
+        : failurePhase === 'failed' ? '设置已保存，但配置应用失败'
+        : '设置已保存')
       if (
-        bridgeSaved
+        persisted
         && rejectedPublicFields.length === 0
+        && failurePhase === null
       ) {
         restartPending = true
         restartTransitionSeen = inFlight.restartTransitionSeen === true
@@ -302,11 +301,11 @@ export function createSettingsController({ api, render, status, notice = () => {
       const rejectedSecrets = persisted && Array.isArray(remoteView?.rejectedSecrets)
         ? remoteView.rejectedSecrets.filter(key => Object.hasOwn(secrets, key))
         : []
-      const acceptedSecrets = bridgeSaved
+      const acceptedSecrets = persisted
         ? Object.keys(secrets).filter(key => !rejectedSecrets.includes(key))
         : []
       return {
-        saved: bridgeSaved && rejectedPublicFields.length === 0,
+        saved: persisted && rejectedPublicFields.length === 0,
         view: effectiveView(),
         rejectedPublicFields,
         rejectedSecrets,

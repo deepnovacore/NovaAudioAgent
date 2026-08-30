@@ -220,10 +220,15 @@ test('rollback recovery gates startup, save restart, rescan, and explicit backen
   const retryHandler = retry.slice(0, retry.indexOf('\n  })'))
   assert.match(retryHandler, /async \(event, \.\.\.args\) =>/)
   assert.match(retryHandler, /event\.sender !== settingsWindow\.webContents \|\| args\.length !== 0/)
-  assert.match(retryHandler, /managedWorkspaceBackendRecovery\.retry\(\)/)
+  assert.match(retryHandler, /coordinateBackendRetry/)
+  assert.match(retryHandler, /lifecycleCoordinator/)
+  assert.match(retryHandler, /operationStatus: 'busy'/)
   const refresh = source.slice(source.indexOf('async function refreshManagedWorkspaceCapabilities()'))
   const refreshBody = refresh.slice(0, refresh.indexOf('\n}'))
-  assert.match(refreshBody, /managedWorkspaceBackendRecovery\.observe\(managedWorkspaceCapabilities\)/)
+  assert.match(
+    refreshBody,
+    /managedWorkspaceBackendRecovery\.observe\(managedWorkspaceCapabilities, maintenance !== null\)/,
+  )
   const recovery = source.slice(source.indexOf('const managedWorkspaceBackendRecovery ='))
   const recoveryBody = recovery.slice(0, recovery.indexOf('\n})') + 3)
   assert.match(recoveryBody, /stopBackend:/)
@@ -339,7 +344,7 @@ test('quitting drains the backend on the stdin sentinel instead of killing it', 
   const beforeQuit = source.slice(source.indexOf("app.on('before-quit'"))
 
   assert.match(beforeQuit, /event\.preventDefault\(\)/)
-  assert.match(beforeQuit, /shutdownBackend\(backend\)/)
+  assert.match(beforeQuit, /shutdownBackendBestEffort\(backend\)/)
   assert.match(beforeQuit, /app\.exit\(0\)/)
   // Every teardown path goes through the helper, so no bare signal survives.
   assert.doesNotMatch(source, /backend\??\.kill\(/)
