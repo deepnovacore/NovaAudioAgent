@@ -133,6 +133,21 @@ test('restart failure takes precedence after a successful clear', async () => {
   assert.deepEqual(await fixtureValue.actions.clearCurrent(), {status: 'restart_failed'})
 })
 
+test('cleanup and restart failures remain visible together', async () => {
+  const fixtureValue = fixture({
+    maintenance: {
+      execute: async () => ({status: 'clear_failed', committed: true, cleanup_pending: true}),
+    },
+    dependencies: {
+      restartBackendBounded: async () => {
+        fixtureValue.calls.push('restart')
+        return false
+      },
+    },
+  })
+  assert.deepEqual(await fixtureValue.actions.clearAll(), {status: 'clear_and_restart_failed'})
+})
+
 test('renderer closure after confirmation cannot revoke an authorized operation', async () => {
   let currentWindow = {kind: 'settings-window'}
   const value = fixture({dependencies: {getWindow: () => currentWindow}})

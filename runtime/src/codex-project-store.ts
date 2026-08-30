@@ -170,12 +170,14 @@ export interface ProjectMaintenanceSnapshot {
 
 export interface ManagedMaintenanceJournalEntry {
   readonly workspace_id: string
+  readonly original_name: string
   readonly tombstone_name: string
   readonly identity: ProjectFileIdentity
 }
 
 export interface ManagedMaintenanceJournal {
   readonly operation_id: string
+  readonly phase: 'prepared' | 'committed'
   readonly entries: readonly ManagedMaintenanceJournalEntry[]
 }
 
@@ -428,6 +430,27 @@ export class CodexProjectStore {
     }, {wait: true})
   }
 
+  async withCurrentManagedWorkspacePath(
+    callback: (path: string) => void | Promise<void>,
+  ): Promise<boolean> {
+    return await this.#transaction<boolean>(async state => {
+      await this.#validateManagedRoot()
+      const workspace = state.activeWorkspaceId === null
+        ? undefined
+        : state.workspaces.get(state.activeWorkspaceId)
+      if (workspace?.origin !== 'managed') return [false, false]
+      const before = await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
+      this.#pinWorkspaceIdentity(workspace.workspace_id, before.identity)
+      await callback(workspace.canonical_path)
+      await this.#validateManagedRoot()
+      const after = await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
+      if (!sameFileIdentity(before.identity, after.identity)) {
+        throw new ProjectStateError('workspace_boundary_changed')
+      }
+      return [true, false]
+    }, {wait: true})
+  }
+
   async executeManagedReplacement(input: ManagedReplacementInput): Promise<{
     readonly committed: boolean
     readonly tombstones: readonly {readonly name: string; readonly identity: ProjectFileIdentity}[]
@@ -483,8 +506,10 @@ export class CodexProjectStore {
       }
       const journal: ManagedMaintenanceJournal = Object.freeze({
         operation_id: operationId,
+        phase: 'prepared',
         entries: Object.freeze(prepared.map(target => Object.freeze({
           workspace_id: target.workspace.workspace_id,
+          original_name: target.originalName,
           tombstone_name: target.tombstoneName,
           identity: Object.freeze({...target.identity}),
         }))),
@@ -512,6 +537,9 @@ export class CodexProjectStore {
           if (tombstone.status !== 'ok' || !sameFileIdentity(tombstone.identity, target.identity)) {
             throw new ProjectStateError('workspace_boundary_changed')
           }
+        }
+        for (const item of replaced) {
+          const target = item.target
           const replacement = await this.#ensurePrivateDirectoryAt(
             root, managed, target.originalName,
           )
@@ -523,6 +551,7 @@ export class CodexProjectStore {
             replacement.binding.identity,
           )
         }
+        await this.#writeMaintenanceJournal(Object.freeze({...journal, phase: 'committed'}))
       } catch {
         let rollbackComplete = true
         for (const item of [...replaced].reverse()) {
@@ -585,6 +614,76 @@ export class CodexProjectStore {
       if (journal === null) return [{status: 'clean'}, false]
       await this.#validateManagedRoot()
       const root = this.#requireManagedRootHandle()
+      if (journal.phase === 'prepared') {
+        const remaining: ManagedMaintenanceJournalEntry[] = []
+        for (const entry of [...journal.entries].reverse()) {
+          const tombstone = this.#lookupAt(root, entry.tombstone_name, 'workspace_boundary_changed')
+          const original = this.#lookupAt(root, entry.original_name, 'workspace_boundary_changed')
+          if (tombstone.status === 'missing') {
+            if (original.status !== 'ok' || !sameFileIdentity(original.identity, entry.identity)) {
+              remaining.push(entry)
+            } else {
+              this.#restoreWorkspaceIdentity(entry.workspace_id, null, entry.identity)
+            }
+            continue
+          }
+          if (tombstone.status !== 'ok' || !sameFileIdentity(tombstone.identity, entry.identity)) {
+            remaining.push(entry)
+            continue
+          }
+          if (original.status === 'ok') {
+            if (sameFileIdentity(original.identity, entry.identity)) {
+              remaining.push(entry)
+              continue
+            }
+            let removed = false
+            try {
+              removed = this.#unlinkAt(
+                root, entry.original_name, original.identity,
+                'directory', 'workspace_boundary_changed',
+              ).status === 'ok'
+            } catch { /* a non-empty or substituted replacement is never deleted */ }
+            if (!removed) {
+              remaining.push(entry)
+              continue
+            }
+          } else if (original.status !== 'missing') {
+            remaining.push(entry)
+            continue
+          }
+          const restored = this.#callRootFile(() => this.#rootFiles.renameAt(
+            root.fd, entry.tombstone_name, entry.original_name,
+          ))
+          const restoredIdentity = this.#lookupAt(
+            root, entry.original_name, 'workspace_boundary_changed',
+          )
+          if (
+            restored.status !== 'ok'
+            || restoredIdentity.status !== 'ok'
+            || !sameFileIdentity(restoredIdentity.identity, entry.identity)
+          ) {
+            remaining.push(entry)
+            continue
+          }
+          this.#restoreWorkspaceIdentity(
+            entry.workspace_id,
+            original.status === 'ok' ? original.identity : null,
+            entry.identity,
+          )
+        }
+        if (remaining.length === 0) {
+          await this.#clearMaintenanceJournal(journal.operation_id)
+          return [{status: 'clean'}, false]
+        }
+        if (remaining.length !== journal.entries.length) {
+          await this.#writeMaintenanceJournal(Object.freeze({
+            operation_id: journal.operation_id,
+            phase: 'prepared',
+            entries: Object.freeze(remaining.reverse()),
+          }))
+        }
+        return [{status: 'cleanup_pending'}, false]
+      }
       const remaining: ManagedMaintenanceJournalEntry[] = []
       for (const entry of journal.entries) {
         const result = this.#callRootFile(() => this.#rootFiles.removeTreeAt(
@@ -599,6 +698,7 @@ export class CodexProjectStore {
       if (remaining.length !== journal.entries.length) {
         await this.#writeMaintenanceJournal(Object.freeze({
           operation_id: journal.operation_id,
+          phase: 'committed',
           entries: Object.freeze(remaining),
         }))
       }
@@ -1376,6 +1476,23 @@ export class CodexProjectStore {
       throw new ProjectStateError('workspace_boundary_changed')
     }
     this.#workspaceIdentities.set(workspaceId, replacement)
+  }
+
+  #restoreWorkspaceIdentity(
+    workspaceId: string,
+    replacement: FileIdentity | null,
+    original: FileIdentity,
+  ): void {
+    const current = this.#workspaceIdentities.get(workspaceId)
+    if (current === undefined || sameFileIdentity(current, original)) {
+      this.#workspaceIdentities.set(workspaceId, original)
+      return
+    }
+    if (replacement !== null && sameFileIdentity(current, replacement)) {
+      this.#workspaceIdentities.set(workspaceId, original)
+      return
+    }
+    throw new ProjectStateError('workspace_boundary_changed')
   }
 
   #deleteWorkspaceIdentityIfExact(workspaceId: string, identity: FileIdentity): void {
@@ -2831,29 +2948,37 @@ function encodeMaintenanceJournal(journal: ManagedMaintenanceJournal): Readonly<
         device: entry.identity.device.toString(10),
         inode: entry.identity.inode.toString(10),
       },
+      original_name: entry.original_name,
       tombstone_name: entry.tombstone_name,
       workspace_id: entry.workspace_id,
     })),
     operation_id: journal.operation_id,
+    phase: journal.phase,
     version: 1,
   }
 }
 
 function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
-  const root = exactRecord(value, ['entries', 'operation_id', 'version'])
+  const root = exactRecord(value, ['entries', 'operation_id', 'phase', 'version'])
   if (root.version !== 1 || !Array.isArray(root.entries) || root.entries.length > MAX_PROJECT_WORKSPACES) {
     throw new ProjectStateError('state_corrupt')
   }
   const operationId = storedId(root.operation_id)
+  if (root.phase !== 'prepared' && root.phase !== 'committed') {
+    throw new ProjectStateError('state_corrupt')
+  }
   const entries = root.entries.map(raw => {
-    const entry = exactRecord(raw, ['identity', 'tombstone_name', 'workspace_id'])
+    const entry = exactRecord(raw, ['identity', 'original_name', 'tombstone_name', 'workspace_id'])
     const identity = exactRecord(entry.identity, ['device', 'inode'])
+    if (typeof entry.original_name !== 'string') throw new ProjectStateError('state_corrupt')
+    requireProjectBasename(entry.original_name, 'state_corrupt')
     if (
       typeof entry.tombstone_name !== 'string'
       || MAINTENANCE_TOMBSTONE.exec(entry.tombstone_name)?.[1] !== operationId
     ) throw new ProjectStateError('state_corrupt')
     return Object.freeze({
       workspace_id: storedId(entry.workspace_id),
+      original_name: entry.original_name,
       tombstone_name: entry.tombstone_name,
       identity: Object.freeze({
         device: decimalIdentity(identity.device),
@@ -2861,11 +2986,17 @@ function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
       }),
     })
   })
-  if (entries.length === 0 || new Set(entries.map(entry => entry.tombstone_name)).size !== entries.length) {
+  if (
+    entries.length === 0
+    || new Set(entries.map(entry => entry.workspace_id)).size !== entries.length
+    || new Set(entries.map(entry => entry.original_name)).size !== entries.length
+    || new Set(entries.map(entry => entry.tombstone_name)).size !== entries.length
+  ) {
     throw new ProjectStateError('state_corrupt')
   }
   return Object.freeze({
     operation_id: operationId,
+    phase: root.phase,
     entries: Object.freeze(entries),
   })
 }

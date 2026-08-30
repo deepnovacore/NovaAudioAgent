@@ -20,6 +20,7 @@ export interface ManagedWorkspaceAuthorization { readonly [authorizationBrand]: 
 
 interface MaintenanceStore {
   maintenanceSnapshot(): Promise<ProjectMaintenanceSnapshot>
+  withCurrentManagedWorkspacePath(callback: (path: string) => void | Promise<void>): Promise<boolean>
   executeManagedReplacement(input: ManagedReplacementInput): Promise<{
     readonly committed: boolean
     readonly tombstones: readonly {readonly name: string; readonly identity: {readonly device: bigint; readonly inode: bigint}}[]
@@ -268,7 +269,11 @@ export class ManagedWorkspaceMaintenanceService {
       if (!replaced.committed) {
         const journal = await this.#store.loadManagedMaintenanceJournal()
         return journal?.operation_id === operationId
-          ? Object.freeze({status: 'clear_failed', committed: false, cleanup_pending: true})
+          ? Object.freeze({
+            status: 'clear_failed',
+            committed: journal.phase === 'committed',
+            cleanup_pending: true,
+          })
           : staleResult()
       }
       const cleanup = await this.#store.cleanupManagedMaintenanceJournal()
@@ -277,12 +282,15 @@ export class ManagedWorkspaceMaintenanceService {
         ? Object.freeze({status: 'clear_failed', committed: true, cleanup_pending: true})
         : Object.freeze({status: 'cleared', committed: true, cleanup_pending: false})
     } catch {
-      let cleanupPending = false
+      let journal: ManagedMaintenanceJournal | null = null
       try {
-        cleanupPending = (await this.#store.loadManagedMaintenanceJournal())?.operation_id === operationId
+        const loaded = await this.#store.loadManagedMaintenanceJournal()
+        if (loaded?.operation_id === operationId) journal = loaded
       } catch { /* the bounded result does not expose a state-root error */ }
       return Object.freeze({
-        status: 'clear_failed', committed: false, cleanup_pending: cleanupPending,
+        status: 'clear_failed',
+        committed: journal?.phase === 'committed',
+        cleanup_pending: journal !== null,
       })
     }
   }
@@ -291,13 +299,11 @@ export class ManagedWorkspaceMaintenanceService {
     callback: (path: string) => void | Promise<void>,
   ): Promise<Readonly<{status: 'opened' | 'not_managed'}>> {
     if (this.#closed) return Object.freeze({status: 'not_managed'})
-    const snapshot = await this.#store.maintenanceSnapshot()
-    const current = snapshot.managed_targets.find(
-      target => target.workspace.workspace_id === snapshot.active_workspace_id,
-    )
-    if (current === undefined) return Object.freeze({status: 'not_managed'})
-    await callback(current.workspace.canonical_path)
-    return Object.freeze({status: 'opened'})
+    return Object.freeze({
+      status: await this.#store.withCurrentManagedWorkspacePath(callback)
+        ? 'opened'
+        : 'not_managed',
+    })
   }
 
   close(): Promise<void> {

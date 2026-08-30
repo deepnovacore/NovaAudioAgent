@@ -28,6 +28,10 @@ test('preparation and authorization are opaque, paired, and consumed exactly onc
       active_workspace_id: workspace.workspace_id,
       managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
     }),
+    withCurrentManagedWorkspacePath: async (callback: (path: string) => void | Promise<void>) => {
+      await callback(workspace.canonical_path)
+      return true
+    },
     executeManagedReplacement: (input: unknown) => {
       calls.push(input)
       return Promise.resolve({committed: true, tombstones: []})
@@ -44,6 +48,9 @@ test('preparation and authorization are opaque, paired, and consumed exactly onc
     current: {available: true, display_name: 'workspace-0001'},
     all: {available: true, count: 1},
   })
+  let openedPath = ''
+  assert.deepEqual(await service.withCurrentManagedPath(path => { openedPath = path }), {status: 'opened'})
+  assert.equal(openedPath, workspace.canonical_path)
   assert.equal(prepared.status, 'ready')
   if (prepared.status !== 'ready') return
   assert.deepEqual(JSON.parse(JSON.stringify(prepared.preparation)), {})
@@ -73,6 +80,7 @@ test('registered current workspaces and expired preparations cannot authorize cl
       active_workspace_id: workspace.workspace_id,
       managed_targets: [],
     }),
+    withCurrentManagedWorkspacePath: () => Promise.resolve(false),
     executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
   }
   const service = await ManagedWorkspaceMaintenanceService.open({store, now: () => now})
@@ -94,6 +102,10 @@ test('expiry, cancellation, duplicate authorization, and cross-pair replay fail 
       active_workspace_id: workspace.workspace_id,
       managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
     }),
+    withCurrentManagedWorkspacePath: async (callback: (path: string) => void | Promise<void>) => {
+      await callback(workspace.canonical_path)
+      return true
+    },
     executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
   }
   const service = await ManagedWorkspaceMaintenanceService.open({store, now: () => now})
@@ -131,10 +143,51 @@ test('a persistent cleanup journal is a maintenance failure, never an empty targ
       snapshotCalls += 1
       return Promise.reject(new Error('must not resolve new targets'))
     },
+    withCurrentManagedWorkspacePath: () => Promise.resolve(false),
     executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
   }
   const service = await ManagedWorkspaceMaintenanceService.open({store})
   await assert.rejects(service.prepare('all_managed'), /cleanup pending/u)
   assert.equal(snapshotCalls, 0)
+  await service.close()
+})
+
+test('a committed journal remains committed when execution loses its reply', async () => {
+  const workspace = record('workspace-0001')
+  let executing = false
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
+    loadManagedMaintenanceJournal: () => Promise.resolve(executing ? {
+      operation_id: 'operation-0001',
+      phase: 'committed' as const,
+      entries: [{
+        workspace_id: workspace.workspace_id,
+        original_name: 'workspace-0001',
+        tombstone_name: '.nova-maintenance-operation-0001-1',
+        identity: {device: 1n, inode: 2n},
+      }],
+    } : null),
+    maintenanceSnapshot: () => Promise.resolve({
+      state_revision: 1,
+      active_workspace_id: workspace.workspace_id,
+      managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
+    }),
+    withCurrentManagedWorkspacePath: () => Promise.resolve(false),
+    executeManagedReplacement: () => {
+      executing = true
+      return Promise.reject(new Error('reply lost after commit'))
+    },
+  }
+  const service = await ManagedWorkspaceMaintenanceService.open({
+    store,
+    now: () => 100,
+    idFactory: () => 'operation-0001',
+  })
+  const prepared = await service.prepare('current_managed')
+  if (prepared.status !== 'ready') assert.fail('expected ready')
+  const authorization = service.authorize(prepared.preparation)
+  assert.deepEqual(await service.execute(prepared.preparation, authorization), {
+    status: 'clear_failed', committed: true, cleanup_pending: true,
+  })
   await service.close()
 })

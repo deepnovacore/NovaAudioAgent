@@ -37,6 +37,7 @@ const WORKSPACE_STATUS_TEXT = Object.freeze({
   stop_failed: '后台未能安全停止，未清空 workspace',
   clear_failed: 'workspace 清空未完整完成，可重试清理',
   restart_failed: 'workspace 已处理，但后台恢复失败，请重试连接',
+  clear_and_restart_failed: 'workspace 清理未完整完成，后台恢复也失败；请重启后重试清理',
 })
 
 const secretRevisions = createSecretRevisions(SECRET_KEYS)

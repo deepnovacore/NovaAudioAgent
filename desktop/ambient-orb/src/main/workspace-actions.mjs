@@ -115,7 +115,8 @@ export function createWorkspaceActions({
             recovered = false
           }
         }
-        return recovered ? bounded(clearStatus) : bounded('restart_failed')
+        if (recovered) return bounded(clearStatus)
+        return bounded(clearStatus === 'cleared' ? 'restart_failed' : 'clear_and_restart_failed')
       })
       if (coordinated.status === 'busy') {
         maintenance.cancel(preparation)

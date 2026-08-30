@@ -485,7 +485,7 @@ async function commitDesktopConfiguration(prepared) {
 
 async function refreshDesktopConfiguration() {
   const prepared = await prepareDesktopConfiguration()
-  commitDesktopConfiguration(prepared)
+  await commitDesktopConfiguration(prepared)
   return prepared
 }
 
