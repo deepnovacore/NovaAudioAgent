@@ -52,6 +52,8 @@
 #define NOVA_STATUS_OBJECT_PATH_NOT_FOUND ((NTSTATUS)0xC000003AL)
 #define NOVA_STATUS_SUCCESS ((NTSTATUS)0x00000000L)
 #define NOVA_FILE_RENAME_INFORMATION ((FILE_INFORMATION_CLASS)10)
+#define NOVA_DIRECTORY_ENUM_BUFFER_BYTES (64U * 1024U)
+#define NOVA_REMOVE_TREE_MAX_DEPTH 64U
 
 typedef NTSTATUS(NTAPI *nova_nt_create_file_fn)(PHANDLE, ACCESS_MASK,
                                                 POBJECT_ATTRIBUTES,
@@ -1140,48 +1142,74 @@ static int nova_dot_name(const WCHAR *name, size_t length) {
          (length == 2 && name[0] == L'.' && name[1] == L'.');
 }
 
-static int nova_remove_tree_contents(HANDLE directory) {
-  BYTE buffer[64 * 1024];
+static int nova_remove_tree_contents(HANDLE directory, unsigned depth) {
   for (;;) {
-    if (!GetFileInformationByHandleEx(directory, FileIdBothDirectoryInfo,
-                                      buffer, (DWORD)sizeof(buffer))) {
-      return GetLastError() == ERROR_NO_MORE_FILES;
+    BYTE *buffer = (BYTE *)HeapAlloc(GetProcessHeap(), 0,
+                                     NOVA_DIRECTORY_ENUM_BUFFER_BYTES);
+    if (buffer == NULL)
+      return 0;
+    if (!GetFileInformationByHandleEx(
+            directory, FileIdBothDirectoryRestartInfo, buffer,
+            (DWORD)NOVA_DIRECTORY_ENUM_BUFFER_BYTES)) {
+      DWORD error = GetLastError();
+      HeapFree(GetProcessHeap(), 0, buffer);
+      return error == ERROR_NO_MORE_FILES;
     }
     FILE_ID_BOTH_DIR_INFO *entry = (FILE_ID_BOTH_DIR_INFO *)buffer;
+    WCHAR name[256];
+    USHORT name_bytes = 0;
+    uint64_t file_id = 0;
+    int selected = 0;
     for (;;) {
       size_t length = (size_t)entry->FileNameLength / sizeof(WCHAR);
       if (!nova_dot_name(entry->FileName, length)) {
-        if (length == 0 || length > 255) return 0;
-        WCHAR name[256];
-        CopyMemory(name, entry->FileName, entry->FileNameLength);
-        name[length] = L'\0';
-        HANDLE child = INVALID_HANDLE_VALUE;
-        NTSTATUS status = nova_open_at(
-            directory, name, (USHORT)entry->FileNameLength,
-            DELETE | FILE_READ_ATTRIBUTES | READ_CONTROL | FILE_LIST_DIRECTORY,
-            FILE_OPEN, 0, NULL, &child);
-        if (status != NOVA_STATUS_SUCCESS) return 0;
-        BY_HANDLE_FILE_INFORMATION child_info;
-        int reparse = 0;
-        if (!nova_raw_handle_info(child, &child_info, &reparse)) {
-          CloseHandle(child);
+        if (length == 0 || length > 255) {
+          HeapFree(GetProcessHeap(), 0, buffer);
           return 0;
         }
-        int child_directory =
-            (child_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-        int removed = 0;
-        if (child_directory && !reparse) {
-          removed = nova_remove_tree_contents(child) && nova_delete_handle(child);
-        } else {
-          /* Reparse points are selected and deleted as leaves; never traverse. */
-          removed = nova_delete_handle(child);
-        }
-        CloseHandle(child);
-        if (!removed) return 0;
+        CopyMemory(name, entry->FileName, entry->FileNameLength);
+        name[length] = L'\0';
+        name_bytes = (USHORT)entry->FileNameLength;
+        file_id = (uint64_t)entry->FileId.QuadPart;
+        selected = 1;
+        break;
       }
       if (entry->NextEntryOffset == 0) break;
       entry = (FILE_ID_BOTH_DIR_INFO *)((BYTE *)entry + entry->NextEntryOffset);
     }
+    HeapFree(GetProcessHeap(), 0, buffer);
+    if (!selected)
+      return 1;
+
+    HANDLE child = INVALID_HANDLE_VALUE;
+    NTSTATUS status = nova_open_at(
+        directory, name, name_bytes,
+        DELETE | FILE_READ_ATTRIBUTES | READ_CONTROL | FILE_LIST_DIRECTORY,
+        FILE_OPEN, 0, NULL, &child);
+    if (status != NOVA_STATUS_SUCCESS)
+      return 0;
+    BY_HANDLE_FILE_INFORMATION child_info;
+    int reparse = 0;
+    if (!nova_raw_handle_info(child, &child_info, &reparse) ||
+        nova_file_index(&child_info) != file_id) {
+      CloseHandle(child);
+      return 0;
+    }
+    int child_directory =
+        (child_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    int removed = 0;
+    if (child_directory && !reparse) {
+      if (depth < NOVA_REMOVE_TREE_MAX_DEPTH) {
+        removed = nova_remove_tree_contents(child, depth + 1) &&
+                  nova_delete_handle(child);
+      }
+    } else {
+      /* Reparse points are selected and deleted as leaves; never traverse. */
+      removed = nova_delete_handle(child);
+    }
+    CloseHandle(child);
+    if (!removed)
+      return 0;
   }
 }
 
@@ -1214,7 +1242,8 @@ static napi_value nova_remove_tree_at(napi_env env, napi_callback_info info) {
     CloseHandle(opened);
     return nova_status(env, "mismatch");
   }
-  int removed = nova_remove_tree_contents(opened) && nova_delete_handle(opened);
+  int removed =
+      nova_remove_tree_contents(opened, 0) && nova_delete_handle(opened);
   CloseHandle(opened);
   return nova_status(env, removed ? "ok" : "failed");
 }

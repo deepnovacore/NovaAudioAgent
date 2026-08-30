@@ -18,6 +18,9 @@ const addon = require(addonPath)
 assert.equal(process.versions.electron, '43.2.0')
 assert.equal(process.versions.modules, '148')
 
+const REMOVE_TREE_DEPTH_BUDGET = 64
+const DEEP_DELETE_DEPTH = REMOVE_TREE_DEPTH_BUDGET
+
 function delay(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
 }
@@ -183,6 +186,47 @@ if (mode === 'hold') {
       assert.equal(existsSync(join(root, 'tombstone')), false)
       assert.equal(readFileSync(unrelated, 'utf8'), 'keep')
       assert.equal(readFileSync(join(outside, 'data.txt'), 'utf8'), 'outside')
+
+      const deepSibling = join(root, 'deep-delete-sibling.txt')
+      writeFileSync(deepSibling, 'keep-deep-sibling')
+      const deepTombstone = addon.mkdirAt(rootDescriptor, 'deep-tombstone')
+      assert.equal(deepTombstone.status, 'ok')
+      let deepCursor = join(root, 'deep-tombstone')
+      for (let depth = 0; depth < DEEP_DELETE_DEPTH; depth += 1) {
+        deepCursor = join(deepCursor, 'd')
+        mkdirSync(deepCursor)
+      }
+      writeFileSync(join(deepCursor, 'data.txt'), 'delete-deep')
+      assert.deepEqual(
+        addon.removeTreeAt(
+          rootDescriptor, 'deep-tombstone', deepTombstone.identity,
+        ),
+        {status: 'ok'},
+      )
+      assert.equal(existsSync(join(root, 'deep-tombstone')), false)
+      assert.equal(readFileSync(deepSibling, 'utf8'), 'keep-deep-sibling')
+
+      const overBudget = addon.mkdirAt(rootDescriptor, 'over-budget-tombstone')
+      assert.equal(overBudget.status, 'ok')
+      let overBudgetCursor = join(root, 'over-budget-tombstone')
+      for (let depth = 0; depth <= REMOVE_TREE_DEPTH_BUDGET; depth += 1) {
+        overBudgetCursor = join(overBudgetCursor, 'd')
+        mkdirSync(overBudgetCursor)
+      }
+      writeFileSync(join(overBudgetCursor, 'data.txt'), 'keep-over-budget')
+      assert.deepEqual(
+        addon.removeTreeAt(
+          rootDescriptor, 'over-budget-tombstone', overBudget.identity,
+        ),
+        {status: 'failed'},
+      )
+      assert.equal(existsSync(join(root, 'over-budget-tombstone')), true)
+      assert.equal(
+        readFileSync(join(overBudgetCursor, 'data.txt'), 'utf8'),
+        'keep-over-budget',
+      )
+      assert.equal(readFileSync(deepSibling, 'utf8'), 'keep-deep-sibling')
+      rmSync(join(root, 'over-budget-tombstone'), {recursive: true})
 
       const swapped = addon.mkdirAt(rootDescriptor, 'swapped')
       assert.equal(swapped.status, 'ok')

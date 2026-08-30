@@ -21,6 +21,8 @@
 #define O_NOFOLLOW 0
 #endif
 
+#define NOVA_REMOVE_TREE_MAX_DEPTH 64U
+
 typedef struct {
   int descriptor;
 } nova_lock_handle;
@@ -478,7 +480,7 @@ static napi_value nova_unlink_at(napi_env env, napi_callback_info info) {
   return nova_status(env, "ok");
 }
 
-static int nova_remove_directory_contents(int directory) {
+static int nova_remove_directory_contents(int directory, unsigned depth) {
   int scan_descriptor = dup(directory);
   if (scan_descriptor < 0) return 0;
   DIR* stream = fdopendir(scan_descriptor);
@@ -498,12 +500,16 @@ static int nova_remove_directory_contents(int directory) {
       break;
     }
     if (S_ISDIR(before.st_mode)) {
+      if (depth >= NOVA_REMOVE_TREE_MAX_DEPTH) {
+        valid = 0;
+        break;
+      }
       int child = openat(directory, name,
                          O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
       struct stat opened;
       if (child < 0 || fstat(child, &opened) != 0 || !S_ISDIR(opened.st_mode) ||
           opened.st_dev != before.st_dev || opened.st_ino != before.st_ino ||
-          !nova_remove_directory_contents(child)) {
+          !nova_remove_directory_contents(child, depth + 1)) {
         if (child >= 0) (void)close(child);
         valid = 0;
         break;
@@ -554,7 +560,7 @@ static napi_value nova_remove_tree_at(napi_env env, napi_callback_info info) {
     if (child >= 0) (void)close(child);
     return nova_status(env, "mismatch");
   }
-  int emptied = nova_remove_directory_contents(child);
+  int emptied = nova_remove_directory_contents(child, 0);
   (void)close(child);
   if (!emptied) return nova_status(env, "failed");
   struct stat final;
