@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { posix, win32 } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -8,6 +10,40 @@ import {
   planClientLaunch,
   resolveClientCodexBinary,
 } from '../../../scripts/start-client.mjs'
+
+const DEMO_LAUNCHER_URL = new URL('../../../scripts/start-client-demo.mjs', import.meta.url)
+
+test('root demo command selects the repository camera fixture without mutating its environment', async () => {
+  const manifest = JSON.parse(await readFile(
+    new URL('../../../package.json', import.meta.url),
+    'utf8',
+  ))
+  assert.equal(manifest.scripts['start:client_demo'], 'node scripts/start-client-demo.mjs')
+
+  let demoLauncher
+  await assert.doesNotReject(async () => {
+    demoLauncher = await import(DEMO_LAUNCHER_URL)
+  })
+
+  const environment = { KEEP_ME: 'yes' }
+  assert.deepEqual(demoLauncher.demoClientEnvironment({
+    environment,
+    rootDir: '/repo',
+    pathApi: posix,
+  }), {
+    KEEP_ME: 'yes',
+    NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE:
+      '/repo/assets/demos/cat-sofa-guard/cat-sofa-guard.mp4',
+  })
+  assert.deepEqual(environment, { KEEP_ME: 'yes' })
+
+  assert.equal(demoLauncher.demoClientEnvironment({
+    environment: {},
+    rootDir: 'C:\\repo',
+    pathApi: win32,
+  }).NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE,
+  'C:\\repo\\assets\\demos\\cat-sofa-guard\\cat-sofa-guard.mp4')
+})
 
 test('native toolchain preflight reports stable platform-specific setup guidance', () => {
   assert.throws(() => assertNativeToolchain({

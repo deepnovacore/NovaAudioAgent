@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "start:client": "node scripts/start-client.mjs",
+    "start:client_demo": "node scripts/start-client-demo.mjs",
     "build": "npm run build --workspaces --if-present",
     "check": "npm run typecheck --workspace @nova-audio-agent/runtime && npm run lint --workspace @nova-audio-agent/runtime && npm run check:env-contract && npm run check:node-parity",
     "check:env-contract": "npm run build --workspace @nova-audio-agent/runtime && node runtime/scripts/check-env-contract.mjs --check",
