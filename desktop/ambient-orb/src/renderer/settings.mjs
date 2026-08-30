@@ -153,6 +153,7 @@ function updateButtons() {
     lifecycleBusy: currentView?.managedWorkspaces?.lifecycleBusy === true,
     workspaceBusy,
     currentManagedAvailable: currentView?.managedWorkspaces?.current?.available === true,
+    allManagedAvailable: (currentView?.managedWorkspaces?.count ?? 0) > 0,
   })
   settingsSave.disabled = state.saveDisabled
   workspaceOpenCurrent.disabled = state.currentDisabled

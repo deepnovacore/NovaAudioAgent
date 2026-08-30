@@ -121,3 +121,20 @@ test('expiry, cancellation, duplicate authorization, and cross-pair replay fail 
   assert.throws(() => service.authorize(cancelled.preparation), /stale/u)
   await service.close()
 })
+
+test('a persistent cleanup journal is a maintenance failure, never an empty target set', async () => {
+  let snapshotCalls = 0
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'cleanup_pending' as const}),
+    loadManagedMaintenanceJournal: () => Promise.resolve(null),
+    maintenanceSnapshot: () => {
+      snapshotCalls += 1
+      return Promise.reject(new Error('must not resolve new targets'))
+    },
+    executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
+  }
+  const service = await ManagedWorkspaceMaintenanceService.open({store})
+  await assert.rejects(service.prepare('all_managed'), /cleanup pending/u)
+  assert.equal(snapshotCalls, 0)
+  await service.close()
+})

@@ -9,6 +9,7 @@ const html = await readFile(new URL('../src/renderer/settings.html', import.meta
 const script = await readFile(new URL('../src/renderer/settings.mjs', import.meta.url), 'utf8')
 const controllerScript = await readFile(new URL('../src/renderer/settings-controller.mjs', import.meta.url), 'utf8')
 const css = await readFile(new URL('../src/renderer/settings.css', import.meta.url), 'utf8')
+const mainScript = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
 function deferred() {
   let resolve
@@ -127,6 +128,51 @@ test('an edit made while save is in flight remains dirty after the older respons
   assert.equal(controller.dirty, true)
   assert.equal(controller.snapshot().view.integratedModel, 'second')
   assert.deepEqual(calls, [{integratedModel: 'first'}])
+})
+
+test('the complete successful apply sequence clears only the submitted draft', async () => {
+  const response = deferred()
+  const notices = []
+  const calls = []
+  const controller = createSettingsController({
+    api: {set: patch => { calls.push(structuredClone(patch)); return response.promise }},
+    render: () => {},
+    status: () => {},
+    notice: phase => notices.push(phase),
+  })
+  controller.setView(publicView())
+  controller.stage({palette: 'graphite'})
+  assert.equal(calls.length, 0, 'local draft never crosses IPC')
+  const saving = controller.save()
+  controller.syncView(publicView({settingsApplyStatus: 'saving'}))
+  controller.syncView(publicView({settingsApplyStatus: 'restarting', backendStatus: 'starting'}))
+  response.resolve(publicView({
+    palette: 'graphite', settingsApplyStatus: 'applied', backendStatus: 'connected',
+  }))
+  assert.equal((await saving).saved, true)
+  assert.equal(controller.dirty, false)
+  assert.deepEqual(calls, [{palette: 'graphite'}])
+  assert.deepEqual(notices, ['restarting', 'complete'])
+})
+
+test('an apply failure retains public and secret drafts for an explicit retry', async () => {
+  const controller = createSettingsController({
+    api: {set: async () => publicView({
+      palette: 'graphite',
+      saved: true,
+      operationStatus: 'failed',
+      settingsApplyStatus: 'failed',
+    })},
+    render: () => {},
+    status: () => {},
+  })
+  controller.setView(publicView())
+  controller.stage({palette: 'graphite'})
+  const result = await controller.save({dashscopeApiKey: 'write-only'})
+  assert.equal(result.saved, false)
+  assert.equal(controller.dirty, true)
+  assert.deepEqual(controller.snapshot().drafts, {palette: 'graphite'})
+  assert.deepEqual(result.acceptedSecrets, [])
 })
 
 test('accepted leaves clear independently while rejected nested leaves stay dirty', async () => {
@@ -498,12 +544,14 @@ test('save and workspace buttons reflect dirtiness, lifecycle, and target eligib
     controllerBusy: false,
     lifecycleBusy: false,
     currentManagedAvailable: true,
+    allManagedAvailable: true,
   }), {saveDisabled: false, workspaceDisabled: false, currentDisabled: false})
   assert.deepEqual(settingsButtonState({
     dirty: false,
     controllerBusy: false,
     lifecycleBusy: false,
     currentManagedAvailable: false,
+    allManagedAvailable: true,
   }), {saveDisabled: true, workspaceDisabled: false, currentDisabled: true})
   for (const busyField of ['controllerBusy', 'lifecycleBusy', 'workspaceBusy']) {
     assert.deepEqual(settingsButtonState({
@@ -512,9 +560,17 @@ test('save and workspace buttons reflect dirtiness, lifecycle, and target eligib
       lifecycleBusy: false,
       workspaceBusy: false,
       currentManagedAvailable: true,
+      allManagedAvailable: true,
       [busyField]: true,
     }), {saveDisabled: true, workspaceDisabled: true, currentDisabled: true})
   }
+  assert.deepEqual(settingsButtonState({
+    dirty: false,
+    controllerBusy: false,
+    lifecycleBusy: false,
+    currentManagedAvailable: false,
+    allManagedAvailable: false,
+  }), {saveDisabled: true, workspaceDisabled: true, currentDisabled: true})
 })
 
 test('one save clears only accepted secrets whose input revision is unchanged', () => {
@@ -556,4 +612,21 @@ test('workspace controls expose only zero-argument managed actions', () => {
   assert.match(script, /api\.openCurrentManagedWorkspace\(\)/)
   assert.match(script, /api\.clearCurrentManagedWorkspace\(\)/)
   assert.match(script, /api\.clearAllManagedWorkspaces\(\)/)
+  assert.match(html, /<\/div>\n\s*<div class="workspace-actions">/)
+  const statusText = script.slice(
+    script.indexOf('const WORKSPACE_STATUS_TEXT'),
+    script.indexOf('\n})', script.indexOf('const WORKSPACE_STATUS_TEXT')) + 3,
+  )
+  assert.doesNotMatch(statusText, /(?:file:|[A-Za-z]:\\|\/(?:Users|home|var|tmp)\/)/u)
+})
+
+test('the Orb receives one committed palette notification only inside the save transaction', () => {
+  const notifications = mainScript.match(
+    /'nova:settings:changed', orbSettings\(currentSettings\)/g,
+  ) ?? []
+  assert.equal(notifications.length, 1)
+  const handler = mainScript.slice(mainScript.indexOf("ipcMain.handle('nova:settings:set'"))
+  const body = handler.slice(0, handler.indexOf('\n  })'))
+  assert.match(body, /publishCommitted: \(\) => sendToOrb\(/)
+  assert.ok(body.indexOf('write: async value') < body.indexOf('publishCommitted:'))
 })

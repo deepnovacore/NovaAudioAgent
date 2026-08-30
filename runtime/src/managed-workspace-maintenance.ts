@@ -171,7 +171,7 @@ export class ManagedWorkspaceMaintenanceService {
     if (this.#cleanupPending) {
       const cleanup = await this.#store.cleanupManagedMaintenanceJournal()
       this.#cleanupPending = cleanup.status === 'cleanup_pending'
-      if (this.#cleanupPending) return Object.freeze({status: 'empty'})
+      if (this.#cleanupPending) throw new Error('managed workspace cleanup pending')
     }
     const snapshot = await this.#store.maintenanceSnapshot()
     const selected = scope === 'all_managed'

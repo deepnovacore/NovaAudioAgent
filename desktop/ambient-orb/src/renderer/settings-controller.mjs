@@ -26,11 +26,12 @@ export function settingsButtonState({
   lifecycleBusy,
   workspaceBusy = false,
   currentManagedAvailable,
+  allManagedAvailable,
 }) {
   const busy = controllerBusy || lifecycleBusy || workspaceBusy
   return Object.freeze({
     saveDisabled: !dirty || busy,
-    workspaceDisabled: busy,
+    workspaceDisabled: busy || allManagedAvailable !== true,
     currentDisabled: busy || currentManagedAvailable !== true,
   })
 }
@@ -236,16 +237,23 @@ export function createSettingsController({ api, render, status, notice = () => {
     renderCurrent()
     try {
       const remoteView = publicPatch(await api.set(outbound))
-      const bridgeSaved = remoteView?.saved !== false
-      const rejectedPublicFields = bridgeSaved
+      const persisted = remoteView?.saved !== false
+      const failedPhase = remoteView?.operationStatus === 'failed'
+        || remoteView?.operationStatus === 'restart_failed'
+        || remoteView?.settingsApplyStatus === 'failed'
+        || remoteView?.settingsApplyStatus === 'restart_failed'
+      const bridgeSaved = persisted && !failedPhase
+      const rejectedPublicFields = persisted
         ? publicRejections(publicSubmitted, remoteView)
         : []
-      if (bridgeSaved) {
+      if (persisted) {
         hasAuthoritativeView = true
         const liveMainState = mainSyncRevision === syncRevisionAtStart
           ? {}
           : mainLiveViewPatch(confirmedView)
-        confirmedView = mergePatch(remoteView, liveMainState)
+        confirmedView = mergePatch(liveMainState, remoteView)
+      }
+      if (bridgeSaved) {
         const rejected = new Set(rejectedPublicFields)
         for (const [key, submittedDraft] of submitted) {
           const current = drafts.get(key)
@@ -258,6 +266,7 @@ export function createSettingsController({ api, render, status, notice = () => {
       renderCurrent()
       status(!bridgeSaved ? '保存失败'
         : rejectedPublicFields.length > 0 ? '部分设置未保存' : '设置已保存')
+      const failurePhase = applyFailurePhase()
       if (
         bridgeSaved
         && rejectedPublicFields.length === 0
@@ -267,12 +276,7 @@ export function createSettingsController({ api, render, status, notice = () => {
           || (typeof confirmedView?.backendStatus === 'string'
             && confirmedView.backendStatus !== 'connected')
         announce('restarting')
-        const failurePhase = applyFailurePhase()
-        if (failurePhase !== null) {
-          restartPending = false
-          restartTransitionSeen = false
-          announce(failurePhase)
-        } else if (
+        if (
           confirmedView?.settingsApplyStatus === 'applied'
           && restartTransitionSeen
           && confirmedView?.backendStatus === 'connected'
@@ -280,8 +284,12 @@ export function createSettingsController({ api, render, status, notice = () => {
           restartPending = false
           announce('complete')
         }
+      } else if (failurePhase !== null) {
+        restartPending = false
+        restartTransitionSeen = false
+        announce(failurePhase)
       }
-      const rejectedSecrets = bridgeSaved && Array.isArray(remoteView?.rejectedSecrets)
+      const rejectedSecrets = persisted && Array.isArray(remoteView?.rejectedSecrets)
         ? remoteView.rejectedSecrets.filter(key => Object.hasOwn(secrets, key))
         : []
       const acceptedSecrets = bridgeSaved
