@@ -31,15 +31,19 @@ data/
 .data/
 *.sqlite
 *.sqlite3
+memory-board-*.json
 resources/raw/
 resources/cut/
 resources/cut-final/
+desktop/ambient-orb/resources/generated/
 
 # Internal working material (demo video production)
 docs/demos/
 docs/superpowers/
 .worktrees/
 video/
+.claude/merge-artifacts/*.bundle
+thirdparty/mycontext/
 
 # Editors and operating systems
 .DS_Store
