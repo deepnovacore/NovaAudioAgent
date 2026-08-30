@@ -13,6 +13,12 @@ import {
 import type {ProjectNativeHost} from './project-native-resource.js'
 
 export type ManagedWorkspaceScope = 'current_managed' | 'all_managed'
+export type ManagedWorkspaceMaintenanceHealth =
+  | 'ready'
+  | 'degraded'
+  | 'cleanup_pending'
+  | 'rollback_pending'
+  | 'unavailable'
 declare const preparationBrand: unique symbol
 declare const authorizationBrand: unique symbol
 export interface ManagedWorkspacePreparation { readonly [preparationBrand]: never }
@@ -20,7 +26,8 @@ export interface ManagedWorkspaceAuthorization { readonly [authorizationBrand]: 
 
 interface MaintenanceStore {
   maintenanceSnapshot(): Promise<ProjectMaintenanceSnapshot>
-  withCurrentManagedWorkspacePath(callback: (path: string) => void | Promise<void>): Promise<boolean>
+  currentMaintenanceSnapshot(): Promise<ProjectMaintenanceSnapshot>
+  withCurrentManagedWorkspacePath(callback: (path: string) => void): Promise<boolean>
   executeManagedReplacement(input: ManagedReplacementInput): Promise<{
     readonly status: 'stale' | 'rolled_back' | 'committed'
     readonly committed: boolean
@@ -68,7 +75,26 @@ export type ManagedWorkspacePrepareResult =
       count: number
     }>
   }>
-  | Readonly<{status: 'not_managed' | 'empty'}>
+  | Readonly<{
+    status: 'not_managed' | 'empty' | 'cleanup_pending' | 'rollback_pending' | 'unavailable'
+  }>
+
+export type ManagedWorkspaceCapabilities = Readonly<{
+  health: ManagedWorkspaceMaintenanceHealth
+  lifecycleBusy: boolean
+  current: Readonly<{available: boolean; display_name: string | null}>
+  all: Readonly<{available: boolean; count: number}>
+}>
+
+export type ManagedWorkspaceOpenResult = Readonly<{
+  status:
+    | 'opened'
+    | 'not_managed'
+    | 'open_failed'
+    | 'cleanup_pending'
+    | 'rollback_pending'
+    | 'unavailable'
+}>
 
 export type ManagedWorkspaceExecuteResult = Readonly<{
   status: 'cleared' | 'stale' | 'clear_failed' | 'rollback_pending'
@@ -83,7 +109,7 @@ export class ManagedWorkspaceMaintenanceService {
   readonly #ttlMs: number
   readonly #closeStore: (() => Promise<void>) | null
   #closed = false
-  #cleanupPending = false
+  #journalHealth: 'ready' | 'cleanup_pending' | 'rollback_pending' | 'unavailable' = 'ready'
   #closePromise: Promise<void> | null = null
 
   private constructor(options: {
@@ -113,11 +139,7 @@ export class ManagedWorkspaceMaintenanceService {
       ttlMs: options.ttlMs ?? 60_000,
       closeStore: null,
     })
-    const cleanup = await options.store.cleanupManagedMaintenanceJournal()
-    if (cleanup.status === 'rollback_pending') {
-      throw new Error('managed workspace rollback pending')
-    }
-    service.#cleanupPending = cleanup.status === 'cleanup_pending'
+    await service.#refreshJournalHealth()
     return service
   }
 
@@ -140,11 +162,7 @@ export class ManagedWorkspaceMaintenanceService {
         ttlMs: 60_000,
         closeStore: () => store.close(),
       })
-      const cleanup = await store.cleanupManagedMaintenanceJournal()
-      if (cleanup.status === 'rollback_pending') {
-        throw new Error('managed workspace rollback pending')
-      }
-      service.#cleanupPending = cleanup.status === 'cleanup_pending'
+      await service.#refreshJournalHealth()
       return service
     } catch (error) {
       await store.close().catch(() => undefined)
@@ -152,42 +170,49 @@ export class ManagedWorkspaceMaintenanceService {
     }
   }
 
-  async capabilities(): Promise<Readonly<{
-    lifecycleBusy: boolean
-    current: Readonly<{available: boolean; display_name: string | null}>
-    all: Readonly<{available: boolean; count: number}>
-  }>> {
-    if (this.#closed) return Object.freeze({
-      lifecycleBusy: false,
-      current: Object.freeze({available: false, display_name: null}),
-      all: Object.freeze({available: false, count: 0}),
-    })
-    const snapshot = await this.#store.maintenanceSnapshot()
-    const current = snapshot.managed_targets.find(
-      target => target.workspace.workspace_id === snapshot.active_workspace_id,
+  async capabilities(): Promise<ManagedWorkspaceCapabilities> {
+    if (this.#closed) return unavailableCapabilities('unavailable')
+    if (this.#journalHealth !== 'ready') {
+      const refreshed = await this.#refreshJournalHealth()
+      if (refreshed !== 'ready') {
+        return unavailableCapabilities(refreshed)
+      }
+    }
+
+    let currentSnapshot: ProjectMaintenanceSnapshot | null = null
+    let completeSnapshot: ProjectMaintenanceSnapshot | null = null
+    try { currentSnapshot = await this.#store.currentMaintenanceSnapshot() } catch { /* bounded below */ }
+    try { completeSnapshot = await this.#store.maintenanceSnapshot() } catch { /* bounded below */ }
+    const current = currentSnapshot?.managed_targets.find(
+      target => target.workspace.workspace_id === currentSnapshot?.active_workspace_id,
     )
     return Object.freeze({
+      health: currentSnapshot !== null && completeSnapshot !== null
+        ? 'ready'
+        : currentSnapshot !== null || completeSnapshot !== null ? 'degraded' : 'unavailable',
       lifecycleBusy: false,
       current: Object.freeze({
         available: current !== undefined,
         display_name: current?.workspace.display_name ?? null,
       }),
-      all: Object.freeze({available: snapshot.managed_targets.length > 0, count: snapshot.managed_targets.length}),
+      all: Object.freeze({
+        available: (completeSnapshot?.managed_targets.length ?? 0) > 0,
+        count: completeSnapshot?.managed_targets.length ?? 0,
+      }),
     })
   }
 
   async prepare(scope: ManagedWorkspaceScope): Promise<ManagedWorkspacePrepareResult> {
-    if (this.#closed) return Object.freeze({status: 'empty'})
-    if (this.#cleanupPending) {
-      const cleanup = await this.#store.cleanupManagedMaintenanceJournal()
-      this.#cleanupPending = cleanup.status !== 'clean'
-      if (this.#cleanupPending) throw new Error(
-        cleanup.status === 'rollback_pending'
-          ? 'managed workspace rollback pending'
-          : 'managed workspace cleanup pending',
-      )
+    if (this.#closed) return Object.freeze({status: 'unavailable'})
+    if (this.#journalHealth !== 'ready') return Object.freeze({status: this.#journalHealth})
+    let snapshot: ProjectMaintenanceSnapshot
+    try {
+      snapshot = scope === 'all_managed'
+        ? await this.#store.maintenanceSnapshot()
+        : await this.#store.currentMaintenanceSnapshot()
+    } catch {
+      return Object.freeze({status: 'unavailable'})
     }
-    const snapshot = await this.#store.maintenanceSnapshot()
     const selected = scope === 'all_managed'
       ? snapshot.managed_targets
       : snapshot.managed_targets.filter(
@@ -233,7 +258,7 @@ export class ManagedWorkspaceMaintenanceService {
     const state = preparationState.get(preparation)
     if (
       state?.service !== this || state.consumed || state.authorized
-      || this.#closed || this.#now() > state.expiresAt
+      || this.#closed || this.#journalHealth !== 'ready' || this.#now() > state.expiresAt
     ) throw new Error('managed_workspace_preparation_stale')
     state.authorized = true
     const authorization = Object.freeze(Object.create(null)) as ManagedWorkspaceAuthorization
@@ -259,6 +284,7 @@ export class ManagedWorkspaceMaintenanceService {
     }
     if (
       this.#closed
+      || this.#journalHealth !== 'ready'
       || !preparedUsable
       || !authorizationUsable
       || prepared?.service !== this
@@ -284,8 +310,8 @@ export class ManagedWorkspaceMaintenanceService {
         return Object.freeze({status: 'clear_failed', committed: false, cleanup_pending: false})
       }
       const cleanup = await this.#store.cleanupManagedMaintenanceJournal()
-      this.#cleanupPending = cleanup.status !== 'clean'
-      return this.#cleanupPending
+      this.#journalHealth = cleanup.status === 'clean' ? 'ready' : cleanup.status
+      return this.#journalHealth !== 'ready'
         ? Object.freeze({status: 'clear_failed', committed: true, cleanup_pending: true})
         : Object.freeze({status: 'cleared', committed: true, cleanup_pending: false})
     } catch {
@@ -296,22 +322,22 @@ export class ManagedWorkspaceMaintenanceService {
         if (loaded?.operation_id === operationId) journal = loaded
       } catch { journalReadFailed = true }
       if (journalReadFailed) {
-        this.#cleanupPending = true
+        this.#journalHealth = 'rollback_pending'
         return Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
       }
       if (journal?.phase === 'prepared') {
         try {
           const recovery = await this.#store.cleanupManagedMaintenanceJournal()
-          this.#cleanupPending = recovery.status !== 'clean'
+          this.#journalHealth = recovery.status === 'clean' ? 'ready' : recovery.status
           return recovery.status === 'rollback_pending'
             ? Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
             : Object.freeze({status: 'clear_failed', committed: false, cleanup_pending: false})
         } catch {
-          this.#cleanupPending = true
+          this.#journalHealth = 'rollback_pending'
           return Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
         }
       }
-      this.#cleanupPending = journal !== null
+      this.#journalHealth = journal === null ? 'ready' : 'cleanup_pending'
       return Object.freeze({
         status: 'clear_failed',
         committed: journal?.phase === 'committed',
@@ -322,13 +348,35 @@ export class ManagedWorkspaceMaintenanceService {
 
   async withCurrentManagedPath(
     callback: (path: string) => void | Promise<void>,
-  ): Promise<Readonly<{status: 'opened' | 'not_managed'}>> {
-    if (this.#closed) return Object.freeze({status: 'not_managed'})
-    return Object.freeze({
-      status: await this.#store.withCurrentManagedWorkspacePath(callback)
-        ? 'opened'
-        : 'not_managed',
-    })
+  ): Promise<ManagedWorkspaceOpenResult> {
+    if (this.#closed) return Object.freeze({status: 'unavailable'})
+    if (this.#journalHealth !== 'ready') return Object.freeze({status: this.#journalHealth})
+    let callbackInvoked = false
+    let completion = Promise.resolve()
+    let opened: boolean
+    try {
+      opened = await this.#store.withCurrentManagedWorkspacePath(path => {
+        callbackInvoked = true
+        try {
+          completion = Promise.resolve(callback(path))
+        } catch (error) {
+          completion = Promise.reject(
+            error instanceof Error ? error : new Error('managed workspace open failed'),
+          )
+        }
+        void completion.catch(() => undefined)
+      })
+    } catch {
+      return Object.freeze({status: callbackInvoked ? 'open_failed' : 'unavailable'})
+    }
+    if (!opened) return Object.freeze({status: 'not_managed'})
+    if (!callbackInvoked) return Object.freeze({status: 'unavailable'})
+    try {
+      await completion
+      return Object.freeze({status: 'opened'})
+    } catch {
+      return Object.freeze({status: 'open_failed'})
+    }
   }
 
   close(): Promise<void> {
@@ -343,8 +391,31 @@ export class ManagedWorkspaceMaintenanceService {
     if (!/^[A-Za-z0-9_-]{8,80}$/u.test(value)) throw new Error('invalid maintenance operation id')
     return value
   }
+
+  async #refreshJournalHealth(): Promise<
+    'ready' | 'cleanup_pending' | 'rollback_pending' | 'unavailable'
+  > {
+    try {
+      const cleanup = await this.#store.cleanupManagedMaintenanceJournal()
+      this.#journalHealth = cleanup.status === 'clean' ? 'ready' : cleanup.status
+    } catch {
+      this.#journalHealth = 'unavailable'
+    }
+    return this.#journalHealth
+  }
 }
 
 function staleResult(): ManagedWorkspaceExecuteResult {
   return Object.freeze({status: 'stale', committed: false, cleanup_pending: false})
+}
+
+function unavailableCapabilities(
+  health: 'cleanup_pending' | 'rollback_pending' | 'unavailable',
+): ManagedWorkspaceCapabilities {
+  return Object.freeze({
+    health,
+    lifecycleBusy: false,
+    current: Object.freeze({available: false, display_name: null}),
+    all: Object.freeze({available: false, count: 0}),
+  })
 }

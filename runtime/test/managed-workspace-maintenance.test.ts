@@ -28,6 +28,11 @@ test('preparation and authorization are opaque, paired, and consumed exactly onc
       active_workspace_id: workspace.workspace_id,
       managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
     }),
+    currentMaintenanceSnapshot: () => Promise.resolve({
+      state_revision: 7,
+      active_workspace_id: workspace.workspace_id,
+      managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
+    }),
     withCurrentManagedWorkspacePath: async (callback: (path: string) => void | Promise<void>) => {
       await callback(workspace.canonical_path)
       return true
@@ -44,6 +49,7 @@ test('preparation and authorization are opaque, paired, and consumed exactly onc
   })
   const prepared = await service.prepare('current_managed')
   assert.deepEqual(await service.capabilities(), {
+    health: 'ready',
     lifecycleBusy: false,
     current: {available: true, display_name: 'workspace-0001'},
     all: {available: true, count: 1},
@@ -80,6 +86,11 @@ test('registered current workspaces and expired preparations cannot authorize cl
       active_workspace_id: workspace.workspace_id,
       managed_targets: [],
     }),
+    currentMaintenanceSnapshot: () => Promise.resolve({
+      state_revision: 1,
+      active_workspace_id: workspace.workspace_id,
+      managed_targets: [],
+    }),
     withCurrentManagedWorkspacePath: () => Promise.resolve(false),
     executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
   }
@@ -98,6 +109,11 @@ test('expiry, cancellation, duplicate authorization, and cross-pair replay fail 
     cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
     loadManagedMaintenanceJournal: () => Promise.resolve(null),
     maintenanceSnapshot: () => Promise.resolve({
+      state_revision: 1,
+      active_workspace_id: workspace.workspace_id,
+      managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
+    }),
+    currentMaintenanceSnapshot: () => Promise.resolve({
       state_revision: 1,
       active_workspace_id: workspace.workspace_id,
       managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
@@ -143,11 +159,15 @@ test('a persistent cleanup journal is a maintenance failure, never an empty targ
       snapshotCalls += 1
       return Promise.reject(new Error('must not resolve new targets'))
     },
+    currentMaintenanceSnapshot: () => {
+      snapshotCalls += 1
+      return Promise.reject(new Error('must not resolve current target'))
+    },
     withCurrentManagedWorkspacePath: () => Promise.resolve(false),
     executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
   }
   const service = await ManagedWorkspaceMaintenanceService.open({store})
-  await assert.rejects(service.prepare('all_managed'), /cleanup pending/u)
+  assert.deepEqual(await service.prepare('all_managed'), {status: 'cleanup_pending'})
   assert.equal(snapshotCalls, 0)
   await service.close()
 })
@@ -173,6 +193,11 @@ test('a committed journal remains committed when execution loses its reply', asy
       active_workspace_id: workspace.workspace_id,
       managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
     }),
+    currentMaintenanceSnapshot: () => Promise.resolve({
+      state_revision: 1,
+      active_workspace_id: workspace.workspace_id,
+      managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
+    }),
     withCurrentManagedWorkspacePath: () => Promise.resolve(false),
     executeManagedReplacement: () => {
       executing = true
@@ -193,15 +218,37 @@ test('a committed journal remains committed when execution loses its reply', asy
   await service.close()
 })
 
-test('service startup refuses an unresolved prepared rollback', async () => {
+test('service startup preserves unresolved rollback health and remains closable', async () => {
+  let snapshotCalls = 0
   const store = {
     cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'rollback_pending' as const}),
     loadManagedMaintenanceJournal: () => Promise.resolve(null),
-    maintenanceSnapshot: () => Promise.reject(new Error('must not inspect detached workspaces')),
+    maintenanceSnapshot: () => {
+      snapshotCalls += 1
+      return Promise.reject(new Error('must not inspect detached workspaces'))
+    },
+    currentMaintenanceSnapshot: () => {
+      snapshotCalls += 1
+      return Promise.reject(new Error('must not inspect the active workspace'))
+    },
     withCurrentManagedWorkspacePath: () => Promise.resolve(false),
     executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
   }
-  await assert.rejects(ManagedWorkspaceMaintenanceService.open({store}), /rollback pending/u)
+  const service = await ManagedWorkspaceMaintenanceService.open({store})
+  assert.deepEqual(await service.capabilities(), {
+    health: 'rollback_pending',
+    lifecycleBusy: false,
+    current: {available: false, display_name: null},
+    all: {available: false, count: 0},
+  })
+  assert.equal(snapshotCalls, 0)
+  await service.close()
+  assert.deepEqual(await service.capabilities(), {
+    health: 'unavailable',
+    lifecycleBusy: false,
+    current: {available: false, display_name: null},
+    all: {available: false, count: 0},
+  })
 })
 
 test('a completed filesystem rollback is reported as clear_failed rather than stale', async () => {
@@ -210,6 +257,11 @@ test('a completed filesystem rollback is reported as clear_failed rather than st
     cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
     loadManagedMaintenanceJournal: () => Promise.resolve(null),
     maintenanceSnapshot: () => Promise.resolve({
+      state_revision: 1,
+      active_workspace_id: workspace.workspace_id,
+      managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
+    }),
+    currentMaintenanceSnapshot: () => Promise.resolve({
       state_revision: 1,
       active_workspace_id: workspace.workspace_id,
       managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
@@ -229,6 +281,149 @@ test('a completed filesystem rollback is reported as clear_failed rather than st
   const authorization = service.authorize(prepared.preparation)
   assert.deepEqual(await service.execute(prepared.preparation, authorization), {
     status: 'clear_failed', committed: false, cleanup_pending: false,
+  })
+  await service.close()
+})
+
+test('capabilities keep a valid current target available when complete-set validation fails', async () => {
+  const workspace = record('workspace-0001')
+  let currentSnapshotCalls = 0
+  let completeSnapshotCalls = 0
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
+    loadManagedMaintenanceJournal: () => Promise.resolve(null),
+    currentMaintenanceSnapshot: () => {
+      currentSnapshotCalls += 1
+      return Promise.resolve({
+        state_revision: 1,
+        active_workspace_id: workspace.workspace_id,
+        managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
+      })
+    },
+    maintenanceSnapshot: () => {
+      completeSnapshotCalls += 1
+      return Promise.reject(new Error('detached managed workspace'))
+    },
+    withCurrentManagedWorkspacePath: () => Promise.resolve(false),
+    executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
+  }
+  const service = await ManagedWorkspaceMaintenanceService.open({store})
+  assert.deepEqual(await service.capabilities(), {
+    health: 'degraded',
+    lifecycleBusy: false,
+    current: {available: true, display_name: 'workspace-0001'},
+    all: {available: false, count: 0},
+  })
+  const current = await service.prepare('current_managed')
+  assert.equal(current.status, 'ready')
+  assert.deepEqual(await service.prepare('all_managed'), {status: 'unavailable'})
+  assert.equal(currentSnapshotCalls, 2)
+  assert.equal(completeSnapshotCalls, 2)
+  await service.close()
+})
+
+test('capabilities bound complete snapshot failures as unavailable', async () => {
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
+    loadManagedMaintenanceJournal: () => Promise.resolve(null),
+    currentMaintenanceSnapshot: () => Promise.reject(new Error('current unavailable')),
+    maintenanceSnapshot: () => Promise.reject(new Error('all unavailable')),
+    withCurrentManagedWorkspacePath: () => Promise.resolve(false),
+    executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
+  }
+  const service = await ManagedWorkspaceMaintenanceService.open({store})
+  assert.deepEqual(await service.capabilities(), {
+    health: 'unavailable',
+    lifecycleBusy: false,
+    current: {available: false, display_name: null},
+    all: {available: false, count: 0},
+  })
+  await service.close()
+})
+
+test('capability refresh retries pending journal recovery before inspecting targets', async () => {
+  const workspace = record('workspace-0001')
+  const cleanupStatuses = ['cleanup_pending', 'cleanup_pending', 'clean'] as const
+  let cleanupCalls = 0
+  let snapshotCalls = 0
+  const snapshot = {
+    state_revision: 1,
+    active_workspace_id: workspace.workspace_id,
+    managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
+  }
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({
+      status: cleanupStatuses[cleanupCalls++] ?? 'clean',
+    }),
+    loadManagedMaintenanceJournal: () => Promise.resolve(null),
+    currentMaintenanceSnapshot: () => {
+      snapshotCalls += 1
+      return Promise.resolve(snapshot)
+    },
+    maintenanceSnapshot: () => {
+      snapshotCalls += 1
+      return Promise.resolve(snapshot)
+    },
+    withCurrentManagedWorkspacePath: () => {
+      snapshotCalls += 1
+      return Promise.resolve(false)
+    },
+    executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
+  }
+  const service = await ManagedWorkspaceMaintenanceService.open({store})
+  assert.deepEqual(await service.prepare('current_managed'), {status: 'cleanup_pending'})
+  assert.deepEqual(await service.withCurrentManagedPath(() => undefined), {status: 'cleanup_pending'})
+  assert.equal(snapshotCalls, 0)
+  assert.deepEqual(await service.capabilities(), {
+    health: 'cleanup_pending',
+    lifecycleBusy: false,
+    current: {available: false, display_name: null},
+    all: {available: false, count: 0},
+  })
+  assert.equal(snapshotCalls, 0)
+  assert.deepEqual(await service.capabilities(), {
+    health: 'ready',
+    lifecycleBusy: false,
+    current: {available: true, display_name: 'workspace-0001'},
+    all: {available: true, count: 1},
+  })
+  assert.equal(snapshotCalls, 2)
+  await service.close()
+})
+
+test('current open awaits OS completion after store validation and reports callback failure', async () => {
+  const workspace = record('workspace-0001')
+  let transactionReleased = false
+  let finishOpen!: (error?: Error) => void
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
+    loadManagedMaintenanceJournal: () => Promise.resolve(null),
+    currentMaintenanceSnapshot: () => Promise.reject(new Error('must not snapshot')),
+    maintenanceSnapshot: () => Promise.reject(new Error('must not snapshot')),
+    withCurrentManagedWorkspacePath: (callback: (path: string) => void) => {
+      callback(workspace.canonical_path)
+      assert.equal(transactionReleased, false)
+      transactionReleased = true
+      return Promise.resolve(true)
+    },
+    executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
+  }
+  const service = await ManagedWorkspaceMaintenanceService.open({store})
+  let settled = false
+  const opened = service.withCurrentManagedPath(() => new Promise<void>((resolve, reject) => {
+    finishOpen = error => { if (error === undefined) resolve(); else reject(error) }
+  })).then(result => {
+    settled = true
+    return result
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(transactionReleased, true)
+  assert.equal(settled, false)
+  finishOpen()
+  assert.deepEqual(await opened, {status: 'opened'})
+
+  assert.deepEqual(await service.withCurrentManagedPath(() => Promise.reject(new Error('OS failed'))), {
+    status: 'open_failed',
   })
   await service.close()
 })

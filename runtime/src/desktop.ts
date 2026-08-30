@@ -34,7 +34,10 @@ export {
 export {
   ManagedWorkspaceMaintenanceService,
   type ManagedWorkspaceAuthorization,
+  type ManagedWorkspaceCapabilities,
   type ManagedWorkspaceExecuteResult,
+  type ManagedWorkspaceMaintenanceHealth,
+  type ManagedWorkspaceOpenResult,
   type ManagedWorkspacePreparation,
   type ManagedWorkspacePrepareResult,
   type ManagedWorkspaceScope,

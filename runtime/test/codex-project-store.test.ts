@@ -45,6 +45,7 @@ import {
   hostWorkspaceForTest,
   hostWorkspacePath,
 } from '../src/codex-process-owner.js'
+import {ManagedWorkspaceMaintenanceService} from '../src/managed-workspace-maintenance.js'
 import {
   unsupportedNativeFileLocks,
   type NativeFileLockAuthority,
@@ -1947,14 +1948,85 @@ test('current managed open detects a same-path substitution around the host call
   })
   try {
     const workspace = await store.createManaged('Alpha')
-    await assert.rejects(store.withCurrentManagedWorkspacePath(async path => {
+    await assert.rejects(store.withCurrentManagedWorkspacePath(path => {
       assert.equal(path, workspace.canonical_path)
-      await rename(path, join(managedRoot, 'moved-during-open'))
-      await mkdir(path, {mode: 0o700})
+      renameSync(path, join(managedRoot, 'moved-during-open'))
+      mkdirSync(path, {mode: 0o700})
     }), (error: unknown) => (
       error instanceof ProjectStateError && error.code === 'workspace_boundary_changed'
     ))
   } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('current maintenance snapshot ignores invalid detached managed records', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-current-maintenance-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
+    idFactory: () => identifiers.next().value ?? 'unused-id',
+  })
+  try {
+    const detached = await store.createManaged('Alpha')
+    const current = await store.createManaged('Beta')
+    await rename(detached.canonical_path, join(managedRoot, 'detached-alpha'))
+    const snapshot = await store.currentMaintenanceSnapshot()
+    assert.equal(snapshot.active_workspace_id, current.workspace_id)
+    assert.deepEqual(
+      snapshot.managed_targets.map(target => target.workspace.workspace_id),
+      [current.workspace_id],
+    )
+    await assert.rejects(store.maintenanceSnapshot(), (error: unknown) => (
+      error instanceof ProjectStateError && error.code === 'workspace_boundary_changed'
+    ))
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('current managed open releases the store transaction before awaiting host completion', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-open-lock-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
+    idFactory: () => 'workspace-0001',
+  })
+  let finishHost!: () => void
+  let service: ManagedWorkspaceMaintenanceService | null = null
+  try {
+    await store.createManaged('Alpha')
+    service = await ManagedWorkspaceMaintenanceService.open({store})
+    let callbackStarted!: () => void
+    const started = new Promise<void>(resolve => { callbackStarted = resolve })
+    const hostCompletion = new Promise<void>(resolve => { finishHost = resolve })
+    const opened = service.withCurrentManagedPath(() => {
+      callbackStarted()
+      return hostCompletion
+    })
+    await started
+    const snapshot = await within('snapshot while host completion is pending', store.snapshot(), 250)
+    assert.equal(snapshot.workspaces.length, 1)
+    finishHost()
+    assert.deepEqual(await opened, {status: 'opened'})
+  } finally {
+    finishHost?.()
+    await service?.close()
     await store.close()
     await rm(root, {recursive: true, force: true})
   }

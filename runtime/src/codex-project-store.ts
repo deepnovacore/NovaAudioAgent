@@ -431,8 +431,31 @@ export class CodexProjectStore {
     }, {wait: true})
   }
 
+  async currentMaintenanceSnapshot(): Promise<ProjectMaintenanceSnapshot> {
+    return await this.#transaction<ProjectMaintenanceSnapshot>(async state => {
+      await this.#validateManagedRoot()
+      const workspace = state.activeWorkspaceId === null
+        ? undefined
+        : state.workspaces.get(state.activeWorkspaceId)
+      const targets: ProjectMaintenanceTargetSnapshot[] = []
+      if (workspace?.origin === 'managed') {
+        const binding = await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
+        this.#pinWorkspaceIdentity(workspace.workspace_id, binding.identity)
+        targets.push(Object.freeze({
+          workspace: Object.freeze({...workspace}),
+          identity: Object.freeze({...binding.identity}),
+        }))
+      }
+      return [Object.freeze({
+        state_revision: state.stateRevision,
+        active_workspace_id: state.activeWorkspaceId,
+        managed_targets: Object.freeze(targets),
+      }), false]
+    }, {wait: true})
+  }
+
   async withCurrentManagedWorkspacePath(
-    callback: (path: string) => void | Promise<void>,
+    callback: (path: string) => void,
   ): Promise<boolean> {
     return await this.#transaction<boolean>(async state => {
       await this.#validateManagedRoot()
@@ -442,7 +465,7 @@ export class CodexProjectStore {
       if (workspace?.origin !== 'managed') return [false, false]
       const before = await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
       this.#pinWorkspaceIdentity(workspace.workspace_id, before.identity)
-      await callback(workspace.canonical_path)
+      callback(workspace.canonical_path)
       await this.#validateManagedRoot()
       const after = await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
       if (!sameFileIdentity(before.identity, after.identity)) {
