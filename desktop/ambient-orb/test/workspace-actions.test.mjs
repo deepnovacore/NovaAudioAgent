@@ -175,6 +175,46 @@ test('explicit safe retry activates once and clears recovery only after success'
   assert.deepEqual(value.events, ['stop', 'refresh', 'retry'])
 })
 
+test('a newer rollback invalidates an in-flight safe retry and quiesces stale activation', async () => {
+  const rollback = {health: 'rollback_pending'}
+  let activationEntered
+  const entered = new Promise(resolve => { activationEntered = resolve })
+  let releaseActivation
+  const activationGate = new Promise(resolve => { releaseActivation = resolve })
+  let running = false
+  const value = recoveryFixture({
+    capabilities: rollback,
+    refreshCapabilities: () => ({health: 'ready'}),
+    retryBackend: async () => {
+      running = true
+      activationEntered()
+      await activationGate
+      running = true
+      return true
+    },
+    stopBackend: () => {
+      running = false
+      return true
+    },
+  })
+
+  assert.deepEqual(await value.recovery.observe(rollback), {status: 'required'})
+  const retrying = value.recovery.retry()
+  await entered
+  assert.equal(running, true)
+
+  const newerRollback = {health: 'rollback_pending', observation: 'newer'}
+  value.setCapabilities(newerRollback)
+  assert.deepEqual(await value.recovery.observe(newerRollback), {status: 'required'})
+  assert.equal(running, false)
+
+  releaseActivation()
+  assert.deepEqual(await retrying, {status: 'recovery_failed'})
+  assert.equal(value.recovery.status(), 'failed')
+  assert.equal(running, false)
+  assert.deepEqual(value.events, ['stop', 'refresh', 'retry', 'stop', 'stop'])
+})
+
 test('failed safe activation remains latched and blocks ordinary restart', async () => {
   const rollback = {health: 'rollback_pending'}
   const value = recoveryFixture({

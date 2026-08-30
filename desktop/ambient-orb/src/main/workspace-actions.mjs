@@ -41,9 +41,11 @@ export function createManagedWorkspaceBackendRecovery({
   stopBackend,
 }) {
   let recoveryStatus = 'idle'
+  let rollbackGeneration = 0
 
   const observe = async capabilities => {
     if (capabilities?.health !== 'rollback_pending') return bounded(recoveryStatus)
+    rollbackGeneration += 1
     const alreadyFailed = recoveryStatus === 'failed'
     recoveryStatus = alreadyFailed ? 'failed' : 'required'
     let stopped = false
@@ -74,6 +76,7 @@ export function createManagedWorkspaceBackendRecovery({
         await observe(current)
       }
       const recoveryRequired = recoveryStatus !== 'idle'
+      const attemptGeneration = rollbackGeneration
       let capabilities
       try {
         capabilities = await refreshCapabilities()
@@ -84,8 +87,15 @@ export function createManagedWorkspaceBackendRecovery({
       if (capabilities?.health === 'rollback_pending') await observe(capabilities)
       if (recoveryRequired || recoveryStatus !== 'idle') {
         const safe = capabilities?.health === 'ready' || capabilities?.health === 'degraded'
-        if (!safe) {
+        if (!safe || rollbackGeneration !== attemptGeneration) {
           recoveryStatus = 'failed'
+          if (rollbackGeneration !== attemptGeneration) {
+            try {
+              await stopBackend()
+            } catch {
+              // A stale recovery never becomes successful even if quiescing fails.
+            }
+          }
           return bounded('recovery_failed')
         }
         let activated = false
@@ -94,7 +104,7 @@ export function createManagedWorkspaceBackendRecovery({
         } catch {
           activated = false
         }
-        if (!activated) {
+        if (!activated || rollbackGeneration !== attemptGeneration) {
           recoveryStatus = 'failed'
           try {
             await stopBackend()
