@@ -74,7 +74,7 @@ export interface BridgeService {
     generationEpoch: number,
     playedMs: number | null,
   ): Promise<boolean>
-  playbackDisconnected(): Promise<boolean>
+  playbackDisconnected(options?: {readonly resumeDelivery?: boolean}): Promise<boolean>
   playbackCleared(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean
   projectConfirmationDecision(proposalId: string, confirmed: boolean): Promise<void>
 }
@@ -309,15 +309,19 @@ export class DesktopSocketBridge {
 
   /** Mark the connection authenticated, which is what unblocks the single-slot queues. */
   markAuthenticated(): void {
-    if (this.#everAuthenticated) this.#fencePlaybackForConnectionBoundary()
+    if (this.#everAuthenticated) {
+      this.#fencePlaybackForConnectionBoundary({resumeDelivery: true})
+    }
     this.#authenticated = true
     this.#everAuthenticated = true
     this.#syncCodexStateDelivery()
     this.#syncProjectDelivery()
   }
 
-  #fencePlaybackForConnectionBoundary(): void {
-    void this.#service.playbackDisconnected().catch(() => {
+  #fencePlaybackForConnectionBoundary(
+    options: {readonly resumeDelivery?: boolean} = {},
+  ): void {
+    void this.#service.playbackDisconnected(options).catch(() => {
       this.#telemetry?.record('desktop.playback_disconnect_failed', {})
     })
   }

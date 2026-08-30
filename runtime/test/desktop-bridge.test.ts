@@ -91,8 +91,8 @@ function harness(
       calls.push(`stopped:${utteranceId}:${epoch}:${playedMs ?? 'null'}`)
       return Promise.resolve(true)
     },
-    playbackDisconnected: () => {
-      calls.push('playback-disconnected')
+    playbackDisconnected: (options) => {
+      calls.push(`playback-disconnected:${options?.resumeDelivery === true ? 'resume' : 'paused'}`)
       return Promise.resolve(true)
     },
     playbackCleared: (utteranceId, epoch, playedMs) => {
@@ -347,7 +347,7 @@ test('releasing drops transient playback and does not queue partial audio while 
   bridge.onAudioTerminal('u-4', 4)
 
   bridge.release()
-  assert.ok(calls.includes('playback-disconnected'))
+  assert.ok(calls.includes('playback-disconnected:paused'))
   bridge.onAudioFrame(frame(4, 1))
   bridge.onCaption({role: 'assistant', text: 'disconnected', final: false})
   bridge.onAudioTerminal('u-4', 4)
@@ -356,9 +356,13 @@ test('releasing drops transient playback and does not queue partial audio while 
   assert.equal(bridge.claim(), true)
   bridge.markAuthenticated()
   assert.equal(
-    calls.filter(call => call === 'playback-disconnected').length,
+    calls.filter(call => call.startsWith('playback-disconnected:')).length,
     2,
-    'reconnect fences anything that began while no renderer was authenticated',
+    'both connection boundaries fence playback',
+  )
+  assert.ok(
+    calls.includes('playback-disconnected:resume'),
+    'only the authenticated replacement reopens provider delivery',
   )
   assert.equal(
     bridge.takeNextFrame(),

@@ -332,6 +332,8 @@ export class RealtimeService {
    */
   readonly #continuationDriveLock = new Mutex()
   readonly #deliveryReady = new Signal()
+  #rendererHostDeliveryPaused = false
+  #rendererHostDeliveryBoundary: object | null = null
   /**
    * The stop flag, as a real `AbortController`.
    *
@@ -862,6 +864,7 @@ export class RealtimeService {
       if (this.session.releaseStaleUserHold(USER_HOLD_MAX_S)) {
         this.#onDiagnostic('[realtime-diagnostic] floor_stale_hold_released')
       }
+      if (this.#rendererHostDeliveryPaused) return
       const eligiblePreemptWasArmed = this.#pendingPreemptPriority !== null
         && this.#pendingPreemptPriority >= PREEMPT_MIN_PRIORITY
       await this.#maybePreemptLocked()
@@ -1128,7 +1131,8 @@ export class RealtimeService {
    * that is immediately cut off.
    */
   #continuationRequestIsBlocked(): boolean {
-    return this.session.floor.state === 'user_speaking'
+    return this.#rendererHostDeliveryPaused
+      || this.session.floor.state === 'user_speaking'
       || (
         this.#pendingPreemptPriority !== null
         && this.#pendingPreemptPriority >= PREEMPT_MIN_PRIORITY
@@ -4548,16 +4552,34 @@ export class RealtimeService {
   }
 
   /** The renderer transport vanished, so no current or imminent response may keep speaking. */
-  async playbackDisconnected(): Promise<boolean> {
+  async playbackDisconnected(
+    options: {readonly resumeDelivery?: boolean} = {},
+  ): Promise<boolean> {
+    // Set before the first await so a concurrent host event cannot use the renderer boundary as a
+    // chance to start speech that no authenticated renderer can play.
+    const boundary = {}
+    this.#rendererHostDeliveryBoundary = boundary
+    this.#rendererHostDeliveryPaused = true
+    const releasedUserHold = this.session.releaseRendererUserHold()
     const generation = this.session.currentGeneration
+    let fenced: boolean
     if (generation !== null) {
-      return this.playbackStopped(
+      fenced = await this.playbackStopped(
         generation.utterance_id,
         generation.generation_epoch,
         null,
       )
+    } else {
+      fenced = await this.session.rendererDisconnected()
     }
-    return this.session.rendererDisconnected()
+    if (
+      options.resumeDelivery === true
+      && this.#rendererHostDeliveryBoundary === boundary
+    ) {
+      this.#rendererHostDeliveryPaused = false
+      this.#deliveryReady.set()
+    }
+    return fenced || releasedUserHold
   }
 
   /** Return an interrupted, unheard acknowledgement to the live delegate that still owns it. */

@@ -635,6 +635,7 @@ function pipelineService(options: {
   readonly includeRecall?: boolean
   readonly projectTool?: boolean
   readonly retireFailure?: boolean
+  readonly parkProviderEvents?: boolean
   readonly beforeInjectConfirmation?: () => Promise<void>
   readonly beforeCancelResponse?: () => Promise<void>
 } = {}): {
@@ -728,7 +729,7 @@ function pipelineService(options: {
       await options.beforeCancelResponse?.()
     },
     sendAudio: () => Promise.resolve(),
-    events: () => emptyStream(),
+    events: signal => options.parkProviderEvents === true ? parkedStream(signal) : emptyStream(),
     close: () => {
       actions.push('close')
       return Promise.resolve()
@@ -3771,6 +3772,169 @@ test('renderer disconnect fences the current generation even before its first fr
     pcm: new Uint8Array([0, 1]),
   })
   assert.equal(session.currentGeneration, null)
+})
+
+test('renderer reconnect releases an abandoned provider VAD hold before new agent audio', async (t) => {
+  const {service, session, clock, actions} = pipelineService({parkProviderEvents: true})
+  t.after(async () => { await service.close() })
+  await service.start()
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-before-disconnect',
+    provider_item_id: 'user-before-disconnect',
+  })
+  assert.equal(session.floor.state, 'user_speaking')
+
+  service.queueHostItem(hostFact('queued-during-renderer-disconnect'))
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(
+    actions.includes('inject:queued-during-renderer-disconnect'),
+    false,
+    'the user hold initially keeps the real host delivery queue closed',
+  )
+
+  await service.playbackDisconnected()
+  assert.equal(session.floor.state, 'idle')
+  service.queueHostItem(hostFact('queued-after-renderer-disconnect'))
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(
+    actions.includes('inject:queued-during-renderer-disconnect'),
+    false,
+    'a disconnected renderer does not reopen provider delivery',
+  )
+  assert.equal(
+    actions.includes('inject:queued-after-renderer-disconnect'),
+    false,
+    'new host work also stays paused until a renderer authenticates',
+  )
+
+  await service.playbackDisconnected({resumeDelivery: true})
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(
+    actions.includes('inject:queued-during-renderer-disconnect'),
+    true,
+    'releasing the abandoned hold wakes the real host delivery queue',
+  )
+
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'response-after-renderer-reconnect',
+  })
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'response-after-renderer-reconnect',
+    pcm: new Uint8Array([0, 1]),
+  })
+
+  assert.equal(clock.now(), 0, 'recovery does not wait for the 30 second stale-hold deadline')
+  assert.notEqual(session.currentGeneration, null)
+})
+
+test('renderer disconnect keeps delivery paused while completed audio is still playing', async (t) => {
+  const {service, session, actions} = pipelineService({parkProviderEvents: true})
+  t.after(async () => { await service.close() })
+  await service.start()
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'completed-before-disconnect',
+  })
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'completed-before-disconnect',
+    pcm: new Uint8Array([0, 1]),
+  })
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'completed-before-disconnect',
+    status: 'completed',
+    reason: '',
+  })
+  assert.notEqual(session.currentGeneration, null)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-over-completed-playback',
+    provider_item_id: 'user-over-completed-playback',
+  })
+  service.queueHostItem(hostFact('queued-behind-completed-playback'))
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+
+  await service.playbackDisconnected()
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(
+    actions.includes('inject:queued-behind-completed-playback'),
+    false,
+    'stopping the old generation does not resume delivery while disconnected',
+  )
+
+  await service.playbackDisconnected({resumeDelivery: true})
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(
+    actions.includes('inject:queued-behind-completed-playback'),
+    true,
+    'the authenticated replacement resumes the held delivery',
+  )
+})
+
+test('a late authenticated resume cannot reopen delivery after its renderer disconnects', async (t) => {
+  let reportCancelStarted: (() => void) | undefined
+  let releaseCancel: (() => void) | undefined
+  const cancelStarted = new Promise<void>(resolve => { reportCancelStarted = resolve })
+  const cancelReleased = new Promise<void>(resolve => { releaseCancel = resolve })
+  const {service, actions} = pipelineService({
+    parkProviderEvents: true,
+    beforeCancelResponse: async () => {
+      reportCancelStarted?.()
+      await cancelReleased
+    },
+  })
+  t.after(async () => { await service.close() })
+  await service.start()
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'response-fenced-during-authentication',
+  })
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'response-fenced-during-authentication',
+    pcm: new Uint8Array([0, 1]),
+  })
+
+  const lateResume = service.playbackDisconnected({resumeDelivery: true})
+  await cancelStarted
+  await service.playbackDisconnected()
+  releaseCancel?.()
+  await lateResume
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'response-fenced-during-authentication',
+    status: 'cancelled',
+    reason: '',
+  })
+  service.queueHostItem(hostFact('queued-after-reconnect-race'))
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(
+    actions.includes('inject:queued-after-reconnect-race'),
+    false,
+    'the later disconnect owns the paused state',
+  )
+
+  await service.playbackDisconnected({resumeDelivery: true})
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(
+    actions.includes('inject:queued-after-reconnect-race'),
+    true,
+    'only a newer authenticated boundary may resume delivery',
+  )
 })
 
 test('playback stop requeues an acknowledgement when provider cancellation terminates first', async () => {

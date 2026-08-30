@@ -1435,6 +1435,13 @@ export class RealtimeSession {
     return this.#fenceAndCancelActiveResponse()
   }
 
+  /** Release the exact provider VAD hold whose PCM source disappeared with the renderer. */
+  releaseRendererUserHold(): boolean {
+    const speechId = this.#floor.userSpeechId
+    if (speechId === null) return false
+    return this.#acceptSpeechEnded(speechId, null)
+  }
+
   // ---------------------------------------------------------------------------
   // Delegates
   // ---------------------------------------------------------------------------
