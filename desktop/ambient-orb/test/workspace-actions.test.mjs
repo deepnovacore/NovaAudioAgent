@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import {createBackendSupervisor} from '../src/main/backend-supervisor.mjs'
 import {createLifecycleCoordinator} from '../src/main/lifecycle-coordinator.mjs'
 import * as workspaceActionModule from '../src/main/workspace-actions.mjs'
 
@@ -88,45 +89,166 @@ test('public capabilities preserve maintenance health and independent current/al
   })
 })
 
-test('rollback recovery keeps the supervisor stopped until an explicit retry observes clean health', async () => {
-  assert.equal(typeof workspaceActionModule.createManagedWorkspaceBackendRecovery, 'function')
+function recoveryFixture(overrides = {}) {
   const events = []
-  let current = {
-    health: 'rollback_pending',
-    current: {available: false, displayName: null},
-    all: {available: false, count: 0},
-  }
-  const refreshes = [current, {
+  let current = overrides.capabilities ?? {
     health: 'ready',
     current: {available: true, displayName: 'Alpha'},
     all: {available: true, count: 1},
-  }]
+  }
   const recovery = workspaceActionModule.createManagedWorkspaceBackendRecovery({
     getCapabilities: () => current,
     refreshCapabilities: async () => {
       events.push('refresh')
-      return refreshes.shift() ?? current
+      return overrides.refreshCapabilities?.() ?? current
     },
-    startBackend: async () => { events.push('start') },
-    restartBackend: async () => { events.push('restart') },
-    retryBackend: async () => { events.push('retry') },
+    startBackend: async () => {
+      events.push('start')
+      return overrides.startBackend?.() ?? true
+    },
+    restartBackend: async () => {
+      events.push('restart')
+      return overrides.restartBackend?.() ?? true
+    },
+    retryBackend: async () => {
+      events.push('retry')
+      return overrides.retryBackend?.() ?? true
+    },
+    stopBackend: async () => {
+      events.push('stop')
+      return overrides.stopBackend?.() ?? true
+    },
   })
+  return {events, recovery, setCapabilities: value => { current = value }}
+}
 
-  assert.deepEqual(await recovery.start(), {status: 'rollback_pending'})
-  assert.deepEqual(await recovery.restart(), {status: 'rollback_pending'})
-  assert.deepEqual(events, [])
-  assert.deepEqual(await recovery.retry(), {status: 'rollback_pending'})
-  assert.deepEqual(events, ['refresh'])
-  assert.deepEqual(await recovery.retry(), {status: 'retried'})
-  assert.deepEqual(events, ['refresh', 'refresh', 'retry'])
-  current = refreshes.at(-1) ?? {
+test('known rollback remains latched across passive ready refresh and fails closed on unavailable retry', async () => {
+  assert.equal(typeof workspaceActionModule.createManagedWorkspaceBackendRecovery, 'function')
+  const rollback = {
+    health: 'rollback_pending',
+    current: {available: false, displayName: null},
+    all: {available: false, count: 0},
+  }
+  const ready = {
     health: 'ready',
     current: {available: true, displayName: 'Alpha'},
     all: {available: true, count: 1},
   }
-  assert.deepEqual(await recovery.restart(), {status: 'restarted'})
-  assert.deepEqual(await recovery.start(), {status: 'started'})
-  assert.deepEqual(events, ['refresh', 'refresh', 'retry', 'restart', 'start'])
+  const unavailable = {
+    health: 'unavailable',
+    current: {available: false, displayName: null},
+    all: {available: false, count: 0},
+  }
+  const value = recoveryFixture({
+    capabilities: rollback,
+    refreshCapabilities: () => unavailable,
+  })
+
+  assert.equal(typeof value.recovery.observe, 'function')
+  assert.equal(typeof value.recovery.status, 'function')
+  assert.deepEqual(await value.recovery.observe(rollback), {status: 'required'})
+  assert.equal(value.recovery.status(), 'required')
+  assert.deepEqual(value.events, ['stop'])
+
+  value.setCapabilities(ready)
+  assert.deepEqual(await value.recovery.observe(ready), {status: 'required'})
+  assert.equal(value.recovery.status(), 'required')
+  assert.deepEqual(await value.recovery.start(), {status: 'rollback_pending'})
+  assert.deepEqual(await value.recovery.restart(), {status: 'rollback_pending'})
+  assert.deepEqual(value.events, ['stop'])
+
+  assert.deepEqual(await value.recovery.retry(), {status: 'recovery_failed'})
+  assert.equal(value.recovery.status(), 'failed')
+  assert.deepEqual(value.events, ['stop', 'refresh'])
+})
+
+test('explicit safe retry activates once and clears recovery only after success', async () => {
+  const rollback = {health: 'rollback_pending'}
+  const value = recoveryFixture({
+    capabilities: rollback,
+    refreshCapabilities: () => ({health: 'degraded'}),
+  })
+
+  assert.deepEqual(await value.recovery.observe(rollback), {status: 'required'})
+  assert.deepEqual(await value.recovery.retry(), {status: 'retried'})
+  assert.equal(value.recovery.status(), 'idle')
+  assert.deepEqual(value.events, ['stop', 'refresh', 'retry'])
+})
+
+test('failed safe activation remains latched and blocks ordinary restart', async () => {
+  const rollback = {health: 'rollback_pending'}
+  const value = recoveryFixture({
+    capabilities: rollback,
+    refreshCapabilities: () => ({health: 'ready'}),
+    retryBackend: () => false,
+  })
+
+  assert.deepEqual(await value.recovery.observe(rollback), {status: 'required'})
+  assert.deepEqual(await value.recovery.retry(), {status: 'recovery_failed'})
+  assert.equal(value.recovery.status(), 'failed')
+  assert.deepEqual(value.events, ['stop', 'refresh', 'retry', 'stop'])
+  assert.deepEqual(await value.recovery.restart(), {status: 'rollback_pending'})
+  assert.deepEqual(value.events, ['stop', 'refresh', 'retry', 'stop', 'stop'])
+})
+
+test('unsupported maintenance remains distinct from known rollback and permits normal startup', async () => {
+  const unavailable = workspaceActionModule.publicManagedWorkspaceCapabilities()
+  const value = recoveryFixture({capabilities: unavailable})
+
+  assert.deepEqual(await value.recovery.observe(unavailable), {status: 'idle'})
+  assert.deepEqual(await value.recovery.start(), {status: 'started'})
+  assert.equal(value.recovery.status(), 'idle')
+  assert.deepEqual(value.events, ['start'])
+})
+
+test('observing rollback stops a connected supervisor and cancels an armed retry', async () => {
+  const connectedStops = []
+  const connected = createBackendSupervisor({
+    start: async () => ({backend: {id: 'connected'}, connection: {port: 1234}}),
+    stopBackend: async backend => { connectedStops.push(backend.id) },
+    onStatus: () => {},
+  })
+  await connected.start()
+  assert.equal(connected.status().state, 'connected')
+  const connectedRecovery = recoveryFixture({
+    stopBackend: async () => {
+      await connected.stop()
+      return connected.status().state === 'stopped'
+    },
+  })
+  assert.deepEqual(await connectedRecovery.recovery.observe({health: 'rollback_pending'}), {
+    status: 'required',
+  })
+  assert.equal(connected.status().state, 'stopped')
+  assert.deepEqual(connectedStops, ['connected'])
+
+  const scheduled = []
+  const cancelled = []
+  const retrying = createBackendSupervisor({
+    start: async () => { throw {kind: 'recoverable', code: 'temporary'} },
+    stopBackend: async () => {},
+    onStatus: () => {},
+    schedule: callback => {
+      const token = {callback}
+      scheduled.push(token)
+      return token
+    },
+    cancel: token => { cancelled.push(token) },
+    retryPolicy: {baseMs: 1, capMs: 1, jitterRatio: 0},
+  })
+  await retrying.start()
+  assert.equal(retrying.status().state, 'reconnecting')
+  const retryingRecovery = recoveryFixture({
+    stopBackend: async () => {
+      await retrying.stop()
+      return retrying.status().state === 'stopped'
+    },
+  })
+  assert.deepEqual(await retryingRecovery.recovery.observe({health: 'rollback_pending'}), {
+    status: 'required',
+  })
+  assert.equal(retrying.status().state, 'stopped')
+  assert.deepEqual(cancelled, scheduled)
 })
 
 test('either confirmation cancellation consumes preparation without stopping', async () => {

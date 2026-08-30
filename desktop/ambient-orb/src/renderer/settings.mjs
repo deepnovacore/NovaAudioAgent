@@ -43,6 +43,7 @@ const WORKSPACE_STATUS_TEXT = Object.freeze({
   cleanup_pending: 'workspace 清理仍在进行，请稍后重试',
   unavailable: 'workspace 维护状态暂时不可用',
   recovered: 'workspace 恢复完成，后台已开始重新连接',
+  recovery_failed: 'workspace 恢复尚未完成，后台保持停止；请重试恢复',
 })
 
 const secretRevisions = createSecretRevisions(SECRET_KEYS)
@@ -160,6 +161,7 @@ function updateButtons() {
     lifecycleBusy: currentView?.managedWorkspaces?.lifecycleBusy === true,
     workspaceBusy,
     managedHealth: currentView?.managedWorkspaces?.health,
+    managedRecoveryStatus: currentView?.managedWorkspaces?.recoveryStatus,
     currentManagedAvailable: currentView?.managedWorkspaces?.current?.available === true,
     allManagedAvailable: currentView?.managedWorkspaces?.all?.available === true,
   })
@@ -205,10 +207,13 @@ function render(view, _drafts, state) {
   renderBadges(view.secretsPresent)
   renderKeyUsage(view)
   warning.hidden = view.keyringAvailable !== false
-  const rollbackPending = view.managedWorkspaces?.health === 'rollback_pending'
-  workspaceRetryRecovery.hidden = !rollbackPending
-  if (rollbackPending && !workspaceBusy) {
-    workspaceActionStatus.textContent = WORKSPACE_STATUS_TEXT.rollback_pending
+  const recoveryStatus = view.managedWorkspaces?.recoveryStatus ?? 'idle'
+  const recoveryRequired = recoveryStatus !== 'idle'
+  workspaceRetryRecovery.hidden = !recoveryRequired
+  if (recoveryRequired && !workspaceBusy) {
+    workspaceActionStatus.textContent = recoveryStatus === 'failed'
+      ? WORKSPACE_STATUS_TEXT.recovery_failed
+      : WORKSPACE_STATUS_TEXT.rollback_pending
   }
   updateButtons()
 }
@@ -376,9 +381,9 @@ workspaceRetryRecovery.addEventListener('click', () => {
   void runWorkspaceAction(async () => {
     const view = await api.retryBackend()
     return {
-      status: view?.managedWorkspaces?.health === 'rollback_pending'
-        ? 'rollback_pending'
-        : 'recovered',
+      status: view?.managedWorkspaces?.recoveryStatus === 'idle'
+        ? 'recovered'
+        : 'recovery_failed',
       view,
     }
   })

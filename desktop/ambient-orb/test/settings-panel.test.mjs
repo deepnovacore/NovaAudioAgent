@@ -623,6 +623,7 @@ test('save and workspace buttons reflect dirtiness, lifecycle, and target eligib
     controllerBusy: false,
     lifecycleBusy: false,
     managedHealth: 'rollback_pending',
+    managedRecoveryStatus: 'required',
     currentManagedAvailable: true,
     allManagedAvailable: true,
   }), {
@@ -631,6 +632,22 @@ test('save and workspace buttons reflect dirtiness, lifecycle, and target eligib
     currentDisabled: true,
     recoveryDisabled: false,
   })
+  for (const managedRecoveryStatus of ['required', 'failed']) {
+    assert.deepEqual(settingsButtonState({
+      dirty: false,
+      controllerBusy: false,
+      lifecycleBusy: false,
+      managedHealth: 'ready',
+      managedRecoveryStatus,
+      currentManagedAvailable: true,
+      allManagedAvailable: true,
+    }), {
+      saveDisabled: true,
+      workspaceDisabled: true,
+      currentDisabled: true,
+      recoveryDisabled: false,
+    })
+  }
 })
 
 test('one save clears only accepted secrets whose input revision is unchanged', () => {
@@ -674,6 +691,8 @@ test('workspace controls expose only zero-argument managed actions', () => {
   assert.match(script, /api\.clearCurrentManagedWorkspace\(\)/)
   assert.match(script, /api\.clearAllManagedWorkspaces\(\)/)
   assert.match(script, /api\.retryBackend\(\)/)
+  assert.match(script, /managedWorkspaces\?\.recoveryStatus/)
+  assert.match(script, /recoveryStatus === 'idle'/)
   assert.match(html, /<\/div>\n\s*<div class="workspace-actions">/)
   const statusText = script.slice(
     script.indexOf('const WORKSPACE_STATUS_TEXT'),

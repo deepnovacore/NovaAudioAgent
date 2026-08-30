@@ -38,18 +38,76 @@ export function createManagedWorkspaceBackendRecovery({
   startBackend,
   restartBackend,
   retryBackend,
+  stopBackend,
 }) {
-  const activate = async (action, status, capabilities = getCapabilities()) => {
-    if (capabilities?.health === 'rollback_pending') return bounded('rollback_pending')
+  let recoveryStatus = 'idle'
+
+  const observe = async capabilities => {
+    if (capabilities?.health !== 'rollback_pending') return bounded(recoveryStatus)
+    const alreadyFailed = recoveryStatus === 'failed'
+    recoveryStatus = alreadyFailed ? 'failed' : 'required'
+    let stopped = false
+    try {
+      stopped = await stopBackend() === true
+    } catch {
+      stopped = false
+    }
+    if (!stopped) recoveryStatus = 'failed'
+    return bounded(recoveryStatus)
+  }
+
+  const activate = async (action, status) => {
+    const capabilities = getCapabilities()
+    if (capabilities?.health === 'rollback_pending') await observe(capabilities)
+    if (recoveryStatus !== 'idle') return bounded('rollback_pending')
     await action()
     return bounded(status)
   }
   return Object.freeze({
+    observe,
+    status: () => recoveryStatus,
     start: () => activate(startBackend, 'started'),
     restart: () => activate(restartBackend, 'restarted'),
     retry: async () => {
-      const capabilities = await refreshCapabilities()
-      return activate(retryBackend, 'retried', capabilities)
+      const current = getCapabilities()
+      if (current?.health === 'rollback_pending' && recoveryStatus === 'idle') {
+        await observe(current)
+      }
+      const recoveryRequired = recoveryStatus !== 'idle'
+      let capabilities
+      try {
+        capabilities = await refreshCapabilities()
+      } catch {
+        if (recoveryRequired) recoveryStatus = 'failed'
+        return bounded('recovery_failed')
+      }
+      if (capabilities?.health === 'rollback_pending') await observe(capabilities)
+      if (recoveryRequired || recoveryStatus !== 'idle') {
+        const safe = capabilities?.health === 'ready' || capabilities?.health === 'degraded'
+        if (!safe) {
+          recoveryStatus = 'failed'
+          return bounded('recovery_failed')
+        }
+        let activated = false
+        try {
+          activated = await retryBackend() === true
+        } catch {
+          activated = false
+        }
+        if (!activated) {
+          recoveryStatus = 'failed'
+          try {
+            await stopBackend()
+          } catch {
+            // The failed recovery remains latched even if quiescing also fails.
+          }
+          return bounded('recovery_failed')
+        }
+        recoveryStatus = 'idle'
+        return bounded('retried')
+      }
+      await retryBackend()
+      return bounded('retried')
     },
   })
 }

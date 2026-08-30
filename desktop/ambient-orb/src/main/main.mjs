@@ -204,6 +204,7 @@ function managedWorkspacesView() {
     health: managedWorkspaceCapabilities.health,
     current: managedWorkspaceCapabilities.current,
     all: managedWorkspaceCapabilities.all,
+    recoveryStatus: managedWorkspaceBackendRecovery.status(),
     lifecycleBusy: lifecycleCoordinator.busy,
   })
 }
@@ -503,6 +504,7 @@ async function refreshManagedWorkspaceCapabilities() {
   const maintenance = managedWorkspaceMaintenance
   if (maintenance === null) {
     managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
+    await managedWorkspaceBackendRecovery.observe(managedWorkspaceCapabilities)
     return managedWorkspaceCapabilities
   }
   try {
@@ -514,6 +516,7 @@ async function refreshManagedWorkspaceCapabilities() {
       managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
     }
   }
+  await managedWorkspaceBackendRecovery.observe(managedWorkspaceCapabilities)
   return managedWorkspaceCapabilities
 }
 
@@ -531,6 +534,12 @@ const managedWorkspaceBackendRecovery = createManagedWorkspaceBackendRecovery({
   retryBackend: async () => {
     if (!backendSupervisor) throw new Error('backend supervisor unavailable')
     await backendSupervisor.retry()
+    return backendSupervisor.status().state === 'connected'
+  },
+  stopBackend: async () => {
+    if (!backendSupervisor) return true
+    await backendSupervisor.stop()
+    return backendSupervisor.status().state === 'stopped'
   },
 })
 

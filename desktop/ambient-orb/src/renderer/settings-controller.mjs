@@ -26,16 +26,18 @@ export function settingsButtonState({
   lifecycleBusy,
   workspaceBusy = false,
   managedHealth = 'ready',
+  managedRecoveryStatus = 'idle',
   currentManagedAvailable,
   allManagedAvailable,
 }) {
   const busy = controllerBusy || lifecycleBusy || workspaceBusy
-  const maintenanceBlocked = managedHealth !== 'ready' && managedHealth !== 'degraded'
+  const maintenanceBlocked = managedRecoveryStatus !== 'idle'
+    || (managedHealth !== 'ready' && managedHealth !== 'degraded')
   return Object.freeze({
     saveDisabled: !dirty || busy,
     workspaceDisabled: busy || maintenanceBlocked || allManagedAvailable !== true,
     currentDisabled: busy || maintenanceBlocked || currentManagedAvailable !== true,
-    recoveryDisabled: busy || managedHealth !== 'rollback_pending',
+    recoveryDisabled: busy || managedRecoveryStatus === 'idle',
   })
 }
 
