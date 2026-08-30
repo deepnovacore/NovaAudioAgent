@@ -1,3 +1,6 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
 #define _DARWIN_C_SOURCE 1
 #define _POSIX_C_SOURCE 200809L
 
@@ -12,6 +15,10 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#endif
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -449,6 +456,61 @@ static napi_value nova_rename_at(napi_env env, napi_callback_info info) {
   return nova_status(env, "ok");
 }
 
+static napi_value nova_rename_no_replace_at(napi_env env, napi_callback_info info) {
+  napi_value args[4];
+  int root_descriptor;
+  char from[256];
+  char to[256];
+  uint64_t device;
+  uint64_t inode;
+  struct stat source;
+  if (!nova_args(env, info, 4, args) ||
+      !nova_descriptor(env, args[0], &root_descriptor) ||
+      !nova_basename(env, args[1], from) ||
+      !nova_basename(env, args[2], to) ||
+      !nova_expected_identity(env, args[3], &device, &inode)) {
+    return nova_status(env, "failed");
+  }
+  if (fstatat(root_descriptor, from, &source, AT_SYMLINK_NOFOLLOW) != 0) {
+    return nova_status(env, errno == ENOENT ? "missing" : "failed");
+  }
+  if (S_ISLNK(source.st_mode) || (uint64_t)source.st_dev != device ||
+      (uint64_t)source.st_ino != inode) return nova_status(env, "mismatch");
+
+  int renamed;
+#if defined(__APPLE__)
+  renamed = renameatx_np(root_descriptor, from, root_descriptor, to, RENAME_EXCL);
+#elif defined(__linux__) && defined(SYS_renameat2)
+  renamed = (int)syscall(
+      SYS_renameat2, root_descriptor, from, root_descriptor, to, RENAME_NOREPLACE);
+#else
+  errno = ENOTSUP;
+  renamed = -1;
+#endif
+  if (renamed != 0) {
+    if (errno == EEXIST || errno == ENOTEMPTY) return nova_status(env, "exists");
+    if (errno == ENOENT) return nova_status(env, "missing");
+    if (errno == ENOTSUP || errno == ENOSYS) return nova_status(env, "unsupported");
+    return nova_status(env, "failed");
+  }
+  struct stat placed;
+  if (fstatat(root_descriptor, to, &placed, AT_SYMLINK_NOFOLLOW) != 0 ||
+      S_ISLNK(placed.st_mode) || (uint64_t)placed.st_dev != device ||
+      (uint64_t)placed.st_ino != inode) return nova_status(env, "mismatch");
+  return nova_status(env, "ok");
+}
+
+static napi_value nova_sync_directory(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  int root_descriptor;
+  struct stat root;
+  if (!nova_args(env, info, 1, args) ||
+      !nova_descriptor(env, args[0], &root_descriptor) ||
+      fstat(root_descriptor, &root) != 0 || !S_ISDIR(root.st_mode) ||
+      fsync(root_descriptor) != 0) return nova_status(env, "failed");
+  return nova_status(env, "ok");
+}
+
 static napi_value nova_unlink_at(napi_env env, napi_callback_info info) {
   napi_value args[4];
   int root_descriptor;
@@ -590,6 +652,8 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "mkdirPrivateAt", nova_mkdir_private_at) ||
       !nova_export(env, exports, "protectAt", nova_protect_at) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
+      !nova_export(env, exports, "renameNoReplaceAt", nova_rename_no_replace_at) ||
+      !nova_export(env, exports, "syncDirectory", nova_sync_directory) ||
       !nova_export(env, exports, "unlinkAt", nova_unlink_at) ||
       !nova_export(env, exports, "removeTreeAt", nova_remove_tree_at)) return NULL;
   return exports;

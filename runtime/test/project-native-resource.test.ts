@@ -33,6 +33,8 @@ function fakeAddon(): Record<string, (...args: readonly unknown[]) => unknown> {
     mkdirAt: () => ({status: 'exists'}),
     mkdirPrivateAt: () => ({status: 'ok', identity: {device: 1n, inode: 2n}}),
     renameAt: () => ({status: 'ok'}),
+    renameNoReplaceAt: () => ({status: 'exists'}),
+    syncDirectory: () => ({status: 'ok'}),
     unlinkAt: () => ({status: 'ok'}),
     removeTreeAt: () => ({status: 'ok'}),
   }
@@ -83,6 +85,22 @@ test('project native host loads only one fixed manifest-bound addon for the exac
     assert.deepEqual(loaded?.rootFiles.removeTreeAt(8, 'tombstone', {device: 1n, inode: 2n}), {
       status: 'ok',
     })
+    const maintenanceFiles = loaded?.rootFiles as unknown as {
+      renameNoReplaceAt(
+        root: number,
+        from: string,
+        to: string,
+        identity: {device: bigint; inode: bigint},
+      ): unknown
+      syncDirectory(root: number): unknown
+    }
+    assert.deepEqual(maintenanceFiles.renameNoReplaceAt(
+      8,
+      'source',
+      'destination',
+      {device: 1n, inode: 2n},
+    ), {status: 'exists'})
+    assert.deepEqual(maintenanceFiles.syncDirectory(8), {status: 'ok'})
     const directory = loaded?.directoryHandles.open('/home/nova')
     assert.equal(directory?.fd, 41)
     assert.equal(directory?.close(), undefined)

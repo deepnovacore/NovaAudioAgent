@@ -58,6 +58,7 @@ const DEFAULT_SESSION_TITLE = /^任务 ([1-9][0-9]*)$/u
 const MAX_ID_FACTORY_ATTEMPTS = 32
 const MAX_MAINTENANCE_JOURNAL_BYTES = 64 * 1024
 const MAINTENANCE_TOMBSTONE = /^\.nova-maintenance-([A-Za-z0-9_-]{8,80})-([0-9]{1,3})$/u
+const MAINTENANCE_REPLACEMENT = /^\.nova-replacement-([A-Za-z0-9_-]{8,80})-([0-9]{1,3})$/u
 
 export type ProjectStateCode =
   | 'workspace_name_invalid'
@@ -97,6 +98,19 @@ export class ProjectStateError extends Error {
 class TransactionProjectStateError extends ProjectStateError {
   constructor(code: ProjectStateCode, readonly committed: boolean) {
     super(code)
+  }
+}
+
+type MaintenanceFaultStep =
+  | 'replacement_created'
+  | 'replacement_identity_persisted'
+  | 'replacement_placed'
+  | 'cleanup_entry_deleted'
+
+class MaintenanceFaultError extends Error {
+  constructor(step: MaintenanceFaultStep) {
+    super(`maintenance fault: ${step}`)
+    this.name = 'MaintenanceFaultError'
   }
 }
 
@@ -172,6 +186,7 @@ export interface ManagedMaintenanceJournalEntry {
   readonly workspace_id: string
   readonly original_name: string
   readonly tombstone_name: string
+  readonly replacement_name: string
   readonly identity: ProjectFileIdentity
   readonly replacement_identity: ProjectFileIdentity | null
 }
@@ -253,6 +268,8 @@ export interface CodexProjectStoreOptions {
   readonly live?: boolean
   readonly lockClock?: Clock
   readonly onDurabilityStep?: (step: DurabilityStep) => void
+  /** Deterministic crash-transition seam used only by transaction tests. */
+  readonly maintenanceFault?: (step: MaintenanceFaultStep) => boolean
   /** Host-only seam: Windows security is enforced by the native handle authority. */
   readonly platform?: NodeJS.Platform
 }
@@ -316,6 +333,7 @@ export class CodexProjectStore {
   readonly #recoverStarting: boolean
   readonly #lockClock: Clock
   readonly #onDurabilityStep: ((step: DurabilityStep) => void) | undefined
+  readonly #maintenanceFault: ((step: MaintenanceFaultStep) => boolean) | undefined
   readonly #platform: NodeJS.Platform
   readonly #activeTransactions = new Set<Promise<void>>()
   readonly #workspaceIdentities = new Map<string, FileIdentity>()
@@ -341,6 +359,7 @@ export class CodexProjectStore {
     this.#recoverStarting = options.live === true
     this.#lockClock = options.lockClock ?? new RealClock()
     this.#onDurabilityStep = options.onDurabilityStep
+    this.#maintenanceFault = options.maintenanceFault
     this.#platform = options.platform ?? process.platform
   }
 
@@ -494,6 +513,7 @@ export class CodexProjectStore {
         readonly workspace: WorkspaceRecord
         readonly originalName: string
         readonly tombstoneName: string
+        readonly replacementName: string
         readonly identity: FileIdentity
       }[] = []
       const operationIds = new Set<string>()
@@ -522,6 +542,10 @@ export class CodexProjectStore {
           workspace,
           originalName: basename(target.canonical_path),
           tombstoneName: target.tombstone_name,
+          replacementName: target.tombstone_name.replace(
+            '.nova-maintenance-',
+            '.nova-replacement-',
+          ),
           identity: binding.identity,
         })
       }
@@ -539,6 +563,7 @@ export class CodexProjectStore {
           workspace_id: target.workspace.workspace_id,
           original_name: target.originalName,
           tombstone_name: target.tombstoneName,
+          replacement_name: target.replacementName,
           identity: Object.freeze({...target.identity}),
           replacement_identity: null,
         }))),
@@ -556,10 +581,15 @@ export class CodexProjectStore {
         for (const item of replaced) {
           const target = item.target
           const tombstoneBefore = this.#lookupAt(root, target.tombstoneName, 'workspace_boundary_changed')
-          if (tombstoneBefore.status !== 'missing') throw new ProjectStateError('workspace_boundary_changed')
-          const renamed = this.#callRootFile(() => this.#rootFiles.renameAt(
-            root.fd, target.originalName, target.tombstoneName,
-          ))
+          const replacementBefore = this.#lookupAt(
+            root, target.replacementName, 'workspace_boundary_changed',
+          )
+          if (tombstoneBefore.status !== 'missing' || replacementBefore.status !== 'missing') {
+            throw new ProjectStateError('workspace_boundary_changed')
+          }
+          const renamed = this.#renameManagedNoReplace(
+            root, target.originalName, target.tombstoneName, target.identity,
+          )
           if (renamed.status !== 'ok') throw new ProjectStateError('workspace_boundary_changed')
           item.renamed = true
           const tombstone = this.#lookupAt(root, target.tombstoneName, 'workspace_boundary_changed')
@@ -570,15 +600,11 @@ export class CodexProjectStore {
         for (const [index, item] of replaced.entries()) {
           const target = item.target
           const replacement = await this.#ensurePrivateDirectoryAt(
-            root, managed, target.originalName,
+            root, managed, target.replacementName, true,
           )
           item.replacementIdentity = replacement.binding.identity
           await replacement.file.close()
-          this.#advanceWorkspaceIdentity(
-            target.workspace.workspace_id,
-            target.identity,
-            replacement.binding.identity,
-          )
+          this.#maintenanceCheckpoint('replacement_created')
           journal = Object.freeze({
             ...journal,
             entries: Object.freeze(journal.entries.map((entry, entryIndex) => entryIndex === index
@@ -589,39 +615,81 @@ export class CodexProjectStore {
               : entry)),
           })
           await this.#writeMaintenanceJournal(journal)
+          this.#maintenanceCheckpoint('replacement_identity_persisted')
+          const placed = this.#renameManagedNoReplace(
+            root,
+            target.replacementName,
+            target.originalName,
+            replacement.binding.identity,
+          )
+          if (placed.status !== 'ok') throw new ProjectStateError('workspace_boundary_changed')
+          const placedIdentity = this.#lookupAt(
+            root, target.originalName, 'workspace_boundary_changed',
+          )
+          if (
+            placedIdentity.status !== 'ok'
+            || !sameFileIdentity(placedIdentity.identity, replacement.binding.identity)
+          ) throw new ProjectStateError('workspace_boundary_changed')
+          this.#maintenanceCheckpoint('replacement_placed')
+          this.#advanceWorkspaceIdentity(
+            target.workspace.workspace_id,
+            target.identity,
+            replacement.binding.identity,
+          )
         }
+        await this.#syncManagedRoot()
         await this.#writeMaintenanceJournal(Object.freeze({...journal, phase: 'committed'}))
-      } catch {
+      } catch (error) {
+        if (error instanceof MaintenanceFaultError) throw error
         let rollbackComplete = true
         for (const item of [...replaced].reverse()) {
-          if (item.replacementIdentity !== null) {
+          const replacementNames = item.replacementIdentity === null
+            ? [item.target.replacementName]
+            : [item.target.originalName, item.target.replacementName]
+          for (const name of replacementNames) {
             try {
+              const present = this.#lookupAt(root, name, 'workspace_boundary_changed')
+              if (present.status === 'missing') continue
+              if (present.status !== 'ok') {
+                rollbackComplete = false
+                continue
+              }
+              const removable = item.replacementIdentity === null
+                ? name === item.target.replacementName
+                : sameFileIdentity(present.identity, item.replacementIdentity)
+              if (!removable) {
+                rollbackComplete = false
+                continue
+              }
               const removed = this.#unlinkAt(
-                root, item.target.originalName, item.replacementIdentity,
-                'directory', 'workspace_boundary_changed',
+                root, name, present.identity, 'directory', 'workspace_boundary_changed',
               )
-              if (removed.status !== 'ok') rollbackComplete = false
+              if (removed.status !== 'ok' && removed.status !== 'missing') rollbackComplete = false
             } catch { rollbackComplete = false }
           }
           if (item.renamed) {
-            const restored = this.#callRootFile(() => this.#rootFiles.renameAt(
-              root.fd, item.target.tombstoneName, item.target.originalName,
-            ))
+            const restored = this.#renameManagedNoReplace(
+              root,
+              item.target.tombstoneName,
+              item.target.originalName,
+              item.target.identity,
+            )
             if (restored.status === 'ok') {
-              if (item.replacementIdentity !== null) {
-                try {
-                  this.#advanceWorkspaceIdentity(
-                    item.target.workspace.workspace_id,
-                    item.replacementIdentity,
-                    item.target.identity,
-                  )
-                } catch { rollbackComplete = false }
-              }
+              try {
+                this.#restoreWorkspaceIdentity(
+                  item.target.workspace.workspace_id,
+                  item.replacementIdentity,
+                  item.target.identity,
+                )
+              } catch { rollbackComplete = false }
             } else rollbackComplete = false
           }
         }
         if (rollbackComplete) {
-          try { await this.#clearMaintenanceJournal(operationId) } catch { rollbackComplete = false }
+          try {
+            await this.#syncManagedRoot()
+            await this.#clearMaintenanceJournal(operationId)
+          } catch { rollbackComplete = false }
         }
         if (!rollbackComplete) throw new ProjectStateError('workspace_boundary_changed')
         return [{status: 'rolled_back', committed: false, tombstones: []}, false]
@@ -663,8 +731,15 @@ export class CodexProjectStore {
         for (const entry of [...journal.entries].reverse()) {
           const tombstone = this.#lookupAt(root, entry.tombstone_name, 'workspace_boundary_changed')
           const original = this.#lookupAt(root, entry.original_name, 'workspace_boundary_changed')
+          const temporary = entry.replacement_name === entry.original_name
+            ? {status: 'missing'} as const
+            : this.#lookupAt(root, entry.replacement_name, 'workspace_boundary_changed')
           if (tombstone.status === 'missing') {
-            if (original.status !== 'ok' || !sameFileIdentity(original.identity, entry.identity)) {
+            if (
+              original.status !== 'ok'
+              || !sameFileIdentity(original.identity, entry.identity)
+              || temporary.status !== 'missing'
+            ) {
               remaining.push(entry)
             } else {
               this.#restoreWorkspaceIdentity(entry.workspace_id, null, entry.identity)
@@ -675,36 +750,53 @@ export class CodexProjectStore {
             remaining.push(entry)
             continue
           }
-          if (original.status === 'ok') {
-            if (sameFileIdentity(original.identity, entry.identity)) {
-              remaining.push(entry)
+          let replacementSafe = true
+          const candidates = entry.replacement_name === entry.original_name
+            ? [{name: entry.original_name, result: original}]
+            : [
+                {name: entry.original_name, result: original},
+                {name: entry.replacement_name, result: temporary},
+              ]
+          for (const candidate of candidates) {
+            if (candidate.result.status === 'missing') continue
+            if (candidate.result.status !== 'ok') {
+              replacementSafe = false
               continue
             }
-            if (
-              entry.replacement_identity === null
-              || !sameFileIdentity(original.identity, entry.replacement_identity)
-            ) {
-              remaining.push(entry)
+            const bound = entry.replacement_identity !== null
+              && sameFileIdentity(candidate.result.identity, entry.replacement_identity)
+            const reservedUnboundTemporary = entry.replacement_identity === null
+              && entry.replacement_name !== entry.original_name
+              && candidate.name === entry.replacement_name
+            if (!bound && !reservedUnboundTemporary) {
+              replacementSafe = false
               continue
             }
-            let removed = false
             try {
-              removed = this.#unlinkAt(
-                root, entry.original_name, original.identity,
-                'directory', 'workspace_boundary_changed',
-              ).status === 'ok'
-            } catch { /* a non-empty or substituted replacement is never deleted */ }
-            if (!removed) {
-              remaining.push(entry)
-              continue
-            }
-          } else if (original.status !== 'missing') {
+              const removed = this.#unlinkAt(
+                root,
+                candidate.name,
+                candidate.result.identity,
+                'directory',
+                'workspace_boundary_changed',
+              )
+              if (removed.status !== 'ok' && removed.status !== 'missing') replacementSafe = false
+            } catch { replacementSafe = false }
+          }
+          if (!replacementSafe) {
             remaining.push(entry)
             continue
           }
-          const restored = this.#callRootFile(() => this.#rootFiles.renameAt(
-            root.fd, entry.tombstone_name, entry.original_name,
-          ))
+          const originalAfter = this.#lookupAt(
+            root, entry.original_name, 'workspace_boundary_changed',
+          )
+          if (originalAfter.status !== 'missing') {
+            remaining.push(entry)
+            continue
+          }
+          const restored = this.#renameManagedNoReplace(
+            root, entry.tombstone_name, entry.original_name, entry.identity,
+          )
           const restoredIdentity = this.#lookupAt(
             root, entry.original_name, 'workspace_boundary_changed',
           )
@@ -718,15 +810,17 @@ export class CodexProjectStore {
           }
           this.#restoreWorkspaceIdentity(
             entry.workspace_id,
-            original.status === 'ok' ? original.identity : null,
+            entry.replacement_identity,
             entry.identity,
           )
         }
         if (remaining.length === 0) {
+          await this.#syncManagedRoot()
           await this.#clearMaintenanceJournal(journal.operation_id)
           return [{status: 'clean'}, false]
         }
         if (remaining.length !== journal.entries.length) {
+          await this.#syncManagedRoot()
           await this.#writeMaintenanceJournal(Object.freeze({
             operation_id: journal.operation_id,
             phase: 'prepared',
@@ -740,13 +834,16 @@ export class CodexProjectStore {
         const result = this.#callRootFile(() => this.#rootFiles.removeTreeAt(
           root.fd, entry.tombstone_name, entry.identity,
         ))
-        if (result.status !== 'ok') remaining.push(entry)
+        if (result.status !== 'ok' && result.status !== 'missing') remaining.push(entry)
+        else if (result.status === 'ok') this.#maintenanceCheckpoint('cleanup_entry_deleted')
       }
       if (remaining.length === 0) {
+        await this.#syncManagedRoot()
         await this.#clearMaintenanceJournal(journal.operation_id)
         return [{status: 'clean'}, false]
       }
       if (remaining.length !== journal.entries.length) {
+        await this.#syncManagedRoot()
         await this.#writeMaintenanceJournal(Object.freeze({
           operation_id: journal.operation_id,
           phase: 'committed',
@@ -1854,6 +1951,38 @@ export class CodexProjectStore {
     if (result.status !== 'ok') throw new ProjectStateError('state_write_failed')
   }
 
+  #renameManagedNoReplace(
+    root: FileHandle,
+    from: string,
+    to: string,
+    expected: FileIdentity,
+  ): ProjectRootFileResult {
+    requireProjectBasename(from, 'workspace_boundary_changed')
+    requireProjectBasename(to, 'workspace_boundary_changed')
+    const result = this.#callRootFile(
+      () => this.#rootFiles.renameNoReplaceAt?.(root.fd, from, to, expected)
+        ?? {status: 'unsupported'},
+    )
+    if (result.status === 'unsupported' || result.status === 'failed') {
+      throw new ProjectStateError('workspace_boundary_changed')
+    }
+    return result
+  }
+
+  async #syncManagedRoot(): Promise<void> {
+    await this.#validateManagedRoot()
+    const root = this.#requireManagedRootHandle()
+    const result = this.#callRootFile(
+      () => this.#rootFiles.syncDirectory?.(root.fd) ?? {status: 'unsupported'},
+    )
+    if (result.status !== 'ok') throw new ProjectStateError('workspace_boundary_changed')
+    await this.#validateManagedRoot()
+  }
+
+  #maintenanceCheckpoint(step: MaintenanceFaultStep): void {
+    if (this.#maintenanceFault?.(step) === true) throw new MaintenanceFaultError(step)
+  }
+
   async #migrateLegacyCodexHomes(root: FileHandle): Promise<void> {
     const current = this.#lookupAt(root, PROJECT_CODEX_HOMES_DIRECTORY, 'state_permissions')
     if (current.status === 'ok') return
@@ -1935,10 +2064,11 @@ export class CodexProjectStore {
     root: FileHandle,
     rootPath: string,
     name: string,
+    exclusive = false,
   ): Promise<{readonly file: FileHandle; readonly binding: DirectoryBinding}> {
     requireProjectBasename(name, 'state_permissions')
     const created = this.#mkdirPrivateAt(root, name, 'state_permissions')
-    if (created.status !== 'ok' && created.status !== 'exists') {
+    if (created.status !== 'ok' && (!exclusive && created.status !== 'exists')) {
       throw new ProjectStateError('state_permissions')
     }
     const createdIdentity = created.status === 'ok' ? created.identity : null
@@ -3000,6 +3130,7 @@ function encodeMaintenanceJournal(journal: ManagedMaintenanceJournal): Readonly<
         inode: entry.identity.inode.toString(10),
       },
       original_name: entry.original_name,
+      replacement_name: entry.replacement_name,
       replacement_identity: entry.replacement_identity === null ? null : {
         device: entry.replacement_identity.device.toString(10),
         inode: entry.replacement_identity.inode.toString(10),
@@ -3009,13 +3140,17 @@ function encodeMaintenanceJournal(journal: ManagedMaintenanceJournal): Readonly<
     })),
     operation_id: journal.operation_id,
     phase: journal.phase,
-    version: 1,
+    version: 2,
   }
 }
 
 function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
   const root = exactRecord(value, ['entries', 'operation_id', 'phase', 'version'])
-  if (root.version !== 1 || !Array.isArray(root.entries) || root.entries.length > MAX_PROJECT_WORKSPACES) {
+  if (
+    (root.version !== 1 && root.version !== 2)
+    || !Array.isArray(root.entries)
+    || root.entries.length > MAX_PROJECT_WORKSPACES
+  ) {
     throw new ProjectStateError('state_corrupt')
   }
   const operationId = storedId(root.operation_id)
@@ -3023,9 +3158,12 @@ function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
     throw new ProjectStateError('state_corrupt')
   }
   const entries = root.entries.map(raw => {
-    const entry = exactRecord(raw, [
-      'identity', 'original_name', 'replacement_identity', 'tombstone_name', 'workspace_id',
-    ])
+    const entry = exactRecord(raw, root.version === 1
+      ? ['identity', 'original_name', 'replacement_identity', 'tombstone_name', 'workspace_id']
+      : [
+          'identity', 'original_name', 'replacement_identity', 'replacement_name',
+          'tombstone_name', 'workspace_id',
+        ])
     const identity = exactRecord(entry.identity, ['device', 'inode'])
     const replacementIdentity = entry.replacement_identity === null
       ? null
@@ -3036,10 +3174,23 @@ function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
       typeof entry.tombstone_name !== 'string'
       || MAINTENANCE_TOMBSTONE.exec(entry.tombstone_name)?.[1] !== operationId
     ) throw new ProjectStateError('state_corrupt')
+    const replacementName = root.version === 1 ? entry.original_name : entry.replacement_name
+    if (
+      typeof replacementName !== 'string'
+      || (root.version === 2
+        && (
+          MAINTENANCE_REPLACEMENT.exec(replacementName)?.[1] !== operationId
+          || replacementName !== entry.tombstone_name.replace(
+            '.nova-maintenance-',
+            '.nova-replacement-',
+          )
+        ))
+    ) throw new ProjectStateError('state_corrupt')
     return Object.freeze({
       workspace_id: storedId(entry.workspace_id),
       original_name: entry.original_name,
       tombstone_name: entry.tombstone_name,
+      replacement_name: replacementName,
       identity: Object.freeze({
         device: decimalIdentity(identity.device),
         inode: decimalIdentity(identity.inode),
@@ -3055,6 +3206,7 @@ function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
     || new Set(entries.map(entry => entry.workspace_id)).size !== entries.length
     || new Set(entries.map(entry => entry.original_name)).size !== entries.length
     || new Set(entries.map(entry => entry.tombstone_name)).size !== entries.length
+    || new Set(entries.map(entry => entry.replacement_name)).size !== entries.length
   ) {
     throw new ProjectStateError('state_corrupt')
   }

@@ -206,6 +206,40 @@ class DescriptorRelativeRootFileAuthority implements ProjectRootFileAuthority {
     }
   }
 
+  renameNoReplaceAt(
+    rootDescriptor: number,
+    from: string,
+    to: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult {
+    try {
+      const root = this.#rootPath(rootDescriptor)
+      const source = lstatSync(join(root, from), {bigint: true})
+      if (source.dev !== expected.device || source.ino !== expected.inode) {
+        return {status: 'mismatch'}
+      }
+      try {
+        lstatSync(join(root, to))
+        return {status: 'exists'}
+      } catch (error) {
+        if (!isErrno(error, 'ENOENT')) return {status: 'failed'}
+      }
+      renameSync(join(root, from), join(root, to))
+      return {status: 'ok'}
+    } catch (error) {
+      return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
+    }
+  }
+
+  syncDirectory(rootDescriptor: number): ProjectRootFileResult {
+    try {
+      this.#rootPath(rootDescriptor)
+      return {status: 'ok'}
+    } catch {
+      return {status: 'failed'}
+    }
+  }
+
   unlinkAt(
     rootDescriptor: number,
     name: string,
@@ -290,9 +324,109 @@ class MaintenanceOrderRootFileAuthority extends DescriptorRelativeRootFileAuthor
     return super.renameAt(rootDescriptor, from, to)
   }
 
+  override renameNoReplaceAt(
+    rootDescriptor: number,
+    from: string,
+    to: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult {
+    if (this.recording && (from.startsWith('.nova-') || to.startsWith('.nova-'))) {
+      this.events.push(`rename:${from}:${to}`)
+    }
+    return super.renameNoReplaceAt(rootDescriptor, from, to, expected)
+  }
+
   override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
     if (this.recording) this.events.push(`mkdir:${name}`)
     return super.mkdirAt(rootDescriptor, name)
+  }
+}
+
+class MaintenanceCollisionRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  collisionIdentity: ProjectFileIdentity | null = null
+
+  #installCollision(rootDescriptor: number, to: string): void {
+    if (this.collisionIdentity !== null || !to.startsWith('.nova-maintenance-')) return
+    const destination = this.pathAt(rootDescriptor, to)
+    mkdirSync(destination, {mode: 0o700})
+    const info = lstatSync(destination, {bigint: true})
+    this.collisionIdentity = {device: info.dev, inode: info.ino}
+  }
+
+  override renameAt(rootDescriptor: number, from: string, to: string): ProjectRootFileResult {
+    this.#installCollision(rootDescriptor, to)
+    return super.renameAt(rootDescriptor, from, to)
+  }
+
+  override renameNoReplaceAt(
+    rootDescriptor: number,
+    from: string,
+    to: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult {
+    this.#installCollision(rootDescriptor, to)
+    return super.renameNoReplaceAt(rootDescriptor, from, to, expected)
+  }
+}
+
+class MaintenanceDurabilityRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  recording = false
+  readonly events: string[] = []
+  failReplacementNumber: number | null = null
+  failCleanupName: string | null = null
+  #replacementCreates = 0
+
+  override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    if (this.recording && name.startsWith('.nova-replacement-')) {
+      this.#replacementCreates += 1
+      this.events.push(`replacement:create:${name}`)
+      if (this.#replacementCreates === this.failReplacementNumber) return {status: 'failed'}
+    }
+    return super.mkdirAt(rootDescriptor, name)
+  }
+
+  override renameAt(rootDescriptor: number, from: string, to: string): ProjectRootFileResult {
+    if (this.recording && to === PROJECT_MAINTENANCE_JOURNAL_FILE) {
+      this.events.push('journal:write')
+    }
+    return super.renameAt(rootDescriptor, from, to)
+  }
+
+  override renameNoReplaceAt(
+    rootDescriptor: number,
+    from: string,
+    to: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult {
+    if (this.recording) this.events.push(`maintenance:rename:${from}:${to}`)
+    return super.renameNoReplaceAt(rootDescriptor, from, to, expected)
+  }
+
+  override syncDirectory(rootDescriptor: number): ProjectRootFileResult {
+    if (this.recording) this.events.push('managed:sync')
+    return super.syncDirectory(rootDescriptor)
+  }
+
+  override unlinkAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
+    kind: 'file' | 'directory',
+  ): ProjectRootFileResult {
+    if (this.recording && name === PROJECT_MAINTENANCE_JOURNAL_FILE) {
+      this.events.push('journal:clear')
+    }
+    return super.unlinkAt(rootDescriptor, name, expected, kind)
+  }
+
+  override removeTreeAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult {
+    if (this.recording) this.events.push(`cleanup:${name}`)
+    if (name === this.failCleanupName) return {status: 'failed'}
+    return super.removeTreeAt(rootDescriptor, name, expected)
   }
 }
 
@@ -1783,6 +1917,155 @@ test('all managed originals are detached before any replacement is created', asy
   }
 })
 
+test('maintenance rename never overwrites a destination raced into the managed root', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-maintenance-collision-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const rootFiles = new MaintenanceCollisionRootFileAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const workspace = await store.createManaged('Alpha')
+    await writeFile(join(workspace.canonical_path, 'original.txt'), 'preserve me')
+    const snapshot = await store.maintenanceSnapshot()
+    const target = snapshot.managed_targets[0]
+    assert.ok(target)
+    const tombstoneName = '.nova-maintenance-operation-0001-1'
+
+    const result = await store.executeManagedReplacement({
+      expected_state_revision: snapshot.state_revision,
+      targets: [{
+        workspace_id: workspace.workspace_id,
+        canonical_path: workspace.canonical_path,
+        identity: target.identity,
+        tombstone_name: tombstoneName,
+      }],
+    })
+
+    assert.deepEqual(result, {status: 'rolled_back', committed: false, tombstones: []})
+    assert.notEqual(rootFiles.collisionIdentity, null)
+    const collision = await lstat(join(managedRoot, tombstoneName), {bigint: true})
+    assert.equal(collision.dev, rootFiles.collisionIdentity?.device)
+    assert.equal(collision.ino, rootFiles.collisionIdentity?.inode)
+    assert.equal(await readFile(join(workspace.canonical_path, 'original.txt'), 'utf8'), 'preserve me')
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('managed-root metadata is durable before commit and cleanup journal advancement', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-maintenance-durability-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
+  const rootFiles = new MaintenanceDurabilityRootFileAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => identifiers.next().value ?? 'unused-id',
+  })
+  try {
+    await store.createManaged('Alpha')
+    await store.createManaged('Beta')
+    const snapshot = await store.maintenanceSnapshot()
+    rootFiles.recording = true
+    const result = await store.executeManagedReplacement({
+      expected_state_revision: snapshot.state_revision,
+      targets: snapshot.managed_targets.map((target, index) => ({
+        workspace_id: target.workspace.workspace_id,
+        canonical_path: target.workspace.canonical_path,
+        identity: target.identity,
+        tombstone_name: `.nova-maintenance-operation-0001-${index + 1}`,
+      })),
+    })
+    assert.equal(result.status, 'committed')
+    const commitJournal = rootFiles.events.lastIndexOf('journal:write')
+    const commitBarrier = rootFiles.events.lastIndexOf('managed:sync', commitJournal)
+    assert.notEqual(commitJournal, -1, JSON.stringify(rootFiles.events))
+    assert.notEqual(commitBarrier, -1, JSON.stringify(rootFiles.events))
+    assert.equal(commitBarrier < commitJournal, true, JSON.stringify(rootFiles.events))
+
+    rootFiles.events.length = 0
+    rootFiles.failCleanupName = '.nova-maintenance-operation-0001-2'
+    assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'cleanup_pending'})
+    const shrinkJournal = rootFiles.events.lastIndexOf('journal:write')
+    const shrinkBarrier = rootFiles.events.lastIndexOf('managed:sync', shrinkJournal)
+    assert.notEqual(shrinkJournal, -1, JSON.stringify(rootFiles.events))
+    assert.notEqual(shrinkBarrier, -1, JSON.stringify(rootFiles.events))
+    assert.equal(shrinkBarrier < shrinkJournal, true, JSON.stringify(rootFiles.events))
+
+    rootFiles.events.length = 0
+    rootFiles.failCleanupName = null
+    assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
+    const clearJournal = rootFiles.events.lastIndexOf('journal:clear')
+    const clearBarrier = rootFiles.events.lastIndexOf('managed:sync', clearJournal)
+    assert.notEqual(clearJournal, -1, JSON.stringify(rootFiles.events))
+    assert.notEqual(clearBarrier, -1, JSON.stringify(rootFiles.events))
+    assert.equal(clearBarrier < clearJournal, true, JSON.stringify(rootFiles.events))
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('managed-root rollback is durable before its journal is cleared', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-maintenance-rollback-durability-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
+  const rootFiles = new MaintenanceDurabilityRootFileAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => identifiers.next().value ?? 'unused-id',
+  })
+  try {
+    const alpha = await store.createManaged('Alpha')
+    const beta = await store.createManaged('Beta')
+    await writeFile(join(alpha.canonical_path, 'alpha.txt'), 'alpha')
+    await writeFile(join(beta.canonical_path, 'beta.txt'), 'beta')
+    const snapshot = await store.maintenanceSnapshot()
+    rootFiles.recording = true
+    rootFiles.failReplacementNumber = 2
+    const result = await store.executeManagedReplacement({
+      expected_state_revision: snapshot.state_revision,
+      targets: snapshot.managed_targets.map((target, index) => ({
+        workspace_id: target.workspace.workspace_id,
+        canonical_path: target.workspace.canonical_path,
+        identity: target.identity,
+        tombstone_name: `.nova-maintenance-operation-0001-${index + 1}`,
+      })),
+    })
+    assert.equal(result.status, 'rolled_back')
+    const clearJournal = rootFiles.events.lastIndexOf('journal:clear')
+    const rollbackBarrier = rootFiles.events.lastIndexOf('managed:sync', clearJournal)
+    assert.notEqual(clearJournal, -1, JSON.stringify(rootFiles.events))
+    assert.notEqual(rollbackBarrier, -1, JSON.stringify(rootFiles.events))
+    assert.equal(rollbackBarrier < clearJournal, true, JSON.stringify(rootFiles.events))
+    assert.equal(await readFile(join(alpha.canonical_path, 'alpha.txt'), 'utf8'), 'alpha')
+    assert.equal(await readFile(join(beta.canonical_path, 'beta.txt'), 'utf8'), 'beta')
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('a later replacement failure restores every original in the prepared set', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-maintenance-rollback-'))
   const stateRoot = join(root, 'state')
@@ -1933,6 +2216,152 @@ test('prepared recovery never deletes an empty replacement with an unbound ident
   }
 })
 
+test('replacement crash boundaries recover the operation-owned temporary in either legal position', async t => {
+  for (const crashPoint of [
+    'replacement_created',
+    'replacement_identity_persisted',
+    'replacement_placed',
+  ] as const) {
+    await t.test(crashPoint, async () => {
+      const root = await mkdtemp(join(tmpdir(), `nova-codex-project-maintenance-${crashPoint}-`))
+      const stateRoot = join(root, 'state')
+      const managedRoot = join(root, 'managed')
+      await mkdir(stateRoot, {mode: 0o700})
+      await mkdir(managedRoot, {mode: 0o700})
+      const rootFiles = new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot])
+      const baseOptions = {
+        stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+        managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+        nativeLocks: new DescriptorLockAuthority(),
+        rootFiles,
+        idFactory: () => 'workspace-0001',
+      }
+      const crashOptions = {
+        ...baseOptions,
+        maintenanceFault: (step: string) => step === crashPoint,
+      } as typeof baseOptions & {readonly maintenanceFault: (step: string) => boolean}
+      let store = await CodexProjectStore.open(crashOptions)
+      try {
+        const workspace = await store.createManaged('Alpha')
+        await writeFile(join(workspace.canonical_path, 'original.txt'), 'preserve me')
+        const snapshot = await store.maintenanceSnapshot()
+        const target = snapshot.managed_targets[0]
+        assert.ok(target)
+        await assert.rejects(store.executeManagedReplacement({
+          expected_state_revision: snapshot.state_revision,
+          targets: [{
+            workspace_id: workspace.workspace_id,
+            canonical_path: workspace.canonical_path,
+            identity: target.identity,
+            tombstone_name: '.nova-maintenance-operation-0001-1',
+          }],
+        }), /maintenance fault/u)
+        assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'prepared')
+        await store.close()
+
+        store = await CodexProjectStore.open(baseOptions)
+        assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
+        assert.equal(await readFile(join(workspace.canonical_path, 'original.txt'), 'utf8'), 'preserve me')
+        assert.equal(
+          (await readdir(managedRoot)).some(name => name.startsWith('.nova-replacement-')),
+          false,
+        )
+        assert.equal(await store.loadManagedMaintenanceJournal(), null)
+      } finally {
+        await store.close().catch(() => undefined)
+        await rm(root, {recursive: true, force: true})
+      }
+    })
+  }
+})
+
+test('crash after tombstone deletion is idempotently completed from the committed journal', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-maintenance-delete-crash-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const rootFiles = new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot])
+  const baseOptions = {
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => 'workspace-0001',
+  }
+  const crashOptions = {
+    ...baseOptions,
+    maintenanceFault: (step: string) => step === 'cleanup_entry_deleted',
+  } as typeof baseOptions & {readonly maintenanceFault: (step: string) => boolean}
+  let store = await CodexProjectStore.open(crashOptions)
+  try {
+    const workspace = await store.createManaged('Alpha')
+    await writeFile(join(workspace.canonical_path, 'original.txt'), 'delete me')
+    const snapshot = await store.maintenanceSnapshot()
+    const target = snapshot.managed_targets[0]
+    assert.ok(target)
+    const replaced = await store.executeManagedReplacement({
+      expected_state_revision: snapshot.state_revision,
+      targets: [{
+        workspace_id: workspace.workspace_id,
+        canonical_path: workspace.canonical_path,
+        identity: target.identity,
+        tombstone_name: '.nova-maintenance-operation-0001-1',
+      }],
+    })
+    assert.equal(replaced.status, 'committed')
+    await assert.rejects(store.cleanupManagedMaintenanceJournal(), /maintenance fault/u)
+    assert.equal((await store.loadManagedMaintenanceJournal())?.phase, 'committed')
+    await store.close()
+
+    store = await CodexProjectStore.open(baseOptions)
+    assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
+    assert.equal(await store.loadManagedMaintenanceJournal(), null)
+    assert.deepEqual(await readdir(workspace.canonical_path), [])
+  } finally {
+    await store.close().catch(() => undefined)
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('committed cleanup treats an already missing tombstone as completed', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-maintenance-missing-cleanup-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const workspace = await store.createManaged('Alpha')
+    const snapshot = await store.maintenanceSnapshot()
+    const target = snapshot.managed_targets[0]
+    assert.ok(target)
+    const replaced = await store.executeManagedReplacement({
+      expected_state_revision: snapshot.state_revision,
+      targets: [{
+        workspace_id: workspace.workspace_id,
+        canonical_path: workspace.canonical_path,
+        identity: target.identity,
+        tombstone_name: '.nova-maintenance-operation-0001-1',
+      }],
+    })
+    assert.equal(replaced.status, 'committed')
+    await rm(join(managedRoot, '.nova-maintenance-operation-0001-1'), {recursive: true})
+
+    assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
+    assert.equal(await store.loadManagedMaintenanceJournal(), null)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('current managed open detects a same-path substitution around the host callback', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-open-substitution-'))
   const stateRoot = join(root, 'state')
@@ -2056,6 +2485,41 @@ test('a committed journal cannot omit its replacement identity', async () => {
       operation_id: 'operation-0001',
       phase: 'committed',
       version: 1,
+    }), {mode: 0o600})
+    await assert.rejects(store.loadManagedMaintenanceJournal(), (error: unknown) => (
+      error instanceof ProjectStateError && error.code === 'state_corrupt'
+    ))
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('a v2 journal binds each replacement temporary to its exact tombstone entry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-journal-replacement-name-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
+  })
+  try {
+    await writeFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE), JSON.stringify({
+      entries: [{
+        identity: {device: '1', inode: '2'},
+        original_name: 'workspace-0001',
+        replacement_identity: null,
+        replacement_name: '.nova-replacement-operation-0001-2',
+        tombstone_name: '.nova-maintenance-operation-0001-1',
+        workspace_id: 'workspace-0001',
+      }],
+      operation_id: 'operation-0001',
+      phase: 'prepared',
+      version: 2,
     }), {mode: 0o600})
     await assert.rejects(store.loadManagedMaintenanceJournal(), (error: unknown) => (
       error instanceof ProjectStateError && error.code === 'state_corrupt'

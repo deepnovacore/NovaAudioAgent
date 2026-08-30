@@ -183,6 +183,7 @@ test('a committed journal remains committed when execution loses its reply', asy
       entries: [{
         workspace_id: workspace.workspace_id,
         original_name: 'workspace-0001',
+        replacement_name: 'workspace-0001',
         replacement_identity: {device: 3n, inode: 4n},
         tombstone_name: '.nova-maintenance-operation-0001-1',
         identity: {device: 1n, inode: 2n},
@@ -237,6 +238,7 @@ test('a foreign prepared journal preserves rollback health after replacement is 
       entries: [{
         workspace_id: workspace.workspace_id,
         original_name: 'workspace-0001',
+        replacement_name: 'workspace-0001',
         replacement_identity: null,
         tombstone_name: '.nova-maintenance-foreign-operation-0002-1',
         identity: {device: 3n, inode: 4n},

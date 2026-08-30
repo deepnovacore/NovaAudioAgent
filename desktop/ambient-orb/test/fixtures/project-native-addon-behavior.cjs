@@ -83,6 +83,7 @@ if (mode === 'hold') {
       assert.equal(typeof created.identity.inode, 'bigint')
       assert.deepEqual(addon.createFileAt(rootDescriptor, 'state.tmp', true), {status: 'exists'})
       assert.deepEqual(addon.lookupAt(rootDescriptor, 'missing'), {status: 'missing'})
+      assert.deepEqual(addon.syncDirectory(rootDescriptor), {status: 'ok'})
 
       let childDescriptor = openSync(join(root, 'state.tmp'), 'r+')
       try {
@@ -104,6 +105,41 @@ if (mode === 'hold') {
       } finally {
         if (childDescriptor !== null) closeSync(childDescriptor)
       }
+
+      const renameSource = addon.mkdirPrivateAt(rootDescriptor, 'rename-source')
+      const renameCollision = addon.mkdirPrivateAt(rootDescriptor, 'rename-collision')
+      assert.equal(renameSource.status, 'ok')
+      assert.equal(renameCollision.status, 'ok')
+      assert.deepEqual(
+        addon.renameNoReplaceAt(
+          rootDescriptor, 'rename-source', 'rename-collision', renameSource.identity,
+        ),
+        {status: 'exists'},
+      )
+      assert.deepEqual(
+        addon.lookupAt(rootDescriptor, 'rename-collision'),
+        {status: 'ok', identity: renameCollision.identity},
+      )
+      assert.deepEqual(
+        addon.renameNoReplaceAt(
+          rootDescriptor, 'rename-source', 'rename-final', {device: 0n, inode: 0n},
+        ),
+        {status: 'mismatch'},
+      )
+      assert.deepEqual(
+        addon.unlinkAt(rootDescriptor, 'rename-collision', renameCollision.identity, 'directory'),
+        {status: 'ok'},
+      )
+      assert.deepEqual(
+        addon.renameNoReplaceAt(
+          rootDescriptor, 'rename-source', 'rename-final', renameSource.identity,
+        ),
+        {status: 'ok'},
+      )
+      assert.deepEqual(
+        addon.unlinkAt(rootDescriptor, 'rename-final', renameSource.identity, 'directory'),
+        {status: 'ok'},
+      )
 
       mkdirSync(join(root, 'repair-me'))
       const repairDescriptor = openDirectory(join(root, 'repair-me'))

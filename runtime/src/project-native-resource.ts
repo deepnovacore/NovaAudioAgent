@@ -29,7 +29,7 @@ const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
   'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'openDirectory',
-  'probe', 'protectAt', 'removeTreeAt', 'renameAt', 'unlinkAt',
+  'probe', 'protectAt', 'removeTreeAt', 'renameAt', 'renameNoReplaceAt', 'syncDirectory', 'unlinkAt',
 ])
 
 export interface ProjectDirectoryHandle {
@@ -192,6 +192,15 @@ export function loadProjectNativeHostFromResources(
       mkdirPrivateAt: (root: number, name: string) => addon.mkdirPrivateAt(root, name),
       protectAt: (root: number, name: string, child: number) => addon.protectAt(root, name, child),
       renameAt: (root: number, from: string, to: string) => addon.renameAt(root, from, to),
+      renameNoReplaceAt: (
+        root: number,
+        from: string,
+        to: string,
+        expected: ProjectFileIdentity,
+      ) => (
+        addon.renameNoReplaceAt(root, from, to, expected)
+      ),
+      syncDirectory: (root: number) => addon.syncDirectory(root),
       unlinkAt: (
         root: number,
         name: string,
@@ -386,6 +395,13 @@ interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority
   openDirectory(path: string): unknown
   protectAt(root: number, name: string, child: number): ProjectRootFileResult
   mkdirPrivateAt(root: number, name: string): ProjectRootFileCreateResult
+  renameNoReplaceAt(
+    root: number,
+    from: string,
+    to: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult
+  syncDirectory(root: number): ProjectRootFileResult
 }
 
 function projectDirectoryHandle(value: unknown): ProjectDirectoryHandle {

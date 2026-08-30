@@ -63,6 +63,8 @@ typedef NTSTATUS(NTAPI *nova_nt_create_file_fn)(PHANDLE, ACCESS_MASK,
 typedef intptr_t(__cdecl *nova_uv_get_osfhandle_fn)(int);
 typedef NTSTATUS(NTAPI *nova_nt_set_information_file_fn)(
     HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
+typedef NTSTATUS(NTAPI *nova_nt_flush_buffers_file_ex_fn)(
+    HANDLE, ULONG, PVOID, ULONG, PIO_STATUS_BLOCK);
 
 typedef struct {
   HANDLE handle;
@@ -423,6 +425,19 @@ static nova_nt_set_information_file_fn nova_nt_set_information_file(void) {
   nova_nt_set_information_file_fn result =
       (nova_nt_set_information_file_fn)(void *)GetProcAddress(
           ntdll, "NtSetInformationFile");
+#pragma warning(pop)
+  return result;
+}
+
+static nova_nt_flush_buffers_file_ex_fn nova_nt_flush_buffers_file_ex(void) {
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (ntdll == NULL)
+    return NULL;
+#pragma warning(push)
+#pragma warning(disable : 4055)
+  nova_nt_flush_buffers_file_ex_fn result =
+      (nova_nt_flush_buffers_file_ex_fn)(void *)GetProcAddress(
+          ntdll, "NtFlushBuffersFileEx");
 #pragma warning(pop)
   return result;
 }
@@ -1056,6 +1071,79 @@ static napi_value nova_rename_at(napi_env env, napi_callback_info info) {
   return nova_status(env, rename_status == NOVA_STATUS_SUCCESS ? "ok" : "failed");
 }
 
+static napi_value nova_rename_no_replace_at(napi_env env,
+                                             napi_callback_info info) {
+  napi_value args[4];
+  HANDLE root;
+  WCHAR from[256];
+  WCHAR to[256];
+  USHORT from_bytes;
+  USHORT to_bytes;
+  uint64_t device;
+  uint64_t inode;
+  if (!nova_args(env, info, 4, args) ||
+      !nova_handle_from_value(env, args[0], &root) ||
+      !nova_validate_handle(root, 1, NULL) ||
+      !nova_basename(env, args[1], from, &from_bytes) ||
+      !nova_basename(env, args[2], to, &to_bytes) ||
+      !nova_expected_identity(env, args[3], &device, &inode))
+    return nova_status(env, "failed");
+  HANDLE opened = INVALID_HANDLE_VALUE;
+  NTSTATUS status = nova_open_at(root, from, from_bytes,
+                                 DELETE | FILE_READ_ATTRIBUTES | READ_CONTROL,
+                                 FILE_OPEN, 0, NULL, &opened);
+  if (nova_missing_status(status)) return nova_status(env, "missing");
+  BY_HANDLE_FILE_INFORMATION actual;
+  if (status != NOVA_STATUS_SUCCESS ||
+      !nova_validate_handle(opened, -1, &actual)) {
+    if (opened != INVALID_HANDLE_VALUE) CloseHandle(opened);
+    return nova_status(env, "failed");
+  }
+  if ((uint64_t)actual.dwVolumeSerialNumber != device ||
+      nova_file_index(&actual) != inode) {
+    CloseHandle(opened);
+    return nova_status(env, "mismatch");
+  }
+  SIZE_T bytes = FIELD_OFFSET(FILE_RENAME_INFO, FileName) + to_bytes + sizeof(WCHAR);
+  FILE_RENAME_INFO *rename =
+      (FILE_RENAME_INFO *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bytes);
+  if (rename == NULL) {
+    CloseHandle(opened);
+    return nova_status(env, "failed");
+  }
+  rename->ReplaceIfExists = FALSE;
+  rename->RootDirectory = root;
+  rename->FileNameLength = to_bytes;
+  CopyMemory(rename->FileName, to, to_bytes);
+  nova_nt_set_information_file_fn set_information = nova_nt_set_information_file();
+  IO_STATUS_BLOCK io;
+  NTSTATUS rename_status = set_information == NULL
+                               ? (NTSTATUS)0xC0000001L
+                               : set_information(opened, &io, rename,
+                                                 (ULONG)bytes,
+                                                 NOVA_FILE_RENAME_INFORMATION);
+  HeapFree(GetProcessHeap(), 0, rename);
+  CloseHandle(opened);
+  if (rename_status == NOVA_STATUS_SUCCESS) return nova_status(env, "ok");
+  if (nova_exists_status(rename_status)) return nova_status(env, "exists");
+  if (nova_missing_status(rename_status)) return nova_status(env, "missing");
+  return nova_status(env, "failed");
+}
+
+static napi_value nova_sync_directory(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  HANDLE root;
+  if (!nova_args(env, info, 1, args) ||
+      !nova_handle_from_value(env, args[0], &root) ||
+      !nova_validate_handle(root, 1, NULL)) return nova_status(env, "failed");
+  nova_nt_flush_buffers_file_ex_fn flush = nova_nt_flush_buffers_file_ex();
+  IO_STATUS_BLOCK io;
+  NTSTATUS status = flush == NULL
+                        ? (NTSTATUS)0xC0000001L
+                        : flush(root, 0, NULL, 0, &io);
+  return nova_status(env, status == NOVA_STATUS_SUCCESS ? "ok" : "failed");
+}
+
 static napi_value nova_unlink_at(napi_env env, napi_callback_info info) {
   napi_value args[4];
   HANDLE root;
@@ -1267,6 +1355,8 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "mkdirPrivateAt", nova_mkdir_private_at) ||
       !nova_export(env, exports, "protectAt", nova_protect_at) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
+      !nova_export(env, exports, "renameNoReplaceAt", nova_rename_no_replace_at) ||
+      !nova_export(env, exports, "syncDirectory", nova_sync_directory) ||
       !nova_export(env, exports, "unlinkAt", nova_unlink_at) ||
       !nova_export(env, exports, "removeTreeAt", nova_remove_tree_at))
     return NULL;
