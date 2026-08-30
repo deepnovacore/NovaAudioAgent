@@ -37,6 +37,7 @@
   "dependencies": {
     "@livekit/agents": "1.6.4",
     "@livekit/rtc-node": "0.13.33",
+    "undici": "7.29.0",
     "ws": "8.21.3",
     "zod": "4.4.3"
   },

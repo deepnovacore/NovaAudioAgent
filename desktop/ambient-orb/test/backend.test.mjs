@@ -505,6 +505,38 @@ test('launch spec injects decrypted secrets as env overrides when present', () =
   assert.equal('DOUBAO_ASR_API_KEY' in spec.env, false)
 })
 
+test('launch spec supplies the resolved desktop search proxy without overriding explicit env', () => {
+  const detected = nodeLaunchSpec({
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {},
+    searchProxyUrl: 'http://127.0.0.1:7890',
+  })
+  assert.equal(detected.env.HTTPS_PROXY, 'http://127.0.0.1:7890')
+
+  const explicit = nodeLaunchSpec({
+    workspace: '/workspace',
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: { HTTPS_PROXY: 'http://explicit.example:8080' },
+    searchProxyUrl: 'http://127.0.0.1:7890',
+  })
+  assert.equal(explicit.env.HTTPS_PROXY, 'http://explicit.example:8080')
+})
+
+test('Electron proxy rules expose only the first supported proxy endpoint', async () => {
+  const backend = await import('../src/main/backend.mjs')
+  assert.equal(typeof backend.searchProxyUrlFromRules, 'function')
+  assert.equal(
+    backend.searchProxyUrlFromRules('PROXY 127.0.0.1:7890; DIRECT'),
+    'http://127.0.0.1:7890',
+  )
+  assert.equal(backend.searchProxyUrlFromRules('HTTPS proxy.example:443'), 'https://proxy.example:443')
+  assert.equal(backend.searchProxyUrlFromRules('SOCKS5 127.0.0.1:7891; DIRECT'), '')
+  assert.equal(backend.searchProxyUrlFromRules('DIRECT'), '')
+})
+
 test('launch spec omits a secret env var entirely when absent, empty, or undefined', () => {
   const spec = nodeLaunchSpec({
     workspace: '/workspace',

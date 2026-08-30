@@ -37,6 +37,7 @@ const RUNTIME_MANIFEST = Object.freeze({
   dependencies: {
     '@livekit/agents': '1.6.4',
     '@livekit/rtc-node': '0.13.33',
+    undici: '7.29.0',
     ws: '8.21.3',
     zod: '4.4.3',
   },
@@ -63,6 +64,7 @@ async function writeArtifactRoot(root, {
     ['node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js', 'export {}\n'],
     ['node_modules/@livekit/agents/package.json', '{"name":"@livekit/agents"}\n'],
     ['node_modules/@livekit/rtc-node/package.json', '{"name":"@livekit/rtc-node"}\n'],
+    ['node_modules/undici/package.json', '{"name":"undici"}\n'],
     ['node_modules/ws/package.json', '{"name":"ws"}\n'],
     ['node_modules/zod/package.json', '{"name":"zod"}\n'],
   ])
@@ -137,6 +139,7 @@ function validArtifactFiles() {
     'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
     'node_modules/@livekit/agents/package.json',
     'node_modules/@livekit/rtc-node/package.json',
+    'node_modules/undici/package.json',
     'node_modules/ws/package.json',
     'node_modules/zod/package.json',
     'package.json',
@@ -152,6 +155,7 @@ test('artifact file-list entry point catches missing camera/runtime and forbidde
     'node_modules/@nova-audio-agent/runtime/dist/src/desktop-entry.js',
     'node_modules/@livekit/agents/package.json',
     'node_modules/@livekit/rtc-node/package.json',
+    'node_modules/undici/package.json',
     'node_modules/ws/package.json',
     'node_modules/zod/package.json',
   ]) {
@@ -1029,7 +1033,7 @@ test('release candidate report binds artifact SHA and rejects an external resour
           name: '@nova-audio-agent/runtime', version: '0.1.0',
           dependencies: {
             '@livekit/agents': '1.6.4', '@livekit/rtc-node': '0.13.33',
-            ws: '8.21.3', zod: '4.4.3',
+            undici: '7.29.0', ws: '8.21.3', zod: '4.4.3',
           },
         },
         'node_modules/@livekit/agents': {
@@ -1052,6 +1056,7 @@ test('release candidate report binds artifact SHA and rejects an external resour
         'node_modules/@livekit/rtc-ffi-bindings-darwin-arm64': {
           version: '0.13.33', os: ['darwin'], cpu: ['arm64'],
         },
+        'node_modules/undici': { version: '7.29.0' },
         'node_modules/ws': { version: '8.21.3' },
         'node_modules/zod': { version: '4.4.3' },
       },

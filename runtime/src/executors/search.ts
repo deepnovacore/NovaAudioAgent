@@ -13,6 +13,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { EnvHttpProxyAgent, fetch as undiciFetch } from 'undici'
 import { compareCodePoints } from '../canonical-json.js'
 import type { ExecutorAdapter, ExecutorDispatchContext, ExecutorHandoff } from '../causal-runtime.js'
 import type { JsonValue } from '../events.js'
@@ -89,14 +90,32 @@ export interface SearchTransport {
   search(query: string, options: {readonly maxResults: number}): Promise<Record<string, unknown>>
 }
 
+interface SearchRequestInit {
+  readonly method: 'POST'
+  readonly headers: Readonly<Record<string, string>>
+  readonly body: string
+  readonly redirect: 'manual'
+  readonly signal: AbortSignal
+}
+
+type SearchFetch = (input: string, init: SearchRequestInit) => Promise<Response>
+
+function proxyAwareFetch(): SearchFetch {
+  const dispatcher = new EnvHttpProxyAgent()
+  return (input: string, init: SearchRequestInit) => undiciFetch(
+    input,
+    {...init, dispatcher},
+  )
+}
+
 /** One direct, bounded Tavily `/search` request with no retries. */
 export class TavilyTransport implements SearchTransport {
   readonly #apiKey: string
-  readonly #fetch: typeof fetch
+  readonly #fetch: SearchFetch
 
-  constructor(apiKey: string | null, options: {readonly fetch?: typeof fetch} = {}) {
+  constructor(apiKey: string | null, options: {readonly fetch?: SearchFetch} = {}) {
     this.#apiKey = apiKey ?? ''
-    this.#fetch = options.fetch ?? globalThis.fetch
+    this.#fetch = options.fetch ?? proxyAwareFetch()
   }
 
   async search(

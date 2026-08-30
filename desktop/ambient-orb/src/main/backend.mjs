@@ -106,6 +106,25 @@ export function nodeRuntimeEntry({ isPackaged, appPath, packageRoot }) {
     : resolve(packageRoot, '../../runtime/dist/src/desktop-entry.js')
 }
 
+export function searchProxyUrlFromRules(rules) {
+  if (typeof rules !== 'string') return ''
+  for (const rule of rules.split(';')) {
+    const match = /^ *(PROXY|HTTPS) +([^ ;]+) *$/u.exec(rule)
+    if (!match) continue
+    const scheme = match[1] === 'HTTPS' ? 'https' : 'http'
+    try {
+      const url = new URL(`${scheme}://${match[2]}`)
+      const portMatch = /:(\d{1,5})$/u.exec(match[2])
+      const port = portMatch ? Number(portMatch[1]) : 0
+      if (!url.hostname || port < 1 || port > 65535 || url.username || url.password) continue
+      return `${scheme}://${match[2]}`
+    } catch {
+      continue
+    }
+  }
+  return ''
+}
+
 export function backendLaunchSpec({
   backend = 'node',
   nodeEntry,
@@ -117,6 +136,7 @@ export function backendLaunchSpec({
   settings,
   decryptedSecrets,
   resolvedConfig,
+  searchProxyUrl,
 }) {
   if (backend !== 'node') throw new Error('backend kind is invalid')
   if (typeof nodeEntry !== 'string' || !isAbsolute(nodeEntry)) {
@@ -155,6 +175,13 @@ export function backendLaunchSpec({
     NOVA_AUDIO_AGENT_CODEX_WORKING_INTERVAL: String(codexHeartbeatSeconds),
     NOVA_AUDIO_AGENT_PIPELINE_MODE: pipelineMode,
     NOVA_AUDIO_AGENT_CODEX_RESOURCES_PATH: nodeResourcesPath,
+  }
+  const inheritedProxy = parentEnv.HTTPS_PROXY
+    ?? parentEnv.https_proxy
+    ?? parentEnv.HTTP_PROXY
+    ?? parentEnv.http_proxy
+  if (!inheritedProxy && typeof searchProxyUrl === 'string' && searchProxyUrl) {
+    env.HTTPS_PROXY = searchProxyUrl
   }
   if (resolvedConfig && typeof resolvedConfig === 'object') {
     delete env.NOVA_AUDIO_AGENT_CODEX_BIN

@@ -15,6 +15,7 @@
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import net from 'node:net'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
@@ -373,6 +374,42 @@ test('a missing key fails before the query leaves the process', async () => {
   })
   assert.equal(await transportCode(transport), 'authentication')
   assert.equal(called, false, 'and the query never reached the network')
+})
+
+test('the default transport uses HTTPS_PROXY for the Tavily tunnel', async () => {
+  // Regression: Electron's utility process used Node fetch directly, so macOS system-proxy users
+  // resolved Tavily to Clash fake-IP space and then failed with ECONNRESET without ever reaching the
+  // local proxy. The real proxy boundary is exercised here: it must receive a CONNECT for Tavily.
+  let request = ''
+  const proxy = net.createServer(socket => {
+    socket.once('data', chunk => {
+      request = chunk.toString('latin1')
+      socket.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n')
+    })
+  })
+  await new Promise<void>((accept, reject) => {
+    proxy.once('error', reject)
+    proxy.listen(0, '127.0.0.1', accept)
+  })
+  const address = proxy.address()
+  assert.ok(address && typeof address === 'object')
+  const previous = {
+    HTTPS_PROXY: process.env.HTTPS_PROXY,
+    NO_PROXY: process.env.NO_PROXY,
+  }
+  process.env.HTTPS_PROXY = `http://127.0.0.1:${address.port}`
+  process.env.NO_PROXY = ''
+  try {
+    const transport = new TavilyTransport('key')
+    assert.equal(await transportCode(transport), 'transport')
+    assert.match(request, /^CONNECT api\.tavily\.com:443 HTTP\/1\.1\r\n/mu)
+  } finally {
+    if (previous.HTTPS_PROXY === undefined) delete process.env.HTTPS_PROXY
+    else process.env.HTTPS_PROXY = previous.HTTPS_PROXY
+    if (previous.NO_PROXY === undefined) delete process.env.NO_PROXY
+    else process.env.NO_PROXY = previous.NO_PROXY
+    await new Promise<void>((accept, reject) => proxy.close(error => error ? reject(error) : accept()))
+  }
 })
 
 test('each HTTP status maps to the code the adapter keys its outcome on', async () => {

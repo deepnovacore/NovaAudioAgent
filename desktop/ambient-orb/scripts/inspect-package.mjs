@@ -31,6 +31,7 @@ const REQUIRED_RUNTIME_FILE = `node_modules/${RUNTIME_PACKAGE}/dist/src/desktop-
 const EXPECTED_RUNTIME_DEPENDENCIES = Object.freeze([
   '@livekit/agents',
   '@livekit/rtc-node',
+  'undici',
   'ws',
   'zod',
 ])

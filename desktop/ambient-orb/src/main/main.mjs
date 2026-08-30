@@ -27,6 +27,7 @@ import {
   backendLaunchSpec,
   createReadinessListener,
   nodeRuntimeEntry,
+  searchProxyUrlFromRules,
   selectedBackend,
   shutdownBackend,
   watchBackendExit,
@@ -453,6 +454,15 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
   const diagnostic = createBackendDiagnosticCollector()
   try {
     const decryptedSecrets = decryptSecretsForSpawn(currentSettings, secretCodec)
+    let searchProxyUrl = ''
+    try {
+      const proxyRules = await mainWindow?.webContents.session.resolveProxy(
+        'https://api.tavily.com/search',
+      )
+      searchProxyUrl = searchProxyUrlFromRules(proxyRules)
+    } catch {
+      // Proxy discovery is best-effort. Explicit HTTP(S)_PROXY values still flow through parentEnv.
+    }
     const spec = backendLaunchSpec({
       backend: backendKind,
       nodeEntry: nodeRuntimeEntry({
@@ -470,6 +480,7 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       settings: currentSettings,
       decryptedSecrets,
       resolvedConfig: desktopConfig,
+      searchProxyUrl,
     })
     spawnedBackend = utilityProcess.fork(spec.entry, spec.argv, {
       cwd: workspace,
