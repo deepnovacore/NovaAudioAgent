@@ -4560,26 +4560,29 @@ export class RealtimeService {
     const boundary = {}
     this.#rendererHostDeliveryBoundary = boundary
     this.#rendererHostDeliveryPaused = true
-    const releasedUserHold = this.session.releaseRendererUserHold()
-    const generation = this.session.currentGeneration
-    let fenced: boolean
-    if (generation !== null) {
-      fenced = await this.playbackStopped(
-        generation.utterance_id,
-        generation.generation_epoch,
-        null,
-      )
-    } else {
-      fenced = await this.session.rendererDisconnected()
+    try {
+      const releasedUserHold = this.session.releaseRendererUserHold()
+      const generation = this.session.currentGeneration
+      let fenced: boolean
+      if (generation !== null) {
+        fenced = await this.playbackStopped(
+          generation.utterance_id,
+          generation.generation_epoch,
+          null,
+        )
+      } else {
+        fenced = await this.session.rendererDisconnected()
+      }
+      return fenced || releasedUserHold
+    } finally {
+      if (
+        options.resumeDelivery === true
+        && this.#rendererHostDeliveryBoundary === boundary
+      ) {
+        this.#rendererHostDeliveryPaused = false
+        this.#deliveryReady.set()
+      }
     }
-    if (
-      options.resumeDelivery === true
-      && this.#rendererHostDeliveryBoundary === boundary
-    ) {
-      this.#rendererHostDeliveryPaused = false
-      this.#deliveryReady.set()
-    }
-    return fenced || releasedUserHold
   }
 
   /** Return an interrupted, unheard acknowledgement to the live delegate that still owns it. */

@@ -3937,6 +3937,46 @@ test('a late authenticated resume cannot reopen delivery after its renderer disc
   )
 })
 
+test('an authenticated resume releases delivery even when its playback fence fails', async (t) => {
+  const fenceFailure = new Error('renderer fence failed')
+  const {service, actions} = pipelineService({
+    parkProviderEvents: true,
+    beforeCancelResponse: () => Promise.reject(fenceFailure),
+  })
+  t.after(async () => { await service.close() })
+  await service.start()
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'response-with-failing-fence',
+  })
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'response-with-failing-fence',
+    pcm: new Uint8Array([0, 1]),
+  })
+  service.queueHostItem(hostFact('queued-behind-failing-fence'))
+
+  await assert.rejects(
+    service.playbackDisconnected({resumeDelivery: true}),
+    error => error === fenceFailure,
+  )
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'response-with-failing-fence',
+    status: 'cancelled',
+    reason: '',
+  })
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(
+    actions.includes('inject:queued-behind-failing-fence'),
+    true,
+    'the authenticated renderer can receive later host work despite the reported fence failure',
+  )
+})
+
 test('playback stop requeues an acknowledgement when provider cancellation terminates first', async () => {
   let reportCancelStarted: (() => void) | undefined
   let releaseCancel: (() => void) | undefined
