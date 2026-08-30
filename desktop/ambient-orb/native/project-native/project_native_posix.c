@@ -1,7 +1,11 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
 #define _DARWIN_C_SOURCE 1
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <node_api.h>
 #include <stdint.h>
@@ -11,6 +15,10 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#endif
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -19,6 +27,8 @@
 #ifndef O_NOFOLLOW
 #define O_NOFOLLOW 0
 #endif
+
+#define NOVA_REMOVE_TREE_MAX_DEPTH 64U
 
 typedef struct {
   int descriptor;
@@ -446,6 +456,61 @@ static napi_value nova_rename_at(napi_env env, napi_callback_info info) {
   return nova_status(env, "ok");
 }
 
+static napi_value nova_rename_no_replace_at(napi_env env, napi_callback_info info) {
+  napi_value args[4];
+  int root_descriptor;
+  char from[256];
+  char to[256];
+  uint64_t device;
+  uint64_t inode;
+  struct stat source;
+  if (!nova_args(env, info, 4, args) ||
+      !nova_descriptor(env, args[0], &root_descriptor) ||
+      !nova_basename(env, args[1], from) ||
+      !nova_basename(env, args[2], to) ||
+      !nova_expected_identity(env, args[3], &device, &inode)) {
+    return nova_status(env, "failed");
+  }
+  if (fstatat(root_descriptor, from, &source, AT_SYMLINK_NOFOLLOW) != 0) {
+    return nova_status(env, errno == ENOENT ? "missing" : "failed");
+  }
+  if (S_ISLNK(source.st_mode) || (uint64_t)source.st_dev != device ||
+      (uint64_t)source.st_ino != inode) return nova_status(env, "mismatch");
+
+  int renamed;
+#if defined(__APPLE__)
+  renamed = renameatx_np(root_descriptor, from, root_descriptor, to, RENAME_EXCL);
+#elif defined(__linux__) && defined(SYS_renameat2)
+  renamed = (int)syscall(
+      SYS_renameat2, root_descriptor, from, root_descriptor, to, RENAME_NOREPLACE);
+#else
+  errno = ENOTSUP;
+  renamed = -1;
+#endif
+  if (renamed != 0) {
+    if (errno == EEXIST || errno == ENOTEMPTY) return nova_status(env, "exists");
+    if (errno == ENOENT) return nova_status(env, "missing");
+    if (errno == ENOTSUP || errno == ENOSYS) return nova_status(env, "unsupported");
+    return nova_status(env, "failed");
+  }
+  struct stat placed;
+  if (fstatat(root_descriptor, to, &placed, AT_SYMLINK_NOFOLLOW) != 0 ||
+      S_ISLNK(placed.st_mode) || (uint64_t)placed.st_dev != device ||
+      (uint64_t)placed.st_ino != inode) return nova_status(env, "mismatch");
+  return nova_status(env, "ok");
+}
+
+static napi_value nova_sync_directory(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  int root_descriptor;
+  struct stat root;
+  if (!nova_args(env, info, 1, args) ||
+      !nova_descriptor(env, args[0], &root_descriptor) ||
+      fstat(root_descriptor, &root) != 0 || !S_ISDIR(root.st_mode) ||
+      fsync(root_descriptor) != 0) return nova_status(env, "failed");
+  return nova_status(env, "ok");
+}
+
 static napi_value nova_unlink_at(napi_env env, napi_callback_info info) {
   napi_value args[4];
   int root_descriptor;
@@ -477,6 +542,99 @@ static napi_value nova_unlink_at(napi_env env, napi_callback_info info) {
   return nova_status(env, "ok");
 }
 
+static int nova_remove_directory_contents(int directory, unsigned depth) {
+  int scan_descriptor = dup(directory);
+  if (scan_descriptor < 0) return 0;
+  DIR* stream = fdopendir(scan_descriptor);
+  if (stream == NULL) {
+    (void)close(scan_descriptor);
+    return 0;
+  }
+  int valid = 1;
+  errno = 0;
+  struct dirent* entry;
+  while (valid && (entry = readdir(stream)) != NULL) {
+    const char* name = entry->d_name;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+    struct stat before;
+    if (fstatat(directory, name, &before, AT_SYMLINK_NOFOLLOW) != 0) {
+      valid = 0;
+      break;
+    }
+    if (S_ISDIR(before.st_mode)) {
+      if (depth >= NOVA_REMOVE_TREE_MAX_DEPTH) {
+        valid = 0;
+        break;
+      }
+      int child = openat(directory, name,
+                         O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+      struct stat opened;
+      if (child < 0 || fstat(child, &opened) != 0 || !S_ISDIR(opened.st_mode) ||
+          opened.st_dev != before.st_dev || opened.st_ino != before.st_ino ||
+          !nova_remove_directory_contents(child, depth + 1)) {
+        if (child >= 0) (void)close(child);
+        valid = 0;
+        break;
+      }
+      (void)close(child);
+      struct stat after;
+      if (fstatat(directory, name, &after, AT_SYMLINK_NOFOLLOW) != 0 ||
+          !S_ISDIR(after.st_mode) || after.st_dev != before.st_dev ||
+          after.st_ino != before.st_ino ||
+          unlinkat(directory, name, AT_REMOVEDIR) != 0) {
+        valid = 0;
+        break;
+      }
+    } else if (unlinkat(directory, name, 0) != 0) {
+      valid = 0;
+      break;
+    }
+    errno = 0;
+  }
+  if (entry == NULL && errno != 0) valid = 0;
+  if (closedir(stream) != 0) valid = 0;
+  return valid;
+}
+
+static napi_value nova_remove_tree_at(napi_env env, napi_callback_info info) {
+  napi_value args[3];
+  int root_descriptor;
+  char name[256];
+  uint64_t device;
+  uint64_t inode;
+  if (!nova_args(env, info, 3, args) ||
+      !nova_descriptor(env, args[0], &root_descriptor) ||
+      !nova_basename(env, args[1], name) ||
+      !nova_expected_identity(env, args[2], &device, &inode)) {
+    return nova_status(env, "failed");
+  }
+  struct stat named;
+  if (fstatat(root_descriptor, name, &named, AT_SYMLINK_NOFOLLOW) != 0) {
+    return nova_status(env, errno == ENOENT ? "missing" : "failed");
+  }
+  if (!S_ISDIR(named.st_mode) || (uint64_t)named.st_dev != device ||
+      (uint64_t)named.st_ino != inode) return nova_status(env, "mismatch");
+  int child = openat(root_descriptor, name,
+                     O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  struct stat opened;
+  if (child < 0 || fstat(child, &opened) != 0 || !S_ISDIR(opened.st_mode) ||
+      opened.st_dev != named.st_dev || opened.st_ino != named.st_ino) {
+    if (child >= 0) (void)close(child);
+    return nova_status(env, "mismatch");
+  }
+  int emptied = nova_remove_directory_contents(child, 0);
+  (void)close(child);
+  if (!emptied) return nova_status(env, "failed");
+  struct stat final;
+  if (fstatat(root_descriptor, name, &final, AT_SYMLINK_NOFOLLOW) != 0 ||
+      !S_ISDIR(final.st_mode) || final.st_dev != named.st_dev ||
+      final.st_ino != named.st_ino) return nova_status(env, "mismatch");
+  if (unlinkat(root_descriptor, name, AT_REMOVEDIR) != 0) {
+    return nova_status(env, errno == ENOENT ? "missing" : "failed");
+  }
+  return nova_status(env, "ok");
+}
+
 static int nova_export(napi_env env, napi_value exports, const char* name, napi_callback callback) {
   napi_value function;
   return napi_create_function(env, name, NAPI_AUTO_LENGTH, callback, NULL, &function) == napi_ok &&
@@ -494,6 +652,9 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "mkdirPrivateAt", nova_mkdir_private_at) ||
       !nova_export(env, exports, "protectAt", nova_protect_at) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
-      !nova_export(env, exports, "unlinkAt", nova_unlink_at)) return NULL;
+      !nova_export(env, exports, "renameNoReplaceAt", nova_rename_no_replace_at) ||
+      !nova_export(env, exports, "syncDirectory", nova_sync_directory) ||
+      !nova_export(env, exports, "unlinkAt", nova_unlink_at) ||
+      !nova_export(env, exports, "removeTreeAt", nova_remove_tree_at)) return NULL;
   return exports;
 }

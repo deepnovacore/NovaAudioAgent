@@ -49,6 +49,9 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:window-drag:move',
     'nova:window-drag:start',
     'nova:workspace-graph-board:request',
+    'nova:workspaces:clear-all',
+    'nova:workspaces:clear-current',
+    'nova:workspaces:open-current',
   ])
   assert.doesNotMatch(source, /sendSync/)
 })
@@ -140,7 +143,7 @@ test('the settings window is a singleton that never rebinds the shared permissio
   const body = open.slice(0, open.indexOf('\n}\n'))
 
   assert.match(source, /let settingsWindow = null/)
-  assert.match(body, /if \(settingsWindow\) \{\n\s*settingsWindow\.show\(\)\n\s*settingsWindow\.focus\(\)\n\s*return\n\s*\}/)
+  assert.match(body, /if \(settingsWindow\) \{\n\s*settingsWindow\.show\(\)\n\s*settingsWindow\.focus\(\)[\s\S]*refreshManagedWorkspaceCapabilities\(\)[\s\S]*return\n\s*\}/)
   assert.match(body, /settingsWindowOptions\(preload, launchId\)/)
   assert.match(body, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
   assert.match(body, /allowRendererNavigation\(url\)/)
@@ -154,9 +157,9 @@ test('the settings window is a singleton that never rebinds the shared permissio
 test('settings IPC is sender-validated and answers from main without an orb relay', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
-  assert.match(source, /ipcMain\.handle\('nova:settings:get', event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
+  assert.match(source, /ipcMain\.handle\('nova:settings:get', async event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
   assert.match(source, /ipcMain\.handle\('nova:settings:set', async \(event, patch\) => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
-  assert.match(source, /sendToOrb\('nova:settings:changed', orbSettings\(currentSettings\)\)/)
+  assert.match(source, /publishCommitted: \(\) => sendToOrb\(\s*'nova:settings:changed', orbSettings\(currentSettings\),?\s*\)/)
   // No requestId machinery: settings live in main, so nothing round-trips
   // through the orb renderer the way the memory board has to.
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
@@ -170,7 +173,69 @@ test('Codex rescan is restricted to the settings window sender', async () => {
     source,
     /ipcMain\.handle\('nova:codex:rescan', async event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/,
   )
-  assert.match(source, /await refreshDesktopConfiguration\(\)/)
+  const rescan = source.slice(source.indexOf("ipcMain.handle('nova:codex:rescan'"))
+  const handler = rescan.slice(0, rescan.indexOf('\n  })'))
+  assert.match(handler, /lifecycleCoordinator\.run\('codex_rescan'/)
+  assert.match(handler, /sameBackendLaunchConfiguration\(previous, prepared\)/)
+  assert.match(handler, /if \(changed && backendSupervisor\) await managedWorkspaceBackendRecovery\.restart\(\)/)
+  assert.match(handler, /discardDesktopConfiguration\(prepared\)/)
+  assert.match(handler, /operationStatus: 'busy'/)
+})
+
+test('managed workspace actions are zero-argument and bound to the live settings sender', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  for (const channel of [
+    'nova:workspaces:open-current',
+    'nova:workspaces:clear-current',
+    'nova:workspaces:clear-all',
+  ]) {
+    const start = source.indexOf(`ipcMain.handle('${channel}'`)
+    assert.notEqual(start, -1)
+    const body = source.slice(start, source.indexOf('\n  })', start))
+    assert.match(body, /async \(event, \.\.\.args\) =>/)
+    assert.match(body, /!settingsWindow \|\| event\.sender !== settingsWindow\.webContents \|\| args\.length !== 0/)
+  }
+  const view = source.slice(source.indexOf('function settingsView()'))
+  const viewBody = view.slice(0, view.indexOf('\n}'))
+  assert.match(viewBody, /managedWorkspaces:/)
+  const managedView = source.slice(source.indexOf('function managedWorkspacesView()'))
+  const managedViewBody = managedView.slice(0, managedView.indexOf('\n}'))
+  assert.match(managedViewBody, /health:/)
+  assert.match(managedViewBody, /current:/)
+  assert.match(managedViewBody, /all:/)
+  assert.match(managedViewBody, /recoveryStatus: managedWorkspaceBackendRecovery\.status\(\)/)
+  assert.match(managedViewBody, /lifecycleBusy: lifecycleCoordinator\.busy/)
+  assert.doesNotMatch(viewBody, /canonical_path|workspace_id|identity|tombstone/u)
+  const reply = source.slice(source.indexOf('const workspaceActionReply = async action =>'))
+  const replyBody = reply.slice(0, reply.indexOf('\n  }'))
+  assert.match(replyBody, /managedWorkspaces: managedWorkspacesView\(\)/)
+  assert.doesNotMatch(replyBody, /settingsView\(\).*\}/u)
+})
+
+test('rollback recovery gates startup, save restart, rescan, and explicit backend retry', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  assert.match(source, /createManagedWorkspaceBackendRecovery/)
+  assert.match(source, /void managedWorkspaceBackendRecovery\.start\(\)/)
+  const retry = source.slice(source.indexOf("ipcMain.handle('nova:backend:retry'"))
+  const retryHandler = retry.slice(0, retry.indexOf('\n  })'))
+  assert.match(retryHandler, /async \(event, \.\.\.args\) =>/)
+  assert.match(retryHandler, /event\.sender !== settingsWindow\.webContents \|\| args\.length !== 0/)
+  assert.match(retryHandler, /coordinateBackendRetry/)
+  assert.match(retryHandler, /lifecycleCoordinator/)
+  assert.match(retryHandler, /operationStatus: 'busy'/)
+  const refresh = source.slice(source.indexOf('async function refreshManagedWorkspaceCapabilities()'))
+  const refreshBody = refresh.slice(0, refresh.indexOf('\n}'))
+  assert.match(
+    refreshBody,
+    /managedWorkspaceBackendRecovery\.observe\(\s*managedWorkspaceCapabilities,\s*projectNativeAuthorityPresent,?\s*\)/,
+  )
+  const recovery = source.slice(source.indexOf('const managedWorkspaceBackendRecovery ='))
+  const recoveryBody = recovery.slice(0, recovery.indexOf('\n})') + 3)
+  assert.match(recoveryBody, /stopBackend:/)
+  assert.match(recoveryBody, /backendSupervisor\.stop\(\)/)
+  assert.match(recoveryBody, /retryBackend:[\s\S]*backendSupervisor\.status\(\)\.state === 'connected'/)
+  const settings = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
+  assert.match(settings.slice(0, settings.indexOf('\n  })')), /managedWorkspaceBackendRecovery\.restart\(\)/)
 })
 
 test('no decrypted secret can reach the renderer or a log line', async () => {
@@ -222,7 +287,9 @@ test('every settings write goes through one queue so overlapping patches merge',
 
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
   const handler = set.slice(0, set.indexOf('\n  })'))
-  assert.match(handler, /await settingsWriter\(patch\)/)
+  assert.match(handler, /applySettingsTransaction\(\{/)
+  assert.match(handler, /write: async value => \{[\s\S]*await settingsWriter\(value\)/)
+  assert.match(handler, /coordinator: lifecycleCoordinator/)
   assert.doesNotMatch(
     handler,
     /applySettingsUpdate|currentSettings = /,
@@ -277,7 +344,7 @@ test('quitting drains the backend on the stdin sentinel instead of killing it', 
   const beforeQuit = source.slice(source.indexOf("app.on('before-quit'"))
 
   assert.match(beforeQuit, /event\.preventDefault\(\)/)
-  assert.match(beforeQuit, /shutdownBackend\(backend\)/)
+  assert.match(beforeQuit, /shutdownBackendBestEffort\(backend\)/)
   assert.match(beforeQuit, /app\.exit\(0\)/)
   // Every teardown path goes through the helper, so no bare signal survives.
   assert.doesNotMatch(source, /backend\??\.kill\(/)
@@ -350,15 +417,20 @@ test('supervisor publishes live connection state to an open settings panel', asy
   assert.match(statusHandler.slice(0, statusHandler.indexOf('\n    },')), /sendToSettings\('nova:settings:changed', settingsView\(\)\)/)
 })
 
-test('a saved configuration reports an explicit apply failure without falsifying backend status', async () => {
+test('a saved configuration reports bounded transaction phases without falsifying backend status', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const apply = await readFile(new URL('../src/main/settings-apply.mjs', import.meta.url), 'utf8')
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
   const handler = set.slice(0, set.indexOf('\n  })'))
 
   assert.match(source, /settingsApplyStatus/)
-  assert.match(handler, /settingsApplyStatus = 'pending'/)
-  assert.match(handler, /settingsApplyStatus = 'failed'/)
-  assert.match(handler, /sendToSettings\('nova:settings:changed', settingsView\(\)\)/)
+  assert.match(handler, /publishStatus: publishSettingsApplyStatus/)
+  assert.match(handler, /backendSupervisor\?\.status\(\)\.state !== 'connected'/)
+  assert.match(handler, /discardConfiguration: discardDesktopConfiguration/)
+  for (const phase of ['saving', 'refreshing', 'restarting', 'applied', 'failed', 'restart_failed']) {
+    assert.match(apply, new RegExp(`publishStatus\\('${phase}'\\)`))
+  }
+  assert.match(handler, /return \{\.\.\.settingsView\(\), \.\.\.applied\}/)
   assert.doesNotMatch(handler, /backendStatus\s*=/)
 })
 
@@ -445,6 +517,18 @@ test('packaged smoke readiness is private, post-backend, and closed by every qui
   assert.match(launchBody, /endpoint: validated\.endpoint, token/u)
   const quit = source.slice(source.indexOf("app.on('before-quit'"))
   assert.match(quit, /releaseSmokeChannel\?\.close\(\)/u)
+})
+
+test('a supported native authority load failure remains present for backend recovery gating', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /inspectProjectNativeHostFromResources/u)
+  assert.match(source, /projectNativeAuthorityPresent = projectNativeLoad\.status !== 'absent'/u)
+  assert.match(
+    source,
+    /observe\(\s*managedWorkspaceCapabilities,\s*projectNativeAuthorityPresent,?\s*\)/u,
+  )
+  assert.match(source, /hasMaintenanceAuthority: \(\) => projectNativeAuthorityPresent/u)
 })
 
 test('camera bootstrap and protocol wiring catch canonical path disclosure or renderer URL choice', async () => {

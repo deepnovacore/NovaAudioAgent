@@ -87,9 +87,31 @@ test('exit reconnects, explicit retry cancels delay, and stop fences a stale sta
   assert.equal(startCount, 2)
   const third = supervisor.restart()
   while (startCount < 3) await Promise.resolve()
-  await supervisor.stop()
+  const stopping = supervisor.stop()
   pending.resolve({backend: {id: 3}, connection: {endpoint: 'ws://127.0.0.1:9/'}})
+  await stopping
   await third
   assert.deepEqual(stopped, [2, 3])
   assert.equal(supervisor.status().state, 'stopped')
+})
+
+test('an unconfirmed stop is explicit and restart never starts a replacement backend', async () => {
+  const starts = []
+  const statuses = []
+  const supervisor = createBackendSupervisor({
+    start: async () => {
+      const backend = {id: starts.length + 1}
+      starts.push(backend)
+      return {backend, connection: {endpoint: 'ws://127.0.0.1:10/'}}
+    },
+    stopBackend: async () => { throw new Error('backend termination unconfirmed') },
+    onStatus: status => statuses.push(status),
+  })
+  await supervisor.start()
+
+  await assert.rejects(supervisor.restart(), /termination unconfirmed/u)
+
+  assert.equal(starts.length, 1)
+  assert.notEqual(supervisor.status().state, 'stopped')
+  assert.equal(statuses.some(status => status.state === 'stopped'), false)
 })

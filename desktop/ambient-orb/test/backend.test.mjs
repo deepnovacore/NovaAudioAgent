@@ -996,21 +996,83 @@ test('the default drain grace outlasts the backend cleanup it is waiting on', as
 test('shutdown ends stdin first, then signals, and escalates only after the grace', async () => {
   const child = fakeChild()
 
-  const drained = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+  const drained = shutdownBackend(child, {graceMs: 20, forceExitMs: 100, platform: 'darwin'})
 
   assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM'])
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+  child.exitCode = 137
+  child.emit('exit', 137, 'SIGKILL')
   await drained
+})
+
+test('forced shutdown waits for observed child exit before confirming termination', async () => {
+  const child = fakeChild()
+
+  const drained = shutdownBackend(child, {
+    graceMs: 5,
+    forceExitMs: 100,
+    platform: 'darwin',
+  })
+
+  await new Promise(resolve => setTimeout(resolve, 15))
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+  assert.equal(await pending(drained, 10), 'pending')
+
+  child.exitCode = 137
+  child.emit('exit', 137, 'SIGKILL')
+  assert.equal(await pending(drained, 50), 'settled')
+})
+
+test('forced shutdown rejects when child exit cannot be confirmed', async () => {
+  const child = fakeChild()
+
+  await assert.rejects(
+    shutdownBackend(child, {graceMs: 5, forceExitMs: 5, platform: 'darwin'}),
+    /termination unconfirmed/u,
+  )
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+})
+
+test('a late exit after termination timeout allows a later shutdown to confirm', async () => {
+  const child = fakeChild()
+
+  await assert.rejects(
+    shutdownBackend(child, {graceMs: 5, forceExitMs: 5, platform: 'darwin'}),
+    /termination unconfirmed/u,
+  )
+  child.exitCode = 137
+  child.emit('exit', 137, 'SIGKILL')
+
+  await shutdownBackend(child, {graceMs: 5, forceExitMs: 5, platform: 'darwin'})
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+})
+
+test('quit-only best-effort shutdown contains an unconfirmed termination failure', async () => {
+  const backend = await import('../src/main/backend.mjs')
+  assert.equal(typeof backend.shutdownBackendBestEffort, 'function')
+  const child = fakeChild()
+
+  await backend.shutdownBackendBestEffort(child, {
+    graceMs: 5,
+    forceExitMs: 5,
+    platform: 'darwin',
+  })
+
   assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
 })
 
 test('shutdown on win32 relies on the stdin sentinel instead of a signal', async () => {
   const child = fakeChild()
 
-  const drained = shutdownBackend(child, { graceMs: 20, platform: 'win32' })
+  const drained = shutdownBackend(child, {graceMs: 20, forceExitMs: 100, platform: 'win32'})
 
   assert.deepEqual(child.calls, ['stdin.end'])
-  await drained
+  await new Promise(resolve => setTimeout(resolve, 30))
   assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGKILL'])
+  child.exitCode = 137
+  child.emit('exit', 137, 'SIGKILL')
+  await drained
 })
 
 test('utility-process shutdown requests a drain over its parent port before killing', async () => {
@@ -1043,8 +1105,12 @@ test('a utility process still spawning is stopped instead of mistaken for an exi
     return true
   }
 
-  await shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+  const drained = shutdownBackend(child, {graceMs: 20, forceExitMs: 100, platform: 'darwin'})
+  await new Promise(resolve => setTimeout(resolve, 30))
   assert.deepEqual(child.calls, ['post:nova.shutdown', 'kill'])
+  child.exitCode = 137
+  child.emit('exit', 137)
+  await drained
 })
 
 test('a backend that drains inside the grace window is never force killed', async () => {
@@ -1061,13 +1127,16 @@ test('a backend that drains inside the grace window is never force killed', asyn
 test('concurrent and repeated shutdowns share one drain sequence', async () => {
   const child = fakeChild()
 
-  const first = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
-  const second = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+  const first = shutdownBackend(child, {graceMs: 20, forceExitMs: 100, platform: 'darwin'})
+  const second = shutdownBackend(child, {graceMs: 20, forceExitMs: 100, platform: 'darwin'})
 
   assert.equal(first, second)
   assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM'])
-  await Promise.all([first, second])
+  await new Promise(resolve => setTimeout(resolve, 30))
   assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+  child.exitCode = 137
+  child.emit('exit', 137, 'SIGKILL')
+  await Promise.all([first, second])
 
   const third = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
   assert.equal(await pending(third, 50), 'settled')
@@ -1113,11 +1182,14 @@ test('a destroyed stdin is never ended, but the kill path still runs', async () 
     end: () => { throw new Error('must not be called') },
   }
 
-  const drained = shutdownBackend(child, { graceMs: 20, platform: 'darwin' })
+  const drained = shutdownBackend(child, {graceMs: 20, forceExitMs: 100, platform: 'darwin'})
 
   assert.deepEqual(child.calls, ['kill:SIGTERM'])
-  await drained
+  await new Promise(resolve => setTimeout(resolve, 30))
   assert.deepEqual(child.calls, ['kill:SIGTERM', 'kill:SIGKILL'])
+  child.exitCode = 137
+  child.emit('exit', 137, 'SIGKILL')
+  await drained
 })
 
 test('shutting down an already exited backend never waits out the grace', async () => {

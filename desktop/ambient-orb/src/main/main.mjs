@@ -10,11 +10,15 @@ import {
   protocol,
   safeStorage,
   screen,
+  shell,
   systemPreferences,
   Tray,
   utilityProcess,
 } from 'electron'
-import { loadProjectNativeHostFromResources } from '@nova-audio-agent/runtime/desktop'
+import {
+  inspectProjectNativeHostFromResources,
+  ManagedWorkspaceMaintenanceService,
+} from '@nova-audio-agent/runtime/desktop'
 import { randomBytes } from 'node:crypto'
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
@@ -30,6 +34,7 @@ import {
   searchProxyUrlFromRules,
   selectedBackend,
   shutdownBackend,
+  shutdownBackendBestEffort,
   watchBackendExit,
 } from './backend.mjs'
 import {
@@ -37,6 +42,7 @@ import {
   createBackendDiagnosticCollector,
 } from './backend-diagnostics.mjs'
 import { createBackendSupervisor } from './backend-supervisor.mjs'
+import { createLifecycleCoordinator } from './lifecycle-coordinator.mjs'
 import { configureDevelopmentDockIcon } from './app-icon.mjs'
 import {createDebugBoardRequester} from './debug-board-client.mjs'
 import { installAppProtocol, loadAppWindow, registerAppScheme } from './app-protocol.mjs'
@@ -71,6 +77,16 @@ import {
   secretsPresent,
   secretValueIsSafe,
 } from './settings-store.mjs'
+import {
+  applySettingsTransaction,
+  sameBackendLaunchConfiguration,
+} from './settings-apply.mjs'
+import {
+  coordinateBackendRetry,
+  createManagedWorkspaceBackendRecovery,
+  createWorkspaceActions,
+  publicManagedWorkspaceCapabilities,
+} from './workspace-actions.mjs'
 import {
   clampWindowPosition,
   createConfirmationWindowController,
@@ -125,7 +141,6 @@ let backendStatus = Object.freeze({
   state: 'stopped', connection: null, retryInMs: null, diagnostic: null,
 })
 let settingsApplyStatus = 'idle'
-let settingsApplyRevision = 0
 let mainWindow = null
 let boardWindow = null
 let settingsWindow = null
@@ -134,6 +149,9 @@ let bootstrap = null
 let nativeAudio = null
 let nativeBinary = null
 let projectNativeHost
+let projectNativeAuthorityPresent = false
+let managedWorkspaceMaintenance = null
+let managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
 let quitDrain = null
 let releaseSmokeChannel = null
 // Settings and debug boards are main-owned IPC surfaces. Neither relays through
@@ -157,6 +175,9 @@ const MICROPHONE_STATUSES = new Set([
   'capture_unavailable',
   'audio_pipeline_error',
 ])
+const lifecycleCoordinator = createLifecycleCoordinator({
+  onChange: () => sendToSettings('nova:settings:changed', settingsView()),
+})
 
 // Every push to the orb goes through here. `mainWindow` is never nulled — the orb has no
 // 'closed' handler because it is not meant to close before the app quits — so a send after
@@ -182,6 +203,16 @@ function settingsFile() {
   return resolve(app.getPath('userData'), 'ambient-orb-settings.json')
 }
 
+function managedWorkspacesView() {
+  return Object.freeze({
+    health: managedWorkspaceCapabilities.health,
+    current: managedWorkspaceCapabilities.current,
+    all: managedWorkspaceCapabilities.all,
+    recoveryStatus: managedWorkspaceBackendRecovery.status(),
+    lifecycleBusy: lifecycleCoordinator.busy,
+  })
+}
+
 // The single shape the settings panel is ever told. Key material is reduced to
 // seven booleans here and nowhere else, so no handler can widen it by accident;
 // `keyringAvailable` is what turns the plaintext warning line on. It answers
@@ -196,6 +227,7 @@ function settingsView() {
     backendDiagnostic: backendStatus.diagnostic,
     backendRetryInMs: backendStatus.retryInMs,
     settingsApplyStatus,
+    managedWorkspaces: managedWorkspacesView(),
     microphoneStatus,
     effectivePaths: desktopConfig ? Object.freeze({
       stateRoot: desktopConfig.stateRoot,
@@ -205,6 +237,11 @@ function settingsView() {
     secretsPresent: secretsPresent(currentSettings),
     keyringAvailable: secretCodec.available() && !hasPlaintextSecret(currentSettings),
   }
+}
+
+function publishSettingsApplyStatus(status) {
+  settingsApplyStatus = status
+  sendToSettings('nova:settings:changed', settingsView())
 }
 
 // One writer for the whole process, so overlapping panel changes queue instead
@@ -276,6 +313,9 @@ function openSettingsWindow(launchId) {
   if (settingsWindow) {
     settingsWindow.show()
     settingsWindow.focus()
+    void refreshManagedWorkspaceCapabilities().then(() => {
+      sendToSettings('nova:settings:changed', settingsView())
+    })
     return
   }
   const window = new BrowserWindow(settingsWindowOptions(preload, launchId))
@@ -291,6 +331,9 @@ function openSettingsWindow(launchId) {
     settingsWindow = null
   })
   settingsWindow = window
+  void refreshManagedWorkspaceCapabilities().then(() => {
+    sendToSettings('nova:settings:changed', settingsView())
+  })
   void window.loadURL('nova://orb/settings.html')
 }
 
@@ -383,14 +426,16 @@ function decryptSecretsForSpawn(settings, codec) {
   return decrypted
 }
 
-async function refreshDesktopConfiguration(commitIf = () => true) {
+async function prepareDesktopConfiguration() {
   if (projectNativeHost === undefined) {
-    projectNativeHost = loadProjectNativeHostFromResources({
+    const projectNativeLoad = inspectProjectNativeHostFromResources({
       resourcesPath: app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'build'),
       platform: process.platform,
       arch: process.arch,
       electronAbi: process.versions.modules,
     })
+    projectNativeHost = projectNativeLoad.host
+    projectNativeAuthorityPresent = projectNativeLoad.status !== 'absent'
   }
   const prepared = await prepareDesktopStartup({
     settings: currentSettings,
@@ -428,11 +473,108 @@ async function refreshDesktopConfiguration(commitIf = () => true) {
       mkdir,
     }),
   })
-  if (!commitIf()) return false
+  const maintenance = projectNativeHost === null
+    ? null
+    : await ManagedWorkspaceMaintenanceService.openFromDesktop({
+        stateRoot: prepared.config.stateRoot,
+        managedRoot: prepared.config.managedRoot,
+        nativeHost: projectNativeHost,
+      })
+  return Object.freeze({...prepared, maintenance})
+}
+
+async function commitDesktopConfiguration(prepared) {
+  const previousMaintenance = managedWorkspaceMaintenance
   desktopConfig = prepared.config
   codexStatus = prepared.codexStatus
-  return true
+  managedWorkspaceMaintenance = prepared.maintenance
+  if (previousMaintenance !== null) await previousMaintenance.close().catch(() => undefined)
+  await refreshManagedWorkspaceCapabilities()
 }
+
+async function discardDesktopConfiguration(prepared) {
+  const maintenance = prepared?.maintenance
+  if (maintenance !== null && maintenance !== undefined
+    && maintenance !== managedWorkspaceMaintenance) {
+    await maintenance.close().catch(() => undefined)
+  }
+}
+
+async function refreshDesktopConfiguration() {
+  const prepared = await prepareDesktopConfiguration()
+  await commitDesktopConfiguration(prepared)
+  return prepared
+}
+
+async function refreshManagedWorkspaceCapabilities() {
+  const maintenance = managedWorkspaceMaintenance
+  if (maintenance === null) {
+    managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
+    await managedWorkspaceBackendRecovery.observe(
+      managedWorkspaceCapabilities,
+      projectNativeAuthorityPresent,
+    )
+    return managedWorkspaceCapabilities
+  }
+  try {
+    const capabilities = await maintenance.capabilities()
+    if (maintenance !== managedWorkspaceMaintenance) return managedWorkspaceCapabilities
+    managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities(capabilities)
+  } catch {
+    if (maintenance === managedWorkspaceMaintenance) {
+      managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
+    }
+  }
+  await managedWorkspaceBackendRecovery.observe(
+    managedWorkspaceCapabilities,
+    projectNativeAuthorityPresent,
+  )
+  return managedWorkspaceCapabilities
+}
+
+const managedWorkspaceBackendRecovery = createManagedWorkspaceBackendRecovery({
+  getCapabilities: () => managedWorkspaceCapabilities,
+  hasMaintenanceAuthority: () => projectNativeAuthorityPresent,
+  refreshCapabilities: refreshManagedWorkspaceCapabilities,
+  startBackend: async () => {
+    if (!backendSupervisor) throw new Error('backend supervisor unavailable')
+    await backendSupervisor.start()
+  },
+  restartBackend: async () => {
+    if (!backendSupervisor) throw new Error('backend supervisor unavailable')
+    await backendSupervisor.restart()
+  },
+  retryBackend: async () => {
+    if (!backendSupervisor) throw new Error('backend supervisor unavailable')
+    await backendSupervisor.retry()
+    return backendSupervisor.status().state === 'connected'
+  },
+  stopBackend: async () => {
+    if (!backendSupervisor) return true
+    await backendSupervisor.stop()
+    return backendSupervisor.status().state === 'stopped'
+  },
+})
+
+const workspaceActions = createWorkspaceActions({
+  coordinator: lifecycleCoordinator,
+  getMaintenance: () => managedWorkspaceMaintenance,
+  getWindow: () => settingsWindow,
+  showMessageBox: (window, options) => window
+    ? dialog.showMessageBox(window, options)
+    : dialog.showMessageBox(options),
+  openPath: value => shell.openPath(value),
+  stopBackendCleanly: async () => {
+    if (!backendSupervisor) return false
+    await backendSupervisor.stop()
+    return backendSupervisor.status().state === 'stopped'
+  },
+  restartBackendBounded: async () => {
+    if (!backendSupervisor) return false
+    await backendSupervisor.restart()
+    return backendSupervisor.status().state === 'connected'
+  },
+})
 
 async function launchBackend(backendKind, smokeChannel, onExit) {
   const configurationCode = desktopConfig?.codexConfigurationError
@@ -447,7 +589,7 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
   const listener = createReadinessListener({
     token,
     onTimeout: () => {
-      if (spawnedBackend) void shutdownBackend(spawnedBackend)
+      if (spawnedBackend) void shutdownBackendBestEffort(spawnedBackend)
     },
   })
   let ready
@@ -704,26 +846,48 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     }
     return { saved: filePath }
   })
-  ipcMain.handle('nova:settings:get', event => {
+  ipcMain.handle('nova:settings:get', async event => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings request rejected')
     }
+    await refreshManagedWorkspaceCapabilities()
     return settingsView()
   })
   ipcMain.handle('nova:codex:rescan', async event => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('Codex rescan rejected')
     }
-    await refreshDesktopConfiguration()
-    void backendSupervisor?.restart()
-    return settingsView()
+    const coordinated = await lifecycleCoordinator.run('codex_rescan', async () => {
+      const previous = Object.freeze({config: desktopConfig, codexStatus})
+      let prepared
+      let committed = false
+      let changed = false
+      try {
+        prepared = await prepareDesktopConfiguration()
+        changed = !sameBackendLaunchConfiguration(previous, prepared)
+        await commitDesktopConfiguration(prepared)
+        committed = true
+      } finally {
+        if (prepared !== undefined && !committed) await discardDesktopConfiguration(prepared)
+      }
+      if (changed && backendSupervisor) await managedWorkspaceBackendRecovery.restart()
+      return settingsView()
+    })
+    return coordinated.status === 'busy'
+      ? {...settingsView(), operationStatus: 'busy'}
+      : coordinated.value
   })
-  ipcMain.handle('nova:backend:retry', async event => {
-    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+  ipcMain.handle('nova:backend:retry', async (event, ...args) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
       throw new Error('backend retry rejected')
     }
-    await backendSupervisor?.retry()
-    return settingsView()
+    const recovery = await coordinateBackendRetry({
+      coordinator: lifecycleCoordinator,
+      retry: () => managedWorkspaceBackendRecovery.retry(),
+    })
+    return recovery.status === 'busy'
+      ? {...settingsView(), operationStatus: 'busy'}
+      : {...settingsView(), operationStatus: recovery.status}
   })
   ipcMain.handle('nova:microphone:retry', event => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
@@ -744,52 +908,71 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       pathApi: path,
     })
   })
+  const workspaceActionReply = async action => {
+    const result = await action()
+    await refreshManagedWorkspaceCapabilities()
+    sendToSettings('nova:settings:changed', settingsView())
+    return Object.freeze({status: result.status, managedWorkspaces: managedWorkspacesView()})
+  }
+  ipcMain.handle('nova:workspaces:open-current', async (event, ...args) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
+      throw new Error('workspace open rejected')
+    }
+    return workspaceActionReply(() => workspaceActions.openCurrent())
+  })
+  ipcMain.handle('nova:workspaces:clear-current', async (event, ...args) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
+      throw new Error('workspace clear rejected')
+    }
+    return workspaceActionReply(() => workspaceActions.clearCurrent())
+  })
+  ipcMain.handle('nova:workspaces:clear-all', async (event, ...args) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
+      throw new Error('workspace clear rejected')
+    }
+    return workspaceActionReply(() => workspaceActions.clearAll())
+  })
   ipcMain.handle('nova:settings:set', async (event, patch) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings update rejected')
     }
-    // Plaintext key values ride in on `patch`, are sealed inside the store, and
-    // are never held, echoed, or logged here. Disk is the commit point: until
-    // the write lands, the in-memory settings stay as they were. The writer
-    // serializes, so a second change arriving mid-save merges onto the first
-    // rather than overwriting it from a stale snapshot.
-    let rejectedSecrets = []
-    try {
-      const written = await settingsWriter(patch)
-      // Key names only, never values — this call's per-field rejects, so the
-      // panel can say which paste failed instead of the save looking like a
-      // silent, total success while that one field kept its old value.
-      rejectedSecrets = written.rejectedSecrets ?? []
-    } catch (error) {
-      console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
-      return { ...settingsView(), saved: false, rejectedSecrets: [] }
-    }
-    // Only the palette is live; pipeline, providers, models, voices,
-    // proactivity, and keys are applied by a controlled backend restart.
-    sendToOrb('nova:settings:changed', orbSettings(currentSettings))
-    settingsApplyStatus = 'pending'
-    settingsApplyRevision += 1
-    const applyRevision = settingsApplyRevision
-    void refreshDesktopConfiguration(() => applyRevision === settingsApplyRevision).then(
-      refreshed => {
-        if (!refreshed || applyRevision !== settingsApplyRevision) return
-        if (!backendSupervisor) {
-          settingsApplyStatus = 'restart_failed'
-          sendToSettings('nova:settings:changed', settingsView())
-          return
+    // Plaintext values exist only in the inbound patch and the queued writer.
+    // Every later callback receives committed settings or prepared public
+    // configuration, and every reply contains secret key names only.
+    const applied = await applySettingsTransaction({
+      coordinator: lifecycleCoordinator,
+      patch,
+      write: async value => {
+        try {
+          return await settingsWriter(value)
+        } catch (error) {
+          console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
+          throw error
         }
-        settingsApplyStatus = 'restarting'
-        sendToSettings('nova:settings:changed', settingsView())
-        return backendSupervisor.restart()
       },
-      error => {
-        console.error(`[desktop-diagnostic] settings_apply_failure type=${error.name}`)
-        if (applyRevision !== settingsApplyRevision) return
-        settingsApplyStatus = 'failed'
-        sendToSettings('nova:settings:changed', settingsView())
+      publishCommitted: () => sendToOrb(
+        'nova:settings:changed', orbSettings(currentSettings),
+      ),
+      prepareConfiguration: async () => {
+        try {
+          return await prepareDesktopConfiguration()
+        } catch (error) {
+          console.error(`[desktop-diagnostic] settings_apply_failure type=${error.name}`)
+          throw error
+        }
       },
-    )
-    return { ...settingsView(), saved: true, rejectedSecrets }
+      commitConfiguration: commitDesktopConfiguration,
+      discardConfiguration: discardDesktopConfiguration,
+      restartBackend: async () => {
+        const recovery = await managedWorkspaceBackendRecovery.restart()
+        if (recovery.status !== 'restarted'
+          || backendSupervisor?.status().state !== 'connected') {
+          throw new Error('backend restart unavailable')
+        }
+      },
+      publishStatus: publishSettingsApplyStatus,
+    })
+    return {...settingsView(), ...applied}
   })
   ipcMain.handle('nova:bootstrap', event => {
     // The renderer binds its backend-exit listener only after this reply lands, so a push
@@ -927,7 +1110,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       }
     },
   })
-  void backendSupervisor.start()
+  void managedWorkspaceBackendRecovery.start()
 }
 
 async function start() {
@@ -1044,15 +1227,19 @@ app.on('before-quit', event => {
   releaseSmokeChannel?.close()
   globalShortcut.unregisterAll()
   void nativeAudio?.deactivate()
-  if (!backendSupervisor && !backend) return
+  if (!backendSupervisor && !backend && !managedWorkspaceMaintenance) return
   // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
   // kill would cut the session off mid-teardown, and on Windows there is no
   // graceful signal at all. Later passes keep holding; the first pass exits.
   event.preventDefault()
   if (quitDrain) return
-  const drain = backendSupervisor
+  const backendDrain = backendSupervisor
     ? backendSupervisor.stop()
-    : shutdownBackend(backend)
+    : backend ? shutdownBackendBestEffort(backend) : Promise.resolve()
+  const maintenance = managedWorkspaceMaintenance
+  managedWorkspaceMaintenance = null
+  const maintenanceDrain = maintenance?.close() ?? Promise.resolve()
+  const drain = Promise.all([backendDrain, maintenanceDrain])
   quitDrain = drain.then(() => app.exit(0), () => app.exit(0))
 })
 

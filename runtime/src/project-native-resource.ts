@@ -29,7 +29,7 @@ const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
   'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'openDirectory',
-  'probe', 'protectAt', 'renameAt', 'unlinkAt',
+  'probe', 'protectAt', 'removeTreeAt', 'renameAt', 'renameNoReplaceAt', 'syncDirectory', 'unlinkAt',
 ])
 
 export interface ProjectDirectoryHandle {
@@ -122,6 +122,11 @@ interface ProjectNativeLoadOptions {
   readonly moduleLoader?: (path: string) => unknown
 }
 
+export type ProjectNativeHostLoadResult =
+  | Readonly<{readonly status: 'absent'; readonly host: null}>
+  | Readonly<{readonly status: 'present_failure'; readonly host: null}>
+  | Readonly<{readonly status: 'loaded'; readonly host: ProjectNativeHost}>
+
 interface FileSnapshot {
   readonly bytes: Buffer
   readonly device: bigint
@@ -143,6 +148,25 @@ export function loadPackagedProjectNativeHost(): ProjectNativeHost | null {
 
 /** Host-only seam. Renderer/model/work-order values never enter these options. */
 export function loadProjectNativeHostFromResources(
+  options: ProjectNativeLoadOptions,
+): ProjectNativeHost | null {
+  return inspectProjectNativeHostFromResources(options).host
+}
+
+/** Preserves whether a supported native authority failed validation or is unsupported. */
+export function inspectProjectNativeHostFromResources(
+  options: ProjectNativeLoadOptions,
+): ProjectNativeHostLoadResult {
+  if (supportedTarget(options.platform, options.arch) === null) {
+    return Object.freeze({status: 'absent', host: null})
+  }
+  const host = loadSupportedProjectNativeHostFromResources(options)
+  return host === null
+    ? Object.freeze({status: 'present_failure', host: null})
+    : Object.freeze({status: 'loaded', host})
+}
+
+function loadSupportedProjectNativeHostFromResources(
   options: ProjectNativeLoadOptions,
 ): ProjectNativeHost | null {
   try {
@@ -192,12 +216,24 @@ export function loadProjectNativeHostFromResources(
       mkdirPrivateAt: (root: number, name: string) => addon.mkdirPrivateAt(root, name),
       protectAt: (root: number, name: string, child: number) => addon.protectAt(root, name, child),
       renameAt: (root: number, from: string, to: string) => addon.renameAt(root, from, to),
+      renameNoReplaceAt: (
+        root: number,
+        from: string,
+        to: string,
+        expected: ProjectFileIdentity,
+      ) => (
+        addon.renameNoReplaceAt(root, from, to, expected)
+      ),
+      syncDirectory: (root: number) => addon.syncDirectory(root),
       unlinkAt: (
         root: number,
         name: string,
         identity: ProjectFileIdentity,
         kind: 'file' | 'directory',
       ) => addon.unlinkAt(root, name, identity, kind),
+      removeTreeAt: (root: number, name: string, identity: ProjectFileIdentity) => (
+        addon.removeTreeAt(root, name, identity)
+      ),
     })
     return Object.freeze({
       nativeLocks,
@@ -383,6 +419,13 @@ interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority
   openDirectory(path: string): unknown
   protectAt(root: number, name: string, child: number): ProjectRootFileResult
   mkdirPrivateAt(root: number, name: string): ProjectRootFileCreateResult
+  renameNoReplaceAt(
+    root: number,
+    from: string,
+    to: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult
+  syncDirectory(root: number): ProjectRootFileResult
 }
 
 function projectDirectoryHandle(value: unknown): ProjectDirectoryHandle {

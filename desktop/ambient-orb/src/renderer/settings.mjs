@@ -1,7 +1,10 @@
-// The panel talks only to the constrained settings bridge. The controller
-// owns queued requests and drafts, which keeps an older bridge response from
-// erasing text the user typed while it was in flight.
-import { codexModeVisibility, createSettingsController } from './settings-controller.mjs'
+// Settings are edited as one local transaction. Public drafts live in the
+// controller; secret plaintext remains only in password inputs until Save.
+import {
+  codexModeVisibility,
+  createSettingsController,
+  settingsButtonState,
+} from './settings-controller.mjs'
 import { createSecretRevisions } from './secret-revisions.mjs'
 import {
   CUSTOM_VOICE_VALUE,
@@ -11,15 +14,9 @@ import {
 } from './voice-choice.mjs'
 
 const api = window.novaAudioAgentDesktop.settings
-
 const SECRET_KEYS = [
-  'dashscopeApiKey',
-  'tavilyApiKey',
-  'modelApiKey',
-  'codexApiKey',
-  'arkApiKey',
-  'doubaoBigmodelApiKey',
-  'doubaoAsrApiKey',
+  'dashscopeApiKey', 'tavilyApiKey', 'modelApiKey', 'codexApiKey',
+  'arkApiKey', 'doubaoBigmodelApiKey', 'doubaoAsrApiKey',
 ]
 const SECRET_LABELS = {
   dashscopeApiKey: 'DashScope',
@@ -30,11 +27,40 @@ const SECRET_LABELS = {
   doubaoBigmodelApiKey: '豆包大模型',
   doubaoAsrApiKey: '豆包 ASR',
 }
+const WORKSPACE_STATUS_TEXT = Object.freeze({
+  opened: '已打开当前托管 workspace',
+  open_failed: '系统未能打开当前托管 workspace',
+  cleared: '已清空托管 workspace',
+  cancelled: '已取消',
+  not_managed: '当前 workspace 不是 Nova 托管目录',
+  empty: '没有可清空的托管 workspace',
+  busy: '另一项保存或维护操作正在进行',
+  stop_failed: '后台未能安全停止，未清空 workspace',
+  clear_failed: 'workspace 清空未完整完成，可重试清理',
+  restart_failed: 'workspace 已处理，但后台恢复失败，请重试连接',
+  clear_and_restart_failed: 'workspace 清理未完整完成，后台恢复也失败；请重启后重试清理',
+  rollback_pending: 'workspace 原内容尚未安全恢复，后台保持停止；请先处理回滚',
+  cleanup_pending: 'workspace 清理仍在进行，请稍后重试',
+  unavailable: 'workspace 维护状态暂时不可用',
+  recovered: 'workspace 恢复完成，后台已开始重新连接',
+  recovery_failed: 'workspace 恢复尚未完成，后台保持停止；请重试恢复',
+})
+
 const secretRevisions = createSecretRevisions(SECRET_KEYS)
+const dirtySecretKeys = new Set()
+let currentView = null
+let controllerState = {dirty: false, busy: false}
+let workspaceBusy = false
 
 const statusLabel = document.querySelector('#status')
 const restartNotice = document.querySelector('#restart-notice')
 const warning = document.querySelector('#keyring-warning')
+const settingsSave = document.querySelector('#settings-save')
+const workspaceOpenCurrent = document.querySelector('#workspace-open-current')
+const workspaceClearCurrent = document.querySelector('#workspace-clear-current')
+const workspaceClearAll = document.querySelector('#workspace-clear-all')
+const workspaceRetryRecovery = document.querySelector('#workspace-retry-recovery')
+const workspaceActionStatus = document.querySelector('#workspace-action-status')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
 const proactivityInputs = [...document.querySelectorAll('input[name="proactivity"]')]
 const pipelineModeInputs = [...document.querySelectorAll('input[name="pipelineMode"]')]
@@ -80,9 +106,7 @@ function populateVoiceOptions(select, presets) {
 populateVoiceOptions(integratedVoicePreset, QWEN_VOICES)
 populateVoiceOptions(cascadedTtsVoicePreset, VOLCENGINE_TTS_VOICES)
 
-function secretInput(key) {
-  return document.querySelector(`#${key}`)
-}
+function secretInput(key) { return document.querySelector(`#${key}`) }
 
 function renderBadges(present) {
   for (const key of SECRET_KEYS) {
@@ -102,9 +126,7 @@ function keyUsage(view) {
       && view.cascadedLlmProvider === 'ark' ? '必需' : '当前未使用',
     doubaoBigmodelApiKey: view.pipelineMode === 'cascaded' ? '必需' : '当前未使用',
     doubaoAsrApiKey: view.pipelineMode === 'cascaded' ? '可选覆盖' : '当前未使用',
-    tavilyApiKey: '可选',
-    modelApiKey: '可选',
-    codexApiKey: '可选',
+    tavilyApiKey: '可选', modelApiKey: '可选', codexApiKey: '可选',
   }
 }
 
@@ -114,22 +136,11 @@ function renderKeyUsage(view) {
   }
 }
 
-function renderText(input, draftKey, value, drafts) {
-  // A draft is a value typed locally after the response snapshot. Leave it on
-  // screen until its own exact save has synchronized it.
-  if (!Object.hasOwn(drafts, draftKey)) input.value = value ?? ''
-}
-
-function renderVoice(select, customInput, draftKey, value, drafts, presets) {
-  const displayValue = Object.hasOwn(drafts, draftKey) ? drafts[draftKey] : value
-  const choice = resolveVoiceChoice(displayValue, presets)
+function renderVoice(select, customInput, value, presets) {
+  const choice = resolveVoiceChoice(value, presets)
   select.value = choice.selected
   customInput.hidden = choice.selected !== CUSTOM_VOICE_VALUE
   if (choice.selected === CUSTOM_VOICE_VALUE) customInput.value = choice.custom
-}
-
-function llmDraftKey(provider) {
-  return `cascadedLlmModel:${provider}`
 }
 
 function renderCodexStatus(view) {
@@ -143,8 +154,28 @@ function renderCodexStatus(view) {
   codexStatus.dataset.ready = '1'
 }
 
-function render(view, drafts) {
+function updateButtons() {
+  const state = settingsButtonState({
+    dirty: controllerState.dirty || dirtySecretKeys.size > 0,
+    controllerBusy: controllerState.busy,
+    lifecycleBusy: currentView?.managedWorkspaces?.lifecycleBusy === true,
+    workspaceBusy,
+    managedHealth: currentView?.managedWorkspaces?.health,
+    managedRecoveryStatus: currentView?.managedWorkspaces?.recoveryStatus,
+    currentManagedAvailable: currentView?.managedWorkspaces?.current?.available === true,
+    allManagedAvailable: currentView?.managedWorkspaces?.all?.available === true,
+  })
+  settingsSave.disabled = state.saveDisabled
+  workspaceOpenCurrent.disabled = state.currentDisabled
+  workspaceClearCurrent.disabled = state.currentDisabled
+  workspaceClearAll.disabled = state.workspaceDisabled
+  workspaceRetryRecovery.disabled = state.recoveryDisabled
+}
+
+function render(view, _drafts, state) {
   if (!view) return
+  currentView = view
+  controllerState = state
   for (const input of paletteInputs) input.checked = input.value === view.palette
   for (const input of proactivityInputs) input.checked = input.value === view.proactivity
   for (const input of pipelineModeInputs) input.checked = input.value === view.pipelineMode
@@ -155,46 +186,36 @@ function render(view, drafts) {
   codexManualSettings.hidden = codexVisibility.manualConfigurationHidden
   codexRescan.hidden = codexVisibility.rescanHidden
   codexBinaryPath.disabled = view.codexBinaryMode !== 'manual'
-  renderText(codexBinaryPath, 'codexBinaryPath', view.codexBinaryPath, drafts)
-  renderText(codexWorkspace, 'codexWorkspace', view.codexWorkspace, drafts)
-  renderText(codexManagedRoot, 'codexManagedRoot', view.codexManagedRoot, drafts)
-  renderText(modelBaseUrl, 'modelBaseUrl', view.modelBaseUrl, drafts)
+  codexBinaryPath.value = view.codexBinaryPath ?? ''
+  codexWorkspace.value = view.codexWorkspace ?? ''
+  codexManagedRoot.value = view.codexManagedRoot ?? ''
+  modelBaseUrl.value = view.modelBaseUrl ?? ''
   effectiveWorkspace.textContent = view.effectivePaths?.workspace ?? ''
   effectiveManagedRoot.textContent = view.effectivePaths?.managedRoot ?? ''
   renderCodexStatus(view)
   integratedSection.hidden = view.pipelineMode !== 'integrated'
   cascadedSection.hidden = view.pipelineMode !== 'cascaded'
   integratedProvider.value = view.integratedProvider
-  renderText(integratedModel, 'integratedModel', view.integratedModel, drafts)
-  renderVoice(
-    integratedVoicePreset,
-    integratedVoiceCustom,
-    'integratedVoice',
-    view.integratedVoice,
-    drafts,
-    QWEN_VOICES,
-  )
+  integratedModel.value = view.integratedModel ?? ''
+  renderVoice(integratedVoicePreset, integratedVoiceCustom, view.integratedVoice, QWEN_VOICES)
   cascadedEndpointingProvider.value = view.cascadedEndpointingProvider
   cascadedAsrProvider.value = view.cascadedAsrProvider
   cascadedLlmProvider.value = view.cascadedLlmProvider
-  renderText(
-    cascadedLlmModel,
-    llmDraftKey(view.cascadedLlmProvider),
-    view.cascadedLlmModels?.[view.cascadedLlmProvider],
-    drafts,
-  )
+  cascadedLlmModel.value = view.cascadedLlmModels?.[view.cascadedLlmProvider] ?? ''
   cascadedTtsProvider.value = view.cascadedTtsProvider
-  renderVoice(
-    cascadedTtsVoicePreset,
-    cascadedTtsVoiceCustom,
-    'cascadedTtsVoice',
-    view.cascadedTtsVoice,
-    drafts,
-    VOLCENGINE_TTS_VOICES,
-  )
+  renderVoice(cascadedTtsVoicePreset, cascadedTtsVoiceCustom, view.cascadedTtsVoice, VOLCENGINE_TTS_VOICES)
   renderBadges(view.secretsPresent)
   renderKeyUsage(view)
   warning.hidden = view.keyringAvailable !== false
+  const recoveryStatus = view.managedWorkspaces?.recoveryStatus ?? 'idle'
+  const recoveryRequired = recoveryStatus !== 'idle'
+  workspaceRetryRecovery.hidden = !recoveryRequired
+  if (recoveryRequired && !workspaceBusy) {
+    workspaceActionStatus.textContent = recoveryStatus === 'failed'
+      ? WORKSPACE_STATUS_TEXT.recovery_failed
+      : WORKSPACE_STATUS_TEXT.rollback_pending
+  }
+  updateButtons()
 }
 
 function updateRestartNotice(phase) {
@@ -216,38 +237,39 @@ function updateRestartNotice(phase) {
 }
 
 const controller = createSettingsController({
-  api,
-  render,
+  api, render,
   status: note => { statusLabel.textContent = note },
   notice: updateRestartNotice,
 })
+api.onChanged(view => { controller.syncView(view) })
 
-api.onChanged(view => {
-  controller.syncView(view)
+function bindStage(element, event, patch) {
+  element.addEventListener(event, () => { controller.stage(patch()) })
+}
+
+for (const input of paletteInputs) bindStage(input, 'change', () => ({palette: input.value}))
+for (const input of proactivityInputs) bindStage(input, 'change', () => ({proactivity: input.value}))
+for (const input of pipelineModeInputs) bindStage(input, 'change', () => ({pipelineMode: input.value}))
+heartbeat.addEventListener('input', () => {
+  heartbeatValue.textContent = `${heartbeat.value} 秒`
+  controller.stage({codexHeartbeatSeconds: Number(heartbeat.value)})
 })
-
-function push(patch, note) {
-  return controller.push(patch, note)
-}
-
-function recordDraft(input, key = input.id) {
-  controller.setDraft(key, input.value)
-}
-
-async function saveText(field, input) {
-  const value = input.value
-  recordDraft(input, field)
-  controller.applyLocal({ [field]: value })
-  const result = await push({ [field]: value }, '已保存')
-  if (result.saved && result.view?.[field] === value) controller.clearDraftIfEqual(field, value)
-}
-
-async function saveVoiceSelection(field, value) {
-  controller.setDraft(field, value)
-  controller.applyLocal({ [field]: value })
-  const result = await push({ [field]: value }, '音色已保存')
-  if (result.saved && result.view?.[field] === value) controller.clearDraftIfEqual(field, value)
-}
+for (const input of codexModeInputs) bindStage(input, 'change', () => ({codexBinaryMode: input.value}))
+bindStage(codexBinaryPath, 'input', () => ({codexBinaryPath: codexBinaryPath.value}))
+bindStage(codexWorkspace, 'input', () => ({codexWorkspace: codexWorkspace.value}))
+bindStage(codexManagedRoot, 'input', () => ({codexManagedRoot: codexManagedRoot.value}))
+bindStage(modelBaseUrl, 'input', () => ({modelBaseUrl: modelBaseUrl.value}))
+bindStage(integratedProvider, 'change', () => ({integratedProvider: integratedProvider.value}))
+bindStage(integratedModel, 'input', () => ({integratedModel: integratedModel.value}))
+bindStage(cascadedEndpointingProvider, 'change', () => ({cascadedEndpointingProvider: cascadedEndpointingProvider.value}))
+bindStage(cascadedAsrProvider, 'change', () => ({cascadedAsrProvider: cascadedAsrProvider.value}))
+bindStage(cascadedLlmProvider, 'change', () => ({cascadedLlmProvider: cascadedLlmProvider.value}))
+cascadedLlmModel.addEventListener('input', () => {
+  const provider = cascadedLlmProvider.value
+  const value = cascadedLlmModel.value
+  controller.stage({cascadedLlmModels: { [provider]: value }})
+})
+bindStage(cascadedTtsProvider, 'change', () => ({cascadedTtsProvider: cascadedTtsProvider.value}))
 
 function bindVoicePicker(field, select, customInput) {
   select.addEventListener('change', () => {
@@ -257,102 +279,58 @@ function bindVoicePicker(field, select, customInput) {
       customInput.focus()
       return
     }
-    void saveVoiceSelection(field, select.value)
+    controller.stage({[field]: select.value})
   })
-  customInput.addEventListener('input', () => {
-    controller.setDraft(field, customInput.value)
+  customInput.addEventListener('input', () => { controller.stage({[field]: customInput.value}) })
+}
+
+bindVoicePicker('integratedVoice', integratedVoicePreset, integratedVoiceCustom)
+bindVoicePicker('cascadedTtsVoice', cascadedTtsVoicePreset, cascadedTtsVoiceCustom)
+
+for (const key of SECRET_KEYS) {
+  secretInput(key).addEventListener('input', () => {
+    secretRevisions.noteInput(key)
+    dirtySecretKeys.add(key)
+    updateButtons()
   })
-  customInput.addEventListener('change', () => {
-    void saveVoiceSelection(field, customInput.value)
+}
+for (const button of document.querySelectorAll('button.clear')) {
+  button.addEventListener('click', () => {
+    const key = button.dataset.key
+    const input = secretInput(key)
+    input.value = ''
+    secretRevisions.noteInput(key)
+    dirtySecretKeys.add(key)
+    updateButtons()
   })
 }
 
-async function saveCascadedLlmModel() {
-  const provider = cascadedLlmProvider.value
-  const draftKey = llmDraftKey(provider)
-  const value = cascadedLlmModel.value
-  recordDraft(cascadedLlmModel, draftKey)
-  const patch = { cascadedLlmModels: { [provider]: value } }
-  controller.applyLocal(patch)
-  const result = await push(patch, '已保存')
-  if (result.saved && result.view?.cascadedLlmModels?.[provider] === value) {
-    controller.clearDraftIfEqual(draftKey, value)
-  }
+function stagedSecrets() {
+  return Object.fromEntries([...dirtySecretKeys].map(key => [key, secretInput(key).value]))
 }
 
-async function saveSecrets() {
-  const secrets = {}
-  const submissions = {}
-  for (const key of SECRET_KEYS) {
+async function saveAll() {
+  const submissions = Object.fromEntries([...dirtySecretKeys].map(key => {
     const input = secretInput(key)
-    const value = input.value
-    if (!value) continue
-    // Capture a revision with the one forward write. Nothing secret is ever
-    // put in controller drafts or render snapshots.
-    const submission = secretRevisions.capture(key, value)
-    secrets[key] = submission.value
-    submissions[key] = submission
-  }
-  if (!Object.keys(secrets).length) {
-    statusLabel.textContent = '没有要保存的密钥'
-    return
-  }
-  const result = await controller.saveSecrets(secrets)
-  if (!result.saved) return
-  for (const key of result.accepted) {
+    return [key, secretRevisions.capture(key, input.value)]
+  }))
+  const result = await controller.save(stagedSecrets())
+  for (const key of result.acceptedSecrets ?? []) {
     const input = secretInput(key)
-    if (secretRevisions.matches(key, input.value, submissions[key])) input.value = ''
+    if (secretRevisions.matches(key, input.value, submissions[key])) {
+      input.value = ''
+      dirtySecretKeys.delete(key)
+    }
   }
-  if (result.rejected.length) {
-    const labels = result.rejected.map(key => SECRET_LABELS[key])
+  if (result.rejectedSecrets.length) {
+    const labels = result.rejectedSecrets.map(key => SECRET_LABELS[key])
     statusLabel.textContent = `部分密钥未保存(含非法字符): ${labels.join('、')}`
   }
+  updateButtons()
 }
 
-for (const input of paletteInputs) {
-  input.addEventListener('change', () => {
-    controller.applyLocal({ palette: input.value })
-    void push({ palette: input.value }, '配色已更新')
-  })
-}
-for (const input of proactivityInputs) {
-  input.addEventListener('change', () => {
-    controller.applyLocal({ proactivity: input.value })
-    void push({ proactivity: input.value }, '已保存')
-  })
-}
-for (const input of pipelineModeInputs) {
-  input.addEventListener('change', () => {
-    controller.applyLocal({ pipelineMode: input.value })
-    void push({ pipelineMode: input.value }, '语音管线已保存')
-  })
-}
-heartbeat.addEventListener('input', () => {
-  heartbeatValue.textContent = `${heartbeat.value} 秒`
-})
-heartbeat.addEventListener('change', () => {
-  const value = Number(heartbeat.value)
-  controller.applyLocal({ codexHeartbeatSeconds: value })
-  void push({ codexHeartbeatSeconds: value }, '已保存')
-})
-for (const input of codexModeInputs) {
-  input.addEventListener('change', () => {
-    controller.applyLocal({ codexBinaryMode: input.value })
-    void push({ codexBinaryMode: input.value }, 'Codex 发现方式已保存')
-  })
-}
-codexBinaryPath.addEventListener('input', () => { recordDraft(codexBinaryPath) })
-codexBinaryPath.addEventListener('change', () => {
-  void saveText('codexBinaryPath', codexBinaryPath)
-})
-codexWorkspace.addEventListener('input', () => { recordDraft(codexWorkspace) })
-codexWorkspace.addEventListener('change', () => { void saveText('codexWorkspace', codexWorkspace) })
-codexManagedRoot.addEventListener('input', () => { recordDraft(codexManagedRoot) })
-codexManagedRoot.addEventListener('change', () => {
-  void saveText('codexManagedRoot', codexManagedRoot)
-})
-modelBaseUrl.addEventListener('input', () => { recordDraft(modelBaseUrl) })
-modelBaseUrl.addEventListener('change', () => { void saveText('modelBaseUrl', modelBaseUrl) })
+settingsSave.addEventListener('click', () => { void saveAll() })
+
 codexRescan.addEventListener('click', async () => {
   statusLabel.textContent = '正在扫描 Codex…'
   try {
@@ -365,9 +343,7 @@ codexRescan.addEventListener('click', async () => {
 document.querySelector('#projects-repair').addEventListener('click', async () => {
   statusLabel.textContent = '正在修复 Projects 目录权限…'
   try {
-    const results = await Promise.all(
-      ['state', 'managed', 'workspace'].map(root => api.repairProjects(root)),
-    )
+    const results = await Promise.all(['state', 'managed', 'workspace'].map(root => api.repairProjects(root)))
     statusLabel.textContent = results.every(result => result?.status === 'ok')
       ? 'Projects 目录权限已修复'
       : '部分 Projects 目录无法修复，请检查路径是否存在'
@@ -375,47 +351,43 @@ document.querySelector('#projects-repair').addEventListener('click', async () =>
     statusLabel.textContent = 'Projects 目录权限修复失败'
   }
 })
-integratedProvider.addEventListener('change', () => {
-  controller.applyLocal({ integratedProvider: integratedProvider.value })
-  void push({ integratedProvider: integratedProvider.value }, '已保存')
-})
-integratedModel.addEventListener('input', () => { recordDraft(integratedModel) })
-integratedModel.addEventListener('change', () => { void saveText('integratedModel', integratedModel) })
-bindVoicePicker('integratedVoice', integratedVoicePreset, integratedVoiceCustom)
-cascadedEndpointingProvider.addEventListener('change', () => {
-  controller.applyLocal({ cascadedEndpointingProvider: cascadedEndpointingProvider.value })
-  void push({ cascadedEndpointingProvider: cascadedEndpointingProvider.value }, '已保存')
-})
-cascadedAsrProvider.addEventListener('change', () => {
-  controller.applyLocal({ cascadedAsrProvider: cascadedAsrProvider.value })
-  void push({ cascadedAsrProvider: cascadedAsrProvider.value }, '已保存')
-})
-cascadedLlmProvider.addEventListener('change', () => {
-  controller.applyLocal({ cascadedLlmProvider: cascadedLlmProvider.value })
-  void push({ cascadedLlmProvider: cascadedLlmProvider.value }, '已保存')
-})
-cascadedLlmModel.addEventListener('input', () => {
-  recordDraft(cascadedLlmModel, llmDraftKey(cascadedLlmProvider.value))
-})
-cascadedLlmModel.addEventListener('change', () => { void saveCascadedLlmModel() })
-cascadedTtsProvider.addEventListener('change', () => {
-  controller.applyLocal({ cascadedTtsProvider: cascadedTtsProvider.value })
-  void push({ cascadedTtsProvider: cascadedTtsProvider.value }, '已保存')
-})
-bindVoicePicker('cascadedTtsVoice', cascadedTtsVoicePreset, cascadedTtsVoiceCustom)
-for (const key of SECRET_KEYS) {
-  secretInput(key).addEventListener('input', () => { secretRevisions.noteInput(key) })
+
+async function runWorkspaceAction(action) {
+  workspaceBusy = true
+  workspaceActionStatus.textContent = '正在处理…'
+  updateButtons()
+  try {
+    const result = await action()
+    workspaceActionStatus.textContent = WORKSPACE_STATUS_TEXT[result?.status] ?? '操作未完成'
+    if (result?.view) controller.syncView(result.view, {trackRestart: false})
+  } catch {
+    workspaceActionStatus.textContent = '操作未完成'
+  } finally {
+    workspaceBusy = false
+    updateButtons()
+  }
 }
-document.querySelector('#save-secrets').addEventListener('click', () => { void saveSecrets() })
-for (const button of document.querySelectorAll('button.clear')) {
-  button.addEventListener('click', () => {
-    const key = button.dataset.key
-    const input = secretInput(key)
-    input.value = ''
-    secretRevisions.noteInput(key)
-    void push({ secrets: { [key]: '' } }, '密钥已清除')
+
+workspaceOpenCurrent.addEventListener('click', () => {
+  void runWorkspaceAction(() => api.openCurrentManagedWorkspace())
+})
+workspaceClearCurrent.addEventListener('click', () => {
+  void runWorkspaceAction(() => api.clearCurrentManagedWorkspace())
+})
+workspaceClearAll.addEventListener('click', () => {
+  void runWorkspaceAction(() => api.clearAllManagedWorkspaces())
+})
+workspaceRetryRecovery.addEventListener('click', () => {
+  void runWorkspaceAction(async () => {
+    const view = await api.retryBackend()
+    return {
+      status: view?.managedWorkspaces?.recoveryStatus === 'idle'
+        ? 'recovered'
+        : 'recovery_failed',
+      view,
+    }
   })
-}
+})
 
 void (async () => {
   try {

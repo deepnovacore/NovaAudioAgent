@@ -78,6 +78,7 @@ export const READINESS_SOCKET_AUTH_TIMEOUT_MS = 3000
  * codex tree it was reaping. 5 + 2 + 1s of margin.
  */
 export const BACKEND_DRAIN_GRACE_MS = 8000
+export const BACKEND_FORCE_EXIT_CONFIRM_MS = 2000
 
 export function selectedBackend(env = process.env, { isPackaged = false } = {}) {
   void isPackaged
@@ -481,16 +482,21 @@ const exitedBackends = new WeakSet()
  * The grace is a ceiling, not a wait: the race resolves on the child's actual
  * exit, so an ordinary quit is as fast as the backend is.
  *
- * Resolves once the child is gone or has been force killed; never rejects, so a
- * `before-quit` handler can always reach `app.exit(0)`.
+ * Resolves only after the child has actually emitted `exit`. A successful kill
+ * request is not proof that the process is gone: lifecycle callers must not
+ * start a replacement or publish `stopped` until termination is observed.
  */
 export function shutdownBackend(
   child,
-  { graceMs = BACKEND_DRAIN_GRACE_MS, platform = process.platform } = {},
+  {
+    graceMs = BACKEND_DRAIN_GRACE_MS,
+    forceExitMs = BACKEND_FORCE_EXIT_CONFIRM_MS,
+    platform = process.platform,
+  } = {},
 ) {
   const started = drains.get(child)
   if (started) return started
-  const drained = new Promise(resolve => {
+  const drained = new Promise((resolve, reject) => {
     const utility = typeof child.postMessage === 'function'
     // `!= null` deliberately: a live child reports null for both, so anything
     // else means it is already gone and nothing should wait out the grace.
@@ -502,32 +508,64 @@ export function shutdownBackend(
       resolve()
       return
     }
-    let timer
+    let graceTimer = null
+    let forceTimer = null
     let settled = false
     const finish = () => {
+      exitedBackends.add(child)
       if (settled) return
       settled = true
-      exitedBackends.add(child)
-      clearTimeout(timer)
+      clearTimeout(graceTimer)
+      clearTimeout(forceTimer)
       resolve()
+    }
+    const fail = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(graceTimer)
+      clearTimeout(forceTimer)
+      const error = new Error('backend termination unconfirmed')
+      error.code = 'backend_termination_unconfirmed'
+      reject(error)
     }
     // Listen before signalling so an instant exit cannot be missed.
     child.once('exit', finish)
     // A destroyed/non-writable stdin throws ERR_STREAM_DESTROYED asynchronously
     // on end() — outside this promise, so it would surface as an uncaught
     // exception during quit instead of failing the shutdown gracefully.
-    if (utility) child.postMessage({ type: 'nova.shutdown' })
-    else if (child.stdin && child.stdin.writable && !child.stdin.destroyed) child.stdin.end()
-    if (!utility && platform !== 'win32') child.kill('SIGTERM')
-    timer = setTimeout(() => {
-      if (utility) child.kill()
-      else child.kill('SIGKILL')
-      finish()
+    try {
+      if (utility) child.postMessage({ type: 'nova.shutdown' })
+      else if (child.stdin && child.stdin.writable && !child.stdin.destroyed) child.stdin.end()
+    } catch {}
+    try {
+      if (!utility && platform !== 'win32') child.kill('SIGTERM')
+    } catch {}
+    graceTimer = setTimeout(() => {
+      try {
+        if (utility) child.kill()
+        else child.kill('SIGKILL')
+      } catch {}
+      if (settled) return
+      forceTimer = setTimeout(fail, forceExitMs)
     }, graceMs)
     // 'exit' can fire synchronously above (reachable with test doubles), in
     // which case finish() already resolved before the timer existed to clear.
-    if (settled) clearTimeout(timer)
+    if (settled) clearTimeout(graceTimer)
   })
   drains.set(child, drained)
+  const forget = () => {
+    if (drains.get(child) === drained) drains.delete(child)
+  }
+  void drained.then(forget, forget)
   return drained
+}
+
+/** Quit-only containment: lifecycle code must use the strict function above. */
+export async function shutdownBackendBestEffort(child, options) {
+  try {
+    await shutdownBackend(child, options)
+    return true
+  } catch {
+    return false
+  }
 }

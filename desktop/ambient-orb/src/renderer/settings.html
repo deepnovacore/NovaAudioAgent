@@ -231,7 +231,6 @@
           <input type="password" id="doubaoAsrApiKey" placeholder="留空保持不变" autocomplete="off" spellcheck="false">
           <button type="button" class="clear" data-key="doubaoAsrApiKey">清除</button>
         </div>
-        <button type="button" id="save-secrets">保存密钥</button>
         </div>
       </details>
       <details id="codex-projects" class="secret-disclosure codex-disclosure">
@@ -274,12 +273,20 @@
             <button type="button" id="projects-repair">修复 Projects 目录权限</button>
             <small>仅修复当前设置对应的 state、托管根目录和 workspace，不接受任意路径。</small>
           </div>
+          <div class="workspace-actions">
+            <button type="button" id="workspace-open-current">打开当前托管 workspace</button>
+            <button type="button" id="workspace-clear-current" class="destructive">清空当前托管 workspace</button>
+            <button type="button" id="workspace-clear-all" class="destructive">清空全部托管 workspace</button>
+            <button type="button" id="workspace-retry-recovery" hidden>重试 workspace 恢复</button>
+          </div>
+          <p id="workspace-action-status" class="workspace-action-status" aria-live="polite"></p>
         </div>
       </details>
     </main>
     <p id="restart-notice" class="warning" hidden></p>
     <footer>
-      <p class="note">配色更改立即生效；运行配置保存后，后台会自动重启并重新连接。</p>
+      <p class="note">更改会暂存在本窗口；点击保存后，后台会自动重启并重新连接。</p>
+      <button type="button" id="settings-save" disabled>保存并重启</button>
     </footer>
     <script type="module" src="./settings.mjs"></script>
   </body>

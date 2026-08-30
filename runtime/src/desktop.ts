@@ -27,9 +27,23 @@ import {
 } from './realtime/memory-board.js'
 
 export {
+  inspectProjectNativeHostFromResources,
   loadProjectNativeHostFromResources,
+  type ProjectNativeHostLoadResult,
   type ProjectNativeHost,
 } from './project-native-resource.js'
+
+export {
+  ManagedWorkspaceMaintenanceService,
+  type ManagedWorkspaceAuthorization,
+  type ManagedWorkspaceCapabilities,
+  type ManagedWorkspaceExecuteResult,
+  type ManagedWorkspaceMaintenanceHealth,
+  type ManagedWorkspaceOpenResult,
+  type ManagedWorkspacePreparation,
+  type ManagedWorkspacePrepareResult,
+  type ManagedWorkspaceScope,
+} from './managed-workspace-maintenance.js'
 
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024

@@ -1,7 +1,10 @@
 'use strict'
 
 const assert = require('node:assert/strict')
-const {closeSync, mkdirSync, mkdtempSync, openSync, rmSync, symlinkSync} = require('node:fs')
+const {
+  closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync,
+  renameSync, rmSync, symlinkSync, writeFileSync,
+} = require('node:fs')
 const {homedir} = require('node:os')
 const {join} = require('node:path')
 const {spawn, spawnSync} = require('node:child_process')
@@ -14,6 +17,9 @@ const addon = require(addonPath)
 
 assert.equal(process.versions.electron, '43.2.0')
 assert.equal(process.versions.modules, '148')
+
+const REMOVE_TREE_DEPTH_BUDGET = 64
+const DEEP_DELETE_DEPTH = REMOVE_TREE_DEPTH_BUDGET
 
 function delay(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
@@ -77,6 +83,7 @@ if (mode === 'hold') {
       assert.equal(typeof created.identity.inode, 'bigint')
       assert.deepEqual(addon.createFileAt(rootDescriptor, 'state.tmp', true), {status: 'exists'})
       assert.deepEqual(addon.lookupAt(rootDescriptor, 'missing'), {status: 'missing'})
+      assert.deepEqual(addon.syncDirectory(rootDescriptor), {status: 'ok'})
 
       let childDescriptor = openSync(join(root, 'state.tmp'), 'r+')
       try {
@@ -98,6 +105,41 @@ if (mode === 'hold') {
       } finally {
         if (childDescriptor !== null) closeSync(childDescriptor)
       }
+
+      const renameSource = addon.mkdirPrivateAt(rootDescriptor, 'rename-source')
+      const renameCollision = addon.mkdirPrivateAt(rootDescriptor, 'rename-collision')
+      assert.equal(renameSource.status, 'ok')
+      assert.equal(renameCollision.status, 'ok')
+      assert.deepEqual(
+        addon.renameNoReplaceAt(
+          rootDescriptor, 'rename-source', 'rename-collision', renameSource.identity,
+        ),
+        {status: 'exists'},
+      )
+      assert.deepEqual(
+        addon.lookupAt(rootDescriptor, 'rename-collision'),
+        {status: 'ok', identity: renameCollision.identity},
+      )
+      assert.deepEqual(
+        addon.renameNoReplaceAt(
+          rootDescriptor, 'rename-source', 'rename-final', {device: 0n, inode: 0n},
+        ),
+        {status: 'mismatch'},
+      )
+      assert.deepEqual(
+        addon.unlinkAt(rootDescriptor, 'rename-collision', renameCollision.identity, 'directory'),
+        {status: 'ok'},
+      )
+      assert.deepEqual(
+        addon.renameNoReplaceAt(
+          rootDescriptor, 'rename-source', 'rename-final', renameSource.identity,
+        ),
+        {status: 'ok'},
+      )
+      assert.deepEqual(
+        addon.unlinkAt(rootDescriptor, 'rename-final', renameSource.identity, 'directory'),
+        {status: 'ok'},
+      )
 
       mkdirSync(join(root, 'repair-me'))
       const repairDescriptor = openDirectory(join(root, 'repair-me'))
@@ -158,6 +200,80 @@ if (mode === 'hold') {
         addon.unlinkAt(rootDescriptor, 'bootstrap-root', bootstrapDirectory.identity, 'directory'),
         {status: 'ok'},
       )
+
+      const unrelated = join(root, 'unrelated.txt')
+      writeFileSync(unrelated, 'keep')
+      const outside = join(root, 'outside-target')
+      mkdirSync(outside)
+      writeFileSync(join(outside, 'data.txt'), 'outside')
+      const tombstone = addon.mkdirAt(rootDescriptor, 'tombstone')
+      assert.equal(tombstone.status, 'ok')
+      mkdirSync(join(root, 'tombstone', 'nested'))
+      writeFileSync(join(root, 'tombstone', 'nested', 'data.txt'), 'delete')
+      symlinkSync(
+        outside,
+        join(root, 'tombstone', 'link-to-outside'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      )
+      assert.deepEqual(
+        addon.removeTreeAt(rootDescriptor, 'tombstone', tombstone.identity),
+        {status: 'ok'},
+      )
+      assert.equal(existsSync(join(root, 'tombstone')), false)
+      assert.equal(readFileSync(unrelated, 'utf8'), 'keep')
+      assert.equal(readFileSync(join(outside, 'data.txt'), 'utf8'), 'outside')
+
+      const deepSibling = join(root, 'deep-delete-sibling.txt')
+      writeFileSync(deepSibling, 'keep-deep-sibling')
+      const deepTombstone = addon.mkdirAt(rootDescriptor, 'deep-tombstone')
+      assert.equal(deepTombstone.status, 'ok')
+      let deepCursor = join(root, 'deep-tombstone')
+      for (let depth = 0; depth < DEEP_DELETE_DEPTH; depth += 1) {
+        deepCursor = join(deepCursor, 'd')
+        mkdirSync(deepCursor)
+      }
+      writeFileSync(join(deepCursor, 'data.txt'), 'delete-deep')
+      assert.deepEqual(
+        addon.removeTreeAt(
+          rootDescriptor, 'deep-tombstone', deepTombstone.identity,
+        ),
+        {status: 'ok'},
+      )
+      assert.equal(existsSync(join(root, 'deep-tombstone')), false)
+      assert.equal(readFileSync(deepSibling, 'utf8'), 'keep-deep-sibling')
+
+      const overBudget = addon.mkdirAt(rootDescriptor, 'over-budget-tombstone')
+      assert.equal(overBudget.status, 'ok')
+      let overBudgetCursor = join(root, 'over-budget-tombstone')
+      for (let depth = 0; depth <= REMOVE_TREE_DEPTH_BUDGET; depth += 1) {
+        overBudgetCursor = join(overBudgetCursor, 'd')
+        mkdirSync(overBudgetCursor)
+      }
+      writeFileSync(join(overBudgetCursor, 'data.txt'), 'keep-over-budget')
+      assert.deepEqual(
+        addon.removeTreeAt(
+          rootDescriptor, 'over-budget-tombstone', overBudget.identity,
+        ),
+        {status: 'failed'},
+      )
+      assert.equal(existsSync(join(root, 'over-budget-tombstone')), true)
+      assert.equal(
+        readFileSync(join(overBudgetCursor, 'data.txt'), 'utf8'),
+        'keep-over-budget',
+      )
+      assert.equal(readFileSync(deepSibling, 'utf8'), 'keep-deep-sibling')
+      rmSync(join(root, 'over-budget-tombstone'), {recursive: true})
+
+      const swapped = addon.mkdirAt(rootDescriptor, 'swapped')
+      assert.equal(swapped.status, 'ok')
+      renameSync(join(root, 'swapped'), join(root, 'swapped-original'))
+      mkdirSync(join(root, 'swapped'))
+      assert.deepEqual(
+        addon.removeTreeAt(rootDescriptor, 'swapped', swapped.identity),
+        {status: 'mismatch'},
+      )
+      rmSync(join(root, 'swapped'), {recursive: true})
+      rmSync(join(root, 'swapped-original'), {recursive: true})
 
       const lock = addon.createFileAt(rootDescriptor, 'owner.lock', true)
       assert.equal(lock.status, 'ok')

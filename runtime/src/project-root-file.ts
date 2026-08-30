@@ -31,11 +31,23 @@ export interface ProjectRootFileAuthority {
     childDescriptor: number,
   ): ProjectRootFileResult
   renameAt(rootDescriptor: number, from: string, to: string): ProjectRootFileResult
+  renameNoReplaceAt?(
+    rootDescriptor: number,
+    from: string,
+    to: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult
+  syncDirectory?(rootDescriptor: number): ProjectRootFileResult
   unlinkAt(
     rootDescriptor: number,
     name: string,
     expected: ProjectFileIdentity,
     kind: 'file' | 'directory',
+  ): ProjectRootFileResult
+  removeTreeAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
   ): ProjectRootFileResult
 }
 
@@ -49,5 +61,8 @@ export const unsupportedProjectRootFiles: ProjectRootFileAuthority = Object.free
   mkdirPrivateAt: (): ProjectRootFileCreateResult => ({status: 'unsupported'}),
   protectAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
   renameAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
+  renameNoReplaceAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
+  syncDirectory: (): ProjectRootFileResult => ({status: 'unsupported'}),
   unlinkAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
+  removeTreeAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
 })

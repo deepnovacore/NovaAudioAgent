@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readdirSync,
   renameSync,
+  rmSync,
   rmdirSync,
   unlinkSync,
   writeFileSync,
@@ -247,6 +248,22 @@ class DescriptorRootFileAuthority implements ProjectRootFileAuthority {
       }
       if (kind === 'directory') rmdirSync(path)
       else unlinkSync(path)
+      return {status: 'ok'}
+    } catch (error) {
+      return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
+    }
+  }
+
+  removeTreeAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult {
+    try {
+      const path = join(this.#rootPath(rootDescriptor), name)
+      const current = lstatSync(path, {bigint: true})
+      if (current.dev !== expected.device || current.ino !== expected.inode) return {status: 'mismatch'}
+      rmSync(path, {recursive: true})
       return {status: 'ok'}
     } catch (error) {
       return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}

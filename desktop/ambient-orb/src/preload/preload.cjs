@@ -103,6 +103,9 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
     retryBackend: () => ipcRenderer.invoke('nova:backend:retry'),
     retryMicrophone: () => ipcRenderer.invoke('nova:microphone:retry'),
     repairProjects: root => ipcRenderer.invoke('nova:projects:repair', root),
+    openCurrentManagedWorkspace: () => ipcRenderer.invoke('nova:workspaces:open-current'),
+    clearCurrentManagedWorkspace: () => ipcRenderer.invoke('nova:workspaces:clear-current'),
+    clearAllManagedWorkspaces: () => ipcRenderer.invoke('nova:workspaces:clear-all'),
     // The payload may carry plaintext key values on their way *into* main; the
     // reply never carries any back out.
     set: patch => ipcRenderer.invoke('nova:settings:set', patch),

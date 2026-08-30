@@ -230,6 +230,22 @@ class DescriptorRootFileAuthority implements ProjectRootFileAuthority {
     }
   }
 
+  removeTreeAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult {
+    try {
+      const path = join(this.#rootPath(rootDescriptor), name)
+      const current = lstatSync(path, {bigint: true})
+      if (current.dev !== expected.device || current.ino !== expected.inode) return {status: 'mismatch'}
+      rmSync(path, {recursive: true})
+      return {status: 'ok'}
+    } catch (error) {
+      return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
+    }
+  }
+
   #rootPath(descriptor: number): string {
     const info = fstatSync(descriptor, {bigint: true})
     const key = `${info.dev}:${info.ino}`
