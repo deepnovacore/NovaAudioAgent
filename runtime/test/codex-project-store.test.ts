@@ -1542,14 +1542,16 @@ test('registry no-follow, owner mode, byte cap, strict decode, and corrupt-byte 
     const exactLimit = await CodexProjectStore.open(options)
     try {
       assert.deepEqual(await exactLimit.snapshot(), {
-        version: 1, active_binding_revision: 0,
+        version: 1, state_revision: 0, active_binding_revision: 0,
         active_workspace_id: null, workspaces: [], sessions: [],
       })
       await exactLimit.createManaged('migrated')
       const migrated = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>
       assert.equal(migrated.active_binding_revision, 1)
+      assert.equal(migrated.state_revision, 1)
       assert.deepEqual(Object.keys(migrated).sort(), [
-        'active_binding_revision', 'active_workspace_id', 'sessions', 'version', 'workspaces',
+        'active_binding_revision', 'active_workspace_id', 'sessions', 'state_revision',
+        'version', 'workspaces',
       ])
     } finally {
       await exactLimit.close()
@@ -1584,6 +1586,43 @@ test('registry no-follow, owner mode, byte cap, strict decode, and corrupt-byte 
       await expectCode('state_permissions')
     }
   } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('state revision increments once per mutation and maintenance snapshots pin managed identities', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-revision-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const identifiers = ['workspace-0001', 'session-0001'][Symbol.iterator]()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    now: () => 100,
+    idFactory: () => identifiers.next().value ?? 'unused-id',
+  })
+  try {
+    assert.equal((await store.snapshot()).state_revision, 0)
+    const workspace = await store.createManaged('Alpha')
+    assert.equal((await store.snapshot()).state_revision, 1)
+
+    const maintenance = await store.maintenanceSnapshot()
+    assert.equal(maintenance.state_revision, 1)
+    assert.equal(maintenance.active_workspace_id, workspace.workspace_id)
+    assert.equal(maintenance.managed_targets.length, 1)
+    assert.equal(maintenance.managed_targets[0]?.workspace.workspace_id, workspace.workspace_id)
+    assert.equal(typeof maintenance.managed_targets[0]?.identity.device, 'bigint')
+    assert.equal(Object.isFrozen(maintenance.managed_targets[0]?.workspace), true)
+    assert.equal((await store.snapshot()).state_revision, 1)
+
+    await store.beginSessionForRun(workspace.workspace_id, 'Task')
+    assert.equal((await store.snapshot()).state_revision, 2)
+  } finally {
+    await store.close()
     await rm(root, {recursive: true, force: true})
   }
 })
