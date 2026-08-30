@@ -596,18 +596,33 @@ button:disabled { cursor: default; opacity: .45; }
   white-space: nowrap;
 }
 
-#save-secrets {
-  min-width: 92px;
-  margin-top: 10px;
+#settings-save {
+  min-width: 104px;
   border-color: var(--accent);
   background: var(--accent);
   color: #fff;
   font-weight: 700;
 }
 
-#save-secrets:hover:not(:disabled) {
+#settings-save:hover:not(:disabled) {
   border-color: var(--accent-strong);
   background: var(--accent-strong);
+}
+
+.workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+button.destructive { color: var(--warn); }
+
+.workspace-action-status {
+  min-height: 16px;
+  margin: 6px 0 0;
+  color: var(--ink-faint);
+  font-size: 10.5px;
 }
 
 .warning {
@@ -627,6 +642,10 @@ button:disabled { cursor: default; opacity: .45; }
 }
 
 footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 9px 0 1px;
   border-top: 1px solid var(--line);
 }
