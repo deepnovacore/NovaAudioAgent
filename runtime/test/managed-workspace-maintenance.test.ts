@@ -163,6 +163,7 @@ test('a committed journal remains committed when execution loses its reply', asy
       entries: [{
         workspace_id: workspace.workspace_id,
         original_name: 'workspace-0001',
+        replacement_identity: {device: 3n, inode: 4n},
         tombstone_name: '.nova-maintenance-operation-0001-1',
         identity: {device: 1n, inode: 2n},
       }],
@@ -190,4 +191,15 @@ test('a committed journal remains committed when execution loses its reply', asy
     status: 'clear_failed', committed: true, cleanup_pending: true,
   })
   await service.close()
+})
+
+test('service startup refuses an unresolved prepared rollback', async () => {
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'rollback_pending' as const}),
+    loadManagedMaintenanceJournal: () => Promise.resolve(null),
+    maintenanceSnapshot: () => Promise.reject(new Error('must not inspect detached workspaces')),
+    withCurrentManagedWorkspacePath: () => Promise.resolve(false),
+    executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
+  }
+  await assert.rejects(ManagedWorkspaceMaintenanceService.open({store}), /rollback pending/u)
 })

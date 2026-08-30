@@ -103,18 +103,23 @@ export function createWorkspaceActions({
 
         let clearStatus = 'clear_failed'
         let recovered = false
+        let rollbackPending = false
         try {
           const cleared = await maintenance.execute(preparation, authorization)
+          rollbackPending = cleared?.status === 'rollback_pending'
           clearStatus = cleared?.status === 'cleared' ? 'cleared' : 'clear_failed'
         } catch {
           clearStatus = 'clear_failed'
         } finally {
-          try {
-            recovered = await restartBackendBounded()
-          } catch {
-            recovered = false
+          if (!rollbackPending) {
+            try {
+              recovered = await restartBackendBounded()
+            } catch {
+              recovered = false
+            }
           }
         }
+        if (rollbackPending) return bounded('rollback_pending')
         if (recovered) return bounded(clearStatus)
         return bounded(clearStatus === 'cleared' ? 'restart_failed' : 'clear_and_restart_failed')
       })

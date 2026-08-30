@@ -148,6 +148,14 @@ test('cleanup and restart failures remain visible together', async () => {
   assert.deepEqual(await fixtureValue.actions.clearAll(), {status: 'clear_and_restart_failed'})
 })
 
+test('an unresolved pre-commit rollback keeps the backend stopped', async () => {
+  const fixtureValue = fixture({maintenance: {
+    execute: async () => ({status: 'rollback_pending', committed: false, cleanup_pending: true}),
+  }})
+  assert.deepEqual(await fixtureValue.actions.clearAll(), {status: 'rollback_pending'})
+  assert.equal(fixtureValue.calls.includes('restart'), false)
+})
+
 test('renderer closure after confirmation cannot revoke an authorized operation', async () => {
   let currentWindow = {kind: 'settings-window'}
   const value = fixture({dependencies: {getWindow: () => currentWindow}})

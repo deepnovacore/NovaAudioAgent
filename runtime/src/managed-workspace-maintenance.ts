@@ -25,7 +25,9 @@ interface MaintenanceStore {
     readonly committed: boolean
     readonly tombstones: readonly {readonly name: string; readonly identity: {readonly device: bigint; readonly inode: bigint}}[]
   }>
-  cleanupManagedMaintenanceJournal(): Promise<{readonly status: 'clean' | 'cleanup_pending'}>
+  cleanupManagedMaintenanceJournal(): Promise<{
+    readonly status: 'clean' | 'cleanup_pending' | 'rollback_pending'
+  }>
   loadManagedMaintenanceJournal(): Promise<ManagedMaintenanceJournal | null>
 }
 
@@ -68,7 +70,7 @@ export type ManagedWorkspacePrepareResult =
   | Readonly<{status: 'not_managed' | 'empty'}>
 
 export type ManagedWorkspaceExecuteResult = Readonly<{
-  status: 'cleared' | 'stale' | 'clear_failed'
+  status: 'cleared' | 'stale' | 'clear_failed' | 'rollback_pending'
   committed: boolean
   cleanup_pending: boolean
 }>
@@ -111,6 +113,9 @@ export class ManagedWorkspaceMaintenanceService {
       closeStore: null,
     })
     const cleanup = await options.store.cleanupManagedMaintenanceJournal()
+    if (cleanup.status === 'rollback_pending') {
+      throw new Error('managed workspace rollback pending')
+    }
     service.#cleanupPending = cleanup.status === 'cleanup_pending'
     return service
   }
@@ -135,6 +140,9 @@ export class ManagedWorkspaceMaintenanceService {
         closeStore: () => store.close(),
       })
       const cleanup = await store.cleanupManagedMaintenanceJournal()
+      if (cleanup.status === 'rollback_pending') {
+        throw new Error('managed workspace rollback pending')
+      }
       service.#cleanupPending = cleanup.status === 'cleanup_pending'
       return service
     } catch (error) {
@@ -171,8 +179,12 @@ export class ManagedWorkspaceMaintenanceService {
     if (this.#closed) return Object.freeze({status: 'empty'})
     if (this.#cleanupPending) {
       const cleanup = await this.#store.cleanupManagedMaintenanceJournal()
-      this.#cleanupPending = cleanup.status === 'cleanup_pending'
-      if (this.#cleanupPending) throw new Error('managed workspace cleanup pending')
+      this.#cleanupPending = cleanup.status !== 'clean'
+      if (this.#cleanupPending) throw new Error(
+        cleanup.status === 'rollback_pending'
+          ? 'managed workspace rollback pending'
+          : 'managed workspace cleanup pending',
+      )
     }
     const snapshot = await this.#store.maintenanceSnapshot()
     const selected = scope === 'all_managed'
@@ -268,25 +280,45 @@ export class ManagedWorkspaceMaintenanceService {
       })
       if (!replaced.committed) {
         const journal = await this.#store.loadManagedMaintenanceJournal()
-        return journal?.operation_id === operationId
-          ? Object.freeze({
-            status: 'clear_failed',
-            committed: journal.phase === 'committed',
-            cleanup_pending: true,
-          })
-          : staleResult()
+        if (journal?.operation_id !== operationId) return staleResult()
+        if (journal.phase === 'prepared') {
+          const recovery = await this.#store.cleanupManagedMaintenanceJournal()
+          this.#cleanupPending = recovery.status !== 'clean'
+          return recovery.status === 'rollback_pending'
+            ? Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
+            : Object.freeze({status: 'clear_failed', committed: false, cleanup_pending: false})
+        }
+        return Object.freeze({status: 'clear_failed', committed: true, cleanup_pending: true})
       }
       const cleanup = await this.#store.cleanupManagedMaintenanceJournal()
-      this.#cleanupPending = cleanup.status === 'cleanup_pending'
+      this.#cleanupPending = cleanup.status !== 'clean'
       return this.#cleanupPending
         ? Object.freeze({status: 'clear_failed', committed: true, cleanup_pending: true})
         : Object.freeze({status: 'cleared', committed: true, cleanup_pending: false})
     } catch {
       let journal: ManagedMaintenanceJournal | null = null
+      let journalReadFailed = false
       try {
         const loaded = await this.#store.loadManagedMaintenanceJournal()
         if (loaded?.operation_id === operationId) journal = loaded
-      } catch { /* the bounded result does not expose a state-root error */ }
+      } catch { journalReadFailed = true }
+      if (journalReadFailed) {
+        this.#cleanupPending = true
+        return Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
+      }
+      if (journal?.phase === 'prepared') {
+        try {
+          const recovery = await this.#store.cleanupManagedMaintenanceJournal()
+          this.#cleanupPending = recovery.status !== 'clean'
+          return recovery.status === 'rollback_pending'
+            ? Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
+            : Object.freeze({status: 'clear_failed', committed: false, cleanup_pending: false})
+        } catch {
+          this.#cleanupPending = true
+          return Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
+        }
+      }
+      this.#cleanupPending = journal !== null
       return Object.freeze({
         status: 'clear_failed',
         committed: journal?.phase === 'committed',

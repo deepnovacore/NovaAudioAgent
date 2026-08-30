@@ -173,6 +173,7 @@ export interface ManagedMaintenanceJournalEntry {
   readonly original_name: string
   readonly tombstone_name: string
   readonly identity: ProjectFileIdentity
+  readonly replacement_identity: ProjectFileIdentity | null
 }
 
 export interface ManagedMaintenanceJournal {
@@ -504,7 +505,7 @@ export class CodexProjectStore {
       if (operationId === undefined || !STORED_ID.test(operationId)) {
         return [{committed: false, tombstones: []}, false]
       }
-      const journal: ManagedMaintenanceJournal = Object.freeze({
+      let journal: ManagedMaintenanceJournal = Object.freeze({
         operation_id: operationId,
         phase: 'prepared',
         entries: Object.freeze(prepared.map(target => Object.freeze({
@@ -512,6 +513,7 @@ export class CodexProjectStore {
           original_name: target.originalName,
           tombstone_name: target.tombstoneName,
           identity: Object.freeze({...target.identity}),
+          replacement_identity: null,
         }))),
       })
       if (await this.#loadMaintenanceJournal() !== null) {
@@ -538,7 +540,7 @@ export class CodexProjectStore {
             throw new ProjectStateError('workspace_boundary_changed')
           }
         }
-        for (const item of replaced) {
+        for (const [index, item] of replaced.entries()) {
           const target = item.target
           const replacement = await this.#ensurePrivateDirectoryAt(
             root, managed, target.originalName,
@@ -550,6 +552,16 @@ export class CodexProjectStore {
             target.identity,
             replacement.binding.identity,
           )
+          journal = Object.freeze({
+            ...journal,
+            entries: Object.freeze(journal.entries.map((entry, entryIndex) => entryIndex === index
+              ? Object.freeze({
+                ...entry,
+                replacement_identity: Object.freeze({...replacement.binding.identity}),
+              })
+              : entry)),
+          })
+          await this.#writeMaintenanceJournal(journal)
         }
         await this.#writeMaintenanceJournal(Object.freeze({...journal, phase: 'committed'}))
       } catch {
@@ -608,8 +620,12 @@ export class CodexProjectStore {
     }, {wait: true})
   }
 
-  async cleanupManagedMaintenanceJournal(): Promise<{readonly status: 'clean' | 'cleanup_pending'}> {
-    return await this.#transaction<{readonly status: 'clean' | 'cleanup_pending'}>(async () => {
+  async cleanupManagedMaintenanceJournal(): Promise<{
+    readonly status: 'clean' | 'cleanup_pending' | 'rollback_pending'
+  }> {
+    return await this.#transaction<{
+      readonly status: 'clean' | 'cleanup_pending' | 'rollback_pending'
+    }>(async () => {
       const journal = await this.#loadMaintenanceJournal()
       if (journal === null) return [{status: 'clean'}, false]
       await this.#validateManagedRoot()
@@ -633,6 +649,13 @@ export class CodexProjectStore {
           }
           if (original.status === 'ok') {
             if (sameFileIdentity(original.identity, entry.identity)) {
+              remaining.push(entry)
+              continue
+            }
+            if (
+              entry.replacement_identity === null
+              || !sameFileIdentity(original.identity, entry.replacement_identity)
+            ) {
               remaining.push(entry)
               continue
             }
@@ -682,7 +705,7 @@ export class CodexProjectStore {
             entries: Object.freeze(remaining.reverse()),
           }))
         }
-        return [{status: 'cleanup_pending'}, false]
+        return [{status: 'rollback_pending'}, false]
       }
       const remaining: ManagedMaintenanceJournalEntry[] = []
       for (const entry of journal.entries) {
@@ -2949,6 +2972,10 @@ function encodeMaintenanceJournal(journal: ManagedMaintenanceJournal): Readonly<
         inode: entry.identity.inode.toString(10),
       },
       original_name: entry.original_name,
+      replacement_identity: entry.replacement_identity === null ? null : {
+        device: entry.replacement_identity.device.toString(10),
+        inode: entry.replacement_identity.inode.toString(10),
+      },
       tombstone_name: entry.tombstone_name,
       workspace_id: entry.workspace_id,
     })),
@@ -2968,8 +2995,13 @@ function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
     throw new ProjectStateError('state_corrupt')
   }
   const entries = root.entries.map(raw => {
-    const entry = exactRecord(raw, ['identity', 'original_name', 'tombstone_name', 'workspace_id'])
+    const entry = exactRecord(raw, [
+      'identity', 'original_name', 'replacement_identity', 'tombstone_name', 'workspace_id',
+    ])
     const identity = exactRecord(entry.identity, ['device', 'inode'])
+    const replacementIdentity = entry.replacement_identity === null
+      ? null
+      : exactRecord(entry.replacement_identity, ['device', 'inode'])
     if (typeof entry.original_name !== 'string') throw new ProjectStateError('state_corrupt')
     requireProjectBasename(entry.original_name, 'state_corrupt')
     if (
@@ -2983,6 +3015,10 @@ function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
       identity: Object.freeze({
         device: decimalIdentity(identity.device),
         inode: decimalIdentity(identity.inode),
+      }),
+      replacement_identity: replacementIdentity === null ? null : Object.freeze({
+        device: decimalIdentity(replacementIdentity.device),
+        inode: decimalIdentity(replacementIdentity.inode),
       }),
     })
   })

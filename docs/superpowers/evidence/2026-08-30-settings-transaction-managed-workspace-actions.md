@@ -9,12 +9,12 @@ Base: `b4b265e docs(design): stage settings and managed workspace actions`
 ## Automated verification
 
 - `npm run build --workspace @nova-audio-agent/runtime`: PASS
-- Runtime maintenance/store/native focused suite: PASS, 71 tests, 0 failed.
+- Runtime maintenance/store/native focused suite: PASS, 75 tests, 0 failed.
 - `npm run typecheck --workspace @nova-audio-agent/runtime`: PASS
 - `npm run lint --workspace @nova-audio-agent/runtime`: PASS
 - `npm run build --workspace @nova-audio-agent/ambient-orb`: PASS
-- Desktop lifecycle/settings/workspace/security focused suite: PASS, 107 tests, 0 failed.
-- `npm test --workspace @nova-audio-agent/ambient-orb`: PASS, 712 passed, 3 platform-specific skips, 0 failed. The optional source startup smoke reported `skipped`; a real Electron GUI smoke was run separately below.
+- Desktop lifecycle/settings/workspace/security focused suite: PASS, 108 tests, 0 failed.
+- `npm test --workspace @nova-audio-agent/ambient-orb`: PASS, 713 passed, 3 platform-specific skips, 0 failed. The optional source startup smoke reported `skipped`; a real Electron GUI smoke was run separately below.
 - `npm run check`: PASS. Environment contract matched and Node parity passed with 169 files and 223 occurrences.
 - `git diff --check`: PASS.
 
@@ -40,7 +40,8 @@ The app was launched from the isolated worktree with `npm run start:client` and 
 - Failed apply phases retain submitted drafts for retry; live Main status pushes do not overwrite newer renderer drafts.
 - Workspace IPC methods are zero-argument, sender-bound, and return bounded public status without filesystem paths or project IDs.
 - Managed clear authorization binds an opaque preparation to the state revision and target identities, is single-use, and fails closed when cleanup is already pending.
-- The maintenance journal records explicit `prepared` and `committed` phases. Recovery rolls back pre-commit tombstones, preserves any populated replacement, and only deletes journal-bound tombstones after commit.
+- The maintenance journal records explicit `prepared` and `committed` phases plus each operation-created replacement identity. Recovery only removes a journal-bound replacement, preserves populated or substituted directories, and only deletes journal-bound tombstones after commit.
+- An unresolved pre-commit recovery reports `rollback_pending`, prevents service startup, and leaves the backend stopped after an in-process clear failure.
 - Batch clear detaches the complete validated target set before it creates any replacement directory.
 - Destructive removal stays inside the native descriptor/handle-relative authority layer; imported and registered directories are never eligible.
 - Current-workspace opening retains the store transaction and revalidates the exact managed identity around the host callback.
@@ -49,7 +50,7 @@ The app was launched from the isolated worktree with `npm run start:client` and 
 
 ## Independent review follow-up
 
-A read-only review of `b4b265e..0172478` found that the first implementation interleaved target rename/replacement and could not distinguish a pre-commit crash journal from post-commit cleanup. The follow-up correction added the explicit journal phases, all-target phase ordering, recovery tests, retained-path validation, compound failure reporting, and an awaited configuration commit. The final verification results above were collected after these corrections.
+A read-only review of `b4b265e..0172478` found that the first implementation interleaved target rename/replacement and could not distinguish a pre-commit crash journal from post-commit cleanup. Follow-up review also required exact replacement identities and a fail-closed backend boundary for unresolved rollback. The corrections added explicit journal phases and identities, all-target phase ordering, failpoint/restart/substitution tests, retained-path validation, compound failure reporting, and an awaited configuration commit. The final verification results above were collected after these corrections.
 
 ## Implementation commits
 
