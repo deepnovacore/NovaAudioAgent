@@ -31,6 +31,15 @@ export {
   type ProjectNativeHost,
 } from './project-native-resource.js'
 
+export {
+  ManagedWorkspaceMaintenanceService,
+  type ManagedWorkspaceAuthorization,
+  type ManagedWorkspaceExecuteResult,
+  type ManagedWorkspacePreparation,
+  type ManagedWorkspacePrepareResult,
+  type ManagedWorkspaceScope,
+} from './managed-workspace-maintenance.js'
+
 export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024
 export const MAX_DESKTOP_OUTBOUND_BINARY_BYTES = 8 * 1024 * 1024

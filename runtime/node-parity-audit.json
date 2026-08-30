@@ -11,6 +11,7 @@
     "desktop/ambient-orb/src/main/debug-board-client.mjs",
     "desktop/ambient-orb/src/main/desktop-startup.mjs",
     "desktop/ambient-orb/src/main/drag-controller.mjs",
+    "desktop/ambient-orb/src/main/lifecycle-coordinator.mjs",
     "desktop/ambient-orb/src/main/main.mjs",
     "desktop/ambient-orb/src/main/native-audio.mjs",
     "desktop/ambient-orb/src/main/platform-config.mjs",
@@ -95,6 +96,7 @@
     "runtime/src/ids.ts",
     "runtime/src/index.ts",
     "runtime/src/integrated-realtime-assembly.ts",
+    "runtime/src/managed-workspace-maintenance.ts",
     "runtime/src/media-store.ts",
     "runtime/src/memory.ts",
     "runtime/src/model-adapters.ts",
@@ -1179,6 +1181,17 @@
       "disposition": "wire_json",
       "test": "runtime/test/runtime.test.ts",
       "behavior": "assistant_spoken appends the exact audible delivery to trusted conversation memory"
+    },
+    {
+      "file": "runtime/src/managed-workspace-maintenance.ts",
+      "kind": "numeric_template",
+      "occurrence_index": 0,
+      "line": 219,
+      "snippet": "index + 1",
+      "snippet_sha256": "d4a5776d00115cfb1bc08c78f874ec20f7a58c2fbf285a17bbbf158fe7bd64a7",
+      "disposition": "wire_json",
+      "test": "runtime/test/managed-workspace-maintenance.test.ts",
+      "behavior": "preparation and authorization are opaque, paired, and consumed exactly once"
     },
     {
       "file": "runtime/src/memory.ts",

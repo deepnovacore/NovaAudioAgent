@@ -263,6 +263,20 @@ class DescriptorRelativeRootFileAuthority implements ProjectRootFileAuthority {
   }
 }
 
+class ToggleRemoveTreeRootFileAuthority extends DescriptorRelativeRootFileAuthority {
+  failRemoveTree = false
+
+  override removeTreeAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult {
+    return this.failRemoveTree
+      ? {status: 'failed'}
+      : super.removeTreeAt(rootDescriptor, name, expected)
+  }
+}
+
 class ReplaceCreatedLockRootFileAuthority extends DescriptorRelativeRootFileAuthority {
   replaced = false
 
@@ -1619,14 +1633,16 @@ test('state revision increments once per mutation and maintenance snapshots pin 
   await mkdir(stateRoot, {mode: 0o700})
   await mkdir(managedRoot, {mode: 0o700})
   const identifiers = ['workspace-0001', 'session-0001'][Symbol.iterator]()
-  const store = await CodexProjectStore.open({
+  const rootFiles = new ToggleRemoveTreeRootFileAuthority([stateRoot, managedRoot])
+  const storeOptions = {
     stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
     managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
     nativeLocks: new DescriptorLockAuthority(),
-    rootFiles: rootFilesForTest(stateRoot, managedRoot),
+    rootFiles,
     now: () => 100,
     idFactory: () => identifiers.next().value ?? 'unused-id',
-  })
+  }
+  let store = await CodexProjectStore.open(storeOptions)
   try {
     assert.equal((await store.snapshot()).state_revision, 0)
     const workspace = await store.createManaged('Alpha')
@@ -1643,6 +1659,48 @@ test('state revision increments once per mutation and maintenance snapshots pin 
 
     await store.beginSessionForRun(workspace.workspace_id, 'Task')
     assert.equal((await store.snapshot()).state_revision, 2)
+
+    await mkdir(join(workspace.canonical_path, 'nested'))
+    await writeFile(join(workspace.canonical_path, 'nested', 'data.txt'), 'delete me')
+    const beforeReplacement = await store.snapshot()
+    const replacementSnapshot = await store.maintenanceSnapshot()
+    const target = replacementSnapshot.managed_targets[0]
+    assert.ok(target)
+    const stale = await store.executeManagedReplacement({
+      expected_state_revision: replacementSnapshot.state_revision - 1,
+      targets: [{
+        workspace_id: workspace.workspace_id,
+        canonical_path: workspace.canonical_path,
+        identity: target.identity,
+        tombstone_name: '.nova-maintenance-operation-0001-1',
+      }],
+    })
+    assert.equal(stale.committed, false)
+    const replaced = await store.executeManagedReplacement({
+      expected_state_revision: replacementSnapshot.state_revision,
+      targets: [{
+        workspace_id: workspace.workspace_id,
+        canonical_path: workspace.canonical_path,
+        identity: target.identity,
+        tombstone_name: '.nova-maintenance-operation-0001-1',
+      }],
+    })
+    assert.equal(replaced.committed, true)
+    assert.deepEqual(await readdir(workspace.canonical_path), [])
+    const afterReplacement = await store.snapshot()
+    assert.equal(afterReplacement.state_revision, beforeReplacement.state_revision)
+    assert.deepEqual(afterReplacement.workspaces, beforeReplacement.workspaces)
+    assert.deepEqual(afterReplacement.sessions, beforeReplacement.sessions)
+    assert.equal((await store.loadManagedMaintenanceJournal())?.operation_id, 'operation-0001')
+    rootFiles.failRemoveTree = true
+    assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'cleanup_pending'})
+    assert.equal((await store.loadManagedMaintenanceJournal())?.operation_id, 'operation-0001')
+    await store.close()
+    store = await CodexProjectStore.open(storeOptions)
+    assert.equal((await store.loadManagedMaintenanceJournal())?.operation_id, 'operation-0001')
+    rootFiles.failRemoveTree = false
+    assert.deepEqual(await store.cleanupManagedMaintenanceJournal(), {status: 'clean'})
+    assert.equal(await store.loadManagedMaintenanceJournal(), null)
   } finally {
     await store.close()
     await rm(root, {recursive: true, force: true})

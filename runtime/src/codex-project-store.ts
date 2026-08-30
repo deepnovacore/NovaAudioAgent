@@ -39,6 +39,7 @@ export const PROJECT_STATE_VERSION = 1
 export const PROJECT_STATE_FILE = 'codex-projects-v1.json'
 export const PROJECT_TRANSACTION_LOCK_FILE = 'codex-projects-v1.lock'
 export const PROJECT_OWNER_LOCK_FILE = 'codex-projects-v1.owner.lock'
+export const PROJECT_MAINTENANCE_JOURNAL_FILE = 'managed-workspace-maintenance-v1.json'
 const PROJECT_CODEX_HOMES_DIRECTORY = 'codex-homes'
 const LEGACY_PROJECT_CODEX_HOMES_DIRECTORY = 'codex-workspaces'
 export const MAX_PROJECT_STATE_BYTES = 1024 * 1024
@@ -55,6 +56,8 @@ const MAX_DEFAULT_SESSION_DIGITS = MAX_PROJECT_SESSION_TITLE - [...DEFAULT_SESSI
 const STORED_ID = /^[A-Za-z0-9_-]{8,80}$/u
 const DEFAULT_SESSION_TITLE = /^任务 ([1-9][0-9]*)$/u
 const MAX_ID_FACTORY_ATTEMPTS = 32
+const MAX_MAINTENANCE_JOURNAL_BYTES = 64 * 1024
+const MAINTENANCE_TOMBSTONE = /^\.nova-maintenance-([A-Za-z0-9_-]{8,80})-([0-9]{1,3})$/u
 
 export type ProjectStateCode =
   | 'workspace_name_invalid'
@@ -163,6 +166,27 @@ export interface ProjectMaintenanceSnapshot {
   readonly state_revision: number
   readonly active_workspace_id: string | null
   readonly managed_targets: readonly ProjectMaintenanceTargetSnapshot[]
+}
+
+export interface ManagedMaintenanceJournalEntry {
+  readonly workspace_id: string
+  readonly tombstone_name: string
+  readonly identity: ProjectFileIdentity
+}
+
+export interface ManagedMaintenanceJournal {
+  readonly operation_id: string
+  readonly entries: readonly ManagedMaintenanceJournalEntry[]
+}
+
+export interface ManagedReplacementInput {
+  readonly expected_state_revision: number
+  readonly targets: readonly {
+    readonly workspace_id: string
+    readonly canonical_path: string
+    readonly identity: ProjectFileIdentity
+    readonly tombstone_name: string
+  }[]
 }
 
 export interface PublicProjectView {
@@ -384,7 +408,7 @@ export class CodexProjectStore {
   }
 
   async maintenanceSnapshot(): Promise<ProjectMaintenanceSnapshot> {
-    return await this.#transaction(async state => {
+    return await this.#transaction<ProjectMaintenanceSnapshot>(async state => {
       await this.#validateManagedRoot()
       const targets: ProjectMaintenanceTargetSnapshot[] = []
       for (const workspace of [...state.workspaces.values()].sort(compareCreated)) {
@@ -401,6 +425,184 @@ export class CodexProjectStore {
         active_workspace_id: state.activeWorkspaceId,
         managed_targets: Object.freeze(targets),
       }), false]
+    }, {wait: true})
+  }
+
+  async executeManagedReplacement(input: ManagedReplacementInput): Promise<{
+    readonly committed: boolean
+    readonly tombstones: readonly {readonly name: string; readonly identity: ProjectFileIdentity}[]
+  }> {
+    return await this.#transaction<{
+      readonly committed: boolean
+      readonly tombstones: readonly {readonly name: string; readonly identity: ProjectFileIdentity}[]
+    }>(async state => {
+      if (state.stateRevision !== input.expected_state_revision || input.targets.length === 0) {
+        return [{committed: false, tombstones: []}, false]
+      }
+      const managed = await this.#validateManagedRoot()
+      const root = this.#requireManagedRootHandle()
+      const prepared: {
+        readonly workspace: WorkspaceRecord
+        readonly originalName: string
+        readonly tombstoneName: string
+        readonly identity: FileIdentity
+      }[] = []
+      const operationIds = new Set<string>()
+      const seenWorkspaces = new Set<string>()
+      const seenTombstones = new Set<string>()
+      for (const target of input.targets) {
+        const workspace = state.workspaces.get(target.workspace_id)
+        const match = MAINTENANCE_TOMBSTONE.exec(target.tombstone_name)
+        if (
+          workspace?.origin !== 'managed'
+          || workspace.canonical_path !== target.canonical_path
+          || !isDirectChild(managed, target.canonical_path)
+          || match === null
+          || seenWorkspaces.has(target.workspace_id)
+          || seenTombstones.has(target.tombstone_name)
+        ) return [{committed: false, tombstones: []}, false]
+        const binding = await this.#validateManagedWorkspaceBinding(target.canonical_path)
+        if (!sameFileIdentity(binding.identity, target.identity)) {
+          return [{committed: false, tombstones: []}, false]
+        }
+        this.#pinWorkspaceIdentity(workspace.workspace_id, binding.identity)
+        operationIds.add(match[1] ?? '')
+        seenWorkspaces.add(target.workspace_id)
+        seenTombstones.add(target.tombstone_name)
+        prepared.push({
+          workspace,
+          originalName: basename(target.canonical_path),
+          tombstoneName: target.tombstone_name,
+          identity: binding.identity,
+        })
+      }
+      if (operationIds.size !== 1) return [{committed: false, tombstones: []}, false]
+      const operationId = [...operationIds][0]
+      if (operationId === undefined || !STORED_ID.test(operationId)) {
+        return [{committed: false, tombstones: []}, false]
+      }
+      const journal: ManagedMaintenanceJournal = Object.freeze({
+        operation_id: operationId,
+        entries: Object.freeze(prepared.map(target => Object.freeze({
+          workspace_id: target.workspace.workspace_id,
+          tombstone_name: target.tombstoneName,
+          identity: Object.freeze({...target.identity}),
+        }))),
+      })
+      if (await this.#loadMaintenanceJournal() !== null) {
+        throw new ProjectStateError('state_busy')
+      }
+      await this.#writeMaintenanceJournal(journal)
+      const replaced: {
+        readonly target: typeof prepared[number]
+        replacementIdentity: FileIdentity | null
+        renamed: boolean
+      }[] = prepared.map(target => ({target, replacementIdentity: null, renamed: false}))
+      try {
+        for (const item of replaced) {
+          const target = item.target
+          const tombstoneBefore = this.#lookupAt(root, target.tombstoneName, 'workspace_boundary_changed')
+          if (tombstoneBefore.status !== 'missing') throw new ProjectStateError('workspace_boundary_changed')
+          const renamed = this.#callRootFile(() => this.#rootFiles.renameAt(
+            root.fd, target.originalName, target.tombstoneName,
+          ))
+          if (renamed.status !== 'ok') throw new ProjectStateError('workspace_boundary_changed')
+          item.renamed = true
+          const tombstone = this.#lookupAt(root, target.tombstoneName, 'workspace_boundary_changed')
+          if (tombstone.status !== 'ok' || !sameFileIdentity(tombstone.identity, target.identity)) {
+            throw new ProjectStateError('workspace_boundary_changed')
+          }
+          const replacement = await this.#ensurePrivateDirectoryAt(
+            root, managed, target.originalName,
+          )
+          item.replacementIdentity = replacement.binding.identity
+          await replacement.file.close()
+          this.#advanceWorkspaceIdentity(
+            target.workspace.workspace_id,
+            target.identity,
+            replacement.binding.identity,
+          )
+        }
+      } catch {
+        let rollbackComplete = true
+        for (const item of [...replaced].reverse()) {
+          if (item.replacementIdentity !== null) {
+            try {
+              const removed = this.#unlinkAt(
+                root, item.target.originalName, item.replacementIdentity,
+                'directory', 'workspace_boundary_changed',
+              )
+              if (removed.status !== 'ok') rollbackComplete = false
+            } catch { rollbackComplete = false }
+          }
+          if (item.renamed) {
+            const restored = this.#callRootFile(() => this.#rootFiles.renameAt(
+              root.fd, item.target.tombstoneName, item.target.originalName,
+            ))
+            if (restored.status === 'ok') {
+              if (item.replacementIdentity !== null) {
+                try {
+                  this.#advanceWorkspaceIdentity(
+                    item.target.workspace.workspace_id,
+                    item.replacementIdentity,
+                    item.target.identity,
+                  )
+                } catch { rollbackComplete = false }
+              }
+            } else rollbackComplete = false
+          }
+        }
+        if (rollbackComplete) {
+          try { await this.#clearMaintenanceJournal(operationId) } catch { rollbackComplete = false }
+        }
+        if (!rollbackComplete) throw new ProjectStateError('workspace_boundary_changed')
+        return [{committed: false, tombstones: []}, false]
+      }
+      return [Object.freeze({
+        committed: true,
+        tombstones: Object.freeze(prepared.map(target => Object.freeze({
+          name: target.tombstoneName,
+          identity: Object.freeze({...target.identity}),
+        }))),
+      }), false]
+    }, {wait: true})
+  }
+
+  async loadManagedMaintenanceJournal(): Promise<ManagedMaintenanceJournal | null> {
+    return await this.#transaction(async () => [await this.#loadMaintenanceJournal(), false], {wait: true})
+  }
+
+  async clearManagedMaintenanceJournal(expectedOperationId: string): Promise<void> {
+    await this.#transaction(async () => {
+      await this.#clearMaintenanceJournal(expectedOperationId)
+      return [undefined, false]
+    }, {wait: true})
+  }
+
+  async cleanupManagedMaintenanceJournal(): Promise<{readonly status: 'clean' | 'cleanup_pending'}> {
+    return await this.#transaction<{readonly status: 'clean' | 'cleanup_pending'}>(async () => {
+      const journal = await this.#loadMaintenanceJournal()
+      if (journal === null) return [{status: 'clean'}, false]
+      await this.#validateManagedRoot()
+      const root = this.#requireManagedRootHandle()
+      const remaining: ManagedMaintenanceJournalEntry[] = []
+      for (const entry of journal.entries) {
+        const result = this.#callRootFile(() => this.#rootFiles.removeTreeAt(
+          root.fd, entry.tombstone_name, entry.identity,
+        ))
+        if (result.status !== 'ok') remaining.push(entry)
+      }
+      if (remaining.length === 0) {
+        await this.#clearMaintenanceJournal(journal.operation_id)
+        return [{status: 'clean'}, false]
+      }
+      if (remaining.length !== journal.entries.length) {
+        await this.#writeMaintenanceJournal(Object.freeze({
+          operation_id: journal.operation_id,
+          entries: Object.freeze(remaining),
+        }))
+      }
+      return [{status: 'cleanup_pending'}, false]
     }, {wait: true})
   }
 
@@ -1164,6 +1366,18 @@ export class CodexProjectStore {
     this.#workspaceIdentities.set(workspaceId, identity)
   }
 
+  #advanceWorkspaceIdentity(
+    workspaceId: string,
+    expected: FileIdentity,
+    replacement: FileIdentity,
+  ): void {
+    const current = this.#workspaceIdentities.get(workspaceId)
+    if (current === undefined || !sameFileIdentity(current, expected)) {
+      throw new ProjectStateError('workspace_boundary_changed')
+    }
+    this.#workspaceIdentities.set(workspaceId, replacement)
+  }
+
   #deleteWorkspaceIdentityIfExact(workspaceId: string, identity: FileIdentity): void {
     const current = this.#workspaceIdentities.get(workspaceId)
     if (current !== undefined && sameFileIdentity(current, identity)) {
@@ -1721,6 +1935,119 @@ export class CodexProjectStore {
       await file.close().catch(() => { closeFailed = true })
       if (closeFailed) throw new ProjectStateError('state_corrupt')
     }
+  }
+
+  async #readMaintenanceJournal(): Promise<{
+    readonly journal: ManagedMaintenanceJournal
+    readonly identity: FileIdentity
+  } | null> {
+    const root = this.#requireStateRootHandle()
+    const path = join(this.#stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE)
+    let file: FileHandle
+    try {
+      file = await openValidatedRegularFile(
+        path,
+        constants.O_RDONLY | nonblockFlag() | noFollowFlag(),
+        null,
+        this.#platform,
+      )
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) {
+        if (this.#lookupAt(
+          root, PROJECT_MAINTENANCE_JOURNAL_FILE, 'state_permissions',
+        ).status === 'missing') return null
+      }
+      throw new ProjectStateError('state_permissions')
+    }
+    try {
+      await this.#revalidateStateRoot()
+      this.#requireMatchesAt(root, PROJECT_MAINTENANCE_JOURNAL_FILE, file, 'state_permissions')
+      const info = await file.stat({bigint: true})
+      if (Number(info.size) > MAX_MAINTENANCE_JOURNAL_BYTES) {
+        throw new ProjectStateError('state_corrupt')
+      }
+      const raw = await file.readFile()
+      if (raw.byteLength > MAX_MAINTENANCE_JOURNAL_BYTES) {
+        throw new ProjectStateError('state_corrupt')
+      }
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(raw)) as unknown
+      } catch {
+        throw new ProjectStateError('state_corrupt')
+      }
+      return {journal: decodeMaintenanceJournal(parsed), identity: fileIdentity(info)}
+    } finally {
+      await file.close().catch(() => undefined)
+    }
+  }
+
+  async #loadMaintenanceJournal(): Promise<ManagedMaintenanceJournal | null> {
+    return (await this.#readMaintenanceJournal())?.journal ?? null
+  }
+
+  async #writeMaintenanceJournal(journal: ManagedMaintenanceJournal): Promise<void> {
+    const raw = Buffer.from(canonicalJsonWithNumberFormatter(
+      encodeMaintenanceJournal(journal),
+      () => undefined,
+    ), 'utf8')
+    if (raw.byteLength > MAX_MAINTENANCE_JOURNAL_BYTES) {
+      throw new ProjectStateError('state_too_large')
+    }
+    const root = this.#requireStateRootHandle()
+    const tempName = `.${PROJECT_MAINTENANCE_JOURNAL_FILE}.${randomUUID()}.tmp`
+    const tempPath = join(this.#stateRoot, tempName)
+    let file: FileHandle | null = null
+    let tempIdentity: FileIdentity | null = null
+    try {
+      const created = this.#createFileAt(root, tempName, true, 'state_write_failed')
+      if (created.status !== 'ok') throw new ProjectStateError('state_write_failed')
+      tempIdentity = created.identity
+      file = await open(tempPath, constants.O_WRONLY | noFollowFlag())
+      const info = await file.stat({bigint: true})
+      if (!info.isFile() || !privateRegularFileMetadata(info, this.#platform)
+        || !sameFileIdentity(created.identity, fileIdentity(info))) {
+        throw new ProjectStateError('state_permissions')
+      }
+      this.#requireMatchesAt(root, tempName, file, 'state_permissions')
+      await file.writeFile(raw)
+      await file.sync()
+      await file.close()
+      file = null
+      const before = this.#lookupAt(root, tempName, 'state_permissions')
+      if (before.status !== 'ok' || !sameFileIdentity(before.identity, created.identity)) {
+        throw new ProjectStateError('state_permissions')
+      }
+      this.#renameAt(root, tempName, PROJECT_MAINTENANCE_JOURNAL_FILE)
+      const after = this.#lookupAt(root, PROJECT_MAINTENANCE_JOURNAL_FILE, 'state_permissions')
+      if (after.status !== 'ok' || !sameFileIdentity(after.identity, created.identity)) {
+        throw new ProjectStateError('state_permissions')
+      }
+      if (this.#platform !== 'win32') await root.sync()
+    } catch (error) {
+      if (error instanceof ProjectStateError) throw error
+      throw new ProjectStateError('state_write_failed')
+    } finally {
+      await file?.close().catch(() => undefined)
+      this.#removeOwnedTemp(tempName, tempIdentity)
+    }
+  }
+
+  async #clearMaintenanceJournal(expectedOperationId: string): Promise<void> {
+    const loaded = await this.#readMaintenanceJournal()
+    if (loaded === null) return
+    if (loaded.journal.operation_id !== expectedOperationId) {
+      throw new ProjectStateError('state_busy')
+    }
+    const result = this.#unlinkAt(
+      this.#requireStateRootHandle(),
+      PROJECT_MAINTENANCE_JOURNAL_FILE,
+      loaded.identity,
+      'file',
+      'state_write_failed',
+    )
+    if (result.status !== 'ok') throw new ProjectStateError('state_write_failed')
+    if (this.#platform !== 'win32') await this.#requireStateRootHandle().sync()
   }
 
   async #saveState(state: MutableProjectState, markCommitted: () => void): Promise<void> {
@@ -2495,6 +2822,61 @@ function encodeState(state: MutableProjectState): Readonly<Record<string, unknow
     workspaces: Object.fromEntries([...state.workspaces].map(([key, value]) => [key, {...value}])),
     sessions: Object.fromEntries([...state.sessions].map(([key, value]) => [key, {...value}])),
   }
+}
+
+function encodeMaintenanceJournal(journal: ManagedMaintenanceJournal): Readonly<Record<string, unknown>> {
+  return {
+    entries: journal.entries.map(entry => ({
+      identity: {
+        device: entry.identity.device.toString(10),
+        inode: entry.identity.inode.toString(10),
+      },
+      tombstone_name: entry.tombstone_name,
+      workspace_id: entry.workspace_id,
+    })),
+    operation_id: journal.operation_id,
+    version: 1,
+  }
+}
+
+function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
+  const root = exactRecord(value, ['entries', 'operation_id', 'version'])
+  if (root.version !== 1 || !Array.isArray(root.entries) || root.entries.length > MAX_PROJECT_WORKSPACES) {
+    throw new ProjectStateError('state_corrupt')
+  }
+  const operationId = storedId(root.operation_id)
+  const entries = root.entries.map(raw => {
+    const entry = exactRecord(raw, ['identity', 'tombstone_name', 'workspace_id'])
+    const identity = exactRecord(entry.identity, ['device', 'inode'])
+    if (
+      typeof entry.tombstone_name !== 'string'
+      || MAINTENANCE_TOMBSTONE.exec(entry.tombstone_name)?.[1] !== operationId
+    ) throw new ProjectStateError('state_corrupt')
+    return Object.freeze({
+      workspace_id: storedId(entry.workspace_id),
+      tombstone_name: entry.tombstone_name,
+      identity: Object.freeze({
+        device: decimalIdentity(identity.device),
+        inode: decimalIdentity(identity.inode),
+      }),
+    })
+  })
+  if (entries.length === 0 || new Set(entries.map(entry => entry.tombstone_name)).size !== entries.length) {
+    throw new ProjectStateError('state_corrupt')
+  }
+  return Object.freeze({
+    operation_id: operationId,
+    entries: Object.freeze(entries),
+  })
+}
+
+function decimalIdentity(value: unknown): bigint {
+  if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,39})$/u.test(value)) {
+    throw new ProjectStateError('state_corrupt')
+  }
+  const parsed = BigInt(value)
+  if (parsed > 18_446_744_073_709_551_615n) throw new ProjectStateError('state_corrupt')
+  return parsed
 }
 
 function projectTimestampNumber(value: number, path: CanonicalJsonPath): string | undefined {
