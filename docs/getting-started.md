@@ -251,7 +251,7 @@ families are `HA_*` and `AUTOGLM_*`; do not add credentials or endpoints for the
 | `NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL` | `core` | No | None | Optional loopback-only Nova-compatible read-only MyContext adapter base URL. |
 | `TAVILY_API_KEY` | `search` | When selected | None | Tavily search credential. |
 | `NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE` | `camera` | No | None | Absolute deterministic desktop video input. |
-| `NOVA_AUDIO_AGENT_REALTIME_TELEMETRY` | `telemetry` | No | None | Source-runtime telemetry output path. |
+| `NOVA_AUDIO_AGENT_REALTIME_TELEMETRY` | `telemetry` | No | ~/.nova-audio-agent/realtime-telemetry.jsonl | Source-runtime telemetry output path; set an empty value to disable. |
 | `NOVA_AUDIO_AGENT_REALTIME_TRACE` | `telemetry` | No | 0 | Enable source-runtime trace records. |
 | `NOVA_ORB_OPAQUE` | `core` | No | 0 | Use an opaque desktop orb window. |
 <!-- END GENERATED ENV CONTRACT -->

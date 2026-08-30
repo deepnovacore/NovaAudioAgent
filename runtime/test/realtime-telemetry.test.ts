@@ -85,14 +85,48 @@ test('JSONL keeps full opt-in telemetry while its Memory Board snapshot is redac
   assert.equal(JSON.stringify(diagnostics).includes('确认'), false)
 })
 
-test('desktop telemetry honors the documented optional path and expands home', async t => {
+test('desktop telemetry defaults to a private app-state JSONL path', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nova-telemetry-env-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const clock = new VirtualClock()
-  const disabled = createRealtimeTelemetry({}, {clock, homeDirectory: directory})
+  const telemetry = createRealtimeTelemetry({}, {clock, homeDirectory: directory})
+  assert.ok(telemetry instanceof JsonlTelemetry)
+  telemetry.record('always.available', {revision: 1})
+  telemetry.close()
+
+  const telemetryPath = join(directory, '.nova-audio-agent', 'realtime-telemetry.jsonl')
+  assert.equal((await stat(telemetryPath)).mode & 0o777, 0o600)
+  assert.deepEqual(
+    (await readFile(telemetryPath, 'utf8')).trim().split('\n')
+      .map(line => JSON.parse(line) as unknown),
+    [{ts: 0, kind: 'always.available', payload: {revision: 1}}],
+  )
+})
+
+test('desktop telemetry creates the app-state directory for the explicit default path', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-telemetry-env-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const telemetry = createRealtimeTelemetry({
+    NOVA_AUDIO_AGENT_REALTIME_TELEMETRY: '~/.nova-audio-agent/realtime-telemetry.jsonl',
+  }, {clock: new VirtualClock(), homeDirectory: directory})
+  telemetry.record('configured.default', {revision: 1})
+  telemetry.close()
+
+  const contents = await readFile(
+    join(directory, '.nova-audio-agent', 'realtime-telemetry.jsonl'),
+    'utf8',
+  )
+  assert.match(contents, /configured\.default/u)
+})
+
+test('desktop telemetry accepts an explicit empty opt-out and expands custom home paths', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-telemetry-env-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const clock = new VirtualClock()
+  const disabled = createRealtimeTelemetry({
+    NOVA_AUDIO_AGENT_REALTIME_TELEMETRY: '  ',
+  }, {clock, homeDirectory: directory})
   assert.ok(disabled instanceof NullTelemetry)
-  disabled.record('always.available', {revision: 1})
-  assert.equal(disabled.diagnostics().records.length, 1)
 
   const enabled = createRealtimeTelemetry({
     NOVA_AUDIO_AGENT_REALTIME_TELEMETRY: '~/desktop-telemetry.jsonl',

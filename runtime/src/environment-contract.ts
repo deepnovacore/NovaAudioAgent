@@ -89,7 +89,7 @@ const rows: readonly Row[] = [
   ['NOVA_AUDIO_AGENT_MYCONTEXT_PROVIDER_URL', 'core', false, true, 'never', null, 'Optional loopback-only Nova-compatible read-only MyContext adapter base URL.', '可选的仅限本机回环、Nova 兼容的只读 MyContext adapter base URL。'],
   ['TAVILY_API_KEY', 'search', true, true, 'when_selected', null, 'Tavily search credential.', 'Tavily 搜索凭据。'],
   ['NOVA_AUDIO_AGENT_DESKTOP_VIDEO_FILE', 'camera', false, true, 'never', null, 'Absolute deterministic desktop video input.', '桌面确定性视频输入的绝对路径。'],
-  ['NOVA_AUDIO_AGENT_REALTIME_TELEMETRY', 'telemetry', false, true, 'never', null, 'Source-runtime telemetry output path.', '源码运行时遥测输出路径。'],
+  ['NOVA_AUDIO_AGENT_REALTIME_TELEMETRY', 'telemetry', false, true, 'never', '~/.nova-audio-agent/realtime-telemetry.jsonl', 'Source-runtime telemetry output path; set an empty value to disable.', '源码运行时遥测输出路径；设置为空值可禁用。'],
   ['NOVA_AUDIO_AGENT_REALTIME_TRACE', 'telemetry', false, true, 'never', '0', 'Enable source-runtime trace records.', '启用源码运行时跟踪记录。'],
   ['NOVA_ORB_OPAQUE', 'core', false, true, 'never', '0', 'Use an opaque desktop orb window.', '使用不透明桌面悬浮球窗口。'],
   ['NOVA_AUDIO_AGENT_DESKTOP_TOKEN', 'host_private', true, false, 'when_selected', null, 'Desktop transport handshake token.', '桌面传输握手令牌。'],

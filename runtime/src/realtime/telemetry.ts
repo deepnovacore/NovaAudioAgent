@@ -1,6 +1,6 @@
-import { closeSync, fchmodSync, openSync, writeSync } from 'node:fs'
+import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from 'node:fs'
 import {homedir} from 'node:os'
-import {join} from 'node:path'
+import {dirname, join} from 'node:path'
 import type { Clock } from '../clock.js'
 import { jsonValueSchema, type JsonValue } from '../events.js'
 
@@ -16,6 +16,7 @@ const MAX_DIAGNOSTIC_ARRAY_ITEMS = 16
 const MAX_DIAGNOSTIC_OBJECT_KEYS = 32
 const MAX_DIAGNOSTIC_DEPTH = 4
 const DIAGNOSTIC_BODY_KEY = /(?:^|_)(?:body|content|prompt|query|summary|text|transcript|work_order|arguments)(?:_|$)/iu
+const DEFAULT_REALTIME_TELEMETRY_PATH = '~/.nova-audio-agent/realtime-telemetry.jsonl'
 
 export interface RealtimeDiagnosticRecord {
   readonly ts: number
@@ -123,17 +124,23 @@ export class JsonlTelemetry implements RealtimeTelemetry, Disposable {
   }
 }
 
-/** Use the documented source-runtime path without creating telemetry by default. */
+/** Use the documented source-runtime path, with an explicit empty value as the opt-out. */
 export function createRealtimeTelemetry(
   environment: Readonly<Record<string, string | undefined>>,
   options: {readonly clock: Clock; readonly homeDirectory?: string},
 ): RealtimeTelemetry {
-  const configured = environment.NOVA_AUDIO_AGENT_REALTIME_TELEMETRY?.trim() ?? ''
-  if (configured === '') return new NullTelemetry({clock: options.clock})
+  const configuredValue = environment.NOVA_AUDIO_AGENT_REALTIME_TELEMETRY
+  const configured = configuredValue?.trim() ?? DEFAULT_REALTIME_TELEMETRY_PATH
+  if (configuredValue !== undefined && configured === '') {
+    return new NullTelemetry({clock: options.clock})
+  }
   const homeDirectory = options.homeDirectory ?? homedir()
   const path = configured === '~'
     ? homeDirectory
     : configured.startsWith('~/') ? join(homeDirectory, configured.slice(2)) : configured
+  if (configured === DEFAULT_REALTIME_TELEMETRY_PATH) {
+    mkdirSync(dirname(path), {recursive: true, mode: 0o700})
+  }
   return new JsonlTelemetry(path, {clock: options.clock})
 }
 
