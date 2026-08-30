@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {createLifecycleCoordinator} from '../src/main/lifecycle-coordinator.mjs'
-import {createWorkspaceActions} from '../src/main/workspace-actions.mjs'
+import * as workspaceActionModule from '../src/main/workspace-actions.mjs'
+
+const {createWorkspaceActions} = workspaceActionModule
 
 function fixture(overrides = {}) {
   const calls = []
@@ -53,6 +55,78 @@ test('open resolves the current managed path only inside the host callback', asy
   const {actions, calls} = fixture()
   assert.deepEqual(await actions.openCurrent(), {status: 'opened'})
   assert.deepEqual(calls, ['resolve_open', 'open:/managed/alpha'])
+})
+
+test('OS open errors remain an explicit open_failed result', async () => {
+  const value = fixture({dependencies: {
+    openPath: async path => {
+      value.calls.push(`open:${path}`)
+      return 'permission denied'
+    },
+  }})
+  assert.deepEqual(await value.actions.openCurrent(), {status: 'open_failed'})
+  assert.deepEqual(value.calls, ['resolve_open', 'open:/managed/alpha'])
+})
+
+test('public capabilities preserve maintenance health and independent current/all availability', () => {
+  assert.equal(typeof workspaceActionModule.publicManagedWorkspaceCapabilities, 'function')
+  const mapCapabilities = workspaceActionModule.publicManagedWorkspaceCapabilities
+  assert.deepEqual(mapCapabilities({
+    health: 'degraded',
+    lifecycleBusy: false,
+    current: {available: true, display_name: 'Alpha'},
+    all: {available: false, count: 0},
+  }), {
+    health: 'degraded',
+    current: {available: true, displayName: 'Alpha'},
+    all: {available: false, count: 0},
+  })
+  assert.deepEqual(mapCapabilities(), {
+    health: 'unavailable',
+    current: {available: false, displayName: null},
+    all: {available: false, count: 0},
+  })
+})
+
+test('rollback recovery keeps the supervisor stopped until an explicit retry observes clean health', async () => {
+  assert.equal(typeof workspaceActionModule.createManagedWorkspaceBackendRecovery, 'function')
+  const events = []
+  let current = {
+    health: 'rollback_pending',
+    current: {available: false, displayName: null},
+    all: {available: false, count: 0},
+  }
+  const refreshes = [current, {
+    health: 'ready',
+    current: {available: true, displayName: 'Alpha'},
+    all: {available: true, count: 1},
+  }]
+  const recovery = workspaceActionModule.createManagedWorkspaceBackendRecovery({
+    getCapabilities: () => current,
+    refreshCapabilities: async () => {
+      events.push('refresh')
+      return refreshes.shift() ?? current
+    },
+    startBackend: async () => { events.push('start') },
+    restartBackend: async () => { events.push('restart') },
+    retryBackend: async () => { events.push('retry') },
+  })
+
+  assert.deepEqual(await recovery.start(), {status: 'rollback_pending'})
+  assert.deepEqual(await recovery.restart(), {status: 'rollback_pending'})
+  assert.deepEqual(events, [])
+  assert.deepEqual(await recovery.retry(), {status: 'rollback_pending'})
+  assert.deepEqual(events, ['refresh'])
+  assert.deepEqual(await recovery.retry(), {status: 'retried'})
+  assert.deepEqual(events, ['refresh', 'refresh', 'retry'])
+  current = refreshes.at(-1) ?? {
+    health: 'ready',
+    current: {available: true, displayName: 'Alpha'},
+    all: {available: true, count: 1},
+  }
+  assert.deepEqual(await recovery.restart(), {status: 'restarted'})
+  assert.deepEqual(await recovery.start(), {status: 'started'})
+  assert.deepEqual(events, ['refresh', 'refresh', 'retry', 'restart', 'start'])
 })
 
 test('either confirmation cancellation consumes preparation without stopping', async () => {

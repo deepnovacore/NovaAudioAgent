@@ -1,7 +1,57 @@
 const CANCEL_RESPONSE = 1
+const MANAGED_WORKSPACE_HEALTH = new Set([
+  'ready',
+  'degraded',
+  'cleanup_pending',
+  'rollback_pending',
+  'unavailable',
+])
 
 function bounded(status) {
   return Object.freeze({status})
+}
+
+export function publicManagedWorkspaceCapabilities(capabilities) {
+  const health = MANAGED_WORKSPACE_HEALTH.has(capabilities?.health)
+    ? capabilities.health
+    : 'unavailable'
+  return Object.freeze({
+    health,
+    current: Object.freeze({
+      available: capabilities?.current?.available === true,
+      displayName: typeof capabilities?.current?.display_name === 'string'
+        ? capabilities.current.display_name
+        : null,
+    }),
+    all: Object.freeze({
+      available: capabilities?.all?.available === true,
+      count: Number.isSafeInteger(capabilities?.all?.count) && capabilities.all.count >= 0
+        ? capabilities.all.count
+        : 0,
+    }),
+  })
+}
+
+export function createManagedWorkspaceBackendRecovery({
+  getCapabilities,
+  refreshCapabilities,
+  startBackend,
+  restartBackend,
+  retryBackend,
+}) {
+  const activate = async (action, status, capabilities = getCapabilities()) => {
+    if (capabilities?.health === 'rollback_pending') return bounded('rollback_pending')
+    await action()
+    return bounded(status)
+  }
+  return Object.freeze({
+    start: () => activate(startBackend, 'started'),
+    restart: () => activate(restartBackend, 'restarted'),
+    retry: async () => {
+      const capabilities = await refreshCapabilities()
+      return activate(retryBackend, 'retried', capabilities)
+    },
+  })
 }
 
 function firstDialog(preview) {
@@ -48,13 +98,18 @@ export function createWorkspaceActions({
   async function openCurrent() {
     const maintenance = getMaintenance()
     if (maintenance === null || maintenance === undefined) return bounded('not_managed')
+    let openFailed = false
     try {
-      return await maintenance.withCurrentManagedPath(async path => {
+      const result = await maintenance.withCurrentManagedPath(async path => {
         const error = await openPath(path)
-        if (typeof error === 'string' && error !== '') throw new Error('workspace open failed')
+        if (typeof error === 'string' && error !== '') {
+          openFailed = true
+          throw new Error('workspace open failed')
+        }
       })
+      return openFailed ? bounded('open_failed') : result
     } catch {
-      return bounded('not_managed')
+      return bounded(openFailed ? 'open_failed' : 'unavailable')
     }
   }
 

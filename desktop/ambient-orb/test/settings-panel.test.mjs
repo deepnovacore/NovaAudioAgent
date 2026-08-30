@@ -199,6 +199,33 @@ test('accepted leaves clear independently while rejected nested leaves stay dirt
   })
 })
 
+test('a dotted public leaf cannot retain an accepted draft through a nested rejection collision', async () => {
+  const controller = createSettingsController({
+    api: {set: async () => publicView({
+      'profile.name': 'accepted-top-level',
+      profile: {name: 'old-nested'},
+    })},
+    render: () => {},
+    status: () => {},
+  })
+  controller.setView(publicView({
+    'profile.name': 'old-top-level',
+    profile: {name: 'old-nested'},
+  }))
+  controller.stage({
+    'profile.name': 'accepted-top-level',
+    profile: {name: 'rejected-nested'},
+  })
+
+  const result = await controller.save()
+
+  assert.equal(result.saved, false)
+  assert.deepEqual(result.rejectedPublicFields, ['profile.name'])
+  assert.deepEqual(controller.snapshot().drafts, {
+    profile: {name: 'rejected-nested'},
+  })
+})
+
 test('a second save is busy and cannot create another bridge call', async () => {
   const response = deferred()
   const calls = []
@@ -501,7 +528,7 @@ test('the panel omits the connection and microphone block while launch listening
   assert.doesNotMatch(html, /启动时自动开始监听/)
   assert.doesNotMatch(script, /document\.querySelector\('#backend-status'\)/)
   assert.doesNotMatch(script, /document\.querySelector\('#microphone-status'\)/)
-  assert.doesNotMatch(script, /api\.retryBackend\(\)/)
+  assert.match(script, /api\.retryBackend\(\)/)
   assert.doesNotMatch(script, /api\.retryMicrophone\(\)/)
   assert.doesNotMatch(script, /startListeningOnLaunch/)
 })
@@ -545,14 +572,24 @@ test('save and workspace buttons reflect dirtiness, lifecycle, and target eligib
     lifecycleBusy: false,
     currentManagedAvailable: true,
     allManagedAvailable: true,
-  }), {saveDisabled: false, workspaceDisabled: false, currentDisabled: false})
+  }), {
+    saveDisabled: false,
+    workspaceDisabled: false,
+    currentDisabled: false,
+    recoveryDisabled: true,
+  })
   assert.deepEqual(settingsButtonState({
     dirty: false,
     controllerBusy: false,
     lifecycleBusy: false,
     currentManagedAvailable: false,
     allManagedAvailable: true,
-  }), {saveDisabled: true, workspaceDisabled: false, currentDisabled: true})
+  }), {
+    saveDisabled: true,
+    workspaceDisabled: false,
+    currentDisabled: true,
+    recoveryDisabled: true,
+  })
   for (const busyField of ['controllerBusy', 'lifecycleBusy', 'workspaceBusy']) {
     assert.deepEqual(settingsButtonState({
       dirty: true,
@@ -562,7 +599,12 @@ test('save and workspace buttons reflect dirtiness, lifecycle, and target eligib
       currentManagedAvailable: true,
       allManagedAvailable: true,
       [busyField]: true,
-    }), {saveDisabled: true, workspaceDisabled: true, currentDisabled: true})
+    }), {
+      saveDisabled: true,
+      workspaceDisabled: true,
+      currentDisabled: true,
+      recoveryDisabled: true,
+    })
   }
   assert.deepEqual(settingsButtonState({
     dirty: false,
@@ -570,7 +612,25 @@ test('save and workspace buttons reflect dirtiness, lifecycle, and target eligib
     lifecycleBusy: false,
     currentManagedAvailable: false,
     allManagedAvailable: false,
-  }), {saveDisabled: true, workspaceDisabled: true, currentDisabled: true})
+  }), {
+    saveDisabled: true,
+    workspaceDisabled: true,
+    currentDisabled: true,
+    recoveryDisabled: true,
+  })
+  assert.deepEqual(settingsButtonState({
+    dirty: true,
+    controllerBusy: false,
+    lifecycleBusy: false,
+    managedHealth: 'rollback_pending',
+    currentManagedAvailable: true,
+    allManagedAvailable: true,
+  }), {
+    saveDisabled: false,
+    workspaceDisabled: true,
+    currentDisabled: true,
+    recoveryDisabled: false,
+  })
 })
 
 test('one save clears only accepted secrets whose input revision is unchanged', () => {
@@ -607,11 +667,13 @@ test('workspace controls expose only zero-argument managed actions', () => {
     'workspace-open-current',
     'workspace-clear-current',
     'workspace-clear-all',
+    'workspace-retry-recovery',
     'workspace-action-status',
   ]) assert.match(html, new RegExp(`id="${id}"`))
   assert.match(script, /api\.openCurrentManagedWorkspace\(\)/)
   assert.match(script, /api\.clearCurrentManagedWorkspace\(\)/)
   assert.match(script, /api\.clearAllManagedWorkspaces\(\)/)
+  assert.match(script, /api\.retryBackend\(\)/)
   assert.match(html, /<\/div>\n\s*<div class="workspace-actions">/)
   const statusText = script.slice(
     script.indexOf('const WORKSPACE_STATUS_TEXT'),

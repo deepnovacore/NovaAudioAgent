@@ -25,14 +25,17 @@ export function settingsButtonState({
   controllerBusy,
   lifecycleBusy,
   workspaceBusy = false,
+  managedHealth = 'ready',
   currentManagedAvailable,
   allManagedAvailable,
 }) {
   const busy = controllerBusy || lifecycleBusy || workspaceBusy
+  const maintenanceBlocked = managedHealth !== 'ready' && managedHealth !== 'degraded'
   return Object.freeze({
     saveDisabled: !dirty || busy,
-    workspaceDisabled: busy || allManagedAvailable !== true,
-    currentDisabled: busy || currentManagedAvailable !== true,
+    workspaceDisabled: busy || maintenanceBlocked || allManagedAvailable !== true,
+    currentDisabled: busy || maintenanceBlocked || currentManagedAvailable !== true,
+    recoveryDisabled: busy || managedHealth !== 'rollback_pending',
   })
 }
 
@@ -154,6 +157,10 @@ function setLeaf(target, path, value) {
   cursor[path.at(-1)] = publicValue(value)
 }
 
+function leafPathKey(path) {
+  return JSON.stringify(path)
+}
+
 function mainLiveViewPatch(value) {
   const safe = {}
   if (!isRecord(value)) return safe
@@ -195,12 +202,12 @@ export function createSettingsController({ api, render, status, notice = () => {
     }))
   }
 
-  function publicRejections(patch, remote, prefix = '') {
+  function publicRejectionPaths(patch, remote, prefix = []) {
     const rejected = []
     for (const [field, submitted] of Object.entries(publicPatch(patch))) {
-      const path = prefix === '' ? field : `${prefix}.${field}`
+      const path = [...prefix, field]
       const received = isRecord(remote) ? remote[field] : undefined
-      if (isRecord(submitted)) rejected.push(...publicRejections(submitted, received, path))
+      if (isRecord(submitted)) rejected.push(...publicRejectionPaths(submitted, received, path))
       else if (!Object.is(received, submitted)) rejected.push(path)
     }
     return rejected
@@ -218,7 +225,7 @@ export function createSettingsController({ api, render, status, notice = () => {
 
   function stage(patch) {
     for (const [path, value] of leafEntries(publicPatch(patch))) {
-      drafts.set(path.join('\0'), {path, value, revision: ++draftRevision})
+      drafts.set(leafPathKey(path), {path, value, revision: ++draftRevision})
     }
     renderCurrent()
   }
@@ -243,9 +250,10 @@ export function createSettingsController({ api, render, status, notice = () => {
         || remoteView?.settingsApplyStatus === 'failed'
         || remoteView?.settingsApplyStatus === 'restart_failed'
       const bridgeSaved = persisted && !failedPhase
-      const rejectedPublicFields = persisted
-        ? publicRejections(publicSubmitted, remoteView)
+      const rejectedPaths = persisted
+        ? publicRejectionPaths(publicSubmitted, remoteView)
         : []
+      const rejectedPublicFields = rejectedPaths.map(path => path.join('.'))
       if (persisted) {
         hasAuthoritativeView = true
         const liveMainState = mainSyncRevision === syncRevisionAtStart
@@ -254,12 +262,12 @@ export function createSettingsController({ api, render, status, notice = () => {
         confirmedView = mergePatch(liveMainState, remoteView)
       }
       if (bridgeSaved) {
-        const rejected = new Set(rejectedPublicFields)
+        const rejected = new Set(rejectedPaths.map(leafPathKey))
         for (const [key, submittedDraft] of submitted) {
           const current = drafts.get(key)
           if (
             current?.revision === submittedDraft.revision
-            && !rejected.has(submittedDraft.path.join('.'))
+            && !rejected.has(leafPathKey(submittedDraft.path))
           ) drafts.delete(key)
         }
       }

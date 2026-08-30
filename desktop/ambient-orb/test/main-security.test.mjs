@@ -177,7 +177,8 @@ test('Codex rescan is restricted to the settings window sender', async () => {
   const handler = rescan.slice(0, rescan.indexOf('\n  })'))
   assert.match(handler, /lifecycleCoordinator\.run\('codex_rescan'/)
   assert.match(handler, /sameBackendLaunchConfiguration\(previous, prepared\)/)
-  assert.match(handler, /if \(changed && backendSupervisor\) await backendSupervisor\.restart\(\)/)
+  assert.match(handler, /if \(changed && backendSupervisor\) await managedWorkspaceBackendRecovery\.restart\(\)/)
+  assert.match(handler, /discardDesktopConfiguration\(prepared\)/)
   assert.match(handler, /operationStatus: 'busy'/)
 })
 
@@ -197,12 +198,30 @@ test('managed workspace actions are zero-argument and bound to the live settings
   const view = source.slice(source.indexOf('function settingsView()'))
   const viewBody = view.slice(0, view.indexOf('\n}'))
   assert.match(viewBody, /managedWorkspaces:/)
-  assert.match(source, /function managedWorkspacesView\(\) \{[\s\S]*lifecycleBusy: lifecycleCoordinator\.busy/)
+  const managedView = source.slice(source.indexOf('function managedWorkspacesView()'))
+  const managedViewBody = managedView.slice(0, managedView.indexOf('\n}'))
+  assert.match(managedViewBody, /health:/)
+  assert.match(managedViewBody, /current:/)
+  assert.match(managedViewBody, /all:/)
+  assert.match(managedViewBody, /lifecycleBusy: lifecycleCoordinator\.busy/)
   assert.doesNotMatch(viewBody, /canonical_path|workspace_id|identity|tombstone/u)
   const reply = source.slice(source.indexOf('const workspaceActionReply = async action =>'))
   const replyBody = reply.slice(0, reply.indexOf('\n  }'))
   assert.match(replyBody, /managedWorkspaces: managedWorkspacesView\(\)/)
   assert.doesNotMatch(replyBody, /settingsView\(\).*\}/u)
+})
+
+test('rollback recovery gates startup, save restart, rescan, and explicit backend retry', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  assert.match(source, /createManagedWorkspaceBackendRecovery/)
+  assert.match(source, /void managedWorkspaceBackendRecovery\.start\(\)/)
+  const retry = source.slice(source.indexOf("ipcMain.handle('nova:backend:retry'"))
+  const retryHandler = retry.slice(0, retry.indexOf('\n  })'))
+  assert.match(retryHandler, /async \(event, \.\.\.args\) =>/)
+  assert.match(retryHandler, /event\.sender !== settingsWindow\.webContents \|\| args\.length !== 0/)
+  assert.match(retryHandler, /managedWorkspaceBackendRecovery\.retry\(\)/)
+  const settings = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
+  assert.match(settings.slice(0, settings.indexOf('\n  })')), /managedWorkspaceBackendRecovery\.restart\(\)/)
 })
 
 test('no decrypted secret can reach the renderer or a log line', async () => {
@@ -392,7 +411,8 @@ test('a saved configuration reports bounded transaction phases without falsifyin
 
   assert.match(source, /settingsApplyStatus/)
   assert.match(handler, /publishStatus: publishSettingsApplyStatus/)
-  assert.match(handler, /backendSupervisor\.status\(\)\.state !== 'connected'/)
+  assert.match(handler, /backendSupervisor\?\.status\(\)\.state !== 'connected'/)
+  assert.match(handler, /discardConfiguration: discardDesktopConfiguration/)
   for (const phase of ['saving', 'refreshing', 'restarting', 'applied', 'failed', 'restart_failed']) {
     assert.match(apply, new RegExp(`publishStatus\\('${phase}'\\)`))
   }

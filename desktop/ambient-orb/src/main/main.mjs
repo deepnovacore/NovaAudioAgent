@@ -79,7 +79,11 @@ import {
   applySettingsTransaction,
   sameBackendLaunchConfiguration,
 } from './settings-apply.mjs'
-import { createWorkspaceActions } from './workspace-actions.mjs'
+import {
+  createManagedWorkspaceBackendRecovery,
+  createWorkspaceActions,
+  publicManagedWorkspaceCapabilities,
+} from './workspace-actions.mjs'
 import {
   clampWindowPosition,
   createConfirmationWindowController,
@@ -143,10 +147,7 @@ let nativeAudio = null
 let nativeBinary = null
 let projectNativeHost
 let managedWorkspaceMaintenance = null
-let managedWorkspaceCapabilities = Object.freeze({
-  current: Object.freeze({available: false, displayName: null}),
-  count: 0,
-})
+let managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
 let quitDrain = null
 let releaseSmokeChannel = null
 // Settings and debug boards are main-owned IPC surfaces. Neither relays through
@@ -200,8 +201,9 @@ function settingsFile() {
 
 function managedWorkspacesView() {
   return Object.freeze({
+    health: managedWorkspaceCapabilities.health,
     current: managedWorkspaceCapabilities.current,
-    count: managedWorkspaceCapabilities.count,
+    all: managedWorkspaceCapabilities.all,
     lifecycleBusy: lifecycleCoordinator.busy,
   })
 }
@@ -483,6 +485,14 @@ async function commitDesktopConfiguration(prepared) {
   await refreshManagedWorkspaceCapabilities()
 }
 
+async function discardDesktopConfiguration(prepared) {
+  const maintenance = prepared?.maintenance
+  if (maintenance !== null && maintenance !== undefined
+    && maintenance !== managedWorkspaceMaintenance) {
+    await maintenance.close().catch(() => undefined)
+  }
+}
+
 async function refreshDesktopConfiguration() {
   const prepared = await prepareDesktopConfiguration()
   await commitDesktopConfiguration(prepared)
@@ -492,32 +502,37 @@ async function refreshDesktopConfiguration() {
 async function refreshManagedWorkspaceCapabilities() {
   const maintenance = managedWorkspaceMaintenance
   if (maintenance === null) {
-    managedWorkspaceCapabilities = Object.freeze({
-      current: Object.freeze({available: false, displayName: null}),
-      count: 0,
-    })
+    managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
     return managedWorkspaceCapabilities
   }
   try {
     const capabilities = await maintenance.capabilities()
     if (maintenance !== managedWorkspaceMaintenance) return managedWorkspaceCapabilities
-    managedWorkspaceCapabilities = Object.freeze({
-      current: Object.freeze({
-        available: capabilities.current.available,
-        displayName: capabilities.current.display_name,
-      }),
-      count: capabilities.all.count,
-    })
+    managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities(capabilities)
   } catch {
     if (maintenance === managedWorkspaceMaintenance) {
-      managedWorkspaceCapabilities = Object.freeze({
-        current: Object.freeze({available: false, displayName: null}),
-        count: 0,
-      })
+      managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
     }
   }
   return managedWorkspaceCapabilities
 }
+
+const managedWorkspaceBackendRecovery = createManagedWorkspaceBackendRecovery({
+  getCapabilities: () => managedWorkspaceCapabilities,
+  refreshCapabilities: refreshManagedWorkspaceCapabilities,
+  startBackend: async () => {
+    if (!backendSupervisor) throw new Error('backend supervisor unavailable')
+    await backendSupervisor.start()
+  },
+  restartBackend: async () => {
+    if (!backendSupervisor) throw new Error('backend supervisor unavailable')
+    await backendSupervisor.restart()
+  },
+  retryBackend: async () => {
+    if (!backendSupervisor) throw new Error('backend supervisor unavailable')
+    await backendSupervisor.retry()
+  },
+})
 
 const workspaceActions = createWorkspaceActions({
   coordinator: lifecycleCoordinator,
@@ -812,21 +827,29 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     }
     const coordinated = await lifecycleCoordinator.run('codex_rescan', async () => {
       const previous = Object.freeze({config: desktopConfig, codexStatus})
-      const prepared = await prepareDesktopConfiguration()
-      const changed = !sameBackendLaunchConfiguration(previous, prepared)
-      await commitDesktopConfiguration(prepared)
-      if (changed && backendSupervisor) await backendSupervisor.restart()
+      let prepared
+      let committed = false
+      let changed = false
+      try {
+        prepared = await prepareDesktopConfiguration()
+        changed = !sameBackendLaunchConfiguration(previous, prepared)
+        await commitDesktopConfiguration(prepared)
+        committed = true
+      } finally {
+        if (prepared !== undefined && !committed) await discardDesktopConfiguration(prepared)
+      }
+      if (changed && backendSupervisor) await managedWorkspaceBackendRecovery.restart()
       return settingsView()
     })
     return coordinated.status === 'busy'
       ? {...settingsView(), operationStatus: 'busy'}
       : coordinated.value
   })
-  ipcMain.handle('nova:backend:retry', async event => {
-    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+  ipcMain.handle('nova:backend:retry', async (event, ...args) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
       throw new Error('backend retry rejected')
     }
-    await backendSupervisor?.retry()
+    await managedWorkspaceBackendRecovery.retry()
     return settingsView()
   })
   ipcMain.handle('nova:microphone:retry', event => {
@@ -902,10 +925,11 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
         }
       },
       commitConfiguration: commitDesktopConfiguration,
+      discardConfiguration: discardDesktopConfiguration,
       restartBackend: async () => {
-        if (!backendSupervisor) throw new Error('backend supervisor unavailable')
-        await backendSupervisor.restart()
-        if (backendSupervisor.status().state !== 'connected') {
+        const recovery = await managedWorkspaceBackendRecovery.restart()
+        if (recovery.status !== 'restarted'
+          || backendSupervisor?.status().state !== 'connected') {
           throw new Error('backend restart unavailable')
         }
       },
@@ -1049,7 +1073,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       }
     },
   })
-  void backendSupervisor.start()
+  void managedWorkspaceBackendRecovery.start()
 }
 
 async function start() {

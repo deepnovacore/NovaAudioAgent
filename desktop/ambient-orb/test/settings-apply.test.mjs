@@ -27,6 +27,7 @@ function harness(overrides = {}) {
         return Object.freeze({config: 'prepared'})
       },
       commitConfiguration: () => calls.push('commit_configuration'),
+      discardConfiguration: () => calls.push('discard_configuration'),
       restartBackend: async () => calls.push('restart_backend'),
       publishStatus: status => statuses.push(status),
       ...overrides,
@@ -77,6 +78,37 @@ test('configuration failure retains the durable write without restarting', async
     rejectedSecrets: ['openaiApiKey'],
   })
   assert.deepEqual(calls, ['write', 'publish_committed', 'prepare_configuration'])
+  assert.deepEqual(statuses, ['saving', 'refreshing', 'failed'])
+})
+
+test('an abandoned prepared configuration explicitly discards its maintenance owner', async () => {
+  const maintenance = Object.freeze({
+    close: async () => { calls.push('maintenance_close') },
+  })
+  const prepared = Object.freeze({config: 'prepared', maintenance})
+  const {calls, statuses, options} = harness({
+    prepareConfiguration: async () => {
+      calls.push('prepare_configuration')
+      return prepared
+    },
+    commitConfiguration: async value => {
+      calls.push(`commit_configuration:${value === prepared}`)
+      throw new Error('commit rejected')
+    },
+    discardConfiguration: async value => {
+      calls.push(`discard_configuration:${value === prepared}`)
+      await value.maintenance.close()
+    },
+  })
+  assert.deepEqual(await applySettingsTransaction(options), {
+    saved: true,
+    operationStatus: 'failed',
+    rejectedSecrets: ['openaiApiKey'],
+  })
+  assert.deepEqual(calls, [
+    'write', 'publish_committed', 'prepare_configuration',
+    'commit_configuration:true', 'discard_configuration:true', 'maintenance_close',
+  ])
   assert.deepEqual(statuses, ['saving', 'refreshing', 'failed'])
 })
 

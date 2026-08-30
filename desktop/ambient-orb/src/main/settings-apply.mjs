@@ -34,6 +34,7 @@ export async function applySettingsTransaction({
   publishCommitted,
   prepareConfiguration,
   commitConfiguration,
+  discardConfiguration = async () => {},
   restartBackend,
   publishStatus,
 }) {
@@ -50,10 +51,15 @@ export async function applySettingsTransaction({
     const rejectedSecrets = rejectedSecretNames(written)
     publishCommitted(written)
     publishStatus('refreshing')
+    let prepared
+    let preparedOwned = false
     try {
-      const prepared = await prepareConfiguration()
+      prepared = await prepareConfiguration()
+      preparedOwned = true
       await commitConfiguration(prepared)
+      preparedOwned = false
     } catch {
+      if (preparedOwned) await discardConfiguration(prepared).catch(() => undefined)
       publishStatus('failed')
       return result(true, 'failed', rejectedSecrets)
     }

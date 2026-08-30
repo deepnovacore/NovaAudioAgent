@@ -29,6 +29,7 @@ const SECRET_LABELS = {
 }
 const WORKSPACE_STATUS_TEXT = Object.freeze({
   opened: '已打开当前托管 workspace',
+  open_failed: '系统未能打开当前托管 workspace',
   cleared: '已清空托管 workspace',
   cancelled: '已取消',
   not_managed: '当前 workspace 不是 Nova 托管目录',
@@ -39,6 +40,9 @@ const WORKSPACE_STATUS_TEXT = Object.freeze({
   restart_failed: 'workspace 已处理，但后台恢复失败，请重试连接',
   clear_and_restart_failed: 'workspace 清理未完整完成，后台恢复也失败；请重启后重试清理',
   rollback_pending: 'workspace 原内容尚未安全恢复，后台保持停止；请先处理回滚',
+  cleanup_pending: 'workspace 清理仍在进行，请稍后重试',
+  unavailable: 'workspace 维护状态暂时不可用',
+  recovered: 'workspace 恢复完成，后台已开始重新连接',
 })
 
 const secretRevisions = createSecretRevisions(SECRET_KEYS)
@@ -54,6 +58,7 @@ const settingsSave = document.querySelector('#settings-save')
 const workspaceOpenCurrent = document.querySelector('#workspace-open-current')
 const workspaceClearCurrent = document.querySelector('#workspace-clear-current')
 const workspaceClearAll = document.querySelector('#workspace-clear-all')
+const workspaceRetryRecovery = document.querySelector('#workspace-retry-recovery')
 const workspaceActionStatus = document.querySelector('#workspace-action-status')
 const paletteInputs = [...document.querySelectorAll('input[name="palette"]')]
 const proactivityInputs = [...document.querySelectorAll('input[name="proactivity"]')]
@@ -154,13 +159,15 @@ function updateButtons() {
     controllerBusy: controllerState.busy,
     lifecycleBusy: currentView?.managedWorkspaces?.lifecycleBusy === true,
     workspaceBusy,
+    managedHealth: currentView?.managedWorkspaces?.health,
     currentManagedAvailable: currentView?.managedWorkspaces?.current?.available === true,
-    allManagedAvailable: (currentView?.managedWorkspaces?.count ?? 0) > 0,
+    allManagedAvailable: currentView?.managedWorkspaces?.all?.available === true,
   })
   settingsSave.disabled = state.saveDisabled
   workspaceOpenCurrent.disabled = state.currentDisabled
   workspaceClearCurrent.disabled = state.currentDisabled
   workspaceClearAll.disabled = state.workspaceDisabled
+  workspaceRetryRecovery.disabled = state.recoveryDisabled
 }
 
 function render(view, _drafts, state) {
@@ -198,6 +205,11 @@ function render(view, _drafts, state) {
   renderBadges(view.secretsPresent)
   renderKeyUsage(view)
   warning.hidden = view.keyringAvailable !== false
+  const rollbackPending = view.managedWorkspaces?.health === 'rollback_pending'
+  workspaceRetryRecovery.hidden = !rollbackPending
+  if (rollbackPending && !workspaceBusy) {
+    workspaceActionStatus.textContent = WORKSPACE_STATUS_TEXT.rollback_pending
+  }
   updateButtons()
 }
 
@@ -359,6 +371,17 @@ workspaceClearCurrent.addEventListener('click', () => {
 })
 workspaceClearAll.addEventListener('click', () => {
   void runWorkspaceAction(() => api.clearAllManagedWorkspaces())
+})
+workspaceRetryRecovery.addEventListener('click', () => {
+  void runWorkspaceAction(async () => {
+    const view = await api.retryBackend()
+    return {
+      status: view?.managedWorkspaces?.health === 'rollback_pending'
+        ? 'rollback_pending'
+        : 'recovered',
+      view,
+    }
+  })
 })
 
 void (async () => {
