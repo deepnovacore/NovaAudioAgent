@@ -62,7 +62,7 @@
     "surrogate": [
       {
         "delay": 0,
-        "output": {"speak": true, "suggestion_id": "s-1", "reason": "useful progress"}
+        "output": {"speak": true, "suggestion_id": "s-1", "progress_class": "milestone", "reason": "useful progress"}
       }
     ],
     "compressor": []

@@ -182,6 +182,48 @@ class NeverCalledGateway implements ModelGateway {
   }
 }
 
+class SequencedSurrogateGateway implements ModelGateway {
+  readonly completed: CompleteRequest[] = []
+
+  constructor(private readonly answers: string[]) {}
+
+  async *stream(request: StreamRequest): AsyncIterable<GatewayDelta> {
+    void request
+    await Promise.resolve()
+    throw new Error('streaming model call was not expected')
+  }
+
+  complete(request: CompleteRequest): Promise<GatewayCompletion> {
+    this.completed.push(structuredClone(request))
+    const text = this.answers.shift()
+    if (text === undefined) return Promise.reject(new Error('surrogate answer script exhausted'))
+    return Promise.resolve({text})
+  }
+}
+
+class ControlledProgressAdapter implements ExecutorAdapter {
+  readonly manifest = CODEX_LIVE_MANIFEST
+  context: ExecutorDispatchContext | null = null
+
+  dispatch(
+    op: string,
+    request: Readonly<Record<string, JsonValue>>,
+    context: ExecutorDispatchContext,
+  ): Promise<ExecutorHandoff> {
+    void op
+    void request
+    this.context = context
+    return new Promise(resolve => {
+      context.signal.addEventListener('abort', () => resolve({
+        outcome: 'unknown',
+        trust: 'trusted_system',
+        content: {error: 'stopped'},
+        refs: [],
+      }), {once: true})
+    })
+  }
+}
+
 class NeverCalledSearch implements SearchTransport {
   search(query: string, options: {readonly maxResults: number}): Promise<Record<string, unknown>> {
     void query
@@ -281,6 +323,28 @@ class AbortAwareProvider implements RealtimeProvider {
     this.closeCalls += 1
     this.actions.push('provider:close')
     await (this.closeSteps.shift()?.() ?? Promise.resolve())
+  }
+}
+
+class RecordingProgressProvider extends AbortAwareProvider {
+  readonly injected: HostContextItem[] = []
+  readonly responses: HostResponseIntent[] = []
+
+  override injectHostItem(
+    item: HostContextItem,
+    options: {
+      readonly confirmationTimeout: number | null
+      readonly asUserActivation: boolean
+      readonly signal: AbortSignal
+    },
+  ): Promise<unknown> {
+    this.injected.push(structuredClone(item))
+    return super.injectHostItem(item, options)
+  }
+
+  override createResponse(intent: HostResponseIntent, signal: AbortSignal): Promise<void> {
+    this.responses.push(structuredClone(intent))
+    return super.createResponse(intent, signal)
   }
 }
 
@@ -429,6 +493,145 @@ test('factory exposes one ordered object graph with shared tools, ids, and provi
   const unbindSuggestion = core.runtime.bindSuggestionSelected(() => undefined)
   unbindSuggestion()
 })
+
+test('routine cumulative progress is suppressed end to end while a later milestone is delivered once',
+  async () => {
+    const clock = new VirtualClock(0)
+    const adapter = new ControlledProgressAdapter()
+    const gateway = new SequencedSurrogateGateway([
+      '{"speak":false,"suggestion_id":null,"progress_class":"milestone","reason":"baseline"}',
+      '{"speak":false,"suggestion_id":null,"progress_class":"routine_delta","reason":"only file count changed"}',
+      '{"speak":true,"suggestion_id":"s-3","progress_class":"routine_delta","reason":"eager file count update"}',
+      '{"speak":true,"suggestion_id":"s-4","progress_class":"milestone","reason":"targeted tests passed"}',
+    ])
+    const telemetry: {readonly kind: string; readonly payload: unknown}[] = []
+    const core = buildAssembly({
+      settings: settingsSchema.parse({
+        executors: ['codex'],
+        proactivity_preset: 'eager',
+      }),
+      clock,
+      gateway,
+      executors: [adapter],
+      realtimeFrontbrain: true,
+      searchTransport: new NeverCalledSearch(),
+      frameSource: new RecordingFrameSource(),
+      telemetry: {
+        record: (kind, payload) => telemetry.push({kind, payload}),
+        close: () => undefined,
+      },
+    })
+    const provider = new RecordingProgressProvider()
+    const realtime = buildRealtimeAssembly({
+      core,
+      provider,
+      idFactory: (() => {
+        let sequence = 0
+        return () => `progress-e2e-${++sequence}`
+      })(),
+      onDiagnostic: () => undefined,
+    })
+
+    await settleNamed('progress e2e start', realtime.start())
+    try {
+      const origin = realtime.runtime.core.memory.append('conversation', {
+        ts: 0,
+        trust: 'trusted_user',
+        priority: 100,
+        content: {text: '请修复进度播报'},
+      })
+      const admission = realtime.runtime.dispatchExternal({
+        executor: 'codex',
+        op: 'run',
+        request: {work_order: '修复进度播报'},
+        origin_ref: `${origin.channel}:${origin.seq}`,
+      }, {
+        kind: 'realtime_tool',
+        priority: 100,
+        routing_class: 'ambient',
+        origin: null,
+        selected_suggestion: null,
+      })
+      assert.equal(admission.accepted, true)
+      await waitNamed('progress adapter dispatch', () => adapter.context !== null)
+
+      adapter.context!.progress({
+        phase: 'working', internal_activity: 2, elapsed: 1,
+        summary: '已完成根因定位，修改了 2 个文件',
+      })
+      await waitNamed('first surrogate verdict', () => gateway.completed.length === 1)
+      await waitNamed('first progress settled', () => (
+        realtime.runtime.suggestionFor('s-1')?.status === 'withdrawn'
+      ))
+
+      adapter.context!.progress({
+        phase: 'working', internal_activity: 3, elapsed: 2,
+        summary: '已完成根因定位，修改了 3 个文件',
+      })
+      await waitNamed('routine surrogate verdict', () => gateway.completed.length === 2)
+      await waitNamed('routine progress settled', () => (
+        realtime.runtime.suggestionFor('s-2')?.status === 'withdrawn'
+      ))
+      assert.equal(provider.injected.length, 0)
+      assert.match(gateway.completed[1]?.prompt ?? '', /previous_summary.*修改了 2 个文件/su)
+
+      adapter.context!.progress({
+        phase: 'working', internal_activity: 4, elapsed: 3,
+        summary: '已完成根因定位，修改了 4 个文件',
+      })
+      await waitNamed('eager routine surrogate verdict', () => gateway.completed.length === 3)
+      await waitNamed('eager routine progress settled', () => (
+        realtime.runtime.suggestionFor('s-3')?.status === 'withdrawn'
+      ))
+      assert.equal(provider.injected.length, 0)
+      assert.deepEqual(core.runtime.core.diagnostics.filter(item => (
+        item.code === 'invalid_surrogate_progress_decision'
+      )), [{code: 'invalid_surrogate_progress_decision'}])
+      assert.equal(core.runtime.core.diagnostics.some(item => (
+        item.code === 'invalid_surrogate_output'
+      )), false)
+
+      adapter.context!.progress({
+        phase: 'working', internal_activity: 5, elapsed: 4,
+        summary: '定向测试全部通过，确认进度播报修复有效',
+      })
+      await waitNamed('milestone surrogate verdict', () => gateway.completed.length === 4)
+      await waitNamed('milestone host fact', () => provider.injected.length === 1)
+      await waitNamed('milestone response', () => provider.responses.length === 1)
+
+      assert.deepEqual(provider.injected.map(item => ({
+        kind: item.kind,
+        event_id: item.event_id,
+        content: item.content,
+      })), [{
+        kind: 'progress',
+        event_id: 'suggestion:s-4',
+        content: '定向测试全部通过，确认进度播报修复有效',
+      }])
+      assert.equal(realtime.runtime.suggestionFor('s-4')?.delivery_policy, 'once')
+      const verdicts = telemetry.filter(entry => entry.kind === 'surrogate.verdict')
+      assert.deepEqual(verdicts.map(entry => entry.payload), [
+        {
+          disposition: 'silent', offered_count: 1, preset: 'eager',
+          progress_class: 'milestone', suppressed: false, trigger_kind: 'progress',
+        },
+        {
+          disposition: 'silent', offered_count: 1, preset: 'eager',
+          progress_class: 'routine_delta', suppressed: false, trigger_kind: 'progress',
+        },
+        {
+          disposition: 'selected', offered_count: 1, preset: 'eager',
+          progress_class: 'routine_delta', suppressed: true, trigger_kind: 'progress',
+        },
+        {
+          disposition: 'selected', offered_count: 1, preset: 'eager',
+          progress_class: 'milestone', suppressed: false, trigger_kind: 'progress',
+        },
+      ])
+    } finally {
+      await settleNamed('progress e2e stop', realtime.stop())
+    }
+  })
 
 test('provider tool view narrows schemas without copying host authority', async () => {
   // Mutations caught: defaulting to an empty view, passing full schemas after narrowing, accepting a

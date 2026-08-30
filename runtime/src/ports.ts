@@ -73,9 +73,17 @@ export const fastBrainOutputSchema = z.object({
   extra_actions: z.number().int().nonnegative().default(0),
 }).strict()
 
+export const progressClassSchema = z.enum([
+  'routine_delta',
+  'milestone',
+  'blocker',
+  'action_required',
+]).nullable()
+
 export const surrogateOutputSchema = z.object({
   speak: z.boolean(),
   suggestion_id: z.string().nullable().default(null),
+  progress_class: progressClassSchema.default(null),
   reason: z.string().default(''),
 }).strict()
 

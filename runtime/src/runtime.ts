@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto'
 import { canonicalJson, compareCodePoints } from './canonical-json.js'
 import type { Diagnostic, ExecutorEffect, FloorDecisionRecord } from './effects.js'
 import {
@@ -76,6 +77,11 @@ interface ProgressTrigger {
 interface AppliedProgress {
   readonly delegate: Delegate
   readonly surrogateCandidateCreated: boolean
+}
+
+interface AppliedObservation {
+  readonly delegate: Delegate
+  readonly shouldWake: boolean
 }
 
 interface ModelJob {
@@ -429,7 +435,6 @@ export class CoreRuntime {
           priority: USER_PRIORITY,
           content,
         })
-        this.suggestions.rearmFrom(CONVERSATION_CHANNEL, event.ts)
         target = {
           slot: 'fast',
           reason: wakeReasonSchema.parse({
@@ -478,9 +483,9 @@ export class CoreRuntime {
         break
       }
       case 'observation': {
-        const delegate = this.#applyObservation(event)
-        if (delegate !== undefined && event.payload.content.hit === true) {
-          target = this.#resultTarget(delegate, event.kind)
+        const applied = this.#applyObservation(event)
+        if (applied?.shouldWake === true) {
+          target = this.#resultTarget(applied.delegate, event.kind)
         }
         break
       }
@@ -826,7 +831,7 @@ export class CoreRuntime {
       this.#terminationOutcome.set(delegate.delegate_id, event.payload.outcome)
     }
     if (delegate !== undefined) {
-      this.#latestObservationSuggestion.delete(delegate.delegate_id)
+      this.#clearObservationCondition(delegate.delegate_id)
       this.#withdrawProgressSuggestion(delegate.delegate_id)
       this.#latestProgressSummary.delete(delegate.delegate_id)
     }
@@ -860,7 +865,6 @@ export class CoreRuntime {
         salience: policy.priority,
       })
     }
-    if (!explicitMiss) this.suggestions.rearmFrom(event.payload.channel, event.ts)
     if (
       claimed !== undefined
       && !this.#retainRoutingHistory
@@ -885,7 +889,7 @@ export class CoreRuntime {
       key,
       sensitive.has(key) ? '[REDACTED]' : value,
     ]))
-    this.#latestObservationSuggestion.delete(delegate.delegate_id)
+    this.#clearObservationCondition(delegate.delegate_id)
     this.#withdrawProgressSuggestion(delegate.delegate_id)
     this.#latestProgressSummary.delete(delegate.delegate_id)
     this.#appendMemory(delegate.executor, {
@@ -924,7 +928,6 @@ export class CoreRuntime {
       content,
       refs: [delegate.origin_ref],
     })
-    this.suggestions.rearmFrom(delegate.executor, event.ts)
     // The summary comparison is Node-only: `Runtime._apply_progress` in the oracle builds a
     // candidate for every working summary and `_wake_progress` wakes on every one of them. A
     // Codex heartbeat repeats an unchanged summary for as long as a stage runs, and each repeat
@@ -932,21 +935,26 @@ export class CoreRuntime {
     // summary, so the oracle-generated expectations still agree; the first one that does will
     // diverge here rather than in the fixture.
     let surrogateCandidateCreated = false
+    const previousSummary = this.#latestProgressSummary.get(delegate.delegate_id)
     if (
       policy.progress_via_surrogate
       && event.payload.phase === 'working'
       && event.payload.summary !== null
-      && this.#latestProgressSummary.get(delegate.delegate_id) !== event.payload.summary
+      && previousSummary !== event.payload.summary
     ) {
       this.#latestProgressSummary.set(delegate.delegate_id, event.payload.summary)
       this.#withdrawProgressSuggestion(delegate.delegate_id)
       const suggestion = this.suggestions.add({
         origin: 'executor',
         kind: 'notify',
-        content: {summary: event.payload.summary},
+        content: {
+          summary: event.payload.summary,
+          previous_summary: previousSummary ?? null,
+        },
         evidence_refs: [memoryItemRef(appended)],
         salience: policy.priority,
         expires_at: event.ts + DEFAULT_COOLDOWN,
+        delivery_policy: 'once',
       })
       this.#latestProgressSuggestion.set(delegate.delegate_id, suggestion.id)
       surrogateCandidateCreated = true
@@ -954,7 +962,7 @@ export class CoreRuntime {
     return {delegate, surrogateCandidateCreated}
   }
 
-  #applyObservation(event: Extract<EventRecord, {kind: 'observation'}>): Delegate | undefined {
+  #applyObservation(event: Extract<EventRecord, {kind: 'observation'}>): AppliedObservation | undefined {
     const delegate = this.#inFlight.get(event.payload.delegate_id)
     if (
       delegate?.executor !== event.payload.channel
@@ -973,23 +981,61 @@ export class CoreRuntime {
         ...event.payload.refs.filter(reference => reference !== delegate.origin_ref),
       ],
     })
-    if (
-      event.payload.content.hit === true
-      && policy.suggest
-      && delegate.routing_class === 'ambient'
-    ) {
+    const resetObserved = event.payload.content.hit === false || (
+      event.payload.content.state === 'armed'
+      && event.payload.content.reset_count === 0
+    )
+    if (resetObserved) this.#clearObservationCondition(delegate.delegate_id)
+    if (event.payload.content.hit === true && policy.suggest && delegate.routing_class === 'ambient') {
       const previous = this.#latestObservationSuggestion.get(delegate.delegate_id)
-      if (previous !== undefined) this.suggestions.withdraw(previous)
+      if (previous !== undefined) {
+        const current = this.suggestions.get(previous)
+        if (current?.delivery_policy === 'while_condition_true' && current.condition_key !== null) {
+          const refreshed = this.suggestions.refreshCondition({
+            condition_key: current.condition_key,
+            now: event.ts,
+            evidence_ref: memoryItemRef(appended),
+            content: event.payload.content,
+          })
+          if (refreshed) return {delegate, shouldWake: true}
+          if (current.status === 'pending' || current.status === 'fired') {
+            return {delegate, shouldWake: false}
+          }
+        }
+        this.suggestions.withdraw(previous)
+        this.#latestObservationSuggestion.delete(delegate.delegate_id)
+      }
+      const condition = event.payload.content.condition
+      const repeatable = typeof condition === 'string' && condition !== ''
       const suggestion = this.suggestions.add({
         origin: 'executor',
         kind: 'notify',
         content: event.payload.content,
         evidence_refs: [memoryItemRef(appended)],
         salience: policy.priority,
+        ...(repeatable ? {
+          delivery_policy: 'while_condition_true' as const,
+          // Delegate identity is host-owned and binds every observation to one monitor condition.
+          // Hashing keeps an arbitrary IdFactory value within the public condition-key bound.
+          condition_key: `delegate:${createHash('sha256').update(delegate.delegate_id).digest('hex')}`,
+        } : {}),
       })
       this.#latestObservationSuggestion.set(delegate.delegate_id, suggestion.id)
+      return {delegate, shouldWake: true}
     }
-    return delegate
+    return {delegate, shouldWake: event.payload.content.hit === true}
+  }
+
+  #clearObservationCondition(delegateId: string): void {
+    const suggestionId = this.#latestObservationSuggestion.get(delegateId)
+    if (suggestionId === undefined) return
+    const suggestion = this.suggestions.get(suggestionId)
+    if (suggestion?.delivery_policy === 'while_condition_true' && suggestion.condition_key !== null) {
+      this.suggestions.clearCondition(suggestion.condition_key)
+    } else {
+      this.suggestions.withdraw(suggestionId)
+    }
+    this.#latestObservationSuggestion.delete(delegateId)
   }
 
   #resultTarget(delegate: Delegate, kind: string, channel = delegate.executor): WakeTarget | null {
@@ -1179,6 +1225,14 @@ export class CoreRuntime {
     const parsed = surrogateOutputSchema.safeParse(output)
     if (!parsed.success) {
       this.diagnostics.push({code: 'invalid_surrogate_output'})
+      this.#settleProgressTrigger(job.progressTrigger, null)
+      return
+    }
+    if (job.progressTrigger !== null && (
+      parsed.data.progress_class === null
+      || (parsed.data.speak && parsed.data.progress_class === 'routine_delta')
+    )) {
+      this.diagnostics.push({code: 'invalid_surrogate_progress_decision'})
       this.#settleProgressTrigger(job.progressTrigger, null)
       return
     }

@@ -209,15 +209,17 @@ test('FastBrain forwards text immediately and decodes tool calls after the strea
 
 test('the Surrogate rejects output that is not contract-shaped', async () => {
   const good = new GatewaySurrogate({
-    gateway: new ScriptedGateway([], '{"speak":true,"suggestion_id":"s-1","reason":"因为"}'),
+    gateway: new ScriptedGateway([], '{"speak":true,"suggestion_id":"s-1","progress_class":"milestone","reason":"因为"}'),
     model: 'm',
     proactivityPreset: 'balanced',
   })
   assert.deepEqual(await good.watch(emptyView),
-    {speak: true, suggestion_id: 's-1', reason: '因为'})
+    {speak: true, suggestion_id: 's-1', progress_class: 'milestone', reason: '因为'})
 
   for (const text of ['not json', '{}', '{"speak":"yes","suggestion_id":null,"reason":"r"}',
-    '{"speak":true,"suggestion_id":7,"reason":"r"}', '{"speak":true,"suggestion_id":null}']) {
+    '{"speak":true,"suggestion_id":7,"progress_class":"milestone","reason":"r"}',
+    '{"speak":true,"suggestion_id":null,"progress_class":null}',
+    '{"speak":true,"suggestion_id":"s-1","reason":"missing classification"}']) {
     const bad = new GatewaySurrogate({
       gateway: new ScriptedGateway([], text),
       model: 'm',
@@ -227,12 +229,30 @@ test('the Surrogate rejects output that is not contract-shaped', async () => {
   }
 })
 
+test('the Surrogate preserves a routine speech request for host policy arbitration', async () => {
+  const surrogate = new GatewaySurrogate({
+    gateway: new ScriptedGateway(
+      [],
+      '{"speak":true,"suggestion_id":"s-1","progress_class":"routine_delta","reason":"file count changed"}',
+    ),
+    model: 'm',
+    proactivityPreset: 'eager',
+  })
+
+  assert.deepEqual(await surrogate.watch(emptyView), {
+    speak: true,
+    suggestion_id: 's-1',
+    progress_class: 'routine_delta',
+    reason: 'file count changed',
+  })
+})
+
 test('the Surrogate receives the selected proactivity policy at its model boundary', async () => {
   const systems = new Map<string, string>()
   for (const preset of ['conservative', 'balanced', 'eager'] as const) {
     const gateway = new ScriptedGateway(
       [],
-      '{"speak":false,"suggestion_id":null,"reason":"routine"}',
+      '{"speak":false,"suggestion_id":null,"progress_class":null,"reason":"routine"}',
     )
     const surrogate = new GatewaySurrogate({gateway, model: 'm', proactivityPreset: preset})
 
@@ -245,9 +265,10 @@ test('the Surrogate receives the selected proactivity policy at its model bounda
   }
 
   assert.equal(new Set(systems.values()).size, 3)
-  assert.match(systems.get('conservative') ?? '', /只在需要用户行动或决定、风险、阻塞/u)
-  assert.match(systems.get('balanced') ?? '', /有意义的阶段变化/u)
-  assert.match(systems.get('eager') ?? '', /主动播报有意义的新进展/u)
+  assert.match(systems.get('conservative') ?? '', /action_required.*blocker.*验证证据.*milestone/u)
+  assert.match(systems.get('balanced') ?? '', /改变用户对任务状态理解的 milestone/u)
+  assert.match(systems.get('eager') ?? '', /milestone/u)
+  assert.doesNotMatch(systems.get('eager') ?? '', /开始或完成验证/u)
 
   for (const system of systems.values()) {
     const policy = /<proactivity_policy[^>]*>([\s\S]*?)<\/proactivity_policy>/u.exec(system)?.[1]

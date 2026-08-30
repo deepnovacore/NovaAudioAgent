@@ -52,7 +52,7 @@
     "surrogate": [
       {
         "delay": 0,
-        "output": {"speak": true, "suggestion_id": "s-999", "reason": "invented"}
+        "output": {"speak": true, "suggestion_id": "s-999", "progress_class": "milestone", "reason": "invented"}
       }
     ],
     "compressor": []

@@ -277,6 +277,10 @@ export function buildAssembly(options: AssemblyOptions): Assembly {
             disposition: classifySurrogateVerdict(record),
             offered_count: record.offered.length,
             preset: settings.proactivity_preset,
+            progress_class: record.output.progress_class,
+            suppressed: call.reason.kind === 'progress'
+              && record.output.speak
+              && record.output.progress_class === 'routine_delta',
             trigger_kind: call.reason.kind,
           })
         } catch { /* telemetry cannot change arbitration */ }

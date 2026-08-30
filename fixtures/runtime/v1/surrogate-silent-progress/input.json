@@ -52,7 +52,7 @@
     "surrogate": [
       {
         "delay": 0,
-        "output": {"speak": false, "suggestion_id": null, "reason": "not useful"}
+        "output": {"speak": false, "suggestion_id": null, "progress_class": "routine_delta", "reason": "not useful"}
       }
     ],
     "compressor": []

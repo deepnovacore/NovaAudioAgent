@@ -429,10 +429,10 @@ test('assembly gates local Guard before armed and emits bounded camera admission
   }])
 })
 
-test('assembly emits bounded Surrogate verdict attribution without model reason text', async () => {
+test('assembly telemetry does not call a non-progress class a host suppression', async () => {
   const telemetry: {readonly kind: string; readonly payload: unknown}[] = []
   const gateway = new ScriptedGateway([], {
-    'qwen-flash': '{"speak":false,"suggestion_id":null,"reason":"private summary echo"}',
+    'qwen-flash': '{"speak":true,"suggestion_id":null,"progress_class":"routine_delta","reason":"private summary echo"}',
   })
   const assembly = buildAssembly({
     settings: settings({proactivity_preset: 'eager'}),
@@ -467,9 +467,11 @@ test('assembly emits bounded Surrogate verdict attribution without model reason 
   assert.deepEqual(telemetry, [{
     kind: 'surrogate.verdict',
     payload: {
-      disposition: 'silent',
+      disposition: 'missing_selection',
       offered_count: 0,
       preset: 'eager',
+      progress_class: 'routine_delta',
+      suppressed: false,
       trigger_kind: 'handoff',
     },
   }])

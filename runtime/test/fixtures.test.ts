@@ -175,7 +175,7 @@ test('a same-time user stimulus is sequenced before an older model completion', 
   assert.equal(actual.executor_effects.length, 0)
 })
 
-test('fixture proactivity preset controls suggestion cooldown', async () => {
+test('progress fixtures keep one-shot delivery under eager proactivity', async () => {
   const fixture = await loadRuntimeFixture(progressFixtureRoot)
   const eagerInput = fixtureInputSchema.parse({
     ...fixture.input,
@@ -184,7 +184,8 @@ test('fixture proactivity preset controls suggestion cooldown', async () => {
   const actual = runRuntimeFixture({...fixture, input: eagerInput}, [slowManifest])
 
   assert.equal(actual.suggestions[0]?.status, 'fired')
-  assert.equal(actual.suggestions[0]?.cooldown_until, 31)
+  assert.equal(actual.suggestions[0]?.delivery_policy, 'once')
+  assert.equal(actual.suggestions[0]?.condition_key, null)
 })
 
 test('deadline evidence redacts sensitive request fields from durable outputs', async () => {

@@ -1856,6 +1856,27 @@
               "salience": {
                 "type": "number"
               },
+              "delivery_policy": {
+                "default": "once",
+                "type": "string",
+                "enum": [
+                  "once",
+                  "while_condition_true"
+                ]
+              },
+              "condition_key": {
+                "default": null,
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "cooldown_until": {
                 "type": "number"
               },
@@ -1886,6 +1907,8 @@
               "content",
               "evidence_refs",
               "salience",
+              "delivery_policy",
+              "condition_key",
               "cooldown_until",
               "expires_at",
               "status"

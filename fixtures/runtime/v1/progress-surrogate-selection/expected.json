@@ -151,6 +151,7 @@
                 "slow_sim:1"
               ],
               "suggestion": {
+                "previous_summary": null,
                 "summary": "halfway"
               }
             },
@@ -271,6 +272,7 @@
                 "slow_sim:1"
               ],
               "suggestion": {
+                "previous_summary": null,
                 "summary": "halfway"
               },
               "selected": true
@@ -617,13 +619,16 @@
       "origin": "executor",
       "kind": "notify",
       "content": {
+        "previous_summary": null,
         "summary": "halfway"
       },
       "evidence_refs": [
         "slow_sim:1"
       ],
       "salience": 50.0,
-      "cooldown_until": 61.0,
+      "delivery_policy": "once",
+      "condition_key": null,
+      "cooldown_until": 0.0,
       "expires_at": 61.0,
       "status": "fired"
     }

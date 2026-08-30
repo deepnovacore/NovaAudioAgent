@@ -175,7 +175,9 @@ test('a call with no action reports the singular none action', async () => {
 
 test('the Surrogate records the suggestion table it actually saw', async () => {
   const record = await runSurrogateCall({
-    watch: () => Promise.resolve({speak: true, suggestion_id: 's-2', reason: '因为'}),
+    watch: () => Promise.resolve({
+      speak: true, suggestion_id: 's-2', progress_class: 'milestone', reason: '因为',
+    }),
   }, {view, reason, trigger: {
     suggestion_id: 's-2', delegate_id: 'd-1', channel: 'codex', memory_ref: 'codex:3',
   }})
@@ -197,7 +199,7 @@ test('the Surrogate table is captured before the call, not after it', async () =
       affordances.push({
         source: 'suggestion', ref: 's-3-arrived-late', content: {}, conclusive: null,
       })
-      return Promise.resolve({speak: false, suggestion_id: null, reason: 'no'})
+      return Promise.resolve({speak: false, suggestion_id: null, progress_class: null, reason: 'no'})
     },
   }, {view: mutable, reason})
 
@@ -210,22 +212,22 @@ test('Surrogate verdict attribution distinguishes silence from invalid and selec
   assert.equal(classifySurrogateVerdict({
     ...base,
     offered: ['s-1'],
-    output: {speak: false, suggestion_id: null, reason: 'routine'},
+    output: {speak: false, suggestion_id: null, progress_class: null, reason: 'routine'},
   }), 'silent')
   assert.equal(classifySurrogateVerdict({
     ...base,
     offered: ['s-1'],
-    output: {speak: true, suggestion_id: null, reason: 'missing'},
+    output: {speak: true, suggestion_id: null, progress_class: null, reason: 'missing'},
   }), 'missing_selection')
   assert.equal(classifySurrogateVerdict({
     ...base,
     offered: ['s-1'],
-    output: {speak: true, suggestion_id: 's-2', reason: 'wrong'},
+    output: {speak: true, suggestion_id: 's-2', progress_class: null, reason: 'wrong'},
   }), 'selection_not_offered')
   assert.equal(classifySurrogateVerdict({
     ...base,
     offered: ['s-1'],
-    output: {speak: true, suggestion_id: 's-1', reason: 'selected'},
+    output: {speak: true, suggestion_id: 's-1', progress_class: null, reason: 'selected'},
   }), 'selected')
 })
 

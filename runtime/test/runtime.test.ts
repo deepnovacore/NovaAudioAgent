@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import type {JsonValue} from '../src/events.js'
 import { MonotonicIdFactory, ScriptedIdFactory } from '../src/ids.js'
 import {
   CONVERSATION_CHANNEL,
@@ -875,11 +876,16 @@ test('progress routed through Surrogate creates one bound candidate and only Fas
   }, 1)
   runtime.apply(runtime.queue.popReady(1)!)
   assert.equal(calls[0]?.slot, 'surrogate.watch')
-  assert.equal(runtime.suggestions.get('s-1')?.content.summary, 'halfway')
+  assert.deepEqual(runtime.suggestions.get('s-1')?.content, {
+    summary: 'halfway',
+    previous_summary: null,
+  })
+  assert.equal(runtime.suggestions.get('s-1')?.delivery_policy, 'once')
 
   runtime.completeModelCall(calls[0].job_id, {
     speak: true,
     suggestion_id: 's-1',
+    progress_class: 'milestone',
     reason: 'worth mentioning',
   }, 1)
   runtime.apply(runtime.queue.popReady(1)!)
@@ -916,6 +922,7 @@ test('selected Surrogate progress leaves through the realtime outlet when FastBr
   runtime.completeModelCall(calls[0]!.job_id, {
     speak: true,
     suggestion_id: 's-1',
+    progress_class: 'milestone',
     reason: 'worth mentioning',
   }, 1)
   runtime.apply(runtime.queue.popReady(1)!)
@@ -958,10 +965,15 @@ test('an old Surrogate verdict cannot withdraw a replacement progress candidate'
   assert.equal(calls.length, 1)
   assert.equal(runtime.suggestions.get('s-1')?.status, 'withdrawn')
   assert.equal(runtime.suggestions.get('s-2')?.status, 'pending')
+  assert.deepEqual(runtime.suggestions.get('s-2')?.content, {
+    summary: 'second',
+    previous_summary: 'first',
+  })
 
   runtime.completeModelCall(calls[0]!.job_id, {
     speak: true,
     suggestion_id: 's-1',
+    progress_class: 'milestone',
     reason: 'stale',
   }, 2)
   runtime.apply(runtime.queue.popReady(2)!)
@@ -999,6 +1011,7 @@ test('an unchanged progress summary does not replace or re-run its Surrogate can
   runtime.completeModelCall(calls[0]!.job_id, {
     speak: true,
     suggestion_id: 's-1',
+    progress_class: 'milestone',
     reason: 'meaningful once',
   }, 2)
   runtime.apply(runtime.queue.popReady(2)!)
@@ -1006,6 +1019,200 @@ test('an unchanged progress summary does not replace or re-run its Surrogate can
   assert.equal(calls.length, 2, 'only the selected FastBrain wake follows the one verdict')
   assert.equal(calls[1]?.slot, 'fast')
   assert.equal(calls[1]?.reason.selected_suggestion, 's-1')
+})
+
+test('the host refuses a routine progress delta even when the model asks to speak', () => {
+  const selected: string[] = []
+  const {runtime, calls} = runtimeWithCalls({
+    manifest: testManifest({wake: 'none', progressViaSurrogate: true}),
+    delegateIds: ['d-1'],
+    slots: ['surrogate.watch'],
+  })
+  runtime.bindSuggestionSelected(suggestion => selected.push(suggestion.id))
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'ambient')
+  runtime.post({
+    kind: 'progress',
+    payload: {
+      channel: 'route_sim',
+      delegate_id: 'd-1',
+      op: 'run',
+      phase: 'working',
+      internal_activity: 3,
+      elapsed: 2,
+      summary: '已修改 3 个文件',
+    },
+  }, 2)
+  runtime.apply(runtime.queue.popReady(2)!)
+
+  runtime.completeModelCall(calls[0]!.job_id, {
+    speak: true,
+    suggestion_id: 's-1',
+    progress_class: 'routine_delta',
+    reason: 'new count',
+  }, 2)
+  runtime.apply(runtime.queue.popReady(2)!)
+
+  assert.deepEqual(selected, [])
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'withdrawn')
+  assert.deepEqual(runtime.diagnostics.at(-1), {code: 'invalid_surrogate_progress_decision'})
+})
+
+test('a non-progress ambient verdict ignores an accidental progress class', () => {
+  const selected: string[] = []
+  const {runtime, calls} = runtimeWithCalls({
+    manifest: testManifest({wake: 'surrogate', suggest: true}),
+    delegateIds: ['d-1'],
+    slots: ['surrogate.watch'],
+  })
+  runtime.bindSuggestionSelected(suggestion => selected.push(suggestion.id))
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'ambient')
+
+  const observation = runtime.postExecutorObservation(0, {
+    trust: 'untrusted_external',
+    content: {hit: true, observation: '门还开着'},
+  }, 1)
+  runtime.apply(runtime.queue.popReady(1)!)
+  assert.equal(observation.kind, 'observation')
+  assert.equal(calls[0]?.slot, 'surrogate.watch')
+
+  runtime.completeModelCall(calls[0].job_id, {
+    speak: true,
+    suggestion_id: 's-1',
+    progress_class: 'action_required',
+    reason: 'model misclassified an ambient reminder',
+  }, 1)
+  runtime.apply(runtime.queue.popReady(1)!)
+
+  assert.deepEqual(selected, ['s-1'])
+  assert.equal(runtime.diagnostics.some(item => (
+    item.code === 'invalid_surrogate_progress_decision'
+  )), false)
+})
+
+test('ambient condition evidence refreshes one episode and reset starts a new suggestion', () => {
+  const selected: string[] = []
+  const {runtime, calls} = runtimeWithCalls({
+    manifest: testManifest({wake: 'surrogate', suggest: true}),
+    delegateIds: ['d-1'],
+    slots: ['surrogate.watch'],
+  })
+  runtime.bindSuggestionSelected(suggestion => selected.push(suggestion.id))
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'ambient')
+
+  const observe = (at: number, content: Readonly<Record<string, JsonValue>>): void => {
+    runtime.postExecutorObservation(0, {trust: 'untrusted_external', content}, at)
+    runtime.apply(runtime.queue.popReady(at)!)
+  }
+  observe(1, {hit: true, state: 'hit', condition: 'door open', observation: '门开着'})
+  assert.equal(runtime.suggestions.get('s-1')?.delivery_policy, 'while_condition_true')
+  const conditionKey = runtime.suggestions.get('s-1')?.condition_key
+  assert.ok(typeof conditionKey === 'string')
+  assert.match(conditionKey, /^delegate:[0-9a-f]{64}$/u)
+  assert.equal(calls.length, 1)
+
+  runtime.completeModelCall(calls[0]!.job_id, {
+    speak: true,
+    suggestion_id: 's-1',
+    progress_class: null,
+    reason: 'persistent condition',
+  }, 1)
+  runtime.apply(runtime.queue.popReady(1)!)
+  runtime.suggestions.fire('s-1', 1, 1)
+  assert.deepEqual(selected, ['s-1'])
+
+  observe(1.5, {hit: true, state: 'hit', condition: 'door open', observation: '门仍开着'})
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'fired')
+  assert.equal(calls.length, 1, 'cooldown suppresses a repeated reminder wake')
+
+  observe(2.1, {hit: true, state: 'hit', condition: 'door open', observation: '门仍开着'})
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'pending')
+  assert.deepEqual(runtime.suggestions.get('s-1')?.content, {
+    hit: true,
+    state: 'hit',
+    condition: 'door open',
+    observation: '门仍开着',
+  })
+  assert.equal(calls.length, 2)
+  runtime.completeModelCall(calls[1]!.job_id, {
+    speak: false,
+    suggestion_id: null,
+    progress_class: null,
+    reason: 'do not repeat now',
+  }, 2.1)
+  runtime.apply(runtime.queue.popReady(2.1)!)
+
+  observe(2.2, {hit: true, state: 'hit', condition: 'door open', observation: '门依然开着'})
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'pending')
+  assert.deepEqual(runtime.suggestions.get('s-1')?.content, {
+    hit: true,
+    state: 'hit',
+    condition: 'door open',
+    observation: '门仍开着',
+  })
+  assert.equal(calls.length, 2, 'a pending episode does not wake again on repeated evidence')
+
+  // This is the lifecycle shape emitted by Watch after the second consecutive miss.
+  observe(3, {state: 'armed', condition: 'door open', hit_count: 1, reset_count: 0})
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'withdrawn')
+
+  observe(4, {hit: true, state: 'hit', condition: 'door open', observation: '门再次打开'})
+  assert.equal(runtime.suggestions.get('s-2')?.delivery_policy, 'while_condition_true')
+  assert.equal(
+    runtime.suggestions.get('s-2')?.condition_key,
+    conditionKey,
+  )
+  assert.equal(calls.length, 3)
+})
+
+test('ambient handoff clears a pending persistent condition episode', () => {
+  const {runtime} = runtimeWithCalls({
+    manifest: testManifest({wake: 'surrogate', suggest: true}),
+    delegateIds: ['d-1'],
+    slots: ['surrogate.watch'],
+  })
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'ambient')
+
+  runtime.postExecutorObservation(0, {
+    trust: 'untrusted_external',
+    content: {hit: true, state: 'hit', condition: 'door open', observation: '门开着'},
+  }, 1)
+  runtime.apply(runtime.queue.popReady(1)!)
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'pending')
+
+  runtime.postExecutorCompletion(0, {
+    outcome: 'ok',
+    trust: 'trusted_system',
+    content: {hit: false, state: 'window_elapsed'},
+  }, 2)
+  runtime.apply(runtime.queue.popReady(2)!)
+
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'withdrawn')
+})
+
+test('ambient deadline clears a fired persistent condition episode', () => {
+  const {runtime} = runtimeWithCalls({
+    manifest: testManifest({wake: 'surrogate', suggest: true}),
+    delegateIds: ['d-1'],
+    slots: ['surrogate.watch'],
+  })
+  appendUserOrigin(runtime)
+  dispatchRoute(runtime, 'ambient')
+
+  runtime.postExecutorObservation(0, {
+    trust: 'untrusted_external',
+    content: {hit: true, state: 'hit', condition: 'door open', observation: '门开着'},
+  }, 1)
+  runtime.apply(runtime.queue.popReady(1)!)
+  runtime.suggestions.fire('s-1', 1, 1)
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'fired')
+
+  runtime.apply(runtime.queue.popReady(5)!)
+
+  assert.equal(runtime.suggestions.get('s-1')?.status, 'withdrawn')
 })
 
 test('new user input keeps old speech but voids the old model action before dispatch', () => {

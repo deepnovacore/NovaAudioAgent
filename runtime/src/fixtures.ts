@@ -19,6 +19,7 @@ import {
   floorDecisionRecordSchema,
   playbackEffectSchema,
 } from './effects.js'
+import { suggestionDeliveryPolicySchema } from './suggestions.js'
 
 export const fixtureManifestSchema = z.object({
   schema_version: z.literal(1),
@@ -261,10 +262,27 @@ export const fixtureSuggestionSchema = z.object({
   content: z.record(z.string(), jsonValueSchema),
   evidence_refs: z.array(z.string()),
   salience: z.number().finite(),
+  delivery_policy: suggestionDeliveryPolicySchema.default('once'),
+  condition_key: z.string().min(1).max(128).nullable().default(null),
   cooldown_until: z.number().finite(),
   expires_at: z.number().finite().nullable(),
   status: z.enum(['pending', 'fired', 'withdrawn', 'expired']),
-}).strict()
+}).strict().superRefine((suggestion, context) => {
+  if (suggestion.delivery_policy === 'while_condition_true' && suggestion.condition_key === null) {
+    context.addIssue({
+      code: 'custom',
+      message: 'while_condition_true requires a condition key',
+      path: ['condition_key'],
+    })
+  }
+  if (suggestion.delivery_policy === 'once' && suggestion.condition_key !== null) {
+    context.addIssue({
+      code: 'custom',
+      message: 'once delivery cannot have a condition key',
+      path: ['condition_key'],
+    })
+  }
+})
 
 export const fixtureModelViewSchema = z.object({
   slot: z.enum(['fast', 'surrogate.watch']),

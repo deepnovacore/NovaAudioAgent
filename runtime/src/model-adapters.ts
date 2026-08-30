@@ -14,6 +14,7 @@ import type { JsonValue } from './events.js'
 import type { MemoryItem } from './memory.js'
 import type { GatewayImage, ModelGateway } from './model-gateway.js'
 import type { UpdateSpec } from './ports.js'
+import {progressClassSchema} from './ports.js'
 import {
   COMPRESSOR_SYSTEM,
   FASTBRAIN_SYSTEM,
@@ -31,9 +32,13 @@ export const SURROGATE_SCHEMA: Readonly<Record<string, JsonValue>> = {
   properties: {
     speak: {type: 'boolean'},
     suggestion_id: {type: ['string', 'null']},
+    progress_class: {
+      type: ['string', 'null'],
+      enum: ['routine_delta', 'milestone', 'blocker', 'action_required', null],
+    },
     reason: {type: 'string'},
   },
-  required: ['speak', 'suggestion_id', 'reason'],
+  required: ['speak', 'suggestion_id', 'progress_class', 'reason'],
   additionalProperties: false,
 }
 
@@ -243,12 +248,14 @@ export function isFiniteBinary64Json(value: unknown): boolean {
 const surrogateResponseSchema = z.object({
   speak: z.boolean(),
   suggestion_id: z.string().nullable(),
+  progress_class: progressClassSchema,
   reason: z.string(),
 }).loose()
 
 export interface SurrogateVerdict {
   readonly speak: boolean
   readonly suggestion_id: string | null
+  readonly progress_class: z.infer<typeof progressClassSchema>
   readonly reason: string
 }
 
@@ -286,6 +293,7 @@ export class GatewaySurrogate {
     return {
       speak: parsed.data.speak,
       suggestion_id: parsed.data.suggestion_id,
+      progress_class: parsed.data.progress_class,
       reason: parsed.data.reason,
     }
   }

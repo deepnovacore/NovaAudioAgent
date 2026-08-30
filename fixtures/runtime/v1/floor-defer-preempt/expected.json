@@ -265,6 +265,8 @@
       },
       "evidence_refs": [],
       "salience": 100.0,
+      "delivery_policy": "once",
+      "condition_key": null,
       "cooldown_until": 0.0,
       "expires_at": null,
       "status": "pending"

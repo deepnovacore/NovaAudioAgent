@@ -262,7 +262,7 @@ function installRecordingFetch(records: GatewayRequest[]): () => void {
     })
     const content = role === 'watch'
       ? JSON.stringify({hit: false, observation: ''})
-      : JSON.stringify({speak: false, suggestion_id: null, reason: 'quiet'})
+      : JSON.stringify({speak: false, suggestion_id: null, progress_class: null, reason: 'quiet'})
     return Promise.resolve(new Response(JSON.stringify({
       id: 'gateway-response',
       choices: [{finish_reason: 'stop', message: {content}}],

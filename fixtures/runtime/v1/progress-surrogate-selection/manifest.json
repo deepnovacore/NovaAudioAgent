@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "progress-surrogate-selection",
   "description": "Working progress becomes one Surrogate candidate and FastBrain owns the selected speech.",
-  "covers": ["runtime.progress", "surrogate.selection", "suggestions.cooldown"],
+  "covers": ["runtime.progress", "surrogate.selection", "suggestions.once_delivery"],
   "clock": "virtual",
   "requires": [],
   "canonicalization": "exact"

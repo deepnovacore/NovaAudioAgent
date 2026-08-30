@@ -183,6 +183,7 @@ export interface AttentionTrigger {
 export interface SurrogateVerdictOutput {
   readonly speak: boolean
   readonly suggestion_id: string | null
+  readonly progress_class: 'routine_delta' | 'milestone' | 'blocker' | 'action_required' | null
   readonly reason: string
 }
 
