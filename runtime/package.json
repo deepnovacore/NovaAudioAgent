@@ -29,6 +29,7 @@
     "fixtures:check": "npm run build && node dist/src/cli.js fixture check",
     "lint": "eslint src test",
     "smoke:qwen": "npm run build && node scripts/qwen-live-smoke.mjs",
+    "smoke:qwen:clarification": "npm run build && node scripts/qwen-codex-clarification-live-smoke.mjs",
     "smoke:qwen:routing": "npm run build && node scripts/qwen-progress-routing-live-smoke.mjs",
     "smoke:qwen:surrogate": "npm run build && node scripts/qwen-surrogate-progress-live-smoke.mjs",
     "test": "npm run build && node --test dist/test/*.test.js",

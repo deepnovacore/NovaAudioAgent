@@ -65,6 +65,18 @@ test('every system prompt is character-identical to the Python oracle', () => {
   assert.ok(FASTBRAIN_LIVE_SYSTEM.split('\n').length >= 30)
 })
 
+test('the explicit Codex live profile uses the same adaptive clarification threshold', () => {
+  // Break caught: the live profile bypasses the frontend policy by requiring every apparently
+  // executable coding request to call codex.run in the same turn.
+  assert.match(
+    FASTBRAIN_LIVE_SYSTEM,
+    /新的编码任务.*可执行目标.*实质范围.*成功标准或验证方式/su,
+  )
+  assert.match(FASTBRAIN_LIVE_SYSTEM, /只有动作词和宽泛对象.*先追问.*不得调用 codex.run/su)
+  assert.match(FASTBRAIN_LIVE_SYSTEM, /具体故障或目标行为.*范围.*验证方式.*调用 codex.run/su)
+  assert.doesNotMatch(FASTBRAIN_LIVE_SYSTEM, /明确且可直接执行.*同一轮.*codex\.run/su)
+})
+
 test('rendered ContextViews match the Python oracle byte for byte', () => {
   const fixture = loadJson<Fixture>('context-views.json')
   const golden = loadJson<Golden>('context-views-expected.json')

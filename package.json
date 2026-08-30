@@ -26,6 +26,7 @@
     "runtime:demo": "npm run demo --workspace @nova-audio-agent/runtime",
     "runtime:fixtures": "npm run fixtures:check --workspace @nova-audio-agent/runtime",
     "runtime:smoke:qwen": "npm run smoke:qwen --workspace @nova-audio-agent/runtime",
+    "runtime:smoke:qwen:clarification": "npm run smoke:qwen:clarification --workspace @nova-audio-agent/runtime",
     "test": "npm run test:runtime && npm run test:desktop",
     "test:desktop": "npm test --workspace @nova-audio-agent/ambient-orb",
     "test:runtime": "npm test --workspace @nova-audio-agent/runtime"

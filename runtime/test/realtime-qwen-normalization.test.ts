@@ -44,6 +44,18 @@ interface ProgressRoutingFixture {
   readonly max_transcript_codepoints: number
 }
 
+interface ClarificationFixture {
+  readonly schema_version: number
+  readonly cases: readonly {
+    readonly id: string
+    readonly turns: readonly {
+      readonly utterance: string
+      readonly expectation: 'clarify' | 'dispatch' | 'respond'
+      readonly required_work_order_terms?: readonly string[]
+    }[]
+  }[]
+}
+
 function loadJson<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(fixtureRoot, name), 'utf8')) as T
 }
@@ -262,6 +274,26 @@ test('Qwen live routing fixture distinguishes progress from explicit liveness', 
   assert.ok(fixture.max_transcript_codepoints <= 160)
 })
 
+test('Qwen clarification fixture covers adaptive first-turn and merged multi-turn behavior', () => {
+  const fixture = loadJson<ClarificationFixture>('codex-clarification.json')
+  assert.equal(fixture.schema_version, 1)
+  assert.deepEqual(fixture.cases.map(value => value.id), [
+    'broad_optimization',
+    'broad_creation',
+    'clear_bug_fix',
+    'explicit_discussion',
+    'explicit_defaults',
+  ])
+  assert.equal(fixture.cases.flatMap(value => value.turns).length, 6)
+  assert.deepEqual(fixture.cases[0]?.turns.map(turn => turn.expectation), [
+    'clarify', 'dispatch',
+  ])
+  assert.ok(fixture.cases.every(value => value.turns.every(turn => turn.utterance.trim() !== '')))
+  assert.ok(fixture.cases.flatMap(value => value.turns)
+    .filter(turn => turn.expectation === 'dispatch')
+    .every(turn => (turn.required_work_order_terms?.length ?? 0) >= 2))
+})
+
 test('Qwen project instructions route the six actions and structured confirmation semantically', () => {
   assert.match(FRONTEND_INSTRUCTIONS, /codex__confirm_project_action/u)
   assert.match(FRONTEND_INSTRUCTIONS, /list_workspaces.*list_sessions/su)
@@ -297,6 +329,26 @@ test('Qwen project instructions route the six actions and structured confirmatio
   assert.match(FRONTEND_INSTRUCTIONS, /最后一条是结果.*不能改说.*提交.*启动/su)
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /codex__run/u)
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /确认语音由 host 判定/u)
+})
+
+test('Qwen project instructions calibrate clarification before a new coding dispatch', () => {
+  // Break caught: a broad coding noun phrase is treated as ready and dispatched before the
+  // user has supplied the material scope or a success boundary.
+  assert.match(
+    FRONTEND_INSTRUCTIONS,
+    /新的 Codex 编程任务.*可执行目标.*实质范围.*成功标准或验证方式/su,
+  )
+  assert.match(
+    FRONTEND_INSTRUCTIONS,
+    /只有动作词和宽泛对象.*信息不足.*追问一个.*不得调用 codex__project/su,
+  )
+  assert.match(
+    FRONTEND_INSTRUCTIONS,
+    /具体故障或目标行为.*范围.*验证方式.*直接调用 codex__project/su,
+  )
+  assert.match(FRONTEND_INSTRUCTIONS, /先讨论、先规划或先澄清.*不得调用 codex__project/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /按合理默认直接做.*只覆盖非关键偏好/su)
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /不存在这类缺失时，直接调用 codex__project/u)
 })
 
 

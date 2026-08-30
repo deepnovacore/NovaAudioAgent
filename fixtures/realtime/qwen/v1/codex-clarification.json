@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "broad_optimization",
+      "turns": [
+        {
+          "utterance": "帮我把登录功能优化一下",
+          "expectation": "clarify"
+        },
+        {
+          "utterance": "主要修复空密码提交会返回五百的问题，改成显示校验错误，并运行现有登录测试",
+          "expectation": "dispatch",
+          "required_work_order_terms": ["空密码", "校验错误", "现有"]
+        }
+      ]
+    },
+    {
+      "id": "broad_creation",
+      "turns": [
+        {
+          "utterance": "帮我做一个小游戏",
+          "expectation": "clarify"
+        }
+      ]
+    },
+    {
+      "id": "clear_bug_fix",
+      "turns": [
+        {
+          "utterance": "修复当前项目里空密码登录返回五百的问题，改成显示校验错误，并运行现有登录测试",
+          "expectation": "dispatch",
+          "required_work_order_terms": ["空密码", "校验错误", "现有"]
+        }
+      ]
+    },
+    {
+      "id": "explicit_discussion",
+      "turns": [
+        {
+          "utterance": "先别写代码，先跟我讨论登录错误提示应该放在哪一层",
+          "expectation": "respond"
+        }
+      ]
+    },
+    {
+      "id": "explicit_defaults",
+      "turns": [
+        {
+          "utterance": "在当前项目增加一个本地设置页面，支持保存和重载主题选项，沿用现有样式和测试框架，按合理默认直接实现并运行相关测试",
+          "expectation": "dispatch",
+          "required_work_order_terms": ["设置页面", "保存", "重载", "测试"]
+        }
+      ]
+    }
+  ]
+}
