@@ -1111,6 +1111,114 @@ static napi_value nova_unlink_at(napi_env env, napi_callback_info info) {
   return nova_status(env, removed ? "ok" : "failed");
 }
 
+static int nova_delete_handle(HANDLE opened) {
+  nova_file_disposition_info_ex disposition = {
+      FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS |
+      FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE};
+  if (SetFileInformationByHandle(opened, FileDispositionInfoEx, &disposition,
+                                 (DWORD)sizeof(disposition)))
+    return 1;
+  FILE_DISPOSITION_INFO fallback = {TRUE};
+  return SetFileInformationByHandle(opened, FileDispositionInfo, &fallback,
+                                    (DWORD)sizeof(fallback));
+}
+
+static int nova_raw_handle_info(HANDLE handle,
+                                BY_HANDLE_FILE_INFORMATION *information,
+                                int *reparse) {
+  FILE_ATTRIBUTE_TAG_INFO tag;
+  if (!GetFileInformationByHandle(handle, information) ||
+      !GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &tag,
+                                    (DWORD)sizeof(tag)))
+    return 0;
+  *reparse = (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+  return 1;
+}
+
+static int nova_dot_name(const WCHAR *name, size_t length) {
+  return (length == 1 && name[0] == L'.') ||
+         (length == 2 && name[0] == L'.' && name[1] == L'.');
+}
+
+static int nova_remove_tree_contents(HANDLE directory) {
+  BYTE buffer[64 * 1024];
+  for (;;) {
+    if (!GetFileInformationByHandleEx(directory, FileIdBothDirectoryInfo,
+                                      buffer, (DWORD)sizeof(buffer))) {
+      return GetLastError() == ERROR_NO_MORE_FILES;
+    }
+    FILE_ID_BOTH_DIR_INFO *entry = (FILE_ID_BOTH_DIR_INFO *)buffer;
+    for (;;) {
+      size_t length = (size_t)entry->FileNameLength / sizeof(WCHAR);
+      if (!nova_dot_name(entry->FileName, length)) {
+        if (length == 0 || length > 255) return 0;
+        WCHAR name[256];
+        CopyMemory(name, entry->FileName, entry->FileNameLength);
+        name[length] = L'\0';
+        HANDLE child = INVALID_HANDLE_VALUE;
+        NTSTATUS status = nova_open_at(
+            directory, name, (USHORT)entry->FileNameLength,
+            DELETE | FILE_READ_ATTRIBUTES | READ_CONTROL | FILE_LIST_DIRECTORY,
+            FILE_OPEN, 0, NULL, &child);
+        if (status != NOVA_STATUS_SUCCESS) return 0;
+        BY_HANDLE_FILE_INFORMATION child_info;
+        int reparse = 0;
+        if (!nova_raw_handle_info(child, &child_info, &reparse)) {
+          CloseHandle(child);
+          return 0;
+        }
+        int child_directory =
+            (child_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        int removed = 0;
+        if (child_directory && !reparse) {
+          removed = nova_remove_tree_contents(child) && nova_delete_handle(child);
+        } else {
+          /* Reparse points are selected and deleted as leaves; never traverse. */
+          removed = nova_delete_handle(child);
+        }
+        CloseHandle(child);
+        if (!removed) return 0;
+      }
+      if (entry->NextEntryOffset == 0) break;
+      entry = (FILE_ID_BOTH_DIR_INFO *)((BYTE *)entry + entry->NextEntryOffset);
+    }
+  }
+}
+
+static napi_value nova_remove_tree_at(napi_env env, napi_callback_info info) {
+  napi_value args[3];
+  HANDLE root;
+  WCHAR name[256];
+  USHORT name_bytes;
+  uint64_t device;
+  uint64_t inode;
+  if (!nova_args(env, info, 3, args) ||
+      !nova_handle_from_value(env, args[0], &root) ||
+      !nova_validate_handle(root, 1, NULL) ||
+      !nova_basename(env, args[1], name, &name_bytes) ||
+      !nova_expected_identity(env, args[2], &device, &inode))
+    return nova_status(env, "failed");
+  HANDLE opened = INVALID_HANDLE_VALUE;
+  NTSTATUS status = nova_open_at(
+      root, name, name_bytes,
+      DELETE | FILE_READ_ATTRIBUTES | READ_CONTROL | FILE_LIST_DIRECTORY,
+      FILE_OPEN, FILE_DIRECTORY_FILE, NULL, &opened);
+  if (nova_missing_status(status)) return nova_status(env, "missing");
+  BY_HANDLE_FILE_INFORMATION actual;
+  if (status != NOVA_STATUS_SUCCESS || !nova_validate_handle(opened, 1, &actual)) {
+    if (opened != INVALID_HANDLE_VALUE) CloseHandle(opened);
+    return nova_status(env, "mismatch");
+  }
+  if ((uint64_t)actual.dwVolumeSerialNumber != device ||
+      nova_file_index(&actual) != inode) {
+    CloseHandle(opened);
+    return nova_status(env, "mismatch");
+  }
+  int removed = nova_remove_tree_contents(opened) && nova_delete_handle(opened);
+  CloseHandle(opened);
+  return nova_status(env, removed ? "ok" : "failed");
+}
+
 static int nova_export(napi_env env, napi_value exports, const char *name,
                        napi_callback callback) {
   napi_value function;
@@ -1130,7 +1238,8 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "mkdirPrivateAt", nova_mkdir_private_at) ||
       !nova_export(env, exports, "protectAt", nova_protect_at) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
-      !nova_export(env, exports, "unlinkAt", nova_unlink_at))
+      !nova_export(env, exports, "unlinkAt", nova_unlink_at) ||
+      !nova_export(env, exports, "removeTreeAt", nova_remove_tree_at))
     return NULL;
   return exports;
 }

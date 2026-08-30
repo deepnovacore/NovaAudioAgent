@@ -7,6 +7,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  rmSync,
   rmdirSync,
   symlinkSync,
   unlinkSync,
@@ -217,6 +218,24 @@ class DescriptorRelativeRootFileAuthority implements ProjectRootFileAuthority {
       }
       if (kind === 'directory') rmdirSync(path)
       else unlinkSync(path)
+      return {status: 'ok'}
+    } catch (error) {
+      return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
+    }
+  }
+
+  removeTreeAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult {
+    try {
+      const path = join(this.#rootPath(rootDescriptor), name)
+      const current = lstatSync(path, {bigint: true})
+      if (current.dev !== expected.device || current.ino !== expected.inode) {
+        return {status: 'mismatch'}
+      }
+      rmSync(path, {recursive: true})
       return {status: 'ok'}
     } catch (error) {
       return isErrno(error, 'ENOENT') ? {status: 'missing'} : {status: 'failed'}
@@ -766,6 +785,7 @@ test('missing, unsupported, asynchronous, and malformed root-file authority fail
       mkdirAt: () => ({status: 'unsupported'}),
       renameAt: () => ({status: 'unsupported'}),
       unlinkAt: () => ({status: 'unsupported'}),
+      removeTreeAt: () => ({status: 'unsupported'}),
     },
     {
       probe: () => new Promise<ProjectRootFileResult>(() => undefined),
@@ -868,6 +888,8 @@ test('malformed descriptor creation fails before native acquire without awaiting
     renameAt: (descriptor, from, to) => delegate.renameAt(descriptor, from, to),
     unlinkAt: (descriptor, name, expected, kind) =>
       delegate.unlinkAt(descriptor, name, expected, kind),
+    removeTreeAt: (descriptor, name, expected) =>
+      delegate.removeTreeAt(descriptor, name, expected),
   } satisfies ProjectRootFileAuthority
   let acquireCalls = 0
   const store = await CodexProjectStore.open({

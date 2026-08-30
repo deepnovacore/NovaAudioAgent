@@ -29,7 +29,7 @@ const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
   'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'openDirectory',
-  'probe', 'protectAt', 'renameAt', 'unlinkAt',
+  'probe', 'protectAt', 'removeTreeAt', 'renameAt', 'unlinkAt',
 ])
 
 export interface ProjectDirectoryHandle {
@@ -198,6 +198,9 @@ export function loadProjectNativeHostFromResources(
         identity: ProjectFileIdentity,
         kind: 'file' | 'directory',
       ) => addon.unlinkAt(root, name, identity, kind),
+      removeTreeAt: (root: number, name: string, identity: ProjectFileIdentity) => (
+        addon.removeTreeAt(root, name, identity)
+      ),
     })
     return Object.freeze({
       nativeLocks,

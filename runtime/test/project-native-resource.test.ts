@@ -34,6 +34,7 @@ function fakeAddon(): Record<string, (...args: readonly unknown[]) => unknown> {
     mkdirPrivateAt: () => ({status: 'ok', identity: {device: 1n, inode: 2n}}),
     renameAt: () => ({status: 'ok'}),
     unlinkAt: () => ({status: 'ok'}),
+    removeTreeAt: () => ({status: 'ok'}),
   }
 }
 
@@ -79,6 +80,9 @@ test('project native host loads only one fixed manifest-bound addon for the exac
     assert.equal(loads, 1)
     assert.deepEqual(loaded?.nativeLocks.acquire(7), {status: 'busy'})
     assert.deepEqual(loaded?.rootFiles.probe(8), {status: 'ok'})
+    assert.deepEqual(loaded?.rootFiles.removeTreeAt(8, 'tombstone', {device: 1n, inode: 2n}), {
+      status: 'ok',
+    })
     const directory = loaded?.directoryHandles.open('/home/nova')
     assert.equal(directory?.fd, 41)
     assert.equal(directory?.close(), undefined)

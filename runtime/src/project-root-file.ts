@@ -37,6 +37,11 @@ export interface ProjectRootFileAuthority {
     expected: ProjectFileIdentity,
     kind: 'file' | 'directory',
   ): ProjectRootFileResult
+  removeTreeAt(
+    rootDescriptor: number,
+    name: string,
+    expected: ProjectFileIdentity,
+  ): ProjectRootFileResult
 }
 
 /** Production stays fail-closed until Task 8 supplies the packaged descriptor-relative helper. */
@@ -50,4 +55,5 @@ export const unsupportedProjectRootFiles: ProjectRootFileAuthority = Object.free
   protectAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
   renameAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
   unlinkAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
+  removeTreeAt: (): ProjectRootFileResult => ({status: 'unsupported'}),
 })

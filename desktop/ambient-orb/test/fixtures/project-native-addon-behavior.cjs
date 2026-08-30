@@ -1,7 +1,10 @@
 'use strict'
 
 const assert = require('node:assert/strict')
-const {closeSync, mkdirSync, mkdtempSync, openSync, rmSync, symlinkSync} = require('node:fs')
+const {
+  closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync,
+  renameSync, rmSync, symlinkSync, writeFileSync,
+} = require('node:fs')
 const {homedir} = require('node:os')
 const {join} = require('node:path')
 const {spawn, spawnSync} = require('node:child_process')
@@ -158,6 +161,39 @@ if (mode === 'hold') {
         addon.unlinkAt(rootDescriptor, 'bootstrap-root', bootstrapDirectory.identity, 'directory'),
         {status: 'ok'},
       )
+
+      const unrelated = join(root, 'unrelated.txt')
+      writeFileSync(unrelated, 'keep')
+      const outside = join(root, 'outside-target')
+      mkdirSync(outside)
+      writeFileSync(join(outside, 'data.txt'), 'outside')
+      const tombstone = addon.mkdirAt(rootDescriptor, 'tombstone')
+      assert.equal(tombstone.status, 'ok')
+      mkdirSync(join(root, 'tombstone', 'nested'))
+      writeFileSync(join(root, 'tombstone', 'nested', 'data.txt'), 'delete')
+      symlinkSync(
+        outside,
+        join(root, 'tombstone', 'link-to-outside'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      )
+      assert.deepEqual(
+        addon.removeTreeAt(rootDescriptor, 'tombstone', tombstone.identity),
+        {status: 'ok'},
+      )
+      assert.equal(existsSync(join(root, 'tombstone')), false)
+      assert.equal(readFileSync(unrelated, 'utf8'), 'keep')
+      assert.equal(readFileSync(join(outside, 'data.txt'), 'utf8'), 'outside')
+
+      const swapped = addon.mkdirAt(rootDescriptor, 'swapped')
+      assert.equal(swapped.status, 'ok')
+      renameSync(join(root, 'swapped'), join(root, 'swapped-original'))
+      mkdirSync(join(root, 'swapped'))
+      assert.deepEqual(
+        addon.removeTreeAt(rootDescriptor, 'swapped', swapped.identity),
+        {status: 'mismatch'},
+      )
+      rmSync(join(root, 'swapped'), {recursive: true})
+      rmSync(join(root, 'swapped-original'), {recursive: true})
 
       const lock = addon.createFileAt(rootDescriptor, 'owner.lock', true)
       assert.equal(lock.status, 'ok')

@@ -41,7 +41,7 @@ test('Windows project authority owns nonblocking locks and handle-relative proje
   assert.doesNotMatch(body, /\nPfnDliHook __pfnDliNotifyHook2/u)
   for (const exported of [
     'acquire', 'openDirectory', 'probe', 'protectAt', 'matchesAt', 'lookupAt', 'createFileAt', 'mkdirAt', 'mkdirPrivateAt',
-    'renameAt', 'unlinkAt',
+    'renameAt', 'unlinkAt', 'removeTreeAt',
   ]) assert.match(body, new RegExp(`"${exported}"`, 'u'))
   assert.doesNotMatch(body, /static napi_value nova_protect_directory|"protectDirectory"/u)
   assert.match(body, /CreateFileW\s*\(/u)

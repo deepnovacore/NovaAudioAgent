@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <node_api.h>
 #include <stdint.h>
@@ -477,6 +478,95 @@ static napi_value nova_unlink_at(napi_env env, napi_callback_info info) {
   return nova_status(env, "ok");
 }
 
+static int nova_remove_directory_contents(int directory) {
+  int scan_descriptor = dup(directory);
+  if (scan_descriptor < 0) return 0;
+  DIR* stream = fdopendir(scan_descriptor);
+  if (stream == NULL) {
+    (void)close(scan_descriptor);
+    return 0;
+  }
+  int valid = 1;
+  errno = 0;
+  struct dirent* entry;
+  while (valid && (entry = readdir(stream)) != NULL) {
+    const char* name = entry->d_name;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+    struct stat before;
+    if (fstatat(directory, name, &before, AT_SYMLINK_NOFOLLOW) != 0) {
+      valid = 0;
+      break;
+    }
+    if (S_ISDIR(before.st_mode)) {
+      int child = openat(directory, name,
+                         O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+      struct stat opened;
+      if (child < 0 || fstat(child, &opened) != 0 || !S_ISDIR(opened.st_mode) ||
+          opened.st_dev != before.st_dev || opened.st_ino != before.st_ino ||
+          !nova_remove_directory_contents(child)) {
+        if (child >= 0) (void)close(child);
+        valid = 0;
+        break;
+      }
+      (void)close(child);
+      struct stat after;
+      if (fstatat(directory, name, &after, AT_SYMLINK_NOFOLLOW) != 0 ||
+          !S_ISDIR(after.st_mode) || after.st_dev != before.st_dev ||
+          after.st_ino != before.st_ino ||
+          unlinkat(directory, name, AT_REMOVEDIR) != 0) {
+        valid = 0;
+        break;
+      }
+    } else if (unlinkat(directory, name, 0) != 0) {
+      valid = 0;
+      break;
+    }
+    errno = 0;
+  }
+  if (entry == NULL && errno != 0) valid = 0;
+  if (closedir(stream) != 0) valid = 0;
+  return valid;
+}
+
+static napi_value nova_remove_tree_at(napi_env env, napi_callback_info info) {
+  napi_value args[3];
+  int root_descriptor;
+  char name[256];
+  uint64_t device;
+  uint64_t inode;
+  if (!nova_args(env, info, 3, args) ||
+      !nova_descriptor(env, args[0], &root_descriptor) ||
+      !nova_basename(env, args[1], name) ||
+      !nova_expected_identity(env, args[2], &device, &inode)) {
+    return nova_status(env, "failed");
+  }
+  struct stat named;
+  if (fstatat(root_descriptor, name, &named, AT_SYMLINK_NOFOLLOW) != 0) {
+    return nova_status(env, errno == ENOENT ? "missing" : "failed");
+  }
+  if (!S_ISDIR(named.st_mode) || (uint64_t)named.st_dev != device ||
+      (uint64_t)named.st_ino != inode) return nova_status(env, "mismatch");
+  int child = openat(root_descriptor, name,
+                     O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  struct stat opened;
+  if (child < 0 || fstat(child, &opened) != 0 || !S_ISDIR(opened.st_mode) ||
+      opened.st_dev != named.st_dev || opened.st_ino != named.st_ino) {
+    if (child >= 0) (void)close(child);
+    return nova_status(env, "mismatch");
+  }
+  int emptied = nova_remove_directory_contents(child);
+  (void)close(child);
+  if (!emptied) return nova_status(env, "failed");
+  struct stat final;
+  if (fstatat(root_descriptor, name, &final, AT_SYMLINK_NOFOLLOW) != 0 ||
+      !S_ISDIR(final.st_mode) || final.st_dev != named.st_dev ||
+      final.st_ino != named.st_ino) return nova_status(env, "mismatch");
+  if (unlinkat(root_descriptor, name, AT_REMOVEDIR) != 0) {
+    return nova_status(env, errno == ENOENT ? "missing" : "failed");
+  }
+  return nova_status(env, "ok");
+}
+
 static int nova_export(napi_env env, napi_value exports, const char* name, napi_callback callback) {
   napi_value function;
   return napi_create_function(env, name, NAPI_AUTO_LENGTH, callback, NULL, &function) == napi_ok &&
@@ -494,6 +584,7 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "mkdirPrivateAt", nova_mkdir_private_at) ||
       !nova_export(env, exports, "protectAt", nova_protect_at) ||
       !nova_export(env, exports, "renameAt", nova_rename_at) ||
-      !nova_export(env, exports, "unlinkAt", nova_unlink_at)) return NULL;
+      !nova_export(env, exports, "unlinkAt", nova_unlink_at) ||
+      !nova_export(env, exports, "removeTreeAt", nova_remove_tree_at)) return NULL;
   return exports;
 }
