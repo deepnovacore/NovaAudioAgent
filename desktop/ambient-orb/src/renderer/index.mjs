@@ -232,18 +232,7 @@ const socketRouter = new RendererSocketRouter({
   },
   onCurrentClose: ({socket: closedSocket}) => {
     if (socket !== closedSocket) return
-    socket = undefined
-    activeConnection = null
-    axes.connected = false
-    confirmationDecision.deliveryLost()
-    alertTone.stop()
-    playback.disconnect()
-    nativeFrames.clear()
-    nativeLevel.clear()
-    if (nativeReady) void window.novaAudioAgentDesktop.nativeAudio.clear().catch(() => {})
-    axes.playback = 'idle'
-    clearCaption()
-    render()
+    resetRendererConnection(false, {closeSocket: false})
   },
 })
 
@@ -258,6 +247,7 @@ const backendRecovery = new BackendReconnectController({
     type: 'connection.diagnostic',
     ...diagnostic,
   }),
+  onConnectionReplaced: () => resetRendererConnection(true),
 })
 
 function render() {
@@ -845,15 +835,22 @@ async function handleSocketMessage(event, delivery) {
 // 'nova:backend-exit' event and the verdict carried on the bootstrap reply — land here.
 function handleBackendExit() {
   backendRecovery.backendExited()
-  activeConnection?.close(false)
+  resetRendererConnection(true)
+}
+
+function resetRendererConnection(processReplaced, {closeSocket = true} = {}) {
+  if (closeSocket) {
+    activeConnection?.close(false)
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
+  }
   activeConnection = null
-  if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
   socket = undefined
   axes.connected = false
   axes.error = ''
   confirmationDecision.deliveryLost()
   alertTone.stop()
-  playback.backendExited()
+  if (processReplaced) playback.backendExited()
+  else playback.disconnect()
   nativeFrames.clear()
   nativeLevel.clear()
   if (nativeReady) void window.novaAudioAgentDesktop.nativeAudio.clear().catch(() => {})
@@ -874,8 +871,9 @@ function openBackendSocket(connection) {
   if (!connection || typeof connection.endpoint !== 'string' || typeof connection.token !== 'string') {
     throw new TypeError('invalid backend connection')
   }
-  activeConnection?.close(false)
-  if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
+  if (activeConnection !== null || (socket && socket.readyState < WebSocket.CLOSING)) {
+    resetRendererConnection(false)
+  }
   const nextSocket = new WebSocket(connection.endpoint)
   const nextConnection = socketRouter.connect(nextSocket)
   activeConnection = nextConnection
@@ -896,6 +894,15 @@ function openBackendSocket(connection) {
   nextSocket.onerror = () => {
     if (!nextConnection.isCurrent()) return
     axes.error = 'connection'
+    render()
+  }
+  return () => {
+    if (!nextConnection.isCurrent()) return
+    nextConnection.close(false)
+    if (nextSocket.readyState < WebSocket.CLOSING) nextSocket.close()
+    if (activeConnection === nextConnection) activeConnection = null
+    if (socket === nextSocket) socket = undefined
+    axes.connected = false
     render()
   }
 }

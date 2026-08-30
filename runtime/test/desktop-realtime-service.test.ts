@@ -39,7 +39,6 @@ import type {
   RealtimeProvider,
 } from '../src/realtime/protocol.js'
 import {memoryBoardMessage} from '../src/realtime/memory-board.js'
-import {workspaceGraphBoardMessage} from '../src/realtime/workspace-graph-board.js'
 import {buildProductionRealtimeAssembly} from '../src/production-realtime-assembly.js'
 import {createArkCascadedLlmSession} from '../src/realtime/cascaded/ark-llm.js'
 import {
@@ -973,8 +972,8 @@ function speechThenSilencePcm(): Uint8Array {
 
 interface ReceivedFrame {readonly binary: boolean; readonly bytes: Uint8Array}
 
-function connectDesktop(port: number): Promise<WebSocket> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/`)
+function connectDesktop(port: number, path = '/'): Promise<WebSocket> {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}${path}`)
   return settleNamed('production desktop connect', new Promise<WebSocket>((resolve, reject) => {
     socket.once('open', () => resolve(socket))
     socket.once('error', reject)
@@ -1063,6 +1062,99 @@ function text(frame: ReceivedFrame): string {
   return Buffer.from(frame.bytes).toString('utf8')
 }
 
+test('production composition serves compact boards on debug sockets without disturbing voice', async t => {
+  const core = buildAssembly({
+    settings: settingsSchema.parse({
+      executors: ['fast_sim'], model_api_key: 'model-key', tavily_api_key: 'search-key',
+    }),
+    gateway: new NeverGateway(),
+    searchTransport: {search: () => Promise.reject(new Error('search was not expected'))},
+    realtimeFrontbrain: true,
+  })
+  for (let index = 0; index < 13; index += 1) {
+    core.runtime.memory.append('conversation', {
+      ts: index,
+      trust: 'trusted_user',
+      priority: 100,
+      content: {entry: index},
+    })
+  }
+  let callbacks: DesktopOutputCallbacks | undefined
+  const composition = buildDesktopRealtimeComposition({
+    token: TOKEN,
+    stop: new AbortController(),
+    buildRealtime: output => {
+      callbacks = output
+      return buildRealtimeAssembly({
+        core,
+        provider: new ScriptedProvider([]),
+        ...output,
+        onDiagnostic: () => undefined,
+      })
+    },
+  })
+  const ready = await settleNamed('composition debug server start', composition.desktop.server.start())
+  const voice = await connectDesktop(ready.port)
+  const sockets = new Set<WebSocket>([voice])
+  t.after(async () => {
+    await Promise.allSettled([...sockets]
+      .filter(socket => socket.readyState !== WebSocket.CLOSED)
+      .map(socket => closeDesktop(socket)))
+    await composition.desktop.server.close()
+  })
+  await authenticateDesktop(voice, 'composition debug voice')
+
+  const requestBoard = async (
+    requestId: string,
+    board: 'memory' | 'workspace_graph',
+  ): Promise<Record<string, unknown>> => {
+    const debug = await connectDesktop(ready.port, '/debug-board')
+    sockets.add(debug)
+    const response = receiveFrames(debug, 1, `${requestId} response`)
+    await sendDesktop(debug, JSON.stringify({type: 'hello', token: TOKEN}), `${requestId} hello`)
+    await sendDesktop(debug, JSON.stringify({
+      type: 'debug.board.request', request_id: requestId, board, detail: 'compact',
+    }), `${requestId} request`)
+    const payload = JSON.parse(text((await response)[0]!)) as Record<string, unknown>
+    await closeDesktop(debug)
+    return payload
+  }
+
+  const memory = await requestBoard('composition-memory', 'memory')
+  assert.equal(memory.type, 'memory.board')
+  const conversation = (memory.channels as {
+    readonly name: string
+    readonly item_count: number
+    readonly items: unknown[]
+  }[]).find(channel => channel.name === 'conversation')
+  assert.deepEqual({itemCount: conversation?.item_count, transferred: conversation?.items.length}, {
+    itemCount: 13,
+    transferred: 12,
+  })
+
+  const disabled = await requestBoard('composition-graph-disabled', 'workspace_graph')
+  assert.equal(disabled.availability, 'disabled')
+  Object.defineProperty(composition.realtime, 'workspaceGraph', {value: {
+    degraded: false,
+    publishedSnapshot: Object.freeze({
+      schema_version: 3,
+      publication_revision: 7,
+      degraded: false,
+      logical_workspaces: Object.freeze([]),
+      workspace_instances: Object.freeze([]),
+      relations: Object.freeze([]),
+      aliases: Object.freeze([]),
+    }),
+  }})
+  const readyGraph = await requestBoard('composition-graph-ready', 'workspace_graph')
+  assert.equal(readyGraph.availability, 'ready')
+  assert.equal(readyGraph.publication_revision, 7)
+
+  const stillUsable = receiveFrames(voice, 1, 'voice after production debug requests')
+  callbacks!.onCodexState('running')
+  assert.equal(text((await stillUsable)[0]!), '{"type":"codex.state","state":"running"}')
+})
+
 test('authenticated fake-provider loopback uses one service for duplex audio and reconnect', async t => {
   const trace: string[] = []
   const provider = new ScriptedProvider(trace)
@@ -1148,21 +1240,6 @@ test('authenticated fake-provider loopback uses one service for duplex audio and
       '{"type":"desktop.ready"}',
       '{"type":"codex.state","state":"idle"}',
     ])
-
-    const board = receiveFrames(first, 1, 'exact runtime memory board')
-    await sendDesktop(first, JSON.stringify({
-      type: 'memory.board.request', request_id: 'board-1',
-    }), 'desktop memory board request')
-    assert.equal(text((await board)[0]!), memoryBoardMessage('board-1', core.runtime.memory))
-
-    const graphBoard = receiveFrames(first, 1, 'disabled workspace graph board')
-    await sendDesktop(first, JSON.stringify({
-      type: 'workspace_graph.board.request', request_id: 'graph-board-1',
-    }), 'desktop workspace graph board request')
-    assert.equal(
-      text((await graphBoard)[0]!),
-      workspaceGraphBoardMessage('graph-board-1', null, 'disabled'),
-    )
 
     await sendDesktop(first, new Uint8Array([1, 2, 3, 4]), 'desktop PCM')
     await sendDesktop(first, JSON.stringify({
@@ -1327,11 +1404,6 @@ test('selected integrated Qwen assembly uses the authenticated provider-neutral 
   assert.match(text(providerFrames[2]!), /"type":"playback\.terminal"/u)
   await assertDesktopControlOutputs(socket, callbacks!, 'qwen')
 
-  const board = receiveFrames(socket, 1, 'Qwen memory board')
-  await sendDesktop(socket, JSON.stringify({
-    type: 'memory.board.request', request_id: 'qwen-board',
-  }), 'Qwen memory board request')
-  assert.match(text((await board)[0]!), /"type":"memory\.board"/u)
   await closeDesktop(socket)
 
   await settleNamed('Qwen repeated desktop stop', Promise.all([owner.stop(), owner.stop()]))

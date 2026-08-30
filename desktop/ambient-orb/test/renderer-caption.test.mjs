@@ -15,8 +15,13 @@ test('renderer clears captions on disconnect and on every playback clear', async
     source.indexOf('onCurrentClose: ({socket: closedSocket}) => {'),
     source.indexOf('const backendRecovery = new BackendReconnectController'),
   )
-  assert.match(disconnectHandler, /playback\.disconnect\(\)/)
-  assert.match(disconnectHandler, /clearCaption\(\)/)
+  assert.match(disconnectHandler, /resetRendererConnection\(false, \{closeSocket: false\}\)/)
+  const resetHelper = source.slice(
+    source.indexOf('function resetRendererConnection('),
+    source.indexOf('function connectBackend('),
+  )
+  assert.match(resetHelper, /else playback\.disconnect\(\)/)
+  assert.match(resetHelper, /clearCaption\(\)/)
   // Continuous speech keeps refreshing the floor hold with the same utterance id.
   assert.match(source, /new OnsetTracker\(/)
 })

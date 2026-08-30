@@ -545,18 +545,6 @@
       "raw": "{\"type\":\"playback.done\",\"utterance_id\":\"u-1\"}"
     },
     {
-      "name": "memory-board-request",
-      "kind": "parse_client",
-      "authenticated": true,
-      "raw": "{\"type\":\"memory.board.request\",\"request_id\":\"req-1\"}"
-    },
-    {
-      "name": "memory-board-no-id",
-      "kind": "parse_client",
-      "authenticated": true,
-      "raw": "{\"type\":\"memory.board.request\"}"
-    },
-    {
       "name": "clock-pong",
       "kind": "parse_client",
       "authenticated": true,

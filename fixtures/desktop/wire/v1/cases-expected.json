@@ -422,17 +422,6 @@
       "error": "desktop playback generation is invalid"
     },
     {
-      "name": "memory-board-request",
-      "command": "memory_board_request",
-      "payload": {
-        "request_id": "req-1"
-      }
-    },
-    {
-      "name": "memory-board-no-id",
-      "error": "desktop request_id is invalid"
-    },
-    {
       "name": "clock-pong",
       "command": "clock_pong",
       "payload": {

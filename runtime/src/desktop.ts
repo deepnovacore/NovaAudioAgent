@@ -25,7 +25,6 @@ import {
   MAX_BOARD_MESSAGE_BYTES,
   type MemoryBoardDetail,
 } from './realtime/memory-board.js'
-import {hasUnpairedSurrogate} from './realtime/workspace-graph-board.js'
 
 export {
   loadProjectNativeHostFromResources,
@@ -47,7 +46,6 @@ const readyEndpointPattern = /^127\.0\.0\.1:([0-9]{1,5})$/u
 const identifierSchema = z.string()
   .refine(value => codePointLengthLikePython(value) <= 256)
   .refine(value => stripLikePython(value) !== '')
-const graphRequestIdentifierSchema = identifierSchema.refine(value => !hasUnpairedSurrogate(value))
 const renderTimestampSchema = z.number().finite().nonnegative().optional()
 const playbackTelemetryCountSchema = z.number().int().nonnegative().max(4_294_967_295)
 const playbackTelemetryQueueSchema = z.number().int().nonnegative().max(16_777_216)
@@ -145,14 +143,6 @@ const ordinaryDesktopControlSchema = z.discriminatedUnion('type', [
       t_render_ms: renderTimestampSchema,
     })),
   z.object({
-    type: z.literal('memory.board.request'),
-    request_id: identifierSchema,
-  }),
-  z.object({
-    type: z.literal('workspace_graph.board.request'),
-    request_id: graphRequestIdentifierSchema,
-  }).strict(),
-  z.object({
     type: z.literal('project.confirmation_decision'),
     proposal_id: identifierSchema.refine(value => codePointLengthLikePython(value) <= 128),
     confirmed: z.boolean(),
@@ -187,7 +177,6 @@ export class DesktopOutboundValidationError extends DesktopProtocolError {
   }
 }
 
-class DesktopGraphRequestError extends DesktopProtocolError {}
 
 export type DesktopCameraErrorCode = 'invalid_request' | 'capture_unavailable'
 
@@ -569,8 +558,7 @@ export class NodeDesktopServer {
           // Control parsing succeeded, so a host-side failure (for example cancellation while the
           // provider reconnects) is not evidence that the renderer violated the desktop protocol.
         }
-      }).catch(error => {
-        if (error instanceof DesktopGraphRequestError) return
+      }).catch(() => {
         rejected = true
         socket.close(4003, 'desktop protocol rejected')
       }).finally(() => {
@@ -986,9 +974,6 @@ export function parseDesktopControl(raw: string): DesktopControl {
     ) {
       const type = (value as Record<string, unknown>).type
       if (type === 'playback.telemetry') return {type: 'playback.telemetry_rejected'}
-      if (type === 'workspace_graph.board.request') {
-        throw new DesktopGraphRequestError('desktop workspace graph request is invalid')
-      }
     }
     throw new DesktopProtocolError('desktop control frame is unsupported')
   }

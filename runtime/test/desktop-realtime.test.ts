@@ -205,7 +205,6 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
 
     realtime.bridge.registerPing('p-1')
     clock.advanceTo(0.25)
-    const board = nextFrames(socket, 1, 'desktop memory board response')
     for (const [label, value] of [
       ['desktop PCM send', new Uint8Array([4, 5, 6, 7])],
       ['desktop speech onset send', JSON.stringify({type: 'speech.onset', speech_id: 's-1'})],
@@ -214,9 +213,14 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
       ['desktop playback done send', JSON.stringify({type: 'playback.done', utterance_id: 'u-2', generation_epoch: 2})],
       ['desktop playback cleared send', JSON.stringify({type: 'playback.cleared', utterance_id: 'u-2', generation_epoch: 2, played_ms: 0})],
       ['desktop clock pong send', JSON.stringify({type: 'clock.pong', ping_id: 'p-1', t_render_ms: 4.5})],
-      ['desktop memory request send', JSON.stringify({type: 'memory.board.request', request_id: 'r-1'})],
     ] as const) await sendClient(socket, value, label)
-    assert.equal(text((await board)[0]!), '{"type":"memory.board","request_id":"r-1"}')
+    await settleWithin('desktop voice controls applied', new Promise<void>(resolve => {
+      const check = (): void => {
+        if (calls.length >= 6) resolve()
+        else setImmediate(check)
+      }
+      check()
+    }))
     assert.deepEqual(calls, [
       'audio:4,5,6,7', 'onset:s-1', 'started:u-2:2', 'stopped:u-2:2:12',
       'done:u-2:2:null', 'cleared:u-2:2:0',

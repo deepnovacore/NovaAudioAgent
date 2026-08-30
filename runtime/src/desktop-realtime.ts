@@ -11,6 +11,7 @@ import {
   type DesktopServerOptions,
 } from './desktop.js'
 import type {RealtimeTelemetry} from './realtime/telemetry.js'
+import type {MemoryBoardDetail} from './realtime/memory-board.js'
 import {workspaceGraphBoardMessage} from './realtime/workspace-graph-board.js'
 
 const READY_FRAME = '{"type":"desktop.ready"}'
@@ -25,6 +26,8 @@ export interface DesktopServerTransport {
 }
 
 export interface DesktopRealtimeOptions extends DesktopBridgeOptions {
+  readonly memoryBoard?: (requestId: string, detail?: MemoryBoardDetail) => string
+  readonly workspaceGraphBoard?: (requestId: string) => string
   readonly createServer?: (options: DesktopServerOptions) => DesktopServerTransport
   /** Optional lifecycle observation after bridge connection state has been released. */
   readonly onConnectionReleased?: () => void
@@ -48,7 +51,13 @@ export class DesktopRealtime {
   #draining = false
 
   constructor(options: DesktopRealtimeOptions) {
-    const {createServer, onConnectionReleased, ...bridgeOptions} = options
+    const {
+      createServer,
+      onConnectionReleased,
+      memoryBoard,
+      workspaceGraphBoard,
+      ...bridgeOptions
+    } = options
     this.#stop = options.stop
     this.#onConnectionReleased = onConnectionReleased
     this.#telemetry = options.telemetry
@@ -63,12 +72,12 @@ export class DesktopRealtime {
       onClientDisconnect: () => this.#disconnected(),
       onDebugBoardRequest: request => {
         if (request.board === 'memory') {
-          if (bridgeOptions.memoryBoard === undefined) {
+          if (memoryBoard === undefined) {
             throw new DesktopProtocolError('desktop memory board is unavailable')
           }
-          return bridgeOptions.memoryBoard(request.request_id, request.detail)
+          return memoryBoard(request.request_id, request.detail)
         }
-        return bridgeOptions.workspaceGraphBoard?.(request.request_id)
+        return workspaceGraphBoard?.(request.request_id)
           ?? workspaceGraphBoardMessage(request.request_id, null, 'disabled')
       },
       onAudio: pcm => this.bridge.receiveAudio(pcm),

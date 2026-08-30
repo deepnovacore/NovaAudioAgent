@@ -1,5 +1,6 @@
 export const BACKEND_RECONNECT_BASE_DELAY_MS = 250
 export const BACKEND_RECONNECT_MAX_DELAY_MS = 5_000
+export const BACKEND_CONNECT_TIMEOUT_MS = 5_000
 export const MAX_PENDING_CONNECTION_DIAGNOSTICS = 16
 
 const tokenPattern = /^[a-f0-9]{32}$/u
@@ -11,10 +12,15 @@ export class BackendReconnectController {
   #random
   #onState
   #sendDiagnostic
+  #onConnectionReplaced
   #baseDelayMs
   #maxDelayMs
+  #connectTimeoutMs
   #connection = null
   #timer = null
+  #connectTimer = null
+  #connectAttemptToken = null
+  #cancelOpen = null
   #attempt = 0
   #generation = 0
   #recovering = false
@@ -27,8 +33,10 @@ export class BackendReconnectController {
     random = Math.random,
     onState = () => {},
     sendDiagnostic = () => false,
+    onConnectionReplaced = () => {},
     baseDelayMs = BACKEND_RECONNECT_BASE_DELAY_MS,
     maxDelayMs = BACKEND_RECONNECT_MAX_DELAY_MS,
+    connectTimeoutMs = BACKEND_CONNECT_TIMEOUT_MS,
   } = {}) {
     if (typeof open !== 'function'
       || typeof scheduleTimeout !== 'function'
@@ -36,27 +44,38 @@ export class BackendReconnectController {
       || typeof random !== 'function'
       || typeof onState !== 'function'
       || typeof sendDiagnostic !== 'function'
+      || typeof onConnectionReplaced !== 'function'
       || !Number.isFinite(baseDelayMs)
       || baseDelayMs <= 0
       || !Number.isFinite(maxDelayMs)
-      || maxDelayMs < baseDelayMs) throw new TypeError('invalid backend reconnect controller')
+      || maxDelayMs < baseDelayMs
+      || !Number.isFinite(connectTimeoutMs)
+      || connectTimeoutMs <= 0) throw new TypeError('invalid backend reconnect controller')
     this.#open = open
     this.#scheduleTimeout = scheduleTimeout
     this.#cancelTimeout = cancelTimeout
     this.#random = random
     this.#onState = onState
     this.#sendDiagnostic = sendDiagnostic
+    this.#onConnectionReplaced = onConnectionReplaced
     this.#baseDelayMs = baseDelayMs
     this.#maxDelayMs = maxDelayMs
+    this.#connectTimeoutMs = connectTimeoutMs
   }
 
   setConnection(connection) {
     validateConnection(connection)
-    this.#cancelRetry()
-    this.#connection = Object.freeze({
+    const next = Object.freeze({
       endpoint: connection.endpoint,
       token: connection.token,
     })
+    if (this.#connection !== null && !sameConnection(this.#connection, next)) {
+      this.#diagnostics.length = 0
+      this.#onConnectionReplaced()
+    }
+    this.#cancelRetry()
+    this.#retireOpen(true)
+    this.#connection = next
     this.#generation += 1
     this.#attempt = 0
     this.#recovering = false
@@ -65,6 +84,7 @@ export class BackendReconnectController {
 
   socketOpened() {
     if (this.#connection === null) return false
+    this.#retireOpen(false)
     const attempt = this.#attempt
     const recovering = this.#recovering
     this.#cancelRetry()
@@ -84,6 +104,7 @@ export class BackendReconnectController {
 
   socketClosed(event = {}) {
     if (this.#connection === null) return false
+    this.#retireOpen(false)
     this.#recovering = true
     this.#record({
       phase: 'closed',
@@ -102,6 +123,7 @@ export class BackendReconnectController {
     this.#recovering = false
     this.#diagnostics.length = 0
     this.#cancelRetry()
+    this.#retireOpen(true)
   }
 
   dispose() {
@@ -111,7 +133,8 @@ export class BackendReconnectController {
   #tryOpen(attempt, generation) {
     if (this.#connection === null || generation !== this.#generation) return
     try {
-      this.#open(this.#connection, Object.freeze({attempt}))
+      const cancelOpen = this.#open(this.#connection, Object.freeze({attempt}))
+      if (typeof cancelOpen === 'function') this.#armConnectTimeout(cancelOpen, attempt, generation)
     } catch {
       this.#recovering = true
       this.#record({
@@ -154,6 +177,42 @@ export class BackendReconnectController {
     this.#cancelTimeout(timer)
   }
 
+  #armConnectTimeout(cancelOpen, attempt, generation) {
+    this.#retireOpen(true)
+    const attemptToken = Object.freeze({})
+    this.#connectAttemptToken = attemptToken
+    this.#cancelOpen = cancelOpen
+    this.#connectTimer = this.#scheduleTimeout(() => {
+      if (this.#connection === null
+        || generation !== this.#generation
+        || this.#connectAttemptToken !== attemptToken) return
+      const cancel = this.#cancelOpen
+      this.#connectAttemptToken = null
+      this.#cancelOpen = null
+      this.#connectTimer = null
+      try { cancel?.() } catch { /* a failed close still owns this attempt */ }
+      this.#recovering = true
+      this.#record({
+        phase: 'reconnect_result',
+        attempt,
+        result: 'open_failed',
+      })
+      this.#publishState('reconnecting')
+      this.#scheduleRetry()
+    }, this.#connectTimeoutMs)
+  }
+
+  #retireOpen(close) {
+    if (this.#connectTimer !== null) this.#cancelTimeout(this.#connectTimer)
+    this.#connectTimer = null
+    this.#connectAttemptToken = null
+    const cancel = this.#cancelOpen
+    this.#cancelOpen = null
+    if (close) {
+      try { cancel?.() } catch { /* replacement/exit cleanup is best effort */ }
+    }
+  }
+
   #record(diagnostic) {
     try {
       if (this.#sendDiagnostic(Object.freeze({...diagnostic})) === true) return
@@ -179,6 +238,10 @@ export class BackendReconnectController {
   #publishState(state) {
     try { this.#onState(state) } catch { /* presentation cannot own recovery */ }
   }
+}
+
+function sameConnection(left, right) {
+  return left.endpoint === right.endpoint && left.token === right.token
 }
 
 function validateConnection(connection) {

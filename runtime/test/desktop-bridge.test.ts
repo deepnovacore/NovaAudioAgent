@@ -499,85 +499,17 @@ test('a banner decision carries the exact proposal binding to the service', asyn
   ), DesktopProtocolError)
 })
 
-test('a memory board request is answered when a provider is wired, and ignored otherwise', async () => {
-  const answered = harness({memoryBoard: requestId => `{"type":"memory.board","id":"${requestId}"}`})
-  await answered.bridge.receive(
+test('voice bridge rejects debug board requests', async () => {
+  const {bridge} = harness()
+  for (const raw of [
     '{"type":"memory.board.request","request_id":"req-1"}',
-    {authenticated: true},
-  )
-  assert.equal(answered.bridge.takeNextFrame(), '{"type":"memory.board","id":"req-1"}')
-
-  const unwired = harness()
-  await unwired.bridge.receive(
-    '{"type":"memory.board.request","request_id":"req-1"}',
-    {authenticated: true},
-  )
-  assert.equal(unwired.bridge.takeNextFrame(), null)
-  assert.equal(unwired.stopped(), false, 'and not treated as an overflow')
-})
-
-test('workspace graph board requests use a distinct latest read-only response slot', async () => {
-  const {bridge, calls} = harness({
-    workspaceGraphBoard: requestId => JSON.stringify({
-      type: 'workspace_graph.board', request_id: requestId,
-    }),
-  })
-  await bridge.receive(
     '{"type":"workspace_graph.board.request","request_id":"graph-1"}',
-    {authenticated: true},
-  )
-  await bridge.receive(
-    '{"type":"workspace_graph.board.request","request_id":"graph-2"}',
-    {authenticated: true},
-  )
-  assert.deepEqual(calls, [], 'a graph read never reaches voice service methods')
-  assert.deepEqual(bridge.pendingCounts, {
-    outbound: 0, preempt: 0, codex: false, project: false, workspaceGraph: true,
-  })
-  assert.equal(
-    bridge.takeNextDelivery()?.frame,
-    '{"type":"workspace_graph.board","request_id":"graph-2"}',
-  )
-  assert.equal(bridge.takeNextDelivery(), null, 'the superseded graph-1 response is gone')
-})
-
-test('workspace graph board latest delivery never consumes or stops the voice queue', async () => {
-  const {bridge, stopped} = harness({
-    maxOutboundFrames: 1,
-    workspaceGraphBoard: requestId => JSON.stringify({
-      type: 'workspace_graph.board', request_id: requestId,
-    }),
-  })
-  bridge.onAudioFrame(frame(2, 0))
-  await bridge.receive(
-    '{"type":"workspace_graph.board.request","request_id":"graph-full"}',
-    {authenticated: true},
-  )
-  assert.equal(stopped(), false)
-  assert.equal(bridge.pendingCounts.outbound, 1)
-  assert.equal(bridge.pendingCounts.workspaceGraph, true)
-  assert.ok(bridge.takeNextFrame() instanceof Uint8Array, 'voice remains ahead of graph UI data')
-  assert.equal(
-    bridge.takeNextDelivery()?.policy,
-    'latest',
-    'graph UI data is refreshable latest state',
-  )
-})
-
-test('malformed workspace graph frames are rejected without changing transport state', async () => {
-  const {bridge, stopped} = harness({
-    workspaceGraphBoard: () => '{"type":"workspace_graph.board"}',
-  })
-  await assert.rejects(() => bridge.receive(
-    '{"type":"workspace_graph.board.request","request_id":""}',
-    {authenticated: true},
-  ), /unsupported|request_id/u)
-  assert.equal(stopped(), false)
-  assert.equal(bridge.takeNextFrame(), null)
-  await assert.rejects(() => bridge.receive(
-    '{"type":"workspace_graph.board.request","request_id":"\\ud800"}',
-    {authenticated: true},
-  ), /request_id/u)
+  ]) {
+    await assert.rejects(
+      () => bridge.receive(raw, {authenticated: true}),
+      DesktopProtocolError,
+    )
+  }
 })
 
 test('a clock pong is only measured against a ping that was actually sent', async () => {
@@ -831,23 +763,6 @@ test('a state that returns to what was already sent clears the queued one', () =
     'the stale queued state is dropped, not left to be sent',
   )
   assert.equal(bridge.takeNextFrame(), null)
-})
-
-test('a memory board answer is dropped rather than stopping the transport', async () => {
-  // The renderer asked for it and can ask again. Treating it like a lost audio frame would tear down a
-  // working connection over a refreshable panel.
-  const {bridge, stopped} = harness({
-    maxOutboundFrames: 1,
-    memoryBoard: () => '{"type":"memory.board"}',
-  })
-  bridge.onAudioFrame(frame(1, 0))
-  assert.equal(bridge.pendingCounts.outbound, 1, 'the queue is full')
-  await bridge.receive(
-    '{"type":"memory.board.request","request_id":"req-1"}',
-    {authenticated: true},
-  )
-  assert.equal(stopped(), false, 'dropped, not fatal')
-  assert.equal(bridge.pendingCounts.outbound, 1, 'and nothing was added')
 })
 
 test('the project dedup is value-based in both places it is checked', () => {
