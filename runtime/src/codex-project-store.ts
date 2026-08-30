@@ -453,15 +453,17 @@ export class CodexProjectStore {
   }
 
   async executeManagedReplacement(input: ManagedReplacementInput): Promise<{
+    readonly status: 'stale' | 'rolled_back' | 'committed'
     readonly committed: boolean
     readonly tombstones: readonly {readonly name: string; readonly identity: ProjectFileIdentity}[]
   }> {
     return await this.#transaction<{
+      readonly status: 'stale' | 'rolled_back' | 'committed'
       readonly committed: boolean
       readonly tombstones: readonly {readonly name: string; readonly identity: ProjectFileIdentity}[]
     }>(async state => {
       if (state.stateRevision !== input.expected_state_revision || input.targets.length === 0) {
-        return [{committed: false, tombstones: []}, false]
+        return [{status: 'stale', committed: false, tombstones: []}, false]
       }
       const managed = await this.#validateManagedRoot()
       const root = this.#requireManagedRootHandle()
@@ -484,10 +486,10 @@ export class CodexProjectStore {
           || match === null
           || seenWorkspaces.has(target.workspace_id)
           || seenTombstones.has(target.tombstone_name)
-        ) return [{committed: false, tombstones: []}, false]
+        ) return [{status: 'stale', committed: false, tombstones: []}, false]
         const binding = await this.#validateManagedWorkspaceBinding(target.canonical_path)
         if (!sameFileIdentity(binding.identity, target.identity)) {
-          return [{committed: false, tombstones: []}, false]
+          return [{status: 'stale', committed: false, tombstones: []}, false]
         }
         this.#pinWorkspaceIdentity(workspace.workspace_id, binding.identity)
         operationIds.add(match[1] ?? '')
@@ -500,10 +502,12 @@ export class CodexProjectStore {
           identity: binding.identity,
         })
       }
-      if (operationIds.size !== 1) return [{committed: false, tombstones: []}, false]
+      if (operationIds.size !== 1) {
+        return [{status: 'stale', committed: false, tombstones: []}, false]
+      }
       const operationId = [...operationIds][0]
       if (operationId === undefined || !STORED_ID.test(operationId)) {
-        return [{committed: false, tombstones: []}, false]
+        return [{status: 'stale', committed: false, tombstones: []}, false]
       }
       let journal: ManagedMaintenanceJournal = Object.freeze({
         operation_id: operationId,
@@ -597,9 +601,10 @@ export class CodexProjectStore {
           try { await this.#clearMaintenanceJournal(operationId) } catch { rollbackComplete = false }
         }
         if (!rollbackComplete) throw new ProjectStateError('workspace_boundary_changed')
-        return [{committed: false, tombstones: []}, false]
+        return [{status: 'rolled_back', committed: false, tombstones: []}, false]
       }
       return [Object.freeze({
+        status: 'committed',
         committed: true,
         tombstones: Object.freeze(prepared.map(target => Object.freeze({
           name: target.tombstoneName,
@@ -3028,6 +3033,9 @@ function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
     || new Set(entries.map(entry => entry.original_name)).size !== entries.length
     || new Set(entries.map(entry => entry.tombstone_name)).size !== entries.length
   ) {
+    throw new ProjectStateError('state_corrupt')
+  }
+  if (root.phase === 'committed' && entries.some(entry => entry.replacement_identity === null)) {
     throw new ProjectStateError('state_corrupt')
   }
   return Object.freeze({

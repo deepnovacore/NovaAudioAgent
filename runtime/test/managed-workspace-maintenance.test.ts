@@ -34,7 +34,7 @@ test('preparation and authorization are opaque, paired, and consumed exactly onc
     },
     executeManagedReplacement: (input: unknown) => {
       calls.push(input)
-      return Promise.resolve({committed: true, tombstones: []})
+      return Promise.resolve({status: 'committed' as const, committed: true, tombstones: []})
     },
   }
   const service = await ManagedWorkspaceMaintenanceService.open({
@@ -202,4 +202,33 @@ test('service startup refuses an unresolved prepared rollback', async () => {
     executeManagedReplacement: () => Promise.reject(new Error('must not execute')),
   }
   await assert.rejects(ManagedWorkspaceMaintenanceService.open({store}), /rollback pending/u)
+})
+
+test('a completed filesystem rollback is reported as clear_failed rather than stale', async () => {
+  const workspace = record('workspace-0001')
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
+    loadManagedMaintenanceJournal: () => Promise.resolve(null),
+    maintenanceSnapshot: () => Promise.resolve({
+      state_revision: 1,
+      active_workspace_id: workspace.workspace_id,
+      managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
+    }),
+    withCurrentManagedWorkspacePath: () => Promise.resolve(false),
+    executeManagedReplacement: () => Promise.resolve({
+      status: 'rolled_back' as const, committed: false, tombstones: [],
+    }),
+  }
+  const service = await ManagedWorkspaceMaintenanceService.open({
+    store,
+    now: () => 100,
+    idFactory: () => 'operation-0001',
+  })
+  const prepared = await service.prepare('current_managed')
+  if (prepared.status !== 'ready') assert.fail('expected ready')
+  const authorization = service.authorize(prepared.preparation)
+  assert.deepEqual(await service.execute(prepared.preparation, authorization), {
+    status: 'clear_failed', committed: false, cleanup_pending: false,
+  })
+  await service.close()
 })

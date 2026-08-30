@@ -9,7 +9,7 @@ Base: `b4b265e docs(design): stage settings and managed workspace actions`
 ## Automated verification
 
 - `npm run build --workspace @nova-audio-agent/runtime`: PASS
-- Runtime maintenance/store/native focused suite: PASS, 75 tests, 0 failed.
+- Runtime maintenance/store/native focused suite: PASS, 77 tests, 0 failed.
 - `npm run typecheck --workspace @nova-audio-agent/runtime`: PASS
 - `npm run lint --workspace @nova-audio-agent/runtime`: PASS
 - `npm run build --workspace @nova-audio-agent/ambient-orb`: PASS
@@ -42,6 +42,7 @@ The app was launched from the isolated worktree with `npm run start:client` and 
 - Managed clear authorization binds an opaque preparation to the state revision and target identities, is single-use, and fails closed when cleanup is already pending.
 - The maintenance journal records explicit `prepared` and `committed` phases plus each operation-created replacement identity. Recovery only removes a journal-bound replacement, preserves populated or substituted directories, and only deletes journal-bound tombstones after commit.
 - An unresolved pre-commit recovery reports `rollback_pending`, prevents service startup, and leaves the backend stopped after an in-process clear failure.
+- Store replacement results distinguish stale validation from a filesystem failure that rolled back successfully, so the UI reports the latter as `clear_failed` rather than `stale`.
 - Batch clear detaches the complete validated target set before it creates any replacement directory.
 - Destructive removal stays inside the native descriptor/handle-relative authority layer; imported and registered directories are never eligible.
 - Current-workspace opening retains the store transaction and revalidates the exact managed identity around the host callback.

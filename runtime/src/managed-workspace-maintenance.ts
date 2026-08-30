@@ -22,6 +22,7 @@ interface MaintenanceStore {
   maintenanceSnapshot(): Promise<ProjectMaintenanceSnapshot>
   withCurrentManagedWorkspacePath(callback: (path: string) => void | Promise<void>): Promise<boolean>
   executeManagedReplacement(input: ManagedReplacementInput): Promise<{
+    readonly status: 'stale' | 'rolled_back' | 'committed'
     readonly committed: boolean
     readonly tombstones: readonly {readonly name: string; readonly identity: {readonly device: bigint; readonly inode: bigint}}[]
   }>
@@ -278,17 +279,9 @@ export class ManagedWorkspaceMaintenanceService {
         expected_state_revision: prepared.stateRevision,
         targets,
       })
-      if (!replaced.committed) {
-        const journal = await this.#store.loadManagedMaintenanceJournal()
-        if (journal?.operation_id !== operationId) return staleResult()
-        if (journal.phase === 'prepared') {
-          const recovery = await this.#store.cleanupManagedMaintenanceJournal()
-          this.#cleanupPending = recovery.status !== 'clean'
-          return recovery.status === 'rollback_pending'
-            ? Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
-            : Object.freeze({status: 'clear_failed', committed: false, cleanup_pending: false})
-        }
-        return Object.freeze({status: 'clear_failed', committed: true, cleanup_pending: true})
+      if (replaced.status === 'stale') return staleResult()
+      if (replaced.status === 'rolled_back') {
+        return Object.freeze({status: 'clear_failed', committed: false, cleanup_pending: false})
       }
       const cleanup = await this.#store.cleanupManagedMaintenanceJournal()
       this.#cleanupPending = cleanup.status !== 'clean'

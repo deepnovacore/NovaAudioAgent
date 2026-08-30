@@ -1704,6 +1704,7 @@ test('state revision increments once per mutation and maintenance snapshots pin 
       }],
     })
     assert.equal(stale.committed, false)
+    assert.equal(stale.status, 'stale')
     const replaced = await store.executeManagedReplacement({
       expected_state_revision: replacementSnapshot.state_revision,
       targets: [{
@@ -1714,6 +1715,7 @@ test('state revision increments once per mutation and maintenance snapshots pin 
       }],
     })
     assert.equal(replaced.committed, true)
+    assert.equal(replaced.status, 'committed')
     assert.deepEqual(await readdir(workspace.canonical_path), [])
     const afterReplacement = await store.snapshot()
     assert.equal(afterReplacement.state_revision, beforeReplacement.state_revision)
@@ -1765,6 +1767,7 @@ test('all managed originals are detached before any replacement is created', asy
       })),
     })
     assert.equal(result.committed, true)
+    assert.equal(result.status, 'committed')
     const firstMkdir = rootFiles.events.findIndex(event => event.startsWith('mkdir:'))
     assert.equal(
       rootFiles.events.slice(0, firstMkdir).filter(event => event.startsWith('rename:')).length,
@@ -1811,6 +1814,7 @@ test('a later replacement failure restores every original in the prepared set', 
       })),
     })
     assert.equal(result.committed, false)
+    assert.equal(result.status, 'rolled_back')
     assert.equal(await readFile(join(alpha.canonical_path, 'alpha.txt'), 'utf8'), 'alpha')
     assert.equal(await readFile(join(beta.canonical_path, 'beta.txt'), 'utf8'), 'beta')
     assert.equal(await store.loadManagedMaintenanceJournal(), null)
@@ -1949,6 +1953,40 @@ test('current managed open detects a same-path substitution around the host call
       await mkdir(path, {mode: 0o700})
     }), (error: unknown) => (
       error instanceof ProjectStateError && error.code === 'workspace_boundary_changed'
+    ))
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('a committed journal cannot omit its replacement identity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-journal-phase-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
+  })
+  try {
+    await writeFile(join(stateRoot, PROJECT_MAINTENANCE_JOURNAL_FILE), JSON.stringify({
+      entries: [{
+        identity: {device: '1', inode: '2'},
+        original_name: 'workspace-0001',
+        replacement_identity: null,
+        tombstone_name: '.nova-maintenance-operation-0001-1',
+        workspace_id: 'workspace-0001',
+      }],
+      operation_id: 'operation-0001',
+      phase: 'committed',
+      version: 1,
+    }), {mode: 0o600})
+    await assert.rejects(store.loadManagedMaintenanceJournal(), (error: unknown) => (
+      error instanceof ProjectStateError && error.code === 'state_corrupt'
     ))
   } finally {
     await store.close()
