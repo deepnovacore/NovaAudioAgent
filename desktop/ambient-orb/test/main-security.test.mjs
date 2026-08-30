@@ -49,6 +49,9 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:window-drag:move',
     'nova:window-drag:start',
     'nova:workspace-graph-board:request',
+    'nova:workspaces:clear-all',
+    'nova:workspaces:clear-current',
+    'nova:workspaces:open-current',
   ])
   assert.doesNotMatch(source, /sendSync/)
 })
@@ -140,7 +143,7 @@ test('the settings window is a singleton that never rebinds the shared permissio
   const body = open.slice(0, open.indexOf('\n}\n'))
 
   assert.match(source, /let settingsWindow = null/)
-  assert.match(body, /if \(settingsWindow\) \{\n\s*settingsWindow\.show\(\)\n\s*settingsWindow\.focus\(\)\n\s*return\n\s*\}/)
+  assert.match(body, /if \(settingsWindow\) \{\n\s*settingsWindow\.show\(\)\n\s*settingsWindow\.focus\(\)[\s\S]*refreshManagedWorkspaceCapabilities\(\)[\s\S]*return\n\s*\}/)
   assert.match(body, /settingsWindowOptions\(preload, launchId\)/)
   assert.match(body, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
   assert.match(body, /allowRendererNavigation\(url\)/)
@@ -154,7 +157,7 @@ test('the settings window is a singleton that never rebinds the shared permissio
 test('settings IPC is sender-validated and answers from main without an orb relay', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
-  assert.match(source, /ipcMain\.handle\('nova:settings:get', event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
+  assert.match(source, /ipcMain\.handle\('nova:settings:get', async event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
   assert.match(source, /ipcMain\.handle\('nova:settings:set', async \(event, patch\) => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
   assert.match(source, /publishCommitted: \(\) => sendToOrb\(\s*'nova:settings:changed', orbSettings\(currentSettings\),?\s*\)/)
   // No requestId machinery: settings live in main, so nothing round-trips
@@ -176,6 +179,30 @@ test('Codex rescan is restricted to the settings window sender', async () => {
   assert.match(handler, /sameBackendLaunchConfiguration\(previous, prepared\)/)
   assert.match(handler, /if \(changed && backendSupervisor\) await backendSupervisor\.restart\(\)/)
   assert.match(handler, /operationStatus: 'busy'/)
+})
+
+test('managed workspace actions are zero-argument and bound to the live settings sender', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  for (const channel of [
+    'nova:workspaces:open-current',
+    'nova:workspaces:clear-current',
+    'nova:workspaces:clear-all',
+  ]) {
+    const start = source.indexOf(`ipcMain.handle('${channel}'`)
+    assert.notEqual(start, -1)
+    const body = source.slice(start, source.indexOf('\n  })', start))
+    assert.match(body, /async \(event, \.\.\.args\) =>/)
+    assert.match(body, /!settingsWindow \|\| event\.sender !== settingsWindow\.webContents \|\| args\.length !== 0/)
+  }
+  const view = source.slice(source.indexOf('function settingsView()'))
+  const viewBody = view.slice(0, view.indexOf('\n}'))
+  assert.match(viewBody, /managedWorkspaces:/)
+  assert.match(source, /function managedWorkspacesView\(\) \{[\s\S]*lifecycleBusy: lifecycleCoordinator\.busy/)
+  assert.doesNotMatch(viewBody, /canonical_path|workspace_id|identity|tombstone/u)
+  const reply = source.slice(source.indexOf('const workspaceActionReply = async action =>'))
+  const replyBody = reply.slice(0, reply.indexOf('\n  }'))
+  assert.match(replyBody, /managedWorkspaces: managedWorkspacesView\(\)/)
+  assert.doesNotMatch(replyBody, /settingsView\(\).*\}/u)
 })
 
 test('no decrypted secret can reach the renderer or a log line', async () => {
@@ -365,6 +392,7 @@ test('a saved configuration reports bounded transaction phases without falsifyin
 
   assert.match(source, /settingsApplyStatus/)
   assert.match(handler, /publishStatus: publishSettingsApplyStatus/)
+  assert.match(handler, /backendSupervisor\.status\(\)\.state !== 'connected'/)
   for (const phase of ['saving', 'refreshing', 'restarting', 'applied', 'failed', 'restart_failed']) {
     assert.match(apply, new RegExp(`publishStatus\\('${phase}'\\)`))
   }

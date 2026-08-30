@@ -63,7 +63,9 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   const { exposed, ipcRenderer, invokes } = await loadPreload()
 
   assert.deepEqual(Object.keys(exposed.settings).sort(), [
-    'get', 'onChanged', 'repairProjects', 'rescanCodex', 'retryBackend', 'retryMicrophone', 'set',
+    'clearAllManagedWorkspaces', 'clearCurrentManagedWorkspace', 'get', 'onChanged',
+    'openCurrentManagedWorkspace', 'repairProjects', 'rescanCodex', 'retryBackend',
+    'retryMicrophone', 'set',
   ])
   assert.ok(Object.isFrozen(exposed.settings))
 
@@ -72,12 +74,18 @@ test('preload exposes the settings bridge as invoke/invoke/removable listener', 
   await exposed.settings.rescanCodex()
   await exposed.settings.repairProjects('state')
   await exposed.settings.retryMicrophone()
+  await exposed.settings.openCurrentManagedWorkspace()
+  await exposed.settings.clearCurrentManagedWorkspace()
+  await exposed.settings.clearAllManagedWorkspaces()
   assert.deepEqual(invokes, [
     { channel: 'nova:settings:get', payload: undefined },
     { channel: 'nova:settings:set', payload: { palette: 'graphite' } },
     { channel: 'nova:codex:rescan', payload: undefined },
     { channel: 'nova:projects:repair', payload: 'state' },
     { channel: 'nova:microphone:retry', payload: undefined },
+    { channel: 'nova:workspaces:open-current', payload: undefined },
+    { channel: 'nova:workspaces:clear-current', payload: undefined },
+    { channel: 'nova:workspaces:clear-all', payload: undefined },
   ])
 
   const seen = []

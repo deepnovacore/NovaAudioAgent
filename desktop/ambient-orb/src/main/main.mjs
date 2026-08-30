@@ -10,11 +10,15 @@ import {
   protocol,
   safeStorage,
   screen,
+  shell,
   systemPreferences,
   Tray,
   utilityProcess,
 } from 'electron'
-import { loadProjectNativeHostFromResources } from '@nova-audio-agent/runtime/desktop'
+import {
+  loadProjectNativeHostFromResources,
+  ManagedWorkspaceMaintenanceService,
+} from '@nova-audio-agent/runtime/desktop'
 import { randomBytes } from 'node:crypto'
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
@@ -75,6 +79,7 @@ import {
   applySettingsTransaction,
   sameBackendLaunchConfiguration,
 } from './settings-apply.mjs'
+import { createWorkspaceActions } from './workspace-actions.mjs'
 import {
   clampWindowPosition,
   createConfirmationWindowController,
@@ -137,6 +142,11 @@ let bootstrap = null
 let nativeAudio = null
 let nativeBinary = null
 let projectNativeHost
+let managedWorkspaceMaintenance = null
+let managedWorkspaceCapabilities = Object.freeze({
+  current: Object.freeze({available: false, displayName: null}),
+  count: 0,
+})
 let quitDrain = null
 let releaseSmokeChannel = null
 // Settings and debug boards are main-owned IPC surfaces. Neither relays through
@@ -188,6 +198,14 @@ function settingsFile() {
   return resolve(app.getPath('userData'), 'ambient-orb-settings.json')
 }
 
+function managedWorkspacesView() {
+  return Object.freeze({
+    current: managedWorkspaceCapabilities.current,
+    count: managedWorkspaceCapabilities.count,
+    lifecycleBusy: lifecycleCoordinator.busy,
+  })
+}
+
 // The single shape the settings panel is ever told. Key material is reduced to
 // seven booleans here and nowhere else, so no handler can widen it by accident;
 // `keyringAvailable` is what turns the plaintext warning line on. It answers
@@ -202,6 +220,7 @@ function settingsView() {
     backendDiagnostic: backendStatus.diagnostic,
     backendRetryInMs: backendStatus.retryInMs,
     settingsApplyStatus,
+    managedWorkspaces: managedWorkspacesView(),
     microphoneStatus,
     effectivePaths: desktopConfig ? Object.freeze({
       stateRoot: desktopConfig.stateRoot,
@@ -287,6 +306,9 @@ function openSettingsWindow(launchId) {
   if (settingsWindow) {
     settingsWindow.show()
     settingsWindow.focus()
+    void refreshManagedWorkspaceCapabilities().then(() => {
+      sendToSettings('nova:settings:changed', settingsView())
+    })
     return
   }
   const window = new BrowserWindow(settingsWindowOptions(preload, launchId))
@@ -302,6 +324,9 @@ function openSettingsWindow(launchId) {
     settingsWindow = null
   })
   settingsWindow = window
+  void refreshManagedWorkspaceCapabilities().then(() => {
+    sendToSettings('nova:settings:changed', settingsView())
+  })
   void window.loadURL('nova://orb/settings.html')
 }
 
@@ -403,7 +428,7 @@ async function prepareDesktopConfiguration() {
       electronAbi: process.versions.modules,
     })
   }
-  return prepareDesktopStartup({
+  const prepared = await prepareDesktopStartup({
     settings: currentSettings,
     environment: process.env,
     home: homedir(),
@@ -439,11 +464,23 @@ async function prepareDesktopConfiguration() {
       mkdir,
     }),
   })
+  const maintenance = projectNativeHost === null
+    ? null
+    : await ManagedWorkspaceMaintenanceService.openFromDesktop({
+        stateRoot: prepared.config.stateRoot,
+        managedRoot: prepared.config.managedRoot,
+        nativeHost: projectNativeHost,
+      })
+  return Object.freeze({...prepared, maintenance})
 }
 
-function commitDesktopConfiguration(prepared) {
+async function commitDesktopConfiguration(prepared) {
+  const previousMaintenance = managedWorkspaceMaintenance
   desktopConfig = prepared.config
   codexStatus = prepared.codexStatus
+  managedWorkspaceMaintenance = prepared.maintenance
+  if (previousMaintenance !== null) await previousMaintenance.close().catch(() => undefined)
+  await refreshManagedWorkspaceCapabilities()
 }
 
 async function refreshDesktopConfiguration() {
@@ -451,6 +488,56 @@ async function refreshDesktopConfiguration() {
   commitDesktopConfiguration(prepared)
   return prepared
 }
+
+async function refreshManagedWorkspaceCapabilities() {
+  const maintenance = managedWorkspaceMaintenance
+  if (maintenance === null) {
+    managedWorkspaceCapabilities = Object.freeze({
+      current: Object.freeze({available: false, displayName: null}),
+      count: 0,
+    })
+    return managedWorkspaceCapabilities
+  }
+  try {
+    const capabilities = await maintenance.capabilities()
+    if (maintenance !== managedWorkspaceMaintenance) return managedWorkspaceCapabilities
+    managedWorkspaceCapabilities = Object.freeze({
+      current: Object.freeze({
+        available: capabilities.current.available,
+        displayName: capabilities.current.display_name,
+      }),
+      count: capabilities.all.count,
+    })
+  } catch {
+    if (maintenance === managedWorkspaceMaintenance) {
+      managedWorkspaceCapabilities = Object.freeze({
+        current: Object.freeze({available: false, displayName: null}),
+        count: 0,
+      })
+    }
+  }
+  return managedWorkspaceCapabilities
+}
+
+const workspaceActions = createWorkspaceActions({
+  coordinator: lifecycleCoordinator,
+  getMaintenance: () => managedWorkspaceMaintenance,
+  getWindow: () => settingsWindow,
+  showMessageBox: (window, options) => window
+    ? dialog.showMessageBox(window, options)
+    : dialog.showMessageBox(options),
+  openPath: value => shell.openPath(value),
+  stopBackendCleanly: async () => {
+    if (!backendSupervisor) return false
+    await backendSupervisor.stop()
+    return backendSupervisor.status().state === 'stopped'
+  },
+  restartBackendBounded: async () => {
+    if (!backendSupervisor) return false
+    await backendSupervisor.restart()
+    return backendSupervisor.status().state === 'connected'
+  },
+})
 
 async function launchBackend(backendKind, smokeChannel, onExit) {
   const configurationCode = desktopConfig?.codexConfigurationError
@@ -712,10 +799,11 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     }
     return { saved: filePath }
   })
-  ipcMain.handle('nova:settings:get', event => {
+  ipcMain.handle('nova:settings:get', async event => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings request rejected')
     }
+    await refreshManagedWorkspaceCapabilities()
     return settingsView()
   })
   ipcMain.handle('nova:codex:rescan', async event => {
@@ -726,7 +814,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       const previous = Object.freeze({config: desktopConfig, codexStatus})
       const prepared = await prepareDesktopConfiguration()
       const changed = !sameBackendLaunchConfiguration(previous, prepared)
-      commitDesktopConfiguration(prepared)
+      await commitDesktopConfiguration(prepared)
       if (changed && backendSupervisor) await backendSupervisor.restart()
       return settingsView()
     })
@@ -759,6 +847,30 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       nativeHost: projectNativeHost,
       pathApi: path,
     })
+  })
+  const workspaceActionReply = async action => {
+    const result = await action()
+    await refreshManagedWorkspaceCapabilities()
+    sendToSettings('nova:settings:changed', settingsView())
+    return Object.freeze({status: result.status, managedWorkspaces: managedWorkspacesView()})
+  }
+  ipcMain.handle('nova:workspaces:open-current', async (event, ...args) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
+      throw new Error('workspace open rejected')
+    }
+    return workspaceActionReply(() => workspaceActions.openCurrent())
+  })
+  ipcMain.handle('nova:workspaces:clear-current', async (event, ...args) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
+      throw new Error('workspace clear rejected')
+    }
+    return workspaceActionReply(() => workspaceActions.clearCurrent())
+  })
+  ipcMain.handle('nova:workspaces:clear-all', async (event, ...args) => {
+    if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {
+      throw new Error('workspace clear rejected')
+    }
+    return workspaceActionReply(() => workspaceActions.clearAll())
   })
   ipcMain.handle('nova:settings:set', async (event, patch) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
@@ -793,6 +905,9 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       restartBackend: async () => {
         if (!backendSupervisor) throw new Error('backend supervisor unavailable')
         await backendSupervisor.restart()
+        if (backendSupervisor.status().state !== 'connected') {
+          throw new Error('backend restart unavailable')
+        }
       },
       publishStatus: publishSettingsApplyStatus,
     })
@@ -1051,15 +1166,19 @@ app.on('before-quit', event => {
   releaseSmokeChannel?.close()
   globalShortcut.unregisterAll()
   void nativeAudio?.deactivate()
-  if (!backendSupervisor && !backend) return
+  if (!backendSupervisor && !backend && !managedWorkspaceMaintenance) return
   // Hold the quit while the backend drains on the stdin-EOF sentinel: a bare
   // kill would cut the session off mid-teardown, and on Windows there is no
   // graceful signal at all. Later passes keep holding; the first pass exits.
   event.preventDefault()
   if (quitDrain) return
-  const drain = backendSupervisor
+  const backendDrain = backendSupervisor
     ? backendSupervisor.stop()
-    : shutdownBackend(backend)
+    : backend ? shutdownBackend(backend) : Promise.resolve()
+  const maintenance = managedWorkspaceMaintenance
+  managedWorkspaceMaintenance = null
+  const maintenanceDrain = maintenance?.close() ?? Promise.resolve()
+  const drain = Promise.all([backendDrain, maintenanceDrain])
   quitDrain = drain.then(() => app.exit(0), () => app.exit(0))
 })
 

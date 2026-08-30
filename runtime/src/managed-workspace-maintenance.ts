@@ -5,6 +5,12 @@ import type {
   ManagedReplacementInput,
   ProjectMaintenanceSnapshot,
 } from './codex-project-store.js'
+import {
+  CodexProjectStore,
+  hostManagedProjectRootFromConfig,
+  hostProjectRootFromConfig,
+} from './codex-project-store.js'
+import type {ProjectNativeHost} from './project-native-resource.js'
 
 export type ManagedWorkspaceScope = 'current_managed' | 'all_managed'
 declare const preparationBrand: unique symbol
@@ -71,19 +77,23 @@ export class ManagedWorkspaceMaintenanceService {
   readonly #now: () => number
   readonly #idFactory: () => string
   readonly #ttlMs: number
+  readonly #closeStore: (() => Promise<void>) | null
   #closed = false
   #cleanupPending = false
+  #closePromise: Promise<void> | null = null
 
   private constructor(options: {
     readonly store: MaintenanceStore
     readonly now: () => number
     readonly idFactory: () => string
     readonly ttlMs: number
+    readonly closeStore: (() => Promise<void>) | null
   }) {
     this.#store = options.store
     this.#now = options.now
     this.#idFactory = options.idFactory
     this.#ttlMs = options.ttlMs
+    this.#closeStore = options.closeStore
   }
 
   static async open(options: {
@@ -97,29 +107,61 @@ export class ManagedWorkspaceMaintenanceService {
       now: options.now ?? (() => Date.now()),
       idFactory: options.idFactory ?? randomUUID,
       ttlMs: options.ttlMs ?? 60_000,
+      closeStore: null,
     })
     const cleanup = await options.store.cleanupManagedMaintenanceJournal()
     service.#cleanupPending = cleanup.status === 'cleanup_pending'
     return service
   }
 
+  static async openFromDesktop(options: {
+    readonly stateRoot: string
+    readonly managedRoot: string
+    readonly nativeHost: ProjectNativeHost
+  }): Promise<ManagedWorkspaceMaintenanceService> {
+    const store = await CodexProjectStore.open({
+      stateRoot: hostProjectRootFromConfig(options.stateRoot),
+      managedRoot: hostManagedProjectRootFromConfig(options.managedRoot),
+      nativeLocks: options.nativeHost.nativeLocks,
+      rootFiles: options.nativeHost.rootFiles,
+    })
+    try {
+      const service = new ManagedWorkspaceMaintenanceService({
+        store,
+        now: () => Date.now(),
+        idFactory: randomUUID,
+        ttlMs: 60_000,
+        closeStore: () => store.close(),
+      })
+      const cleanup = await store.cleanupManagedMaintenanceJournal()
+      service.#cleanupPending = cleanup.status === 'cleanup_pending'
+      return service
+    } catch (error) {
+      await store.close().catch(() => undefined)
+      throw error
+    }
+  }
+
   async capabilities(): Promise<Readonly<{
     lifecycleBusy: boolean
-    current: Readonly<{available: boolean}>
+    current: Readonly<{available: boolean; display_name: string | null}>
     all: Readonly<{available: boolean; count: number}>
   }>> {
     if (this.#closed) return Object.freeze({
       lifecycleBusy: false,
-      current: Object.freeze({available: false}),
+      current: Object.freeze({available: false, display_name: null}),
       all: Object.freeze({available: false, count: 0}),
     })
     const snapshot = await this.#store.maintenanceSnapshot()
-    const current = snapshot.managed_targets.some(
+    const current = snapshot.managed_targets.find(
       target => target.workspace.workspace_id === snapshot.active_workspace_id,
     )
     return Object.freeze({
       lifecycleBusy: false,
-      current: Object.freeze({available: current}),
+      current: Object.freeze({
+        available: current !== undefined,
+        display_name: current?.workspace.display_name ?? null,
+      }),
       all: Object.freeze({available: snapshot.managed_targets.length > 0, count: snapshot.managed_targets.length}),
     })
   }
@@ -258,8 +300,11 @@ export class ManagedWorkspaceMaintenanceService {
     return Object.freeze({status: 'opened'})
   }
 
-  close(): void {
+  close(): Promise<void> {
+    if (this.#closePromise !== null) return this.#closePromise
     this.#closed = true
+    this.#closePromise = this.#closeStore?.() ?? Promise.resolve()
+    return this.#closePromise
   }
 
   #operationId(): string {

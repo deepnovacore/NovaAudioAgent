@@ -22,6 +22,7 @@
     "desktop/ambient-orb/src/main/settings-store.mjs",
     "desktop/ambient-orb/src/main/startup-diagnostics.mjs",
     "desktop/ambient-orb/src/main/window-position.mjs",
+    "desktop/ambient-orb/src/main/workspace-actions.mjs",
     "desktop/ambient-orb/src/renderer/audio.mjs",
     "desktop/ambient-orb/src/renderer/backend-reconnect.mjs",
     "desktop/ambient-orb/src/renderer/board-auto-scroll.mjs",

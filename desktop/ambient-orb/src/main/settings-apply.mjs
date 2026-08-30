@@ -52,7 +52,7 @@ export async function applySettingsTransaction({
     publishStatus('refreshing')
     try {
       const prepared = await prepareConfiguration()
-      commitConfiguration(prepared)
+      await commitConfiguration(prepared)
     } catch {
       publishStatus('failed')
       return result(true, 'failed', rejectedSecrets)

@@ -39,6 +39,11 @@ test('preparation and authorization are opaque, paired, and consumed exactly onc
     idFactory: () => 'operation-0001',
   })
   const prepared = await service.prepare('current_managed')
+  assert.deepEqual(await service.capabilities(), {
+    lifecycleBusy: false,
+    current: {available: true, display_name: 'workspace-0001'},
+    all: {available: true, count: 1},
+  })
   assert.equal(prepared.status, 'ready')
   if (prepared.status !== 'ready') return
   assert.deepEqual(JSON.parse(JSON.stringify(prepared.preparation)), {})
@@ -54,7 +59,7 @@ test('preparation and authorization are opaque, paired, and consumed exactly onc
   assert.deepEqual(await service.execute(prepared.preparation, authorization), {
     status: 'stale', committed: false, cleanup_pending: false,
   })
-  service.close()
+  await service.close()
 })
 
 test('registered current workspaces and expired preparations cannot authorize clearing', async () => {
@@ -75,7 +80,7 @@ test('registered current workspaces and expired preparations cannot authorize cl
   const all = await service.prepare('all_managed')
   assert.deepEqual(all, {status: 'empty'})
   now += 61_000
-  service.close()
+  await service.close()
 })
 
 test('expiry, cancellation, duplicate authorization, and cross-pair replay fail closed', async () => {
@@ -114,5 +119,5 @@ test('expiry, cancellation, duplicate authorization, and cross-pair replay fail 
   if (cancelled.status !== 'ready') assert.fail('expected ready')
   assert.equal(service.cancel(cancelled.preparation), true)
   assert.throws(() => service.authorize(cancelled.preparation), /stale/u)
-  service.close()
+  await service.close()
 })
