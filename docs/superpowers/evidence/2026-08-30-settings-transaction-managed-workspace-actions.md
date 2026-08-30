@@ -61,3 +61,5 @@ A read-only review of `b4b265e..0172478` found that the first implementation int
 - `ffba0cf feat(runtime): add managed workspace maintenance service`
 - `f04652d feat(desktop): apply settings in one restart transaction`
 - `9e4caa0 feat(desktop): add managed workspace actions`
+- `ddf7273 fix(runtime): recover managed clear transactions`
+- `8ca4ec7 fix(runtime): bind rollback replacements by identity`
