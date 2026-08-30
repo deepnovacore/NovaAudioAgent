@@ -16,7 +16,7 @@ import {
   utilityProcess,
 } from 'electron'
 import {
-  loadProjectNativeHostFromResources,
+  inspectProjectNativeHostFromResources,
   ManagedWorkspaceMaintenanceService,
 } from '@nova-audio-agent/runtime/desktop'
 import { randomBytes } from 'node:crypto'
@@ -148,6 +148,7 @@ let bootstrap = null
 let nativeAudio = null
 let nativeBinary = null
 let projectNativeHost
+let projectNativeAuthorityPresent = false
 let managedWorkspaceMaintenance = null
 let managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
 let quitDrain = null
@@ -426,12 +427,14 @@ function decryptSecretsForSpawn(settings, codec) {
 
 async function prepareDesktopConfiguration() {
   if (projectNativeHost === undefined) {
-    projectNativeHost = loadProjectNativeHostFromResources({
+    const projectNativeLoad = inspectProjectNativeHostFromResources({
       resourcesPath: app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'build'),
       platform: process.platform,
       arch: process.arch,
       electronAbi: process.versions.modules,
     })
+    projectNativeHost = projectNativeLoad.host
+    projectNativeAuthorityPresent = projectNativeLoad.status !== 'absent'
   }
   const prepared = await prepareDesktopStartup({
     settings: currentSettings,
@@ -506,7 +509,10 @@ async function refreshManagedWorkspaceCapabilities() {
   const maintenance = managedWorkspaceMaintenance
   if (maintenance === null) {
     managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
-    await managedWorkspaceBackendRecovery.observe(managedWorkspaceCapabilities, maintenance !== null)
+    await managedWorkspaceBackendRecovery.observe(
+      managedWorkspaceCapabilities,
+      projectNativeAuthorityPresent,
+    )
     return managedWorkspaceCapabilities
   }
   try {
@@ -518,13 +524,16 @@ async function refreshManagedWorkspaceCapabilities() {
       managedWorkspaceCapabilities = publicManagedWorkspaceCapabilities()
     }
   }
-  await managedWorkspaceBackendRecovery.observe(managedWorkspaceCapabilities, maintenance !== null)
+  await managedWorkspaceBackendRecovery.observe(
+    managedWorkspaceCapabilities,
+    projectNativeAuthorityPresent,
+  )
   return managedWorkspaceCapabilities
 }
 
 const managedWorkspaceBackendRecovery = createManagedWorkspaceBackendRecovery({
   getCapabilities: () => managedWorkspaceCapabilities,
-  hasMaintenanceAuthority: () => managedWorkspaceMaintenance !== null,
+  hasMaintenanceAuthority: () => projectNativeAuthorityPresent,
   refreshCapabilities: refreshManagedWorkspaceCapabilities,
   startBackend: async () => {
     if (!backendSupervisor) throw new Error('backend supervisor unavailable')

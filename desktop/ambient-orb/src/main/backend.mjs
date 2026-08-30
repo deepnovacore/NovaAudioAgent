@@ -485,9 +485,9 @@ export function shutdownBackend(
     let forceTimer = null
     let settled = false
     const finish = () => {
+      exitedBackends.add(child)
       if (settled) return
       settled = true
-      exitedBackends.add(child)
       clearTimeout(graceTimer)
       clearTimeout(forceTimer)
       resolve()
@@ -526,6 +526,10 @@ export function shutdownBackend(
     if (settled) clearTimeout(graceTimer)
   })
   drains.set(child, drained)
+  const forget = () => {
+    if (drains.get(child) === drained) drains.delete(child)
+  }
+  void drained.then(forget, forget)
   return drained
 }
 

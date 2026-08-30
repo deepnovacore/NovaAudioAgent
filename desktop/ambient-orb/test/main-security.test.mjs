@@ -227,7 +227,7 @@ test('rollback recovery gates startup, save restart, rescan, and explicit backen
   const refreshBody = refresh.slice(0, refresh.indexOf('\n}'))
   assert.match(
     refreshBody,
-    /managedWorkspaceBackendRecovery\.observe\(managedWorkspaceCapabilities, maintenance !== null\)/,
+    /managedWorkspaceBackendRecovery\.observe\(\s*managedWorkspaceCapabilities,\s*projectNativeAuthorityPresent,?\s*\)/,
   )
   const recovery = source.slice(source.indexOf('const managedWorkspaceBackendRecovery ='))
   const recoveryBody = recovery.slice(0, recovery.indexOf('\n})') + 3)
@@ -517,6 +517,18 @@ test('packaged smoke readiness is private, post-backend, and closed by every qui
   assert.match(launchBody, /endpoint: validated\.endpoint, token/u)
   const quit = source.slice(source.indexOf("app.on('before-quit'"))
   assert.match(quit, /releaseSmokeChannel\?\.close\(\)/u)
+})
+
+test('a supported native authority load failure remains present for backend recovery gating', async () => {
+  const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+
+  assert.match(source, /inspectProjectNativeHostFromResources/u)
+  assert.match(source, /projectNativeAuthorityPresent = projectNativeLoad\.status !== 'absent'/u)
+  assert.match(
+    source,
+    /observe\(\s*managedWorkspaceCapabilities,\s*projectNativeAuthorityPresent,?\s*\)/u,
+  )
+  assert.match(source, /hasMaintenanceAuthority: \(\) => projectNativeAuthorityPresent/u)
 })
 
 test('camera bootstrap and protocol wiring catch canonical path disclosure or renderer URL choice', async () => {

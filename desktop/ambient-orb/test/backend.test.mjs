@@ -1002,6 +1002,20 @@ test('forced shutdown rejects when child exit cannot be confirmed', async () => 
   assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
 })
 
+test('a late exit after termination timeout allows a later shutdown to confirm', async () => {
+  const child = fakeChild()
+
+  await assert.rejects(
+    shutdownBackend(child, {graceMs: 5, forceExitMs: 5, platform: 'darwin'}),
+    /termination unconfirmed/u,
+  )
+  child.exitCode = 137
+  child.emit('exit', 137, 'SIGKILL')
+
+  await shutdownBackend(child, {graceMs: 5, forceExitMs: 5, platform: 'darwin'})
+  assert.deepEqual(child.calls, ['stdin.end', 'kill:SIGTERM', 'kill:SIGKILL'])
+})
+
 test('quit-only best-effort shutdown contains an unconfirmed termination failure', async () => {
   const backend = await import('../src/main/backend.mjs')
   assert.equal(typeof backend.shutdownBackendBestEffort, 'function')

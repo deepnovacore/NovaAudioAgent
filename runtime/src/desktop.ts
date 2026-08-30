@@ -27,7 +27,9 @@ import {
 } from './realtime/memory-board.js'
 
 export {
+  inspectProjectNativeHostFromResources,
   loadProjectNativeHostFromResources,
+  type ProjectNativeHostLoadResult,
   type ProjectNativeHost,
 } from './project-native-resource.js'
 

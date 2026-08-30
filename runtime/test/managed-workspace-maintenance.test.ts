@@ -178,6 +178,7 @@ test('a committed journal remains committed when execution loses its reply', asy
   const store = {
     cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
     loadManagedMaintenanceJournal: () => Promise.resolve(executing ? {
+      version: 1 as const,
       operation_id: 'operation-0001',
       phase: 'committed' as const,
       entries: [{
@@ -233,6 +234,7 @@ test('a foreign prepared journal preserves rollback health after replacement is 
       status: cleanupCalls++ === 0 ? 'clean' as const : 'rollback_pending' as const,
     }),
     loadManagedMaintenanceJournal: () => Promise.resolve({
+      version: 1 as const,
       operation_id: 'foreign-operation-0002',
       phase: 'prepared' as const,
       entries: [{

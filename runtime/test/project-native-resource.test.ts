@@ -171,6 +171,26 @@ test('project native host rejects wrong ABI and decorated addon exports without 
       resourcesPath: root, platform: 'darwin', arch: 'arm64', electronAbi: '148',
       moduleLoader: () => decorated,
     }), null)
+
+    const nativeResources = await import('../src/project-native-resource.js') as unknown as {
+      inspectProjectNativeHostFromResources?: (options: {
+        readonly resourcesPath: string
+        readonly platform: string
+        readonly arch: string
+        readonly electronAbi: string | undefined
+        readonly moduleLoader?: (path: string) => unknown
+      }) => unknown
+    }
+    assert.equal(typeof nativeResources.inspectProjectNativeHostFromResources, 'function')
+    const inspect = nativeResources.inspectProjectNativeHostFromResources!
+    assert.deepEqual(inspect({
+      resourcesPath: root, platform: 'darwin', arch: 'arm64', electronAbi: '127',
+      moduleLoader: () => fakeAddon(),
+    }), {status: 'present_failure', host: null})
+    assert.deepEqual(inspect({
+      resourcesPath: root, platform: 'freebsd', arch: 'x64', electronAbi: '148',
+      moduleLoader: () => fakeAddon(),
+    }), {status: 'absent', host: null})
   } finally {
     await rm(root, {recursive: true, force: true})
   }

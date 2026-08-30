@@ -122,6 +122,11 @@ interface ProjectNativeLoadOptions {
   readonly moduleLoader?: (path: string) => unknown
 }
 
+export type ProjectNativeHostLoadResult =
+  | Readonly<{readonly status: 'absent'; readonly host: null}>
+  | Readonly<{readonly status: 'present_failure'; readonly host: null}>
+  | Readonly<{readonly status: 'loaded'; readonly host: ProjectNativeHost}>
+
 interface FileSnapshot {
   readonly bytes: Buffer
   readonly device: bigint
@@ -143,6 +148,25 @@ export function loadPackagedProjectNativeHost(): ProjectNativeHost | null {
 
 /** Host-only seam. Renderer/model/work-order values never enter these options. */
 export function loadProjectNativeHostFromResources(
+  options: ProjectNativeLoadOptions,
+): ProjectNativeHost | null {
+  return inspectProjectNativeHostFromResources(options).host
+}
+
+/** Preserves whether a supported native authority failed validation or is unsupported. */
+export function inspectProjectNativeHostFromResources(
+  options: ProjectNativeLoadOptions,
+): ProjectNativeHostLoadResult {
+  if (supportedTarget(options.platform, options.arch) === null) {
+    return Object.freeze({status: 'absent', host: null})
+  }
+  const host = loadSupportedProjectNativeHostFromResources(options)
+  return host === null
+    ? Object.freeze({status: 'present_failure', host: null})
+    : Object.freeze({status: 'loaded', host})
+}
+
+function loadSupportedProjectNativeHostFromResources(
   options: ProjectNativeLoadOptions,
 ): ProjectNativeHost | null {
   try {

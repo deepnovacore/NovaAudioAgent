@@ -192,6 +192,7 @@ export interface ManagedMaintenanceJournalEntry {
 }
 
 export interface ManagedMaintenanceJournal {
+  readonly version: 1 | 2
   readonly operation_id: string
   readonly phase: 'prepared' | 'committed'
   readonly entries: readonly ManagedMaintenanceJournalEntry[]
@@ -557,6 +558,7 @@ export class CodexProjectStore {
         return [{status: 'stale', committed: false, tombstones: []}, false]
       }
       let journal: ManagedMaintenanceJournal = Object.freeze({
+        version: 2,
         operation_id: operationId,
         phase: 'prepared',
         entries: Object.freeze(prepared.map(target => Object.freeze({
@@ -822,6 +824,7 @@ export class CodexProjectStore {
         if (remaining.length !== journal.entries.length) {
           await this.#syncManagedRoot()
           await this.#writeMaintenanceJournal(Object.freeze({
+            version: journal.version,
             operation_id: journal.operation_id,
             phase: 'prepared',
             entries: Object.freeze(remaining.reverse()),
@@ -845,6 +848,7 @@ export class CodexProjectStore {
       if (remaining.length !== journal.entries.length) {
         await this.#syncManagedRoot()
         await this.#writeMaintenanceJournal(Object.freeze({
+          version: journal.version,
           operation_id: journal.operation_id,
           phase: 'committed',
           entries: Object.freeze(remaining),
@@ -3124,23 +3128,27 @@ function encodeState(state: MutableProjectState): Readonly<Record<string, unknow
 
 function encodeMaintenanceJournal(journal: ManagedMaintenanceJournal): Readonly<Record<string, unknown>> {
   return {
-    entries: journal.entries.map(entry => ({
-      identity: {
-        device: entry.identity.device.toString(10),
-        inode: entry.identity.inode.toString(10),
-      },
-      original_name: entry.original_name,
-      replacement_name: entry.replacement_name,
-      replacement_identity: entry.replacement_identity === null ? null : {
-        device: entry.replacement_identity.device.toString(10),
-        inode: entry.replacement_identity.inode.toString(10),
-      },
-      tombstone_name: entry.tombstone_name,
-      workspace_id: entry.workspace_id,
-    })),
+    entries: journal.entries.map(entry => {
+      const encoded = {
+        identity: {
+          device: entry.identity.device.toString(10),
+          inode: entry.identity.inode.toString(10),
+        },
+        original_name: entry.original_name,
+        replacement_identity: entry.replacement_identity === null ? null : {
+          device: entry.replacement_identity.device.toString(10),
+          inode: entry.replacement_identity.inode.toString(10),
+        },
+        tombstone_name: entry.tombstone_name,
+        workspace_id: entry.workspace_id,
+      }
+      return journal.version === 1
+        ? encoded
+        : {...encoded, replacement_name: entry.replacement_name}
+    }),
     operation_id: journal.operation_id,
     phase: journal.phase,
-    version: 2,
+    version: journal.version,
   }
 }
 
@@ -3214,6 +3222,7 @@ function decodeMaintenanceJournal(value: unknown): ManagedMaintenanceJournal {
     throw new ProjectStateError('state_corrupt')
   }
   return Object.freeze({
+    version: root.version,
     operation_id: operationId,
     phase: root.phase,
     entries: Object.freeze(entries),
