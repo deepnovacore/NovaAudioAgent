@@ -18,6 +18,7 @@
     "desktop/ambient-orb/src/main/project-directories.mjs",
     "desktop/ambient-orb/src/main/release-smoke-channel.mjs",
     "desktop/ambient-orb/src/main/security.mjs",
+    "desktop/ambient-orb/src/main/settings-apply.mjs",
     "desktop/ambient-orb/src/main/settings-store.mjs",
     "desktop/ambient-orb/src/main/startup-diagnostics.mjs",
     "desktop/ambient-orb/src/main/window-position.mjs",

@@ -156,7 +156,7 @@ test('settings IPC is sender-validated and answers from main without an orb rela
 
   assert.match(source, /ipcMain\.handle\('nova:settings:get', event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
   assert.match(source, /ipcMain\.handle\('nova:settings:set', async \(event, patch\) => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/)
-  assert.match(source, /sendToOrb\('nova:settings:changed', orbSettings\(currentSettings\)\)/)
+  assert.match(source, /publishCommitted: \(\) => sendToOrb\(\s*'nova:settings:changed', orbSettings\(currentSettings\),?\s*\)/)
   // No requestId machinery: settings live in main, so nothing round-trips
   // through the orb renderer the way the memory board has to.
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
@@ -170,7 +170,12 @@ test('Codex rescan is restricted to the settings window sender', async () => {
     source,
     /ipcMain\.handle\('nova:codex:rescan', async event => \{\n\s*if \(!settingsWindow \|\| event\.sender !== settingsWindow\.webContents\)/,
   )
-  assert.match(source, /await refreshDesktopConfiguration\(\)/)
+  const rescan = source.slice(source.indexOf("ipcMain.handle('nova:codex:rescan'"))
+  const handler = rescan.slice(0, rescan.indexOf('\n  })'))
+  assert.match(handler, /lifecycleCoordinator\.run\('codex_rescan'/)
+  assert.match(handler, /sameBackendLaunchConfiguration\(previous, prepared\)/)
+  assert.match(handler, /if \(changed && backendSupervisor\) await backendSupervisor\.restart\(\)/)
+  assert.match(handler, /operationStatus: 'busy'/)
 })
 
 test('no decrypted secret can reach the renderer or a log line', async () => {
@@ -222,7 +227,9 @@ test('every settings write goes through one queue so overlapping patches merge',
 
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
   const handler = set.slice(0, set.indexOf('\n  })'))
-  assert.match(handler, /await settingsWriter\(patch\)/)
+  assert.match(handler, /applySettingsTransaction\(\{/)
+  assert.match(handler, /write: async value => \{[\s\S]*await settingsWriter\(value\)/)
+  assert.match(handler, /coordinator: lifecycleCoordinator/)
   assert.doesNotMatch(
     handler,
     /applySettingsUpdate|currentSettings = /,
@@ -350,15 +357,18 @@ test('supervisor publishes live connection state to an open settings panel', asy
   assert.match(statusHandler.slice(0, statusHandler.indexOf('\n    },')), /sendToSettings\('nova:settings:changed', settingsView\(\)\)/)
 })
 
-test('a saved configuration reports an explicit apply failure without falsifying backend status', async () => {
+test('a saved configuration reports bounded transaction phases without falsifying backend status', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
+  const apply = await readFile(new URL('../src/main/settings-apply.mjs', import.meta.url), 'utf8')
   const set = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
   const handler = set.slice(0, set.indexOf('\n  })'))
 
   assert.match(source, /settingsApplyStatus/)
-  assert.match(handler, /settingsApplyStatus = 'pending'/)
-  assert.match(handler, /settingsApplyStatus = 'failed'/)
-  assert.match(handler, /sendToSettings\('nova:settings:changed', settingsView\(\)\)/)
+  assert.match(handler, /publishStatus: publishSettingsApplyStatus/)
+  for (const phase of ['saving', 'refreshing', 'restarting', 'applied', 'failed', 'restart_failed']) {
+    assert.match(apply, new RegExp(`publishStatus\\('${phase}'\\)`))
+  }
+  assert.match(handler, /return \{\.\.\.settingsView\(\), \.\.\.applied\}/)
   assert.doesNotMatch(handler, /backendStatus\s*=/)
 })
 

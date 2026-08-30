@@ -36,6 +36,7 @@ import {
   createBackendDiagnosticCollector,
 } from './backend-diagnostics.mjs'
 import { createBackendSupervisor } from './backend-supervisor.mjs'
+import { createLifecycleCoordinator } from './lifecycle-coordinator.mjs'
 import { configureDevelopmentDockIcon } from './app-icon.mjs'
 import {createDebugBoardRequester} from './debug-board-client.mjs'
 import { installAppProtocol, loadAppWindow, registerAppScheme } from './app-protocol.mjs'
@@ -70,6 +71,10 @@ import {
   secretsPresent,
   secretValueIsSafe,
 } from './settings-store.mjs'
+import {
+  applySettingsTransaction,
+  sameBackendLaunchConfiguration,
+} from './settings-apply.mjs'
 import {
   clampWindowPosition,
   createConfirmationWindowController,
@@ -124,7 +129,6 @@ let backendStatus = Object.freeze({
   state: 'stopped', connection: null, retryInMs: null, diagnostic: null,
 })
 let settingsApplyStatus = 'idle'
-let settingsApplyRevision = 0
 let mainWindow = null
 let boardWindow = null
 let settingsWindow = null
@@ -156,6 +160,9 @@ const MICROPHONE_STATUSES = new Set([
   'capture_unavailable',
   'audio_pipeline_error',
 ])
+const lifecycleCoordinator = createLifecycleCoordinator({
+  onChange: () => sendToSettings('nova:settings:changed', settingsView()),
+})
 
 // Every push to the orb goes through here. `mainWindow` is never nulled — the orb has no
 // 'closed' handler because it is not meant to close before the app quits — so a send after
@@ -204,6 +211,11 @@ function settingsView() {
     secretsPresent: secretsPresent(currentSettings),
     keyringAvailable: secretCodec.available() && !hasPlaintextSecret(currentSettings),
   }
+}
+
+function publishSettingsApplyStatus(status) {
+  settingsApplyStatus = status
+  sendToSettings('nova:settings:changed', settingsView())
 }
 
 // One writer for the whole process, so overlapping panel changes queue instead
@@ -382,7 +394,7 @@ function decryptSecretsForSpawn(settings, codec) {
   return decrypted
 }
 
-async function refreshDesktopConfiguration(commitIf = () => true) {
+async function prepareDesktopConfiguration() {
   if (projectNativeHost === undefined) {
     projectNativeHost = loadProjectNativeHostFromResources({
       resourcesPath: app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'build'),
@@ -391,7 +403,7 @@ async function refreshDesktopConfiguration(commitIf = () => true) {
       electronAbi: process.versions.modules,
     })
   }
-  const prepared = await prepareDesktopStartup({
+  return prepareDesktopStartup({
     settings: currentSettings,
     environment: process.env,
     home: homedir(),
@@ -427,10 +439,17 @@ async function refreshDesktopConfiguration(commitIf = () => true) {
       mkdir,
     }),
   })
-  if (!commitIf()) return false
+}
+
+function commitDesktopConfiguration(prepared) {
   desktopConfig = prepared.config
   codexStatus = prepared.codexStatus
-  return true
+}
+
+async function refreshDesktopConfiguration() {
+  const prepared = await prepareDesktopConfiguration()
+  commitDesktopConfiguration(prepared)
+  return prepared
 }
 
 async function launchBackend(backendKind, smokeChannel, onExit) {
@@ -703,9 +722,17 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('Codex rescan rejected')
     }
-    await refreshDesktopConfiguration()
-    void backendSupervisor?.restart()
-    return settingsView()
+    const coordinated = await lifecycleCoordinator.run('codex_rescan', async () => {
+      const previous = Object.freeze({config: desktopConfig, codexStatus})
+      const prepared = await prepareDesktopConfiguration()
+      const changed = !sameBackendLaunchConfiguration(previous, prepared)
+      commitDesktopConfiguration(prepared)
+      if (changed && backendSupervisor) await backendSupervisor.restart()
+      return settingsView()
+    })
+    return coordinated.status === 'busy'
+      ? {...settingsView(), operationStatus: 'busy'}
+      : coordinated.value
   })
   ipcMain.handle('nova:backend:retry', async event => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
@@ -737,48 +764,39 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('settings update rejected')
     }
-    // Plaintext key values ride in on `patch`, are sealed inside the store, and
-    // are never held, echoed, or logged here. Disk is the commit point: until
-    // the write lands, the in-memory settings stay as they were. The writer
-    // serializes, so a second change arriving mid-save merges onto the first
-    // rather than overwriting it from a stale snapshot.
-    let rejectedSecrets = []
-    try {
-      const written = await settingsWriter(patch)
-      // Key names only, never values — this call's per-field rejects, so the
-      // panel can say which paste failed instead of the save looking like a
-      // silent, total success while that one field kept its old value.
-      rejectedSecrets = written.rejectedSecrets ?? []
-    } catch (error) {
-      console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
-      return { ...settingsView(), saved: false, rejectedSecrets: [] }
-    }
-    // Only the palette is live; pipeline, providers, models, voices,
-    // proactivity, and keys are applied by a controlled backend restart.
-    sendToOrb('nova:settings:changed', orbSettings(currentSettings))
-    settingsApplyStatus = 'pending'
-    settingsApplyRevision += 1
-    const applyRevision = settingsApplyRevision
-    void refreshDesktopConfiguration(() => applyRevision === settingsApplyRevision).then(
-      refreshed => {
-        if (!refreshed || applyRevision !== settingsApplyRevision) return
-        if (!backendSupervisor) {
-          settingsApplyStatus = 'restart_failed'
-          sendToSettings('nova:settings:changed', settingsView())
-          return
+    // Plaintext values exist only in the inbound patch and the queued writer.
+    // Every later callback receives committed settings or prepared public
+    // configuration, and every reply contains secret key names only.
+    const applied = await applySettingsTransaction({
+      coordinator: lifecycleCoordinator,
+      patch,
+      write: async value => {
+        try {
+          return await settingsWriter(value)
+        } catch (error) {
+          console.error(`[desktop-diagnostic] settings_save_failure type=${error.name}`)
+          throw error
         }
-        settingsApplyStatus = 'restarting'
-        sendToSettings('nova:settings:changed', settingsView())
-        return backendSupervisor.restart()
       },
-      error => {
-        console.error(`[desktop-diagnostic] settings_apply_failure type=${error.name}`)
-        if (applyRevision !== settingsApplyRevision) return
-        settingsApplyStatus = 'failed'
-        sendToSettings('nova:settings:changed', settingsView())
+      publishCommitted: () => sendToOrb(
+        'nova:settings:changed', orbSettings(currentSettings),
+      ),
+      prepareConfiguration: async () => {
+        try {
+          return await prepareDesktopConfiguration()
+        } catch (error) {
+          console.error(`[desktop-diagnostic] settings_apply_failure type=${error.name}`)
+          throw error
+        }
       },
-    )
-    return { ...settingsView(), saved: true, rejectedSecrets }
+      commitConfiguration: commitDesktopConfiguration,
+      restartBackend: async () => {
+        if (!backendSupervisor) throw new Error('backend supervisor unavailable')
+        await backendSupervisor.restart()
+      },
+      publishStatus: publishSettingsApplyStatus,
+    })
+    return {...settingsView(), ...applied}
   })
   ipcMain.handle('nova:bootstrap', event => {
     // The renderer binds its backend-exit listener only after this reply lands, so a push
