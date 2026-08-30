@@ -196,3 +196,27 @@ test('graph tab rejects malformed payloads and coalesces overlapping refreshes',
   await Promise.all([first, overlapping])
   assert.deepEqual(failures, ['invalid'])
 })
+
+test('graph response is discarded after the tab loses ownership', async () => {
+  const resolvers = []
+  const rendered = []
+  const failures = []
+  const controller = createGraphTabController({
+    request: () => new Promise(resolve => { resolvers.push(resolve) }),
+    visible: () => true,
+    render: value => rendered.push(value.request_id),
+    failure: reason => failures.push(reason),
+  })
+  const pending = controller.activate()
+  await Promise.resolve()
+  controller.deactivate()
+  const current = controller.activate()
+  await Promise.resolve()
+  resolvers[0](payload({request_id: 'stale-graph'}))
+  resolvers[1](payload({request_id: 'current-graph'}))
+  await pending
+  await current
+
+  assert.deepEqual(rendered, ['current-graph'])
+  assert.deepEqual(failures, [])
+})

@@ -72,6 +72,32 @@ test('fences locally and rejects stale or out-of-order PCM', () => {
   }))), true)
 })
 
+test('socket loss resets playback state and fences the disconnected generation', () => {
+  let stopped = 0
+  const playback = new GenerationPlayback({stopAll: () => { stopped += 1; return 25 }})
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame({epoch: 4}))), true)
+  assert.ok(playback.dequeue())
+
+  assert.deepEqual(playback.disconnect(), {playedMs: 25, generationEpoch: 4})
+  assert.equal(stopped, 1)
+  assert.equal(playback.current, null)
+  assert.equal(playback.dequeue(), null)
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame({epoch: 4, sequence: 1}))), false)
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame({
+    utterance: 'u-5', epoch: 5, sequence: 0,
+  }))), true)
+})
+
+test('a backend replacement resets the generation fence for the new runtime epoch', () => {
+  const playback = new GenerationPlayback()
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame({epoch: 5, sequence: 0}))), true)
+  playback.disconnect()
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame({epoch: 1, sequence: 0}))), false)
+
+  playback.backendExited()
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame({epoch: 1, sequence: 0}))), true)
+})
+
 test('playback rejection telemetry counts sequence gaps and stays generation-scoped', () => {
   const playback = new GenerationPlayback()
   assert.equal(playback.accept(decodeAudioFrame(audioFrame())), true)

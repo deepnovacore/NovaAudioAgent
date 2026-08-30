@@ -6,6 +6,9 @@ import {
   MAX_BOARD_CONTENT_CHARS,
   MAX_BOARD_ITEMS_PER_CHANNEL,
   MAX_BOARD_MESSAGE_BYTES,
+  MAX_BOARD_REFRESH_DIAGNOSTICS,
+  MAX_BOARD_REFRESH_ITEMS_PER_CHANNEL,
+  MAX_BOARD_REFRESH_MESSAGE_BYTES,
   memoryBoardMessage,
 } from '../src/realtime/memory-board.js'
 import {NullTelemetry} from '../src/realtime/telemetry.js'
@@ -95,4 +98,42 @@ test('memory board drops oldest items until the UTF-8 frame is within budget', (
   }
   assert.equal(board.diagnostics.records.length, 0, 'old diagnostics leave before Memory items')
   assert.ok(board.channels.reduce((count, channel) => count + channel.items.length, 0) > 0)
+})
+
+test('compact refresh is smaller while full export retains the complete bounded snapshot', () => {
+  const memory = new Memory()
+  fill(memory, 'conversation', MAX_BOARD_ITEMS_PER_CHANNEL, '刷新内容'.repeat(200))
+  const telemetry = new NullTelemetry({clock: new VirtualClock()})
+  for (let index = 0; index < 128; index += 1) {
+    telemetry.record('refresh.diagnostic', {item_id: `item-${index}`})
+  }
+
+  const compactMessage = memoryBoardMessage(
+    'req-compact',
+    memory,
+    telemetry.diagnostics(),
+    {detail: 'compact'},
+  )
+  const fullMessage = memoryBoardMessage(
+    'req-full',
+    memory,
+    telemetry.diagnostics(),
+    {detail: 'full'},
+  )
+  const compact = JSON.parse(compactMessage) as {
+    readonly diagnostics: {readonly records: unknown[]}
+    readonly channels: {readonly items: unknown[]}[]
+  }
+  const full = JSON.parse(fullMessage) as {
+    readonly diagnostics: {readonly records: unknown[]}
+    readonly channels: {readonly items: unknown[]}[]
+  }
+
+  assert.ok(Buffer.byteLength(compactMessage, 'utf8') <= MAX_BOARD_REFRESH_MESSAGE_BYTES)
+  assert.ok(Buffer.byteLength(fullMessage, 'utf8') <= MAX_BOARD_MESSAGE_BYTES)
+  assert.equal(compact.channels[0]?.items.length, MAX_BOARD_REFRESH_ITEMS_PER_CHANNEL)
+  assert.equal(compact.diagnostics.records.length, MAX_BOARD_REFRESH_DIAGNOSTICS)
+  assert.equal(full.channels[0]?.items.length, MAX_BOARD_ITEMS_PER_CHANNEL)
+  assert.equal(full.diagnostics.records.length, 128)
+  assert.ok(Buffer.byteLength(compactMessage, 'utf8') < Buffer.byteLength(fullMessage, 'utf8'))
 })

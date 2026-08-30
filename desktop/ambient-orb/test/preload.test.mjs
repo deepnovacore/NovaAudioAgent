@@ -141,26 +141,21 @@ test('preload reports confirmation mode as a strict boolean and sanitizes placem
   assert.deepEqual(placements, ['above', 'below'])
 })
 
-test('preload exposes a distinct read-only workspace graph board relay', async () => {
-  const { exposed, ipcRenderer, invokes, sends } = await loadPreload()
+test('preload exposes direct read-only Memory and workspace graph board requests', async () => {
+  const { exposed, invokes } = await loadPreload()
 
-  assert.deepEqual(Object.keys(exposed.graphBoard).sort(), ['onFetch', 'publish', 'request'])
+  assert.deepEqual(Object.keys(exposed.memoryBoard).sort(), ['export', 'request'])
+  assert.deepEqual(Object.keys(exposed.graphBoard).sort(), ['request'])
+  assert.ok(Object.isFrozen(exposed.memoryBoard))
   assert.ok(Object.isFrozen(exposed.graphBoard))
+  await exposed.memoryBoard.request()
+  await exposed.memoryBoard.export()
   await exposed.graphBoard.request()
-  assert.deepEqual(invokes, [{channel: 'nova:workspace-graph-board:request', payload: undefined}])
-
-  const requests = []
-  const unsubscribe = exposed.graphBoard.onFetch(requestId => requests.push(requestId))
-  ipcRenderer.emit('nova:workspace-graph-board:fetch', {}, 'graph-1')
-  unsubscribe()
-  ipcRenderer.emit('nova:workspace-graph-board:fetch', {}, 'graph-2')
-  assert.deepEqual(requests, ['graph-1'])
-
-  exposed.graphBoard.publish({type: 'workspace_graph.board', request_id: 'graph-1'})
-  assert.deepEqual(sends, [{
-    channel: 'nova:workspace-graph-board:data',
-    payload: {type: 'workspace_graph.board', request_id: 'graph-1'},
-  }])
+  assert.deepEqual(invokes, [
+    {channel: 'nova:memory-board:request', payload: undefined},
+    {channel: 'nova:memory-board:export', payload: undefined},
+    {channel: 'nova:workspace-graph-board:request', payload: undefined},
+  ])
   assert.equal(exposed.graphBoard.export, undefined)
 })
 

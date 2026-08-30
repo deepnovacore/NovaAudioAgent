@@ -531,6 +531,36 @@ export class GenerationPlayback {
     return { playedMs }
   }
 
+  disconnect() {
+    if (!this.current) {
+      this.queue = []
+      this.queuedBytes = 0
+      this.active.clear()
+      return null
+    }
+    const generationEpoch = this.current.generationEpoch
+    this.fencedEpoch = Math.max(this.fencedEpoch, generationEpoch)
+    const inFlightMs = Number(this.stopAll()) || 0
+    const playedMs = Math.round(this.playedMs + Math.max(0, inFlightMs))
+    this.current = null
+    this.queue = []
+    this.queuedBytes = 0
+    this.active.clear()
+    this.providerTerminal = false
+    this.acknowledged = false
+    this.started = false
+    this.playedMs = 0
+    return {playedMs, generationEpoch}
+  }
+
+  backendExited() {
+    const disconnected = this.disconnect()
+    this.fencedEpoch = 0
+    this.lastCompletion = null
+    this.telemetry.clear()
+    return disconnected
+  }
+
   #matches(utteranceId, generationEpoch) {
     return Boolean(
       this.current

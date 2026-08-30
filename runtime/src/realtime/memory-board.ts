@@ -6,6 +6,17 @@ export const MAX_BOARD_MESSAGE_BYTES = 256 * 1024
 export const MAX_BOARD_ITEMS_PER_CHANNEL = 50
 export const MAX_BOARD_CONTENT_CHARS = 2048
 export const MAX_BOARD_SUMMARY_CHARS = 4096
+export const MAX_BOARD_REFRESH_MESSAGE_BYTES = 64 * 1024
+export const MAX_BOARD_REFRESH_ITEMS_PER_CHANNEL = 12
+export const MAX_BOARD_REFRESH_CONTENT_CHARS = 768
+export const MAX_BOARD_REFRESH_SUMMARY_CHARS = 1024
+export const MAX_BOARD_REFRESH_DIAGNOSTICS = 32
+
+export type MemoryBoardDetail = 'compact' | 'full'
+
+export interface MemoryBoardMessageOptions {
+  readonly detail?: MemoryBoardDetail
+}
 
 interface BoardItem {
   readonly seq: number
@@ -30,18 +41,35 @@ export function memoryBoardMessage(
   requestId: string,
   memory: Memory,
   diagnosticSnapshot: RealtimeDiagnosticsSnapshot = {version: 1, records: []},
+  options: MemoryBoardMessageOptions = {},
 ): string {
-  const channels = [...memory.channels.values()].map(channelView)
+  const detail = options.detail ?? 'full'
+  const profile = detail === 'compact'
+    ? {
+        messageBytes: MAX_BOARD_REFRESH_MESSAGE_BYTES,
+        itemsPerChannel: MAX_BOARD_REFRESH_ITEMS_PER_CHANNEL,
+        contentChars: MAX_BOARD_REFRESH_CONTENT_CHARS,
+        summaryChars: MAX_BOARD_REFRESH_SUMMARY_CHARS,
+        diagnostics: MAX_BOARD_REFRESH_DIAGNOSTICS,
+      }
+    : {
+        messageBytes: MAX_BOARD_MESSAGE_BYTES,
+        itemsPerChannel: MAX_BOARD_ITEMS_PER_CHANNEL,
+        contentChars: MAX_BOARD_CONTENT_CHARS,
+        summaryChars: MAX_BOARD_SUMMARY_CHARS,
+        diagnostics: diagnosticSnapshot.records.length,
+      }
+  const channels = [...memory.channels.values()].map(channel => channelView(channel, profile))
   const diagnostics = {
     version: 1 as const,
-    records: [...diagnosticSnapshot.records],
+    records: diagnosticSnapshot.records.slice(-profile.diagnostics),
   }
   let summariesDropped = false
   while (true) {
     const message = JSON.stringify({
       type: 'memory.board', request_id: requestId, diagnostics, channels,
     })
-    if (Buffer.byteLength(message, 'utf8') <= MAX_BOARD_MESSAGE_BYTES) return message
+    if (Buffer.byteLength(message, 'utf8') <= profile.messageBytes) return message
     if (diagnostics.records.length > 0) {
       diagnostics.records = diagnostics.records.slice(1)
       continue
@@ -63,21 +91,29 @@ export function memoryBoardMessage(
   }
 }
 
-function channelView(channel: Channel): BoardChannel {
+interface BoardProfile {
+  readonly itemsPerChannel: number
+  readonly contentChars: number
+  readonly summaryChars: number
+}
+
+function channelView(channel: Channel, profile: BoardProfile): BoardChannel {
   return {
     name: channel.name,
     summary: channel.summary === null
       ? null
-      : sliceCodePoints(channel.summary, MAX_BOARD_SUMMARY_CHARS),
+      : sliceCodePoints(channel.summary, profile.summaryChars),
     uncompressed: channel.uncompressed,
     item_count: channel.items.length,
-    items: channel.items.slice(-MAX_BOARD_ITEMS_PER_CHANNEL).map(itemView),
+    items: channel.items
+      .slice(-profile.itemsPerChannel)
+      .map(item => itemView(item, profile.contentChars)),
   }
 }
 
-function itemView(item: MemoryItem): BoardItem {
+function itemView(item: MemoryItem, contentChars: number): BoardItem {
   const content = JSON.stringify(item.content)
-  const truncated = [...content].length > MAX_BOARD_CONTENT_CHARS
+  const truncated = [...content].length > contentChars
   return {
     seq: item.seq,
     ts: item.ts,
@@ -85,7 +121,7 @@ function itemView(item: MemoryItem): BoardItem {
     priority: item.priority,
     outcome: item.outcome,
     refs: [...item.refs],
-    content: sliceCodePoints(content, MAX_BOARD_CONTENT_CHARS),
+    content: sliceCodePoints(content, contentChars),
     ...(truncated ? {truncated: true as const} : {}),
   }
 }

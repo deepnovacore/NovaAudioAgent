@@ -21,6 +21,10 @@ import {
   type CameraPermissionStatus,
 } from './desktop-camera.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
+import {
+  MAX_BOARD_MESSAGE_BYTES,
+  type MemoryBoardDetail,
+} from './realtime/memory-board.js'
 import {hasUnpairedSurrogate} from './realtime/workspace-graph-board.js'
 
 export {
@@ -32,9 +36,11 @@ export const MAX_DESKTOP_JSON_BYTES = 16 * 1024
 export const MAX_DESKTOP_PCM_BYTES = 64 * 1024
 export const MAX_DESKTOP_OUTBOUND_BINARY_BYTES = 8 * 1024 * 1024
 export const MAX_DESKTOP_PENDING_SENDS = 128
+export const MAX_DESKTOP_DEBUG_CONNECTIONS = 4
 export const DESKTOP_AUTH_TIMEOUT_MS = 3_000
 export const DESKTOP_CLOSE_GRACE_MS = 500
 export const DESKTOP_READY_TIMEOUT_MS = 5_000
+export const DESKTOP_DEBUG_PATH = '/debug-board'
 
 const tokenPattern = /^[a-f0-9]{32}$/u
 const readyEndpointPattern = /^127\.0\.0\.1:([0-9]{1,5})$/u
@@ -51,6 +57,13 @@ const helloSchema = z.object({
   type: z.literal('hello'),
   token: z.string(),
 })
+
+const debugBoardRequestSchema = z.object({
+  type: z.literal('debug.board.request'),
+  request_id: identifierSchema,
+  board: z.enum(['memory', 'workspace_graph']),
+  detail: z.enum(['compact', 'full']),
+}).strict()
 
 export const playbackTelemetrySchema = z.object({
   type: z.literal('playback.telemetry'),
@@ -73,12 +86,45 @@ export const playbackTelemetrySchema = z.object({
   stdin_backpressure_count: z.number().int().nonnegative().max(1_000_000),
   stdin_drain_ms_max: playbackTelemetryDurationSchema,
 }).strict()
+
+export const connectionDiagnosticSchema = z.discriminatedUnion('phase', [
+  z.object({
+    type: z.literal('connection.diagnostic'),
+    phase: z.literal('closed'),
+    close_code: z.number().int().nonnegative().max(4_999),
+    reason: z.enum([
+      'normal',
+      'going_away',
+      'protocol_error',
+      'unsupported_data',
+      'abnormal',
+      'policy',
+      'message_too_big',
+      'internal_error',
+      'protocol_rejected',
+      'client_unavailable',
+      'other',
+    ]),
+  }).strict(),
+  z.object({
+    type: z.literal('connection.diagnostic'),
+    phase: z.literal('reconnect_attempt'),
+    attempt: z.number().int().positive().max(1_000_000),
+    delay_ms: z.number().int().positive().max(60_000),
+  }).strict(),
+  z.object({
+    type: z.literal('connection.diagnostic'),
+    phase: z.literal('reconnect_result'),
+    attempt: z.number().int().nonnegative().max(1_000_000),
+    result: z.enum(['connected', 'open_failed']),
+  }).strict(),
+])
 const DEFAULT_BOOTSTRAP_TEXT_FRAMES = [
   '{"type":"desktop.ready"}',
   '{"type":"codex.state","state":"idle"}',
 ] as const
 
-export const desktopControlSchema = z.discriminatedUnion('type', [
+const ordinaryDesktopControlSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('speech.onset'),
     speech_id: identifierSchema,
@@ -119,6 +165,11 @@ export const desktopControlSchema = z.discriminatedUnion('type', [
   playbackTelemetrySchema,
 ])
 
+export const desktopControlSchema = z.union([
+  ordinaryDesktopControlSchema,
+  connectionDiagnosticSchema,
+])
+
 export type DesktopControl = z.infer<typeof desktopControlSchema>
   | {readonly type: 'playback.telemetry_rejected'}
 
@@ -126,6 +177,13 @@ export class DesktopProtocolError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'DesktopProtocolError'
+  }
+}
+
+export class DesktopOutboundValidationError extends DesktopProtocolError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DesktopOutboundValidationError'
   }
 }
 
@@ -171,10 +229,19 @@ export interface DesktopServerOptions {
   readonly onAudio?: (pcm: Uint8Array) => void | Promise<void>
   readonly onClientDisconnect?: () => void
   readonly onClientAuthenticated?: () => void | Promise<void>
+  readonly onDebugBoardRequest?: (
+    request: DesktopDebugBoardRequest,
+  ) => string | Promise<string>
   readonly bootstrapTextFrames?: readonly string[]
   readonly authTimeoutMs?: number
   readonly closeGraceMs?: number
   readonly cameraTimer?: DesktopCameraTimer
+}
+
+export interface DesktopDebugBoardRequest {
+  readonly request_id: string
+  readonly board: 'memory' | 'workspace_graph'
+  readonly detail: MemoryBoardDetail
 }
 
 export interface DesktopReadiness {
@@ -201,6 +268,7 @@ export class NodeDesktopServer {
   #pendingCameraPermission: PendingCameraPermission | undefined
   readonly #lateCameraIds = new Map<string, CameraResponseOwner>()
   readonly #lateCameraOrder: string[] = []
+  readonly #debugSockets = new Set<WebSocket>()
   #inboundBytes = 0
 
   constructor(options: DesktopServerOptions) {
@@ -304,7 +372,11 @@ export class NodeDesktopServer {
       perMessageDeflate: false,
     })
     this.#server = server
-    server.on('connection', socket => this.#accept(socket))
+    server.on('connection', (socket, request) => {
+      if (request.url === DESKTOP_DEBUG_PATH) this.#acceptDebug(socket)
+      else if (request.url === '/') this.#accept(socket)
+      else socket.close(4004, 'desktop endpoint is unsupported')
+    })
     await new Promise<void>((resolve, reject) => {
       server.once('listening', resolve)
       server.once('error', reject)
@@ -332,16 +404,87 @@ export class NodeDesktopServer {
       active,
       this.#options.closeGraceMs ?? DESKTOP_CLOSE_GRACE_MS,
     )
+    const debugClosed = [...this.#debugSockets].map(socket => closeWebSocket(
+      socket,
+      this.#options.closeGraceMs ?? DESKTOP_CLOSE_GRACE_MS,
+    ))
     if (server === undefined) {
-      await activeClosed
+      await Promise.all([activeClosed, ...debugClosed])
       this.#notifyDisconnected(active)
       return
     }
     const serverClosed = new Promise<void>((resolve, reject) => {
       server.close(error => error === undefined ? resolve() : reject(error))
     })
-    await Promise.all([activeClosed, serverClosed])
+    await Promise.all([activeClosed, ...debugClosed, serverClosed])
     this.#notifyDisconnected(active)
+  }
+
+  #acceptDebug(socket: WebSocket): void {
+    if (
+      this.#stopping
+      || this.#options.onDebugBoardRequest === undefined
+      || this.#debugSockets.size >= MAX_DESKTOP_DEBUG_CONNECTIONS
+    ) {
+      socket.close(4009, 'desktop debug client unavailable')
+      return
+    }
+    this.#debugSockets.add(socket)
+    socket.on('error', error => { void error })
+    let authenticated = false
+    let requestStarted = false
+    let terminal = false
+    let inboundBytes = 0
+    let processing = Promise.resolve()
+    const reject = (): void => {
+      if (terminal) return
+      terminal = true
+      if (socket.readyState < WebSocket.CLOSING) {
+        socket.close(4003, 'desktop debug protocol rejected')
+      }
+    }
+    let phaseTimer = setTimeout(reject, this.#options.authTimeoutMs)
+    const resetPhaseTimer = (): void => {
+      clearTimeout(phaseTimer)
+      phaseTimer = setTimeout(reject, this.#options.authTimeoutMs)
+    }
+    socket.on('message', (data, isBinary) => {
+      const frameBytes = rawDataByteLength(data)
+      if (isBinary || inboundBytes + frameBytes > MAX_DESKTOP_JSON_BYTES) {
+        reject()
+        return
+      }
+      inboundBytes += frameBytes
+      processing = processing.then(async () => {
+        if (terminal) return
+        const raw = rawText(data)
+        if (!authenticated) {
+          authenticateDesktopFrame(raw, this.#options.token)
+          authenticated = true
+          resetPhaseTimer()
+          return
+        }
+        if (requestStarted) throw new DesktopProtocolError('desktop debug request already started')
+        const request = parseDebugBoardRequest(raw)
+        requestStarted = true
+        resetPhaseTimer()
+        const response = await this.#options.onDebugBoardRequest!(request)
+        if (terminal) return
+        validateDebugBoardResponse(response, request)
+        await sendWebSocketFrame(socket, response)
+        if (terminal) return
+        terminal = true
+        clearTimeout(phaseTimer)
+        if (socket.readyState < WebSocket.CLOSING) socket.close(1000, 'debug complete')
+      }).catch(() => reject()).finally(() => {
+        inboundBytes -= frameBytes
+      })
+    })
+    socket.once('close', () => {
+      terminal = true
+      clearTimeout(phaseTimer)
+      this.#debugSockets.delete(socket)
+    })
   }
 
   #accept(socket: WebSocket): void {
@@ -713,10 +856,42 @@ function copyBootstrapTextFrames(frames: readonly string[] | undefined): readonl
 
 function validateOutboundText(raw: string, label = 'desktop outbound text frame'): void {
   if (typeof raw !== 'string') {
-    throw new DesktopProtocolError(`${label} is invalid`)
+    throw new DesktopOutboundValidationError(`${label} is invalid`)
   }
   if (Buffer.byteLength(raw, 'utf8') > MAX_DESKTOP_JSON_BYTES) {
-    throw new DesktopProtocolError(`${label} is too large`)
+    throw new DesktopOutboundValidationError(`${label} is too large`)
+  }
+}
+
+function parseDebugBoardRequest(raw: string): DesktopDebugBoardRequest {
+  let value: unknown
+  try {
+    value = JSON.parse(raw) as unknown
+  } catch {
+    throw new DesktopProtocolError('desktop debug request is invalid')
+  }
+  const parsed = debugBoardRequestSchema.safeParse(value)
+  if (!parsed.success) throw new DesktopProtocolError('desktop debug request is invalid')
+  return parsed.data
+}
+
+function validateDebugBoardResponse(raw: string, request: DesktopDebugBoardRequest): void {
+  if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > MAX_BOARD_MESSAGE_BYTES) {
+    throw new DesktopOutboundValidationError('desktop debug response is invalid')
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(raw) as unknown
+  } catch {
+    throw new DesktopOutboundValidationError('desktop debug response is invalid')
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new DesktopOutboundValidationError('desktop debug response is invalid')
+  }
+  const response = value as {readonly type?: unknown; readonly request_id?: unknown}
+  const expectedType = request.board === 'memory' ? 'memory.board' : 'workspace_graph.board'
+  if (response.type !== expectedType || response.request_id !== request.request_id) {
+    throw new DesktopOutboundValidationError('desktop debug response is invalid')
   }
 }
 

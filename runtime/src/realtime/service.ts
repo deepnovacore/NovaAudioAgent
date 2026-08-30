@@ -2062,7 +2062,7 @@ export class RealtimeService {
       // suppressed. A summary-less event keeps the field template and is never deduped this way.
       if (this.#lastProgressSummary.get(payload.delegate_id) === summary) return
       this.#lastProgressSummary.set(payload.delegate_id, summary)
-      content = `${displayName} 正在执行：${summary}（已进行${formatSeconds(payload.elapsed)}秒）`
+      content = `${displayName} 正在执行：${summary}`
     } else {
       content = `${displayName} 仍在处理这个任务，目前已推进 ${payload.internal_activity} 个步骤。`
     }
@@ -4545,6 +4545,19 @@ export class RealtimeService {
     this.#releaseUrgentHostResponse(urgentOwner)
     this.#deliveryReady.set()
     return true
+  }
+
+  /** The renderer transport vanished, so no current or imminent response may keep speaking. */
+  async playbackDisconnected(): Promise<boolean> {
+    const generation = this.session.currentGeneration
+    if (generation !== null) {
+      return this.playbackStopped(
+        generation.utterance_id,
+        generation.generation_epoch,
+        null,
+      )
+    }
+    return this.session.rendererDisconnected()
   }
 
   /** Return an interrupted, unheard acknowledgement to the live delegate that still owns it. */

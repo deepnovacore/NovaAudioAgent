@@ -27,9 +27,7 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:codex:rescan',
     'nova:confirmation-mode',
     'nova:confirmation-placement',
-    'nova:memory-board:data',
     'nova:memory-board:export',
-    'nova:memory-board:fetch',
     'nova:memory-board:request',
     'nova:microphone:permission',
     'nova:microphone:retry',
@@ -50,8 +48,6 @@ test('preload exposes only bounded bootstrap native-audio menu and board channel
     'nova:window-drag:end',
     'nova:window-drag:move',
     'nova:window-drag:start',
-    'nova:workspace-graph-board:data',
-    'nova:workspace-graph-board:fetch',
     'nova:workspace-graph-board:request',
   ])
   assert.doesNotMatch(source, /sendSync/)
@@ -90,16 +86,15 @@ test('main owns the fixed orb menu and validates every menu and board sender', a
   assert.match(renderer, /orbMenu\.show\(\)/)
 })
 
-test('workspace graph board relay is sender-bound, bounded, and has no export or action channel', async () => {
+test('workspace graph board is sender-bound on the independent debug channel', async () => {
   const main = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   const preload = await readFile(new URL('../src/preload/preload.cjs', import.meta.url), 'utf8')
   const renderer = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
-  assert.match(main, /ipcMain\.handle\('nova:workspace-graph-board:request', event => \{\n\s*if \(!boardWindow \|\| event\.sender !== boardWindow\.webContents\)/)
-  assert.match(main, /ipcMain\.on\('nova:workspace-graph-board:data', \(event, payload\) => \{\n\s*if \(!mainWindow \|\| event\.sender !== mainWindow\.webContents \|\| !payload\) return/)
-  assert.match(renderer, /message\.type === 'workspace_graph\.board'/)
-  assert.match(renderer, /graphBoard\.publish\(message\)/)
-  assert.match(renderer, /graphBoard\.onFetch\(requestId => \{\n\s*send\(\{ type: 'workspace_graph\.board\.request', request_id: requestId \}\)/)
+  assert.match(main, /ipcMain\.handle\('nova:workspace-graph-board:request', async event => \{\n\s*if \(!boardWindow \|\| event\.sender !== boardWindow\.webContents\)/)
+  assert.match(main, /board: 'workspace_graph',\s*detail: 'compact'/u)
+  assert.doesNotMatch(preload, /workspace-graph-board:(?:fetch|data)/u)
+  assert.doesNotMatch(renderer, /workspace_graph\.board/u)
   for (const source of [main, preload, renderer]) {
     assert.doesNotMatch(source, /workspace-graph-board:(?:export|delete|edit|suppress|merge|switch|inspect)/u)
   }
@@ -324,8 +319,13 @@ test('the bootstrap answer carries the current supervised connection at invoke t
 test('renderer accepts both supervised disconnect and reconnect events', async () => {
   const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
+  assert.match(source, /new BackendReconnectController\(/)
   assert.match(source, /function handleBackendExit\(\)/)
   assert.match(source, /function connectBackend\(connection\)/)
+  assert.match(source, /backendRecovery\.socketClosed\(event\)/)
+  assert.match(source, /backendRecovery\.socketOpened\(\)/)
+  assert.match(source, /backendRecovery\.backendExited\(\)/)
+  assert.match(source, /playback\.backendExited\(\)/)
   assert.match(source, /onBackendExit\(handleBackendExit\)/)
   assert.match(source, /onBackendReady\(connectBackend\)/)
   assert.match(source, /if \(bootstrap\.backend\) connectBackend\(bootstrap\.backend\)/)

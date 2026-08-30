@@ -230,21 +230,40 @@ export function renderWorkspaceGraphBoard(payload, {document, root, status}) {
 export function createGraphTabController({request, visible, render, failure}) {
   let active = false
   let inFlight = null
+  let ownership = 0
 
   async function refresh() {
     if (!active || !visible()) return
     if (inFlight) return inFlight
-    inFlight = Promise.resolve().then(request).then(value => {
+    const owner = ownership
+    const operation = Promise.resolve().then(request).then(value => {
+      if (!active || !visible() || owner !== ownership) return
       const parsed = parseWorkspaceGraphBoardPayload(value)
       if (parsed === null) failure('invalid')
       else render(parsed)
-    }, () => { failure('unavailable') }).finally(() => { inFlight = null })
-    return inFlight
+    }, () => {
+      if (active && visible() && owner === ownership) failure('unavailable')
+    }).finally(() => {
+      if (inFlight === operation) inFlight = null
+    })
+    inFlight = operation
+    return operation
   }
 
   return Object.freeze({
-    activate() { active = true; return refresh() },
-    deactivate() { active = false },
+    activate() {
+      if (!active) {
+        active = true
+        ownership += 1
+      }
+      return refresh()
+    },
+    deactivate() {
+      if (!active) return
+      active = false
+      ownership += 1
+      inFlight = null
+    },
     refresh,
     tick: refresh,
   })

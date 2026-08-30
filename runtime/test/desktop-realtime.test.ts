@@ -8,7 +8,10 @@ import {
 } from '../src/desktop-realtime.js'
 import type {BridgeService} from '../src/desktop-bridge.js'
 import {decodeAudioFrame} from '../src/desktop-wire.js'
-import type {DesktopServerOptions} from '../src/desktop.js'
+import {
+  DesktopOutboundValidationError,
+  type DesktopServerOptions,
+} from '../src/desktop.js'
 import type {JsonValue} from '../src/events.js'
 import type {RealtimeTelemetry} from '../src/realtime/telemetry.js'
 
@@ -46,6 +49,10 @@ function serviceHarness(): ServiceHarness {
       playbackStarted: (utteranceId, epoch) => { calls.push(`started:${utteranceId}:${epoch}`); return true },
       playbackStopped: (utteranceId, epoch, playedMs) => {
         calls.push(`stopped:${utteranceId}:${epoch}:${playedMs ?? 'null'}`)
+        return Promise.resolve(true)
+      },
+      playbackDisconnected: () => {
+        calls.push('playback-disconnected')
         return Promise.resolve(true)
       },
       playbackDone: (utteranceId, epoch, playedMs) => {
@@ -226,7 +233,7 @@ test('real loopback drains ready, preempt, current state, project, and duplex tr
 })
 
 test('renderer reconnect receives current state and project without aborting the application', async () => {
-  const {service} = serviceHarness()
+  const {service, calls} = serviceHarness()
   const stop = new AbortController()
   let released: (() => void) | undefined
   const connectionReleased = new Promise<void>(resolve => { released = resolve })
@@ -256,6 +263,7 @@ test('renderer reconnect receives current state and project without aborting the
     assert.equal(text(changed[0]!), '{"type":"codex.state","state":"idle"}')
     await closeDesktop(first)
     await settleWithin('bridge connection release', connectionReleased)
+    assert.ok(calls.includes('playback-disconnected'))
     assert.equal(stop.signal.aborted, false)
 
     const second = await connectDesktop(readiness.port)
@@ -275,6 +283,64 @@ test('renderer reconnect receives current state and project without aborting the
   }
 })
 
+test('debug board client transfers a large snapshot without owning the renderer connection', async () => {
+  const {service} = serviceHarness()
+  const stop = new AbortController()
+  const realtime = new DesktopRealtime({
+    token: TOKEN,
+    service,
+    stop,
+    memoryBoard: (requestId, detail) => JSON.stringify({
+      type: 'memory.board',
+      request_id: requestId,
+      detail,
+      diagnostics: {version: 1, records: []},
+      channels: [{items: [{content: 'x'.repeat(20 * 1024)}]}],
+    }),
+  })
+  const readiness = await settleWithin('debug board server start', realtime.server.start())
+  const renderer = await connectDesktop(readiness.port)
+  let debug: WebSocket | undefined
+
+  try {
+    const initial = nextFrames(renderer, 2, 'debug board renderer initial state')
+    await sendClient(renderer, JSON.stringify({type: 'hello', token: TOKEN}), 'renderer hello')
+    await initial
+
+    debug = await settleWithin('debug board client connect', new Promise<WebSocket>((resolve, reject) => {
+      const candidate = new WebSocket(`ws://127.0.0.1:${readiness.port}/debug-board`)
+      candidate.once('open', () => resolve(candidate))
+      candidate.once('error', reject)
+    }))
+    const response = nextFrames(debug, 1, 'large debug board response')
+    await sendClient(debug, JSON.stringify({type: 'hello', token: TOKEN}), 'debug hello')
+    await sendClient(debug, JSON.stringify({
+      type: 'debug.board.request',
+      request_id: 'debug-1',
+      board: 'memory',
+      detail: 'compact',
+    }), 'debug board request')
+    const payload = text((await response)[0]!)
+    assert.ok(Buffer.byteLength(payload, 'utf8') > 16 * 1024)
+    assert.deepEqual(JSON.parse(payload), {
+      type: 'memory.board',
+      request_id: 'debug-1',
+      detail: 'compact',
+      diagnostics: {version: 1, records: []},
+      channels: [{items: [{content: 'x'.repeat(20 * 1024)}]}],
+    })
+
+    const rendererState = nextFrames(renderer, 1, 'renderer survives debug board response')
+    realtime.bridge.onCodexState('idle')
+    assert.equal(text((await rendererState)[0]!), '{"type":"codex.state","state":"idle"}')
+    assert.equal(stop.signal.aborted, false)
+  } finally {
+    if (debug) await closeDesktop(debug)
+    await closeDesktop(renderer)
+    await settleWithin('debug board server close', realtime.server.close())
+  }
+})
+
 test('bridge uplink errors retain the server stable protocol rejection', async () => {
   const {service, calls} = serviceHarness()
   const realtime = new DesktopRealtime({token: TOKEN, service, stop: new AbortController()})
@@ -287,7 +353,11 @@ test('bridge uplink errors retain the server stable protocol rejection', async (
     const closed = nextClose(socket, 'protocol rejection close')
     await sendClient(socket, new Uint8Array([1]), 'misaligned PCM send')
     assert.deepEqual(await closed, {code: 4003, reason: 'desktop protocol rejected'})
-    assert.deepEqual(calls, [], 'invalid PCM never reaches the service')
+    assert.deepEqual(
+      calls.filter(call => call.startsWith('audio:')),
+      [],
+      'invalid PCM never reaches the service',
+    )
   } finally {
     await settleWithin('protocol rejection server close', realtime.server.close())
   }
@@ -299,6 +369,7 @@ class ControlledServer implements DesktopServerTransport {
   maxConcurrent = 0
   #next: ((value: string | Uint8Array) => void) | undefined
   #fail = false
+  #failValidation = false
   #hold: (() => void) | undefined
   #connected = false
   #clientGeneration = 0
@@ -314,6 +385,7 @@ class ControlledServer implements DesktopServerTransport {
     return settleWithin(label, new Promise(resolve => { this.#next = resolve }))
   }
   failNext(): void { this.#fail = true }
+  failNextValidation(): void { this.#failValidation = true }
   async connectClient(): Promise<void> {
     if (this.#connected) throw new Error('controlled desktop client already connected')
     this.#connected = true
@@ -361,6 +433,10 @@ class ControlledServer implements DesktopServerTransport {
     this.#next?.(raw)
     this.#next = undefined
     try {
+      if (this.#failValidation) {
+        this.#failValidation = false
+        throw new DesktopOutboundValidationError('controlled outbound validation failure')
+      }
       if (this.#fail) { this.#fail = false; throw new Error('sensitive controlled failure') }
       if (this.#hold !== undefined) await new Promise<void>(resolve => {
         const release = this.#hold
@@ -507,4 +583,41 @@ test('required send failure and bridge overflow abort, while droppable/latest fa
     utterance_id: 'overflow', generation_epoch: 1, sequence: 1, pcm: new Uint8Array([2, 3]),
   })
   assert.equal(overflowStop.signal.aborted, true)
+})
+
+test('droppable local validation failure is diagnosed without disconnecting a healthy client', async () => {
+  const stop = new AbortController()
+  const telemetry = new RecordingTelemetry()
+  const clock = new VirtualClock(5)
+  const {service} = serviceHarness()
+  let server: ControlledServer | undefined
+  const realtime = new DesktopRealtime({
+    token: TOKEN,
+    service,
+    stop,
+    clock,
+    telemetry,
+    createServer: options => {
+      server = new ControlledServer(options)
+      return server
+    },
+  })
+  const controlled = server!
+  const initial = controlled.nextSend('validation failure initial state')
+  await controlled.connectClient()
+  await initial
+
+  controlled.failNextValidation()
+  const rejectedCaption = controlled.nextSend('locally rejected caption attempt')
+  realtime.bridge.onCaption({role: 'user', text: 'droppable', final: true})
+  await rejectedCaption
+
+  const currentState = controlled.nextSend('state after local validation failure')
+  realtime.bridge.onCodexState('idle')
+  assert.equal(await currentState, '{"type":"codex.state","state":"idle"}')
+  assert.equal(stop.signal.aborted, false)
+  assert.deepEqual(telemetry.records.at(-1), {
+    kind: 'desktop.outbound_validation_dropped',
+    payload: {policy: 'droppable', frame_kind: 'text'},
+  })
 })

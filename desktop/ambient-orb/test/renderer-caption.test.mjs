@@ -11,7 +11,12 @@ test('renderer clears captions on disconnect and on every playback clear', async
     /if \(message\.type === 'playback\.clear'\) \{\n    clearAssistantCaption\(\)/,
   )
   // A dead socket must not leave speculative text on screen.
-  assert.match(source, /onCurrentClose: \(\{socket: closedSocket\}\) => \{[^}]*clearCaption\(\)/s)
+  const disconnectHandler = source.slice(
+    source.indexOf('onCurrentClose: ({socket: closedSocket}) => {'),
+    source.indexOf('const backendRecovery = new BackendReconnectController'),
+  )
+  assert.match(disconnectHandler, /playback\.disconnect\(\)/)
+  assert.match(disconnectHandler, /clearCaption\(\)/)
   // Continuous speech keeps refreshing the floor hold with the same utterance id.
   assert.match(source, /new OnsetTracker\(/)
 })

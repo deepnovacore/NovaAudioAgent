@@ -47,8 +47,8 @@ function text(data: RawData): string {
     : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]).toString('utf8')
 }
 
-async function connect(port: number): Promise<WebSocket> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/`)
+async function connectPath(port: number, path: string): Promise<WebSocket> {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}${path}`)
   const opened = new Promise<void>((resolve, reject) => {
     const cleanup = (): void => {
       socket.off('open', onOpen)
@@ -78,6 +78,10 @@ async function connect(port: number): Promise<WebSocket> {
     throw error
   }
   return socket
+}
+
+async function connect(port: number): Promise<WebSocket> {
+  return connectPath(port, '/')
 }
 
 function nextTextFrames(socket: WebSocket, count: number): Promise<readonly string[]> {
@@ -1236,6 +1240,59 @@ test('an unauthenticated desktop client is dropped on its own deadline', async (
     code: 4003,
     reason: 'desktop protocol rejected',
   })
+  await server.close()
+})
+
+test('a debug client inherits the default authentication deadline', async () => {
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    onDebugBoardRequest: request => JSON.stringify({
+      type: 'memory.board',
+      request_id: request.request_id,
+      diagnostics: {version: 1, records: []},
+      channels: [],
+    }),
+  })
+  const readiness = await server.start()
+  const socket = await connectPath(readiness.port, '/debug-board')
+  await new Promise(resolve => setTimeout(resolve, 25))
+  const response = nextTextFrames(socket, 1)
+  socket.send(JSON.stringify({type: 'hello', token: TOKEN}))
+  socket.send(JSON.stringify({
+    type: 'debug.board.request',
+    request_id: 'debug-default-auth',
+    board: 'memory',
+    detail: 'compact',
+  }))
+
+  assert.deepEqual(JSON.parse((await response)[0]!), {
+    type: 'memory.board',
+    request_id: 'debug-default-auth',
+    diagnostics: {version: 1, records: []},
+    channels: [],
+  })
+  await closeClient(socket)
+  await server.close()
+})
+
+test('authenticated debug clients cannot retain a slot without completing a request', async () => {
+  const server = new NodeDesktopServer({
+    token: TOKEN,
+    authTimeoutMs: 25,
+    onDebugBoardRequest: () => new Promise<string>(() => undefined),
+  })
+  const readiness = await server.start()
+  const stalled = await connectPath(readiness.port, '/debug-board')
+  const closed = waitForClose(stalled)
+  stalled.send(JSON.stringify({type: 'hello', token: TOKEN}))
+  stalled.send(JSON.stringify({
+    type: 'debug.board.request',
+    request_id: 'debug-stalled',
+    board: 'memory',
+    detail: 'compact',
+  }))
+
+  assert.deepEqual(await closed, {code: 4003, reason: 'desktop debug protocol rejected'})
   await server.close()
 })
 

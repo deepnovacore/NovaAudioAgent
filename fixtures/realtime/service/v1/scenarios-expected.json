@@ -1032,72 +1032,72 @@
     {
       "name": "progress-summary-plain",
       "summary": "running the test suite",
-      "content": "Codex 正在执行：running the test suite（已进行12秒）"
+      "content": "Codex 正在执行：running the test suite"
     },
     {
       "name": "progress-summary-markdown",
       "summary": "running pytest on everything",
-      "content": "Codex 正在执行：running pytest on everything（已进行3秒）"
+      "content": "Codex 正在执行：running pytest on everything"
     },
     {
       "name": "progress-elapsed-0-0",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行0秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-0-4",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行0秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-0-5",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行0秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-0-6",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行1秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-1-4",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行1秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-1-5",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行2秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-2-5",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行2秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-3-5",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行4秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-7-5",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行8秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-12-5",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行12秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-59-5",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行60秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-elapsed-60-5",
       "summary": "still going",
-      "content": "Codex 正在执行：still going（已进行60秒）"
+      "content": "Codex 正在执行：still going"
     },
     {
       "name": "progress-steps",

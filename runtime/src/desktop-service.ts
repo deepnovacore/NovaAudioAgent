@@ -137,10 +137,11 @@ export function buildDesktopRealtimeComposition(
     token: options.token,
     service: realtime.service,
     stop: options.stop,
-    memoryBoard: requestId => memoryBoardMessage(
+    memoryBoard: (requestId, detail) => memoryBoardMessage(
       requestId,
       realtime.runtime.memory,
       options.telemetry?.diagnostics?.(),
+      detail === undefined ? {} : {detail},
     ),
     workspaceGraphBoard: requestId => workspaceGraphBoardForRealtime(requestId, realtime),
     clock: realtime.runtime.clock,

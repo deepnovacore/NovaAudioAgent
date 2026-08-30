@@ -91,6 +91,10 @@ function harness(
       calls.push(`stopped:${utteranceId}:${epoch}:${playedMs ?? 'null'}`)
       return Promise.resolve(true)
     },
+    playbackDisconnected: () => {
+      calls.push('playback-disconnected')
+      return Promise.resolve(true)
+    },
     playbackCleared: (utteranceId, epoch, playedMs) => {
       calls.push(`cleared:${utteranceId}:${epoch}:${playedMs ?? 'null'}`)
       return true
@@ -332,6 +336,39 @@ test('releasing forgets what the previous renderer was told', () => {
     '{"type":"codex.state","state":"running"}',
     'and is told the current state',
   )
+})
+
+test('releasing drops transient playback and does not queue partial audio while disconnected', () => {
+  const {bridge, calls, stopped} = harness()
+  bridge.markAuthenticated()
+  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
+  bridge.onAudioFrame(frame(4, 0))
+  bridge.onCaption({role: 'assistant', text: 'old socket', final: false})
+  bridge.onAudioTerminal('u-4', 4)
+
+  bridge.release()
+  assert.ok(calls.includes('playback-disconnected'))
+  bridge.onAudioFrame(frame(4, 1))
+  bridge.onCaption({role: 'assistant', text: 'disconnected', final: false})
+  bridge.onAudioTerminal('u-4', 4)
+  assert.equal(stopped(), false)
+
+  assert.equal(bridge.claim(), true)
+  bridge.markAuthenticated()
+  assert.equal(
+    calls.filter(call => call === 'playback-disconnected').length,
+    2,
+    'reconnect fences anything that began while no renderer was authenticated',
+  )
+  assert.equal(
+    bridge.takeNextFrame(),
+    '{"type":"codex.state","state":"idle"}',
+    'the new renderer receives only reconstructable current state',
+  )
+  assert.equal(bridge.takeNextFrame(), null, 'no old or partial playback crosses the generation')
+
+  bridge.onAudioFrame(frame(5, 0))
+  assert.ok(bridge.takeNextFrame() instanceof Uint8Array, 'fresh post-auth playback still flows')
 })
 
 test('only one renderer may hold the connection', () => {
@@ -654,6 +691,42 @@ test('authenticated playback telemetry is recorded as bounded native evidence', 
   }])
   assert.equal(telemetry.records.some(record => (
     record.kind === 'renderer.ack' && record.payload.kind === 'playback_telemetry'
+  )), false)
+})
+
+test('sanitized renderer connection recovery diagnostics reach telemetry without generic ack noise', async () => {
+  const {bridge, telemetry} = harness()
+  await bridge.receive(JSON.stringify({
+    type: 'connection.diagnostic',
+    phase: 'closed',
+    close_code: 1009,
+    reason: 'message_too_big',
+  }), {authenticated: true})
+  await bridge.receive(JSON.stringify({
+    type: 'connection.diagnostic',
+    phase: 'reconnect_attempt',
+    attempt: 1,
+    delay_ms: 250,
+  }), {authenticated: true})
+  await bridge.receive(JSON.stringify({
+    type: 'connection.diagnostic',
+    phase: 'reconnect_result',
+    attempt: 1,
+    result: 'connected',
+  }), {authenticated: true})
+
+  assert.deepEqual(telemetry.records.filter(record => record.kind.startsWith('desktop.')), [{
+    kind: 'desktop.connection_closed',
+    payload: {close_code: 1009, reason: 'message_too_big'},
+  }, {
+    kind: 'desktop.reconnect_attempt',
+    payload: {attempt: 1, delay_ms: 250},
+  }, {
+    kind: 'desktop.reconnect_result',
+    payload: {attempt: 1, result: 'connected'},
+  }])
+  assert.equal(telemetry.records.some(record => (
+    record.kind === 'renderer.ack' && record.payload.kind === 'connection_diagnostic'
   )), false)
 })
 

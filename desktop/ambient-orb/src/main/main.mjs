@@ -37,6 +37,7 @@ import {
 } from './backend-diagnostics.mjs'
 import { createBackendSupervisor } from './backend-supervisor.mjs'
 import { configureDevelopmentDockIcon } from './app-icon.mjs'
+import {createDebugBoardRequester} from './debug-board-client.mjs'
 import { installAppProtocol, loadAppWindow, registerAppScheme } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
@@ -134,8 +135,8 @@ let nativeBinary = null
 let projectNativeHost
 let quitDrain = null
 let releaseSmokeChannel = null
-// Settings are main-owned: the panel asks main directly, so unlike the memory
-// board there is no relay through the orb renderer and no requestId to match.
+// Settings and debug boards are main-owned IPC surfaces. Neither relays through
+// the orb renderer or shares the realtime voice socket.
 let currentSettings = null
 let desktopConfig = null
 let codexStatus = Object.freeze({
@@ -143,8 +144,7 @@ let codexStatus = Object.freeze({
   source: null, version: null,
 })
 const secretCodec = createSafeStorageCodec(safeStorage)
-const pendingBoardRequests = new Map()
-let pendingGraphBoardRequest = null
+const requestBoardSnapshot = createDebugBoardRequester()
 let microphoneStatus = 'checking'
 let microphoneSystemStatus = 'unknown'
 const MICROPHONE_STATUSES = new Set([
@@ -265,11 +265,6 @@ function openMemoryBoard(launchId) {
   })
   window.once('ready-to-show', () => window.show())
   window.on('closed', () => {
-    if (pendingGraphBoardRequest) {
-      clearTimeout(pendingGraphBoardRequest.timer)
-      pendingGraphBoardRequest.resolve({ error: 'unavailable' })
-      pendingGraphBoardRequest = null
-    }
     boardWindow = null
   })
   boardWindow = window
@@ -610,66 +605,59 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   ipcMain.on('nova:settings:open', event => {
     if (mainWindow && event.sender === mainWindow.webContents) openSettingsWindow(launchId)
   })
-  ipcMain.handle('nova:memory-board:request', event => {
+  ipcMain.handle('nova:memory-board:request', async event => {
     if (!boardWindow || event.sender !== boardWindow.webContents) {
       throw new Error('memory board request rejected')
     }
-    if (!mainWindow) return { error: 'unavailable' }
-    const requestId = `board-${randomBytes(8).toString('hex')}`
-    return new Promise(resolveRequest => {
-      const timer = setTimeout(() => {
-        pendingBoardRequests.delete(requestId)
-        resolveRequest({ error: 'timeout' })
-      }, 5000)
-      pendingBoardRequests.set(requestId, { resolve: resolveRequest, timer })
-      sendToOrb('nova:memory-board:fetch', requestId)
-    })
+    if (backendStatus.state !== 'connected' || !backendStatus.connection) {
+      return { error: 'unavailable' }
+    }
+    try {
+      return await requestBoardSnapshot(backendStatus.connection, {
+        board: 'memory',
+        detail: 'compact',
+      })
+    } catch (error) {
+      return {error: error?.code === 'timeout' ? 'timeout' : 'unavailable'}
+    }
   })
-  ipcMain.on('nova:memory-board:data', (event, payload) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents || !payload) return
-    const pending = pendingBoardRequests.get(payload.request_id)
-    if (!pending) return
-    pendingBoardRequests.delete(payload.request_id)
-    clearTimeout(pending.timer)
-    pending.resolve(payload)
-  })
-  ipcMain.handle('nova:workspace-graph-board:request', event => {
+  ipcMain.handle('nova:workspace-graph-board:request', async event => {
     if (!boardWindow || event.sender !== boardWindow.webContents) {
       throw new Error('workspace graph board request rejected')
     }
-    if (!mainWindow) return { error: 'unavailable' }
-    if (pendingGraphBoardRequest) {
-      clearTimeout(pendingGraphBoardRequest.timer)
-      pendingGraphBoardRequest.resolve({ error: 'superseded' })
-      pendingGraphBoardRequest = null
+    if (backendStatus.state !== 'connected' || !backendStatus.connection) {
+      return { error: 'unavailable' }
     }
-    const requestId = `graph-${randomBytes(8).toString('hex')}`
-    return new Promise(resolveRequest => {
-      const timer = setTimeout(() => {
-        if (pendingGraphBoardRequest?.requestId === requestId) pendingGraphBoardRequest = null
-        resolveRequest({ error: 'timeout' })
-      }, 5000)
-      pendingGraphBoardRequest = { requestId, resolve: resolveRequest, timer }
-      sendToOrb('nova:workspace-graph-board:fetch', requestId)
-    })
+    try {
+      return await requestBoardSnapshot(backendStatus.connection, {
+        board: 'workspace_graph',
+        detail: 'compact',
+      })
+    } catch (error) {
+      return {error: error?.code === 'timeout' ? 'timeout' : 'unavailable'}
+    }
   })
-  ipcMain.on('nova:workspace-graph-board:data', (event, payload) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents || !payload) return
-    if (!pendingGraphBoardRequest || payload.request_id !== pendingGraphBoardRequest.requestId) return
-    const pending = pendingGraphBoardRequest
-    pendingGraphBoardRequest = null
-    clearTimeout(pending.timer)
-    pending.resolve(payload)
-  })
-  ipcMain.handle('nova:memory-board:export', async (event, payload) => {
+  ipcMain.handle('nova:memory-board:export', async event => {
     if (!boardWindow || event.sender !== boardWindow.webContents) {
       throw new Error('memory board export rejected')
     }
-    if (!payload || !Array.isArray(payload.channels)
-      || payload.diagnostics?.version !== 1
-      || !Array.isArray(payload.diagnostics.records)
-      || payload.diagnostics.records.length > 128
-      || !payload.diagnostics.records.every(record => (
+    if (backendStatus.state !== 'connected' || !backendStatus.connection) {
+      return {error: 'unavailable'}
+    }
+    let snapshot
+    try {
+      snapshot = await requestBoardSnapshot(backendStatus.connection, {
+        board: 'memory',
+        detail: 'full',
+      })
+    } catch (error) {
+      return {error: error?.code === 'timeout' ? 'timeout' : 'unavailable'}
+    }
+    if (!snapshot || !Array.isArray(snapshot.channels)
+      || snapshot.diagnostics?.version !== 1
+      || !Array.isArray(snapshot.diagnostics.records)
+      || snapshot.diagnostics.records.length > 128
+      || !snapshot.diagnostics.records.every(record => (
         record !== null
         && typeof record === 'object'
         && Number.isFinite(record.ts)
@@ -681,8 +669,8 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     const body = JSON.stringify(
       {
         exported_at: new Date().toISOString(),
-        channels: payload.channels,
-        diagnostics: payload.diagnostics,
+        channels: snapshot.channels,
+        diagnostics: snapshot.diagnostics,
       },
       null,
       2,

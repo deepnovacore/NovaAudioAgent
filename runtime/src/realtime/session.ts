@@ -1430,6 +1430,11 @@ export class RealtimeSession {
     return true
   }
 
+  /** Fence or pre-arm cancellation when the renderer connection disappears. */
+  async rendererDisconnected(): Promise<boolean> {
+    return this.#fenceAndCancelActiveResponse()
+  }
+
   // ---------------------------------------------------------------------------
   // Delegates
   // ---------------------------------------------------------------------------

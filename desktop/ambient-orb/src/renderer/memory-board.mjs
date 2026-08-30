@@ -23,6 +23,7 @@ let latestPayload = null
 let inFlight = false
 let exportInFlight = false
 let activeTab = 'memory'
+let loadOwnership = 0
 const scrollAfterRefresh = createBoardAutoScroller({document})
 
 function itemContent(raw) {
@@ -137,13 +138,16 @@ function validDiagnostics(payload) {
 }
 
 async function load() {
+  if (document.hidden) return
   if (activeTab === 'graph') return
   if (inFlight) return
+  const owner = loadOwnership
   inFlight = true
   statusLabel.textContent = '加载中…'
   refreshButton.disabled = true
   try {
     const payload = await window.novaAudioAgentDesktop.memoryBoard.request()
+    if (owner !== loadOwnership || document.hidden || activeTab === 'graph') return
     if (!payload || payload.error || !Array.isArray(payload.channels) || !validDiagnostics(payload)) {
       statusLabel.textContent = payload?.error === 'timeout' ? '后端无响应' : '加载失败'
       return
@@ -161,10 +165,14 @@ async function load() {
     statusLabel.textContent = `更新于 ${new Date().toLocaleTimeString()}`
     scrollAfterRefresh()
   } catch {
+    if (owner !== loadOwnership || document.hidden || activeTab === 'graph') return
     statusLabel.textContent = '加载失败'
   } finally {
     refreshButton.disabled = false
     inFlight = false
+    if (owner !== loadOwnership && !document.hidden && activeTab !== 'graph') {
+      queueMicrotask(() => { void load() })
+    }
   }
 }
 
@@ -173,10 +181,7 @@ async function exportBoard() {
   exportInFlight = true
   exportButton.disabled = true
   try {
-    const result = await window.novaAudioAgentDesktop.memoryBoard.export({
-      channels: latestPayload.channels,
-      diagnostics: latestPayload.diagnostics,
-    })
+    const result = await window.novaAudioAgentDesktop.memoryBoard.export()
     if (result?.saved) statusLabel.textContent = `已导出：${result.saved}`
     else if (result?.error) statusLabel.textContent = '导出失败'
   } catch {
@@ -207,6 +212,7 @@ const graphController = createGraphTabController({
 })
 
 function selectTab(tab) {
+  if (tab === 'graph' && activeTab !== 'graph') loadOwnership += 1
   activeTab = tab
   const graphActive = activeTab === 'graph'
   const diagnosticsActive = activeTab === 'diagnostics'
@@ -247,6 +253,15 @@ refreshButton.addEventListener('click', () => {
   else void load()
 })
 exportButton.addEventListener('click', () => { void exportBoard() })
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    loadOwnership += 1
+    if (activeTab === 'graph') graphController.deactivate()
+    return
+  }
+  if (activeTab === 'graph') void graphController.activate()
+  else void load()
+})
 setInterval(() => {
   if (document.hidden) return
   if (activeTab === 'graph') void graphController.tick()

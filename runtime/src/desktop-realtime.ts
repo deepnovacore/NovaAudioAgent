@@ -4,11 +4,14 @@ import {
   type DesktopDelivery,
 } from './desktop-bridge.js'
 import {
+  DesktopOutboundValidationError,
   DesktopProtocolError,
   NodeDesktopServer,
   type DesktopReadiness,
   type DesktopServerOptions,
 } from './desktop.js'
+import type {RealtimeTelemetry} from './realtime/telemetry.js'
+import {workspaceGraphBoardMessage} from './realtime/workspace-graph-board.js'
 
 const READY_FRAME = '{"type":"desktop.ready"}'
 
@@ -38,6 +41,7 @@ export class DesktopRealtime {
 
   readonly #stop: {abort(): void}
   readonly #onConnectionReleased: (() => void) | undefined
+  readonly #telemetry: RealtimeTelemetry | undefined
   #generation = 0
   #activeGeneration: number | null = null
   #drainRequested = false
@@ -47,6 +51,7 @@ export class DesktopRealtime {
     const {createServer, onConnectionReleased, ...bridgeOptions} = options
     this.#stop = options.stop
     this.#onConnectionReleased = onConnectionReleased
+    this.#telemetry = options.telemetry
     this.bridge = new DesktopSocketBridge({
       ...bridgeOptions,
       onOutboundAvailable: () => this.#requestDrain(),
@@ -56,6 +61,16 @@ export class DesktopRealtime {
       bootstrapTextFrames: [READY_FRAME],
       onClientAuthenticated: () => this.#authenticated(),
       onClientDisconnect: () => this.#disconnected(),
+      onDebugBoardRequest: request => {
+        if (request.board === 'memory') {
+          if (bridgeOptions.memoryBoard === undefined) {
+            throw new DesktopProtocolError('desktop memory board is unavailable')
+          }
+          return bridgeOptions.memoryBoard(request.request_id, request.detail)
+        }
+        return bridgeOptions.workspaceGraphBoard?.(request.request_id)
+          ?? workspaceGraphBoardMessage(request.request_id, null, 'disabled')
+      },
       onAudio: pcm => this.bridge.receiveAudio(pcm),
       onControl: control => this.bridge.receiveControl(control),
     }
@@ -104,9 +119,15 @@ export class DesktopRealtime {
           if (delivery === null) break
           try {
             await this.#send(delivery)
-          } catch {
+          } catch (error) {
             if (delivery.policy === 'required') this.#stop.abort()
-            else {
+            else if (error instanceof DesktopOutboundValidationError) {
+              this.#telemetry?.record('desktop.outbound_validation_dropped', {
+                policy: delivery.policy,
+                frame_kind: typeof delivery.frame === 'string' ? 'text' : 'binary',
+              })
+              continue
+            } else {
               await this.server.disconnectClient()
               this.#release(generation)
             }

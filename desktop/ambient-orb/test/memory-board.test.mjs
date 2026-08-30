@@ -37,7 +37,10 @@ test('board auto-refresh is renderer-owned, guarded, and visibility-aware', asyn
   assert.match(source, /2000/)
   assert.match(source, /let inFlight = false/)
   assert.match(source, /if \(inFlight\) return/)
-  assert.match(source, /document\.hidden/)
+  assert.match(source, /async function load\(\) \{\n\s*if \(document\.hidden\) return/)
+  assert.match(source, /const owner = loadOwnership[\s\S]*await window\.novaAudioAgentDesktop\.memoryBoard\.request\(\)[\s\S]*owner !== loadOwnership/u)
+  assert.match(source, /document\.hidden\) \{\s*loadOwnership \+= 1/u)
+  assert.match(source, /addEventListener\('visibilitychange'/)
   assert.match(source, /let exportInFlight = false/)
   assert.match(source, /exportButton\.disabled = exportInFlight/)
 })
@@ -47,7 +50,8 @@ test('board caches the latest payload and exports it through the preload API', a
 
   assert.match(source, /let latestPayload = null/)
   assert.match(source, /latestPayload = payload/)
-  assert.match(source, /memoryBoard\.export\(\{\s*channels: latestPayload\.channels,\s*diagnostics: latestPayload\.diagnostics,\s*\}\)/)
+  assert.match(source, /memoryBoard\.export\(\)/)
+  assert.doesNotMatch(source, /memoryBoard\.export\(\{\s*channels:/)
 
   const html = await readFile(new URL('../src/renderer/memory-board.html', import.meta.url), 'utf8')
   assert.match(html, /<button id="export" type="button" disabled>导出<\/button>/)
@@ -105,9 +109,10 @@ test('memory channels render as semantic cards with summary, count, tags, and a 
 test('export handler saves through a dialog with the atomic write pattern', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
 
-  assert.match(source, /ipcMain\.handle\('nova:memory-board:export', async \(event, payload\) => \{\n\s*if \(!boardWindow \|\| event\.sender !== boardWindow\.webContents\)/)
-  assert.match(source, /payload\.diagnostics\.records\.length > 128/u)
-  assert.match(source, /payload\.diagnostics\.records\.every/u)
+  assert.match(source, /ipcMain\.handle\('nova:memory-board:export', async event => \{\n\s*if \(!boardWindow \|\| event\.sender !== boardWindow\.webContents\)/)
+  assert.match(source, /requestBoardSnapshot\(backendStatus\.connection, \{\s*board: 'memory',\s*detail: 'full',\s*\}\)/u)
+  assert.match(source, /snapshot\.diagnostics\.records\.length > 128/u)
+  assert.match(source, /snapshot\.diagnostics\.records\.every/u)
   assert.match(source, /Buffer\.byteLength\(body, 'utf8'\) > 1024 \* 1024/)
   assert.match(source, /dialog\.showSaveDialog/)
   assert.match(source, /memory-board-/)
@@ -118,14 +123,15 @@ test('export handler saves through a dialog with the atomic write pattern', asyn
   assert.match(source, /await rename\(temporary, filePath\)/)
 })
 
-test('graph board main relay stays separate from the Memory and diagnostics export body', async () => {
+test('main requests compact board snapshots directly without relaying through the orb', async () => {
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
-  assert.match(source, /let pendingGraphBoardRequest = null/)
-  assert.match(source, /pendingGraphBoardRequest\.resolve\(\{ error: 'superseded' \}\)/)
-  assert.match(source, /sendToOrb\('nova:workspace-graph-board:fetch', requestId\)/)
-  assert.match(source, /payload\.request_id !== pendingGraphBoardRequest\.requestId/)
+  assert.match(source, /createDebugBoardRequester\(\)/)
+  assert.match(source, /board: 'memory',\s*detail: 'compact'/u)
+  assert.match(source, /board: 'workspace_graph',\s*detail: 'compact'/u)
+  assert.doesNotMatch(source, /nova:memory-board:(?:fetch|data)/u)
+  assert.doesNotMatch(source, /nova:workspace-graph-board:(?:fetch|data)/u)
   const exportBody = source.slice(source.indexOf("ipcMain.handle('nova:memory-board:export'"))
-  assert.match(exportBody, /channels: payload\.channels/)
-  assert.match(exportBody, /diagnostics: payload\.diagnostics/)
+  assert.match(exportBody, /channels: snapshot\.channels/)
+  assert.match(exportBody, /diagnostics: snapshot\.diagnostics/)
   assert.doesNotMatch(exportBody.slice(0, exportBody.indexOf("ipcMain.handle('nova:settings:get'")), /graph|workspace_graph/u)
 })

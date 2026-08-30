@@ -42,24 +42,10 @@ contextBridge.exposeInMainWorld('novaAudioAgentDesktop', Object.freeze({
   }),
   memoryBoard: Object.freeze({
     request: () => ipcRenderer.invoke('nova:memory-board:request'),
-    export: payload => ipcRenderer.invoke('nova:memory-board:export', payload),
-    onFetch: callback => {
-      if (typeof callback !== 'function') return () => {}
-      const listener = (_event, requestId) => callback(requestId)
-      ipcRenderer.on('nova:memory-board:fetch', listener)
-      return () => ipcRenderer.removeListener('nova:memory-board:fetch', listener)
-    },
-    publish: payload => ipcRenderer.send('nova:memory-board:data', payload),
+    export: () => ipcRenderer.invoke('nova:memory-board:export'),
   }),
   graphBoard: Object.freeze({
     request: () => ipcRenderer.invoke('nova:workspace-graph-board:request'),
-    onFetch: callback => {
-      if (typeof callback !== 'function') return () => {}
-      const listener = (_event, requestId) => callback(requestId)
-      ipcRenderer.on('nova:workspace-graph-board:fetch', listener)
-      return () => ipcRenderer.removeListener('nova:workspace-graph-board:fetch', listener)
-    },
-    publish: payload => ipcRenderer.send('nova:workspace-graph-board:data', payload),
   }),
   nativeAudio: Object.freeze({
     setCaptureEnabled: enabled => ipcRenderer.invoke(

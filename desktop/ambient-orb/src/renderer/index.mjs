@@ -31,6 +31,7 @@ import { OrbPaletteHoverController } from './palette-hover.mjs'
 import { ConfirmationCountdown } from './confirmation-countdown.mjs'
 import { ConfirmationDecisionController } from './confirmation-controls.mjs'
 import { deriveOrbState } from './state.mjs'
+import { BackendReconnectController } from './backend-reconnect.mjs'
 
 const PROJECT_CONFIRMATION_TTL_SECONDS = 360
 
@@ -232,13 +233,31 @@ const socketRouter = new RendererSocketRouter({
   onCurrentClose: ({socket: closedSocket}) => {
     if (socket !== closedSocket) return
     socket = undefined
+    activeConnection = null
     axes.connected = false
     confirmationDecision.deliveryLost()
     alertTone.stop()
-    playback.stopAll()
+    playback.disconnect()
+    nativeFrames.clear()
+    nativeLevel.clear()
+    if (nativeReady) void window.novaAudioAgentDesktop.nativeAudio.clear().catch(() => {})
+    axes.playback = 'idle'
     clearCaption()
     render()
   },
+})
+
+const backendRecovery = new BackendReconnectController({
+  open: openBackendSocket,
+  onState: state => {
+    axes.backendState = state
+    if (state === 'reconnecting') axes.error = ''
+    render()
+  },
+  sendDiagnostic: diagnostic => send({
+    type: 'connection.diagnostic',
+    ...diagnostic,
+  }),
 })
 
 function render() {
@@ -308,8 +327,12 @@ function markPlaybackInterrupted() {
 
 function send(value) {
   if (socket?.readyState !== WebSocket.OPEN) return false
-  socket.send(JSON.stringify(value))
-  return true
+  try {
+    socket.send(JSON.stringify(value))
+    return true
+  } catch {
+    return false
+  }
 }
 
 function startAlertTone() {
@@ -687,10 +710,6 @@ async function handleControl(message) {
     captionLabel.textContent = message.text
     captionLabel.dataset.role = message.role
     captionLabel.hidden = !message.text
-  } else if (message.type === 'memory.board') {
-    window.novaAudioAgentDesktop.memoryBoard.publish(message)
-  } else if (message.type === 'workspace_graph.board') {
-    window.novaAudioAgentDesktop.graphBoard.publish(message)
   } else if (message.type === 'codex.state') {
     axes.codex = message.state === 'running' ? 'working' : 'idle'
   } else if (message.type === 'codex.project') {
@@ -825,43 +844,59 @@ async function handleSocketMessage(event, delivery) {
 // Named, module-level, and idempotent: both doors onto a dead backend — the pushed
 // 'nova:backend-exit' event and the verdict carried on the bootstrap reply — land here.
 function handleBackendExit() {
+  backendRecovery.backendExited()
+  activeConnection?.close(false)
+  activeConnection = null
+  if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
+  socket = undefined
   axes.connected = false
   axes.error = ''
   confirmationDecision.deliveryLost()
   alertTone.stop()
-  playback.stopAll()
+  playback.backendExited()
+  nativeFrames.clear()
+  nativeLevel.clear()
+  if (nativeReady) void window.novaAudioAgentDesktop.nativeAudio.clear().catch(() => {})
+  axes.playback = 'idle'
+  clearCaption()
   render()
 }
 
 function connectBackend(connection) {
-  if (!connection || typeof connection.endpoint !== 'string' || typeof connection.token !== 'string') {
-    return handleBackendExit()
-  }
   try {
-    activeConnection?.close(false)
-    if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
-    const nextSocket = new WebSocket(connection.endpoint)
-    const nextConnection = socketRouter.connect(nextSocket)
-    activeConnection = nextConnection
-    socket = nextSocket
-    nextSocket.binaryType = 'arraybuffer'
-    nextSocket.onopen = () => {
-      if (!nextConnection.isCurrent()) return
-      nextConnection.delivery.sendText(JSON.stringify({ type: 'hello', token: connection.token }))
-      axes.connected = true
-      axes.backendState = 'connected'
-      axes.error = ''
-      render()
-    }
-    nextSocket.onmessage = nextConnection.onMessage
-    nextSocket.onclose = () => { nextConnection.close() }
-    nextSocket.onerror = () => {
-      if (!nextConnection.isCurrent()) return
-      axes.error = 'connection'
-      render()
-    }
+    backendRecovery.setConnection(connection)
   } catch {
     handleBackendExit()
+  }
+}
+
+function openBackendSocket(connection) {
+  if (!connection || typeof connection.endpoint !== 'string' || typeof connection.token !== 'string') {
+    throw new TypeError('invalid backend connection')
+  }
+  activeConnection?.close(false)
+  if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
+  const nextSocket = new WebSocket(connection.endpoint)
+  const nextConnection = socketRouter.connect(nextSocket)
+  activeConnection = nextConnection
+  socket = nextSocket
+  nextSocket.binaryType = 'arraybuffer'
+  nextSocket.onopen = () => {
+    if (!nextConnection.isCurrent()) return
+    nextConnection.delivery.sendText(JSON.stringify({ type: 'hello', token: connection.token }))
+    axes.connected = true
+    axes.error = ''
+    backendRecovery.socketOpened()
+    render()
+  }
+  nextSocket.onmessage = nextConnection.onMessage
+  nextSocket.onclose = event => {
+    if (nextConnection.close()) backendRecovery.socketClosed(event)
+  }
+  nextSocket.onerror = () => {
+    if (!nextConnection.isCurrent()) return
+    axes.error = 'connection'
+    render()
   }
 }
 
@@ -918,12 +953,6 @@ async function boot() {
     // Palette updates are the only live renderer setting. Runtime settings
     // trigger a supervised backend restart in main.
     window.novaAudioAgentDesktop.settings?.onChanged?.(next => paletteHover.reset(next.palette))
-    window.novaAudioAgentDesktop.memoryBoard.onFetch(requestId => {
-      send({ type: 'memory.board.request', request_id: requestId })
-    })
-    window.novaAudioAgentDesktop.graphBoard.onFetch(requestId => {
-      send({ type: 'workspace_graph.board.request', request_id: requestId })
-    })
     window.novaAudioAgentDesktop.nativeAudio.onEvent(event => {
       if (event.type === 'audio') {
         if (!nativeReady || microphoneGated()) return

@@ -32,11 +32,16 @@ import {
   type PublicProjectView,
 } from './desktop-wire.js'
 import type { Clock } from './clock.js'
-import {playbackTelemetrySchema, type DesktopControl} from './desktop.js'
+import {
+  connectionDiagnosticSchema,
+  playbackTelemetrySchema,
+  type DesktopControl,
+} from './desktop.js'
 import type { PlaybackFrame } from './playback.js'
 import type { CaptionFrame } from './realtime/session-state.js'
 import type { CodexState } from './realtime/service-state.js'
 import type { RealtimeTelemetry } from './realtime/telemetry.js'
+import type {MemoryBoardDetail} from './realtime/memory-board.js'
 import {codePointLengthLikePython, stripLikePython} from './python-text.js'
 import {
   hasUnpairedSurrogate,
@@ -60,6 +65,7 @@ export interface DesktopCommand {
     | 'playback_telemetry'
     | 'playback_telemetry_rejected'
     | 'clock_pong'
+    | 'connection_diagnostic'
   readonly payload: Readonly<Record<string, string | number | boolean>>
 }
 
@@ -75,6 +81,7 @@ export interface BridgeService {
     generationEpoch: number,
     playedMs: number | null,
   ): Promise<boolean>
+  playbackDisconnected(): Promise<boolean>
   playbackCleared(utteranceId: string, generationEpoch: number, playedMs: number | null): boolean
   projectConfirmationDecision(proposalId: string, confirmed: boolean): Promise<void>
 }
@@ -85,7 +92,7 @@ export interface DesktopBridgeOptions {
   /** Set to tear the transport down. Overflow of a non-droppable frame trips it. */
   readonly stop: {abort(): void}
   readonly maxOutboundFrames?: number
-  readonly memoryBoard?: (requestId: string) => string
+  readonly memoryBoard?: (requestId: string, detail?: MemoryBoardDetail) => string
   readonly workspaceGraphBoard?: (requestId: string) => string
   readonly clock?: Clock
   readonly telemetry?: RealtimeTelemetry
@@ -131,12 +138,14 @@ export class DesktopSocketBridge {
    * an older generation arriving late must not un-fence a newer one.
    */
   #fencedGenerationEpoch = 0
+  #latestPlaybackGenerationEpoch = 0
   #captionSequence = 0
   #latestAssistantCaptionSequence = 0
   /** Assistant captions at or below this belong to a cleared turn. */
   #fencedAssistantCaptionSequence = 0
   #claimed = false
   #authenticated = false
+  #everAuthenticated = false
   #codexState: CodexState
   #lastCodexStateSent: CodexState | null = null
   #projectView: PublicProjectView | null
@@ -174,6 +183,11 @@ export class DesktopSocketBridge {
   // -----------------------------------------------------------------------------------------------
 
   onAudioFrame(frame: PlaybackFrame): void {
+    this.#latestPlaybackGenerationEpoch = Math.max(
+      this.#latestPlaybackGenerationEpoch,
+      frame.generation_epoch,
+    )
+    if (frame.generation_epoch <= this.#fencedGenerationEpoch) return
     const sent = this.#enqueue(encodeAudioFrame(frame))
     if (!sent || this.#telemetry === undefined || frame.sequence !== 0) return
     // First frame of a generation only: the metric is time-to-first-audio, and a re-sent sequence zero
@@ -234,6 +248,10 @@ export class DesktopSocketBridge {
   }
 
   onAudioTerminal(utteranceId: string, generationEpoch: number): void {
+    this.#latestPlaybackGenerationEpoch = Math.max(
+      this.#latestPlaybackGenerationEpoch,
+      generationEpoch,
+    )
     this.#enqueue(playbackTerminalMessage(utteranceId, generationEpoch))
   }
 
@@ -286,6 +304,15 @@ export class DesktopSocketBridge {
   release(): void {
     this.#claimed = false
     this.#authenticated = false
+    this.#fencedGenerationEpoch = Math.max(
+      this.#fencedGenerationEpoch,
+      this.#latestPlaybackGenerationEpoch,
+    )
+    this.#outbound.length = 0
+    this.#preemptOutbound.length = 0
+    this.#pingSent.clear()
+    this.#firstFrameSeen = null
+    this.#fencePlaybackForConnectionBoundary()
     // The next renderer has been told nothing, so both latches reset -- otherwise it would never
     // receive the current state, having "already been sent" it.
     this.#lastCodexStateSent = null
@@ -297,9 +324,17 @@ export class DesktopSocketBridge {
 
   /** Mark the connection authenticated, which is what unblocks the single-slot queues. */
   markAuthenticated(): void {
+    if (this.#everAuthenticated) this.#fencePlaybackForConnectionBoundary()
     this.#authenticated = true
+    this.#everAuthenticated = true
     this.#syncCodexStateDelivery()
     this.#syncProjectDelivery()
+  }
+
+  #fencePlaybackForConnectionBoundary(): void {
+    void this.#service.playbackDisconnected().catch(() => {
+      this.#telemetry?.record('desktop.playback_disconnect_failed', {})
+    })
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -345,10 +380,21 @@ export class DesktopSocketBridge {
       && command.kind !== 'workspace_graph_board_request'
       && command.kind !== 'playback_telemetry'
       && command.kind !== 'playback_telemetry_rejected'
+      && command.kind !== 'connection_diagnostic'
     ) {
       this.#telemetry.record('renderer.ack', {kind: command.kind, ...command.payload})
     }
     switch (command.kind) {
+      case 'connection_diagnostic': {
+        const {phase, ...payload} = command.payload
+        const kind = phase === 'closed'
+          ? 'desktop.connection_closed'
+          : phase === 'reconnect_attempt'
+            ? 'desktop.reconnect_attempt'
+            : 'desktop.reconnect_result'
+        this.#telemetry?.record(kind, payload)
+        return
+      }
       case 'playback_telemetry_rejected':
         this.#playbackTelemetryRejected += 1
         this.#telemetry?.record('playback.telemetry_rejected', {
@@ -517,6 +563,7 @@ export class DesktopSocketBridge {
   }
 
   #enqueue(value: OutboundFrame, options: {readonly droppable?: boolean} = {}): boolean {
+    if (this.#everAuthenticated && !this.#authenticated) return false
     if (this.#outbound.length >= this.#maxOutboundFrames) {
       // A dropped non-droppable frame leaves the renderer's picture of playback wrong in a way it
       // cannot detect, so the transport stops rather than continuing to look healthy.
@@ -529,6 +576,7 @@ export class DesktopSocketBridge {
   }
 
   #enqueuePreempt(value: string): boolean {
+    if (this.#everAuthenticated && !this.#authenticated) return false
     if (this.#preemptOutbound.length >= this.#maxOutboundFrames) {
       // Never droppable. A clear that does not arrive means the user keeps hearing an abandoned turn.
       this.#stop.abort()
@@ -712,6 +760,9 @@ export function parseClientMessage(
       'rejected_frames',
       'stdin_buffered_bytes_max',
       'stdin_backpressure_count',
+      'close_code',
+      'attempt',
+      'delay_ms',
     ], field =>
       new DesktopProtocolError(
         field === 'generation_epoch'
@@ -822,6 +873,15 @@ export function parseClientMessage(
       payload: {ping_id: readIdentifier(value, 'ping_id'), t_render_ms: timestamp},
     }
   }
+  if (kind === 'connection.diagnostic') {
+    const result = connectionDiagnosticSchema.safeParse(value)
+    if (!result.success) {
+      throw new DesktopProtocolError('desktop connection diagnostic is invalid')
+    }
+    const {type, ...payload} = result.data
+    void type
+    return {kind: 'connection_diagnostic', payload}
+  }
   throw new DesktopProtocolError('desktop control frame type is unsupported')
 }
 
@@ -864,6 +924,11 @@ function commandFromControl(control: DesktopControl): DesktopCommand {
         kind: 'clock_pong',
         payload: {ping_id: control.ping_id, t_render_ms: control.t_render_ms},
       }
+    case 'connection.diagnostic': {
+      const {type, ...payload} = control
+      void type
+      return {kind: 'connection_diagnostic', payload}
+    }
     case 'playback.telemetry': {
       const {type, ...payload} = control
       void type

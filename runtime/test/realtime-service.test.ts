@@ -1282,7 +1282,7 @@ function runProjection(spec: Projection): Record<string, unknown> {
       // The prepared summary is what the sentence carries, recovered from it rather than recomputed.
       const summary = content === null
         ? null
-        : content.slice(content.indexOf('：') + 1, content.lastIndexOf('（'))
+        : content.slice(content.indexOf('：') + 1)
       return {name: spec.name, summary, content}
     }
     case 'progress_steps':
@@ -1550,6 +1550,18 @@ test('an executor repeating the same progress summary does not make the agent re
   assert.equal(queued().length, 2, 'but a changed summary is')
   service.projectRuntimeEvent(progressEvent({seq: 4, summary: 'running tests', activity: 4}))
   assert.equal(queued().length, 3, 'and so is going back to an earlier one')
+})
+
+test('routine progress facts do not lead with or append elapsed time', () => {
+  const {service, queued} = projectionService()
+  service.projectRuntimeEvent(progressEvent({
+    seq: 1,
+    summary: '正在运行回归测试',
+    activity: 3,
+    elapsed: 47,
+  }))
+
+  assert.deepEqual(queued(), ['Codex 正在执行：正在运行回归测试'])
 })
 
 test('identical active executor state publishes once and terminal state publishes removal', () => {
@@ -3738,6 +3750,27 @@ test('playback stop reopens an unheard acknowledgement for the still-running del
     before + 1,
     'the replacement session re-offers the acknowledgement that renderer never completed',
   )
+})
+
+test('renderer disconnect fences the current generation even before its first frame arrives', async () => {
+  const {service, session} = pipelineService()
+  await service.connect()
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'r-disconnected-before-audio',
+  })
+  assert.equal(session.currentGeneration, null)
+
+  assert.equal(await service.playbackDisconnected(), true)
+  assert.equal(session.currentGeneration, null)
+  await service.handleEvent({
+    kind: 'response_audio_delta',
+    session_epoch: 1,
+    response_id: 'r-disconnected-before-audio',
+    pcm: new Uint8Array([0, 1]),
+  })
+  assert.equal(session.currentGeneration, null)
 })
 
 test('playback stop requeues an acknowledgement when provider cancellation terminates first', async () => {
