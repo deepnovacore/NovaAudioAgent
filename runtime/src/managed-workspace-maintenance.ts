@@ -315,17 +315,18 @@ export class ManagedWorkspaceMaintenanceService {
         ? Object.freeze({status: 'clear_failed', committed: true, cleanup_pending: true})
         : Object.freeze({status: 'cleared', committed: true, cleanup_pending: false})
     } catch {
-      let journal: ManagedMaintenanceJournal | null = null
+      let loadedJournal: ManagedMaintenanceJournal | null = null
+      let currentJournal: ManagedMaintenanceJournal | null = null
       let journalReadFailed = false
       try {
-        const loaded = await this.#store.loadManagedMaintenanceJournal()
-        if (loaded?.operation_id === operationId) journal = loaded
+        loadedJournal = await this.#store.loadManagedMaintenanceJournal()
+        if (loadedJournal?.operation_id === operationId) currentJournal = loadedJournal
       } catch { journalReadFailed = true }
       if (journalReadFailed) {
         this.#journalHealth = 'rollback_pending'
         return Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
       }
-      if (journal?.phase === 'prepared') {
+      if (loadedJournal?.phase === 'prepared') {
         try {
           const recovery = await this.#store.cleanupManagedMaintenanceJournal()
           this.#journalHealth = recovery.status === 'clean' ? 'ready' : recovery.status
@@ -337,11 +338,11 @@ export class ManagedWorkspaceMaintenanceService {
           return Object.freeze({status: 'rollback_pending', committed: false, cleanup_pending: true})
         }
       }
-      this.#journalHealth = journal === null ? 'ready' : 'cleanup_pending'
+      this.#journalHealth = loadedJournal === null ? 'ready' : 'cleanup_pending'
       return Object.freeze({
         status: 'clear_failed',
-        committed: journal?.phase === 'committed',
-        cleanup_pending: journal !== null,
+        committed: currentJournal?.phase === 'committed',
+        cleanup_pending: loadedJournal !== null,
       })
     }
   }

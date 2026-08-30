@@ -218,6 +218,62 @@ test('a committed journal remains committed when execution loses its reply', asy
   await service.close()
 })
 
+test('a foreign prepared journal preserves rollback health after replacement is refused', async () => {
+  const workspace = record('workspace-0001')
+  let cleanupCalls = 0
+  let targetInspections = 0
+  const snapshot = {
+    state_revision: 1,
+    active_workspace_id: workspace.workspace_id,
+    managed_targets: [{workspace, identity: {device: 1n, inode: 2n}}],
+  }
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({
+      status: cleanupCalls++ === 0 ? 'clean' as const : 'rollback_pending' as const,
+    }),
+    loadManagedMaintenanceJournal: () => Promise.resolve({
+      operation_id: 'foreign-operation-0002',
+      phase: 'prepared' as const,
+      entries: [{
+        workspace_id: workspace.workspace_id,
+        original_name: 'workspace-0001',
+        replacement_identity: null,
+        tombstone_name: '.nova-maintenance-foreign-operation-0002-1',
+        identity: {device: 3n, inode: 4n},
+      }],
+    }),
+    currentMaintenanceSnapshot: () => {
+      targetInspections += 1
+      return Promise.resolve(snapshot)
+    },
+    maintenanceSnapshot: () => {
+      targetInspections += 1
+      return Promise.resolve(snapshot)
+    },
+    withCurrentManagedWorkspacePath: () => {
+      targetInspections += 1
+      return Promise.resolve(false)
+    },
+    executeManagedReplacement: () => Promise.reject(new Error('state_busy')),
+  }
+  const service = await ManagedWorkspaceMaintenanceService.open({
+    store,
+    now: () => 100,
+    idFactory: () => 'current-operation-0001',
+  })
+  const prepared = await service.prepare('current_managed')
+  if (prepared.status !== 'ready') assert.fail('expected ready')
+  const authorization = service.authorize(prepared.preparation)
+  assert.deepEqual(await service.execute(prepared.preparation, authorization), {
+    status: 'rollback_pending', committed: false, cleanup_pending: true,
+  })
+  assert.deepEqual(await service.prepare('current_managed'), {status: 'rollback_pending'})
+  assert.deepEqual(await service.withCurrentManagedPath(() => undefined), {status: 'rollback_pending'})
+  assert.equal(targetInspections, 1)
+  assert.equal(cleanupCalls, 2)
+  await service.close()
+})
+
 test('service startup preserves unresolved rollback health and remains closable', async () => {
   let snapshotCalls = 0
   const store = {
