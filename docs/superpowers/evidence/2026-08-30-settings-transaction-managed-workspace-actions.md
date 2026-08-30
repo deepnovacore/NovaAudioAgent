@@ -6,69 +6,41 @@ Branch: `feature/settings-transaction-managed-workspace-actions`
 
 Base: `b4b265e docs(design): stage settings and managed workspace actions`
 
-## Review-remediation verification status
+Verified implementation tip: `c98761b fix(desktop): invalidate stale recovery attempts`
 
-Task 3 verification after `7ea0b8d fix(desktop): gate backend on workspace recovery`:
+## Final serial verification
 
-- `npm run build --workspace @nova-audio-agent/runtime`: PASS.
-- `npm run build --workspace @nova-audio-agent/ambient-orb`: PASS.
-- Desktop rollback/startup/settings/workspace/security focused suite: PASS, 118 tests, 0 failed.
-- The final runtime and desktop full suites are intentionally deferred to Task 4; no Task 3 result below is presented as final branch-wide verification.
+The commands below ran serially from this worktree. This ordering is required because both runtime and desktop builds write `runtime/dist`.
 
-## Pre-review implementation verification (historical)
+| Command | Outcome |
+| --- | --- |
+| `npm run build --workspace @nova-audio-agent/runtime` | PASS, exit 0 |
+| `node --test runtime/dist/test/codex-project-store.test.js runtime/dist/test/project-native-resource.test.js runtime/dist/test/managed-workspace-maintenance.test.js` | PASS, exit 0: 84 passed, 0 failed, 0 skipped |
+| `npm run typecheck --workspace @nova-audio-agent/runtime` | PASS, exit 0 |
+| `npm run lint --workspace @nova-audio-agent/runtime` | PASS, exit 0 |
+| `npm run build --workspace @nova-audio-agent/ambient-orb` | PASS, exit 0 |
+| `node --test desktop/ambient-orb/test/lifecycle-coordinator.test.mjs desktop/ambient-orb/test/settings-apply.test.mjs desktop/ambient-orb/test/workspace-actions.test.mjs desktop/ambient-orb/test/settings-panel.test.mjs desktop/ambient-orb/test/preload.test.mjs desktop/ambient-orb/test/main-security.test.mjs desktop/ambient-orb/test/backend-supervisor.test.mjs desktop/ambient-orb/test/desktop-startup.test.mjs desktop/ambient-orb/test/native-project-addon.test.mjs` | PASS, exit 0: 126 passed, 0 failed, 0 skipped |
+| `npm test --workspace @nova-audio-agent/ambient-orb` | PASS in a loopback- and Electron-permitted environment, exit 0: 724 passed, 0 failed, 3 skipped; source-startup smoke reported `skipped` |
+| `npm run check` | PASS, exit 0; generated environment contract matched; Node parity audit: 169 files, 223 occurrences |
+| `git diff --check` | PASS, exit 0 |
 
-The following results were recorded before the review-remediation commits and are retained only as historical evidence, not as current final-suite counts:
+The first full desktop-suite invocation inside the restricted sandbox exited 1 with 706 passed, 18 failed, and 3 skipped. The 15 readiness/native-sandbox failures all reported `listen EPERM: operation not permitted 127.0.0.1`; the three transparency probes aborted Electron with `SIGABRT`. Re-running the unchanged command outside that sandbox passed, so these are environment limitations rather than a branch regression.
 
-- `npm run build --workspace @nova-audio-agent/runtime`: PASS
-- Runtime maintenance/store/native focused suite: PASS, 77 tests, 0 failed.
-- `npm run typecheck --workspace @nova-audio-agent/runtime`: PASS
-- `npm run lint --workspace @nova-audio-agent/runtime`: PASS
-- `npm run build --workspace @nova-audio-agent/ambient-orb`: PASS
-- Desktop lifecycle/settings/workspace/security focused suite: PASS, 108 tests, 0 failed.
-- `npm test --workspace @nova-audio-agent/ambient-orb`: PASS, 713 passed, 3 platform-specific skips, 0 failed. The optional source startup smoke reported `skipped`; a real Electron GUI smoke was run separately below.
-- `npm run check`: PASS. Environment contract matched and Node parity passed with 169 files and 223 occurrences.
-- `git diff --check`: PASS.
+## GUI and platform limits
 
-## Real Electron GUI smoke (historical)
+- No destructive GUI operation was performed. In particular, this verification did not create a rollback journal in user data and did not execute current/all permanent clear without a disposable managed workspace.
+- The degraded `rollback_pending` GUI was not manually visual-smoked in this pass: safely reaching it would require a disposable managed workspace and an interrupted maintenance transaction. Its startup gate, disabled actions, explicit retry, latching, and stale-retry invalidation are covered by the focused suite above; this is automated coverage, not visual acceptance evidence.
+- The local full suite ran on macOS. Its three skips are Windows-only behavior tests (two Job-object ownership/EOF tests and the Unicode MSVC-batch test). Static Windows-contract tests ran, but this result is not native Windows CI or an installed Windows package smoke; obtain a Windows runner result before making either claim.
 
-The app was launched from the isolated worktree with `npm run start:client` and inspected through the macOS accessibility surface.
+## Corrected scope narrative
 
-| Acceptance item | Result | Evidence |
-| --- | --- | --- |
-| Editing a public setting does not apply before Save | OBSERVED PASS | Selected Graphite; Save became enabled while the running backend remained unchanged. |
-| One Save performs one transaction and reconnects | OBSERVED PASS | UI showed `保存中…`, then `设置已保存` and `已保存，后台已重启并重新连接`. The pre-save utility process was replaced by exactly one post-save utility process. |
-| Settings controls remain usable in automatic Codex discovery mode | OBSERVED PASS | Managed-workspace controls remained visible outside the hidden manual-path section. |
-| Registered current workspace is not treated as managed | OBSERVED PASS | `打开当前托管 workspace` and `清空当前托管 workspace` were disabled for the active registered repository. |
-| Open an exact disposable managed directory | BLOCKED BY ENVIRONMENT | The active repository was registered and no disposable managed target was available. Host-only resolution is covered by the focused test. |
-| Execute destructive current/all clear and inspect unknown children | BLOCKED BY ENVIRONMENT | No disposable managed workspace existed. Permanent deletion was intentionally not performed against user data; double-confirmation, opaque authorization, native identity checks, recovery, and failure paths are covered by automated tests. |
-| Preserve a newer edit made during an in-flight save | BLOCKED BY ENVIRONMENT | The real restart window was not made deterministic enough for a safe manual race. The controller test verifies the newer revision remains dirty. |
-| Restore user-visible preference after smoke | OBSERVED PASS | Ember was restored, saved, and the app again reported a completed restart and reconnect before the test process was stopped. |
+Settings are staged in the renderer and commit only through explicit Save. A committed update performs one durable write, configuration refresh, and lifecycle-owned restart; rejected or newer drafts remain retryable. Workspace actions are zero-argument and sender-bound, use a prepared opaque authorization with identity/state binding, and keep imported or registered directories ineligible for managed deletion.
 
-## Scope and safety audit
+Managed cleanup is transactionally journaled. A prepared transaction restores originals after restart and removes only journal-bound replacements; committed cleanup removes only journal-bound tombstones. Foreign or unresolved rollback state remains fail-closed. Electron exposes bounded maintenance health, opens its surfaces but gates backend start/restart/rescan and workspace actions while recovery is pending, and permits an explicit safe retry. A later recovery observation invalidates an in-flight retry, so a stale successful activation cannot clear current rollback state.
 
-- Settings are staged in the renderer and submitted only by the explicit Save action.
-- The committed apply path durably writes once, refreshes configuration, and awaits exactly one lifecycle-owned backend restart.
-- Failed apply phases retain submitted drafts for retry; live Main status pushes do not overwrite newer renderer drafts.
-- Workspace IPC methods are zero-argument, sender-bound, and return bounded public status without filesystem paths or project IDs.
-- Managed clear authorization binds an opaque preparation to the state revision and target identities, is single-use, and fails closed when cleanup is already pending.
-- The maintenance journal records explicit `prepared` and `committed` phases plus each operation-created replacement identity. Recovery only removes a journal-bound replacement, preserves populated or substituted directories, and only deletes journal-bound tombstones after commit.
-- An unresolved pre-commit recovery reports `rollback_pending`, still opens the maintenance service and Electron Orb/Settings surfaces, instantiates the backend supervisor without starting it, disables workspace actions, and leaves explicit Save plus bounded recovery retry available.
-- Backend startup, settings restart, Codex rescan restart, and the existing zero-argument backend retry all pass through the same recovery gate. Explicit retry refreshes maintenance first and starts only after rollback health clears.
-- The managed-workspace public view exposes only bounded health plus independent current/all availability and count; capability failure is `unavailable`, not an empty-workspace claim.
-- An abandoned prepared desktop configuration is explicitly discarded and closes its uncommitted maintenance owner.
-- Renderer draft/rejection ownership uses one unambiguous encoded leaf path internally, so a dotted public leaf cannot collide with a nested leaf.
-- Store replacement results distinguish stale validation from a filesystem failure that rolled back successfully, so the UI reports the latter as `clear_failed` rather than `stale`.
-- Batch clear detaches the complete validated target set before it creates any replacement directory.
-- Destructive removal stays inside the native descriptor/handle-relative authority layer; imported and registered directories are never eligible.
-- Current-workspace opening retains the store transaction and revalidates the exact managed identity around the host callback.
-- A partial clear combined with backend recovery failure remains a distinct bounded status instead of being reported as a successful workspace operation.
-- Existing telemetry, agent-search work, and unrelated changes in the main checkout were not staged, overwritten, or committed.
+This evidence establishes automated behavior at `c98761b`; it does not establish visual acceptance of the degraded recovery surface, destruction against real user data, native Windows execution, or a production-provider/hardware run.
 
-## Independent review follow-up
-
-A read-only review of `b4b265e..0172478` found that the first implementation interleaved target rename/replacement and could not distinguish a pre-commit crash journal from post-commit cleanup. Follow-up review also required exact replacement identities and a fail-closed backend boundary for unresolved rollback. The corrections added explicit journal phases and identities, all-target phase ordering, failpoint/restart/substitution tests, retained-path validation, compound failure reporting, an awaited configuration commit, bounded maintenance health, and rollback-aware Electron startup/retry. Task 3 focused verification is recorded above; Task 4 owns final full-suite verification.
-
-## Implementation commits
+## Implementation commits (predecessors of this evidence commit)
 
 - `6b1a129 feat(desktop): serialize lifecycle operations`
 - `1012368 feat(settings): stage edits until explicit save`
@@ -86,3 +58,6 @@ A read-only review of `b4b265e..0172478` found that the first implementation int
 - `8c38c75 fix(runtime): expose managed maintenance health`
 - `17803fa fix(runtime): preserve foreign maintenance journals`
 - `7ea0b8d fix(desktop): gate backend on workspace recovery`
+- `cdce027 docs: record desktop rollback recovery`
+- `66bc5bf fix(desktop): latch rollback recovery`
+- `c98761b fix(desktop): invalidate stale recovery attempts`
