@@ -6,7 +6,18 @@ Branch: `feature/settings-transaction-managed-workspace-actions`
 
 Base: `b4b265e docs(design): stage settings and managed workspace actions`
 
-## Automated verification
+## Review-remediation verification status
+
+Task 3 verification after `7ea0b8d fix(desktop): gate backend on workspace recovery`:
+
+- `npm run build --workspace @nova-audio-agent/runtime`: PASS.
+- `npm run build --workspace @nova-audio-agent/ambient-orb`: PASS.
+- Desktop rollback/startup/settings/workspace/security focused suite: PASS, 118 tests, 0 failed.
+- The final runtime and desktop full suites are intentionally deferred to Task 4; no Task 3 result below is presented as final branch-wide verification.
+
+## Pre-review implementation verification (historical)
+
+The following results were recorded before the review-remediation commits and are retained only as historical evidence, not as current final-suite counts:
 
 - `npm run build --workspace @nova-audio-agent/runtime`: PASS
 - Runtime maintenance/store/native focused suite: PASS, 77 tests, 0 failed.
@@ -18,7 +29,7 @@ Base: `b4b265e docs(design): stage settings and managed workspace actions`
 - `npm run check`: PASS. Environment contract matched and Node parity passed with 169 files and 223 occurrences.
 - `git diff --check`: PASS.
 
-## Real Electron GUI smoke
+## Real Electron GUI smoke (historical)
 
 The app was launched from the isolated worktree with `npm run start:client` and inspected through the macOS accessibility surface.
 
@@ -41,7 +52,11 @@ The app was launched from the isolated worktree with `npm run start:client` and 
 - Workspace IPC methods are zero-argument, sender-bound, and return bounded public status without filesystem paths or project IDs.
 - Managed clear authorization binds an opaque preparation to the state revision and target identities, is single-use, and fails closed when cleanup is already pending.
 - The maintenance journal records explicit `prepared` and `committed` phases plus each operation-created replacement identity. Recovery only removes a journal-bound replacement, preserves populated or substituted directories, and only deletes journal-bound tombstones after commit.
-- An unresolved pre-commit recovery reports `rollback_pending`, prevents service startup, and leaves the backend stopped after an in-process clear failure.
+- An unresolved pre-commit recovery reports `rollback_pending`, still opens the maintenance service and Electron Orb/Settings surfaces, instantiates the backend supervisor without starting it, disables workspace actions, and leaves explicit Save plus bounded recovery retry available.
+- Backend startup, settings restart, Codex rescan restart, and the existing zero-argument backend retry all pass through the same recovery gate. Explicit retry refreshes maintenance first and starts only after rollback health clears.
+- The managed-workspace public view exposes only bounded health plus independent current/all availability and count; capability failure is `unavailable`, not an empty-workspace claim.
+- An abandoned prepared desktop configuration is explicitly discarded and closes its uncommitted maintenance owner.
+- Renderer draft/rejection ownership uses one unambiguous encoded leaf path internally, so a dotted public leaf cannot collide with a nested leaf.
 - Store replacement results distinguish stale validation from a filesystem failure that rolled back successfully, so the UI reports the latter as `clear_failed` rather than `stale`.
 - Batch clear detaches the complete validated target set before it creates any replacement directory.
 - Destructive removal stays inside the native descriptor/handle-relative authority layer; imported and registered directories are never eligible.
@@ -51,7 +66,7 @@ The app was launched from the isolated worktree with `npm run start:client` and 
 
 ## Independent review follow-up
 
-A read-only review of `b4b265e..0172478` found that the first implementation interleaved target rename/replacement and could not distinguish a pre-commit crash journal from post-commit cleanup. Follow-up review also required exact replacement identities and a fail-closed backend boundary for unresolved rollback. The corrections added explicit journal phases and identities, all-target phase ordering, failpoint/restart/substitution tests, retained-path validation, compound failure reporting, and an awaited configuration commit. The final verification results above were collected after these corrections.
+A read-only review of `b4b265e..0172478` found that the first implementation interleaved target rename/replacement and could not distinguish a pre-commit crash journal from post-commit cleanup. Follow-up review also required exact replacement identities and a fail-closed backend boundary for unresolved rollback. The corrections added explicit journal phases and identities, all-target phase ordering, failpoint/restart/substitution tests, retained-path validation, compound failure reporting, an awaited configuration commit, bounded maintenance health, and rollback-aware Electron startup/retry. Task 3 focused verification is recorded above; Task 4 owns final full-suite verification.
 
 ## Implementation commits
 
@@ -62,5 +77,12 @@ A read-only review of `b4b265e..0172478` found that the first implementation int
 - `ffba0cf feat(runtime): add managed workspace maintenance service`
 - `f04652d feat(desktop): apply settings in one restart transaction`
 - `9e4caa0 feat(desktop): add managed workspace actions`
+- `0172478 test: verify settings and workspace maintenance flow`
 - `ddf7273 fix(runtime): recover managed clear transactions`
 - `8ca4ec7 fix(runtime): bind rollback replacements by identity`
+- `16e24b5 docs: record managed maintenance verification`
+- `daabc50 fix(runtime): distinguish rolled back maintenance`
+- `22cf40e fix(desktop): bound native tree deletion`
+- `8c38c75 fix(runtime): expose managed maintenance health`
+- `17803fa fix(runtime): preserve foreign maintenance journals`
+- `7ea0b8d fix(desktop): gate backend on workspace recovery`
