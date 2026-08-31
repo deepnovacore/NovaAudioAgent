@@ -426,11 +426,6 @@ test('CI runs checks and packaging across the supported automatic runner matrix'
       artifact: 'ambient-orb-mac',
     },
     {
-      os: 'ubuntu-latest',
-      script: 'package:linux',
-      artifact: 'ambient-orb-linux',
-    },
-    {
       os: 'windows-latest',
       script: 'package:win',
       artifact: 'ambient-orb-win',
