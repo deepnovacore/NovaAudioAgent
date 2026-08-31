@@ -12,7 +12,9 @@ import {
   SCRATCH_REMOVAL_OPTIONS,
   SOURCE_ROLLBACK_UNAVAILABLE_EXIT_CODE,
   candidateInstallPlan,
+  candidateScratchParent,
   classifyCameraCapability,
+  smokeToolShimNames,
   smokeEnvironment,
 } from '../scripts/installed-candidate-smoke.mjs'
 
@@ -26,6 +28,21 @@ test('installed scratch cleanup retries transient Windows file locks', () => {
     retryDelay: 50,
   })
   assert.equal(Object.isFrozen(SCRATCH_REMOVAL_OPTIONS), true)
+})
+
+test('Windows installed smoke creates its private HOME below the current user profile', () => {
+  assert.equal(candidateScratchParent({
+    platform: 'win32',
+    home: 'C:\\Users\\runneradmin',
+    temporary: 'D:\\a\\_temp',
+  }), 'C:\\Users\\runneradmin')
+  assert.equal(candidateScratchParent({
+    platform: 'linux',
+    home: '/home/runner',
+    temporary: '/private/runner/temp',
+  }), '/private/runner/temp')
+  assert.deepEqual(smokeToolShimNames('win32'), ['python.exe', 'python3.exe', 'codex.exe'])
+  assert.deepEqual(smokeToolShimNames('linux'), ['python', 'python3', 'codex'])
 })
 
 function spawnSmokeFixture(mode) {

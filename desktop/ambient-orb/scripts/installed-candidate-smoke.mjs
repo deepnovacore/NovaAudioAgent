@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto'
 import {spawn, spawnSync} from 'node:child_process'
 import {createServer as createHttpsServer} from 'node:https'
 import {copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises'
-import {tmpdir} from 'node:os'
+import {homedir, tmpdir} from 'node:os'
 import {isAbsolute, join, posix, resolve, win32} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
@@ -21,6 +21,19 @@ export const SCRATCH_REMOVAL_OPTIONS = Object.freeze({
   maxRetries: 100,
   retryDelay: 50,
 })
+
+export function candidateScratchParent({
+  platform = process.platform,
+  home = homedir(),
+  temporary = tmpdir(),
+} = {}) {
+  const parent = platform === 'win32' ? home : temporary
+  const pathApi = platform === 'win32' ? win32 : posix
+  if (typeof parent !== 'string' || !pathApi.isAbsolute(parent)) {
+    throw new Error('installed_candidate_invalid')
+  }
+  return pathApi.resolve(parent)
+}
 
 const DEFAULT_SIGNER_WORKFLOW = 'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml'
 const SIGNER_WORKFLOWS = new Set([
@@ -255,7 +268,10 @@ async function runInstalledCandidate({
   if (trustMode === 'attested') requireCandidateAttestation(candidate, commit, signerWorkflow)
   else if (trustMode !== 'workflow-artifact') throw new Error('installed_candidate_attestation_failed')
   reportInstalledSmokeStage('candidate_verified')
-  const scratch = await realpath(await mkdtemp(join(tmpdir(), 'nova-installed-candidate-')))
+  const scratch = await realpath(await mkdtemp(join(
+    candidateScratchParent(),
+    'nova-installed-candidate-',
+  )))
   const plan = candidateInstallPlan({target, artifact: candidate, scratch})
   const poisonPath = resolve(scratch, 'poison-path')
   const workspace = resolve(scratch, 'workspace')
@@ -267,7 +283,7 @@ async function runInstalledCandidate({
     mkdir(plan.installRoot, {recursive: true, mode: 0o700}),
     mkdir(plan.mountRoot, {recursive: true, mode: 0o700}),
   ])
-  await installPoisonInterpreters(poisonPath)
+  await installSmokeToolShims(poisonPath)
   const systemEnvironment = candidateBaseEnvironment({
     parentEnvironment: process.env,
     platform: process.platform,
@@ -874,8 +890,18 @@ async function exactCameraFile(input) {
   return canonical
 }
 
-async function installPoisonInterpreters(root) {
-  const names = process.platform === 'win32' ? ['python.exe', 'python3.exe'] : ['python', 'python3']
+export function smokeToolShimNames(platform = process.platform) {
+  return Object.freeze(platform === 'win32'
+    ? ['python.exe', 'python3.exe', 'codex.exe']
+    : ['python', 'python3', 'codex'])
+}
+
+async function installSmokeToolShims(root) {
+  // Python names remain poison pills: the packaged app must never invoke them.
+  // The Node binary under the Codex name supplies only the bounded `--version`
+  // discovery response needed to boot the fast_sim lifecycle; no Codex tool is
+  // dispatched by this installed smoke.
+  const names = smokeToolShimNames()
   await Promise.all(names.map(name => copyFile(process.execPath, resolve(root, name))))
 }
 
