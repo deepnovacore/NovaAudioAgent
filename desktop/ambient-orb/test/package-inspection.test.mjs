@@ -750,6 +750,36 @@ test('container preflight accepts bounded 7z and deb file inventories', () => {
   ])
 })
 
+test('container preflight accepts modern full 7z Linux metadata without weakening links', () => {
+  const records = packageInspection.preflightContainerListing({
+    format: 'appimage',
+    listing: [
+      'Path = usr/bin/nova',
+      'Folder = -',
+      'Size = 12',
+      'Packed Size = 4',
+      'Modified = 2026-08-31 00:00:00',
+      'Created = ',
+      'Accessed = ',
+      'Mode = -rwxr-xr-x',
+      'User = root',
+      'Group = root',
+      'User ID = 0',
+      'Group ID = 0',
+      'Symbolic Link = ',
+      'Hard Link = ',
+      'Characteristics = ',
+      'Comment = ',
+      'Device Major = ',
+      'Device Minor = ',
+      '',
+    ].join('\n'),
+  })
+  assert.deepEqual(records, [
+    { path: 'usr/bin/nova', raw_path: 'usr/bin/nova', type: 'file', size: 12 },
+  ])
+})
+
 test('container preflight admits only internal relative links and verifies their extracted targets', async () => {
   const sevenZip = packageInspection.preflightContainerListing({
     format: 'appimage',

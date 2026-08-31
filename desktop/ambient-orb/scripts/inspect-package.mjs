@@ -1345,19 +1345,20 @@ function parseSevenZipListing(listing) {
     'CRC', 'Encrypted', 'Method', 'Block', 'Folder', 'Host OS', 'Version',
     'Characteristics', 'Offset', 'Physical Size', 'Headers Size', 'Tail Size',
     'Embedded Stub Size', 'SubType', 'Comment', 'Symbolic Link', 'Hard Link',
+    'Mode', 'User', 'Group', 'User ID', 'Group ID', 'Device Major', 'Device Minor',
   ])
   const records = []
   let fields = new Map()
   const flush = () => {
     if (fields.size === 0) return
     if (
-      fields.has('Hard Link')
+      (fields.has('Hard Link') && fields.get('Hard Link') !== '')
       || !fields.has('Path')
       || !fields.has('Size')
     ) containerListingRejected('sevenzip-fields')
-    const attributes = fields.get('Attributes') ?? ''
+    const attributes = fields.get('Attributes') ?? fields.get('Mode') ?? ''
     const posixMode = /(?:^|\s)([bcdlps-][rwxStTs-]{9})(?:\s|$)/u.exec(attributes)?.[1]
-    const symbolicTarget = fields.get('Symbolic Link')
+    const symbolicTarget = fields.get('Symbolic Link') || undefined
     if (
       posixMode !== undefined
       && posixMode[0] !== '-'
