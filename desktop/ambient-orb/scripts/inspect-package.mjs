@@ -68,7 +68,7 @@ const CONTAINER_TOOL_TUPLES = Object.freeze({
   'linux-x64': Object.freeze({ path: 'linux/x64/7za', binary_kind: 'elf' }),
   'win32-x64': Object.freeze({ path: 'win/x64/7za.exe', binary_kind: 'pe' }),
 })
-const LINUX_SYSTEM_SEVEN_ZIP = '/usr/bin/7z'
+const LINUX_SYSTEM_SEVEN_ZIP = '/usr/lib/7zip/7z'
 
 export class PackageInspectionError extends Error {
   constructor(detail) {
