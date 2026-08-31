@@ -57,9 +57,12 @@ Managed Workspaces default to
 `~/.nova-audio-agent/workspaces`, the registry to
 `~/.nova-audio-agent/codex-projects-v1.json`, and per-Workspace Codex homes to
 `~/.nova-audio-agent/codex-homes`. `NOVA_AUDIO_AGENT_CODEX_WORKSPACE` optionally imports an existing
-repository at startup. The desktop Settings Panel currently exposes a single startup workspace
-path field; registering an arbitrary existing directory goes through
-`NOVA_AUDIO_AGENT_CODEX_WORKSPACE`, while voice can create new managed directories only.
+repository at startup. The desktop Settings Panel exposes the active workspace and the managed
+workspace root, alongside actions that open the active managed workspace and clear the active one
+or every managed workspace behind two confirmation dialogs; clearing empties the directory while
+the project record, display name, Codex history, and Session metadata survive. Registering an
+arbitrary existing directory still goes through `NOVA_AUDIO_AGENT_CODEX_WORKSPACE`, and voice can
+create new managed directories only.
 
 Each realtime turn receives only the active Workspace and its active Session, if any. Nova lists
 Workspace or Session candidates only on demand and never injects historical candidates into the
@@ -130,8 +133,12 @@ there is no automatic provider failover.
 
 The conditional Settings Panel places pipeline mode before provider configuration. Integrated mode
 shows its provider, model, and voice; cascaded mode shows endpointing, ASR, LLM, and TTS cards. API
-keys remain one field per platform, are write-only, and return presence booleans only. Pipeline,
-provider, model, voice, and key edits apply on the next launch; the palette is the sole live setting.
+keys remain one field per platform, are write-only, and return presence booleans only. Panel edits
+stay in the Settings window as drafts until the save-and-restart button (labelled `保存并重启`,
+since the interface is Chinese-first) writes them, refreshes resolved
+configuration, and performs exactly one controlled backend restart. Pipeline, provider, model,
+voice, and key values therefore take effect on that next launch of the backend rather than
+mid-session, and the palette commits on the same boundary instead of applying live.
 
 The configured Node executor names are
 `fast_sim`, `slow_sim`, and `codex`. Codex ordinary/live/project modes share the bounded app-server

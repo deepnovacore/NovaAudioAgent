@@ -15,36 +15,40 @@ Nova Audio Agent is a **harness for an always-on, general-purpose voice agent**:
 keeps the conversation responsive while independent capabilities search, observe, operate
 devices, or complete longer tasks in the background.
 
-It is not a chatbot framework or a workflow engine — it studies **how an agent decides when to
-speak, when to dispatch work, and when to stay silent while several things happen at once**,
-giving each component exactly one judgment ([Glossary and invariants](docs/glossary.md)); an
-experimental system, not a turnkey assistant. Nova is user-level rather than per-project: one
-voice entry point across many named workspaces, where a Workspace is the filesystem isolation
-boundary between projects and each task is a resumable Session inside one.
+It is not a chatbot framework or a workflow engine: it studies **when an agent should speak,
+dispatch work, or stay silent while several things happen at once**, giving each component
+exactly one judgment ([Glossary and invariants](docs/glossary.md)). Nova is user-level rather
+than per-project (§4), and experimental rather than turnkey.
 
-We adapted the macOS voice-capture helper of
-[qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) ([NOTICE](NOTICE)): it answers
+A most relevant recent work is [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) ([NOTICE](NOTICE)): it answers
 *how to keep an agent talking while it works*; we ask the mirror question — when is talking
 worth it at all ([design post](docs/blog/2026-08-proactive-voice-agent-design-space.md)).
 
-> **Principle:** domain-specific capability is replaceable execution capability; the agent
-> core is the part that owns lifecycle, memory, attention, and speech.
 
 **New here?** Read [Design essence](docs/essence.md), or jump to [Quickstart](#3-quickstart).
 
+https://github.com/user-attachments/assets/94f4f199-ab5e-4c26-aef5-efb00cfe8bc0
+
 ## 1. Highlights
 
-- **Structured channel-wise memory.** Every capability writes its own append-only channel;
-  model calls read a bounded `ContextView`, never raw memory.
-- **Push-and-pull proactivity.** Pooled observations Surrogate may voice later — `speak=false`
-  is silence, not forgetting — and `memory.recall` answers from the same state.
-- **Priority-based floor arbitration.** Floor rules every speech attempt `allow`, `preempt`,
-  or `defer`; priority is bound to the triggering event, never chosen by the model.
-- **One voice entry point for many workspaces.** Isolated Codex homes, resumable Sessions,
-  fail-closed propose-and-confirm.
+- **Milestones get reported.** Every capability writes its own append-only channel, and a result
+  reaches canonical memory before it can reach the conversation; long Codex work checks in on a
+  fixed cadence. A busy moment delays the telling, never the record.
+- **Not every word is worth saying.** `speak=false` is silence, not forgetting: a deferred
+  observation waits in the suggestion pool, re-arms only when new evidence lands on the channel
+  it cited, and `memory.recall` still answers from that same state.
+- **Important words take over.** Search, Camera, Watch, Guard, and Codex sit behind one arbiter,
+  and priority is bound to the triggering event, never chosen by the model — user 100, Guard 90,
+  active executors 50, ambient 40. A Guard hit cuts Nova's own sentence short mid-utterance; it
+  never cuts off yours.
+- **Your voice assistant for workspace management.** One entry point across every named
+  workspace: isolated Codex homes, resumable Sessions, fail-closed propose-and-confirm on every
+  create, switch, and resume.
 - **Token discipline and live steering.** Codex receives one bounded work order, never
-  conversation history; progress returns summarized, and a new user constraint joins the
-  in-flight `codex app-server` turn instead of restarting it (§2).
+  conversation history, and a new user constraint joins the in-flight `codex app-server` turn
+  instead of restarting it (§2). Clarifying before dispatch also beats paying for a wrong run:
+  on an internal task set it cut Codex-side tokens by roughly 31% (internal measurement, no
+  reproduction script ships here).
 
 ## 2. Architecture
 
@@ -114,27 +118,27 @@ default voice); per-integration setup and variables: [Getting started](docs/gett
 
 ## 4. One assistant, many workspaces
 
-Nova's multi-project story rests on two nouns: a **Workspace** is an isolated filesystem/Git
-project with its own `CODEX_HOME`, and a **Session** is a Codex thread inside one that can be
-suspended and resumed at any time.
+A **Workspace** is an isolated filesystem/Git project with its own `CODEX_HOME`; a **Session**
+is a Codex thread inside one that suspends and resumes at any time.
 
 Every lifecycle action — create, switch, resume — takes two steps: voice produces a proposal,
 and only a structured confirmation carrying that proposal's ID commits it; rejection, a
-mismatched ID, or a replay fails closed. Switching confirms in stages, Codex execution is
-globally serialized, and the desktop client surfaces public labels only. Voice can only
-create new managed directories — connecting an existing repository goes through the
-`NOVA_AUDIO_AGENT_CODEX_WORKSPACE` startup setting. The complete contract lives in
-[Multi-project Workspace handoff](docs/multi-project-workspace-handoff.md), retention and
-credential handling in [Getting started](docs/getting-started.md).
+mismatched ID, or a replay fails closed. Codex execution is globally serialized, and the desktop
+client surfaces public labels only. Voice creates new managed directories only; connecting an
+existing repository goes through `NOVA_AUDIO_AGENT_CODEX_WORKSPACE`. Nova Desktop can also open
+the active managed workspace, or clear one or all of them behind two confirmations — clearing
+empties the directory while the project record, display name, Codex history, and Session
+metadata survive. Full contract:
+[Multi-project Workspace handoff](docs/multi-project-workspace-handoff.md); retention and
+credentials: [Getting started](docs/getting-started.md).
 
 Two memory layers sit on top. An opt-in workspace graph records weak `discussed_with` cues —
 bounded, low-authority, below the proactive threshold, stale after 90 days — and Nova never
-reads or inspects another workspace on its own
-([v3 memory volume](docs/archs/v3/02-memory.md)). The optional MyContext boundary adds a
-person-wide evidence source — read-only, untrusted, never proactive, consulted only for
-explicit recall; no Nova-compatible adapter ships here, so the integration is not yet
-functional end to end, and upstream MyContext (Elastic License 2.0) needs a separate legal
-and distribution review before reuse or bundling.
+reads another workspace on its own ([v3 memory volume](docs/archs/v3/02-memory.md)). The
+optional MyContext boundary adds a person-wide evidence source: read-only, untrusted, never
+proactive, consulted only for explicit recall. No Nova-compatible read-only adapter ships here,
+so that path is not functional end to end, and upstream MyContext (Elastic License 2.0) needs a
+separate legal and distribution review before reuse or bundling.
 
 ```bash
 NOVA_AUDIO_AGENT_CODEX_WORKSPACE=/absolute/path/to/initial/repository
@@ -151,16 +155,24 @@ npm run start:client
 ```
 
 The launcher starts the Node runtime and a sandboxed, context-isolated Electron renderer; it
-needs the `codex` executable, microphone permission, and `TAVILY_API_KEY`; `DASHSCOPE_API_KEY`
+needs the `codex` executable, microphone permission, and `TAVILY_API_KEY`. `DASHSCOPE_API_KEY`
 is needed only for integrated Qwen and cascaded Qwen, and cascaded Ark needs `ARK_API_KEY`
 plus `DOUBAO_BIGMODEL_API_KEY`. Pipeline shapes, key reuse, and settings behavior:
 [Getting started](docs/getting-started.md).
 
 The orb is a Canvas 2D particle field whose behavior carries state — converging while
 listening, pulsing with playback, an orbiting band while Codex works — in the Ember or
-Graphite palette. Right-clicking opens the Memory Board (each channel's latest items) and a
-settings panel (palette, proactivity, Codex cadence, voice, and API keys encrypted via the
-OS keychain).
+Graphite palette. When a project action waits on you, it becomes a host-owned confirmation card
+that names the exact operation, marks it as not yet executed, and counts down to automatic
+cancellation.
+
+Right-clicking opens the Memory Board and a settings panel covering palette, proactivity, Codex
+cadence, voice, pipeline shape, Codex executable discovery, the managed workspace root, and the
+§4 workspace actions. Edits stay in that window as drafts until the save-and-restart button
+(labelled `保存并重启`, since the interface is Chinese-first) writes them, refreshes resolved
+configuration, and performs exactly one controlled backend restart; the palette commits on that
+same boundary. API keys are write-only, encrypted via the OS keychain, and read back as
+presence only.
 
 ## 6. Documentation
 
@@ -178,6 +190,10 @@ OS keychain).
 
 ## 7. Roadmap
 
+- [ ] **The cascaded pipeline as the cheaper default** — the cascaded topology is already
+  selectable (Volcengine ASR, `qwen-flash`, Volcengine TTS), but costing less than integrated
+  `qwen-audio-3.0-realtime-plus` is an expectation rather than a measurement; live validation
+  and a cost comparison come before recommending it over the integrated default.
 - [ ] **MyContext end to end** — a Nova-compatible read-only adapter, after the Elastic
   License 2.0 review; only the strict client boundary ships today.
 - [ ] **Workspace graph on by default, plus episodic memory** — once soak evidence justifies

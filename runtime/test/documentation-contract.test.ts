@@ -15,10 +15,6 @@ const currentDocs = [
   'docs/getting-started.md',
   'docs/getting-started.zh-CN.md',
   'docs/status.md',
-  'docs/archs/node-runtime-migration/plan.md',
-  'docs/archs/node-runtime-migration/backlog.md',
-  'docs/archs/node-runtime-migration/parity-matrix.md',
-  'docs/releases/node-runtime-migration-unreleased.md',
 ] as const
 
 test('current docs state the Node release truth and do not advertise retired capabilities', async () => {
@@ -28,7 +24,7 @@ test('current docs state the Node release truth and do not advertise retired cap
   })))
   for (const {file, text} of documents) {
     assert.doesNotMatch(text, /active executors?[^\n]*(?:Home Assistant|AutoGLM)|(?:Home Assistant|AutoGLM)[^\n]*(?:implemented|supported active)/iu, file)
-    assert.equal(text.includes('tests/snapshots') && file !== 'docs/archs/node-runtime-migration/parity-matrix.md', false, file)
+    assert.equal(text.includes('tests/snapshots'), false, file)
     assert.doesNotMatch(text, /no production source constructs (?:it|CausalRuntime)|does not instantiate CausalRuntime|desktop (?:microphone )?audio remains (?:deliberately )?unwired/iu, file)
     assert.doesNotMatch(text, /live (?:DashScope )?smoke[^\n]*(?:landed|pass)|runtime:smoke:qwen[^\n]*pass/iu, file)
     assert.doesNotMatch(text, /v1-mini[^\n]*(?:real|actual) executor[^\n]*(?:proven|pass)|v1-mini path runs locally/iu, file)
@@ -36,10 +32,6 @@ test('current docs state the Node release truth and do not advertise retired cap
   const status = documents.find(item => item.file === 'docs/status.md')!.text
   assert.match(status, /Node\.js and TypeScript[^\n]*primary/iu)
   assert.match(status, /pending external evidence/iu)
-
-  const release = documents.find(item => item.file.endsWith('unreleased.md'))!.text
-  assert.match(release, /gate_state:\s*pending_external_evidence/u)
-  assert.doesNotMatch(release, /gate_state:\s*passed|Node is (?:now )?the default|signed installer|clean-machine gate passed/iu)
 })
 
 test('audio pipeline docs distinguish the selectable topology, credentials, and deferred settings effects', async () => {

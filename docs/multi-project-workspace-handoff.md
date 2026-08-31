@@ -27,6 +27,12 @@ to the proposal's epoch, item, and response. Only the dedicated confirmation fun
 and its arguments must contain the exact proposal ID plus a JSON boolean. `false`, a mismatched or
 missing ID, a non-boolean value, a stale response, or a replay fails closed without mutation.
 
+While a proposal is pending, the desktop client renders it as a host-owned confirmation surface
+rather than relying on how the model phrased the request: the orb names the exact operation, marks
+it as not yet executed, shows the remaining time before automatic cancellation, and offers explicit
+confirm and cancel controls. The surface is derived from host state, so a proposal the model
+describes inaccurately still appears with its true operation and its true pending status.
+
 ## Staged flows
 
 - Creating a Workspace is independent: propose it, confirm it, then start a new Session there with
@@ -39,6 +45,17 @@ missing ID, a non-boolean value, a stale response, or a replay fails closed with
 Each accepted work order creates a persistent Session record before starting one app-server process.
 Resume starts a new app-server process on the saved thread. Codex work remains globally serialized,
 even though Workspace state and homes are isolated.
+
+## Desktop maintenance
+
+Voice can only create new managed directories. Everything else that touches a managed directory on
+disk is a desktop action, confirmed in the host UI rather than through the model: the Settings panel
+can open the active managed workspace, clear the active managed workspace, or clear every managed
+workspace, and both clearing actions require two separate confirmation dialogs.
+
+Clearing is a filesystem operation only. It empties the directory while the project record, display
+name, Codex home history, and Session metadata survive in the registry, so a cleared Workspace stays
+listable, switchable, and resumable rather than disappearing from the store.
 
 ## Recovery
 

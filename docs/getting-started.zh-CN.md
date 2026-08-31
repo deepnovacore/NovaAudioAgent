@@ -51,7 +51,9 @@ realtime provider 不暴露 `codex__run`。Workspace 是文件系统/Git 项目�
 可恢复的 Codex thread。托管 Workspace 默认位于 `~/.nova-audio-agent/workspaces`，注册表默认是
 `~/.nova-audio-agent/codex-projects-v1.json`，各 Workspace 的 Codex home 默认位于
 `~/.nova-audio-agent/codex-homes`。`NOVA_AUDIO_AGENT_CODEX_WORKSPACE` 可在启动时导入已有仓库。
-桌面设置面板目前只暴露单个启动 workspace 路径字段；注册任意已有目录须使用
+桌面设置面板暴露当前 workspace 和 workspace 根目录，另有三个操作：打开当前托管 workspace、
+经两道确认对话框清空当前托管 workspace 或全部托管 workspace；清空只倒空目录，项目记录、显示
+名称、Codex 历史和 Session 元数据都会保留。注册任意已有目录仍须使用
 `NOVA_AUDIO_AGENT_CODEX_WORKSPACE`，语音只能创建新的托管目录。
 
 每个 realtime turn 只注入 active Workspace 及其 active Session（如果存在）。Nova 只在请求时列出
@@ -113,8 +115,10 @@ LLM 使用 `ARK_API_KEY`；火山 TTS 使用 `DOUBAO_BIGMODEL_API_KEY`。`DOUBAO
 provider 故障转移。
 
 条件式设置面板把管线模式放在 provider 配置之前。集成模式显示 provider、模型和音色；级联模式显示
-端点检测、ASR、LLM 和 TTS 卡片。API 密钥仍是每个平台一个字段、只写，且只返回存在状态。管线、
-provider、模型、音色和密钥编辑均在下次启动生效；只有配色是实时设置。
+端点检测、ASR、LLM 和 TTS 卡片。API 密钥仍是每个平台一个字段、只写，且只返回存在状态。面板上
+的改动先以草稿留在设置窗口里，点 `保存并重启` 才会一次性写盘、刷新生效配置，并做恰好一次受控
+的后台重启。因此管线、provider、模型、音色和密钥的取值是在那一次下次启动时生效，而不是会话
+中途热更；配色也改为在同一个提交点生效，不再实时应用。
 
 Node 可配置执行器为 `fast_sim`、`slow_sim`、`codex`。Codex 的
 ordinary/live/project 模式共用有界 app-server transport。Camera 文件输入只接受主机验证过的

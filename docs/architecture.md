@@ -69,6 +69,11 @@ registry admits only one live Orb owner at a time (a second Orb fails with `stat
 complete discovery, confirmation, switching, persistence, and recovery contract is in
 [Multi-project Workspace handoff](multi-project-workspace-handoff.md).
 
+Maintenance of managed workspaces is a host surface rather than a voice capability. Nova Desktop
+can open the active managed workspace, or clear the active one or every managed workspace behind
+two confirmation dialogs; clearing empties directories while the project record, display name,
+Codex history, and Session metadata survive, so the store stays authoritative over the filesystem.
+
 ## Workspace memory graph (opt-in)
 
 The Node runtime carries an opt-in durable workspace memory graph
@@ -87,6 +92,11 @@ packaging targets (macOS, Windows NSIS, Linux AppImage/deb). Native echo-cancell
 (VoiceProcessingIO) exists on macOS only; Windows and Linux use Chromium's audio stack, and both
 camera paths use Chromium's capture pipeline on every platform. Cross-platform CI and hardware
 validation status is tracked honestly in [Project status](status.md).
+
+Desktop settings apply as a transaction rather than live. Panel edits accumulate as drafts inside
+the Settings window; an explicit save writes them, refreshes resolved configuration, and performs
+exactly one controlled backend restart. The runtime therefore never observes a half-applied
+configuration, and the palette commits on that same boundary instead of mutating a running session.
 
 ## Realtime path
 
