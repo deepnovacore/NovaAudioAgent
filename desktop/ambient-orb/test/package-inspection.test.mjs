@@ -603,6 +603,65 @@ test('bounded container listing exposes only a stable diagnostic class for tool 
   }
 })
 
+test('AppImage inspection snapshots only the appended SquashFS payload without executing it', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-appimage-filesystem-'))
+  const source = resolve(root, 'candidate.AppImage')
+  const destination = resolve(root, 'candidate.squashfs')
+  try {
+    const image = Buffer.alloc(320)
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(image, 0)
+    image[4] = 2
+    image[5] = 1
+    Buffer.from([0x41, 0x49, 0x02]).copy(image, 8)
+    image.writeBigUInt64LE(64n, 40)
+    image.writeUInt16LE(64, 58)
+    image.writeUInt16LE(2, 60)
+    image.writeBigUInt64LE(160n, 64 + 64 + 24)
+    image.writeBigUInt64LE(96n, 64 + 64 + 32)
+    Buffer.from('hsqs').copy(image, 256)
+    Buffer.from('bounded-payload').copy(image, 260)
+    await writeFile(source, image)
+
+    assert.deepEqual(
+      await packageInspection.captureAppImageFilesystem(source, destination),
+      {offset: 256, size: 64},
+    )
+    assert.deepEqual(await readFile(destination), image.subarray(256))
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('AppImage filesystem snapshot rejects invalid type or payload magic', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-appimage-invalid-'))
+  try {
+    for (const [name, typeMagic, payloadMagic] of [
+      ['type', [0x41, 0x49, 0x01], 'hsqs'],
+      ['payload', [0x41, 0x49, 0x02], 'nope'],
+    ]) {
+      const source = resolve(root, `${name}.AppImage`)
+      const destination = resolve(root, `${name}.squashfs`)
+      const image = Buffer.alloc(196)
+      Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(image, 0)
+      image[4] = 2
+      image[5] = 1
+      Buffer.from(typeMagic).copy(image, 8)
+      image.writeBigUInt64LE(64n, 40)
+      image.writeUInt16LE(64, 58)
+      image.writeUInt16LE(1, 60)
+      Buffer.from(payloadMagic).copy(image, 128)
+      await writeFile(source, image)
+      await assert.rejects(
+        packageInspection.captureAppImageFilesystem(source, destination),
+        PackageInspectionError,
+      )
+      await assert.rejects(lstat(destination), error => error.code === 'ENOENT')
+    }
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('container preflight rejects excessive entries and unsafe paths before extraction', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'nova-container-entries-'))
   const raw = resolve(root, 'container-raw')

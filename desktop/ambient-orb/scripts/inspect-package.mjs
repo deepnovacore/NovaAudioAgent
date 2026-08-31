@@ -810,6 +810,118 @@ async function copyAndHashHandle(source, destination, expectedSize) {
   }
 }
 
+function readAppImageInteger(buffer, offset, bytes, littleEndian) {
+  if (bytes === 2) return littleEndian ? buffer.readUInt16LE(offset) : buffer.readUInt16BE(offset)
+  if (bytes === 4) return littleEndian ? buffer.readUInt32LE(offset) : buffer.readUInt32BE(offset)
+  if (bytes === 8) {
+    const value = littleEndian ? buffer.readBigUInt64LE(offset) : buffer.readBigUInt64BE(offset)
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new PackageInspectionError('AppImage ELF layout rejected')
+    }
+    return Number(value)
+  }
+  throw new PackageInspectionError('AppImage ELF layout rejected')
+}
+
+async function readExactHandle(handle, length, position, detail) {
+  const buffer = Buffer.alloc(length)
+  let read = 0
+  while (read < length) {
+    const {bytesRead} = await handle.read(buffer, read, length - read, position + read)
+    if (bytesRead === 0) throw new PackageInspectionError(detail)
+    read += bytesRead
+  }
+  return buffer
+}
+
+export async function captureAppImageFilesystem(sourcePath, destinationPath) {
+  let source
+  try {
+    source = await open(sourcePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+  } catch {
+    throw new PackageInspectionError('AppImage snapshot unavailable')
+  }
+  try {
+    const before = await source.stat()
+    if (!before.isFile() || before.size <= 64 || before.size > MAX_CANDIDATE_BYTES) {
+      throw new PackageInspectionError('AppImage snapshot rejected')
+    }
+    const header = await readExactHandle(source, 64, 0, 'AppImage ELF header rejected')
+    if (
+      !header.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+      || !header.subarray(8, 11).equals(Buffer.from([0x41, 0x49, 0x02]))
+      || ![1, 2].includes(header[4])
+      || ![1, 2].includes(header[5])
+    ) throw new PackageInspectionError('AppImage ELF header rejected')
+    const is64 = header[4] === 2
+    const littleEndian = header[5] === 1
+    const sectionHeaderOffset = readAppImageInteger(header, is64 ? 40 : 32, is64 ? 8 : 4, littleEndian)
+    const sectionHeaderSize = readAppImageInteger(header, is64 ? 58 : 46, 2, littleEndian)
+    const sectionHeaderCount = readAppImageInteger(header, is64 ? 60 : 48, 2, littleEndian)
+    const minimumSectionHeaderSize = is64 ? 64 : 40
+    if (
+      sectionHeaderOffset < (is64 ? 64 : 52)
+      || sectionHeaderSize < minimumSectionHeaderSize
+      || sectionHeaderCount < 1
+      || sectionHeaderCount > 4096
+    ) throw new PackageInspectionError('AppImage ELF layout rejected')
+    const sectionTableBytes = sectionHeaderSize * sectionHeaderCount
+    const sectionTableEnd = sectionHeaderOffset + sectionTableBytes
+    const lastSectionHeaderOffset = sectionTableEnd - sectionHeaderSize
+    if (
+      !Number.isSafeInteger(sectionTableBytes)
+      || !Number.isSafeInteger(sectionTableEnd)
+      || lastSectionHeaderOffset < sectionHeaderOffset
+      || sectionTableEnd >= before.size
+    ) throw new PackageInspectionError('AppImage ELF layout rejected')
+    const lastSection = await readExactHandle(
+      source,
+      minimumSectionHeaderSize,
+      lastSectionHeaderOffset,
+      'AppImage ELF section rejected',
+    )
+    const lastSectionOffset = readAppImageInteger(lastSection, is64 ? 24 : 16, is64 ? 8 : 4, littleEndian)
+    const lastSectionSize = readAppImageInteger(lastSection, is64 ? 32 : 20, is64 ? 8 : 4, littleEndian)
+    const lastSectionEnd = lastSectionOffset + lastSectionSize
+    const filesystemOffset = Math.max(sectionTableEnd, lastSectionEnd)
+    if (
+      !Number.isSafeInteger(lastSectionEnd)
+      || !Number.isSafeInteger(filesystemOffset)
+      || filesystemOffset <= 0
+      || filesystemOffset + 4 >= before.size
+    ) throw new PackageInspectionError('AppImage ELF layout rejected')
+    const squashfsMagic = await readExactHandle(
+      source,
+      4,
+      filesystemOffset,
+      'AppImage filesystem rejected',
+    )
+    if (!squashfsMagic.equals(Buffer.from('hsqs'))) {
+      throw new PackageInspectionError('AppImage filesystem rejected')
+    }
+    await copyAndHashHandle(
+      {
+        read: (buffer, offset, length, position) => source.read(
+          buffer,
+          offset,
+          length,
+          filesystemOffset + position,
+        ),
+      },
+      destinationPath,
+      before.size - filesystemOffset,
+    )
+    const after = await source.stat()
+    if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size) {
+      throw new PackageInspectionError('AppImage snapshot changed')
+    }
+    await chmod(destinationPath, 0o400)
+    return Object.freeze({offset: filesystemOffset, size: before.size - filesystemOffset})
+  } finally {
+    await source?.close().catch(() => {})
+  }
+}
+
 async function hashHandle(handle, expectedSize, label = 'ASAR snapshot') {
   const hash = createHash('sha256')
   const buffer = Buffer.allocUnsafe(1024 * 1024)
@@ -1802,9 +1914,15 @@ async function extractCandidateContainer(snapshot, format, privateRoot, deadline
       privateRoot: resolve(privateRoot, 'container-tool'),
     })
     await verifySnapshottedSevenZipTool(tool)
+    const containerSnapshot = format === 'appimage'
+      ? resolve(privateRoot, 'candidate.squashfs')
+      : snapshot
+    if (format === 'appimage') {
+      await captureAppImageFilesystem(snapshot, containerSnapshot)
+    }
     const listing = runBoundedListing(
       tool.path,
-      ['l', '-slt', '-ba', '-bd', '--', snapshot],
+      ['l', '-slt', '-ba', '-bd', '--', containerSnapshot],
       privateRoot,
     )
     await verifySnapshottedSevenZipTool(tool)
@@ -1814,7 +1932,7 @@ async function extractCandidateContainer(snapshot, format, privateRoot, deadline
       destinationRoot: raw,
       extract: async () => {
         await verifySnapshottedSevenZipTool(tool)
-        runExtractor(tool.path, ['x', '-bd', '-y', `-o${raw}`, '--', snapshot], privateRoot)
+        runExtractor(tool.path, ['x', '-bd', '-y', `-o${raw}`, '--', containerSnapshot], privateRoot)
         await verifySnapshottedSevenZipTool(tool)
       },
     })
