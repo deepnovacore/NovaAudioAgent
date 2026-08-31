@@ -1083,7 +1083,8 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     return
   }
   void rendererLoaded.then(() => {
-    if (backendStatus.state === 'connected' && backendStatus.connection) {
+    if (smokeChannel === null
+      && backendStatus.state === 'connected' && backendStatus.connection) {
       sendToOrb('nova:backend-ready', backendStatus.connection)
     } else if (backendStatus.state !== 'starting') sendToOrb('nova:backend-exit')
   }).catch(() => {
@@ -1118,7 +1119,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       }
       sendToSettings('nova:settings:changed', settingsView())
       sendToOrb('nova:backend-status', status)
-      if (status.state === 'connected' && status.connection) {
+      if (smokeChannel === null && status.state === 'connected' && status.connection) {
         sendToOrb('nova:backend-ready', status.connection)
       } else if (status.state !== 'starting' && status.state !== 'stopped') {
         sendToOrb('nova:backend-exit')

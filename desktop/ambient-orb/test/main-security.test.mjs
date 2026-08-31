@@ -521,6 +521,16 @@ test('packaged smoke readiness is private, post-backend, and closed by every qui
   const launchBody = launch.slice(0, launch.indexOf('\n}\n'))
   assert.ok(launchBody.indexOf('await listener.readiness') < launchBody.indexOf('smokeChannel?.ready({'))
   assert.match(launchBody, /endpoint: validated\.endpoint, token/u)
+  const start = source.slice(source.indexOf('async function startSelectedCamera('))
+  const startBody = start.slice(0, start.indexOf('\n}\n'))
+  assert.match(
+    startBody,
+    /smokeChannel === null[\s\S]*sendToOrb\('nova:backend-ready', backendStatus\.connection\)/u,
+  )
+  assert.match(
+    startBody,
+    /smokeChannel === null && status\.state === 'connected'[\s\S]*sendToOrb\('nova:backend-ready', status\.connection\)/u,
+  )
   const quit = source.slice(source.indexOf("app.on('before-quit'"))
   assert.match(quit, /releaseSmokeChannel\?\.close\(\)/u)
 })
