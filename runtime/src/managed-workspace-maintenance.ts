@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto'
 
 import type {
+  ExternalManagedWorkspaceReconciliation,
   ManagedMaintenanceJournal,
   ManagedReplacementInput,
   ProjectMaintenanceSnapshot,
@@ -25,6 +26,9 @@ export interface ManagedWorkspacePreparation { readonly [preparationBrand]: neve
 export interface ManagedWorkspaceAuthorization { readonly [authorizationBrand]: never }
 
 interface MaintenanceStore {
+  reconcileExternallyRemovedManagedWorkspaces?(): Promise<
+    ExternalManagedWorkspaceReconciliation
+  >
   maintenanceSnapshot(): Promise<ProjectMaintenanceSnapshot>
   currentMaintenanceSnapshot(): Promise<ProjectMaintenanceSnapshot>
   withCurrentManagedWorkspacePath(callback: (path: string) => void): Promise<boolean>
@@ -95,6 +99,14 @@ export type ManagedWorkspaceOpenResult = Readonly<{
     | 'rollback_pending'
     | 'unavailable'
 }>
+
+export type ManagedWorkspaceExternalCleanupResult =
+  | ExternalManagedWorkspaceReconciliation
+  | Readonly<{
+    status: 'unavailable'
+    recreated_count: 0
+    active_workspace_reset: false
+  }>
 
 export type ManagedWorkspaceExecuteResult = Readonly<{
   status: 'cleared' | 'stale' | 'clear_failed' | 'rollback_pending'
@@ -200,6 +212,32 @@ export class ManagedWorkspaceMaintenanceService {
         count: completeSnapshot?.managed_targets.length ?? 0,
       }),
     })
+  }
+
+  async reconcileExternalCleanup(): Promise<ManagedWorkspaceExternalCleanupResult> {
+    if (this.#closed || this.#journalHealth !== 'ready') {
+      return Object.freeze({
+        status: 'unavailable',
+        recreated_count: 0,
+        active_workspace_reset: false,
+      })
+    }
+    if (this.#store.reconcileExternallyRemovedManagedWorkspaces === undefined) {
+      return Object.freeze({
+        status: 'unchanged',
+        recreated_count: 0,
+        active_workspace_reset: false,
+      })
+    }
+    try {
+      return await this.#store.reconcileExternallyRemovedManagedWorkspaces()
+    } catch {
+      return Object.freeze({
+        status: 'unavailable',
+        recreated_count: 0,
+        active_workspace_reset: false,
+      })
+    }
   }
 
   async prepare(scope: ManagedWorkspaceScope): Promise<ManagedWorkspacePrepareResult> {

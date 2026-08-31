@@ -484,12 +484,19 @@ async function prepareDesktopConfiguration() {
 }
 
 async function commitDesktopConfiguration(prepared) {
+  const reconciliation = prepared.maintenance === null
+    ? null
+    : await prepared.maintenance.reconcileExternalCleanup()
   const previousMaintenance = managedWorkspaceMaintenance
   desktopConfig = prepared.config
   codexStatus = prepared.codexStatus
   managedWorkspaceMaintenance = prepared.maintenance
   if (previousMaintenance !== null) await previousMaintenance.close().catch(() => undefined)
   await refreshManagedWorkspaceCapabilities()
+  return Object.freeze({
+    externalWorkspaceReset: reconciliation?.status === 'reconciled'
+      && reconciliation.active_workspace_reset === true,
+  })
 }
 
 async function discardDesktopConfiguration(prepared) {
@@ -864,7 +871,20 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       commitConfiguration: commitDesktopConfiguration,
       discardConfiguration: discardDesktopConfiguration,
       restartBackend: async () => {
-        if (backendSupervisor) await managedWorkspaceBackendRecovery.restart()
+        if (!backendSupervisor) return
+        const recovery = await managedWorkspaceBackendRecovery.restart()
+        if (recovery.status !== 'restarted'
+          || backendSupervisor.status().state !== 'connected') {
+          throw new Error('backend restart unavailable')
+        }
+      },
+      recoverBackend: async () => {
+        if (!backendSupervisor) return
+        const recovery = await managedWorkspaceBackendRecovery.retry()
+        if (recovery.status !== 'retried'
+          || backendSupervisor.status().state !== 'connected') {
+          throw new Error('backend recovery unavailable')
+        }
       },
       view: settingsView,
     })
@@ -955,11 +975,14 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
       },
       commitConfiguration: commitDesktopConfiguration,
       discardConfiguration: discardDesktopConfiguration,
-      restartBackend: async () => {
-        const recovery = await managedWorkspaceBackendRecovery.restart()
-        if (recovery.status !== 'restarted'
+      restartBackend: async committedConfiguration => {
+        const externalWorkspaceReset = committedConfiguration?.externalWorkspaceReset === true
+        const recovery = externalWorkspaceReset
+          ? await managedWorkspaceBackendRecovery.retry()
+          : await managedWorkspaceBackendRecovery.restart()
+        if (recovery.status !== (externalWorkspaceReset ? 'retried' : 'restarted')
           || backendSupervisor?.status().state !== 'connected') {
-          throw new Error('backend restart unavailable')
+          throw new Error('backend activation unavailable')
         }
       },
       publishStatus: publishSettingsApplyStatus,

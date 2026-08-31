@@ -180,6 +180,7 @@ test('Codex rescan is restricted to the settings window sender', async () => {
   assert.match(handler, /currentConfiguration: \(\) => Object\.freeze\(\{config: desktopConfig, codexStatus\}\)/)
   assert.match(handler, /discardConfiguration: discardDesktopConfiguration/)
   assert.match(handler, /managedWorkspaceBackendRecovery\.restart\(\)/)
+  assert.match(handler, /managedWorkspaceBackendRecovery\.retry\(\)/)
   assert.match(handler, /view: settingsView/)
 })
 
@@ -217,6 +218,8 @@ test('rollback recovery gates startup, save restart, rescan, and explicit backen
   const source = await readFile(new URL('../src/main/main.mjs', import.meta.url), 'utf8')
   assert.match(source, /createManagedWorkspaceBackendRecovery/)
   assert.match(source, /void managedWorkspaceBackendRecovery\.start\(\)/)
+  const commit = source.slice(source.indexOf('async function commitDesktopConfiguration'))
+  assert.match(commit.slice(0, commit.indexOf('\n}')), /reconcileExternalCleanup\(\)/)
   const retry = source.slice(source.indexOf("ipcMain.handle('nova:backend:retry'"))
   const retryHandler = retry.slice(0, retry.indexOf('\n  })'))
   assert.match(retryHandler, /async \(event, \.\.\.args\) =>/)
@@ -236,7 +239,9 @@ test('rollback recovery gates startup, save restart, rescan, and explicit backen
   assert.match(recoveryBody, /backendSupervisor\.stop\(\)/)
   assert.match(recoveryBody, /retryBackend:[\s\S]*backendSupervisor\.status\(\)\.state === 'connected'/)
   const settings = source.slice(source.indexOf("ipcMain.handle('nova:settings:set'"))
-  assert.match(settings.slice(0, settings.indexOf('\n  })')), /managedWorkspaceBackendRecovery\.restart\(\)/)
+  const settingsHandler = settings.slice(0, settings.indexOf('\n  })'))
+  assert.match(settingsHandler, /managedWorkspaceBackendRecovery\.restart\(\)/)
+  assert.match(settingsHandler, /managedWorkspaceBackendRecovery\.retry\(\)/)
 })
 
 test('no decrypted secret can reach the renderer or a log line', async () => {

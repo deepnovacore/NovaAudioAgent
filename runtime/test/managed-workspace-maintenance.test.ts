@@ -382,6 +382,30 @@ test('capabilities keep a valid current target available when complete-set valid
   await service.close()
 })
 
+test('external cleanup reconciliation is explicit and bounded', async () => {
+  const store = {
+    cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),
+    loadManagedMaintenanceJournal: () => Promise.resolve(null),
+    reconcileExternallyRemovedManagedWorkspaces: () => Promise.resolve({
+      status: 'reconciled' as const,
+      recreated_count: 3,
+      active_workspace_reset: true,
+    }),
+    currentMaintenanceSnapshot: () => Promise.reject(new Error('not needed')),
+    maintenanceSnapshot: () => Promise.reject(new Error('not needed')),
+    withCurrentManagedWorkspacePath: () => Promise.resolve(false),
+    executeManagedReplacement: () => Promise.reject(new Error('not needed')),
+  }
+  const service = await ManagedWorkspaceMaintenanceService.open({store})
+
+  assert.deepEqual(await service.reconcileExternalCleanup(), {
+    status: 'reconciled',
+    recreated_count: 3,
+    active_workspace_reset: true,
+  })
+  await service.close()
+})
+
 test('capabilities bound complete snapshot failures as unavailable', async () => {
   const store = {
     cleanupManagedMaintenanceJournal: () => Promise.resolve({status: 'clean' as const}),

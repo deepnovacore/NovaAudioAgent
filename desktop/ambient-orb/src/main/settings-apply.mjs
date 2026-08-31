@@ -53,10 +53,11 @@ export async function applySettingsTransaction({
     publishStatus('refreshing')
     let prepared
     let preparedOwned = false
+    let committedConfiguration
     try {
       prepared = await prepareConfiguration()
       preparedOwned = true
-      await commitConfiguration(prepared)
+      committedConfiguration = await commitConfiguration(prepared)
       preparedOwned = false
     } catch {
       if (preparedOwned) await discardConfiguration(prepared).catch(() => undefined)
@@ -66,7 +67,7 @@ export async function applySettingsTransaction({
 
     publishStatus('restarting')
     try {
-      await restartBackend()
+      await restartBackend(committedConfiguration)
     } catch {
       publishStatus('restart_failed')
       return result(true, 'restart_failed', rejectedSecrets)
@@ -86,6 +87,7 @@ export async function coordinateCodexRescan({
   commitConfiguration,
   discardConfiguration = async () => {},
   restartBackend,
+  recoverBackend = restartBackend,
   view,
 }) {
   const coordinated = await coordinator.run('codex_rescan', async () => {
@@ -93,15 +95,20 @@ export async function coordinateCodexRescan({
     let prepared
     let committed = false
     let changed = false
+    let committedConfiguration
     try {
       prepared = await prepareConfiguration()
       changed = !sameBackendLaunchConfiguration(previous, prepared)
-      await commitConfiguration(prepared)
+      committedConfiguration = await commitConfiguration(prepared)
       committed = true
     } finally {
       if (prepared !== undefined && !committed) await discardConfiguration(prepared)
     }
-    if (changed) await restartBackend()
+    if (committedConfiguration?.externalWorkspaceReset === true) {
+      await recoverBackend()
+    } else if (changed) {
+      await restartBackend()
+    }
   })
 
   // `coordinator.run()` releases lifecycle ownership in its finally block.

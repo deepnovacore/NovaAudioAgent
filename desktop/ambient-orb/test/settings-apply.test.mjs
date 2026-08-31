@@ -182,6 +182,7 @@ test('Codex refresh returns a view captured after lifecycle ownership is release
     commitConfiguration: async () => {},
     discardConfiguration: async () => {},
     restartBackend: async () => { restarts += 1 },
+    recoverBackend: async () => { throw new Error('must not recover') },
     view: () => Object.freeze({
       managedWorkspaces: Object.freeze({lifecycleBusy: coordinator.busy}),
     }),
@@ -190,4 +191,37 @@ test('Codex refresh returns a view captured after lifecycle ownership is release
   assert.equal(view.managedWorkspaces.lifecycleBusy, false)
   assert.equal(coordinator.busy, false)
   assert.equal(restarts, 0)
+})
+
+test('Codex refresh recovers once when external cleanup reset the active workspace', async () => {
+  const coordinator = createLifecycleCoordinator()
+  const previous = Object.freeze({config: {workspace: '/managed/alpha'}})
+  const prepared = structuredClone(previous)
+  const calls = []
+
+  const view = await coordinateCodexRescan({
+    coordinator,
+    currentConfiguration: () => previous,
+    prepareConfiguration: async () => prepared,
+    commitConfiguration: async () => ({externalWorkspaceReset: true}),
+    discardConfiguration: async () => {},
+    restartBackend: async () => { calls.push('restart') },
+    recoverBackend: async () => { calls.push('recover') },
+    view: () => ({managedWorkspaces: {lifecycleBusy: coordinator.busy}}),
+  })
+
+  assert.deepEqual(calls, ['recover'])
+  assert.equal(view.managedWorkspaces.lifecycleBusy, false)
+})
+
+test('settings save passes configuration reconciliation to its one backend activation', async () => {
+  const marker = Object.freeze({externalWorkspaceReset: true})
+  let received = null
+  const {options} = harness({
+    commitConfiguration: async () => marker,
+    restartBackend: async result => { received = result },
+  })
+
+  assert.equal((await applySettingsTransaction(options)).operationStatus, 'applied')
+  assert.equal(received, marker)
 })

@@ -607,6 +607,22 @@ class FailManagedLookupRootFileAuthority extends DescriptorRelativeRootFileAutho
   }
 }
 
+class ExternalCleanupMkdirCollisionAuthority extends DescriptorRelativeRootFileAuthority {
+  targetName: string | null = null
+  collisionIdentity: ProjectFileIdentity | null = null
+
+  override mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult {
+    if (name === this.targetName) {
+      const path = this.pathAt(rootDescriptor, name)
+      mkdirSync(path, {mode: 0o700})
+      const info = lstatSync(path, {bigint: true})
+      this.collisionIdentity = {device: info.dev, inode: info.ino}
+      this.targetName = null
+    }
+    return super.mkdirAt(rootDescriptor, name)
+  }
+}
+
 class PermissiveManagedMkdirRootFileAuthority extends DescriptorRelativeRootFileAuthority {
   readonly #managedRoot: string
 
@@ -2571,6 +2587,168 @@ test('current maintenance snapshot ignores invalid detached managed records', as
     await assert.rejects(store.maintenanceSnapshot(), (error: unknown) => (
       error instanceof ProjectStateError && error.code === 'workspace_boundary_changed'
     ))
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('external managed cleanup recreates empty roots and clears the active selection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-external-cleanup-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const identifiers = [
+    'workspace-0001', 'session-000001',
+    'workspace-0002', 'session-000002',
+  ][Symbol.iterator]()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
+    idFactory: () => identifiers.next().value ?? 'unused-id',
+  })
+  try {
+    const first = await store.createManaged('Alpha')
+    const firstSession = await store.beginSession(first.workspace_id, 'First session')
+    await store.markSessionReady(firstSession.session_id, 'thread-alpha')
+    const second = await store.createManaged('Beta')
+    const secondSession = await store.beginSession(second.workspace_id, 'Second session')
+    await store.markSessionReady(secondSession.session_id, 'thread-beta')
+
+    await rm(first.canonical_path, {recursive: true, force: true})
+    await rm(second.canonical_path, {recursive: true, force: true})
+
+    assert.deepEqual(await store.reconcileExternallyRemovedManagedWorkspaces(), {
+      status: 'reconciled',
+      recreated_count: 2,
+      active_workspace_reset: true,
+    })
+    const snapshot = await store.snapshot()
+    assert.equal(snapshot.active_workspace_id, null)
+    assert.equal(snapshot.workspaces.length, 2)
+    assert.equal(snapshot.sessions.length, 2)
+    assert.equal((await lstat(first.canonical_path)).isDirectory(), true)
+    assert.equal((await lstat(second.canonical_path)).isDirectory(), true)
+    assert.deepEqual(await store.currentMaintenanceSnapshot(), {
+      state_revision: snapshot.state_revision,
+      active_workspace_id: null,
+      managed_targets: [],
+    })
+    assert.equal((await store.maintenanceSnapshot()).managed_targets.length, 2)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('complete external managed cleanup keeps an existing imported workspace unselected', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-external-empty-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  const importedRoot = join(root, 'imported')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  await mkdir(importedRoot, {mode: 0o700})
+  const identifiers = ['workspace-0001', 'workspace-0002'][Symbol.iterator]()
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
+    idFactory: () => identifiers.next().value ?? 'unused-id',
+  })
+  try {
+    const imported = await store.ensureImported(
+      'Imported',
+      hostWorkspaceForTest(await realpath(importedRoot)),
+    )
+    const managed = await store.createManaged('Managed')
+    await store.selectWorkspace(imported.display_name)
+    await rm(managed.canonical_path, {recursive: true, force: true})
+
+    assert.deepEqual(await store.reconcileExternallyRemovedManagedWorkspaces(), {
+      status: 'reconciled',
+      recreated_count: 1,
+      active_workspace_reset: true,
+    })
+    assert.equal((await store.snapshot()).active_workspace_id, null)
+    assert.equal(
+      (await store.ensureImported(
+        imported.display_name,
+        hostWorkspaceForTest(await realpath(importedRoot)),
+      )).workspace_id,
+      imported.workspace_id,
+    )
+    assert.equal((await store.snapshot()).active_workspace_id, null)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('external cleanup reconciliation refuses a same-name replacement', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-external-replacement-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles: new DescriptorRelativeRootFileAuthority([stateRoot, managedRoot]),
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const workspace = await store.createManaged('Alpha')
+    await rename(workspace.canonical_path, `${workspace.canonical_path}-moved`)
+    await mkdir(workspace.canonical_path, {mode: 0o700})
+
+    await assert.rejects(
+      store.reconcileExternallyRemovedManagedWorkspaces(),
+      (error: unknown) => (
+        error instanceof ProjectStateError && error.code === 'workspace_boundary_changed'
+      ),
+    )
+    assert.equal((await store.snapshot()).active_workspace_id, workspace.workspace_id)
+  } finally {
+    await store.close()
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('external cleanup reconciliation refuses a replacement racing directory recreation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-project-external-race-'))
+  const stateRoot = join(root, 'state')
+  const managedRoot = join(root, 'managed')
+  await mkdir(stateRoot, {mode: 0o700})
+  await mkdir(managedRoot, {mode: 0o700})
+  const rootFiles = new ExternalCleanupMkdirCollisionAuthority([stateRoot, managedRoot])
+  const store = await CodexProjectStore.open({
+    stateRoot: hostProjectRootForTest(await realpath(stateRoot)),
+    managedRoot: hostManagedProjectRootForTest(await realpath(managedRoot)),
+    nativeLocks: new DescriptorLockAuthority(),
+    rootFiles,
+    idFactory: () => 'workspace-0001',
+  })
+  try {
+    const workspace = await store.createManaged('Alpha')
+    await rm(workspace.canonical_path, {recursive: true, force: true})
+    rootFiles.targetName = basename(workspace.canonical_path)
+
+    await assert.rejects(
+      store.reconcileExternallyRemovedManagedWorkspaces(),
+      (error: unknown) => error instanceof ProjectStateError,
+    )
+    const collision = rootFiles.collisionIdentity
+    assert.notEqual(collision, null)
+    const info = await lstat(workspace.canonical_path, {bigint: true})
+    assert.equal(info.dev, collision?.device)
+    assert.equal(info.ino, collision?.inode)
+    assert.equal((await store.snapshot()).active_workspace_id, workspace.workspace_id)
   } finally {
     await store.close()
     await rm(root, {recursive: true, force: true})

@@ -182,6 +182,12 @@ export interface ProjectMaintenanceSnapshot {
   readonly managed_targets: readonly ProjectMaintenanceTargetSnapshot[]
 }
 
+export interface ExternalManagedWorkspaceReconciliation {
+  readonly status: 'unchanged' | 'reconciled'
+  readonly recreated_count: number
+  readonly active_workspace_reset: boolean
+}
+
 export interface ManagedMaintenanceJournalEntry {
   readonly workspace_id: string
   readonly original_name: string
@@ -428,6 +434,104 @@ export class CodexProjectStore {
 
   async snapshot(): Promise<ProjectSnapshot> {
     return await this.#transaction(state => [snapshotState(state), false], {wait: true})
+  }
+
+  async reconcileExternallyRemovedManagedWorkspaces(): Promise<
+    ExternalManagedWorkspaceReconciliation
+  > {
+    const created: {
+      readonly path: string
+      readonly identity: FileIdentity
+      readonly workspaceId: string
+      readonly previousIdentity: FileIdentity | undefined
+    }[] = []
+    try {
+      return await this.#transaction<ExternalManagedWorkspaceReconciliation>(async state => {
+        if (await this.#loadMaintenanceJournal() !== null) {
+          throw new ProjectStateError('state_busy')
+        }
+        const managed = await this.#validateManagedRoot()
+        const root = this.#requireManagedRootHandle()
+        const missing: WorkspaceRecord[] = []
+        let managedWorkspaceCount = 0
+        for (const workspace of [...state.workspaces.values()].sort(compareCreated)) {
+          if (workspace.origin !== 'managed') continue
+          managedWorkspaceCount += 1
+          if (!isDirectChild(managed, workspace.canonical_path)) {
+            throw new ProjectStateError('workspace_boundary_changed')
+          }
+          const present = this.#lookupAt(
+            root,
+            basename(workspace.canonical_path),
+            'workspace_boundary_changed',
+          )
+          if (present.status === 'missing') {
+            missing.push(workspace)
+            continue
+          }
+          const binding = await this.#validateManagedWorkspaceBinding(workspace.canonical_path)
+          this.#pinWorkspaceIdentity(workspace.workspace_id, binding.identity)
+        }
+        if (missing.length === 0) {
+          return [Object.freeze({
+            status: 'unchanged',
+            recreated_count: 0,
+            active_workspace_reset: false,
+          }), false]
+        }
+
+        for (const workspace of missing) {
+          const recreated = await this.#ensurePrivateDirectoryAt(
+            root,
+            managed,
+            basename(workspace.canonical_path),
+            true,
+          )
+          try {
+            const identity = recreated.binding.identity
+            created.push({
+              path: workspace.canonical_path,
+              identity,
+              workspaceId: workspace.workspace_id,
+              previousIdentity: this.#workspaceIdentities.get(workspace.workspace_id),
+            })
+            this.#workspaceIdentities.set(workspace.workspace_id, identity)
+          } finally {
+            await recreated.file.close().catch(() => undefined)
+          }
+        }
+        await this.#syncManagedRoot()
+        const activeWorkspaceReset = state.activeWorkspaceId !== null
+          && (
+            missing.length === managedWorkspaceCount
+            || missing.some(workspace => workspace.workspace_id === state.activeWorkspaceId)
+          )
+        if (activeWorkspaceReset) {
+          state.activeWorkspaceId = null
+          bumpActiveBindingRevision(state)
+        }
+        return [Object.freeze({
+          status: 'reconciled',
+          recreated_count: missing.length,
+          active_workspace_reset: activeWorkspaceReset,
+        }), activeWorkspaceReset]
+      }, {wait: true})
+    } catch (error) {
+      if (!isCommittedTransactionFailure(error)) {
+        for (const candidate of [...created].reverse()) {
+          const removed = await this.#rollbackCreatedDirectory(candidate)
+          if (!removed) continue
+          const current = this.#workspaceIdentities.get(candidate.workspaceId)
+          if (current === undefined || !sameFileIdentity(current, candidate.identity)) continue
+          if (candidate.previousIdentity === undefined) {
+            this.#workspaceIdentities.delete(candidate.workspaceId)
+          } else {
+            this.#workspaceIdentities.set(candidate.workspaceId, candidate.previousIdentity)
+          }
+        }
+      }
+      throw error
+    }
   }
 
   async maintenanceSnapshot(): Promise<ProjectMaintenanceSnapshot> {
@@ -881,21 +985,17 @@ export class CodexProjectStore {
             ? await this.#validateManagedWorkspaceBinding(existing.canonical_path)
             : binding
           this.#pinWorkspaceIdentity(existing.workspace_id, approved.identity)
-          if (state.activeWorkspaceId === null) {
-            state.activeWorkspaceId = existing.workspace_id
-            bumpActiveBindingRevision(state)
-            return [existing, true]
-          }
           return [existing, false]
         }
         requireWorkspaceCapacity(state)
+        const initialImport = state.workspaces.size === 0
         const unique = uniqueWorkspaceName(state, requested.display)
         const normalized = normalizeProjectWorkspaceName(unique)
         const record = this.#newWorkspace(state, normalized, binding.canonical, 'registered')
         this.#pinWorkspaceIdentity(record.workspace_id, binding.identity)
         createdPin.push({workspaceId: record.workspace_id, identity: binding.identity})
         state.workspaces.set(record.workspace_id, record)
-        if (state.activeWorkspaceId === null) {
+        if (state.activeWorkspaceId === null && initialImport) {
           state.activeWorkspaceId = record.workspace_id
           bumpActiveBindingRevision(state)
         }
@@ -2072,7 +2172,7 @@ export class CodexProjectStore {
   ): Promise<{readonly file: FileHandle; readonly binding: DirectoryBinding}> {
     requireProjectBasename(name, 'state_permissions')
     const created = this.#mkdirPrivateAt(root, name, 'state_permissions')
-    if (created.status !== 'ok' && (!exclusive && created.status !== 'exists')) {
+    if (created.status !== 'ok' && (exclusive || created.status !== 'exists')) {
       throw new ProjectStateError('state_permissions')
     }
     const createdIdentity = created.status === 'ok' ? created.identity : null
