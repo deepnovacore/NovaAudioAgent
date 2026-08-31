@@ -1436,14 +1436,27 @@ export function runBoundedListing(command, arguments_, workingDirectory) {
     timeout: MAX_CANDIDATE_MILLISECONDS,
     windowsHide: true,
   })
-  if (
-    result.status !== 0
-    || result.error
-    || typeof result.stdout !== 'string'
-    || typeof result.stderr !== 'string'
-    || Buffer.byteLength(result.stdout, 'utf8') > MAX_CONTAINER_LISTING_BYTES
-    || Buffer.byteLength(result.stderr, 'utf8') > MAX_CONTAINER_LISTING_BYTES
-  ) containerListingRejected('tool-output')
+  if (result.error) {
+    const code = /^[A-Z0-9_]{1,32}$/u.test(result.error.code ?? '')
+      ? result.error.code.toLowerCase().replaceAll('_', '-')
+      : 'unknown'
+    containerListingRejected(`tool-error-${code}`)
+  }
+  if (result.status !== 0) {
+    const status = Number.isInteger(result.status) && result.status >= 0 && result.status <= 255
+      ? result.status
+      : 'signal'
+    containerListingRejected(`tool-status-${status}`)
+  }
+  if (typeof result.stdout !== 'string' || typeof result.stderr !== 'string') {
+    containerListingRejected('tool-output-type')
+  }
+  if (Buffer.byteLength(result.stdout, 'utf8') > MAX_CONTAINER_LISTING_BYTES) {
+    containerListingRejected('tool-stdout-limit')
+  }
+  if (Buffer.byteLength(result.stderr, 'utf8') > MAX_CONTAINER_LISTING_BYTES) {
+    containerListingRejected('tool-stderr-limit')
+  }
   boundedListingLines(result.stdout)
   return result.stdout
 }

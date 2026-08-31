@@ -585,6 +585,24 @@ test('a successful bounded container listing may carry an ignored stderr warning
   }
 })
 
+test('bounded container listing exposes only a stable diagnostic class for tool failure', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-container-listing-failure-'))
+  const tool = resolve(root, 'listing-tool.mjs')
+  try {
+    await writeFile(tool, 'process.exitCode = 23\n')
+    assert.throws(
+      () => packageInspection.runBoundedListing(process.execPath, [tool], root),
+      error => {
+        assert.equal(error.message, 'desktop package contract rejected: candidate container listing rejected')
+        assert.equal(error.diagnosticCode, 'tool-status-23')
+        return true
+      },
+    )
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('container preflight rejects excessive entries and unsafe paths before extraction', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'nova-container-entries-'))
   const raw = resolve(root, 'container-raw')
