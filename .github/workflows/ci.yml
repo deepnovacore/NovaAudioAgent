@@ -26,6 +26,10 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run test:runtime
+        # The complete runtime suite asserts POSIX uid/mode and descriptor-lock
+        # contracts. Windows is covered by the desktop/native suite below and
+        # by the checkout-free installed NSIS smoke in unsigned-packages.yml.
+        if: runner.os != 'Windows'
       - run: npm run test:desktop
       - run: npm run build
 

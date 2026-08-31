@@ -292,8 +292,9 @@ if (mode === 'hold') {
 
       const contender = openSync(lockFile, 'r+')
       assert.deepEqual(addon.acquire(contender), {status: 'busy'})
+      const lockChildExit = new Promise(resolve => child.once('exit', resolve))
       child.kill('SIGKILL')
-      await new Promise(resolve => child.once('exit', resolve))
+      await lockChildExit
       lockChild = null
       let acquired = addon.acquire(contender)
       for (let attempt = 0; acquired.status === 'busy' && attempt < 100; attempt += 1) {
