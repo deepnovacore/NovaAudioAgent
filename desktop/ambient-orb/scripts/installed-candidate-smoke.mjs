@@ -654,6 +654,13 @@ export function installedSmokeDiagnostic(error, child = {}) {
   for (const match of stderr.matchAll(pattern)) {
     if (!codes.includes(match[1])) codes.push(match[1])
   }
+  const startupPattern = /\[desktop-diagnostic\]\s+startup_failure code=([a-z][a-z0-9_]*)/gu
+  for (const match of stderr.matchAll(startupPattern)) {
+    const generic = codes.indexOf('startup_failure')
+    if (generic >= 0) codes.splice(generic, 1)
+    const code = `startup_${match[1]}`
+    if (!codes.includes(code)) codes.push(code)
+  }
   const state = Number.isInteger(child.exitCode)
     ? `exit_${child.exitCode}`
     : typeof child.signalCode === 'string' && /^[A-Z0-9]+$/u.test(child.signalCode)

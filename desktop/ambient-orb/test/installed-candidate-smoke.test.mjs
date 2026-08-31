@@ -421,12 +421,14 @@ test('installed-candidate diagnostics expose only stable failure and child codes
     stderr: [
       '[backend-diagnostic] [runtime-diagnostic] assembly_failed',
       'private path C:\\Users\\runneradmin\\secret',
+      '[desktop-diagnostic] startup_failure code=project_directory_open_failed_home',
       '[desktop-diagnostic] source_rollback_unavailable',
     ].join('\n'),
     exitCode: null,
     signalCode: null,
   }), 'failure=installed_candidate_tree_failed+installed_candidate_readiness_failed '
-    + 'child=assembly_failed+source_rollback_unavailable state=running')
+    + 'child=assembly_failed+source_rollback_unavailable'
+    + '+startup_project_directory_open_failed_home state=running')
   assert.equal(installedSmokeDiagnostic(cleanup, {
     stderr: 'token=private-secret',
     exitCode: 7,
