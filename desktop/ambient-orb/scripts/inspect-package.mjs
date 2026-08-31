@@ -68,6 +68,7 @@ const CONTAINER_TOOL_TUPLES = Object.freeze({
   'linux-x64': Object.freeze({ path: 'linux/x64/7za', binary_kind: 'elf' }),
   'win32-x64': Object.freeze({ path: 'win/x64/7za.exe', binary_kind: 'pe' }),
 })
+const LINUX_SYSTEM_SEVEN_ZIP = '/usr/bin/7z'
 
 export class PackageInspectionError extends Error {
   constructor(detail) {
@@ -1712,6 +1713,70 @@ async function verifySnapshottedSevenZipTool(tool) {
   }
 }
 
+async function trustedLinuxSystemSevenZip() {
+  if (process.platform !== 'linux' || process.arch !== 'x64') containerToolRejected()
+  try {
+    const resolvedPath = await realpath(LINUX_SYSTEM_SEVEN_ZIP)
+    if (!resolvedPath.startsWith('/usr/bin/') && !resolvedPath.startsWith('/usr/lib/')) {
+      containerToolRejected()
+    }
+    const status = await lstat(resolvedPath)
+    if (
+      !status.isFile()
+      || status.isSymbolicLink()
+      || status.uid !== 0
+      || (status.mode & 0o022) !== 0
+      || (status.mode & 0o111) === 0
+      || status.size <= 0
+      || status.size > MAX_CONTAINER_TOOL_BYTES
+    ) containerToolRejected()
+    let handle
+    try {
+      handle = await open(resolvedPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+      const opened = await handle.stat()
+      if (
+        opened.dev !== status.dev
+        || opened.ino !== status.ino
+        || opened.size !== status.size
+      ) containerToolRejected()
+      const header = Buffer.alloc(Math.min(status.size, 4096))
+      const {bytesRead} = await handle.read(header, 0, header.length, 0)
+      verifyContainerToolBinary(header.subarray(0, bytesRead), {
+        binary_kind: 'elf',
+        architecture: 'x64',
+      })
+    } finally {
+      await handle?.close().catch(() => {})
+    }
+    return Object.freeze({
+      path: resolvedPath,
+      dev: status.dev,
+      ino: status.ino,
+      size: status.size,
+    })
+  } catch {
+    containerToolRejected()
+  }
+}
+
+async function verifyTrustedLinuxSystemSevenZip(tool) {
+  try {
+    const status = await lstat(tool.path)
+    if (
+      !status.isFile()
+      || status.isSymbolicLink()
+      || status.uid !== 0
+      || (status.mode & 0o022) !== 0
+      || (status.mode & 0o111) === 0
+      || status.dev !== tool.dev
+      || status.ino !== tool.ino
+      || status.size !== tool.size
+    ) containerToolRejected()
+  } catch {
+    containerToolRejected()
+  }
+}
+
 export async function snapshotLockedSevenZipTool({
   lockPath = DEFAULT_PACKAGE_LOCK,
   privateRoot,
@@ -1909,11 +1974,17 @@ async function extractCandidateContainer(snapshot, format, privateRoot, deadline
       },
     })
   } else {
-    const tool = await snapshotLockedSevenZipTool({
-      lockPath,
-      privateRoot: resolve(privateRoot, 'container-tool'),
-    })
-    await verifySnapshottedSevenZipTool(tool)
+    const systemTool = format === 'appimage'
+    const tool = systemTool
+      ? await trustedLinuxSystemSevenZip()
+      : await snapshotLockedSevenZipTool({
+        lockPath,
+        privateRoot: resolve(privateRoot, 'container-tool'),
+      })
+    const verifyTool = systemTool
+      ? verifyTrustedLinuxSystemSevenZip
+      : verifySnapshottedSevenZipTool
+    await verifyTool(tool)
     const containerSnapshot = format === 'appimage'
       ? resolve(privateRoot, 'candidate.squashfs')
       : snapshot
@@ -1925,15 +1996,15 @@ async function extractCandidateContainer(snapshot, format, privateRoot, deadline
       ['l', '-slt', '-ba', '-bd', '--', containerSnapshot],
       privateRoot,
     )
-    await verifySnapshottedSevenZipTool(tool)
+    await verifyTool(tool)
     await extractPreflightedContainer({
       format,
       listing,
       destinationRoot: raw,
       extract: async () => {
-        await verifySnapshottedSevenZipTool(tool)
+        await verifyTool(tool)
         runExtractor(tool.path, ['x', '-bd', '-y', `-o${raw}`, '--', containerSnapshot], privateRoot)
-        await verifySnapshottedSevenZipTool(tool)
+        await verifyTool(tool)
       },
     })
   }
