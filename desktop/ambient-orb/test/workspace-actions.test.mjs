@@ -69,6 +69,20 @@ test('OS open errors remain an explicit open_failed result', async () => {
   assert.deepEqual(value.calls, ['resolve_open', 'open:/managed/alpha'])
 })
 
+test('clear confirmation copy describes workspaces without managed terminology', async () => {
+  const dialogs = []
+  const value = fixture({dependencies: {
+    showMessageBox: async (_window, options) => {
+      dialogs.push(options)
+      return {response: dialogs.length === 1 ? 0 : 1}
+    },
+  }})
+
+  assert.deepEqual(await value.actions.clearAll(), {status: 'cancelled'})
+  assert.equal(dialogs.length, 2)
+  assert.doesNotMatch(JSON.stringify(dialogs), /托管/u)
+})
+
 test('public capabilities preserve maintenance health and independent current/all availability', () => {
   assert.equal(typeof workspaceActionModule.publicManagedWorkspaceCapabilities, 'function')
   const mapCapabilities = workspaceActionModule.publicManagedWorkspaceCapabilities

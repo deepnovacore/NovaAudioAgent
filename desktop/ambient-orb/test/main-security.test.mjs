@@ -175,11 +175,12 @@ test('Codex rescan is restricted to the settings window sender', async () => {
   )
   const rescan = source.slice(source.indexOf("ipcMain.handle('nova:codex:rescan'"))
   const handler = rescan.slice(0, rescan.indexOf('\n  })'))
-  assert.match(handler, /lifecycleCoordinator\.run\('codex_rescan'/)
-  assert.match(handler, /sameBackendLaunchConfiguration\(previous, prepared\)/)
-  assert.match(handler, /if \(changed && backendSupervisor\) await managedWorkspaceBackendRecovery\.restart\(\)/)
-  assert.match(handler, /discardDesktopConfiguration\(prepared\)/)
-  assert.match(handler, /operationStatus: 'busy'/)
+  assert.match(handler, /coordinateCodexRescan\(\{/)
+  assert.match(handler, /coordinator: lifecycleCoordinator/)
+  assert.match(handler, /currentConfiguration: \(\) => Object\.freeze\(\{config: desktopConfig, codexStatus\}\)/)
+  assert.match(handler, /discardConfiguration: discardDesktopConfiguration/)
+  assert.match(handler, /managedWorkspaceBackendRecovery\.restart\(\)/)
+  assert.match(handler, /view: settingsView/)
 })
 
 test('managed workspace actions are zero-argument and bound to the live settings sender', async () => {

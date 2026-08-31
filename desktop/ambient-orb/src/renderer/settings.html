@@ -254,7 +254,7 @@
               <span class="option"><span class="option-name">手动路径</span></span>
             </label>
           </fieldset>
-          <button type="button" id="codex-rescan">重新扫描</button>
+          <button type="button" id="codex-rescan">刷新</button>
           <div id="codex-manual-settings" hidden>
             <div class="field">
               <label for="codexBinaryPath">Codex 原生可执行文件</label>
@@ -266,17 +266,17 @@
               <small>当前有效值：<code id="effective-workspace"></code></small>
             </div>
             <div class="field">
-              <label for="codexManagedRoot">托管 workspace 根目录</label>
+              <label for="codexManagedRoot">workspace 根目录</label>
               <input type="text" id="codexManagedRoot" maxlength="32768" autocomplete="off" spellcheck="false" placeholder="默认 ~/.nova-audio-agent/workspaces">
               <small>当前有效值：<code id="effective-managed-root"></code></small>
             </div>
             <button type="button" id="projects-repair">修复 Projects 目录权限</button>
-            <small>仅修复当前设置对应的 state、托管根目录和 workspace，不接受任意路径。</small>
+            <small>仅修复当前设置对应的 state、workspace 根目录和当前 workspace，不接受任意路径。</small>
           </div>
           <div class="workspace-actions">
-            <button type="button" id="workspace-open-current">打开当前托管 workspace</button>
-            <button type="button" id="workspace-clear-current" class="destructive">清空当前托管 workspace</button>
-            <button type="button" id="workspace-clear-all" class="destructive">清空全部托管 workspace</button>
+            <button type="button" id="workspace-open-current">打开当前 workspace</button>
+            <button type="button" id="workspace-clear-current" class="destructive">清空当前 workspace</button>
+            <button type="button" id="workspace-clear-all" class="destructive">清空全部 workspace</button>
             <button type="button" id="workspace-retry-recovery" hidden>重试 workspace 恢复</button>
           </div>
           <p id="workspace-action-status" class="workspace-action-status" aria-live="polite"></p>

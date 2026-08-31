@@ -543,6 +543,17 @@ test('the panel exposes packaged Codex, Projects, and model endpoint configurati
   assert.match(script, /\(\{modelBaseUrl: modelBaseUrl\.value\}\)/)
 })
 
+test('workspace actions use refresh wording and omit managed terminology from UI copy', () => {
+  assert.match(html, /id="codex-rescan">刷新<\/button>/u)
+  assert.match(html, />打开当前 workspace<\/button>/u)
+  assert.match(html, />清空当前 workspace<\/button>/u)
+  assert.match(html, />清空全部 workspace<\/button>/u)
+  assert.match(script, /正在刷新 Codex/u)
+  assert.match(script, /Codex 刷新完成/u)
+  assert.doesNotMatch(html, /重新扫描|托管/u)
+  assert.doesNotMatch(script, /重新扫描|托管/u)
+})
+
 test('the optional model gateway address is grouped with its API key', () => {
   const secretsStart = html.indexOf('<details id="secrets"')
   const secretsEnd = html.indexOf('</details>', secretsStart)

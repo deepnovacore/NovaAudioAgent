@@ -143,7 +143,7 @@ export async function coordinateBackendRetry({coordinator, retry}) {
 function firstDialog(preview) {
   const target = preview.scope === 'current_managed'
     ? `“${preview.display_name}”`
-    : `${preview.count} 个 Nova 托管 workspaces`
+    : `${preview.count} 个 Nova workspaces`
   return Object.freeze({
     type: 'question',
     title: '确认清空 workspace',
@@ -159,7 +159,7 @@ function firstDialog(preview) {
 function destructiveDialog(scope) {
   const label = scope === 'current_managed'
     ? '永久清空当前 workspace'
-    : '永久清空全部托管 workspaces'
+    : '永久清空全部 workspaces'
   return Object.freeze({
     type: 'warning',
     title: '此操作不可撤销',

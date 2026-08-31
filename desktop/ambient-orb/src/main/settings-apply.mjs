@@ -79,6 +79,40 @@ export async function applySettingsTransaction({
     : coordinated.value
 }
 
+export async function coordinateCodexRescan({
+  coordinator,
+  currentConfiguration,
+  prepareConfiguration,
+  commitConfiguration,
+  discardConfiguration = async () => {},
+  restartBackend,
+  view,
+}) {
+  const coordinated = await coordinator.run('codex_rescan', async () => {
+    const previous = currentConfiguration()
+    let prepared
+    let committed = false
+    let changed = false
+    try {
+      prepared = await prepareConfiguration()
+      changed = !sameBackendLaunchConfiguration(previous, prepared)
+      await commitConfiguration(prepared)
+      committed = true
+    } finally {
+      if (prepared !== undefined && !committed) await discardConfiguration(prepared)
+    }
+    if (changed) await restartBackend()
+  })
+
+  // `coordinator.run()` releases lifecycle ownership in its finally block.
+  // Capture the reply only after that release, otherwise an older busy view can
+  // arrive after the coordinator's idle push and leave the panel disabled.
+  const settled = view()
+  return coordinated.status === 'busy'
+    ? {...settled, operationStatus: 'busy'}
+    : settled
+}
+
 function selected(source, keys) {
   const output = {}
   for (const key of keys) output[key] = source?.[key] ?? null

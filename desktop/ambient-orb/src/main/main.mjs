@@ -79,7 +79,7 @@ import {
 } from './settings-store.mjs'
 import {
   applySettingsTransaction,
-  sameBackendLaunchConfiguration,
+  coordinateCodexRescan,
 } from './settings-apply.mjs'
 import {
   coordinateBackendRetry,
@@ -857,25 +857,17 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) {
       throw new Error('Codex rescan rejected')
     }
-    const coordinated = await lifecycleCoordinator.run('codex_rescan', async () => {
-      const previous = Object.freeze({config: desktopConfig, codexStatus})
-      let prepared
-      let committed = false
-      let changed = false
-      try {
-        prepared = await prepareDesktopConfiguration()
-        changed = !sameBackendLaunchConfiguration(previous, prepared)
-        await commitDesktopConfiguration(prepared)
-        committed = true
-      } finally {
-        if (prepared !== undefined && !committed) await discardDesktopConfiguration(prepared)
-      }
-      if (changed && backendSupervisor) await managedWorkspaceBackendRecovery.restart()
-      return settingsView()
+    return coordinateCodexRescan({
+      coordinator: lifecycleCoordinator,
+      currentConfiguration: () => Object.freeze({config: desktopConfig, codexStatus}),
+      prepareConfiguration: prepareDesktopConfiguration,
+      commitConfiguration: commitDesktopConfiguration,
+      discardConfiguration: discardDesktopConfiguration,
+      restartBackend: async () => {
+        if (backendSupervisor) await managedWorkspaceBackendRecovery.restart()
+      },
+      view: settingsView,
     })
-    return coordinated.status === 'busy'
-      ? {...settingsView(), operationStatus: 'busy'}
-      : coordinated.value
   })
   ipcMain.handle('nova:backend:retry', async (event, ...args) => {
     if (!settingsWindow || event.sender !== settingsWindow.webContents || args.length !== 0) {

@@ -28,12 +28,12 @@ const SECRET_LABELS = {
   doubaoAsrApiKey: '豆包 ASR',
 }
 const WORKSPACE_STATUS_TEXT = Object.freeze({
-  opened: '已打开当前托管 workspace',
-  open_failed: '系统未能打开当前托管 workspace',
-  cleared: '已清空托管 workspace',
+  opened: '已打开当前 workspace',
+  open_failed: '系统未能打开当前 workspace',
+  cleared: '已清空 workspace',
   cancelled: '已取消',
-  not_managed: '当前 workspace 不是 Nova 托管目录',
-  empty: '没有可清空的托管 workspace',
+  not_managed: '当前 workspace 不在 Nova workspace 根目录中',
+  empty: '没有可清空的 workspace',
   busy: '另一项保存或维护操作正在进行',
   stop_failed: '后台未能安全停止，未清空 workspace',
   clear_failed: 'workspace 清空未完整完成，可重试清理',
@@ -146,7 +146,7 @@ function renderVoice(select, customInput, value, presets) {
 function renderCodexStatus(view) {
   const status = view.codexStatus
   if (status?.status !== 'ready') {
-    codexStatus.textContent = '未找到可用的 Codex CLI；可重新扫描或指定原生可执行文件。'
+    codexStatus.textContent = '未找到可用的 Codex CLI；可刷新或指定原生可执行文件。'
     codexStatus.dataset.ready = '0'
     return
   }
@@ -332,12 +332,12 @@ async function saveAll() {
 settingsSave.addEventListener('click', () => { void saveAll() })
 
 codexRescan.addEventListener('click', async () => {
-  statusLabel.textContent = '正在扫描 Codex…'
+  statusLabel.textContent = '正在刷新 Codex…'
   try {
     controller.syncView(await api.rescanCodex(), {trackRestart: false})
-    statusLabel.textContent = 'Codex 扫描完成'
+    statusLabel.textContent = 'Codex 刷新完成'
   } catch {
-    statusLabel.textContent = 'Codex 扫描失败'
+    statusLabel.textContent = 'Codex 刷新失败'
   }
 })
 document.querySelector('#projects-repair').addEventListener('click', async () => {

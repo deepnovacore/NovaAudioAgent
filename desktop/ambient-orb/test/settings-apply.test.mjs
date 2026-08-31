@@ -4,6 +4,7 @@ import test from 'node:test'
 import {createLifecycleCoordinator} from '../src/main/lifecycle-coordinator.mjs'
 import {
   applySettingsTransaction,
+  coordinateCodexRescan,
   sameBackendLaunchConfiguration,
 } from '../src/main/settings-apply.mjs'
 
@@ -166,4 +167,27 @@ test('backend launch comparison is stable, structural, and credential-free', () 
   changed.codexStatus.version = '1.2.4'
   assert.equal(sameBackendLaunchConfiguration(left, changed), false)
   assert.equal(sameBackendLaunchConfiguration(left, {...left, secret: 'ignored'}), true)
+})
+
+test('Codex refresh returns a view captured after lifecycle ownership is released', async () => {
+  const coordinator = createLifecycleCoordinator()
+  const previous = Object.freeze({config: {workspace: '/managed/alpha'}})
+  const prepared = structuredClone(previous)
+  let restarts = 0
+
+  const view = await coordinateCodexRescan({
+    coordinator,
+    currentConfiguration: () => previous,
+    prepareConfiguration: async () => prepared,
+    commitConfiguration: async () => {},
+    discardConfiguration: async () => {},
+    restartBackend: async () => { restarts += 1 },
+    view: () => Object.freeze({
+      managedWorkspaces: Object.freeze({lifecycleBusy: coordinator.busy}),
+    }),
+  })
+
+  assert.equal(view.managedWorkspaces.lifecycleBusy, false)
+  assert.equal(coordinator.busy, false)
+  assert.equal(restarts, 0)
 })
