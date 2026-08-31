@@ -118,6 +118,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           $installer = @(Get-ChildItem 'candidate/release-artifacts/*.exe')
           $digest = @(Get-ChildItem 'candidate/release-digests/*.exe.sha256')

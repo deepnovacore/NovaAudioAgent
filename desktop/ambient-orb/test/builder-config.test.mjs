@@ -527,7 +527,10 @@ test('unsigned Windows workflow publishes tag builds only after digest-bound ins
     && step.with?.name === 'unsigned-win32-x64'
   )))
   const publishStep = releaseJob.steps.find(step => step.run?.includes('gh release create'))
-  assert.deepEqual(publishStep.env, {GH_TOKEN: '${{ github.token }}'})
+  assert.deepEqual(publishStep.env, {
+    GH_TOKEN: '${{ github.token }}',
+    GH_REPO: '${{ github.repository }}',
+  })
   assert.match(publishStep.run, /candidate\/release-artifacts\/\*\.exe/u)
   assert.match(publishStep.run, /candidate\/release-digests\/\*\.exe\.sha256/u)
   assert.match(publishStep.run, /--verify-tag/u)
