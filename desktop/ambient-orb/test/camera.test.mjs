@@ -8,6 +8,8 @@ import {
   CAMERA_FRAME_MAGIC,
   CAMERA_HEIGHT,
   CAMERA_JPEG_QUALITY,
+  CAMERA_PRESENTED_FRAME_DEADLINE_MS,
+  CAMERA_PRESENTED_FRAME_TOLERANCE_SECONDS,
   CAMERA_WIDTH,
   MAX_CAMERA_JPEG_BYTES,
   MAX_CAMERA_POSITION_MS,
@@ -147,8 +149,11 @@ function makeFakeVideo({
   decode = 'success',
   seek = 'success',
   readyAfterSeek = 2,
+  presentation = 'unsupported',
 } = {}) {
   const listeners = new Map()
+  const frameCallbacks = new Map()
+  let nextFrameCallback = 0
   const video = {
     preload: '',
     muted: false,
@@ -163,6 +168,7 @@ function makeFakeVideo({
     removeSourceCalls: 0,
     seeks: [],
     _currentTime: 0,
+    _pendingTime: null,
     addEventListener(type, listener) {
       const values = listeners.get(type) ?? new Set()
       values.add(listener)
@@ -198,17 +204,35 @@ function makeFakeVideo({
     listenerCount() {
       return [...listeners.values()].reduce((sum, values) => sum + values.size, 0)
     },
+    frameCallbackCount() { return frameCallbacks.size },
+  }
+  if (presentation !== 'unsupported') {
+    video.requestVideoFrameCallback = callback => {
+      const id = ++nextFrameCallback
+      frameCallbacks.set(id, callback)
+      return id
+    }
+    video.cancelVideoFrameCallback = id => { frameCallbacks.delete(id) }
   }
   Object.defineProperty(video, 'currentTime', {
     get() { return this._currentTime },
     set(value) {
-      this._currentTime = value
       this.seeks.push(value)
+      if (presentation === 'delayed') this._pendingTime = value
+      else this._currentTime = value
       if (seek === 'success') queueMicrotask(() => {
         this.readyState = readyAfterSeek
         this.dispatch('seeked')
       })
       if (seek === 'error') queueMicrotask(() => this.dispatch('error'))
+      if (presentation === 'delayed') setImmediate(() => {
+        const presentedTime = this._pendingTime
+        this._pendingTime = null
+        this._currentTime = presentedTime
+        const callbacks = [...frameCallbacks.values()]
+        frameCallbacks.clear()
+        for (const callback of callbacks) callback(0, {mediaTime: presentedTime})
+      })
     },
   })
   return video
@@ -234,6 +258,8 @@ test('camera renderer constants and frame bytes match the independent v1 golden'
   assert.equal(CAMERA_WIDTH, 1280)
   assert.equal(CAMERA_HEIGHT, 720)
   assert.equal(CAMERA_JPEG_QUALITY, 0.8)
+  assert.equal(CAMERA_PRESENTED_FRAME_DEADLINE_MS, 500)
+  assert.equal(CAMERA_PRESENTED_FRAME_TOLERANCE_SECONDS, 0.1)
   assert.deepEqual(
     CAMERA_FRAME_MAGIC,
     new Uint8Array([0x4e, 0x56, 0x43, 0x41, 0x4d, 0x01, 0x0d, 0x0a]),
@@ -774,6 +800,71 @@ test('file capture is lazy, fixed-url, paused, deterministic, and reuses one dec
   assert.equal(video.removeSourceCalls, 1)
   assert.equal(video.loadCalls, 2, 'decoder release reloads the cleared source')
   assert.equal(video.listenerCount(), 0)
+  controller.dispose()
+})
+
+test('file capture waits for the requested decoded frame instead of encoding a stale seek frame', async () => {
+  const video = makeFakeVideo({duration: 10, presentation: 'delayed'})
+  const drawnTimes = []
+  const harness = makeLocalHarness({
+    drawImage: drawable => { drawnTimes.push(drawable.currentTime) },
+  })
+  const controller = await makeController({
+    ...harness,
+    createVideo: () => video,
+  }, 'file')
+  const response = makeDelivery()
+
+  controller.enqueue(fileRequest(2_500, 'camera-presented-frame'), response.delivery)
+
+  assert.equal((await settleWithin(response.response.promise, 'presented file frame')).kind, 'binary')
+  assert.deepEqual(drawnTimes, [2.5])
+  assert.equal(video.frameCallbackCount(), 0)
+  controller.dispose()
+})
+
+test('a missed presented-frame callback recreates the decoder within the same capture', async () => {
+  const timers = new Map()
+  let nextTimer = 0
+  const scheduler = {
+    setTimeout(callback, delay) {
+      const id = ++nextTimer
+      timers.set(id, {callback, delay})
+      return id
+    },
+    clearTimeout(id) { timers.delete(id) },
+  }
+  const stalled = makeFakeVideo({presentation: 'held'})
+  const recovered = makeFakeVideo()
+  const drawnTimes = []
+  const harness = makeLocalHarness({
+    drawImage: drawable => { drawnTimes.push(drawable.currentTime) },
+  })
+  let createCalls = 0
+  const controller = await makeController({
+    ...harness,
+    ...scheduler,
+    createVideo: () => (++createCalls === 1 ? stalled : recovered),
+  }, 'file')
+  const response = makeDelivery()
+
+  controller.enqueue(fileRequest(2_500, 'camera-presented-retry'), response.delivery)
+  let presentationTimer
+  for (let turn = 0; turn < 4 && !presentationTimer; turn += 1) {
+    await new Promise(resolve => setImmediate(resolve))
+    presentationTimer = [...timers.values()].find(
+      entry => entry.delay === CAMERA_PRESENTED_FRAME_DEADLINE_MS,
+    )
+  }
+  assert.ok(presentationTimer)
+  presentationTimer.callback()
+
+  assert.equal((await settleWithin(response.response.promise, 'presented frame retry')).kind, 'binary')
+  assert.equal(createCalls, 2)
+  assert.deepEqual(drawnTimes, [2.5])
+  assert.equal(stalled.frameCallbackCount(), 0)
+  assert.equal(stalled.removeSourceCalls, 1)
+  assert.equal(timers.size, 0)
   controller.dispose()
 })
 

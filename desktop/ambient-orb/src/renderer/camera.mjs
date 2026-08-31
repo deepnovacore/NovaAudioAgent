@@ -12,6 +12,13 @@ export const MAX_CAMERA_POSITION_MS = 86_400_000
 export const RENDERER_CAMERA_DEADLINE_MS = 4_500
 // A requested end position is held one millisecond inside the media timeline.
 export const CAMERA_FINAL_FRAME_EPSILON_SECONDS = 0.001
+// `requestVideoFrameCallback` reports the timestamp of the frame actually handed
+// to Chromium's compositor. Allow normal frame quantization while rejecting a
+// stale seek result (most importantly the video's 0-second poster frame).
+export const CAMERA_PRESENTED_FRAME_TOLERANCE_SECONDS = 0.1
+export const CAMERA_PRESENTED_FRAME_DEADLINE_MS = 500
+
+class PresentedFrameTimeoutError extends Error {}
 
 const requestIdPattern = /^camera-[A-Za-z0-9_-]+$/u
 const localKeys = ['request_id', 'source', 'type']
@@ -597,48 +604,64 @@ export class RendererCameraController {
   }
 
   async #captureFile(state, operation, requestedPositionMs) {
-    try {
-      if (!state.video) {
-        if (typeof this.#createVideo !== 'function') throw new Error('unavailable')
-        const video = this.#createVideo()
-        if (!video || typeof video.addEventListener !== 'function'
-          || typeof video.removeEventListener !== 'function') throw new Error('unavailable')
-        state.video = video
-        video.preload = 'auto'
-        video.muted = true
-        video.playsInline = true
-        video.src = CAMERA_FILE_URL
-        video.pause?.()
-        video.load?.()
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await this.#captureFileAttempt(state, operation, requestedPositionMs)
+      } catch (error) {
+        this.#releaseFile(state)
+        if (!(error instanceof PresentedFrameTimeoutError)
+          || !operation.active()
+          || attempt === 1) throw error
       }
-      const video = state.video
-      if (!(video.readyState >= 1)) {
-        await this.#waitForVideo(video, 'loadedmetadata', operation)
-      }
-      if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error('unavailable')
-      if (!(video.readyState >= 2)) await this.#waitForVideo(video, 'loadeddata', operation)
-
-      const durationLimitMs = Math.min(
-        this.#maxPositionMs,
-        Math.floor(video.duration * 1_000),
-      )
-      const boundedPositionMs = Math.max(0, Math.min(requestedPositionMs, durationLimitMs))
-      let targetSeconds = boundedPositionMs / 1_000
-      if (targetSeconds >= video.duration) {
-        targetSeconds = Math.max(0, video.duration - CAMERA_FINAL_FRAME_EPSILON_SECONDS)
-      }
-      const previousTime = video.currentTime
-      video.pause?.()
-      video.currentTime = targetSeconds
-      if (!(video.readyState >= 2 && previousTime === targetSeconds)) {
-        await this.#waitForVideo(video, 'seeked', operation)
-      }
-      if (video.paused !== true || !(video.readyState >= 2)) throw new Error('unavailable')
-      return await this.#encodeDrawable(video, operation)
-    } catch (error) {
-      this.#releaseFile(state)
-      throw error
     }
+    throw new Error('unavailable')
+  }
+
+  async #captureFileAttempt(state, operation, requestedPositionMs) {
+    if (!state.video) {
+      if (typeof this.#createVideo !== 'function') throw new Error('unavailable')
+      const video = this.#createVideo()
+      if (!video || typeof video.addEventListener !== 'function'
+        || typeof video.removeEventListener !== 'function') throw new Error('unavailable')
+      state.video = video
+      video.preload = 'auto'
+      video.muted = true
+      video.playsInline = true
+      video.src = CAMERA_FILE_URL
+      video.pause?.()
+      video.load?.()
+    }
+    const video = state.video
+    if (!(video.readyState >= 1)) {
+      await this.#waitForVideo(video, 'loadedmetadata', operation)
+    }
+    if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error('unavailable')
+    if (!(video.readyState >= 2)) await this.#waitForVideo(video, 'loadeddata', operation)
+
+    const durationLimitMs = Math.min(
+      this.#maxPositionMs,
+      Math.floor(video.duration * 1_000),
+    )
+    const boundedPositionMs = Math.max(0, Math.min(requestedPositionMs, durationLimitMs))
+    let targetSeconds = boundedPositionMs / 1_000
+    if (targetSeconds >= video.duration) {
+      targetSeconds = Math.max(0, video.duration - CAMERA_FINAL_FRAME_EPSILON_SECONDS)
+    }
+    const previousTime = video.currentTime
+    video.pause?.()
+    video.currentTime = targetSeconds
+    if (!(video.readyState >= 2 && previousTime === targetSeconds)) {
+      await Promise.all([
+        this.#waitForVideo(video, 'seeked', operation),
+        this.#waitForPresentedVideoFrame(video, targetSeconds, operation),
+      ])
+    }
+    if (video.paused !== true
+      || !(video.readyState >= 2)
+      || !videoTimeMatchesTarget(video.currentTime, targetSeconds)) {
+      throw new Error('unavailable')
+    }
+    return await this.#encodeDrawable(video, operation)
   }
 
   async #waitForVideo(video, successType, operation) {
@@ -656,6 +679,57 @@ export class RendererCameraController {
     const removeCleanup = operation.addCleanup(cleanup)
     try {
       await operation.wait(event)
+    } finally {
+      cleanup()
+      removeCleanup()
+    }
+  }
+
+  async #waitForPresentedVideoFrame(video, targetSeconds, operation) {
+    if (typeof video.requestVideoFrameCallback !== 'function') return
+    let callbackId = null
+    let timer = null
+    let cleanup = () => {}
+    const presented = new Promise((resolve, reject) => {
+      const onError = () => { cleanup(); reject(new Error('unavailable')) }
+      const onFrame = (_now, metadata) => {
+        callbackId = null
+        if (presentedFrameMatchesTarget(video, metadata, targetSeconds)) {
+          cleanup()
+          resolve()
+          return
+        }
+        try {
+          callbackId = video.requestVideoFrameCallback(onFrame)
+        } catch {
+          cleanup()
+          reject(new Error('unavailable'))
+        }
+      }
+      cleanup = () => {
+        if (timer !== null) this.#clearTimeout?.(timer)
+        timer = null
+        if (callbackId !== null && typeof video.cancelVideoFrameCallback === 'function') {
+          try { video.cancelVideoFrameCallback(callbackId) } catch { /* decoder cleanup */ }
+        }
+        callbackId = null
+        video.removeEventListener('error', onError)
+      }
+      video.addEventListener('error', onError, {once: true})
+      try {
+        callbackId = video.requestVideoFrameCallback(onFrame)
+        timer = this.#setTimeout?.(() => {
+          cleanup()
+          reject(new PresentedFrameTimeoutError())
+        }, CAMERA_PRESENTED_FRAME_DEADLINE_MS) ?? null
+      } catch {
+        cleanup()
+        reject(new Error('unavailable'))
+      }
+    })
+    const removeCleanup = operation.addCleanup(cleanup)
+    try {
+      await operation.wait(presented)
     } finally {
       cleanup()
       removeCleanup()
@@ -818,6 +892,16 @@ function safeCloseBitmap(bitmap) {
 
 function safeRelease(release, value) {
   try { release(value) } catch { /* late cleanup is best effort */ }
+}
+
+function videoTimeMatchesTarget(actual, target) {
+  return Number.isFinite(actual)
+    && Math.abs(actual - target) <= CAMERA_PRESENTED_FRAME_TOLERANCE_SECONDS
+}
+
+function presentedFrameMatchesTarget(video, metadata, target) {
+  return videoTimeMatchesTarget(video.currentTime, target)
+    && videoTimeMatchesTarget(metadata?.mediaTime, target)
 }
 
 function validRequestId(value) {
