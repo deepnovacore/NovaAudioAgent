@@ -92,11 +92,11 @@ Codex transport), and a supported desktop session; native helpers need one platf
 
 - Native echo-cancelled capture (VoiceProcessingIO) is macOS-only; Windows and Linux use
   Chromium's audio stack.
-- CI runs only on manual dispatch, only on Windows runners; signed three-platform candidates,
-  clean-machine runs, hardware validation, and publication evidence remain pending
+- CI validates source builds on macOS, Windows, and Ubuntu. Ubuntu is source-only: install the
+  dependencies, configure `.env`, then launch it yourself with `npm run start:client`.
+- Tagged releases publish an unsigned, versioned Windows installer only after its installed-smoke
+  test passes; hardware validation and signed packages remain pending
   ([Project status](docs/status.md)).
-- The unsigned-packages workflow ships a Windows artifact only; release-candidate Linux
-  artifacts are format-checked, not signed ([Getting started](docs/getting-started.md)).
 
 ```bash
 git clone https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
@@ -174,7 +174,26 @@ configuration, and performs exactly one controlled backend restart; the palette 
 same boundary. API keys are write-only, encrypted via the OS keychain, and read back as
 presence only.
 
-## 6. Documentation
+## 6. FAQ
+
+### Windows reports `project_directory_open_failed_home`
+
+This is usually not an npm, build, or Electron failure. Nova opens `%USERPROFILE%` at startup and
+fails closed when that directory's owner SID differs from the current process user's SID (the
+check is in [`project_native_windows.c`](desktop/ambient-orb/native/project-native/project_native_windows.c#L707);
+its caller is [`project-directories.mjs`](desktop/ambient-orb/src/main/project-directories.mjs#L78)). In PowerShell:
+
+```powershell
+icacls.exe "$env:USERPROFILE" /setowner "$env:USERDOMAIN\$env:USERNAME" /Q
+(Get-Acl "$env:USERPROFILE").Owner
+```
+
+If `icacls` reports insufficient permission, use an Administrator PowerShell. The second command
+should print the current computer/domain and username; then retry `npm run start:client`. Do not
+add `/T`: Nova only checks the home directory itself. Diagnosis is read-only; the repair changes
+only that directory's owner and does not recurse.
+
+## 7. Documentation
 
 | Read this | For |
 |---|---|
@@ -188,7 +207,7 @@ presence only.
 | [v3 design series](docs/archs/v3/00-overview.md) | The detailed design argument |
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | The design-space essay |
 
-## 7. Roadmap
+## 8. Roadmap
 
 - [ ] **The cascaded pipeline as the cheaper default** — the cascaded topology is already
   selectable (Volcengine ASR, `qwen-flash`, Volcengine TTS), but costing less than integrated
@@ -201,7 +220,7 @@ presence only.
 - [ ] **More coding agents through the executor port** — the `ExecutorAdapter` port is the
   seam for ACP or native protocols; Codex is the only backend today.
 
-## 8. Development and verification
+## 9. Development and verification
 
 ```bash
 npm ci && npm run check && npm run build && npm test
@@ -211,7 +230,7 @@ Live integrations are credential- and hardware-dependent and never substitute fo
 deterministic tests. Security reports: [SECURITY.md](SECURITY.md); contribution rules and
 invariants: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## 9. License
+## 10. License
 
 Copyright 2026 DeepNovaCore, [Apache License 2.0](LICENSE). Third-party attribution:
 [NOTICE](NOTICE) and [desktop notices](desktop/ambient-orb/THIRD_PARTY_NOTICES.md).

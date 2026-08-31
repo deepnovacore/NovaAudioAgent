@@ -83,10 +83,10 @@ transport），以及受支持的桌面会话；编译原生 helper 还需要对
 （[上手指南](docs/getting-started.zh-CN.md)）。各平台的验证程度并不一样：
 
 - 原生回声消除采集（VoiceProcessingIO）只有 macOS 有；Windows 和 Linux 走 Chromium 音频栈。
-- CI 只能手动触发，而且目前只跑 Windows runner；三平台签名候选、clean-machine、硬件验证和
-  发布证据都还没落地（[项目状态](docs/status.md)）。
-- unsigned 打包工作流只出 Windows artifact；release-candidate 工作流的 Linux artifact 只做
-  格式校验，不签名（[上手指南](docs/getting-started.zh-CN.md)）。
+- CI 会验证 macOS、Windows 和 Ubuntu 的源码构建。Ubuntu 目前只支持源码运行：装好依赖、配置
+  `.env` 后，需要自行执行 `npm run start:client` 启动。
+- tag 发布会在 installed-smoke 通过后生成带版本号的 Windows 未签名安装包；硬件验证和签名包仍
+  待补（[项目状态](docs/status.md)）。
 
 ```bash
 git clone https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent
@@ -154,7 +154,26 @@ Codex 可执行文件发现、托管 workspace 根目录，以及 §4 那几个 
 形式留在窗口里，点**保存并重启**才会一次性写盘、刷新生效配置，并做恰好一次受控的后台重启，
 配色也在这同一个提交点生效。API 密钥只写不读，走系统钥匙串加密，回读时只告诉你填没填。
 
-## 6. 文档
+## 6. 常见问题
+
+### Windows 报 `project_directory_open_failed_home`
+
+这通常不是 npm、构建或 Electron 的问题。Nova 启动时会打开 `%USERPROFILE%`；如果目录 owner
+SID 与当前进程用户 SID 不一致，就会 fail closed。检查在
+[`project_native_windows.c`](desktop/ambient-orb/native/project-native/project_native_windows.c#L707)，
+调用入口在 [`project-directories.mjs`](desktop/ambient-orb/src/main/project-directories.mjs#L78)。
+在 PowerShell 中修复并验证：
+
+```powershell
+icacls.exe "$env:USERPROFILE" /setowner "$env:USERDOMAIN\$env:USERNAME" /Q
+(Get-Acl "$env:USERPROFILE").Owner
+```
+
+若 `icacls` 提示权限不足，请使用“以管理员身份运行”的 PowerShell。第二条命令应输出当前电脑
+或域及用户名，之后重新执行 `npm run start:client`。无需加 `/T`：Nova 只检查用户目录本身。
+诊断过程只读；修复只改该目录的 owner，不递归修改子目录。
+
+## 7. 文档
 
 上手指南有中文版，其余文档目前只有英文。
 
@@ -170,7 +189,7 @@ Codex 可执行文件发现、托管 workspace 根目录，以及 §4 那几个 
 | [v3 设计系列](docs/archs/v3/00-overview.md) | 详细的设计论证 |
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 设计空间随笔 |
 
-## 7. 路线图
+## 8. 路线图
 
 - [ ] **把级联管线做成更省钱的默认**——级联拓扑今天已经可选（火山 ASR、`qwen-flash`、
   火山 TTS），但它比集成 `qwen-audio-3.0-realtime-plus` 更省成本目前只是预期，不是实测；
@@ -182,7 +201,7 @@ Codex 可执行文件发现、托管 workspace 根目录，以及 §4 那几个 
 - [ ] **通过 executor 端口接入更多 coding agent**——`ExecutorAdapter` 端口就是留给 ACP
   或各家原生协议的接缝；今天 Codex 是唯一后端。
 
-## 8. 开发与验证
+## 9. 开发与验证
 
 ```bash
 npm ci && npm run check && npm run build && npm test
@@ -192,7 +211,7 @@ npm ci && npm run check && npm run build && npm test
 [SECURITY.md](SECURITY.md)；贡献规则和每次改动都要守住的不变量见
 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 9. 许可证
+## 10. 许可证
 
 版权所有 2026 DeepNovaCore，以 [Apache License 2.0](LICENSE) 授权。第三方署名见
 [NOTICE](NOTICE) 与[桌面端第三方声明](desktop/ambient-orb/THIRD_PARTY_NOTICES.md)。
