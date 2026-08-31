@@ -132,7 +132,8 @@ export function candidateInstallPlan({target, artifact, scratch}) {
     uninstall = [{
       op: 'spawn',
       command: pathApi.resolve(installRoot, 'Uninstall Nova Audio Agent Ambient Orb.exe'),
-      args: ['/S', `_?=${installRoot}`],
+      args: ['/S'],
+      cwd: installRoot,
       timeoutMs: NATIVE_INSTALLER_SETTLE_MS,
       windowsVerbatimArguments: true,
     }]

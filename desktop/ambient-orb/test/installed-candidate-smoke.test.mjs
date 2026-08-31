@@ -147,7 +147,7 @@ test('Windows native installer actions allow enough time for cold CI extraction'
   assert.equal(plan.uninstall[0].timeoutMs, NATIVE_INSTALLER_SETTLE_MS)
 })
 
-test('Windows NSIS actions preserve spaced install roots and bind the uninstaller directory', () => {
+test('Windows NSIS actions preserve spaced install roots and exercise normal self-removal', () => {
   const plan = candidateInstallPlan({
     target: 'win32-x64:nsis',
     artifact: '/private/Candidate Files/nova setup.exe',
@@ -155,7 +155,8 @@ test('Windows NSIS actions preserve spaced install roots and bind the uninstalle
   })
   assert.deepEqual(plan.install[0].args, ['/S', '/D=/private/Smoke Root/install'])
   assert.equal(plan.install[0].windowsVerbatimArguments, true)
-  assert.deepEqual(plan.uninstall[0].args, ['/S', '_?=/private/Smoke Root/install'])
+  assert.deepEqual(plan.uninstall[0].args, ['/S'])
+  assert.equal(plan.uninstall[0].cwd, '/private/Smoke Root/install')
   assert.equal(plan.uninstall[0].windowsVerbatimArguments, true)
 })
 
