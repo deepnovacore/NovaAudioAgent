@@ -696,7 +696,7 @@ test('container preflight rejects excessive entries and unsafe paths before extr
     const invalidListings = [
       `${record(1)}${record(1)}`,
       `${record(1).replace('files/f1.txt', 'FILES/F1.TXT')}${record(1)}`,
-      record(1).replace('Attributes = A', 'Attributes = A lrwxr-xr-x'),
+      record(1).replace('Attributes = A', 'Attributes = A -rw-r--r--\nSymbolic Link = target'),
       record(1).replace('files/f1.txt', Array.from({ length: 65 }, () => 'x').join('/')),
       `${record(1).replace('files/f1.txt', 'parent')}${record(2).replace('files/f2.txt', 'parent/child')}`,
     ]
@@ -793,6 +793,21 @@ test('container preflight accepts modern full 7z Linux metadata without weakenin
   })
   assert.deepEqual(directoryLink, [
     { path: 'lib64', raw_path: 'lib64', type: 'link', size: 0, target: 'usr/lib64' },
+  ])
+
+  const targetlessLink = packageInspection.preflightContainerListing({
+    format: 'appimage',
+    listing: [
+      'Path = AppRun',
+      'Folder = -',
+      'Size = 9',
+      'Packed Size = 0',
+      'Mode = lrwxrwxrwx',
+      '',
+    ].join('\n'),
+  })
+  assert.deepEqual(targetlessLink, [
+    { path: 'AppRun', raw_path: 'AppRun', type: 'link', size: 0 },
   ])
 })
 
