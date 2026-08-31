@@ -786,7 +786,6 @@ test('container preflight accepts modern full 7z Linux metadata without weakenin
       'Folder = +',
       'Size = 9',
       'Packed Size = 0',
-      'Mode = lrwxrwxrwx',
       'Symbolic Link = usr/lib64',
       'Hard Link = ',
       '',

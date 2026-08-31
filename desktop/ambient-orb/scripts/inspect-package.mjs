@@ -1390,7 +1390,6 @@ function parseSevenZipListing(listing) {
     if (symbolicTarget !== undefined || linkAttributes) {
       if (
         symbolicTarget === undefined
-        || !linkAttributes
         || (posixMode !== undefined && posixMode[0] !== 'l')
       ) containerListingRejected('sevenzip-link')
       assertSafeSymlink(path, symbolicTarget)
