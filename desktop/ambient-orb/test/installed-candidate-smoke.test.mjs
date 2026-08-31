@@ -65,13 +65,13 @@ function assertPidGone(pid) {
 test('installed candidate plans use native install or mount boundaries for every closed artifact', () => {
   const root = '/private/smoke'
   const matrix = [
-    ['darwin-arm64:app', 'nova-darwin-arm64-app.zip', '/private/smoke/install/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/install'],
-    ['darwin-arm64:dmg', 'nova-darwin-arm64.dmg', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb'],
-    ['darwin-x64:app', 'nova-darwin-x64-app.zip', '/private/smoke/install/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/install'],
-    ['darwin-x64:dmg', 'nova-darwin-x64.dmg', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb'],
-    ['win32-x64:nsis', 'nova-win32-x64.exe', '/private/smoke/install/Nova Audio Agent Ambient Orb.exe', '/private/smoke/install'],
-    ['linux-x64-gnu:appimage', 'nova-linux-x64.AppImage', '/private/smoke/install/squashfs-root/AppRun', '/private/smoke/install'],
-    ['linux-x64-gnu:deb', 'nova-linux-x64.deb', '/usr/bin/nova-ambient-orb', '/usr/bin/nova-ambient-orb'],
+    ['darwin-arm64:app', 'nova-audio-agent-0.1.0-macos-arm64-app.zip', '/private/smoke/install/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/install'],
+    ['darwin-arm64:dmg', 'nova-audio-agent-0.1.0-macos-arm64.dmg', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb'],
+    ['darwin-x64:app', 'nova-audio-agent-0.1.0-macos-x64-app.zip', '/private/smoke/install/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/install'],
+    ['darwin-x64:dmg', 'nova-audio-agent-0.1.0-macos-x64.dmg', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb'],
+    ['win32-x64:nsis', 'nova-audio-agent-0.1.0-windows-x64.exe', '/private/smoke/install/Nova Audio Agent Ambient Orb.exe', '/private/smoke/install'],
+    ['linux-x64-gnu:appimage', 'nova-audio-agent-0.1.0-linux-x64.AppImage', '/private/smoke/install/squashfs-root/AppRun', '/private/smoke/install'],
+    ['linux-x64-gnu:deb', 'nova-audio-agent-0.1.0-linux-x64.deb', '/usr/bin/nova-ambient-orb', '/usr/bin/nova-ambient-orb'],
   ]
   for (const [target, artifactName, executable, residue] of matrix) {
     const plan = candidateInstallPlan({target, artifact: `${root}/${artifactName}`, scratch: root})
@@ -87,7 +87,7 @@ test('installed candidate plans use native install or mount boundaries for every
 test('Windows native installer actions allow enough time for cold CI extraction', () => {
   const plan = candidateInstallPlan({
     target: 'win32-x64:nsis',
-    artifact: '/private/candidate/nova-win32-x64.exe',
+    artifact: '/private/candidate/nova-audio-agent-0.1.0-windows-x64.exe',
     scratch: '/private/scratch',
   })
   assert.equal(NATIVE_INSTALLER_SETTLE_MS, 120_000)
@@ -292,7 +292,7 @@ test('installed candidate CLI defaults to and permits only formal release author
   assert.equal(typeof cliOptions, 'function')
   const required = [
     '--target', 'linux-x64-gnu:appimage',
-    '--artifact', '/candidate/nova-linux-x64.AppImage',
+    '--artifact', '/candidate/nova-audio-agent-0.1.0-linux-x64.AppImage',
     '--sha256', 'a'.repeat(64),
     '--commit', 'b'.repeat(40),
   ]
@@ -316,7 +316,7 @@ test('same-workflow unsigned artifact CLI is digest-bound and refuses attestatio
   assert.equal(typeof workflowArtifactCliOptions, 'function')
   const required = [
     '--target', 'win32-x64:nsis',
-    '--artifact', 'C:\\candidate\\nova-win32-x64.exe',
+    '--artifact', 'C:\\candidate\\nova-audio-agent-0.1.0-windows-x64.exe',
     '--sha256', 'a'.repeat(64),
   ]
   const values = workflowArtifactCliOptions(required)

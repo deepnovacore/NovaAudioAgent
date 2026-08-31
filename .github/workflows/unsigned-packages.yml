@@ -1,9 +1,10 @@
-name: Unsigned Windows and Linux packages
+name: Unsigned Windows package and release
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -23,10 +24,6 @@ jobs:
             target_id: win32-x64
             package_script: package:win
             artifact_name: unsigned-win32-x64
-          - os: ubuntu-latest
-            target_id: linux-x64-gnu
-            package_script: package:linux
-            artifact_name: unsigned-linux-x64-gnu
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -53,14 +50,6 @@ jobs:
         env:
           NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"
         run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
-      - name: Upload failed Linux AppImage for private diagnosis
-        if: failure() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: failed-linux-appimage-diagnostic
-          path: desktop/ambient-orb/dist/*.AppImage
-          if-no-files-found: error
-          retention-days: 1
       - name: Normalize closed release artifact names and final digests
         run: npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}
       - name: Prepare checkout-free installed smoke kit
@@ -91,18 +80,8 @@ jobs:
           - os: windows-2022
             target: win32-x64:nsis
             artifact_name: unsigned-win32-x64
-            filename: nova-win32-x64.exe
+            filename: nova-audio-agent-0.1.0-windows-x64.exe
             command: node
-          - os: ubuntu-latest
-            target: linux-x64-gnu:appimage
-            artifact_name: unsigned-linux-x64-gnu
-            filename: nova-linux-x64.AppImage
-            command: xvfb-run -a node
-          - os: ubuntu-latest
-            target: linux-x64-gnu:deb
-            artifact_name: unsigned-linux-x64-gnu
-            filename: nova-linux-x64.deb
-            command: xvfb-run -a node
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/setup-node@v4
@@ -122,3 +101,33 @@ jobs:
           --artifact candidate/release-artifacts/${{ matrix.filename }}
           --sha256-file candidate/release-digests/${{ matrix.filename }}.sha256
           --camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: installed-smoke
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-win32-x64
+          path: candidate
+      - name: Create GitHub Release from the installed-smoke-approved bytes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $installer = @(Get-ChildItem 'candidate/release-artifacts/*.exe')
+          $digest = @(Get-ChildItem 'candidate/release-digests/*.exe.sha256')
+          if ($installer.Count -ne 1 -or $digest.Count -ne 1) {
+            throw 'Expected exactly one Windows installer and SHA-256 digest.'
+          }
+          gh release create "$env:GITHUB_REF_NAME" `
+            $($installer[0].FullName) `
+            $($digest[0].FullName) `
+            --verify-tag `
+            --title "Nova Audio Agent $env:GITHUB_REF_NAME" `
+            --notes "Unsigned Windows x64 installer. Windows SmartScreen may warn because this build is not code-signed."
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed.' }

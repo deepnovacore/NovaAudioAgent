@@ -116,37 +116,37 @@ jobs:
           - os: macos-14
             target: darwin-arm64:app
             artifact_name: candidate-darwin-arm64
-            filename: nova-darwin-arm64-app.zip
+            filename: nova-audio-agent-0.1.0-macos-arm64-app.zip
             command: node
           - os: macos-14
             target: darwin-arm64:dmg
             artifact_name: candidate-darwin-arm64
-            filename: nova-darwin-arm64.dmg
+            filename: nova-audio-agent-0.1.0-macos-arm64.dmg
             command: node
           - os: macos-15-intel
             target: darwin-x64:app
             artifact_name: candidate-darwin-x64
-            filename: nova-darwin-x64-app.zip
+            filename: nova-audio-agent-0.1.0-macos-x64-app.zip
             command: node
           - os: macos-15-intel
             target: darwin-x64:dmg
             artifact_name: candidate-darwin-x64
-            filename: nova-darwin-x64.dmg
+            filename: nova-audio-agent-0.1.0-macos-x64.dmg
             command: node
           - os: windows-latest
             target: win32-x64:nsis
             artifact_name: candidate-win32-x64
-            filename: nova-win32-x64.exe
+            filename: nova-audio-agent-0.1.0-windows-x64.exe
             command: node
           - os: ubuntu-latest
             target: linux-x64-gnu:appimage
             artifact_name: candidate-linux-x64-gnu
-            filename: nova-linux-x64.AppImage
+            filename: nova-audio-agent-0.1.0-linux-x64.AppImage
             command: xvfb-run -a node
           - os: ubuntu-latest
             target: linux-x64-gnu:deb
             artifact_name: candidate-linux-x64-gnu
-            filename: nova-linux-x64.deb
+            filename: nova-audio-agent-0.1.0-linux-x64.deb
             command: xvfb-run -a node
     runs-on: ${{ matrix.os }}
     steps:

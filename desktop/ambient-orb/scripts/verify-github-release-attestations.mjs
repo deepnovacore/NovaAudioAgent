@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto'
 import {spawnSync} from 'node:child_process'
-import {createReadStream} from 'node:fs'
+import {createReadStream, readFileSync} from 'node:fs'
 import {lstat, readFile, readdir, realpath} from 'node:fs/promises'
 import {isAbsolute, resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
@@ -29,14 +29,21 @@ const EVIDENCE_CLAIM_KEYS = Object.freeze([
   'attestation_identity',
 ])
 
+const releasePackage = parseStrictJson(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+export const RELEASE_VERSION = releasePackage.version
+if (typeof RELEASE_VERSION !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(RELEASE_VERSION)) {
+  throw new Error('release package version invalid')
+}
+const RELEASE_FILE_PREFIX = `nova-audio-agent-${RELEASE_VERSION}`
+
 export const RELEASE_ARTIFACT_FILES = Object.freeze({
-  'darwin-arm64:app': 'nova-darwin-arm64-app.zip',
-  'darwin-arm64:dmg': 'nova-darwin-arm64.dmg',
-  'darwin-x64:app': 'nova-darwin-x64-app.zip',
-  'darwin-x64:dmg': 'nova-darwin-x64.dmg',
-  'win32-x64:nsis': 'nova-win32-x64.exe',
-  'linux-x64-gnu:appimage': 'nova-linux-x64.AppImage',
-  'linux-x64-gnu:deb': 'nova-linux-x64.deb',
+  'darwin-arm64:app': `${RELEASE_FILE_PREFIX}-macos-arm64-app.zip`,
+  'darwin-arm64:dmg': `${RELEASE_FILE_PREFIX}-macos-arm64.dmg`,
+  'darwin-x64:app': `${RELEASE_FILE_PREFIX}-macos-x64-app.zip`,
+  'darwin-x64:dmg': `${RELEASE_FILE_PREFIX}-macos-x64.dmg`,
+  'win32-x64:nsis': `${RELEASE_FILE_PREFIX}-windows-x64.exe`,
+  'linux-x64-gnu:appimage': `${RELEASE_FILE_PREFIX}-linux-x64.AppImage`,
+  'linux-x64-gnu:deb': `${RELEASE_FILE_PREFIX}-linux-x64.deb`,
 })
 
 export class ReleaseAttestationError extends Error {

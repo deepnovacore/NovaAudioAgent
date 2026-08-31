@@ -445,13 +445,14 @@ test('root npm commands require only the Node toolchain', async () => {
   assert.doesNotMatch(commands, /\b(?:python|pytest|uv)\b/u)
 })
 
-test('unsigned Windows and Linux workflow closes native packages through digest-bound installed smoke', async () => {
+test('unsigned Windows workflow publishes tag builds only after digest-bound installed smoke', async () => {
   const text = await readFile(UNSIGNED_WORKFLOW_PATH, 'utf8')
   const workflow = parseYaml(text)
 
-  assert.equal(workflow.name, 'Unsigned Windows and Linux packages')
+  assert.equal(workflow.name, 'Unsigned Windows package and release')
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch', 'push'])
   assert.deepEqual(workflow.on.push.branches, ['main'])
+  assert.deepEqual(workflow.on.push.tags, ['v*'])
   assert.deepEqual(workflow.permissions, {contents: 'read'})
 
   const packageJob = workflow.jobs.package
@@ -462,12 +463,6 @@ test('unsigned Windows and Linux workflow closes native packages through digest-
       target_id: 'win32-x64',
       package_script: 'package:win',
       artifact_name: 'unsigned-win32-x64',
-    },
-    {
-      os: 'ubuntu-latest',
-      target_id: 'linux-x64-gnu',
-      package_script: 'package:linux',
-      artifact_name: 'unsigned-linux-x64-gnu',
     },
   ])
 
@@ -510,25 +505,11 @@ test('unsigned Windows and Linux workflow closes native packages through digest-
       os: 'windows-2022',
       target: 'win32-x64:nsis',
       artifact_name: 'unsigned-win32-x64',
-      filename: 'nova-win32-x64.exe',
+      filename: 'nova-audio-agent-0.1.0-windows-x64.exe',
       command: 'node',
     },
-    {
-      os: 'ubuntu-latest',
-      target: 'linux-x64-gnu:appimage',
-      artifact_name: 'unsigned-linux-x64-gnu',
-      filename: 'nova-linux-x64.AppImage',
-      command: 'xvfb-run -a node',
-    },
-    {
-      os: 'ubuntu-latest',
-      target: 'linux-x64-gnu:deb',
-      artifact_name: 'unsigned-linux-x64-gnu',
-      filename: 'nova-linux-x64.deb',
-      command: 'xvfb-run -a node',
-    },
   ])
-  assert.doesNotMatch(text, /macos-/u)
+  assert.doesNotMatch(text, /macos-|ubuntu-|linux-x64/u)
   assert.equal(smokeJob.steps.some(step => step.uses === 'actions/checkout@v4'), false)
   assert.ok(smokeJob.steps.some(step => step.uses === 'actions/download-artifact@v4'))
   const smokeStep = smokeJob.steps.find(step => step.run?.includes('run-unsigned-installed-smoke.mjs'))
@@ -540,6 +521,21 @@ test('unsigned Windows and Linux workflow closes native packages through digest-
   ]) assert.ok(smokeStep.run.includes(argument), argument)
   assert.doesNotMatch(smokeStep.run, /--commit|--signer-workflow/u)
   assert.doesNotMatch(text, /attestations:|id-token:|attest-build-provenance/u)
+
+  const releaseJob = workflow.jobs.release
+  assert.equal(releaseJob.if, "startsWith(github.ref, 'refs/tags/v')")
+  assert.equal(releaseJob.needs, 'installed-smoke')
+  assert.equal(releaseJob['runs-on'], 'windows-2022')
+  assert.deepEqual(releaseJob.permissions, {contents: 'write'})
+  assert.ok(releaseJob.steps.some(step => (
+    step.uses === 'actions/download-artifact@v4'
+    && step.with?.name === 'unsigned-win32-x64'
+  )))
+  const publishStep = releaseJob.steps.find(step => step.run?.includes('gh release create'))
+  assert.deepEqual(publishStep.env, {GH_TOKEN: '${{ github.token }}'})
+  assert.match(publishStep.run, /candidate\/release-artifacts\/\*\.exe/u)
+  assert.match(publishStep.run, /candidate\/release-digests\/\*\.exe\.sha256/u)
+  assert.match(publishStep.run, /--verify-tag/u)
 })
 
 function parseBooleanPlist(text) {
