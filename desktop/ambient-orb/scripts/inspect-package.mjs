@@ -1123,7 +1123,12 @@ function assertCandidateDeadline(deadline) {
   if (Date.now() > deadline) throw new PackageInspectionError('candidate snapshot timed out')
 }
 
-function assertSafeSymlink(relativePath, target) {
+export function assertSafeSymlink(relativePath, target, {allowMacApplicationsLink = false} = {}) {
+  if (
+    allowMacApplicationsLink
+    && relativePath === 'Applications'
+    && target === '/Applications'
+  ) return
   if (
     typeof target !== 'string'
     || target === ''
@@ -1140,7 +1145,7 @@ function assertSafeSymlink(relativePath, target) {
   }
 }
 
-async function candidateTreeInventory(root, deadline) {
+async function candidateTreeInventory(root, deadline, linkOptions) {
   const records = []
   let totalBytes = 0
   const visit = async (directory, prefix, depth) => {
@@ -1163,7 +1168,7 @@ async function candidateTreeInventory(root, deadline) {
         await visit(path, relativePath, depth + 1)
       } else if (entry.isSymbolicLink()) {
         const target = await readlink(path)
-        assertSafeSymlink(relativePath, target)
+        assertSafeSymlink(relativePath, target, linkOptions)
         records.push({
           path: relativePath,
           type: 'link',
@@ -1203,8 +1208,8 @@ async function candidateTreeInventory(root, deadline) {
   })
 }
 
-async function captureCandidateDirectory(sourceRoot, destinationRoot, deadline) {
-  const initial = await candidateTreeInventory(sourceRoot, deadline)
+async function captureCandidateDirectory(sourceRoot, destinationRoot, deadline, linkOptions) {
+  const initial = await candidateTreeInventory(sourceRoot, deadline, linkOptions)
   await mkdir(destinationRoot, { mode: 0o700 })
   const copy = async (sourceDirectory, destinationDirectory, prefix, depth) => {
     assertCandidateDeadline(deadline)
@@ -1223,7 +1228,7 @@ async function captureCandidateDirectory(sourceRoot, destinationRoot, deadline) 
         await chmod(destinationPath, 0o500)
       } else if (entry.isSymbolicLink()) {
         const target = await readlink(sourcePath)
-        assertSafeSymlink(relativePath, target)
+        assertSafeSymlink(relativePath, target, linkOptions)
         await symlink(target, destinationPath)
       } else if (entry.isFile()) {
         let source
@@ -1254,8 +1259,8 @@ async function captureCandidateDirectory(sourceRoot, destinationRoot, deadline) 
   await copy(sourceRoot, destinationRoot, '', 0)
   await chmod(destinationRoot, 0o500)
   const [sourceAfter, snapshot] = await Promise.all([
-    candidateTreeInventory(sourceRoot, deadline),
-    candidateTreeInventory(destinationRoot, deadline),
+    candidateTreeInventory(sourceRoot, deadline, linkOptions),
+    candidateTreeInventory(destinationRoot, deadline, linkOptions),
   ])
   if (
     JSON.stringify(sourceAfter.records) !== JSON.stringify(initial.records)
@@ -1947,8 +1952,9 @@ async function extractCandidateContainer(snapshot, format, privateRoot, deadline
       'attach', snapshot, '-readonly', '-nobrowse', '-mountpoint', mount,
     ], privateRoot)
     try {
-      await candidateTreeInventory(mount, deadline)
-      const identity = await captureCandidateDirectory(mount, immutable, deadline)
+      const linkOptions = {allowMacApplicationsLink: true}
+      await candidateTreeInventory(mount, deadline, linkOptions)
+      const identity = await captureCandidateDirectory(mount, immutable, deadline, linkOptions)
       return Object.freeze({ root: immutable, identity })
     } finally {
       runExtractor('/usr/bin/hdiutil', ['detach', mount, '-force'], privateRoot)
@@ -2011,8 +2017,8 @@ async function extractCandidateContainer(snapshot, format, privateRoot, deadline
   return Object.freeze({ root: immutable, identity })
 }
 
-async function locateApplicationResources(applicationRoot, targetId, deadline) {
-  const inventory = await candidateTreeInventory(applicationRoot, deadline)
+async function locateApplicationResources(applicationRoot, targetId, deadline, linkOptions) {
+  const inventory = await candidateTreeInventory(applicationRoot, deadline, linkOptions)
   const expectedSuffix = targetId.startsWith('darwin-')
     ? 'Contents/Resources/app.asar'
     : 'resources/app.asar'
@@ -2069,6 +2075,7 @@ export async function inspectBuiltArtifact(candidatePath, {
   let snapshotIdentity
   let artifactIdentity
   let fileSnapshot
+  const linkOptions = format === 'dmg' ? {allowMacApplicationsLink: true} : undefined
   try {
     let status
     try {
@@ -2105,7 +2112,12 @@ export async function inspectBuiltArtifact(candidatePath, {
       snapshotRoot = container.root
       snapshotIdentity = container.identity
     }
-    const resourcesRoot = await locateApplicationResources(snapshotRoot, targetId, deadline)
+    const resourcesRoot = await locateApplicationResources(
+      snapshotRoot,
+      targetId,
+      deadline,
+      linkOptions,
+    )
     await requireNativeManifest(resourcesRoot)
     const report = await inspectAsarSnapshot(resolve(resourcesRoot, 'app.asar'), {
       targetId,
@@ -2113,7 +2125,7 @@ export async function inspectBuiltArtifact(candidatePath, {
       resourcesRoot,
       requireNative: true,
     })
-    const snapshotAfter = await candidateTreeInventory(snapshotRoot, deadline)
+    const snapshotAfter = await candidateTreeInventory(snapshotRoot, deadline, linkOptions)
     if (snapshotAfter.sha256 !== snapshotIdentity.sha256) {
       throw new PackageInspectionError('candidate snapshot changed')
     }

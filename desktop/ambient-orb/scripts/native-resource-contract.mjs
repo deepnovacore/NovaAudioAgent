@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { parseStrictJson } from './strict-json.mjs'
 
 const MAX_NATIVE_BYTES = 256 * 1024 * 1024
+const MAX_NATIVE_HEADER_BYTES = 64 * 1024
 const MAX_NATIVE_MANIFEST_BYTES = 1024 * 1024
 const MAX_NATIVE_FILES = 256
 const TARGETS = Object.freeze({
@@ -166,7 +167,7 @@ async function hashNativeFile(path, target, kind) {
       && process.platform !== 'win32'
       && (before.mode & 0o111) === 0
     ) throw new NativeResourceError('native_resource_mode')
-    const header = Buffer.alloc(Math.min(4096, before.size))
+    const header = Buffer.alloc(Math.min(MAX_NATIVE_HEADER_BYTES, before.size))
     await handle.read(header, 0, header.length, 0)
     if (kind !== 'data') assertBinaryHeader(header, target, kind)
     const hash = createHash('sha256')

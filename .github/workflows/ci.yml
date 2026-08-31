@@ -64,6 +64,8 @@ jobs:
       - run: npm ci
       - run: npm run ${{ matrix.script }}
       - run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
+        env:
+          NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
