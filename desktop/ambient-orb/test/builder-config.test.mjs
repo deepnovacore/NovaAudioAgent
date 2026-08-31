@@ -445,12 +445,13 @@ test('root npm commands require only the Node toolchain', async () => {
   assert.doesNotMatch(commands, /\b(?:python|pytest|uv)\b/u)
 })
 
-test('unsigned Windows workflow closes the native package through digest-bound installed smoke', async () => {
+test('unsigned Windows and Linux workflow closes native packages through digest-bound installed smoke', async () => {
   const text = await readFile(UNSIGNED_WORKFLOW_PATH, 'utf8')
   const workflow = parseYaml(text)
 
-  assert.equal(workflow.name, 'Unsigned Windows packages')
-  assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch'])
+  assert.equal(workflow.name, 'Unsigned Windows and Linux packages')
+  assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch', 'push'])
+  assert.deepEqual(workflow.on.push.branches, ['main'])
   assert.deepEqual(workflow.permissions, {contents: 'read'})
 
   const packageJob = workflow.jobs.package
@@ -461,6 +462,12 @@ test('unsigned Windows workflow closes the native package through digest-bound i
       target_id: 'win32-x64',
       package_script: 'package:win',
       artifact_name: 'unsigned-win32-x64',
+    },
+    {
+      os: 'ubuntu-latest',
+      target_id: 'linux-x64-gnu',
+      package_script: 'package:linux',
+      artifact_name: 'unsigned-linux-x64-gnu',
     },
   ])
 
@@ -503,8 +510,22 @@ test('unsigned Windows workflow closes the native package through digest-bound i
       filename: 'nova-win32-x64.exe',
       command: 'node',
     },
+    {
+      os: 'ubuntu-latest',
+      target: 'linux-x64-gnu:appimage',
+      artifact_name: 'unsigned-linux-x64-gnu',
+      filename: 'nova-linux-x64.AppImage',
+      command: 'xvfb-run -a node',
+    },
+    {
+      os: 'ubuntu-latest',
+      target: 'linux-x64-gnu:deb',
+      artifact_name: 'unsigned-linux-x64-gnu',
+      filename: 'nova-linux-x64.deb',
+      command: 'xvfb-run -a node',
+    },
   ])
-  assert.doesNotMatch(text, /(?:ubuntu|macos)-/u)
+  assert.doesNotMatch(text, /macos-/u)
   assert.equal(smokeJob.steps.some(step => step.uses === 'actions/checkout@v4'), false)
   assert.ok(smokeJob.steps.some(step => step.uses === 'actions/download-artifact@v4'))
   const smokeStep = smokeJob.steps.find(step => step.run?.includes('run-unsigned-installed-smoke.mjs'))
