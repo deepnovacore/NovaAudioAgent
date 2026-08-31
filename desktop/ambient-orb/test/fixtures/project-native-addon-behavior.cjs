@@ -8,6 +8,7 @@ const {
 const {homedir} = require('node:os')
 const {join} = require('node:path')
 const {spawn, spawnSync} = require('node:child_process')
+const {bindWindowsCurrentOwner} = require('./windows-current-owner.cjs')
 
 const addonPath = process.argv[2]
 if (addonPath === undefined) process.exit(0)
@@ -30,6 +31,7 @@ function openDirectory(path) {
 }
 
 function openNativeDirectory(path) {
+  bindWindowsCurrentOwner(path)
   const opened = addon.openDirectory(path)
   assert.equal(opened.status, 'ok', JSON.stringify(opened))
   assert.equal(Number.isInteger(opened.descriptor), true)

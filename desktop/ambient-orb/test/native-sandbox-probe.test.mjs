@@ -4,11 +4,14 @@ import {createServer} from 'node:net'
 import {tmpdir} from 'node:os'
 import {basename, dirname, resolve} from 'node:path'
 import {spawnSync} from 'node:child_process'
+import {createRequire} from 'node:module'
 import test from 'node:test'
 
 import {buildCodexSandboxProbe} from '../scripts/build-codex-sandbox-probe.mjs'
 
 const packageRoot = resolve(import.meta.dirname, '..')
+const require = createRequire(import.meta.url)
+const {bindWindowsCurrentOwner} = require('./fixtures/windows-current-owner.cjs')
 
 test('fixed native sandbox probe invokes its child and cannot default an unsandboxed run positive', {
   skip: process.platform !== 'darwin' && process.platform !== 'win32',
@@ -31,6 +34,9 @@ test('fixed native sandbox probe invokes its child and cannot default an unsandb
   const canonicalWorkspace = await realpath(workspace)
   const canonicalCanary = await realpath(canary)
   const marker = resolve(canonicalWorkspace, '.nova-audio-agent-codex-preflight-0123456789abcdef0123456789abcdef')
+  bindWindowsCurrentOwner(canonicalWorkspace)
+  bindWindowsCurrentOwner(sibling)
+  bindWindowsCurrentOwner(canonicalCanary)
 
   const server = createServer(socket => socket.end())
   await new Promise((resolveListen, rejectListen) => {
