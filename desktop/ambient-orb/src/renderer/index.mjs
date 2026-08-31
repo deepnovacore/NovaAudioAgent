@@ -304,15 +304,14 @@ function setAttribute(element, name, value) {
   if (element.getAttribute(name) !== value) element.setAttribute(name, value)
 }
 
-// The one door onto the interrupted playback axis. A real barge-in — the user
-// talking over playback — has the capture axis already in 'listening' by the
-// time the clear lands, so deriveOrbState keeps returning 'listening' and the
-// 'interrupted' state never renders. The scatter is therefore applied as a
-// one-shot impulse over whatever field is on screen, independent of the derived
-// name, while the label contract itself stays untouched.
-function markPlaybackInterrupted() {
-  if (axes.playback !== 'interrupted') visual.interrupt()
-  axes.playback = 'interrupted'
+// A clear ends the current playback generation immediately. A real barge-in has
+// already moved capture to `listening`, so changing the derived state would be
+// both redundant and misleading. Keep the event visible as a one-shot impulse,
+// then truthfully settle playback: native playback.cleared intentionally has no
+// later playback.done that could repair a latched state.
+function markPlaybackCleared() {
+  visual.interrupt()
+  axes.playback = 'idle'
 }
 
 function send(value) {
@@ -375,7 +374,7 @@ function scheduleFrames() {
     node.start(startAt)
     if (!playback.started) {
       // Report start at audibility, not at scheduling: a barge-in inside the
-      // scheduling lead must not turn silence into "interrupted" evidence.
+      // scheduling lead must not turn silence into interruption evidence.
       const generation = playback.current
       const delayMs = Math.max(0, (startAt - context.currentTime) * 1000)
       setTimeout(() => {
@@ -638,7 +637,7 @@ async function handleControl(message) {
           message.generation_epoch,
         )
       }
-      markPlaybackInterrupted()
+      markPlaybackCleared()
     }
     let playedMs = cleared
       ? Math.max(cleared.playedMs, Number(nativeEvidence?.playedMs) || 0)
@@ -671,7 +670,7 @@ async function handleControl(message) {
         return window.novaAudioAgentDesktop.nativeAudio.clear(utteranceId, generationEpoch)
       },
     })
-    if (result.cleared) markPlaybackInterrupted()
+    if (result.cleared) markPlaybackCleared()
     if (hasIdentity) {
       send({
         type: 'playback.cleared',

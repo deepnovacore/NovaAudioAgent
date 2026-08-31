@@ -5,7 +5,6 @@ const LABELS = Object.freeze({
   candidate: '检测到可能的语音',
   listening: '正在聆听',
   speaking: 'Nova Audio Agent 正在说话',
-  interrupted: '播放已中断，正在聆听',
   muted: '已闭麦，暂停接收麦克风输入',
   'permission-denied': '麦克风权限被拒绝',
   'microphone-restricted': '麦克风被系统策略限制',
@@ -31,7 +30,6 @@ const COMPACT_LABELS = Object.freeze({
   candidate: '检测中',
   listening: '聆听中',
   speaking: '回复中',
-  interrupted: '聆听中',
   muted: '已闭麦',
   'permission-denied': '麦克风未授权',
   'microphone-restricted': '麦克风被限制',
@@ -90,7 +88,6 @@ export function deriveOrbState(input) {
   else if (input.muted) name = 'muted'
   else if (input.capture === 'listening') name = 'listening'
   else if (input.capture === 'candidate') name = 'candidate'
-  else if (input.playback === 'interrupted') name = 'interrupted'
   else if (input.playback === 'speaking') name = 'speaking'
   else name = 'idle'
   const pendingConfirmation = input.pendingConfirmation === true

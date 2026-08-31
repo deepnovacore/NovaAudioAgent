@@ -123,7 +123,6 @@ test('every orb state carries a compact label on the one visible status line', (
     candidate: { ...base, capture: 'candidate' },
     listening: { ...base, capture: 'listening' },
     speaking: { ...base, playback: 'speaking' },
-    interrupted: { ...base, playback: 'interrupted' },
     muted: { ...base, muted: true },
     'permission-denied': { ...base, microphone: 'permission_denied' },
     'microphone-restricted': { ...base, microphone: 'restricted' },
@@ -154,10 +153,9 @@ test('labels the browser AEC path without implying it is a fallback', () => {
   assert.equal(state.aecLabel, '浏览器 AEC')
 })
 
-test('provides stable accessible labels for permission disconnect and interruption', () => {
+test('provides stable accessible labels for permission disconnect and playback', () => {
   assert.equal(deriveOrbState({ ...base, permission: 'denied' }).name, 'permission-denied')
   assert.equal(deriveOrbState({ ...base, connected: false }).name, 'disconnected')
-  assert.equal(deriveOrbState({ ...base, playback: 'interrupted' }).name, 'interrupted')
   assert.ok(deriveOrbState({ ...base, playback: 'speaking' }).label)
 })
 

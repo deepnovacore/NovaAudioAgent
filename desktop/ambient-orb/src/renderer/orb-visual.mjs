@@ -286,6 +286,8 @@ const LISTENING = stateParams({
   countRatio: 1,
 })
 
+const BARGE_IN_SCATTER = 1
+
 // A dead or refused session collapses the whole field onto one thin ring: the
 // silhouette reads as "stopped" at a glance, without borrowing the live states'
 // colour language. The three terminal states share that language — collapsed,
@@ -355,12 +357,6 @@ export const STATE_PARAMS = Object.freeze({
     alpha: 1,
     countRatio: 1,
   }),
-  // A barge-in is a one-shot outward impulse over the listening field: the
-  // scatter decays away while the state itself stays "interrupted". This entry
-  // covers the case the derived state can actually name — playback cleared
-  // without the microphone taking over — and owns the impulse size that
-  // interrupt() reuses for a barge-in over any other state.
-  interrupted: Object.freeze({ ...LISTENING, scatter: 1 }),
   // A deliberate mute: collapsed like the terminal family so it reads as
   // "not receiving", but dim-toned and mid-sized — the user chose this, so it
   // must not borrow the alert red. It keeps moving at the tier it resumes
@@ -410,7 +406,6 @@ export const STATE_PARAMS = Object.freeze({
 export const STATE_FPS = Object.freeze({
   speaking: 60,
   listening: 60,
-  interrupted: 60,
   candidate: 30,
   booting: 30,
   idle: 15,
@@ -859,8 +854,8 @@ export function createOrbVisual(canvas, options = {}) {
     // speed, so listening's calm attack actually plays on the normal onset
     // path (idle → candidate → listening) rather than starting saturated.
     const nextLevel = params.pulseGain === 0 ? 0 : levelTarget()
-    // Inward pulses (listening, and interrupted which spreads it) take the
-    // calm envelope; outward (speaking) keeps the fast one. Keyed off the
+    // Inward listening pulses take the calm envelope; outward speaking pulses
+    // keep the fast one. Keyed off the
     // *smoothed* pulse, not the target state: during a speaking→listening
     // transition the rendered pulse stays outward for ~200 ms, and leftover
     // outward energy must drain at speaking speed rather than be held by the
@@ -1196,17 +1191,12 @@ export function createOrbVisual(canvas, options = {}) {
     applyMode()
   }
 
-  // A one-shot barge-in impulse over whatever field is on screen.
-  //
-  // The 'interrupted' *state* is only reachable when playback is cleared without
-  // the microphone having taken over, and a real barge-in is the opposite case:
-  // the user talks over playback, the capture axis is already 'listening' when
-  // the clear lands, and deriveOrbState keeps saying 'listening' — correctly, as
-  // that is what the orb is doing. So the renderer calls this instead, and the
-  // scatter rides the current state rather than replacing it.
+  // A one-shot barge-in impulse over whatever truthful state is on screen.
+  // It never changes the state vocabulary; the renderer owns the playback clear
+  // and this visual owns only its short-lived acknowledgement.
   function interrupt() {
     if (destroyed) return
-    scatter = STATE_PARAMS.interrupted.scatter
+    scatter = BARGE_IN_SCATTER
     if (!staticMode && tickIntervalMs() > 0) {
       // A running loop decays the impulse; a hidden orb picks it up on resume.
       // A slow tier's pending wait is cancelled first — a barge-in impulse

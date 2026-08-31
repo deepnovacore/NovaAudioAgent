@@ -247,15 +247,6 @@ test('STATE_PARAMS carries the specified per-state behaviour values', () => {
   assert.equal(STATE_PARAMS.speaking.pulseDirection, 1)
 })
 
-test('interrupted is a one-shot scatter over the listening parameters', () => {
-  const { interrupted, listening } = STATE_PARAMS
-  assert.ok(interrupted.scatter > 0, 'interrupted carries a scatter impulse')
-  assert.equal(listening.scatter, 0)
-  for (const key of ['convergence', 'orbitSpeed', 'jitter', 'pulseGain', 'pulseDirection', 'alpha', 'countRatio', 'twinkleSpeed']) {
-    assert.equal(interrupted[key], listening[key], `interrupted.${key} matches listening`)
-  }
-})
-
 test('the three terminal states share the alert language but not the behaviour', () => {
   // Shared: all three are a collapsed, dimmed, alert-toned ring — the colour
   // semantics a grayscale viewer cannot tell apart anyway.
@@ -594,36 +585,9 @@ test('the codex band adds fourteen orbiting particles on any base state', () => 
   mounted.visual.destroy()
 })
 
-test('the interrupted scatter impulse decays back toward the listening field', () => {
-  const mounted = mount()
-  mounted.visual.setState('listening')
-  mounted.settle()
-  resetDraws(mounted.context)
-  mounted.step()
-  const listeningRadius = meanRadius(mounted.context)
-
-  mounted.visual.setState('interrupted')
-  resetDraws(mounted.context)
-  mounted.step()
-  const scatteredRadius = meanRadius(mounted.context)
-
-  mounted.settle()
-  resetDraws(mounted.context)
-  mounted.step()
-  const settledRadius = meanRadius(mounted.context)
-
-  assert.ok(scatteredRadius > listeningRadius, 'the impulse throws particles outward')
-  assert.ok(
-    Math.abs(settledRadius - listeningRadius) < 1.5,
-    `the field returns to listening (${settledRadius} vs ${listeningRadius})`,
-  )
-  mounted.visual.destroy()
-})
-
 test('interrupt scatters the current field whatever state it is in', () => {
-  // A real barge-in never reaches setState('interrupted'): the capture axis is
-  // already 'listening' when the playback clear lands, so deriveOrbState keeps
-  // saying 'listening' and the impulse has to apply over that field instead.
+  // The capture axis is already listening when playback clear lands, so the
+  // impulse applies over that truthful field without introducing another state.
   const mounted = mount()
   mounted.visual.setState('listening')
   mounted.settle()
@@ -892,13 +856,12 @@ test('a static-mode scatter impulse decays across state snapshots instead of per
   const before = centres(mounted.context)
   assert.ok(before.length > 0)
 
-  // A barge-in leaves scatter=1 on the interrupted snapshot; routing back to
-  // listening (scatter=0) must fully clear the impulse, not carry it forward.
+  // A barge-in produces one transient snapshot, then the seeded listening
+  // constellation must return unchanged.
   resetDraws(mounted.context)
-  mounted.visual.setState('interrupted')
-  resetDraws(mounted.context)
-  mounted.visual.setState('listening')
-  const after = centres(mounted.context)
+  mounted.visual.interrupt()
+  const frames = centres(mounted.context)
+  const after = frames.slice(before.length)
 
   assert.deepEqual(after, before, 'the seeded layout must be a pure function of (seed, state)')
   mounted.visual.destroy()
@@ -1143,8 +1106,6 @@ test('STATE_FPS covers every orb state and tiers them by how much they move', ()
   assert.deepEqual(STATE_FPS, {
     speaking: 60,
     listening: 60,
-    // A barge-in is a live listening field with a decaying impulse over it.
-    interrupted: 60,
     candidate: 30,
     booting: 30,
     reconnecting: 30,
@@ -1744,24 +1705,25 @@ test('the renderer feeds microphone and playback amplitude into the visual', asy
   assert.doesNotMatch(source, /node\.connect\(context\.destination\)/)
 })
 
-test('the renderer fires the barge-in impulse on the playback interrupted transition', async () => {
+test('the renderer settles playback clear and emits one impulse per successful clear', async () => {
   const source = await readFile(new URL('../src/renderer/index.mjs', import.meta.url), 'utf8')
 
-  // Every transition onto the interrupted playback axis goes through one door,
-  // which is also the only place the axis is assigned.
+  // Native clear returns playback.cleared without a later playback.done. The
+  // impulse therefore stays visual-only while the completed playback axis
+  // settles immediately instead of waiting for an unrelated next generation.
   assert.match(
     source,
-    /function markPlaybackInterrupted\(\) \{\n  if \(axes\.playback !== 'interrupted'\) visual\.interrupt\(\)\n  axes\.playback = 'interrupted'\n\}/,
+    /function markPlaybackCleared\(\) \{\n  visual\.interrupt\(\)\n  axes\.playback = 'idle'\n\}/,
   )
   assert.equal(
-    source.match(/axes\.playback = 'interrupted'/g).length,
-    1,
-    'the interrupted axis is assigned only inside that door',
+    (source.match(/playback = 'interrupted'/g) || []).length,
+    0,
+    'the removed playback state cannot be latched again',
   )
-  // Both clear paths — the plain playback.clear and the alert replacement —
-  // walk through it, so the scatter is independent of what deriveOrbState says.
-  assert.equal(source.match(/markPlaybackInterrupted\(\)/g).length, 3)
-  assert.match(source, /if \(result\.cleared\) markPlaybackInterrupted\(\)/)
+  // Both successful clear paths call the unconditional two-line helper once.
+  // There is no state guard that can suppress a later independent barge-in.
+  assert.equal(source.match(/markPlaybackCleared\(\)/g).length, 3)
+  assert.match(source, /if \(result\.cleared\) markPlaybackCleared\(\)/)
 })
 
 test('the renderer maps the onset attack window onto the candidate state', async () => {
