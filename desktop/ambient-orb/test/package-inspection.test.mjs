@@ -778,6 +778,23 @@ test('container preflight accepts modern full 7z Linux metadata without weakenin
   assert.deepEqual(records, [
     { path: 'usr/bin/nova', raw_path: 'usr/bin/nova', type: 'file', size: 12 },
   ])
+
+  const directoryLink = packageInspection.preflightContainerListing({
+    format: 'appimage',
+    listing: [
+      'Path = lib64/',
+      'Folder = +',
+      'Size = 9',
+      'Packed Size = 0',
+      'Mode = lrwxrwxrwx',
+      'Symbolic Link = usr/lib64',
+      'Hard Link = ',
+      '',
+    ].join('\n'),
+  })
+  assert.deepEqual(directoryLink, [
+    { path: 'lib64', raw_path: 'lib64', type: 'link', size: 0, target: 'usr/lib64' },
+  ])
 })
 
 test('container preflight admits only internal relative links and verifies their extracted targets', async () => {
