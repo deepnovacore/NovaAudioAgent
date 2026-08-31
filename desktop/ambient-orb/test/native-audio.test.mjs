@@ -118,7 +118,9 @@ test('macOS playback queue counts only active underruns and isolates final gener
   }
 })
 
-test('native audio forwards generation-scoped periodic and final playback telemetry', async () => {
+test('native audio forwards generation-scoped periodic and final playback telemetry', {
+  skip: process.platform !== 'darwin',
+}, async () => {
   let currentTime = 100
   const { audio, child, events } = await startReadyNativeAudio({
     now: () => currentTime,
@@ -199,7 +201,9 @@ test('native audio forwards generation-scoped periodic and final playback teleme
   child.stdout.destroy()
 })
 
-test('native audio attributes stdin backpressure and drain latency to one generation', async () => {
+test('native audio attributes stdin backpressure and drain latency to one generation', {
+  skip: process.platform !== 'darwin',
+}, async () => {
   let currentTime = 50
   const child = new EventEmitter()
   const commands = []
