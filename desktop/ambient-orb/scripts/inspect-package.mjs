@@ -1388,17 +1388,12 @@ function parseSevenZipListing(listing) {
     if (!Number.isSafeInteger(size) || size < 0) containerListingRejected('sevenzip-size')
     const linkAttributes = posixMode?.[0] === 'l' || /(?:^|\s)L(?:\s|$)/u.test(attributes)
     if (symbolicTarget !== undefined || linkAttributes) {
-      if (posixMode !== undefined && posixMode[0] !== 'l') {
-        containerListingRejected('sevenzip-link')
-      }
-      if (symbolicTarget !== undefined) assertSafeSymlink(path, symbolicTarget)
-      records.push({
-        path,
-        raw_path: rawPath,
-        type: 'link',
-        size: 0,
-        ...(symbolicTarget === undefined ? {} : { target: symbolicTarget }),
-      })
+      if (
+        symbolicTarget === undefined
+        || (posixMode !== undefined && posixMode[0] !== 'l')
+      ) containerListingRejected('sevenzip-link')
+      assertSafeSymlink(path, symbolicTarget)
+      records.push({ path, raw_path: rawPath, type: 'link', size: 0, target: symbolicTarget })
       fields = new Map()
       return
     }
@@ -1503,7 +1498,6 @@ function expectedContainerPaths(records) {
       type: record.type,
       size: record.size,
       sha256: record.type === 'link'
-        && record.target !== undefined
         ? createHash('sha256').update(record.target).digest('hex')
         : undefined,
     })
@@ -1536,7 +1530,7 @@ export async function extractPreflightedContainer({
         !wanted
         || actual.type !== wanted.type
         || (actual.type === 'file' && actual.size !== wanted.size)
-        || (actual.type === 'link' && wanted.sha256 !== undefined && actual.sha256 !== wanted.sha256)
+        || (actual.type === 'link' && actual.sha256 !== wanted.sha256)
       ) containerListingRejected()
     }
     return Object.freeze({ records, sha256: inventory.sha256 })
