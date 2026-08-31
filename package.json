@@ -22,6 +22,7 @@
     "fixtures:schema:session": "npm run build --workspace @nova-audio-agent/runtime && node runtime/scripts/generate-session-fixture-schema.mjs",
     "package:linux": "npm run package:linux --workspace @nova-audio-agent/ambient-orb",
     "package:mac": "npm run package:mac --workspace @nova-audio-agent/ambient-orb",
+    "package:mac:candidate": "npm run package:mac:candidate --workspace @nova-audio-agent/ambient-orb",
     "package:win": "npm run package:win --workspace @nova-audio-agent/ambient-orb",
     "runtime:demo": "npm run demo --workspace @nova-audio-agent/runtime",
     "runtime:fixtures": "npm run fixtures:check --workspace @nova-audio-agent/runtime",
