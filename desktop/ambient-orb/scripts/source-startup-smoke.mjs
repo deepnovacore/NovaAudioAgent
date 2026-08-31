@@ -2,6 +2,8 @@ import {spawn} from 'node:child_process'
 import {mkdir, mkdtemp, rm} from 'node:fs/promises'
 import {resolve} from 'node:path'
 
+import {prepareWindowsSmokeHomeOwnership} from './installed-candidate-smoke.mjs'
+
 export const SOURCE_STARTUP_SMOKE_ARGUMENT = '--nova-source-startup-smoke-v1'
 const READY_LINE = '[desktop-smoke] source_window_ready\n'
 const MAX_OUTPUT = 16 * 1024
@@ -32,6 +34,7 @@ export async function runSourceStartupSmoke({
   const userData = await mkdtemp(resolve(packageRoot, 'build', 'source-startup-smoke-'))
   const home = resolve(userData, 'home')
   await mkdir(home, {mode: 0o700})
+  prepareWindowsSmokeHomeOwnership({home, environment: process.env})
   const electron = resolve(packageRoot, 'node_modules/electron/dist/electron.exe')
   let child = null
   try {

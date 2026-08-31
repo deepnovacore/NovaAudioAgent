@@ -143,8 +143,10 @@ if (mode === 'hold') {
         {status: 'ok'},
       )
 
-      mkdirSync(join(root, 'repair-me'))
-      const repairDescriptor = openDirectory(join(root, 'repair-me'))
+      const repairDirectory = join(root, 'repair-me')
+      mkdirSync(repairDirectory)
+      bindWindowsCurrentOwner(repairDirectory)
+      const repairDescriptor = openDirectory(repairDirectory)
       try {
         assert.deepEqual(
           addon.protectAt(rootDescriptor, 'repair-me', repairDescriptor),
