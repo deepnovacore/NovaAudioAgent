@@ -40,6 +40,8 @@ desktop/ambient-orb/resources/generated/
 # Internal working material (demo video production)
 docs/demos/
 docs/superpowers/
+assets/demos/cat-sofa-guard/*-preroll.mp4
+assets/demos/video-cut
 .worktrees/
 video/
 .claude/merge-artifacts/*.bundle
