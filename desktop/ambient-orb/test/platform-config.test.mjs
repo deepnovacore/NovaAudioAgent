@@ -9,13 +9,13 @@ const { productPaths, resolveDesktopConfig } = platformConfig
 test('product paths use the hidden Nova root on Windows and POSIX', () => {
   assert.deepEqual(productPaths({ home: 'C:\\Users\\nova', pathApi: win32 }), {
     root: 'C:\\Users\\nova\\.nova-audio-agent',
-    stateRoot: 'C:\\Users\\nova\\.nova-audio-agent\\state',
+    stateRoot: 'C:\\Users\\nova\\.nova-audio-agent',
     managedRoot: 'C:\\Users\\nova\\.nova-audio-agent\\workspaces',
     defaultWorkspace: 'C:\\Users\\nova\\.nova-audio-agent\\workspaces\\default',
   })
   assert.deepEqual(productPaths({ home: '/home/nova', pathApi: posix }), {
     root: '/home/nova/.nova-audio-agent',
-    stateRoot: '/home/nova/.nova-audio-agent/state',
+    stateRoot: '/home/nova/.nova-audio-agent',
     managedRoot: '/home/nova/.nova-audio-agent/workspaces',
     defaultWorkspace: '/home/nova/.nova-audio-agent/workspaces/default',
   })
@@ -36,6 +36,7 @@ test('desktop configuration lets the explicit process binary override saved disc
       NOVA_AUDIO_AGENT_CODEX_BIN: 'C:\\Env\\codex.exe',
       NOVA_AUDIO_AGENT_CODEX_WORKSPACE: 'C:\\Env\\Workspace',
       NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: 'C:\\Env\\Managed',
+      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: 'C:\\Env\\State',
       NOVA_AUDIO_AGENT_MODEL_BASE_URL: 'https://env.example/v1',
     },
     home: 'C:\\Users\\nova',
@@ -49,7 +50,7 @@ test('desktop configuration lets the explicit process binary override saved disc
 
   assert.deepEqual(resolved, {
     root: 'C:\\Users\\nova\\.nova-audio-agent',
-    stateRoot: 'C:\\Users\\nova\\.nova-audio-agent\\state',
+    stateRoot: 'C:\\Env\\State',
     managedRoot: 'C:\\Env\\Managed',
     workspace: 'C:\\Work\\Nova',
     codexBinaryMode: 'manual',
@@ -61,7 +62,7 @@ test('desktop configuration lets the explicit process binary override saved disc
   })
   assert.deepEqual(canonicalized, [
     'C:\\Users\\nova\\.nova-audio-agent',
-    'C:\\Users\\nova\\.nova-audio-agent\\state',
+    'C:\\Env\\State',
     'C:\\Env\\Managed',
     'C:\\Work\\Nova',
     'C:\\Env\\codex.exe',
@@ -82,6 +83,7 @@ test('empty desktop settings admit environment and hidden-root defaults', () => 
   assert.equal(resolved.codexBinaryPath, '')
   assert.equal(resolved.codexConfigurationError, null)
   assert.equal(Object.hasOwn(resolved, 'codexProjectsEnabled'), false)
+  assert.equal(resolved.stateRoot, '/home/nova/.nova-audio-agent')
   assert.equal(resolved.managedRoot, '/home/nova/.nova-audio-agent/workspaces')
   assert.equal(resolved.workspace, '/home/nova/.nova-audio-agent/workspaces/default')
   assert.equal(resolved.startListeningOnLaunch, false)
@@ -145,7 +147,6 @@ test('startup creates every application-owned default directory before spawn', a
   assert.equal(result, config)
   assert.deepEqual(created, [
     { path: '/home/nova/.nova-audio-agent', options: { recursive: true, mode: 0o700 } },
-    { path: '/home/nova/.nova-audio-agent/state', options: { recursive: true, mode: 0o700 } },
     { path: '/home/nova/.nova-audio-agent/workspaces', options: { recursive: true, mode: 0o700 } },
     { path: '/home/nova/.nova-audio-agent/workspaces/default', options: { recursive: true, mode: 0o700 } },
   ])

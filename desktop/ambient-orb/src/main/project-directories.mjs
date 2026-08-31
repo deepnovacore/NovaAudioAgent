@@ -60,7 +60,12 @@ export async function ensurePrivateProjectDirectories({
 }) {
   const productRoot = pathApi.resolve(pathApi.join(home, '.nova-audio-agent'))
   if (platform !== 'win32') {
-    for (const directory of [config.root, config.stateRoot, config.managedRoot, config.workspace]) {
+    for (const directory of new Set([
+      config.root,
+      config.stateRoot,
+      config.managedRoot,
+      config.workspace,
+    ])) {
       await mkdir(directory, {recursive: true, mode: 0o700})
     }
     return config
@@ -86,16 +91,18 @@ export async function ensurePrivateProjectDirectories({
     const defaultState = pathApi.join(config.root, 'state')
     const defaultManaged = pathApi.join(config.root, 'workspaces')
     const defaultWorkspace = pathApi.join(defaultManaged, 'default')
-    const stateHandle = await ensureChild({
-      parent: rootHandle,
-      name: 'state',
-      path: defaultState,
-      stage: 'state',
-      bootstrap: false,
-      nativeHost,
-      openDirectory: openNativeDirectory,
-    })
-    await closeChild(stateHandle)
+    if (config.stateRoot === defaultState) {
+      const stateHandle = await ensureChild({
+        parent: rootHandle,
+        name: 'state',
+        path: defaultState,
+        stage: 'state',
+        bootstrap: false,
+        nativeHost,
+        openDirectory: openNativeDirectory,
+      })
+      await closeChild(stateHandle)
+    }
     workspacesHandle = await ensureChild({
       parent: rootHandle,
       name: 'workspaces',

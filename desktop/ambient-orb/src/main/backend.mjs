@@ -202,8 +202,8 @@ export function backendLaunchSpec({
     if (typeof resolvedConfig.managedRoot === 'string' && resolvedConfig.managedRoot) {
       env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT = resolvedConfig.managedRoot
     }
-    if (typeof resolvedConfig.paths?.stateRoot === 'string') {
-      env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT = resolvedConfig.paths.stateRoot
+    if (typeof resolvedConfig.stateRoot === 'string' && resolvedConfig.stateRoot) {
+      env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT = resolvedConfig.stateRoot
     }
     if (typeof resolvedConfig.modelBaseUrl === 'string' && resolvedConfig.modelBaseUrl) {
       env.NOVA_AUDIO_AGENT_MODEL_BASE_URL = resolvedConfig.modelBaseUrl

@@ -23,6 +23,7 @@ test('desktop startup creates defaults then resolves an installed Codex candidat
   })
 
   assert.equal(result.config.workspace, '/home/nova/.nova-audio-agent/workspaces/default')
+  assert.equal(result.config.stateRoot, '/home/nova/.nova-audio-agent')
   assert.equal(result.config.codexBinaryPath, '/opt/codex/bin/codex')
   assert.deepEqual(result.codexStatus, {
     status: 'ready',
@@ -34,7 +35,6 @@ test('desktop startup creates defaults then resolves an installed Codex candidat
   })
   assert.deepEqual(events, [
     'mkdir:/home/nova/.nova-audio-agent',
-    'mkdir:/home/nova/.nova-audio-agent/state',
     'mkdir:/home/nova/.nova-audio-agent/workspaces',
     'mkdir:/home/nova/.nova-audio-agent/workspaces/default',
     'inspect:/opt/codex/bin/codex',

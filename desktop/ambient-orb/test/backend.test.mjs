@@ -3,7 +3,7 @@ import net from 'node:net'
 import test from 'node:test'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { resolve } from 'node:path'
+import { posix, resolve } from 'node:path'
 
 import {
   BACKEND_DRAIN_GRACE_MS,
@@ -16,6 +16,7 @@ import {
   shutdownBackend,
   watchBackendExit,
 } from '../src/main/backend.mjs'
+import { resolveDesktopConfig } from '../src/main/platform-config.mjs'
 
 const TOKEN = 'b'.repeat(32)
 const SETTINGS_V2 = Object.freeze({
@@ -246,8 +247,8 @@ test('resolved desktop settings override inherited Codex and model configuration
       codexBinaryPath: '/settings/codex',
       codexBinaryPrefixArgs: ['/settings/node_modules/@openai/codex/bin/codex.js'],
       managedRoot: '/settings/managed',
+      stateRoot: '/settings/state',
       modelBaseUrl: 'https://settings.example/v1',
-      paths: {stateRoot: '/settings/state'},
     },
   })
 
@@ -260,6 +261,34 @@ test('resolved desktop settings override inherited Codex and model configuration
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT, '/settings/managed')
   assert.equal(spec.env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT, '/settings/state')
   assert.equal(spec.env.NOVA_AUDIO_AGENT_MODEL_BASE_URL, 'https://settings.example/v1')
+})
+
+test('the runtime receives the exact state root resolved for desktop maintenance', () => {
+  const resolvedConfig = resolveDesktopConfig({
+    settings: {},
+    environment: {
+      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '/existing/project-state',
+    },
+    home: '/home/nova',
+    platform: 'linux',
+    pathApi: posix,
+    canonicalize: value => value,
+  })
+  const spec = nodeLaunchSpec({
+    workspace: resolvedConfig.workspace,
+    token: TOKEN,
+    readyEndpoint: '127.0.0.1:49152',
+    parentEnv: {
+      NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT: '/stale/project-state',
+    },
+    resolvedConfig,
+  })
+
+  assert.equal(resolvedConfig.stateRoot, '/existing/project-state')
+  assert.equal(
+    spec.env.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT,
+    resolvedConfig.stateRoot,
+  )
 })
 
 test('resolved desktop configuration removes an invalid inherited Codex binary', () => {
@@ -278,8 +307,8 @@ test('resolved desktop configuration removes an invalid inherited Codex binary',
       workspace: '/workspace',
       codexBinaryPath: '',
       managedRoot: '/managed',
+      stateRoot: '/state',
       modelBaseUrl: '',
-      paths: {stateRoot: '/state'},
     },
   })
 

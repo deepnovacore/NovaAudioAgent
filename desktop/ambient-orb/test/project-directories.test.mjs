@@ -80,6 +80,34 @@ test('Windows creates and verifies every default directory descriptor-relatively
   ])
 })
 
+test('Windows reuses the protected product root when it is also the state root', async () => {
+  const value = fixture()
+  const config = {
+    root: value.root,
+    stateRoot: value.root,
+    managedRoot: `${value.root}\\workspaces`,
+    workspace: `${value.root}\\workspaces\\default`,
+  }
+  await ensurePrivateProjectDirectories({
+    config,
+    home: 'C:\\Users\\nova',
+    platform: 'win32',
+    nativeHost: value.nativeHost,
+    pathApi: path.win32,
+    mkdir: async () => { throw new Error('path mkdir must not create defaults') },
+  })
+  assert.deepEqual(value.creates, [
+    ['bootstrap', 1, '.nova-audio-agent'],
+    ['child', 2, 'workspaces'],
+    ['child', 4, 'default'],
+  ])
+  assert.deepEqual(value.protects, [
+    [1, '.nova-audio-agent', 2],
+    [2, 'workspaces', 4],
+    [4, 'default', 5],
+  ])
+})
+
 test('repair selects a configured root enum and never consumes a renderer path', async () => {
   const value = fixture()
   const config = {

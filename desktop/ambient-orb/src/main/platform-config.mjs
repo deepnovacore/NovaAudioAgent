@@ -7,7 +7,7 @@ export function productPaths({ home, pathApi }) {
   const managedRoot = pathApi.join(root, 'workspaces')
   return Object.freeze({
     root,
-    stateRoot: pathApi.join(root, 'state'),
+    stateRoot: root,
     managedRoot,
     defaultWorkspace: pathApi.join(managedRoot, 'default'),
   })
@@ -38,6 +38,8 @@ export function resolveDesktopConfig({
   const managedRoot = nonempty(settings.codexManagedRoot)
     || nonempty(environment.NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT)
     || defaults.managedRoot
+  const stateRoot = nonempty(environment.NOVA_AUDIO_AGENT_CODEX_PROJECT_STATE_ROOT)
+    || defaults.stateRoot
   const workspace = nonempty(settings.codexWorkspace)
     || nonempty(environment.NOVA_AUDIO_AGENT_CODEX_WORKSPACE)
     || defaults.defaultWorkspace
@@ -52,7 +54,7 @@ export function resolveDesktopConfig({
   void platform
   return Object.freeze({
     root: canonicalize(defaults.root),
-    stateRoot: canonicalize(defaults.stateRoot),
+    stateRoot: canonicalize(stateRoot),
     managedRoot: canonicalize(managedRoot),
     workspace: canonicalize(workspace),
     codexBinaryMode,
@@ -65,7 +67,7 @@ export function resolveDesktopConfig({
 }
 
 export async function ensureProductDirectories(config, { mkdir, pathApi }) {
-  const directories = [config.root, config.stateRoot, config.managedRoot]
+  const directories = new Set([config.root, config.stateRoot, config.managedRoot])
   const relativeWorkspace = pathApi.relative(config.managedRoot, config.workspace)
   if (
     relativeWorkspace !== ''
@@ -73,7 +75,7 @@ export async function ensureProductDirectories(config, { mkdir, pathApi }) {
     && !relativeWorkspace.startsWith(`..${pathApi.sep}`)
     && !pathApi.isAbsolute(relativeWorkspace)
   ) {
-    directories.push(config.workspace)
+    directories.add(config.workspace)
   }
   for (const directory of directories) {
     await mkdir(directory, { recursive: true, mode: 0o700 })
