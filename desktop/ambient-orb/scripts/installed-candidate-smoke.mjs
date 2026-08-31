@@ -35,6 +35,42 @@ export function candidateScratchParent({
   return pathApi.resolve(parent)
 }
 
+export function prepareWindowsSmokeHomeOwnership({
+  platform = process.platform,
+  home,
+  environment,
+  run = spawnSync,
+}) {
+  if (platform !== 'win32') return
+  const systemRoot = environment?.SystemRoot ?? environment?.WINDIR
+  if (typeof home !== 'string' || !win32.isAbsolute(home)
+    || typeof systemRoot !== 'string' || !win32.isAbsolute(systemRoot)) {
+    throw new Error('installed_candidate_invalid')
+  }
+  const options = {
+    env: environment,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10_000,
+    maxBuffer: OUTPUT_LIMIT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }
+  const identity = run(win32.join(systemRoot, 'System32', 'whoami.exe'), [
+    '/user', '/fo', 'csv', '/nh',
+  ], options)
+  const match = typeof identity?.stdout === 'string'
+    ? /^"[^"\r\n]{1,256}","(S-1-(?:[0-9]+-){1,15}[0-9]+)"\r?\n?$/u.exec(identity.stdout)
+    : null
+  if (identity?.status !== 0 || identity?.error !== undefined || identity?.signal !== null
+    || match === null) throw new Error('installed_candidate_invalid')
+  const ownership = run(win32.join(systemRoot, 'System32', 'icacls.exe'), [
+    home, '/setowner', `*${match[1]}`, '/Q',
+  ], options)
+  if (ownership?.status !== 0 || ownership?.error !== undefined || ownership?.signal !== null) {
+    throw new Error('installed_candidate_invalid')
+  }
+}
+
 const DEFAULT_SIGNER_WORKFLOW = 'deepnovacore/NovaAudioAgent/.github/workflows/release-candidate.yml'
 const SIGNER_WORKFLOWS = new Set([
   DEFAULT_SIGNER_WORKFLOW,
@@ -289,6 +325,10 @@ async function runInstalledCandidate({
     platform: process.platform,
     userDataRoot: scratch,
     path: systemPath(process.platform, process.env),
+  })
+  prepareWindowsSmokeHomeOwnership({
+    home: userData,
+    environment: systemEnvironment,
   })
   const provider = await createQwenSmokeProvider()
   reportInstalledSmokeStage('provider_ready')

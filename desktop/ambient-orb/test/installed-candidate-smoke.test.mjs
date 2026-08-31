@@ -14,6 +14,7 @@ import {
   candidateInstallPlan,
   candidateScratchParent,
   classifyCameraCapability,
+  prepareWindowsSmokeHomeOwnership,
   smokeToolShimNames,
   smokeEnvironment,
 } from '../scripts/installed-candidate-smoke.mjs'
@@ -43,6 +44,40 @@ test('Windows installed smoke creates its private HOME below the current user pr
   }), '/private/runner/temp')
   assert.deepEqual(smokeToolShimNames('win32'), ['python.exe', 'python3.exe', 'codex.exe'])
   assert.deepEqual(smokeToolShimNames('linux'), ['python', 'python3', 'codex'])
+})
+
+test('Windows smoke binds its synthetic HOME owner to the exact current user SID', () => {
+  const calls = []
+  prepareWindowsSmokeHomeOwnership({
+    platform: 'win32',
+    home: 'C:\\Users\\runneradmin\\nova-installed-candidate-1\\user-data',
+    environment: {SystemRoot: 'C:\\Windows'},
+    run(command, args) {
+      calls.push({command, args})
+      return calls.length === 1
+        ? {status: 0, error: undefined, signal: null, stdout: '"RUNNER\\runneradmin","S-1-5-21-1-2-3-1001"\r\n'}
+        : {status: 0, error: undefined, signal: null, stdout: ''}
+    },
+  })
+  assert.deepEqual(calls, [
+    {
+      command: 'C:\\Windows\\System32\\whoami.exe',
+      args: ['/user', '/fo', 'csv', '/nh'],
+    },
+    {
+      command: 'C:\\Windows\\System32\\icacls.exe',
+      args: [
+        'C:\\Users\\runneradmin\\nova-installed-candidate-1\\user-data',
+        '/setowner', '*S-1-5-21-1-2-3-1001', '/Q',
+      ],
+    },
+  ])
+  assert.throws(() => prepareWindowsSmokeHomeOwnership({
+    platform: 'win32',
+    home: 'C:\\Users\\runneradmin\\user-data',
+    environment: {SystemRoot: 'C:\\Windows'},
+    run: () => ({status: 0, error: undefined, signal: null, stdout: 'private output'}),
+  }), /installed_candidate_invalid/u)
 })
 
 function spawnSmokeFixture(mode) {
