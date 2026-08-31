@@ -53,6 +53,14 @@ jobs:
         env:
           NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"
         run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
+      - name: Upload failed Linux AppImage for private diagnosis
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-linux-appimage-diagnostic
+          path: desktop/ambient-orb/dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 1
       - name: Normalize closed release artifact names and final digests
         run: npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}
       - name: Prepare checkout-free installed smoke kit

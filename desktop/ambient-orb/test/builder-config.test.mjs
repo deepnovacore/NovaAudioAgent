@@ -491,7 +491,10 @@ test('unsigned Windows and Linux workflow closes native packages through digest-
   assert.ok(packageSteps.some(step => step.uses === 'actions/upload-artifact@v4'))
   assert.doesNotMatch(text, /continue-on-error|\|\| true/u)
 
-  const upload = packageSteps.find(step => step.uses === 'actions/upload-artifact@v4')
+  const upload = packageSteps.find(step => (
+    step.uses === 'actions/upload-artifact@v4'
+    && step.with?.name === '${{ matrix.artifact_name }}'
+  ))
   assert.deepEqual(upload.with.path.split('\n'), [
     'desktop/ambient-orb/build/release-artifacts/**',
     'desktop/ambient-orb/build/release-digests/**',
