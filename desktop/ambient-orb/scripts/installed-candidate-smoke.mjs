@@ -363,7 +363,7 @@ async function runInstalledCandidate({
       providerEndpoint: provider.endpoint,
       ...(cameraFile === undefined ? {} : {cameraFile: await exactCameraFile(cameraFile)}),
     })
-    const child = spawn(executable, [`--user-data-dir=${userData}`], {
+    const child = spawn(executable, [`--user-data-dir=${userData}`, '--open-settings'], {
       cwd: workspace,
       env: environment,
       detached: process.platform !== 'win32',

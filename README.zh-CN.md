@@ -51,7 +51,7 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对�
 
 环境要求：Node.js 22+、npm、Git、已登录的 `codex` 可执行文件（Codex 只走 app-server），以及受支持的桌面会话。
 
-使用打包好的桌面端时，可以在任意目录安装并启动：
+待替换版 v0.1.0 正式发布到 npm 后，可以在任意目录安装并启动打包好的桌面端：
 
 ```bash
 npm install --global nova-audio-agent@0.1.0

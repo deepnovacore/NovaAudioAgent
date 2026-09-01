@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import {
   access,
@@ -12,6 +12,7 @@ import {
   rename,
   rm,
   stat,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
@@ -32,6 +33,9 @@ const LOCK_STALE_MS = 15 * 60 * 1000
 const LOCK_WAIT_MS = 2 * 60 * 1000
 const REDIRECT_DELAY_MS = 100
 const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/u
+const INSTALL_RECEIPT_BYTES = 4096
+const LOCK_HEARTBEAT_MS = 30 * 1000
+const LAUNCH_GRACE_MS = 1000
 
 function allowedDownloadUrl(value) {
   const url = new URL(value)
@@ -182,24 +186,103 @@ async function executableReady(path, platform) {
   }
 }
 
+async function cachedInstallation({root, executable, target, platform, expected}) {
+  if (!await executableReady(executable, platform)) return null
+  try {
+    const receiptPath = join(root, 'novaaudio-install.json')
+    const details = await lstat(receiptPath)
+    if (!details.isFile() || details.isSymbolicLink() || details.size > INSTALL_RECEIPT_BYTES) {
+      return null
+    }
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8'))
+    const keys = Object.keys(receipt).sort()
+    if (keys.join('\0') !== ['artifact', 'schema_version', 'sha256', 'target', 'version'].join('\0')
+      || receipt.schema_version !== 1
+      || receipt.version !== PRODUCT_VERSION
+      || receipt.target !== target.id
+      || receipt.artifact !== target.artifact
+      || !CHECKSUM_PATTERN.test(receipt.sha256)
+      || expected !== undefined && !sameDigest(receipt.sha256, expected)) return null
+    return Object.freeze({sha256: receipt.sha256})
+  } catch {
+    return null
+  }
+}
+
+function lockOwnerAlive(owner, kill = process.kill) {
+  if (owner === null || typeof owner !== 'object' || !Number.isSafeInteger(owner.pid)
+    || owner.pid < 1 || typeof owner.token !== 'string' || owner.token.length !== 36) return false
+  try {
+    kill(owner.pid, 0)
+    return true
+  } catch (error) {
+    return error?.code !== 'ESRCH'
+  }
+}
+
+async function installPayloadAtomically(payload, root) {
+  const previous = `${root}.previous-${randomUUID()}`
+  let hadPrevious = false
+  try {
+    await rename(root, previous)
+    hadPrevious = true
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+  try {
+    await rename(payload, root)
+  } catch (error) {
+    if (hadPrevious) {
+      await rename(previous, root).catch(() => {})
+    }
+    throw error
+  }
+  if (hadPrevious) await rm(previous, {recursive: true, force: true})
+}
+
+async function readLockOwner(path) {
+  try {
+    const ownerPath = join(path, 'owner.json')
+    const details = await lstat(ownerPath)
+    if (!details.isFile() || details.isSymbolicLink() || details.size > 1024) return null
+    return JSON.parse(await readFile(ownerPath, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
 async function acquireLock(path, {now = () => Date.now(), delay = wait} = {}) {
   const deadline = now() + LOCK_WAIT_MS
   for (;;) {
     try {
       await mkdir(path, {mode: 0o700})
+      const token = randomUUID()
       try {
-        await writeFile(join(path, 'owner.json'), `${JSON.stringify({pid: process.pid})}\n`, {
+        await writeFile(join(path, 'owner.json'), `${JSON.stringify({pid: process.pid, token})}\n`, {
           mode: 0o600,
         })
       } catch (error) {
         await rm(path, {recursive: true, force: true})
         throw error
       }
-      return async () => rm(path, {recursive: true, force: true})
+      const heartbeat = setInterval(async () => {
+        const owner = await readLockOwner(path)
+        if (owner?.token !== token) return
+        const timestamp = new Date()
+        await utimes(path, timestamp, timestamp).catch(() => {})
+      }, LOCK_HEARTBEAT_MS)
+      heartbeat.unref()
+      return async () => {
+        clearInterval(heartbeat)
+        const owner = await readLockOwner(path)
+        if (owner?.token === token) await rm(path, {recursive: true, force: true})
+      }
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error
       const details = await stat(path).catch(() => null)
-      if (details !== null && now() - details.mtimeMs > LOCK_STALE_MS) {
+      const owner = await readLockOwner(path)
+      if (details !== null && now() - details.mtimeMs > LOCK_STALE_MS
+        && !lockOwnerAlive(owner)) {
         await rm(path, {recursive: true, force: true})
         continue
       }
@@ -223,17 +306,32 @@ export async function ensureDesktop({
   const target = resolveTarget(platform, arch)
   const root = releaseRoot({home, target})
   const executable = resolve(root, target.executable)
-  if (await executableReady(executable, platform)) return Object.freeze({target, root, executable})
+  const cached = await cachedInstallation({root, executable, target, platform})
+  let expected
+  try {
+    expected = await expectedChecksum(
+      `${baseUrl}/${target.artifact}`,
+      target.artifact,
+      {fetchImpl},
+    )
+  } catch (error) {
+    if (cached !== null) return Object.freeze({target, root, executable})
+    throw error
+  }
+  if (cached !== null && sameDigest(cached.sha256, expected)) {
+    return Object.freeze({target, root, executable})
+  }
 
   await mkdir(dirname(root), {recursive: true, mode: 0o700})
   const releaseLock = await acquireLock(`${root}.lock`)
   try {
-    if (await executableReady(executable, platform)) return Object.freeze({target, root, executable})
+    if (await cachedInstallation({root, executable, target, platform, expected}) !== null) {
+      return Object.freeze({target, root, executable})
+    }
     const temporary = await mkdtemp(join(dirname(root), `.${target.id}-install-`))
     try {
       const artifact = join(temporary, target.artifact)
       const artifactUrl = `${baseUrl}/${target.artifact}`
-      const expected = await expectedChecksum(artifactUrl, target.artifact, {fetchImpl})
       const actual = await downloadArtifact(artifactUrl, artifact, {fetchImpl})
       if (!sameDigest(expected, actual)) throw new Error('release checksum mismatch')
       const payload = join(temporary, 'payload')
@@ -245,8 +343,7 @@ export async function ensureDesktop({
         artifact: target.artifact,
         sha256: actual,
       })}\n`, {mode: 0o600})
-      await rm(root, {recursive: true, force: true})
-      await rename(payload, root)
+      await installPayloadAtomically(payload, root)
     } finally {
       await rm(temporary, {recursive: true, force: true})
     }
@@ -257,13 +354,58 @@ export async function ensureDesktop({
   return Object.freeze({target, root, executable})
 }
 
-export function launchDesktop(executable, {openSettings = false} = {}) {
-  const child = spawn(executable, openSettings ? ['--open-settings'] : [], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: false,
+export function launchDesktop(executable, {
+  openSettings = false,
+  platform = process.platform,
+  environment = process.env,
+  spawnImpl = spawn,
+  launchGraceMs = LAUNCH_GRACE_MS,
+} = {}) {
+  return new Promise((resolveLaunch, rejectLaunch) => {
+    let child
+    try {
+      child = spawnImpl(executable, openSettings ? ['--open-settings'] : [], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false,
+        env: platform === 'linux'
+          ? {...environment, APPIMAGE_EXTRACT_AND_RUN: '1'}
+          : environment,
+      })
+    } catch {
+      rejectLaunch(new Error('desktop launch failed'))
+      return
+    }
+    let settled = false
+    let launchTimer
+    const fail = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(launchTimer)
+      rejectLaunch(new Error('desktop launch failed'))
+    }
+    child.once('error', fail)
+    child.once('exit', (code, signal) => {
+      if (settled) return
+      if (code === 0 && signal === null) {
+        settled = true
+        clearTimeout(launchTimer)
+        resolveLaunch()
+      } else {
+        fail()
+      }
+    })
+    child.once('spawn', () => {
+      if (settled) return
+      launchTimer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        child.unref()
+        resolveLaunch()
+      }, launchGraceMs)
+      launchTimer.unref?.()
+    })
   })
-  child.unref()
 }
 
 function findCodex(platform = process.platform) {
@@ -297,7 +439,7 @@ export async function inspectDoctor({
   return Object.freeze({
     supported: true,
     platform: target.id,
-    desktopReady: await executableReady(executable, platform),
+    desktopReady: await cachedInstallation({root, executable, target, platform}) !== null,
     settingsPresent: await access(settings).then(() => true, () => false),
     configuredSecretKeys: Object.freeze(secretKeys),
     codexPresent: findCodex(platform),

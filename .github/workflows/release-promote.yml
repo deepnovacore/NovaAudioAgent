@@ -62,6 +62,12 @@ jobs:
           test "$(jq -r .headSha candidate-run.json)" = "$EXPECTED_COMMIT"
           test "$(jq -r .name candidate-run.json)" = "Release candidate evidence"
           npm whoami
+          set +e
+          npm view nova-audio-agent@0.1.0 version > existing-version.txt 2> npm-view-error.txt
+          view_status=$?
+          set -e
+          test "$view_status" -ne 0
+          grep -q 'E404' npm-view-error.txt
       - run: npm ci
       - run: npm test
       - name: Download and verify the exact candidate matrix
@@ -102,7 +108,7 @@ jobs:
           find promotion-audit/previous-assets -type f -print0 \
             | sort -z \
             | xargs -0 sha256sum > promotion-audit/previous-assets.sha256
-      - name: Move v0.1.0 and replace the existing release assets
+      - name: Move v0.1.0 and replace assets without an empty release interval
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_COMMIT: ${{ inputs.commit }}
@@ -110,16 +116,16 @@ jobs:
           set -euo pipefail
           git tag --force v0.1.0 "$EXPECTED_COMMIT"
           git push --force origin refs/tags/v0.1.0
-          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.1.0" --jq .id)"
-          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" --jq '.[].id' \
-            | while read -r asset_id; do
-                gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
-              done
           gh release edit v0.1.0 \
             --target "$EXPECTED_COMMIT" \
             --title "Nova Audio Agent v0.1.0" \
             --notes "Replacement for the original Windows-only v0.1.0. This release now includes macOS arm64/x64, Windows x64, and Linux x64 portable applications plus installers. These builds are unsigned; macOS Gatekeeper and Windows SmartScreen may display security warnings."
           gh release upload v0.1.0 release-artifacts/* --clobber
+      - name: Launch the packed npm CLI against the replacement release before publish
+        run: |
+          set -euo pipefail
+          timeout 60 xvfb-run -a bash -c \
+            'set -euo pipefail; npm-smoke/node_modules/.bin/novaaudio config; sleep 5'
       - name: Publish and verify nova-audio-agent 0.1.0
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -131,8 +137,8 @@ jobs:
           prefix="$(mktemp -d)"
           npm install --global --prefix "$prefix" nova-audio-agent@0.1.0
           "$prefix/bin/novaaudio" --version
+          "$prefix/bin/novaaudio" --help
           "$prefix/bin/novaaudio" doctor
-          timeout 60 xvfb-run -a "$prefix/bin/novaaudio" config
       - uses: actions/upload-artifact@v4
         if: always()
         with:
