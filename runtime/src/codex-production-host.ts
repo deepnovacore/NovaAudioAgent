@@ -39,6 +39,7 @@ import {
 } from './codex-factory.js'
 import {
   CredentialSnapshotter,
+  environmentValue,
   type CodexCredentialDiagnosticCode,
 } from './codex-credential-snapshot.js'
 import {expandUserPath, type CodexHostCatalog} from './codex-host-config.js'
@@ -216,6 +217,7 @@ export function createProductionCodexHost(
   })
   const credentialSnapshotter = new CredentialSnapshotter({
     environment,
+    platform,
     ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
     ...(typeof environment.CODEX_HOME === 'string' && environment.CODEX_HOME !== ''
       ? {sourceHome: environment.CODEX_HOME}
@@ -230,6 +232,7 @@ export function createProductionCodexHost(
     preflightRunner: new NativeCodexHostPreflightRunner({
       probe,
       environment,
+      platform,
       hasApiKey: settings.codex_api_key !== null,
       ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
       ...(windowsGuardianFactory === null
@@ -238,6 +241,7 @@ export function createProductionCodexHost(
     }),
     schemaProbe: new NativeCodexLiveSchemaProbe({
       environment,
+      platform,
       ...(windowsGuardianFactory === null
         ? {}
         : {commandRunner: command => windowsGuardianFactory.runCommand(command)}),
@@ -319,6 +323,7 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
     readonly probe?: ManifestBoundCodexSandboxProbe
     readonly probePath?: string
     readonly environment: Readonly<Record<string, string | undefined>>
+    readonly platform?: NodeJS.Platform
     readonly hasApiKey: boolean
     readonly commandRunner?: BoundedCodexCommandRunner
     readonly onDiagnostic?: (code: CodexHostDiagnosticCode) => void
@@ -340,7 +345,7 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
       this.#probe = null
       this.#testProbe = Object.freeze({path, snapshot: snapshotRegularFile(path, MAX_PROBE_BYTES)})
     }
-    this.#environment = filteredEnvironment(options.environment)
+    this.#environment = filteredEnvironment(options.environment, options.platform ?? process.platform)
     this.#hasApiKey = options.hasApiKey
     this.#runCommand = options.commandRunner ?? runBoundedCodexCommand
     this.#onDiagnostic = options.onDiagnostic ?? (() => undefined)
@@ -517,9 +522,10 @@ export class NativeCodexLiveSchemaProbe implements CodexLiveSchemaProbe {
 
   constructor(options: {
     readonly environment: Readonly<Record<string, string | undefined>>
+    readonly platform?: NodeJS.Platform
     readonly commandRunner?: BoundedCodexCommandRunner
   }) {
-    this.#environment = filteredEnvironment(options.environment)
+    this.#environment = filteredEnvironment(options.environment, options.platform ?? process.platform)
     this.#runCommand = options.commandRunner ?? runBoundedCodexCommand
   }
 
@@ -803,11 +809,16 @@ function decodeSuccessful(
 
 function filteredEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
 ): Readonly<Record<string, string>> {
   const result: Record<string, string> = {}
-  for (const name of ENVIRONMENT_ALLOWLIST) {
-    const value = environment[name]
-    if (typeof value === 'string' && value !== '' && !value.includes('\0')) result[name] = value
+  try {
+    for (const name of ENVIRONMENT_ALLOWLIST) {
+      const value = environmentValue(environment, name, platform)
+      if (typeof value === 'string' && value !== '' && !value.includes('\0')) result[name] = value
+    }
+  } catch {
+    throw new CodexTransportError('preflight_failed')
   }
   if (result.PATH === undefined || result.HOME === undefined) {
     throw new CodexTransportError('preflight_failed')

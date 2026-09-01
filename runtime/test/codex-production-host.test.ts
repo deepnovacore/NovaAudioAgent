@@ -223,6 +223,61 @@ test('production preflight accepts a canonical non-Git workspace for a new manag
   }
 })
 
+test('Windows production preflight derives HOME from USERPROFILE without a synthetic HOME', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-codex-windows-preflight-env-')))
+  const workspace = join(root, 'workspace')
+  const binary = join(root, 'codex')
+  const home = join(root, 'home')
+  const probe = join(root, 'probe')
+  await mkdir(workspace)
+  await mkdir(home)
+  await writeFile(binary, 'binary', {mode: 0o755})
+  await writeFile(probe, 'probe', {mode: 0o755})
+  let call = 0
+  try {
+    const runner = new NativeCodexHostPreflightRunner({
+      probePath: probe,
+      platform: 'win32',
+      environment: {
+        Path: 'C:\\Windows\\System32',
+        USERPROFILE: 'C:\\Users\\nova',
+      },
+      hasApiKey: true,
+      commandRunner: async command => {
+        assert.deepEqual(command.environment, {
+          PATH: 'C:\\Windows\\System32',
+          HOME: 'C:\\Users\\nova',
+        })
+        call += 1
+        await Promise.resolve()
+        if (call === 1) return {status: 0, stdout: Buffer.from('codex-cli 0.147.0')}
+        return {status: 0, stdout: Buffer.from(JSON.stringify({
+          cwd_matches: true,
+          inside_write: true,
+          inside_remove: true,
+          outside_write_denied: true,
+          child_outside_write_denied: true,
+          network_denied: true,
+          limits: {cpu: 'finite', as: 'unbounded', nofile: 'finite'},
+        }))}
+      },
+    })
+    await runner.run({
+      binary: hostBinaryForTest(await realpath(binary)),
+      workspace: hostWorkspaceForTest(await realpath(workspace)),
+      codexHome: hostCodexHomeForTest(await realpath(home), {ephemeral: true}),
+      apiKey: null,
+      developerInstructions: null,
+      resumeThreadId: null,
+      persistent: false,
+      workingInterval: 30,
+    }, 5_000)
+    assert.equal(call, 2)
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('production preflight reports a safe login-status diagnostic without command output', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-codex-login-diagnostic-')))
   const workspace = join(root, 'workspace')
@@ -366,6 +421,60 @@ test('production schema probe invokes the host binary and returns only the revie
       workingInterval: 30,
     }, 5_000)
     assert.deepEqual(validateCodexSchemaBundle(result), {
+      initialize: true,
+      'config/read': true,
+      'thread/start': true,
+      'thread/resume': true,
+      'turn/start': true,
+      'turn/steer': true,
+      'turn/interrupt': true,
+    })
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test('Windows production schema probe derives HOME from USERPROFILE without a synthetic HOME', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-codex-windows-schema-env-')))
+  const workspace = join(root, 'workspace')
+  const binary = join(root, 'codex')
+  const home = join(root, 'home')
+  await mkdir(workspace)
+  await mkdir(home)
+  await writeFile(binary, 'binary', {mode: 0o755})
+  const bundle = supportedSchemaBundle()
+  try {
+    const probe = new NativeCodexLiveSchemaProbe({
+      platform: 'win32',
+      environment: {
+        Path: 'C:\\Windows\\System32',
+        USERPROFILE: 'C:\\Users\\nova',
+      },
+      commandRunner: async command => {
+        assert.deepEqual(command.environment, {
+          PATH: 'C:\\Windows\\System32',
+          HOME: 'C:\\Users\\nova',
+        })
+        const output = command.argv[3]
+        assert.notEqual(output, undefined)
+        for (const [name, document] of Object.entries(bundle)) {
+          const destination = join(output!, name)
+          await mkdir(join(destination, '..'), {recursive: true})
+          await writeFile(destination, JSON.stringify(document), {mode: 0o600})
+        }
+        return {status: 0, stdout: Buffer.alloc(0)}
+      },
+    })
+    assert.deepEqual(validateCodexSchemaBundle(await probe.generate({
+      binary: hostBinaryForTest(await realpath(binary)),
+      workspace: hostWorkspaceForTest(await realpath(workspace)),
+      codexHome: hostCodexHomeForTest(await realpath(home), {ephemeral: true}),
+      apiKey: null,
+      developerInstructions: null,
+      resumeThreadId: null,
+      persistent: false,
+      workingInterval: 30,
+    }, 5_000)), {
       initialize: true,
       'config/read': true,
       'thread/start': true,

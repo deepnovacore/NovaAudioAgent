@@ -192,7 +192,6 @@ export function candidateBaseEnvironment({
   }
   Object.assign(env, {
     PATH: path,
-    HOME: userDataRoot,
     XDG_CONFIG_HOME: userDataRoot,
     XDG_CACHE_HOME: userDataRoot,
     XDG_DATA_HOME: userDataRoot,
@@ -209,7 +208,7 @@ export function candidateBaseEnvironment({
       throw new Error('installed_candidate_invalid')
     }
     env.PSModulePath = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\Modules`
-  }
+  } else env.HOME = userDataRoot
   return env
 }
 

@@ -307,6 +307,7 @@ test('Windows system child environment keeps only paths required for native laun
     'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
   )
   assert.equal(environment.USERPROFILE, 'C:\\private\\smoke-user')
+  assert.equal('HOME' in environment, false)
   assert.equal('GH_TOKEN' in environment, false)
   assert.equal('RUNNER_TEMP' in environment, false)
 })

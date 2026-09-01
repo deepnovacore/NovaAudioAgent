@@ -174,8 +174,8 @@ export class CredentialSnapshotter {
   }
 }
 
-function environmentValue(
-  environment: Readonly<Record<string, string>>,
+export function environmentValue(
+  environment: Readonly<Record<string, string | undefined>>,
   name: string,
   platform: NodeJS.Platform,
 ): string | undefined {
@@ -183,13 +183,13 @@ function environmentValue(
   const normalizedName = name.toUpperCase()
   let result: string | undefined
   for (const [key, value] of Object.entries(environment)) {
-    if (key.toUpperCase() !== normalizedName) continue
+    if (key.toUpperCase() !== normalizedName || value === undefined) continue
     if (result !== undefined && result !== value) throw new CodexCredentialError()
     result = value
   }
   if (result !== undefined || normalizedName !== 'HOME') return result
   for (const [key, value] of Object.entries(environment)) {
-    if (key.toUpperCase() !== 'USERPROFILE') continue
+    if (key.toUpperCase() !== 'USERPROFILE' || value === undefined) continue
     if (result !== undefined && result !== value) throw new CodexCredentialError()
     result = value
   }
