@@ -37,7 +37,10 @@ import {
   unavailableCodexBackendTransportFactory,
   type CodexBackendTransportFactory,
 } from './codex-factory.js'
-import {CredentialSnapshotter} from './codex-credential-snapshot.js'
+import {
+  CredentialSnapshotter,
+  type CodexCredentialDiagnosticCode,
+} from './codex-credential-snapshot.js'
 import {expandUserPath, type CodexHostCatalog} from './codex-host-config.js'
 import type {Settings} from './config.js'
 import {
@@ -121,7 +124,7 @@ interface ProductionCodexHostOptions {
 }
 
 export type CodexHostDiagnosticCode =
-  | import('./codex-credential-snapshot.js').CodexCredentialDiagnosticCode
+  | CodexCredentialDiagnosticCode
   | 'codex_login_status_nonzero'
   | 'codex_login_status_no_output'
   | 'codex_login_status_multiple_streams'

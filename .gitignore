@@ -42,6 +42,7 @@ docs/demos/
 docs/superpowers/
 assets/demos/cat-sofa-guard/*-preroll.mp4
 assets/demos/video-cut
+assets/demos/video-recut-v*/
 .worktrees/
 video/
 .claude/merge-artifacts/*.bundle

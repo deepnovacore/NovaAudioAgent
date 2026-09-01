@@ -410,25 +410,28 @@ test('every package: script disables publishing explicitly', async () => {
   }
 })
 
-test('CI runs checks and packaging across the supported automatic runner matrix', async () => {
+test('ordinary CI uploads package artifacts only for version tags', async () => {
   const text = await readFile(CI_WORKFLOW_PATH, 'utf8')
   const workflow = parseYaml(text)
 
   assert.deepEqual(Object.keys(workflow.on), ['push', 'pull_request'])
+  assert.deepEqual(workflow.on.push.branches, ['**'])
+  assert.deepEqual(workflow.on.push.tags, ['v*'])
   assert.equal('python' in workflow.jobs, false)
   assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, [
     'macos-latest', 'ubuntu-latest', 'windows-latest',
   ])
-  assert.deepEqual(workflow.jobs.package.strategy.matrix.include, [
+  assert.equal(
+    workflow.jobs.electron.steps.some(step => step.uses === 'actions/upload-artifact@v4'),
+    false,
+  )
+  const packageJob = workflow.jobs.package
+  assert.equal(packageJob.if, "startsWith(github.ref, 'refs/tags/v')")
+  assert.deepEqual(packageJob.strategy.matrix.include, [
     {
       os: 'macos-latest',
       script: 'package:mac:candidate',
       artifact: 'ambient-orb-mac',
-    },
-    {
-      os: 'ubuntu-latest',
-      script: 'package:linux',
-      artifact: 'ambient-orb-linux',
     },
     {
       os: 'windows-latest',
@@ -436,6 +439,7 @@ test('CI runs checks and packaging across the supported automatic runner matrix'
       artifact: 'ambient-orb-win',
     },
   ])
+  assert.ok(packageJob.steps.some(step => step.uses === 'actions/upload-artifact@v4'))
 })
 
 test('root npm commands require only the Node toolchain', async () => {
@@ -450,8 +454,8 @@ test('unsigned Windows workflow publishes tag builds only after digest-bound ins
   const workflow = parseYaml(text)
 
   assert.equal(workflow.name, 'Unsigned Windows package and release')
-  assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch', 'push'])
-  assert.deepEqual(workflow.on.push.branches, ['main'])
+  assert.deepEqual(Object.keys(workflow.on), ['push'])
+  assert.equal('branches' in workflow.on.push, false)
   assert.deepEqual(workflow.on.push.tags, ['v*'])
   assert.deepEqual(workflow.permissions, {contents: 'read'})
 
@@ -532,7 +536,10 @@ test('unsigned Windows workflow publishes tag builds only after digest-bound ins
     && step.with?.name === 'unsigned-win32-x64'
   )))
   const publishStep = releaseJob.steps.find(step => step.run?.includes('gh release create'))
-  assert.deepEqual(publishStep.env, {GH_TOKEN: '${{ github.token }}'})
+  assert.deepEqual(publishStep.env, {
+    GH_TOKEN: '${{ github.token }}',
+    GH_REPO: '${{ github.repository }}',
+  })
   assert.match(publishStep.run, /candidate\/release-artifacts\/\*\.exe/u)
   assert.match(publishStep.run, /candidate\/release-digests\/\*\.exe\.sha256/u)
   assert.match(publishStep.run, /--verify-tag/u)

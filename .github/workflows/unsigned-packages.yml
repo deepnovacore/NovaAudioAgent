@@ -1,9 +1,7 @@
 name: Unsigned Windows package and release
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
     tags: ["v*"]
 
 permissions:
@@ -118,6 +116,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           $installer = @(Get-ChildItem 'candidate/release-artifacts/*.exe')
           $digest = @(Get-ChildItem 'candidate/release-digests/*.exe.sha256')

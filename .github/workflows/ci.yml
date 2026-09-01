@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
 
 permissions:
@@ -37,6 +39,7 @@ jobs:
       - run: npm run build
 
   package:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: electron
     strategy:
       fail-fast: false
@@ -45,9 +48,6 @@ jobs:
           - os: macos-latest
             script: package:mac:candidate
             artifact: ambient-orb-mac
-          - os: ubuntu-latest
-            script: package:linux
-            artifact: ambient-orb-linux
           - os: windows-latest
             script: package:win
             artifact: ambient-orb-win
@@ -64,6 +64,8 @@ jobs:
       - run: npm ci
       - run: npm run ${{ matrix.script }}
       - run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
+        env:
+          NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

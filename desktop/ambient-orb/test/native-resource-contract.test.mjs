@@ -99,6 +99,44 @@ test('source host manifest binds only the fixed Codex host resources', async () 
   }
 })
 
+test('macOS executable inspection accepts a load-command table larger than one page', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'nova-large-mach-header-'))
+  const addon = Buffer.alloc(64)
+  addon.writeUInt32LE(0xfeedfacf, 0)
+  addon.writeUInt32LE(0x0100000c, 4)
+  addon.writeUInt32LE(8, 12)
+  const paddingCommandBytes = 4080
+  const buildVersionBytes = 24
+  const executable = Buffer.alloc(32 + paddingCommandBytes + buildVersionBytes)
+  executable.writeUInt32LE(0xfeedfacf, 0)
+  executable.writeUInt32LE(0x0100000c, 4)
+  executable.writeUInt32LE(2, 12)
+  executable.writeUInt32LE(2, 16)
+  executable.writeUInt32LE(paddingCommandBytes + buildVersionBytes, 20)
+  executable.writeUInt32LE(0, 32)
+  executable.writeUInt32LE(paddingCommandBytes, 36)
+  const buildVersionOffset = 32 + paddingCommandBytes
+  executable.writeUInt32LE(0x32, buildVersionOffset)
+  executable.writeUInt32LE(buildVersionBytes, buildVersionOffset + 4)
+  executable.writeUInt32LE(1, buildVersionOffset + 8)
+  executable.writeUInt32LE(0x000c0000, buildVersionOffset + 12)
+  try {
+    const addonPath = resolve(root, 'native/project-native/nova_project_native.node')
+    const probePath = resolve(root, 'native/codex-sandbox-probe')
+    await mkdir(resolve(addonPath, '..'), {recursive: true})
+    await writeFile(addonPath, addon)
+    await writeFile(probePath, executable)
+    await chmod(probePath, 0o755)
+
+    await assert.doesNotReject(generateSourceHostResourceManifest({
+      resourcesRoot: root,
+      targetId: 'darwin-arm64',
+    }))
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('native manifest maps every external native resource exactly once', async () => {
   assert.equal(typeof verifyNativeResourceManifest, 'function')
   const root = await mkdtemp(resolve(tmpdir(), 'nova-native-resource-complete-'))

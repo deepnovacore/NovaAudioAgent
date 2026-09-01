@@ -798,6 +798,24 @@ test('container preflight accepts modern full 7z Linux metadata without weakenin
 })
 
 test('container preflight admits only internal relative links and verifies their extracted targets', async () => {
+  assert.doesNotThrow(() => packageInspection.assertSafeSymlink(
+    'Applications',
+    '/Applications',
+    {allowMacApplicationsLink: true},
+  ))
+  for (const [path, target] of [
+    ['Nested/Applications', '/Applications'],
+    ['Applications', '/System/Applications'],
+  ]) {
+    assert.throws(
+      () => packageInspection.assertSafeSymlink(
+        path,
+        target,
+        {allowMacApplicationsLink: true},
+      ),
+      PackageInspectionError,
+    )
+  }
   const sevenZip = packageInspection.preflightContainerListing({
     format: 'appimage',
     listing: [

@@ -9,6 +9,7 @@ test('main owns single-instance lifecycle and denies renderer escape', async () 
   assert.match(source, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
   assert.match(source, /configureWindowSecurity\(window\)/)
   assert.match(source, /loadAppWindow\(mainWindow/)
+  assert.match(source, /Number\.isInteger\(code\) \? code : 'none'/)
   assert.doesNotMatch(source, /shell\.openExternal/)
 })
 

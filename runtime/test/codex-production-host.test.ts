@@ -271,7 +271,8 @@ test('production preflight reports a safe login-status diagnostic without comman
         typeof error === 'object'
         && error !== null
         && Reflect.get(error, 'code') === 'credential_missing'
-        && String(error).includes('private') === false
+        && typeof Reflect.get(error, 'message') === 'string'
+        && (Reflect.get(error, 'message') as string).includes('private') === false
       ))
       assert.deepEqual(diagnostics, [expected])
     }
