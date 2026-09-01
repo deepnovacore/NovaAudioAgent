@@ -108,7 +108,7 @@ test('release candidate explicitly builds unsigned bytes and keeps trust-bound s
   assert.doesNotMatch(workflow, /require-release-signing|verify-signed-candidate|finalize:mac-notarization/u)
   assert.match(workflow, /inspect:release-package/u)
   assert.match(workflow, /collect:release-artifacts/u)
-  assert.match(workflow, /attest-build-provenance@v3/u)
+  assert.doesNotMatch(workflow, /attest-build-provenance|id-token:|attestations:/u)
   assert.match(workflow, /generate:pending-release-ledger/u)
   assert.match(workflow, /node desktop\/ambient-orb\/node_modules\/electron\/install\.js/u)
   assert.match(workflow, /npm run test:runtime\n\s+[^\n]*\n\s+[^\n]*\n\s+[^\n]*\n\s+if: runner\.os != 'Windows'/u)

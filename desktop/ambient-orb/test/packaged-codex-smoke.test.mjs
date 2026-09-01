@@ -51,6 +51,10 @@ test('packaged Codex failures expose only one closed stage code', () => {
     parsePackagedCodexFailure('packaged production Codex composition rejected stage=start_project_sandbox_failed\n'),
     'start_project_sandbox_failed',
   )
+  assert.equal(
+    parsePackagedCodexFailure('packaged production Codex composition rejected stage=resource_project_codex_project_state_invalid\n'),
+    'resource_project_codex_project_state_invalid',
+  )
   for (const value of [
     'packaged production Codex composition rejected stage=private/path\n',
     'raw private detail\n',
@@ -77,6 +81,7 @@ test('release-candidate workflow makes packaged Codex composition a required tar
   const workflow = await readFile(resolve(import.meta.dirname, '../../../.github/workflows/release-candidate.yml'), 'utf8')
   assert.match(workflow, /@openai\/codex@0\.147\.0/u)
   assert.match(workflow, /smoke:packaged-codex:ci/u)
+  assert.match(workflow, /NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"/u)
   assert.doesNotMatch(workflow, /\/opt\/homebrew\/bin\/codex|\/usr\/local\/bin\/codex|C:\\nova-tools\\codex\.exe/u)
   assert.doesNotMatch(workflow, /continue-on-error|smoke:packaged-codex[^\n]*\|\|/u)
 })

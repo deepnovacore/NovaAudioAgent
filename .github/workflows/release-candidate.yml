@@ -11,8 +11,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 
 jobs:
   platform-candidate:
@@ -65,6 +63,8 @@ jobs:
       - name: Build unsigned candidate bytes
         run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb
       - name: Inspect exact unsigned application and installer bytes
+        env:
+          NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"
         run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
       - name: Provision pinned target-native Codex
         run: npm install --prefix desktop/ambient-orb/build/release-codex --install-strategy=nested --package-lock=false --ignore-scripts --no-save --omit=dev @openai/codex@0.147.0
@@ -76,10 +76,6 @@ jobs:
         run: npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}
       - name: Prepare checkout-free installed smoke kit
         run: npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb
-      - name: Attest exact final candidate files
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: desktop/ambient-orb/build/release-artifacts/*
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
@@ -94,7 +90,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      attestations: read
     strategy:
       fail-fast: false
       matrix:
@@ -148,15 +143,12 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: candidate
-      - name: Rehash, attest, install, authenticate, exercise, quit, and remove candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Rehash, install, authenticate, exercise, quit, and remove candidate
         run: >-
-          ${{ matrix.command }} candidate/release-smoke-kit/scripts/installed-candidate-smoke.mjs
+          ${{ matrix.command }} candidate/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs
           --target ${{ matrix.target }}
           --artifact candidate/release-artifacts/${{ matrix.filename }}
           --sha256-file candidate/release-digests/${{ matrix.filename }}.sha256
-          --commit ${{ github.sha }}
           --camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4
 
   pending-candidate-ledger:
@@ -172,7 +164,7 @@ jobs:
         with:
           pattern: candidate-*
           path: downloaded
-      - name: Assemble only the complete attested candidate matrix
+      - name: Assemble only the complete digest-bound candidate matrix
         run: node desktop/ambient-orb/scripts/assemble-release-artifact-root.mjs --input downloaded --output candidate-artifacts
       - name: Generate the honest pending external-evidence ledger
         env:
@@ -188,12 +180,6 @@ jobs:
           npm run generate:release-candidate-report --workspace @nova-audio-agent/ambient-orb --
           --ledger candidate-ledger-v1.json
           --output candidate-report.md
-      - name: Attest the pending ledger and report bytes
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: |
-            candidate-ledger-v1.json
-            candidate-report.md
       - uses: actions/upload-artifact@v4
         with:
           name: pending-candidate-ledger

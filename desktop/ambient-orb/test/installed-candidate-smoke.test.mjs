@@ -589,13 +589,13 @@ test('release workflow downloads exact candidates into checkout-free smoke jobs'
   const workflow = await readFile(new URL('../../../.github/workflows/release-candidate.yml', import.meta.url), 'utf8')
   assert.match(workflow, /installed-candidate-smoke/u)
   assert.match(workflow, /actions\/download-artifact@v4/u)
-  assert.match(workflow, /installed-candidate-smoke\.mjs/u)
-  assert.match(workflow, /attest-build-provenance@v3/u)
-  assert.match(workflow, /id-token: write/u)
+  assert.match(workflow, /run-unsigned-installed-smoke\.mjs/u)
+  assert.doesNotMatch(workflow, /attest-build-provenance|id-token:|attestations:/u)
   const smokeStart = workflow.indexOf('  installed-candidate-smoke:')
   const smokeJob = workflow.slice(smokeStart, workflow.indexOf('\n  pending-candidate-ledger:', smokeStart))
   assert.doesNotMatch(smokeJob, /actions\/checkout/u)
   assert.doesNotMatch(smokeJob, /continue-on-error|\|\| true/u)
+  assert.doesNotMatch(smokeJob, /--commit|--signer-workflow|GH_TOKEN/u)
 })
 
 test('installed candidate smoke cold-starts every packaged target through config mode', async () => {

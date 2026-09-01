@@ -11,6 +11,9 @@ const PREFLIGHT_FAILURES = [
 const FAILURE_STAGES = new Set([
   'load_runtime', 'settings_project', 'host_project', 'host_project_transport',
   'host_project_native', 'host_project_config', 'resource_project',
+  'resource_project_codex_host_unavailable',
+  'resource_project_codex_project_host_unsupported',
+  'resource_project_codex_project_state_invalid',
   'start_project', 'close_project', 'resource_without_project_host',
   ...PREFLIGHT_FAILURES.map(code => `start_project_${code}`),
 ])

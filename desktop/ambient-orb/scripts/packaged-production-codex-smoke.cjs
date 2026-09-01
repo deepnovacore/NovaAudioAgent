@@ -122,7 +122,16 @@ void (async () => {
     'packaged_project_missing_host_did_not_fail_closed',
   )
   process.stdout.write('packaged production Codex composition passed\n')
-})().catch(() => {
+})().catch(error => {
+  if (
+    stage === 'resource_project'
+    && typeof error?.code === 'string'
+    && [
+      'codex_host_unavailable',
+      'codex_project_host_unsupported',
+      'codex_project_state_invalid',
+    ].includes(error.code)
+  ) stage = `${stage}_${error.code}`
   process.stderr.write(`packaged production Codex composition rejected stage=${stage}\n`)
   process.exitCode = 1
 }).finally(() => {
