@@ -91,7 +91,7 @@ The runtime and desktop client carry win32, darwin, and linux code paths, with p
 packaging targets (macOS, Windows NSIS, Linux AppImage/deb). Native echo-cancelled audio capture
 (VoiceProcessingIO) exists on macOS only; Windows and Linux use Chromium's audio stack, and both
 camera paths use Chromium's capture pipeline on every platform. Cross-platform CI and hardware
-validation status is tracked honestly in [Project status](status.md).
+validation status must remain explicit in release evidence and test results.
 
 Desktop settings apply as a transaction rather than live. Panel edits accumulate as drafts inside
 the Settings window; an explicit save writes them, refreshes resolved configuration, and performs

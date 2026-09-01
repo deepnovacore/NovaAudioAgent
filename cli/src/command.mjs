@@ -44,6 +44,6 @@ export async function main(argv, {
     return 2
   }
   const installed = await ensure()
-  launch(installed.executable, {openSettings: command === 'config'})
+  await launch(installed.executable, {openSettings: command === 'config'})
   return 0
 }

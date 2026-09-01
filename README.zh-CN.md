@@ -17,7 +17,7 @@ https://github.com/user-attachments/assets/0ca76117-f6d2-46fc-80c3-8a8cee603fc6
 
 ## 1. 核心特性
 
-Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）负责在前台和用户进行实时对话，长任务则交给后台各路能力异步去做，拿到的信息由小诺进行筛选、转述、只在合适的时机说重要的事情。
+Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）保持前台对话实时响应，同时在后台处理长任务，并在合适的时间汇报合适的进度。
 
 同期工作 [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) 回答的是
 「怎么让 agent 边干活边说话」；我们在此基础上又追问了一层——**开口这件事，什么时候才值得**
@@ -51,7 +51,7 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）负责在前台�
 
 环境要求：Node.js 22+、npm、Git、已登录的 `codex` 可执行文件（Codex 只走 app-server），以及受支持的桌面会话。
 
-使用打包好的桌面端时，可以在任意目录安装并启动：
+待替换版 v0.1.0 正式发布到 npm 后，可以在任意目录安装并启动打包好的桌面端：
 
 ```bash
 npm install --global nova-audio-agent@0.1.0
@@ -70,7 +70,7 @@ cd nova-audio-agent
 npm ci && cp .env.example .env
 ```
 
-默认集成 Qwen 桌面端需配置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`——Search 始终会装配，即便没选它当 executor，Tavily 也是必填。
+默认集成 Qwen 桌面端需配置 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。
 
 ```bash
 npm run build --workspace @nova-audio-agent/runtime
@@ -94,7 +94,6 @@ npm run start:client
 | [架构](docs/architecture.md) | 模块与边界 |
 | [术语与不变量](docs/glossary.md) | 核心常量 |
 | [上手指南](docs/getting-started.zh-CN.md) | 安装与集成 |
-| [A2A Discussion](docs/a2a.md) | A2A 扩展脑暴 |
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | 设计博客 |
 
 ## 5. 路线图

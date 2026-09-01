@@ -148,6 +148,21 @@ test('Windows native installer actions allow enough time for cold CI extraction'
   assert.equal(plan.uninstall[0].timeoutMs, NATIVE_INSTALLER_SETTLE_MS)
 })
 
+test('downloaded macOS release DMGs must verify before they can be mounted', () => {
+  for (const target of ['darwin-arm64:dmg', 'darwin-x64:dmg']) {
+    const artifact = `/private/candidate/${target}.dmg`
+    const plan = candidateInstallPlan({target, artifact, scratch: '/private/scratch'})
+    assert.deepEqual(plan.install.slice(0, 2), [
+      {op: 'spawn', command: '/usr/bin/hdiutil', args: ['verify', artifact]},
+      {
+        op: 'spawn',
+        command: '/usr/bin/hdiutil',
+        args: ['attach', '-nobrowse', '-readonly', '-mountpoint', '/private/scratch/mount', artifact],
+      },
+    ])
+  }
+})
+
 test('Windows NSIS actions preserve spaced install roots and exercise normal self-removal', () => {
   const plan = candidateInstallPlan({
     target: 'win32-x64:nsis',
@@ -581,4 +596,15 @@ test('release workflow downloads exact candidates into checkout-free smoke jobs'
   const smokeJob = workflow.slice(smokeStart, workflow.indexOf('\n  pending-candidate-ledger:', smokeStart))
   assert.doesNotMatch(smokeJob, /actions\/checkout/u)
   assert.doesNotMatch(smokeJob, /continue-on-error|\|\| true/u)
+})
+
+test('installed candidate smoke cold-starts every packaged target through config mode', async () => {
+  const source = await readFile(
+    new URL('../scripts/installed-candidate-smoke.mjs', import.meta.url),
+    'utf8',
+  )
+  assert.match(
+    source,
+    /spawn\(executable, \[`--user-data-dir=\$\{userData\}`, '--open-settings'\]/u,
+  )
 })

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
+import {EventEmitter} from 'node:events'
 import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {test} from 'node:test'
 
-import {ensureDesktop, inspectDoctor, parseChecksum} from '../src/runtime.mjs'
+import {ensureDesktop, inspectDoctor, launchDesktop, parseChecksum} from '../src/runtime.mjs'
 
 const ARTIFACT = 'nova-audio-agent-0.1.0-linux-x64.AppImage'
 
@@ -34,7 +35,37 @@ test('desktop install verifies, atomically caches, and reuses a portable file', 
   assert.equal(requests, 2)
   const second = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl})
   assert.equal(second.executable, first.executable)
-  assert.equal(requests, 2)
+  assert.equal(requests, 3)
+})
+
+test('an online cache is reused only while its receipt matches the current release digest', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'novaaudio-cli-'))
+  let bytes = Buffer.from('#!/bin/sh\nexit 1\n')
+  let digest = createHash('sha256').update(bytes).digest('hex')
+  const fetchImpl = async url => String(url).endsWith('.sha256')
+    ? new Response(`${digest}  ${ARTIFACT}\n`)
+    : new Response(bytes)
+  const first = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl})
+  bytes = Buffer.from('#!/bin/sh\nexit 0\n')
+  digest = createHash('sha256').update(bytes).digest('hex')
+  const second = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl})
+  assert.equal(second.executable, first.executable)
+  assert.deepEqual(await readFile(second.executable), bytes)
+  const receipt = JSON.parse(await readFile(join(second.root, 'novaaudio-install.json'), 'utf8'))
+  assert.equal(receipt.sha256, digest)
+})
+
+test('a receipt-validated cache remains available when the release host is offline', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'novaaudio-cli-'))
+  const bytes = Buffer.from('#!/bin/sh\nexit 0\n')
+  const digest = createHash('sha256').update(bytes).digest('hex')
+  const online = async url => String(url).endsWith('.sha256')
+    ? new Response(`${digest}  ${ARTIFACT}\n`)
+    : new Response(bytes)
+  const installed = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl: online})
+  const offline = async () => { throw new Error('offline') }
+  const reused = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl: offline})
+  assert.equal(reused.executable, installed.executable)
 })
 
 test('checksum failure leaves no runnable installation', async () => {
@@ -81,7 +112,7 @@ test('concurrent installs serialize and reuse the first verified result', async 
     ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl}),
   ])
   assert.equal(first.executable, second.executable)
-  assert.equal(requests, 2)
+  assert.equal(requests, 3)
 })
 
 test('an interrupted download leaves no partial executable', async () => {
@@ -113,4 +144,54 @@ test('doctor exposes only configured secret key names', async () => {
   const report = await inspectDoctor({platform: 'linux', arch: 'x64', home, environment: {}})
   assert.deepEqual(report.configuredSecretKeys, ['OPENAI_API_KEY'])
   assert.doesNotMatch(JSON.stringify(report), /secret-value/u)
+})
+
+test('desktop launch waits for spawn success and enables no-FUSE AppImage execution', async () => {
+  const child = new EventEmitter()
+  child.unref = () => { child.unrefCalled = true }
+  let launch
+  const started = launchDesktop('/tmp/NovaAudioAgent.AppImage', {
+    platform: 'linux',
+    environment: {PATH: '/usr/bin'},
+    openSettings: true,
+    launchGraceMs: 1,
+    spawnImpl: (executable, args, options) => {
+      launch = {executable, args, options}
+      queueMicrotask(() => child.emit('spawn'))
+      return child
+    },
+  })
+  await started
+  assert.equal(launch.executable, '/tmp/NovaAudioAgent.AppImage')
+  assert.deepEqual(launch.args, ['--open-settings'])
+  assert.equal(launch.options.env.APPIMAGE_EXTRACT_AND_RUN, '1')
+  assert.equal(child.unrefCalled, true)
+})
+
+test('desktop launch rejects a process that exits unsuccessfully during startup grace', async () => {
+  const child = new EventEmitter()
+  child.unref = () => assert.fail('failed launch must not detach')
+  const launch = launchDesktop('/tmp/NovaAudioAgent.AppImage', {
+    launchGraceMs: 100,
+    spawnImpl: () => {
+      queueMicrotask(() => {
+        child.emit('spawn')
+        child.emit('exit', 1, null)
+      })
+      return child
+    },
+  })
+  await assert.rejects(launch, /desktop launch failed/u)
+})
+
+test('desktop launch reports an executable spawn failure', async () => {
+  const child = new EventEmitter()
+  child.unref = () => assert.fail('failed launch must not detach')
+  const launch = launchDesktop('/missing/Nova', {
+    spawnImpl: () => {
+      queueMicrotask(() => child.emit('error', new Error('ENOENT')))
+      return child
+    },
+  })
+  await assert.rejects(launch, /desktop launch failed/u)
 })

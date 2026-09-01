@@ -18,8 +18,8 @@ https://github.com/user-attachments/assets/0ca76117-f6d2-46fc-80c3-8a8cee603fc6
 ## 1. Highlights
 
 Nova Audio Agent is a **harness for an always-on, general-purpose voice agent**: Nova (小诺)
-keeps the conversation responsive while independent capabilities search, observe, operate
-devices, or complete longer tasks in the background.
+keeps the conversation responsive while doing long-running tasks in the background, reporting
+**proper** progress at **proper** time.
 
 A concurrent work [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) answers
 *how to keep an agent talking while it works*, while we ask the mirror question — **when is talking
@@ -53,7 +53,8 @@ For more details about the architecture, check [Architecture](docs/architecture.
 Requirements: Node.js 22+, npm, Git, a logged-in `codex` executable (app-server is the only
 Codex transport), and a supported desktop session
 
-For the packaged desktop, install and launch from any directory:
+After the replacement v0.1.0 release is published to npm, install and launch the packaged desktop
+from any directory:
 
 ```bash
 npm install --global nova-audio-agent@0.1.0
@@ -74,8 +75,7 @@ cd nova-audio-agent
 npm ci && cp .env.example .env
 ```
 
-Set `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` for the default integrated Qwen desktop — Search
-is always assembled, so Tavily is required even when not selected as an executor.
+Set `DASHSCOPE_API_KEY` and `TAVILY_API_KEY` for the default integrated Qwen desktop.
 
 ```bash
 npm run build --workspace @nova-audio-agent/runtime
@@ -100,7 +100,6 @@ It ships with toggles of microphone, camera, sounds, the settings panel and work
 | [Architecture](docs/architecture.md) | Modules and boundaries |
 | [Glossary and invariants](docs/glossary.md) | Vocabulary and rules |
 | [Getting started](docs/getting-started.md) | Setup and integrations |
-| [A2A Discussion](docs/a2a.md) | Agent-to-agent boundaries |
 | [A Tradeoff Ruler for Proactive Voice Agents](docs/blog/2026-08-proactive-voice-agent-design-space.md) | The design-space essay |
 
 ## 5. Roadmap

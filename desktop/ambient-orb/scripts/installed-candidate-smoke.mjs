@@ -113,11 +113,14 @@ export function candidateInstallPlan({target, artifact, scratch}) {
     residue = installRoot
   } else if (target === 'darwin-arm64:dmg' || target === 'darwin-x64:dmg') {
     executable = pathApi.resolve(mountRoot, appName, 'Contents/MacOS/Nova Audio Agent Ambient Orb')
-    install = [{
-      op: 'spawn',
-      command: '/usr/bin/hdiutil',
-      args: ['attach', '-nobrowse', '-readonly', '-mountpoint', mountRoot, artifact],
-    }]
+    install = [
+      {op: 'spawn', command: '/usr/bin/hdiutil', args: ['verify', artifact]},
+      {
+        op: 'spawn',
+        command: '/usr/bin/hdiutil',
+        args: ['attach', '-nobrowse', '-readonly', '-mountpoint', mountRoot, artifact],
+      },
+    ]
     uninstall = [{op: 'spawn', command: '/usr/bin/hdiutil', args: ['detach', mountRoot]}]
     residue = executable
   } else if (target === 'win32-x64:portable') {
@@ -360,7 +363,7 @@ async function runInstalledCandidate({
       providerEndpoint: provider.endpoint,
       ...(cameraFile === undefined ? {} : {cameraFile: await exactCameraFile(cameraFile)}),
     })
-    const child = spawn(executable, [`--user-data-dir=${userData}`], {
+    const child = spawn(executable, [`--user-data-dir=${userData}`, '--open-settings'], {
       cwd: workspace,
       env: environment,
       detached: process.platform !== 'win32',
