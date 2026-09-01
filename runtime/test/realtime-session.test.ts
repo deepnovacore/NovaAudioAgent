@@ -59,6 +59,10 @@ function makeSession(options: {readonly ids?: readonly string[]} = {}): {
       actions.push(`create_response:${intent.kind}`)
       return Promise.resolve()
     },
+    ensureResponse: () => {
+      actions.push('ensure_response')
+      return Promise.resolve()
+    },
     cancelResponse: (responseId: string) => {
       actions.push(`cancel:${responseId}`)
       return Promise.resolve()
@@ -182,6 +186,80 @@ test('a completed delegate is history, not active work', () => {
   session.registerDelegate('d-1', {summary: '跑测试', state: 'completed'})
   assert.equal(session.delegateState('d-1'), 'completed')
   assert.deepEqual(session.snapshot().active_delegates, [])
+})
+
+test('settling a user response requires the current user input revision', async () => {
+  const {session} = makeSession()
+  await session.connect({tools: []})
+  await session.accept({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-1',
+  })
+  await session.accept({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-1', provider_item_id: 'user-1',
+  })
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'response-1'})
+  await session.accept({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'response-1',
+    status: 'completed', reason: '',
+  })
+  await session.accept({
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-1', text: '确认',
+  })
+  assert.equal(session.settleUserResponse('unknown-response'), false)
+  assert.equal(session.providerIdle, false, 'an unknown response cannot clear the debt')
+
+  await session.accept({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-2', provider_item_id: 'user-2',
+  })
+  await session.accept({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-2', provider_item_id: 'user-2',
+  })
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'response-2'})
+  await session.accept({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'response-2',
+    status: 'completed', reason: '',
+  })
+  await session.accept({
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-2', text: '确认',
+  })
+
+  assert.equal(session.settleUserResponse('response-1'), false)
+  assert.equal(session.providerIdle, false, 'a stale response cannot clear the newer debt')
+  assert.equal(session.settleUserResponse('response-2'), true)
+  assert.equal(session.providerIdle, true, 'the exact current response settles its debt')
+  assert.equal(session.settleUserResponse('response-2'), false, 'one debt settles only once')
+})
+
+test('settling a response from an old provider epoch cannot clear current debt', async () => {
+  const {session} = makeSession({ids: ['recovery-1']})
+  await session.connect({tools: []})
+  await session.accept({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-old', provider_item_id: 'user-old',
+  })
+  await session.accept({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-old', provider_item_id: 'user-old',
+  })
+  await session.accept({kind: 'response_started', session_epoch: 1, response_id: 'response-old'})
+  await session.accept({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'response-old',
+    status: 'completed', reason: '',
+  })
+  await session.accept({
+    kind: 'user_transcript_final', session_epoch: 1, item_id: 'user-old', text: '确认',
+  })
+  assert.equal(session.settleUserResponse('response-old'), true)
+
+  await session.reconnect({tools: []})
+  assert.equal(await session.requestUserResponse(), true)
+  assert.equal(session.providerIdle, false)
+  assert.equal(session.settleUserResponse('response-old'), false)
+  assert.equal(session.providerIdle, false, 'an old epoch response cannot release the retry debt')
 })
 
 test('a tool continuation with no intents is a caller error, not a refusal', async () => {
