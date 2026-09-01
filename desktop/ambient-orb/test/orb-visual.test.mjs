@@ -291,9 +291,9 @@ test('muted is a deliberate dim ring, not an alert', () => {
 })
 
 test('the terminal states render distinct geometry in animated mode too', () => {
-  // Reduced motion folds the state name into the field seed, so its layouts
-  // differ for free; animated mode keeps one continuous field, and the only
-  // thing that can separate the three there is their own parameters.
+  // Static mode folds the state name into the field seed, so its layouts differ
+  // for free; animated mode keeps one continuous field, and the only thing that
+  // can separate the three there is their own parameters.
   const mounted = mount()
   const shape = name => {
     resetDraws(mounted.context)
@@ -617,7 +617,7 @@ test('interrupt scatters the current field whatever state it is in', () => {
 })
 
 test('interrupt keeps the static layout a pure function of seed and state', () => {
-  const mounted = mount({ reducedMotion: true, seed: 4242 })
+  const mounted = mount({ highContrast: true, seed: 4242 })
   resetDraws(mounted.context)
   mounted.visual.setState('listening')
   const canonical = centres(mounted.context)
@@ -627,7 +627,7 @@ test('interrupt keeps the static layout a pure function of seed and state', () =
   mounted.visual.interrupt()
   const frames = centres(mounted.context)
 
-  // Reduced motion has no loop to decay an impulse, so the barge-in is one
+  // High contrast has no loop to decay an impulse, so the barge-in is one
   // scattered snapshot followed immediately by the state's own constellation.
   assert.equal(frames.length, canonical.length * 2, 'the impulse frame then the re-snap')
   assert.notDeepEqual(
@@ -730,8 +730,8 @@ test('setPalette rebuilds only the offscreen atlas, never the visible canvas', (
   mounted.visual.destroy()
 })
 
-test('setPalette repaints immediately in static (reduced-motion) mode', () => {
-  const mounted = mount({ reducedMotion: true })
+test('setPalette repaints immediately in static high-contrast mode', () => {
+  const mounted = mount({ highContrast: true })
   const offscreenBefore = mounted.offscreen.length
   const clearsBefore = mounted.context.calls.clearRect
 
@@ -744,25 +744,16 @@ test('setPalette repaints immediately in static (reduced-motion) mode', () => {
   mounted.visual.destroy()
 })
 
-test('reduced motion never schedules a frame and redraws once per state change', () => {
-  let rafCalls = 0
-  const mounted = mount({
-    reducedMotion: true,
-    raf: () => { rafCalls += 1; return 1 },
-  })
+test('reduced motion still schedules and advances the nebula canvas', () => {
+  const mounted = mount({ reducedMotion: true })
 
-  assert.equal(rafCalls, 0, 'no animation loop in reduced motion')
-  assert.equal(mounted.context.calls.clearRect, 1, 'one static draw at construction')
-  assert.ok(drawnCount(mounted.context) > 0, 'the static constellation is drawn')
+  assert.equal(mounted.pending.length, 1, 'the resting animation loop is still scheduled')
+  assert.ok(mounted.visual.fps > 0, 'reduced motion never forces the canvas to zero fps')
 
-  mounted.visual.setState('listening')
-  assert.equal(mounted.context.calls.clearRect, 2)
-  mounted.visual.setState('listening')
-  assert.equal(mounted.context.calls.clearRect, 2, 'an unchanged state does not redraw')
-  mounted.visual.setLevel(0.9)
-  assert.equal(mounted.context.calls.clearRect, 2, 'amplitude never animates a static field')
-
-  assert.equal(rafCalls, 0)
+  const clears = mounted.context.calls.clearRect
+  mounted.step()
+  assert.equal(mounted.context.calls.clearRect, clears + 1, 'the scheduled frame is drawn')
+  assert.equal(mounted.pending.length, 1, 'the animation loop remains armed')
   mounted.visual.destroy()
 })
 
@@ -784,10 +775,10 @@ test('high contrast never schedules a frame, at construction or after', () => {
   mounted.visual.destroy()
 })
 
-test('the reduced-motion constellation is seeded: same seed same positions', () => {
-  const first = mount({ reducedMotion: true, seed: 4242 })
-  const second = mount({ reducedMotion: true, seed: 4242 })
-  const other = mount({ reducedMotion: true, seed: 99 })
+test('the static high-contrast constellation is seeded: same seed same positions', () => {
+  const first = mount({ highContrast: true, seed: 4242 })
+  const second = mount({ highContrast: true, seed: 4242 })
+  const other = mount({ highContrast: true, seed: 99 })
   for (const mounted of [first, second, other]) mounted.visual.setState('listening')
 
   const firstPoints = centres(first.context)
@@ -796,7 +787,7 @@ test('the reduced-motion constellation is seeded: same seed same positions', () 
   assert.notDeepEqual(firstPoints, centres(other.context))
 
   // Distinct states differ in convergence, so the constellation differs too.
-  const third = mount({ reducedMotion: true, seed: 4242 })
+  const third = mount({ highContrast: true, seed: 4242 })
   third.visual.setState('inactive')
   assert.notDeepEqual(centres(third.context), firstPoints)
   for (const mounted of [first, second, other, third]) mounted.visual.destroy()
@@ -820,7 +811,7 @@ test('collapsed alert states carry their own parameters and render distinct cons
     }
   }
 
-  const mounted = mount({ reducedMotion: true, seed: 777 })
+  const mounted = mount({ seed: 777 })
   resetDraws(mounted.context)
   mounted.visual.setState('disconnected')
   const disconnectedPoints = centres(mounted.context)
@@ -847,7 +838,7 @@ test('collapsed alert states carry their own parameters and render distinct cons
 })
 
 test('a static-mode scatter impulse decays across state snapshots instead of persisting', () => {
-  const mounted = mount({ reducedMotion: true, seed: 4242 })
+  const mounted = mount({ highContrast: true, seed: 4242 })
 
   // The construction-time snapshot draws the default "booting" state; drop
   // it so the capture below reflects only the "listening" redraw.
@@ -978,7 +969,7 @@ test('destroy cancels the pending frame and stops the loop', () => {
 })
 
 test('destroy is safe in static mode and blocks later redraws', () => {
-  const mounted = mount({ reducedMotion: true })
+  const mounted = mount({ highContrast: true })
   mounted.visual.destroy()
   const clears = mounted.context.calls.clearRect
 
@@ -1608,7 +1599,7 @@ test('a pixel-ratio change rebuilds the backing store and the sprite atlas', () 
   assert.equal(densities()[1].handlers.length, 0, 'destroy releases the density listener')
 })
 
-test('enabling reduce motion mid-session stops the loop and draws one still frame', () => {
+test('enabling reduce motion mid-session leaves the nebula loop running', () => {
   const media = mediaStub()
   const mounted = mount({ matchMedia: media.matchMedia, seed: 4242 })
   mounted.visual.setState('listening')
@@ -1619,25 +1610,17 @@ test('enabling reduce motion mid-session stops the loop and draws one still fram
   const clears = mounted.context.calls.clearRect
   media.emit('(prefers-reduced-motion: reduce)', true)
 
-  assert.equal(mounted.pending.length, 0, 'the loop stops instead of animating on')
-  assert.equal(mounted.visual.fps, 0)
-  assert.equal(mounted.context.calls.clearRect, clears + 1, 'exactly one static frame')
-  assert.ok(drawnCount(mounted.context) > 0, 'and it is a drawn constellation')
+  assert.equal(mounted.pending.length, 1, 'the in-flight animation frame remains armed')
+  assert.equal(mounted.visual.fps, 60)
+  assert.equal(mounted.context.calls.clearRect, clears, 'the preference does not force a static redraw')
 
-  // From here on the orb behaves exactly like one built in reduced motion: a
-  // state change redraws in place and never schedules.
-  resetDraws(mounted.context)
-  mounted.visual.setState('idle')
-  assert.equal(mounted.context.calls.clearRect, clears + 2)
-  assert.equal(mounted.pending.length, 0)
-
-  // Turning the preference back off resumes the tier the state is worth.
-  media.emit('(prefers-reduced-motion: reduce)', false)
-  assert.equal(mounted.pending.length, 1, 'the loop comes back')
-  assert.equal(mounted.visual.fps, 15)
-  const resumed = mounted.context.calls.clearRect
   mounted.step()
-  assert.equal(mounted.context.calls.clearRect, resumed + 1, 'and it animates again')
+  assert.equal(mounted.context.calls.clearRect, clears + 1, 'the next live frame still draws')
+  assert.equal(mounted.pending.length, 1, 'the loop schedules its successor')
+
+  media.emit('(prefers-reduced-motion: reduce)', false)
+  assert.equal(mounted.pending.length, 1, 'turning the preference off is also a visual no-op')
+  assert.equal(mounted.visual.fps, 60)
 
   mounted.visual.destroy()
   assert.equal(
@@ -1672,13 +1655,17 @@ test('enabling high contrast mid-session stops scheduling entirely', () => {
   assert.equal(media.find('(prefers-contrast: more)').handlers.length, 0)
 })
 
-test('setAccessibility keeps the orb static while either preference is on', () => {
+test('setAccessibility ignores reduced motion but still honors high contrast', () => {
   const mounted = mount()
   mounted.visual.setState('listening')
   mounted.step()
   assert.equal(mounted.pending.length, 1)
 
-  mounted.visual.setAccessibility({ reducedMotion: true, highContrast: true })
+  mounted.visual.setAccessibility({ reducedMotion: true })
+  assert.equal(mounted.pending.length, 1, 'reduced motion leaves the nebula loop alone')
+  assert.equal(mounted.visual.fps, 60)
+
+  mounted.visual.setAccessibility({ highContrast: true })
   assert.equal(mounted.pending.length, 0)
   assert.equal(mounted.visual.fps, 0)
 
@@ -1686,7 +1673,7 @@ test('setAccessibility keeps the orb static while either preference is on', () =
   assert.equal(mounted.pending.length, 0, 'high contrast alone still hides the canvas')
 
   mounted.visual.setAccessibility({ highContrast: false })
-  assert.equal(mounted.pending.length, 1, 'with both off the tier returns')
+  assert.equal(mounted.pending.length, 1, 'leaving high contrast restores the tier')
   assert.equal(mounted.visual.fps, 60)
   mounted.visual.destroy()
 })

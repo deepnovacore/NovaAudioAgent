@@ -428,15 +428,15 @@ export const STATE_FPS = Object.freeze({
 
 const DEFAULT_STATE = 'booting'
 
-// The two accessibility preferences that decide whether this module animates at
-// all. Both are watched live: a viewer who turns Reduce Motion on mid-session
-// must not keep getting animation, and one who turns high contrast on must not
-// keep paying for frames drawn into a canvas the stylesheet has hidden.
+// Both accessibility preferences are watched live. Reduced Motion deliberately
+// leaves the complete nebula canvas animated while the renderer suppresses its
+// surrounding CSS and palette transitions; high contrast must still stop frames
+// drawn into a canvas the stylesheet has hidden.
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 const HIGH_CONTRAST_QUERY = '(prefers-contrast: more)'
 
-// Deterministic PRNG: the layout must be reproducible so a reduced-motion
-// constellation is stable across redraws and assertable in tests.
+// Deterministic PRNG: static fallbacks must be stable across redraws and the
+// animated field must start reproducibly enough to assert its evolution.
 export function mulberry32(seed) {
   let state = seed >>> 0
   return function random() {
@@ -651,13 +651,14 @@ export function createOrbVisual(canvas, options = {}) {
     ? now
     : () => (globalThis.performance?.now?.() ?? Date.now())
 
-  // A high-contrast viewer sees the CSS solid disc instead of this canvas, and
-  // a reduced-motion viewer gets one still constellation: neither runs a loop.
-  // Both preferences can be toggled while the orb is on screen, so these are
-  // live values rather than a construction-time snapshot.
+  // A high-contrast viewer sees the CSS solid disc instead of this canvas, so
+  // it never runs a hidden animation loop. Reduced motion still limits CSS and
+  // palette transitions in the renderer, but the product deliberately keeps
+  // the nebula canvas rotating. Both preferences remain live values so the
+  // accessibility API and its query listeners keep one stable contract.
   let reducedMotionOn = reducedMotion === true
   let highContrastOn = highContrast === true
-  const computeStaticMode = () => reducedMotionOn || highContrastOn || !schedule
+  const computeStaticMode = () => highContrastOn || !schedule
   let staticMode = computeStaticMode()
 
   // The raw device ratio drives the media query; the capped one drives the
@@ -757,13 +758,10 @@ export function createOrbVisual(canvas, options = {}) {
     }
   }
 
-  // A reduced-motion or high-contrast viewer never sees particles ease
-  // between states — each state change swaps directly to its own still
-  // frame — so each state can and should get its own constellation instead
-  // of the same field merely rescaled by that state's convergence. An
-  // animated viewer keeps one continuous field: reseeding it on every state
-  // change would jump the whole pattern instead of easing, which is exactly
-  // what the live tiers are built to avoid.
+  // A static fallback never sees particles ease between states, so each state
+  // gets its own deterministic constellation. The animated field — including
+  // Reduced Motion — keeps one continuous seed; reseeding on every state change
+  // would jump the pattern instead of easing.
   function stateSeed(name) {
     return staticMode ? (seed ^ hashStateName(name)) >>> 0 : seed
   }
@@ -1165,9 +1163,9 @@ export function createOrbVisual(canvas, options = {}) {
     else startLoop()
   }
 
-  // Reduce Motion or high contrast can be switched on and off while the orb is
-  // on screen. Entering either one stops the loop and leaves a single still
-  // frame; leaving both hands the state's tier back.
+  // Accessibility preferences can be switched while the orb is on screen.
+  // High contrast stops the hidden canvas loop; reduced motion is tracked for
+  // API compatibility but deliberately leaves the rotating nebula untouched.
   function setAccessibility(preferences = {}) {
     if (destroyed) return
     const nextReduced = typeof preferences.reducedMotion === 'boolean'
@@ -1205,8 +1203,8 @@ export function createOrbVisual(canvas, options = {}) {
       startLoop()
       return
     }
-    // Nothing is coming to decay it here — reduced motion, high contrast, or a
-    // zero-fps tier — so the impulse gets a single frame and is then released
+    // Nothing is coming to decay it here — high contrast, a missing scheduler,
+    // or a zero-fps tier — so the impulse gets a single frame and is then released
     // back to the state's canonical constellation, which is what keeps a static
     // layout a pure function of (seed, state).
     draw()
