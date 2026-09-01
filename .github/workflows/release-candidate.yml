@@ -163,15 +163,15 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: >-
           npm run generate:pending-release-ledger --workspace @nova-audio-agent/ambient-orb --
-          --artifact-root candidate-artifacts
+          --artifact-root "$GITHUB_WORKSPACE/candidate-artifacts"
           --release-version "$RELEASE_VERSION"
           --commit ${{ github.sha }}
-          --output candidate-ledger-v1.json
+          --output "$GITHUB_WORKSPACE/candidate-ledger-v1.json"
       - name: Render the unpublished pending candidate report
         run: >-
           npm run generate:release-candidate-report --workspace @nova-audio-agent/ambient-orb --
-          --ledger candidate-ledger-v1.json
-          --output candidate-report.md
+          --ledger "$GITHUB_WORKSPACE/candidate-ledger-v1.json"
+          --output "$GITHUB_WORKSPACE/candidate-report.md"
       - uses: actions/upload-artifact@v4
         with:
           name: pending-candidate-ledger

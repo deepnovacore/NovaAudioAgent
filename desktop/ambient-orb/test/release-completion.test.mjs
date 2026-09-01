@@ -139,6 +139,42 @@ test('release candidate explicitly builds unsigned bytes and keeps trust-bound s
   )
 })
 
+test('candidate ledger workflow commands resolve repository-root artifacts across npm workspace cwd', async t => {
+  const workflow = await readFile(
+    new URL('../../../.github/workflows/release-candidate.yml', import.meta.url),
+    'utf8',
+  )
+  const workspace = await realpath(await mkdtemp(join(tmpdir(), 'nova-candidate-ledger-workflow-')))
+  t.after(() => import('node:fs/promises').then(({rm}) => rm(workspace, {recursive: true, force: true})))
+  const artifactRoot = join(workspace, 'candidate-artifacts')
+  await mkdir(artifactRoot)
+  for (const filename of Object.values(RELEASE_ARTIFACT_FILES)) {
+    await writeFile(join(artifactRoot, filename), `candidate:${filename}`)
+  }
+  const repository = fileURLToPath(new URL('../../..', import.meta.url))
+  const environment = {...process.env, GITHUB_WORKSPACE: workspace, RELEASE_VERSION: '0.1.0'}
+  const generate = workflowStepFoldedCommand(
+    workflow,
+    'Generate the honest pending external-evidence ledger',
+  ).replaceAll('${{ github.sha }}', 'a'.repeat(40))
+  const generated = spawnSync('/bin/sh', ['-c', generate], {
+    cwd: repository,
+    env: environment,
+    encoding: 'utf8',
+    timeout: 10_000,
+  })
+  assert.equal(generated.status, 0, generated.stderr)
+  const render = workflowStepFoldedCommand(workflow, 'Render the unpublished pending candidate report')
+  const rendered = spawnSync('/bin/sh', ['-c', render], {
+    cwd: repository,
+    env: environment,
+    encoding: 'utf8',
+    timeout: 10_000,
+  })
+  assert.equal(rendered.status, 0, rendered.stderr)
+  assert.match(await readFile(join(workspace, 'candidate-report.md'), 'utf8'), /Status: `pending`/u)
+})
+
 test('promotion is manual, candidate-bound, main-bound, and publishes npm only after release replacement', async () => {
   const workflow = await readFile(
     new URL('../../../.github/workflows/release-promote.yml', import.meta.url),
@@ -235,6 +271,22 @@ function workflowRunBodies(workflow) {
     bodies.push(body)
   }
   return bodies
+}
+
+function workflowStepFoldedCommand(workflow, name) {
+  const lines = workflow.split('\n')
+  const nameIndex = lines.findIndex(line => line.trim() === `- name: ${name}`)
+  assert.ok(nameIndex >= 0, `workflow step not found: ${name}`)
+  const runIndex = lines.findIndex((line, index) => index > nameIndex && /^\s+run:\s*>-/u.test(line))
+  assert.ok(runIndex > nameIndex, `workflow run block not found: ${name}`)
+  const indent = /^\s*/u.exec(lines[runIndex])[0].length
+  const command = []
+  for (let index = runIndex + 1; index < lines.length; index += 1) {
+    const nextIndent = /^\s*/u.exec(lines[index])[0].length
+    if (lines[index].trim() !== '' && nextIndent <= indent) break
+    if (lines[index].trim() !== '') command.push(lines[index].trim())
+  }
+  return command.join(' ')
 }
 
 test('mac post-sign verification finds the builder app below its architecture directory', async t => {
