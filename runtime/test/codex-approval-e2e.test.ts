@@ -523,7 +523,8 @@ test('turn interruption and process exit clear pending authority before any late
 })
 
 async function waitUntil(predicate: () => boolean, label: string): Promise<void> {
-  for (let turn = 0; turn < 200; turn += 1) {
+  const deadline = Date.now() + TEST_TIMEOUT_MS
+  while (Date.now() < deadline) {
     if (predicate()) return
     await yieldImmediate()
   }
