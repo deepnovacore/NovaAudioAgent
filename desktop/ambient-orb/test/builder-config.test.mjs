@@ -423,6 +423,8 @@ test('ordinary CI uploads package artifacts only for version tags', async () => 
   assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, [
     'macos-latest', 'ubuntu-latest', 'windows-latest',
   ])
+  const cliTest = workflow.jobs.electron.steps.find(step => step.run === 'npm run test:cli')
+  assert.deepEqual(cliTest, {run: 'npm run test:cli'})
   assert.equal(
     workflow.jobs.electron.steps.some(step => step.uses === 'actions/upload-artifact@v4'),
     false,
