@@ -460,7 +460,7 @@ export class CodexProjectStore {
           if (!isDirectChild(managed, workspace.canonical_path)) {
             throw new ProjectStateError('workspace_boundary_changed')
           }
-          const present = this.#lookupAt(
+          const present = this.#lookupWorkspaceAt(
             root,
             basename(workspace.canonical_path),
             'workspace_boundary_changed',
@@ -1763,7 +1763,7 @@ export class CodexProjectStore {
     let file: FileHandle | null = null
     try {
       file = await open(path, constants.O_RDONLY | directoryFlag() | noFollowFlag())
-      this.#requireMatchesAt(root, basename(path), file, 'workspace_boundary_changed')
+      this.#requireWorkspaceMatchesAt(root, basename(path), file, 'workspace_boundary_changed')
       const info = await file.stat({bigint: true})
       const canonical = realpathSync(path)
       if (
@@ -1773,7 +1773,7 @@ export class CodexProjectStore {
         || !isDirectChild(managed, canonical)
       ) throw new Error('unsafe')
       await this.#validateManagedRoot()
-      this.#requireMatchesAt(root, basename(path), file, 'workspace_boundary_changed')
+      this.#requireWorkspaceMatchesAt(root, basename(path), file, 'workspace_boundary_changed')
       return {canonical, identity: fileIdentity(info)}
     } catch {
       throw new ProjectStateError('workspace_boundary_changed')
@@ -1980,6 +1980,20 @@ export class CodexProjectStore {
     if (result.status !== 'ok') throw new ProjectStateError(code)
   }
 
+  #requireWorkspaceMatchesAt(
+    root: FileHandle,
+    name: string,
+    child: FileHandle,
+    code: ProjectStateCode,
+  ): void {
+    requireProjectBasename(name, code)
+    const result = this.#callRootFile(() => (
+      this.#rootFiles.matchesWorkspaceAt?.(root.fd, name, child.fd)
+      ?? this.#rootFiles.matchesAt(root.fd, name, child.fd)
+    ))
+    if (result.status !== 'ok') throw new ProjectStateError(code)
+  }
+
   #lookupAt(
     root: FileHandle,
     name: string,
@@ -1987,6 +2001,22 @@ export class CodexProjectStore {
   ): ProjectRootFileLookupResult {
     requireProjectBasename(name, code)
     const result = this.#callRootFileLookup(() => this.#rootFiles.lookupAt(root.fd, name))
+    if (result.status === 'unsupported' || result.status === 'failed') {
+      throw new ProjectStateError(code)
+    }
+    return result
+  }
+
+  #lookupWorkspaceAt(
+    root: FileHandle,
+    name: string,
+    code: ProjectStateCode,
+  ): ProjectRootFileLookupResult {
+    requireProjectBasename(name, code)
+    const result = this.#callRootFileLookup(() => (
+      this.#rootFiles.lookupWorkspaceAt?.(root.fd, name)
+      ?? this.#rootFiles.lookupAt(root.fd, name)
+    ))
     if (result.status === 'unsupported' || result.status === 'failed') {
       throw new ProjectStateError(code)
     }

@@ -415,7 +415,7 @@ test('ordinary CI uploads package artifacts only for version tags', async () => 
   const workflow = parseYaml(text)
 
   assert.deepEqual(Object.keys(workflow.on), ['push', 'pull_request'])
-  assert.deepEqual(workflow.on.push.branches, ['**'])
+  assert.deepEqual(workflow.on.push.branches, ['main'])
   assert.deepEqual(workflow.on.push.tags, ['v*'])
   assert.equal('python' in workflow.jobs, false)
   assert.deepEqual(workflow.jobs.electron.strategy.matrix.os, [

@@ -275,6 +275,17 @@
       "file": "desktop/ambient-orb/src/main/main.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
+      "line": 651,
+      "snippet": "safeCode",
+      "snippet_sha256": "00408d87451fcbf3a62f0f6725ffbc9070c579b8144b9e2c00603e2b6fd9b5c6",
+      "disposition": "wire_json",
+      "test": "desktop/ambient-orb/test/main-security.test.mjs",
+      "behavior": "main owns single-instance lifecycle and denies renderer escape"
+    },
+    {
+      "file": "desktop/ambient-orb/src/main/main.mjs",
+      "kind": "numeric_template",
+      "occurrence_index": 1,
       "line": 689,
       "snippet": "process.pid",
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
@@ -633,6 +644,39 @@
       "disposition": "intentional_utf16",
       "test": "runtime/test/codex-app-server-schema.test.ts",
       "behavior": "the exact supported request and inbound schema bundle validates"
+    },
+    {
+      "file": "runtime/src/codex-credential-snapshot.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 0,
+      "line": 183,
+      "snippet": "name.toUpperCase()",
+      "snippet_sha256": "c9938dbdf8cd237a11e3c49a74330148253441547cb6e8a1873a09273b8dd848",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-credential-snapshot.test.ts",
+      "behavior": "Windows environment aliases are canonicalized for the credential child"
+    },
+    {
+      "file": "runtime/src/codex-credential-snapshot.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 1,
+      "line": 186,
+      "snippet": "key.toUpperCase()",
+      "snippet_sha256": "0b53af296116eb2ace99b702bf02073df19853cd0e13bbb724cc8f7c2e2fccce",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-credential-snapshot.test.ts",
+      "behavior": "Windows environment aliases are canonicalized for the credential child"
+    },
+    {
+      "file": "runtime/src/codex-credential-snapshot.ts",
+      "kind": "locale_unicode",
+      "occurrence_index": 2,
+      "line": 192,
+      "snippet": "key.toUpperCase()",
+      "snippet_sha256": "0b53af296116eb2ace99b702bf02073df19853cd0e13bbb724cc8f7c2e2fccce",
+      "disposition": "host_only_unicode",
+      "test": "runtime/test/codex-credential-snapshot.test.ts",
+      "behavior": "Windows environment aliases are canonicalized for the credential child"
     },
     {
       "file": "runtime/src/codex-host-config.ts",

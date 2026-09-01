@@ -31,3 +31,16 @@ test('collector accepts split stable diagnostics and never returns raw stderr', 
   })
   assert.equal(JSON.stringify(collector.failure()).includes('secret'), false)
 })
+
+test('collector surfaces safe Codex detail but does not promote it to a startup failure class', () => {
+  const collector = createBackendDiagnosticCollector()
+  assert.equal(
+    collector.push('[runtime-diagnostic] codex_login_status_nonzero\nprivate command output'),
+    'codex_login_status_nonzero',
+  )
+  assert.equal(collector.code(), 'codex_login_status_nonzero')
+  assert.deepEqual(collector.failure(), {
+    kind: 'recoverable', code: 'backend_disconnected',
+  })
+  assert.equal(JSON.stringify(collector.failure()).includes('private'), false)
+})

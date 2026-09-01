@@ -41,6 +41,7 @@ export interface WindowsGuardianCommand {
 export interface WindowsGuardianCommandResult {
   readonly status: number | null
   readonly stdout: Buffer
+  readonly stderr?: Buffer
 }
 
 const fatalDecoder = new TextDecoder('utf-8', {fatal: true})
@@ -328,7 +329,7 @@ export class WindowsGuardianCodexProcessOwnerFactory implements CodexProcessOwne
       command.environment,
     )
     let stdout = Buffer.alloc(0)
-    let stderrBytes = 0
+    let stderr = Buffer.alloc(0)
     let rejectOverflow!: (error: Error) => void
     const overflow = new Promise<never>((_resolve, reject) => { rejectOverflow = reject })
     const failOverflow = (): void => { rejectOverflow(new CodexProcessOwnerError('spawn_failed')) }
@@ -340,15 +341,15 @@ export class WindowsGuardianCodexProcessOwnerFactory implements CodexProcessOwne
       stdout = Buffer.concat([stdout, Buffer.from(chunk)])
     })
     guardian.stderr.on('data', (chunk: unknown) => {
-      if (!(chunk instanceof Uint8Array)) {
+      if (!(chunk instanceof Uint8Array) || stderr.byteLength + chunk.byteLength > command.stderrLimit) {
         failOverflow()
         return
       }
-      stderrBytes += chunk.byteLength
-      if (stderrBytes > command.stderrLimit) failOverflow()
+      stderr = Buffer.concat([stderr, Buffer.from(chunk)])
     })
+    const stdoutClosed = readableClosed(guardian.stdout)
+    const stderrClosed = readableClosed(guardian.stderr)
     const deadline = Date.now() + command.timeoutMs
-    let timer: NodeJS.Timeout | undefined
     try {
       await Promise.race([
         guardian.waitReady(Math.min(WINDOWS_GUARDIAN_READY_TIMEOUT_MS, command.timeoutMs)),
@@ -357,21 +358,38 @@ export class WindowsGuardianCodexProcessOwnerFactory implements CodexProcessOwne
       if (!this.#validateHelper()) throw new CodexProcessOwnerError('spawn_failed')
       const remaining = deadline - Date.now()
       if (remaining <= 0) throw new CodexProcessOwnerError('spawn_failed')
+      let exitTimer: NodeJS.Timeout | undefined
       const status = await Promise.race([
         guardian.exit,
         overflow,
         new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => { reject(new CodexProcessOwnerError('spawn_failed')) }, remaining)
+          exitTimer = setTimeout(() => { reject(new CodexProcessOwnerError('spawn_failed')) }, remaining)
         }),
-      ])
+      ]).finally(() => {
+        if (exitTimer !== undefined) clearTimeout(exitTimer)
+      })
+      const drainRemaining = deadline - Date.now()
+      if (drainRemaining <= 0) throw new CodexProcessOwnerError('spawn_failed')
+      let drainTimer: NodeJS.Timeout | undefined
+      await Promise.race([
+        Promise.all([stdoutClosed, stderrClosed]),
+        overflow,
+        new Promise<never>((_resolve, reject) => {
+          drainTimer = setTimeout(() => { reject(new CodexProcessOwnerError('spawn_failed')) }, drainRemaining)
+        }),
+      ]).finally(() => {
+        if (drainTimer !== undefined) clearTimeout(drainTimer)
+      })
       await guardian.dispose()
       if (!this.#validateHelper()) throw new CodexProcessOwnerError('spawn_failed')
-      return Object.freeze({status, stdout})
+      return Object.freeze({
+        status,
+        stdout,
+        ...(stderr.byteLength === 0 ? {} : {stderr}),
+      })
     } catch {
       await guardian.terminateTree().catch(() => { guardian.abandon() })
       throw new CodexProcessOwnerError('spawn_failed')
-    } finally {
-      if (timer !== undefined) clearTimeout(timer)
     }
   }
 
@@ -402,6 +420,34 @@ export class WindowsGuardianCodexProcessOwnerFactory implements CodexProcessOwne
     }
     return WindowsGuardianOwnedCodexProcess.create(child)
   }
+}
+
+function readableClosed(stream: Readable): Promise<void> {
+  return new Promise<void>((resolveClosed, rejectClosed) => {
+    let settled = false
+    const cleanup = (): void => {
+      stream.off('end', onEnd)
+      stream.off('close', onClose)
+      stream.off('error', onError)
+    }
+    const resolve = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolveClosed()
+    }
+    const onEnd = (): void => { resolve() }
+    const onClose = (): void => { resolve() }
+    const onError = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      rejectClosed(new CodexProcessOwnerError('spawn_failed'))
+    }
+    stream.once('end', onEnd)
+    stream.once('close', onClose)
+    stream.once('error', onError)
+  })
 }
 
 class WindowsGuardianOwnedCodexProcess implements OwnedCodexProcess {

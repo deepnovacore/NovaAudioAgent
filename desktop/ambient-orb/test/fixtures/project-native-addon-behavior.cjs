@@ -76,6 +76,25 @@ if (mode === 'hold') {
       assert.equal(addon.protectDirectory, undefined)
       assert.deepEqual(addon.protectAt(containerDescriptor, 'root', rootDescriptor), {status: 'ok'})
       assert.deepEqual(addon.probe(rootDescriptor), {status: 'ok'})
+      if (process.platform === 'win32') {
+        const readers = spawnSync('icacls.exe', [
+          root,
+          '/grant:r',
+          '*S-1-5-32-545:(RX)',
+        ], {encoding: 'utf8', windowsHide: true})
+        assert.equal(readers.status, 0, readers.stderr || readers.stdout)
+        assert.deepEqual(addon.probe(rootDescriptor), {status: 'ok'})
+
+        const writable = spawnSync('icacls.exe', [
+          root,
+          '/grant:r',
+          '*S-1-5-32-545:(M)',
+        ], {encoding: 'utf8', windowsHide: true})
+        assert.equal(writable.status, 0, writable.stderr || writable.stdout)
+        assert.deepEqual(addon.probe(rootDescriptor), {status: 'failed'})
+        assert.deepEqual(addon.protectAt(containerDescriptor, 'root', rootDescriptor), {status: 'ok'})
+        assert.deepEqual(addon.probe(rootDescriptor), {status: 'ok'})
+      }
       assert.deepEqual(addon.lookupAt(rootDescriptor, '../escape'), {status: 'failed'})
       assert.deepEqual(addon.createFileAt(rootDescriptor, '/absolute', true), {status: 'failed'})
 
@@ -200,6 +219,49 @@ if (mode === 'hold') {
         addon.unlinkAt(rootDescriptor, 'workspace-01', directory.identity, 'directory'),
         {status: 'ok'},
       )
+
+      if (process.platform === 'win32') {
+        const sandboxWorkspace = addon.mkdirAt(rootDescriptor, 'sandbox-workspace')
+        assert.equal(sandboxWorkspace.status, 'ok')
+        const sandboxWorkspacePath = join(root, 'sandbox-workspace')
+        const writable = spawnSync('icacls.exe', [
+          sandboxWorkspacePath,
+          '/grant:r',
+          '*S-1-5-32-545:(OI)(CI)(M)',
+        ], {encoding: 'utf8', windowsHide: true})
+        assert.equal(writable.status, 0, writable.stderr || writable.stdout)
+        assert.deepEqual(addon.lookupAt(rootDescriptor, 'sandbox-workspace'), {status: 'failed'})
+        assert.deepEqual(addon.lookupWorkspaceAt(rootDescriptor, 'sandbox-workspace'), {
+          status: 'ok',
+          identity: sandboxWorkspace.identity,
+        })
+        const sandboxWorkspaceDescriptor = openDirectory(sandboxWorkspacePath)
+        try {
+          assert.deepEqual(
+            addon.matchesWorkspaceAt(
+              rootDescriptor,
+              'sandbox-workspace',
+              sandboxWorkspaceDescriptor,
+            ),
+            {status: 'ok'},
+          )
+          assert.deepEqual(
+            addon.protectAt(rootDescriptor, 'sandbox-workspace', sandboxWorkspaceDescriptor),
+            {status: 'ok'},
+          )
+        } finally {
+          closeSync(sandboxWorkspaceDescriptor)
+        }
+        assert.deepEqual(
+          addon.unlinkAt(
+            rootDescriptor,
+            'sandbox-workspace',
+            sandboxWorkspace.identity,
+            'directory',
+          ),
+          {status: 'ok'},
+        )
+      }
       assert.deepEqual(
         addon.unlinkAt(rootDescriptor, 'bootstrap-root', bootstrapDirectory.identity, 'directory'),
         {status: 'ok'},

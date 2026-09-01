@@ -41,7 +41,8 @@ test('Windows project authority owns nonblocking locks and handle-relative proje
   assert.match(body, /const PfnDliHook __pfnDliNotifyHook2 = nova_delay_load_hook;/u)
   assert.doesNotMatch(body, /\nPfnDliHook __pfnDliNotifyHook2/u)
   for (const exported of [
-    'acquire', 'openDirectory', 'probe', 'protectAt', 'matchesAt', 'lookupAt', 'createFileAt', 'mkdirAt', 'mkdirPrivateAt',
+    'acquire', 'openDirectory', 'probe', 'protectAt', 'matchesAt', 'matchesWorkspaceAt',
+    'lookupAt', 'lookupWorkspaceAt', 'createFileAt', 'mkdirAt', 'mkdirPrivateAt',
     'renameAt', 'renameNoReplaceAt', 'syncDirectory', 'unlinkAt', 'removeTreeAt',
   ]) assert.match(body, new RegExp(`"${exported}"`, 'u'))
   assert.doesNotMatch(body, /static napi_value nova_protect_directory|"protectDirectory"/u)
@@ -51,6 +52,10 @@ test('Windows project authority owns nonblocking locks and handle-relative proje
     'static napi_value nova_open_directory',
   )[1].split('static napi_value', 1)[0]
   assert.match(openDirectory, /nova_current_user_owner\(opened\)/u)
+  assert.match(body, /nova_validate_project_root/u)
+  assert.match(body, /FILE_DELETE_CHILD[\s\S]{0,160}WRITE_DAC[\s\S]{0,160}GENERIC_ALL/u)
+  assert.match(body, /nova_private_acl\(handle, 0\)/u)
+  assert.match(body, /nova_private_acl\(handle, 1\)/u)
   const posixBody = await source('native/project-native/project_native_posix.c')
   assert.doesNotMatch(posixBody, /static napi_value nova_protect_directory|"protectDirectory"/u)
 })
@@ -74,6 +79,10 @@ test('Windows sandbox probe measures child, filesystem, network, and limit isola
     /QueryInformationJobObject/u,
   ]) assert.match(body, required)
   assert.doesNotMatch(body, /ShellExecute|\bsystem\s*\(|taskkill/iu)
+  assert.doesNotMatch(
+    body,
+    /GetSecurityInfo|GetTokenInformation|OWNER_SECURITY_INFORMATION|nova_current_user_is_owner/u,
+  )
 })
 
 test('Windows guardian assigns a suspended target before resume and owns owner-death cleanup', async () => {

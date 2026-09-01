@@ -646,6 +646,10 @@ async function launchBackend(backendKind, smokeChannel, onExit) {
       const code = diagnostic.push(chunk.toString('utf8'))
       if (code) console.error(`[backend-diagnostic] ${code}`)
     })
+    spawnedBackend.once('exit', code => {
+      const safeCode = Number.isInteger(code) ? code : 'none'
+      console.error(`[backend-process-exit] code=${safeCode}`)
+    })
     // Covers both deaths: the child that exits, and the utility process that never
     // starts. Either way the handshake is failed now
     // instead of waiting out the timeout, and `launchBackend` rejects, which the

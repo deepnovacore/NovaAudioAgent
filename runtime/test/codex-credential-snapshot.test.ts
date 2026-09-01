@@ -93,6 +93,33 @@ test('an API key skips hostile saved-login files and remains process-only', asyn
   }
 })
 
+test('Windows environment aliases are canonicalized for the credential child', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-codex-windows-env-'))
+  const destination = join(root, 'destination')
+  await mkdir(destination, {mode: 0o700})
+  try {
+    const home = hostCodexHomeForTest(await realpath(destination), {ephemeral: true})
+    const snapshotter = new CredentialSnapshotter({
+      platform: 'win32',
+      environment: {
+        Path: 'C:\\Windows\\System32',
+        USERPROFILE: 'C:\\Users\\nova',
+        SECRET_SENTINEL: 'drop-me',
+      },
+    })
+    const snapshot = await snapshotter.prepare({codexHome: home, apiKey: 'api-key-process-only'})
+    assert.deepEqual(credentialSnapshotEnvironment(snapshot), {
+      PATH: 'C:\\Windows\\System32',
+      HOME: 'C:\\Users\\nova',
+      CODEX_HOME: await realpath(destination),
+      CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1',
+      CODEX_API_KEY: 'api-key-process-only',
+    })
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('credential no-follow, mode, and exact byte bounds fail with only credential_missing', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-codex-bound-'))
   try {
@@ -100,6 +127,7 @@ test('credential no-follow, mode, and exact byte bounds fail with only credentia
       ? (['over-limit'] as const)
       : (['symlink', 'group-write', 'over-limit'] as const)
     for (const scenario of scenarios) {
+      const diagnostics: string[] = []
       const source = join(root, `${scenario}-source`)
       const destination = join(root, `${scenario}-destination`)
       await mkdir(source, {mode: 0o700})
@@ -122,6 +150,7 @@ test('credential no-follow, mode, and exact byte bounds fail with only credentia
       const snapshotter = new CredentialSnapshotter({
         sourceHome: await realpath(source),
         environment: {PATH: '/safe-path', HOME: '/safe-home'},
+        onDiagnostic: code => diagnostics.push(code),
       })
       const home = hostCodexHomeForTest(await realpath(destination), {ephemeral: true})
       await assert.rejects(
@@ -133,6 +162,7 @@ test('credential no-follow, mode, and exact byte bounds fail with only credentia
           return true
         },
       )
+      assert.deepEqual(diagnostics, ['codex_credential_snapshot_saved_login_failed'])
     }
   } finally {
     await rm(root, {recursive: true, force: true})

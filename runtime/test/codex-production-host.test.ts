@@ -223,6 +223,64 @@ test('production preflight accepts a canonical non-Git workspace for a new manag
   }
 })
 
+test('production preflight reports a safe login-status diagnostic without command output', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-codex-login-diagnostic-')))
+  const workspace = join(root, 'workspace')
+  const binary = join(root, 'codex')
+  const home = join(root, 'home')
+  const probe = join(root, 'probe')
+  await mkdir(workspace)
+  await mkdir(home)
+  await writeFile(binary, '#!/bin/sh\nexit 0\n', {mode: 0o755})
+  await writeFile(probe, '#!/bin/sh\nexit 0\n', {mode: 0o755})
+  const scenarios: readonly [BoundedCodexCommandResult, string][] = [
+    [{status: 1, stdout: Buffer.from('private login detail')}, 'codex_login_status_nonzero'],
+    [{status: 0, stdout: Buffer.alloc(0)}, 'codex_login_status_no_output'],
+    [{status: 0, stdout: Buffer.from('one'), stderr: Buffer.from('two')},
+      'codex_login_status_multiple_streams'],
+    [{status: 0, stdout: Buffer.from('private changed wording')},
+      'codex_login_status_unrecognized'],
+  ]
+  try {
+    for (const [loginResult, expected] of scenarios) {
+      const diagnostics: string[] = []
+      let call = 0
+      const runner = new NativeCodexHostPreflightRunner({
+        probePath: probe,
+        environment: {PATH: '/usr/bin:/bin', HOME: home},
+        hasApiKey: false,
+        onDiagnostic: code => diagnostics.push(code),
+        commandRunner: async () => {
+          await Promise.resolve()
+          call += 1
+          return call === 1
+            ? {status: 0, stdout: Buffer.from('codex-cli 0.147.0')}
+            : loginResult
+        },
+      })
+      await assert.rejects(runner.run({
+        binary: hostBinaryForTest(await realpath(binary)),
+        workspace: hostWorkspaceForTest(await realpath(workspace)),
+        codexHome: hostCodexHomeForTest(await realpath(home), {ephemeral: true}),
+        apiKey: null,
+        developerInstructions: null,
+        resumeThreadId: null,
+        persistent: false,
+        workingInterval: 30,
+      }, 5_000), (error: unknown) => (
+        typeof error === 'object'
+        && error !== null
+        && Reflect.get(error, 'code') === 'credential_missing'
+        && typeof Reflect.get(error, 'message') === 'string'
+        && (Reflect.get(error, 'message') as string).includes('private') === false
+      ))
+      assert.deepEqual(diagnostics, [expected])
+    }
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test('unsandboxed or malformed native probe output fails closed with a stable code', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-codex-production-host-')))
   const workspace = join(root, 'workspace')
