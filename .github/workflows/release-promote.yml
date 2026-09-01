@@ -39,8 +39,6 @@ jobs:
         include:
           - target: darwin-arm64:app
             filename: nova-audio-agent-0.1.0-macos-arm64-app.zip
-          - target: darwin-arm64:dmg
-            filename: nova-audio-agent-0.1.0-macos-arm64.dmg
     steps:
       - uses: actions/checkout@v4
         with:

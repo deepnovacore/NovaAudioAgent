@@ -151,6 +151,10 @@ test('promotion is manual, candidate-bound, main-bound, and publishes npm only a
   assert.match(workflow, /git rev-parse origin\/main/u)
   assert.match(workflow, /needs: mac-installed-smoke/u)
   assert.match(workflow, /run-id: \$\{\{ inputs\.mac_candidate_run_id \}\}/u)
+  const macSmokeStart = workflow.indexOf('  mac-installed-smoke:')
+  const macSmokeJob = workflow.slice(macSmokeStart, workflow.indexOf('\n  promote:', macSmokeStart))
+  assert.match(macSmokeJob, /target: darwin-arm64:app/u)
+  assert.doesNotMatch(macSmokeJob, /target: darwin-arm64:dmg/u)
   assert.match(
     workflow,
     /cp desktop\/ambient-orb\/scripts\/installed-candidate-smoke\.mjs candidate\/release-smoke-kit\/scripts\//u,
