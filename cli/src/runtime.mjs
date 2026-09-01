@@ -403,7 +403,6 @@ export function launchDesktop(executable, {
         child.unref()
         resolveLaunch()
       }, launchGraceMs)
-      launchTimer.unref?.()
     })
   })
 }

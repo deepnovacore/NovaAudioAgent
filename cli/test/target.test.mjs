@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
+import {join} from 'node:path'
 import {test} from 'node:test'
 
 import {
@@ -23,11 +24,11 @@ test('release and settings paths use the documented local roots', () => {
   const target = resolveTarget('linux', 'x64')
   assert.equal(
     releaseRoot({home: '/tmp/home', target}),
-    '/tmp/home/.nova-audio-agent/cli/releases/0.1.0/linux-x64',
+    join('/tmp/home', '.nova-audio-agent', 'cli', 'releases', '0.1.0', 'linux-x64'),
   )
   assert.equal(
     desktopSettingsPath({platform: 'linux', home: '/tmp/home', environment: {}}),
-    '/tmp/home/.config/Nova Audio Agent Ambient Orb/ambient-orb-settings.json',
+    join('/tmp/home', '.config', 'Nova Audio Agent Ambient Orb', 'ambient-orb-settings.json'),
   )
   assert.equal(releaseBaseUrl(), 'https://github.com/deepnovacore/NovaAudioAgent/releases/download/v0.1.0')
 })
