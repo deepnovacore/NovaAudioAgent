@@ -3,8 +3,12 @@ name: Promote release candidate
 on:
   workflow_dispatch:
     inputs:
-      candidate_run_id:
-        description: Successful Release candidate evidence workflow run ID
+      mac_candidate_run_id:
+        description: Candidate run containing the approved macOS arm64 artifact
+        required: true
+        type: string
+      windows_candidate_run_id:
+        description: Successful Windows-only candidate run ID
         required: true
         type: string
       commit:
@@ -26,7 +30,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  mac-installed-smoke:
+    runs-on: macos-14
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64:app
+            filename: nova-audio-agent-0.1.0-macos-arm64-app.zip
+          - target: darwin-arm64:dmg
+            filename: nova-audio-agent-0.1.0-macos-arm64.dmg
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-darwin-arm64
+          path: candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.mac_candidate_run_id }}
+      - name: Rehash, install, exercise settings launch, quit, and remove macOS candidate
+        run: >-
+          node desktop/ambient-orb/scripts/run-unsigned-installed-smoke.mjs
+          --target ${{ matrix.target }}
+          --artifact candidate/release-artifacts/${{ matrix.filename }}
+          --sha256-file candidate/release-digests/${{ matrix.filename }}.sha256
+          --camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4
+
   promote:
+    needs: mac-installed-smoke
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: npm-release
@@ -42,11 +82,12 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm install --global npm@11.6.0
-      - name: Verify version, main commit, candidate identity, and npm authority
+      - name: Verify version, main commit, split candidate identity, and npm authority
         env:
           GH_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          MAC_CANDIDATE_RUN_ID: ${{ inputs.mac_candidate_run_id }}
+          WINDOWS_CANDIDATE_RUN_ID: ${{ inputs.windows_candidate_run_id }}
           EXPECTED_COMMIT: ${{ inputs.commit }}
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
@@ -57,10 +98,30 @@ jobs:
           test "$EXPECTED_COMMIT" = "$(git rev-parse origin/main)"
           test "$(node -p "require('./cli/package.json').version")" = "$RELEASE_VERSION"
           test "$(node -p "require('./desktop/ambient-orb/package.json').version")" = "$RELEASE_VERSION"
-          gh run view "$CANDIDATE_RUN_ID" --json conclusion,headSha,name > candidate-run.json
-          test "$(jq -r .conclusion candidate-run.json)" = "success"
-          test "$(jq -r .headSha candidate-run.json)" = "$EXPECTED_COMMIT"
-          test "$(jq -r .name candidate-run.json)" = "Release candidate evidence"
+          gh run view "$MAC_CANDIDATE_RUN_ID" --json conclusion,headSha,jobs,name > mac-candidate-run.json
+          gh run view "$WINDOWS_CANDIDATE_RUN_ID" --json conclusion,headSha,jobs,name > windows-candidate-run.json
+          test "$(jq -r .name mac-candidate-run.json)" = "Release candidate evidence"
+          test "$(jq -r .name windows-candidate-run.json)" = "Release candidate evidence"
+          test "$(jq '[.jobs[] | select(.name | contains("macos-14, darwin, darwin-arm64")) | select(.conclusion == "success")] | length' mac-candidate-run.json)" = "1"
+          test "$(jq -r .conclusion windows-candidate-run.json)" = "success"
+          test "$(jq '[.jobs[] | select(.name | contains("windows-latest, win32, win32-x64")) | select(.conclusion == "success")] | length' windows-candidate-run.json)" = "1"
+          test "$(jq '[.jobs[] | select(.name | contains("windows-latest, win32-x64:")) | select(.conclusion == "success")] | length' windows-candidate-run.json)" = "2"
+          mac_commit="$(jq -r .headSha mac-candidate-run.json)"
+          windows_commit="$(jq -r .headSha windows-candidate-run.json)"
+          git merge-base --is-ancestor "$mac_commit" "$windows_commit"
+          git merge-base --is-ancestor "$windows_commit" "$EXPECTED_COMMIT"
+          git diff --name-only "$mac_commit" "$windows_commit" | while read -r changed_path; do
+            case "$changed_path" in
+              .github/workflows/release-candidate.yml|desktop/ambient-orb/scripts/*|desktop/ambient-orb/test/*) ;;
+              *) exit 1 ;;
+            esac
+          done
+          git diff --name-only "$windows_commit" "$EXPECTED_COMMIT" | while read -r changed_path; do
+            case "$changed_path" in
+              .github/workflows/release-promote.yml|desktop/ambient-orb/test/release-completion.test.mjs) ;;
+              *) exit 1 ;;
+            esac
+          done
           npm whoami
           set +e
           npm view nova-audio-agent@0.1.0 version > existing-version.txt 2> npm-view-error.txt
@@ -73,11 +134,15 @@ jobs:
       - name: Download and verify the exact candidate matrix
         env:
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          MAC_CANDIDATE_RUN_ID: ${{ inputs.mac_candidate_run_id }}
+          WINDOWS_CANDIDATE_RUN_ID: ${{ inputs.windows_candidate_run_id }}
           EXPECTED_COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
-          gh run download "$CANDIDATE_RUN_ID" --pattern 'candidate-*' --dir downloaded
+          gh run download "$MAC_CANDIDATE_RUN_ID" --name candidate-darwin-arm64 \
+            --dir downloaded/candidate-darwin-arm64
+          gh run download "$WINDOWS_CANDIDATE_RUN_ID" --name candidate-win32-x64 \
+            --dir downloaded/candidate-win32-x64
           node desktop/ambient-orb/scripts/assemble-release-artifact-root.mjs \
             --input downloaded --output release-artifacts
           node desktop/ambient-orb/scripts/generate-release-manifest.mjs \
@@ -95,7 +160,10 @@ jobs:
           npm install --prefix npm-smoke --ignore-scripts "$tarball"
           npm-smoke/node_modules/.bin/novaaudio --version
           npm-smoke/node_modules/.bin/novaaudio --help
-          npm-smoke/node_modules/.bin/novaaudio doctor
+          if npm-smoke/node_modules/.bin/novaaudio doctor; then
+            echo "unsupported Linux doctor unexpectedly succeeded" >&2
+            exit 1
+          fi
       - name: Record the current v0.1.0 release before replacement
         env:
           GH_TOKEN: ${{ github.token }}
@@ -121,11 +189,6 @@ jobs:
             --title "Nova Audio Agent v0.1.0" \
             --notes "Replacement for the original Windows-only v0.1.0. This release now includes macOS arm64 and Windows x64 portable applications plus installers. These builds are unsigned; macOS Gatekeeper and Windows SmartScreen may display security warnings."
           gh release upload v0.1.0 release-artifacts/* --clobber
-      - name: Launch the packed npm CLI against the replacement release before publish
-        run: |
-          set -euo pipefail
-          timeout 60 xvfb-run -a bash -c \
-            'set -euo pipefail; npm-smoke/node_modules/.bin/novaaudio config; sleep 5'
       - name: Publish and verify nova-audio-agent 0.1.0
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -138,13 +201,17 @@ jobs:
           npm install --global --prefix "$prefix" nova-audio-agent@0.1.0
           "$prefix/bin/novaaudio" --version
           "$prefix/bin/novaaudio" --help
-          "$prefix/bin/novaaudio" doctor
+          if "$prefix/bin/novaaudio" doctor; then
+            echo "unsupported Linux doctor unexpectedly succeeded" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: v0.1.0-replacement-audit
           path: |
-            candidate-run.json
+            mac-candidate-run.json
+            windows-candidate-run.json
             promotion-audit/**
             release-artifacts/release-manifest-v1.json
             release-artifacts/release-manifest-v1.json.sha256
