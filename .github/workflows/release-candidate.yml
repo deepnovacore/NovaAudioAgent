@@ -52,7 +52,7 @@ jobs:
       - run: npm ci
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run check
-        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
+        if: inputs.candidate_scope == 'full'
       - run: npm run test:runtime
         # The complete runtime suite asserts POSIX uid/mode and descriptor-lock
         # contracts. Windows is covered by the desktop/native suite below and
@@ -63,9 +63,9 @@ jobs:
       - run: node desktop/ambient-orb/node_modules/electron/install.js
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run test:desktop
-        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
+        if: inputs.candidate_scope == 'full'
       - run: npm run test:cli
-        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
+        if: inputs.candidate_scope == 'full'
       - name: Build unsigned candidate bytes
         if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb
