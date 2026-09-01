@@ -13,6 +13,7 @@ const allowedScenarios = new Set([
   'unknown-response',
   'server-request',
   'file-approval',
+  'file-approval-held-terminal',
   'file-approval-decline',
   'file-approval-turn-interrupted',
   'file-approval-process-exit',
@@ -28,6 +29,8 @@ if (!allowedScenarios.has(scenario)) fail('invalid_scenario')
 
 let pendingTurnId = null
 let approvalTurnId = null
+let pendingApprovalCompletionId = null
+let approvalResponseCount = 0
 let threadId = 'fixture-thread-1'
 const releases = new Set()
 
@@ -42,6 +45,18 @@ process.on('message', message => {
     turnCompletion(id)
   }
   if (message.name === 'clean_eof' && scenario === 'clean-eof') endAndExit()
+  if (message.name === 'approval_process_exit') {
+    if (scenario !== 'file-approval-process-exit') fail('invalid_approval_process_exit')
+    endAndExit()
+  }
+  if (message.name === 'approval_turn_completion') {
+    if (scenario !== 'file-approval-held-terminal' || pendingApprovalCompletionId === null) {
+      fail('invalid_approval_turn_completion')
+    }
+    const id = pendingApprovalCompletionId
+    pendingApprovalCompletionId = null
+    turnCompletion(id)
+  }
   if (message.name === 'leader_exit') {
     process.disconnect?.()
     process.exit(0)
@@ -76,13 +91,35 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       plain(message)
       && message.id === 910
       && plain(message.result)
-      && message.result.decision === expectedApprovalDecision()
-      && approvalTurnId !== null
+      && (message.result.decision === 'accept' || message.result.decision === 'decline')
     ) {
+      approvalResponseCount += 1
+      barrier('approval_response', {
+        decision: message.result.decision,
+        response_count: approvalResponseCount,
+      })
+      if (approvalResponseCount > 1) return
+      if (message.result.decision !== expectedApprovalDecision() || approvalTurnId === null) {
+        fail('invalid_approval_response')
+      }
       const id = approvalTurnId
       approvalTurnId = null
-      barrier('approval_response', {decision: message.result.decision})
-      if (scenario !== 'file-approval-turn-interrupted') turnCompletion(id)
+      if (scenario === 'file-approval-held-terminal') pendingApprovalCompletionId = id
+      else if (scenario !== 'file-approval-turn-interrupted') turnCompletion(id)
+      return
+    }
+    if (plain(message) && message.method === 'fixture/approvalResponseCount') {
+      const params = plain(message.params) ? message.params : {}
+      if (
+        !isApprovalScenario()
+        || typeof params.probeId !== 'string'
+        || !/^approval-response-probe-[1-9][0-9]*$/u.test(params.probeId)
+        || params.probeId.length > 64
+      ) fail('invalid_approval_response_probe')
+      barrier('approval_response_count', {
+        probe_id: params.probeId,
+        response_count: approvalResponseCount,
+      })
       return
     }
     if (
@@ -203,7 +240,7 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
               id: 'fixture-turn-1', status: 'interrupted', itemsView: 'notLoaded', items: [],
             },
           }})
-        } else if (scenario === 'file-approval-process-exit') endAndExit()
+        }
         return
       }
       if (scenario === 'clean-eof') {
@@ -302,6 +339,7 @@ function isApprovalScenario() {
 
 function isFileApprovalScenario() {
   return scenario === 'file-approval'
+    || scenario === 'file-approval-held-terminal'
     || scenario === 'file-approval-decline'
     || scenario === 'file-approval-turn-interrupted'
     || scenario === 'file-approval-process-exit'

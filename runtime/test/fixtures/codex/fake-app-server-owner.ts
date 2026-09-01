@@ -25,6 +25,7 @@ export type FakeAppServerScenario =
   | 'unknown-response'
   | 'server-request'
   | 'file-approval'
+  | 'file-approval-held-terminal'
   | 'file-approval-decline'
   | 'file-approval-turn-interrupted'
   | 'file-approval-process-exit'
@@ -76,8 +77,13 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
   readonly pid: number
   readonly #child: ChildProcess
   readonly #barriers = new Map<string, (() => void)[]>()
+  readonly #approvalResponseProbes = new Map<string, {
+    readonly resolve: (count: number) => void
+    readonly reject: (error: Error) => void
+  }>()
   readonly #seen = new Set<string>()
   #stdinClosed = false
+  #nextApprovalResponseProbe = 0
   #resolveApprovalDecision!: (decision: 'accept' | 'decline') => void
 
   constructor(child: ChildProcess) {
@@ -91,13 +97,31 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
     this.pid = child.pid
     this.approvalDecision = new Promise(resolve => { this.#resolveApprovalDecision = resolve })
     this.exit = new Promise((resolve, reject) => {
-      child.once('exit', code => { resolve(code) })
-      child.once('error', reject)
+      child.once('exit', code => {
+        this.#rejectApprovalResponseProbes(new Error('fake child exited before probe response'))
+        resolve(code)
+      })
+      child.once('error', error => {
+        this.#rejectApprovalResponseProbes(error)
+        reject(error)
+      })
     })
     void this.exit.catch(() => undefined)
     child.on('message', message => {
       if (!plain(message)) return
       if (message.type === 'barrier' && typeof message.name === 'string') {
+        if (
+          message.name === 'approval_response_count'
+          && typeof message.probe_id === 'string'
+          && Number.isSafeInteger(message.response_count)
+          && Number(message.response_count) >= 0
+        ) {
+          const probe = this.#approvalResponseProbes.get(message.probe_id)
+          if (probe !== undefined) {
+            this.#approvalResponseProbes.delete(message.probe_id)
+            probe.resolve(Number(message.response_count))
+          }
+        }
         if (
           message.name === 'approval_response'
           && (message.decision === 'accept' || message.decision === 'decline')
@@ -120,8 +144,34 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
     })
   }
 
-  release(name: 'turn_start' | 'clean_eof' | 'leader_exit'): void {
+  release(
+    name: 'turn_start' | 'clean_eof' | 'leader_exit'
+      | 'approval_process_exit' | 'approval_turn_completion',
+  ): void {
     this.#child.send?.({type: 'release', name})
+  }
+
+  /** Test-only FIFO probe: runs behind every JSON-RPC response already queued on child stdin. */
+  probeApprovalResponseCountForTest(): Promise<number> {
+    if (this.#stdinClosed || this.stdin.destroyed || this.stdin.writableEnded) {
+      return Promise.reject(new Error('fake child stdin is closed'))
+    }
+    if (this.#approvalResponseProbes.size !== 0) {
+      return Promise.reject(new Error('fake child approval response probe is already pending'))
+    }
+    this.#nextApprovalResponseProbe += 1
+    const probeId = `approval-response-probe-${this.#nextApprovalResponseProbe}`
+    return new Promise((resolve, reject) => {
+      this.#approvalResponseProbes.set(probeId, {resolve, reject})
+      this.stdin.write(`${JSON.stringify({
+        method: 'fixture/approvalResponseCount',
+        params: {probeId},
+      })}\n`, error => {
+        if (error == null) return
+        this.#approvalResponseProbes.delete(probeId)
+        reject(error)
+      })
+    })
   }
 
   async closeStdin(): Promise<void> {
@@ -143,6 +193,7 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
   async killTree(): Promise<void> { this.#signal('SIGKILL') }
 
   async dispose(): Promise<void> {
+    this.#rejectApprovalResponseProbes(new Error('fake child owner disposed'))
     this.stdin.destroy()
     this.stdout.destroy()
     this.stderr.destroy()
@@ -164,6 +215,11 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
     } catch (error) {
       if (!isErrno(error, 'ESRCH')) throw error
     }
+  }
+
+  #rejectApprovalResponseProbes(error: Error): void {
+    for (const probe of this.#approvalResponseProbes.values()) probe.reject(error)
+    this.#approvalResponseProbes.clear()
   }
 }
 

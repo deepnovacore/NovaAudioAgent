@@ -8,6 +8,11 @@ import {VirtualClock, type Clock} from '../src/clock.js'
 import {CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
 import {OwnedCodexAppServerTransport} from '../src/codex-app-server-transport.js'
 import {DesktopRealtime} from '../src/desktop-realtime.js'
+import {
+  NodeDesktopServer,
+  type DesktopControl,
+  type DesktopServerOptions,
+} from '../src/desktop.js'
 import {Memory} from '../src/memory.js'
 import {
   hostBinaryForTest,
@@ -85,6 +90,30 @@ class FakeRealtimeProvider implements SessionProvider, ServiceProvider {
 
   endNonrecoverably(): void { this.#endEvents.resolve() }
   close(): Promise<void> { return Promise.resolve() }
+}
+
+class DesktopInboundObserver {
+  readonly controls: DesktopControl[] = []
+  #changed = deferred<void>()
+
+  createServer(options: DesktopServerOptions): NodeDesktopServer {
+    return new NodeDesktopServer({
+      ...options,
+      onControl: async control => {
+        await options.onControl?.(control)
+        this.controls.push(structuredClone(control))
+        this.#changed.resolve()
+        this.#changed = deferred()
+      },
+    })
+  }
+
+  async waitForCount(count: number, label: string): Promise<void> {
+    while (this.controls.length < count) {
+      const changed = this.#changed.promise
+      await within(changed, label)
+    }
+  }
 }
 
 interface RealtimeHarness {
@@ -332,23 +361,26 @@ test('Windows file approval crosses fake app-server, current Realtime user/tool 
 
 test('Windows renderer decision crosses real desktop loopback into the same transport controller', async t => {
   const clock = new VirtualClock(100)
-  const e2e = await startApprovalE2e(t, 'file-approval', {clock})
+  const e2e = await startApprovalE2e(t, 'file-approval-held-terminal', {clock})
   const stop = new AbortController()
+  const inbound = new DesktopInboundObserver()
   const desktop = new DesktopRealtime({
     token: DESKTOP_TOKEN,
     service: e2e.service,
     stop,
     clock,
     approvalView: e2e.controller.view,
+    createServer: options => inbound.createServer(options),
   })
   const unsubscribe = e2e.controller.observe(view => { desktop.bridge.onCodexApproval(view) })
+  let socket: WebSocket | null = null
   const readiness = await within(desktop.server.start(), 'desktop server start')
-  const socket = await connectDesktop(readiness.port)
   t.after(async () => {
     unsubscribe()
-    await closeDesktop(socket)
+    if (socket !== null) await closeDesktop(socket)
     await desktop.server.close()
   })
+  socket = await connectDesktop(readiness.port)
   const approvalFrame = nextTextFrame(socket, frame => frame.type === 'codex.approval')
   await sendSocket(socket, JSON.stringify({type: 'hello', token: DESKTOP_TOKEN}))
   desktop.bridge.onCodexApproval(e2e.controller.view)
@@ -357,18 +389,34 @@ test('Windows renderer decision crosses real desktop loopback into the same tran
   const approvalId = String(publicView.pending_approval_id)
 
   await sendSocket(socket, JSON.stringify({
-    type: 'codex.approval_decision', approval_id: 'stale-public-id', approved: true,
+    type: 'codex.approval_decision', approval_id: 'stale-public-id', approved: false,
   }))
-  await yieldImmediate()
+  await inbound.waitForCount(1, 'stale desktop inbound decision')
   assert.equal(e2e.controller.pending, true, 'stale renderer ID has no authority')
   await sendSocket(socket, JSON.stringify({
     type: 'codex.approval_decision', approval_id: approvalId, approved: true,
   }))
+  await inbound.waitForCount(2, 'valid desktop inbound decision')
+  assert.equal(await within(e2e.factory.owner!.approvalDecision, 'desktop wire decision'), 'accept')
   await sendSocket(socket, JSON.stringify({
     type: 'codex.approval_decision', approval_id: approvalId, approved: false,
   }))
+  await inbound.waitForCount(3, 'duplicate desktop inbound decision')
 
-  assert.equal(await within(e2e.factory.owner!.approvalDecision, 'desktop wire decision'), 'accept')
+  assert.deepEqual(inbound.controls, [
+    {type: 'codex.approval_decision', approval_id: 'stale-public-id', approved: false},
+    {type: 'codex.approval_decision', approval_id: approvalId, approved: true},
+    {type: 'codex.approval_decision', approval_id: approvalId, approved: false},
+  ])
+  assert.equal(
+    await within(
+      e2e.factory.owner!.probeApprovalResponseCountForTest(),
+      'desktop approval response count',
+    ),
+    1,
+    'duplicate renderer decision never writes a second JSON-RPC response',
+  )
+  e2e.factory.owner!.release('approval_turn_completion')
   const result = await within(e2e.running, 'desktop terminal completion')
   assert.equal(result.classification, 'completed')
   assert.equal(e2e.service.codexApprovalDecision(approvalId, false), false, 'duplicate is spent')
@@ -465,10 +513,13 @@ test('turn interruption and process exit clear pending authority before any late
   ), false)
 
   const exited = await startApprovalE2e(t, 'file-approval-process-exit')
+  await waitUntil(() => exited.controller.pending, 'process exit controller pending')
+  const exitedApprovalId = exited.controller.view.pending_approval_id!
+  exited.factory.owner!.release('approval_process_exit')
   const exitedResult = await within(exited.running, 'process exit result')
   assert.equal(exitedResult.code, 'transport_lost')
   assert.equal(exited.controller.pending, false)
-  assert.equal(exited.service.codexApprovalDecision('public-file-approval-process-exit', true), false)
+  assert.equal(exited.service.codexApprovalDecision(exitedApprovalId, true), false)
 })
 
 async function waitUntil(predicate: () => boolean, label: string): Promise<void> {
@@ -497,7 +548,10 @@ function connectDesktop(port: number): Promise<WebSocket> {
   return within(new Promise<WebSocket>((resolve, reject) => {
     socket.once('open', () => { resolve(socket) })
     socket.once('error', reject)
-  }), 'desktop connect')
+  }), 'desktop connect').catch(error => {
+    socket.terminate()
+    throw error
+  })
 }
 
 function closeDesktop(socket: WebSocket): Promise<void> {
