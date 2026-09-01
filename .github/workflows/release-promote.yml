@@ -56,6 +56,8 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.mac_candidate_run_id }}
       - name: Rehash, install, exercise settings launch, quit, and remove macOS candidate
+        env:
+          NOVA_RELEASE_SMOKE_DIAGNOSTICS: "1"
         run: |
           cp desktop/ambient-orb/scripts/installed-candidate-smoke.mjs candidate/release-smoke-kit/scripts/
           cp desktop/ambient-orb/scripts/run-unsigned-installed-smoke.mjs candidate/release-smoke-kit/scripts/
