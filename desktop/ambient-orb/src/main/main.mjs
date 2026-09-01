@@ -48,6 +48,7 @@ import {createDebugBoardRequester} from './debug-board-client.mjs'
 import { installAppProtocol, loadAppWindow, registerAppScheme } from './app-protocol.mjs'
 import { startWithSelectedCamera } from './camera-source.mjs'
 import { createDragController } from './drag-controller.mjs'
+import { shouldOpenSettings } from './launch-command.mjs'
 import {
   canonicalInstalledExecutable,
   canonicalInstalledInvocation,
@@ -146,6 +147,8 @@ let boardWindow = null
 let settingsWindow = null
 let tray = null
 let bootstrap = null
+let activeLaunchId = null
+let openSettingsRequested = shouldOpenSettings(process.argv)
 let nativeAudio = null
 let nativeBinary = null
 let projectNativeHost
@@ -699,6 +702,7 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
   await refreshDesktopConfiguration()
   initializeDesktopBootstrap(camera.source)
   const launchId = randomBytes(8).toString('hex')
+  activeLaunchId = launchId
   if (process.platform === 'linux') await wait(LINUX_WINDOW_DELAY_MS)
   mainWindow = await createWindow(launchId)
   const windowShown = sourceStartupSmoke
@@ -1131,6 +1135,10 @@ async function startSelectedCamera(camera, backendKind, smokeChannel) {
     },
   })
   void managedWorkspaceBackendRecovery.start()
+  if (openSettingsRequested) {
+    openSettingsRequested = false
+    openSettingsWindow(launchId)
+  }
 }
 
 async function start() {
@@ -1228,7 +1236,15 @@ if (packagedSourceRollbackUnavailable) {
     () => finishInstalledFileCameraSmoke('capture_failed'),
   )
 } else {
-  app.on('second-instance', () => mainWindow?.show())
+  app.on('second-instance', (_event, argv) => {
+    mainWindow?.show()
+    if (!shouldOpenSettings(argv)) return
+    if (activeLaunchId === null) {
+      openSettingsRequested = true
+      return
+    }
+    openSettingsWindow(activeLaunchId)
+  })
   app.whenReady().then(() => {
     configureDevelopmentDockIcon({
       app,

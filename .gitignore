@@ -40,13 +40,28 @@ desktop/ambient-orb/resources/generated/
 # Internal working material (demo video production)
 docs/demos/
 docs/superpowers/
+.superpowers/
 assets/demos/cat-sofa-guard/*-preroll.mp4
 assets/demos/video-cut
 assets/demos/video-recut-v*/
 .worktrees/
 video/
-.claude/merge-artifacts/*.bundle
-thirdparty/mycontext/
+
+# Local third-party checkouts are independent repositories, never parent-repo inputs.
+/thirdparty/**
+
+# Claude project state is local by default. Only explicitly shareable project
+# configuration may be committed.
+/.claude/**
+!/.claude/settings.json
+!/.claude/agents/
+!/.claude/agents/**
+!/.claude/commands/
+!/.claude/commands/**
+!/.claude/rules/
+!/.claude/rules/**
+!/.claude/skills/
+!/.claude/skills/**
 
 # Editors and operating systems
 .DS_Store

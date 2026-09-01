@@ -11,9 +11,9 @@
 [![YouTube](https://img.shields.io/badge/YouTube-Demo-FF0000.svg)](https://youtu.be/t1c-2O-QsxE)
 
 
-> **常驻在线、主动但是有分寸、通过语音帮你管理所有工作区**
+> **Agent 常驻在线、主动但是有分寸、通过语音帮你管理所有工作区 -- 干活不停，言语有度**
 
-https://github.com/user-attachments/assets/94f4f199-ab5e-4c26-aef5-efb00cfe8bc0
+https://github.com/user-attachments/assets/0ca76117-f6d2-46fc-80c3-8a8cee603fc6
 
 ## 1. 核心特性
 
@@ -31,7 +31,7 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）负责在前台�
 
 ## 2. 设计架构
 
-[![Nova Audio Agent 运行时架构](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)
+[![Nova Audio Agent 运行时架构](assets/ideas/v3/nova-audio-agent-runtime-chalkboard-zh-CN.png)](assets/ideas/v3/nova-audio-agent-runtime-chalkboard-zh-CN.png)
 
 *一个事件循环，两个模型端口共读一份 ContextView，Memory 当公共黑板，Floor 把守唯一说话通路。*
 
@@ -50,6 +50,19 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）负责在前台�
 ## 3. 快速开始
 
 环境要求：Node.js 22+、npm、Git、已登录的 `codex` 可执行文件（Codex 只走 app-server），以及受支持的桌面会话。
+
+使用打包好的桌面端时，可以在任意目录安装并启动：
+
+```bash
+npm install --global nova-audio-agent@0.1.0
+novaaudio
+novaaudio config
+novaaudio doctor
+```
+
+CLI 会先校验桌面产物的 SHA-256，再缓存到 `~/.nova-audio-agent/cli/releases/`。当前桌面产物尚未签名，macOS Gatekeeper 或 Windows SmartScreen 可能会显示安全警告。
+
+从源码开发时：
 
 ```bash
 git clone https://github.com/deepnovacore/NovaAudioAgent.git nova-audio-agent

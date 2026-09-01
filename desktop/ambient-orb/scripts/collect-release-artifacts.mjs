@@ -40,10 +40,12 @@ export async function collectReleaseArtifacts({
   for (const input of inputs) {
     const filename = RELEASE_ARTIFACT_FILES[input.target]
     const destination = resolve(outputRoot, filename)
-    if (input.kind === 'app') {
+    if (input.kind === 'app' || input.kind === 'directory') {
       const result = run(Object.freeze({
-        command: '/usr/bin/ditto',
-        args: Object.freeze(['-c', '-k', '--sequesterRsrc', '--keepParent', input.path, destination]),
+        command: input.kind === 'app' ? '/usr/bin/ditto' : 'tar.exe',
+        args: Object.freeze(input.kind === 'app'
+          ? ['-c', '-k', '--sequesterRsrc', '--keepParent', input.path, destination]
+          : ['-a', '-c', '-f', destination, '-C', input.path, '.']),
       }))
       if (result?.error !== undefined || result?.signal !== null || result?.status !== 0) {
         throw new Error('release_artifact_collection_rejected')
@@ -86,8 +88,15 @@ async function candidateInputs(targetId, distRoot) {
   }
   if (targetId === 'win32-x64') {
     const installers = entries.filter(entry => entry.isFile() && entry.name.endsWith('.exe'))
-    if (installers.length !== 1) throw new Error('release_artifact_collection_rejected')
-    return [{target: `${targetId}:nsis`, kind: 'file', path: resolve(distRoot, installers[0].name)}]
+    const unpacked = resolve(distRoot, 'win-unpacked')
+    const unpackedStatus = await lstat(unpacked)
+    if (installers.length !== 1 || !unpackedStatus.isDirectory() || unpackedStatus.isSymbolicLink()) {
+      throw new Error('release_artifact_collection_rejected')
+    }
+    return [
+      {target: `${targetId}:portable`, kind: 'directory', path: unpacked},
+      {target: `${targetId}:nsis`, kind: 'file', path: resolve(distRoot, installers[0].name)},
+    ]
   }
   const appimages = entries.filter(entry => entry.isFile() && entry.name.endsWith('.AppImage'))
   const debs = entries.filter(entry => entry.isFile() && entry.name.endsWith('.deb'))

@@ -120,6 +120,15 @@ export function candidateInstallPlan({target, artifact, scratch}) {
     }]
     uninstall = [{op: 'spawn', command: '/usr/bin/hdiutil', args: ['detach', mountRoot]}]
     residue = executable
+  } else if (target === 'win32-x64:portable') {
+    executable = pathApi.resolve(installRoot, 'Nova Audio Agent Ambient Orb.exe')
+    install = [{
+      op: 'spawn',
+      command: 'tar.exe',
+      args: ['-xf', artifact, '-C', installRoot],
+    }]
+    uninstall = [{op: 'remove_tree', path: installRoot}]
+    residue = installRoot
   } else if (target === 'win32-x64:nsis') {
     executable = pathApi.resolve(installRoot, 'Nova Audio Agent Ambient Orb.exe')
     install = [{

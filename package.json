@@ -1,5 +1,5 @@
 {
-  "name": "nova-audio-agent",
+  "name": "@nova-audio-agent/monorepo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,8 @@
   },
   "workspaces": [
     "runtime",
-    "desktop/ambient-orb"
+    "desktop/ambient-orb",
+    "cli"
   ],
   "scripts": {
     "start:client": "node scripts/start-client.mjs",
@@ -28,7 +29,8 @@
     "runtime:fixtures": "npm run fixtures:check --workspace @nova-audio-agent/runtime",
     "runtime:smoke:qwen": "npm run smoke:qwen --workspace @nova-audio-agent/runtime",
     "runtime:smoke:qwen:clarification": "npm run smoke:qwen:clarification --workspace @nova-audio-agent/runtime",
-    "test": "npm run test:runtime && npm run test:desktop",
+    "test": "npm run test:runtime && npm run test:desktop && npm run test:cli",
+    "test:cli": "npm test --workspace nova-audio-agent",
     "test:desktop": "npm test --workspace @nova-audio-agent/ambient-orb",
     "test:runtime": "npm test --workspace @nova-audio-agent/runtime"
   },

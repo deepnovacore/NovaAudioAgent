@@ -27,4 +27,4 @@ port contract. Add a new core abstraction only when a concrete capability cannot
 without violating an invariant.
 
 See [Architecture](architecture.md), [Glossary](glossary.md), and the
-[v3 overview](archs/v3/00-overview.md).
+[architecture overview](archs/00-overview.md).

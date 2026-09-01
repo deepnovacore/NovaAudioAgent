@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: Unpublished release candidate version (for example 0.1.0-rc.1)
+        description: Application version to validate (0.1.0 for this replacement)
         required: true
+        default: 0.1.0
         type: string
 
 permissions:
@@ -23,12 +24,12 @@ jobs:
           - os: macos-14
             platform: darwin
             target_id: darwin-arm64
-            package_script: package:mac:release
+            package_script: package:mac:candidate
             artifact_name: candidate-darwin-arm64
           - os: macos-15-intel
             platform: darwin
             target_id: darwin-x64
-            package_script: package:mac:release
+            package_script: package:mac:candidate
             artifact_name: candidate-darwin-x64
           - os: windows-latest
             platform: win32
@@ -53,32 +54,10 @@ jobs:
       - run: npm run check
       - run: npm run test:runtime
       - run: npm run test:desktop
-      - name: Require external release signing credentials
-        env:
-          CSC_LINK: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_LINK || matrix.platform == 'win32' && secrets.WINDOWS_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_KEY_PASSWORD || matrix.platform == 'win32' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: node desktop/ambient-orb/scripts/require-release-signing.mjs --platform ${{ matrix.platform }}
-      - name: Build final signed candidate bytes
-        env:
-          CSC_LINK: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_LINK || matrix.platform == 'win32' && secrets.WINDOWS_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_KEY_PASSWORD || matrix.platform == 'win32' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - run: npm run test:cli
+      - name: Build unsigned candidate bytes
         run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb
-      - name: Notarize and staple the final macOS container
-        if: matrix.platform == 'darwin'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run finalize:mac-notarization --workspace @nova-audio-agent/ambient-orb
-      - name: Verify post-sign trust and stapling
-        run: node desktop/ambient-orb/scripts/verify-signed-candidate.mjs --platform ${{ matrix.platform }} --dist-root desktop/ambient-orb/dist
-      - name: Reinspect exact post-sign application and installer bytes
+      - name: Inspect exact unsigned application and installer bytes
         run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
       - name: Provision pinned target-native Codex
         run: npm install --prefix desktop/ambient-orb/build/release-codex --install-strategy=nested --package-lock=false --ignore-scripts --no-save --omit=dev @openai/codex@0.147.0
@@ -134,6 +113,11 @@ jobs:
             filename: nova-audio-agent-0.1.0-macos-x64.dmg
             command: node
           - os: windows-latest
+            target: win32-x64:portable
+            artifact_name: candidate-win32-x64
+            filename: nova-audio-agent-0.1.0-windows-x64-portable.zip
+            command: node
+          - os: windows-latest
             target: win32-x64:nsis
             artifact_name: candidate-win32-x64
             filename: nova-audio-agent-0.1.0-windows-x64.exe
@@ -181,7 +165,7 @@ jobs:
         with:
           pattern: candidate-*
           path: downloaded
-      - name: Assemble only the seven attested candidate files
+      - name: Assemble only the complete attested candidate matrix
         run: node desktop/ambient-orb/scripts/assemble-release-artifact-root.mjs --input downloaded --output candidate-artifacts
       - name: Generate the honest pending external-evidence ledger
         env:

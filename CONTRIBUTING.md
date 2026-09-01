@@ -59,7 +59,7 @@ integrations demonstrate the same missing primitive.
 
 ## Adding an executor
 
-Follow [Executor onboarding](docs/archs/v3/10-executor-onboarding.md):
+Follow [Executor onboarding](docs/archs/10-executor-onboarding.md):
 
 1. Write the manifest and parameter schemas.
 2. Define trust, deadline, side-effect, and verification behavior for every operation.
@@ -71,11 +71,6 @@ Follow [Executor onboarding](docs/archs/v3/10-executor-onboarding.md):
 
 Do not give the model direct transport access; the adapter must translate the external protocol
 into bounded progress and one typed terminal handoff.
-
-## Reimplementing the architecture elsewhere
-
-The [Downstream reimplementation guide](docs/guides/downstream-reimplementation.md) describes how to
-reproduce the design without copying repository internals.
 
 ## Security
 

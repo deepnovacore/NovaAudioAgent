@@ -39,7 +39,7 @@ const EVIDENCE_CLASSES = Object.freeze({
 const ARTIFACT_TARGETS = new Set([
   'darwin-arm64:app', 'darwin-arm64:dmg',
   'darwin-x64:app', 'darwin-x64:dmg',
-  'win32-x64:nsis',
+  'win32-x64:portable', 'win32-x64:nsis',
   'linux-x64-gnu:appimage', 'linux-x64-gnu:deb',
 ])
 const RECORD_KEYS = Object.freeze([

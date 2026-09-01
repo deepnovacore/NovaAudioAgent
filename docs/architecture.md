@@ -65,9 +65,9 @@ The Codex project surface is a two-level durable store (`runtime/src/codex-proje
 Workspace is an isolated filesystem/Git project with its own `CODEX_HOME`, and a Session is a
 resumable Codex thread bound to exactly one Workspace. Voice-driven create, switch, and resume are
 staged propose-and-confirm mutations that fail closed on rejection, ID mismatch, or replay, and a
-registry admits only one live Orb owner at a time (a second Orb fails with `state_busy`). The
-complete discovery, confirmation, switching, persistence, and recovery contract is in
-[Multi-project Workspace handoff](multi-project-workspace-handoff.md).
+registry admits only one live Orb owner at a time (a second Orb fails with `state_busy`). Runtime
+and desktop tests cover discovery, confirmation, switching, persistence, and recovery as one
+contract.
 
 Maintenance of managed workspaces is a host surface rather than a voice capability. Nova Desktop
 can open the active managed workspace, or clear the active one or every managed workspace behind
@@ -82,8 +82,8 @@ spoken workspace names, deterministic projection of confirmed lifecycle events i
 cards, and bounded recall. Graph context reaches model calls only through fixed budgets — a
 bounded header and a recall pack of at most two hints — and is marked low-authority: it can never
 authorize a workspace switch. The memory layering rationale is in the
-[v3 memory volume](archs/v3/02-memory.md) and the context rules in the
-[context-view volume](archs/v3/03-context-view.md).
+[memory volume](archs/02-memory.md) and the context rules in the
+[context-view volume](archs/03-context-view.md).
 
 ## Platform notes
 
@@ -128,4 +128,4 @@ Neither is exposed by the text CLI; steering is also reachable through the expli
 - Codex workspaces are validated before use.
 - Local recordings, runtime data, caches, and credentials are excluded from Git.
 
-The design rationale is expanded in the [v3 series](archs/v3/00-overview.md).
+The design rationale is expanded in the [architecture series](archs/00-overview.md).
