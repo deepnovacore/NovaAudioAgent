@@ -55,8 +55,13 @@ test('packaged Codex failures expose only one closed stage code', () => {
     parsePackagedCodexFailure('packaged production Codex composition rejected stage=resource_project_codex_project_state_invalid\n'),
     'resource_project_codex_project_state_invalid',
   )
+  assert.equal(
+    parsePackagedCodexFailure('packaged production Codex composition rejected stage=host_project_directories_protect_managed\n'),
+    'host_project_directories_protect_managed',
+  )
   for (const value of [
     'packaged production Codex composition rejected stage=private/path\n',
+    'packaged production Codex composition rejected stage=host_project_directories_protect_secret\n',
     'raw private detail\n',
     '',
   ]) assert.equal(parsePackagedCodexFailure(value), 'unknown')
