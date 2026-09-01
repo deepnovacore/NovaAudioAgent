@@ -308,12 +308,14 @@ function recordingRegistries(calls: string[]): CascadedProviderRegistries {
         calls.push('llm:qwen')
         assert.equal(Object.isFrozen(input.config), true)
         assert.equal(input.config.model, 'qwen-flash')
+        assert.doesNotMatch(input.instructions, /codex__confirm_codex_approval|approval_id/u)
         return unusedLlm
       },
       ark: input => {
         calls.push('llm:ark')
         assert.equal(Object.isFrozen(input.config), true)
         assert.equal(input.config.model, 'ark-explicit')
+        assert.doesNotMatch(input.instructions, /codex__confirm_codex_approval|approval_id/u)
         return unusedLlm
       },
     },

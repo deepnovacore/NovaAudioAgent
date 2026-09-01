@@ -460,7 +460,7 @@ test('realtime mode always opens one project store and exposes only project tool
 
   assert.equal(resource.mode, 'project')
   assert.deepEqual(resource.adapter.manifest.ops.map(operation => operation.name), [
-    'project', 'confirm_project_action', 'confirm_codex_approval', 'steer', 'status',
+    'project', 'confirm_project_action', 'steer', 'status',
   ])
   assert.equal(compileToolSchema([resource.adapter.manifest]).bindings.has('codex__run'), false)
   assert.deepEqual(resource.projectView, {
@@ -523,6 +523,8 @@ test('factory exposes a brokered controller only for Windows foreground project 
     {platform: 'win32' as const, broker: false, policy: 'never' as const},
     {platform: 'darwin' as const, broker: true, policy: 'never' as const},
     {platform: 'darwin' as const, broker: false, policy: 'never' as const},
+    {platform: 'linux' as const, broker: true, policy: 'never' as const},
+    {platform: 'linux' as const, broker: false, policy: 'never' as const},
   ].entries()) {
     const {config, stateRoot, managedRoot} = projectHostConfig(t, `workspace-${index}`)
     const transportFactory = new RecordingTransportFactory()
@@ -546,6 +548,11 @@ test('factory exposes a brokered controller only for Windows foreground project 
       await resource.start()
       assert.equal(resource.approvalPolicy, evidence.policy)
       assert.equal(resource.approvalController === null, evidence.policy === 'never')
+      assert.equal(
+        resource.adapter.manifest.ops.some(operation => operation.name === 'confirm_codex_approval'),
+        resource.approvalController !== null,
+        'only a resource with real approval authority exposes the provider tool',
+      )
       assert.equal(transportFactory.calls[0]?.approvalPolicy, 'never', 'startup live is never')
       assert.equal(transportFactory.calls[0]?.approvalController, null)
       if (evidence.platform === 'darwin') {

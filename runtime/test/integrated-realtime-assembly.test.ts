@@ -25,11 +25,13 @@ test('integrated registry resolves only Qwen and passes an immutable selected co
         apiKey: 'dash-secret',
       })
       assert.equal(input.workspaceGraphPolicy, false)
+      assert.equal(input.codexApproval, false)
       expected = new QwenAudioRealtimeAdapter({
         ...input.config,
         connector: () => Promise.reject(new Error('unused')),
         idFactory: input.idFactory,
         now: input.now,
+        codexApproval: input.codexApproval,
       })
       return expected
     },
@@ -86,9 +88,10 @@ test('integrated registry receives only selected provider inputs and cannot insp
         assert.equal('searchTransport' in input, false)
         assert.equal('codexResource' in input, false)
         assert.deepEqual(Object.keys(input).sort(), [
-          'config', 'connector', 'idFactory', 'now', 'workspaceGraphPolicy',
+          'codexApproval', 'config', 'connector', 'idFactory', 'now', 'workspaceGraphPolicy',
         ])
         assert.equal(input.workspaceGraphPolicy, false)
+        assert.equal(input.codexApproval, false)
         assert.equal(Object.isFrozen(input.config), true)
         const config = input.config as {
           readonly url: string
@@ -101,6 +104,7 @@ test('integrated registry receives only selected provider inputs and cannot insp
           connector,
           idFactory: input.idFactory as () => string,
           now: input.now as () => number,
+          codexApproval: input.codexApproval,
         })
       } finally {
         insideRegistry = false
@@ -136,6 +140,7 @@ test('integrated Qwen receives graph policy while the complete builder owns grap
             idFactory: input.idFactory,
             now: input.now,
             workspaceGraphPolicy: input.workspaceGraphPolicy,
+            codexApproval: input.codexApproval,
           })
         },
       }

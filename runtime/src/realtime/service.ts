@@ -3628,6 +3628,7 @@ export class RealtimeService {
         && event.response_id === origin.observedProviderResponseId
         && revision !== undefined
         && revision > authority.createdAtUserRevision
+        && revision === this.session.userInputRevision
         && explicitDecision !== undefined
         && explicitDecision !== null
         && explicitDecision === decision.approved

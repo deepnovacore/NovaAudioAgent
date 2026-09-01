@@ -5,7 +5,7 @@ import {test, type TestContext} from 'node:test'
 import {WebSocket, type RawData} from 'ws'
 
 import {VirtualClock, type Clock} from '../src/clock.js'
-import {CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
+import {CODEX_PROJECT_APPROVAL_MANIFEST} from '../src/codex-contract.js'
 import {OwnedCodexAppServerTransport} from '../src/codex-app-server-transport.js'
 import {DesktopRealtime} from '../src/desktop-realtime.js'
 import {
@@ -126,12 +126,12 @@ function realtimeHarness(
   clock: Clock,
 ): RealtimeHarness {
   const provider = new FakeRealtimeProvider()
-  const memory = new Memory({policies: [CODEX_PROJECT_MANIFEST.policy]})
+  const memory = new Memory({policies: [CODEX_PROJECT_APPROVAL_MANIFEST.policy]})
   const executors = new Map([[
-    CODEX_PROJECT_MANIFEST.name,
-    {manifest: CODEX_PROJECT_MANIFEST},
+    CODEX_PROJECT_APPROVAL_MANIFEST.name,
+    {manifest: CODEX_PROJECT_APPROVAL_MANIFEST},
   ]])
-  const tools = compileToolSchema([CODEX_PROJECT_MANIFEST])
+  const tools = compileToolSchema([CODEX_PROJECT_APPROVAL_MANIFEST])
   let nextId = 0
   const idFactory = (): string => `e2e-${++nextId}`
   const playback = new PlaybackRegistry({

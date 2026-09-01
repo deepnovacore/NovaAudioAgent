@@ -10,6 +10,7 @@ import type {
 } from '../codex-app-server-transport.js'
 import {CodexTransportError} from '../codex-app-server-transport.js'
 import {
+  CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
   validateCodexRequest,
 } from '../codex-contract.js'
@@ -33,6 +34,7 @@ import type {JsonValue} from '../events.js'
 import {consumeHostExecutorCapability} from '../host-executor-capability.js'
 import {USER_PRIORITY} from '../memory.js'
 import type {DelegateRequest} from '../ports.js'
+import type {CodexApprovalController} from '../realtime/codex-approval.js'
 import type {
   ConfirmedProjectOperation,
   ProjectConfirmationController,
@@ -79,6 +81,7 @@ export interface ProjectCodexAdapterOptions {
   readonly store: CodexProjectStore
   readonly confirmation: ProjectConfirmationController
   readonly transportFactory: ProjectTransportFactory
+  readonly codexApproval?: CodexApprovalController
   readonly onProjectView?: ProjectViewObserver
 }
 
@@ -105,7 +108,7 @@ interface ConfirmedDelegateBinding {
 }
 
 export class ProjectCodexAdapter implements ExecutorAdapter {
-  readonly manifest = CODEX_PROJECT_MANIFEST
+  readonly manifest
   readonly #store: CodexProjectStore
   readonly #confirmation: ProjectConfirmationController
   readonly #transportFactory: ProjectTransportFactory
@@ -134,6 +137,9 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
   #closePromise: Promise<void> | null = null
 
   constructor(options: ProjectCodexAdapterOptions) {
+    this.manifest = options.codexApproval === undefined
+      ? CODEX_PROJECT_MANIFEST
+      : CODEX_PROJECT_APPROVAL_MANIFEST
     this.#store = options.store
     this.#confirmation = options.confirmation
     this.#transportFactory = options.transportFactory

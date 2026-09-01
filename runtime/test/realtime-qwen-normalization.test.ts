@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import type { JsonValue } from '../src/events.js'
 import {
+  CODEX_APPROVAL_FRONTEND_INSTRUCTIONS,
   FRONTEND_INSTRUCTIONS,
   QwenAudioRealtimeAdapter,
   QwenSocketClosedError,
@@ -331,13 +332,42 @@ test('Qwen project instructions route the six actions and structured confirmatio
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /确认语音由 host 判定/u)
 })
 
-test('Qwen Codex approval instructions require an exact explicit decision without exposing detail', () => {
-  assert.match(FRONTEND_INSTRUCTIONS, /codex__confirm_codex_approval/u)
-  assert.match(FRONTEND_INSTRUCTIONS, /approval_id.*原样复制/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /明确同意.*approved=true/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /明确拒绝.*approved=false/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /含糊.*不得调用.*自然追问/su)
-  assert.match(FRONTEND_INSTRUCTIONS, /operation_summary.*中性.*不得推断/su)
+test('default Qwen instructions preserve the original surface without Codex approval', () => {
+  assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /codex__confirm_codex_approval|approval_id/u)
+  assert.match(
+    CODEX_APPROVAL_FRONTEND_INSTRUCTIONS,
+    /codex__confirm_codex_approval.*approved=true.*approved=false.*approval_id/su,
+  )
+})
+
+test('Qwen provider emits approval instructions only for an approval-enabled session', async () => {
+  const fixture = loadJson<NormalizationFixture>('normalization.json')
+  for (const codexApproval of [false, true]) {
+    const sent: Record<string, JsonValue>[] = []
+    const adapter = new QwenAudioRealtimeAdapter({
+      url: 'wss://example.invalid/realtime',
+      apiKey: 'fixture-key',
+      model: 'fixture-model',
+      voice: 'fixture-voice',
+      connector: () => Promise.resolve(scriptedSocket(fixture.handshake, sent)),
+      idFactory: identityFactory(),
+      codexApproval,
+    })
+    const stop = new AbortController()
+    await adapter.connect({tools: [], signal: stop.signal})
+    await adapter.close()
+    stop.abort()
+
+    const update = sent.find(frame => frame.type === 'session.update')
+    assert.ok(update !== undefined)
+    const instructions = (update.session as Record<string, JsonValue>).instructions
+    assert.equal(typeof instructions, 'string')
+    assert.equal(
+      (instructions as string).includes('codex__confirm_codex_approval'),
+      codexApproval,
+    )
+    assert.equal((instructions as string).includes('approval_id'), codexApproval)
+  }
 })
 
 test('Qwen project instructions calibrate clarification before a new coding dispatch', () => {
@@ -379,6 +409,7 @@ test('the emitted session.update matches the pinned outbound payload', async () 
     voice: 'fixture-voice',
     connector: () => Promise.resolve(socket),
     idFactory: identityFactory(),
+    codexApproval: true,
   })
   const stop = new AbortController()
   await adapter.connect({tools: [], signal: stop.signal})
@@ -401,6 +432,7 @@ test('the emitted session.update matches the pinned outbound payload', async () 
     'Nova Audio Agent 宿主激活事实：',
     'codex__project',
     'codex__confirm_project_action',
+    'codex__confirm_codex_approval',
     'guard__start',
     'watch__start',
     'memory__recall',

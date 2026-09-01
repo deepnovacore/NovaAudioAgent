@@ -314,6 +314,7 @@ async function createProjectResource(
     const adapter = new ProjectCodexAdapter({
       store,
       confirmation,
+      ...(approvalController === null ? {} : {codexApproval: approvalController}),
       transportFactory: {
         create: binding => {
           const transport = options.transportFactory.create(Object.freeze({

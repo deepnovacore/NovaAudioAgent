@@ -17,7 +17,10 @@ import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { canonicalJson } from '../src/canonical-json.js'
 import { VirtualClock } from '../src/clock.js'
-import { CODEX_PROJECT_MANIFEST } from '../src/codex-contract.js'
+import {
+  CODEX_PROJECT_APPROVAL_MANIFEST,
+  CODEX_PROJECT_MANIFEST,
+} from '../src/codex-contract.js'
 import type { EventRecord, JsonValue } from '../src/events.js'
 import { Memory } from '../src/memory.js'
 import { executorManifestSchema } from '../src/ports.js'
@@ -649,7 +652,9 @@ function pipelineService(options: {
   readonly diagnostics: string[]
   readonly codexApproval: CodexApprovalController | null
 } {
-  const manifest = options.projectTool ? CODEX_PROJECT_MANIFEST : executorManifestSchema.parse({
+  const manifest = options.withCodexApproval
+    ? CODEX_PROJECT_APPROVAL_MANIFEST
+    : options.projectTool ? CODEX_PROJECT_MANIFEST : executorManifestSchema.parse({
     name: 'codex',
     policy: {
       channel: 'codex',
@@ -4625,6 +4630,46 @@ test('Codex approval voice authority requires a post-request final user item and
   })
   assert.deepEqual(await waiting, {decision: 'decline'})
   assert.match(injectedContents.at(-1) ?? '', /"code":"approval_declined"/u)
+})
+
+test('a new accepted user turn makes an earlier explicit Codex approval decision stale', async () => {
+  const {service, codexApproval, injectedContents} = pipelineService({
+    projectTool: true,
+    withCodexApproval: true,
+  })
+  assert.ok(codexApproval !== null)
+  await service.connect()
+  const waiting = offerCodexCommand(codexApproval)
+  const approvalId = codexApproval.view.pending_approval_id!
+
+  await reserveConfirmationTurn(service, {
+    itemId: 'approval-turn-a',
+    responseId: 'approval-response-a',
+    transcript: '确认',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-turn-b',
+    provider_item_id: 'approval-turn-b',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: 'late-approval-call-a',
+    item_id: 'late-approval-function-a',
+    response_id: 'approval-response-a',
+    name: 'codex__confirm_codex_approval',
+    arguments: {approval_id: approvalId, approved: true},
+  })
+
+  assert.equal(codexApproval.pending, true, 'turn A cannot authorize after turn B starts')
+  assert.match(injectedContents.at(-1) ?? '', /"code":"approval_not_authorized"/u)
+  assert.equal(service.codexApprovalDecision(approvalId, true), true, 'renderer click remains direct')
+  const clickResolution = await waiting
+  assert.deepEqual(clickResolution, {decision: 'accept'})
+  assert.ok(clickResolution !== null)
+  assert.equal(codexApproval.consume(clickResolution), 'accept')
 })
 
 test('Codex approval click and voice share one first-valid-decision race', async () => {

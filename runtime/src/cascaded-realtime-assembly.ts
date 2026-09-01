@@ -33,7 +33,10 @@ import type {AsrClient, AsrFactory, EndpointingFactory, TtsClient, TtsFactory} f
 import {CascadedRealtimeError} from './realtime/cascaded/adapter.js'
 import {CascadedRealtimeProvider} from './realtime/cascaded/provider.js'
 import {createQwenCascadedLlmFactory} from './realtime/cascaded/qwen-llm.js'
-import {FRONTEND_INSTRUCTIONS} from './realtime/qwen.js'
+import {
+  CODEX_APPROVAL_FRONTEND_INSTRUCTIONS,
+  FRONTEND_INSTRUCTIONS,
+} from './realtime/qwen.js'
 import {DoubaoAsrClient} from './realtime/volcengine/asr.js'
 import {
   createEndpointingCapabilityFactory,
@@ -68,10 +71,12 @@ export type QwenCascadedFactory = (input: {
   readonly config: QwenCascadedLlmConfig
   readonly clock: Clock
   readonly idFactory: () => string
+  readonly instructions: string
 }) => CascadedLlmFactory
 
 export type ArkCascadedFactory = (input: {
   readonly config: ArkCascadedLlmConfig
+  readonly instructions: string
 }) => CascadedLlmFactory
 
 export interface BuildCascadedRealtimeAssemblyOptions
@@ -115,6 +120,7 @@ export interface QwenLlmFactoryInput {
   readonly config: QwenCascadedLlmConfig
   readonly clock: Clock
   readonly ids: IdFactory
+  readonly instructions: string
   readonly factory?: QwenCascadedFactory
 }
 
@@ -122,6 +128,7 @@ export interface ArkLlmFactoryInput {
   readonly config: ArkCascadedLlmConfig
   readonly clock: Clock
   readonly ids: IdFactory
+  readonly instructions: string
   readonly factory?: ArkCascadedFactory
 }
 
@@ -180,11 +187,13 @@ export const cascadedProviderRegistries: CascadedProviderRegistries = Object.fre
       config: input.config,
       clock: input.clock,
       idFactory: () => input.ids.next('qwen-cascaded'),
+      instructions: input.instructions,
     }),
     ark: (input: ArkLlmFactoryInput) => (
       input.factory ?? defaultArkLlmFactory
     )({
       config: input.config,
+      instructions: input.instructions,
     }),
   }),
   tts: Object.freeze({
@@ -206,6 +215,10 @@ export function buildCascadedRealtimeAssembly(
   validateCodexResource(options)
   const clock = options.clock ?? new RealClock()
   const ids = options.ids ?? new MonotonicIdFactory()
+  const instructions = options.codexResource?.approvalController === null
+    || options.codexResource?.approvalController === undefined
+    ? FRONTEND_INSTRUCTIONS
+    : CODEX_APPROVAL_FRONTEND_INSTRUCTIONS
 
   const endpointingFactory = registry.endpointing[selection.endpointingProvider]({
     config: selected.endpointing,
@@ -225,12 +238,14 @@ export function buildCascadedRealtimeAssembly(
       config: selected.llm.config,
       clock,
       ids,
+      instructions,
       ...(options.qwenLlmFactory === undefined ? {} : {factory: options.qwenLlmFactory}),
     })
     : registry.llm.ark({
       config: selected.llm.config,
       clock,
       ids,
+      instructions,
       ...(options.arkLlmFactory === undefined ? {} : {factory: options.arkLlmFactory}),
   })
   const ttsFactory = registry.tts[selection.ttsProvider]({
@@ -405,12 +420,12 @@ const defaultTtsClient: CascadedTtsClientFactory = input => new DoubaoTtsClient(
 
 const defaultQwenLlmFactory: QwenCascadedFactory = input => createQwenCascadedLlmFactory({
   ...input.config,
-  instructions: FRONTEND_INSTRUCTIONS,
+  instructions: input.instructions,
   clock: input.clock,
   idFactory: input.idFactory,
 })
 
 const defaultArkLlmFactory: ArkCascadedFactory = input => createArkCascadedLlmFactory({
   ...input.config,
-  instructions: FRONTEND_INSTRUCTIONS,
+  instructions: input.instructions,
 })

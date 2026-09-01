@@ -198,6 +198,9 @@ function manifest(ops: readonly OpSpec[]): ExecutorManifest {
 export const CODEX_BASE_MANIFEST = manifest([RUN, STATUS])
 export const CODEX_LIVE_MANIFEST = manifest([RUN, STEER, STATUS])
 export const CODEX_PROJECT_MANIFEST = manifest([
+  PROJECT, CONFIRM_PROJECT_ACTION, STEER, STATUS,
+])
+export const CODEX_PROJECT_APPROVAL_MANIFEST = manifest([
   PROJECT, CONFIRM_PROJECT_ACTION, CONFIRM_CODEX_APPROVAL, STEER, STATUS,
 ])
 

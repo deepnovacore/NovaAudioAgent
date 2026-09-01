@@ -4,6 +4,7 @@ import {test} from 'node:test'
 import {
   CODEX_BASE_MANIFEST,
   CODEX_LIVE_MANIFEST,
+  CODEX_PROJECT_APPROVAL_MANIFEST,
   CODEX_PROJECT_MANIFEST,
   INTERNAL_CODEX_RUN_DEADLINE,
   classifyCodexResult,
@@ -68,9 +69,17 @@ test('base, live, and project manifests pin exact immutable public operations an
   assert.deepEqual(CODEX_BASE_MANIFEST.ops.map(op => op.name), ['run', 'status'])
   assert.deepEqual(CODEX_LIVE_MANIFEST.ops.map(op => op.name), ['run', 'steer', 'status'])
   assert.deepEqual(CODEX_PROJECT_MANIFEST.ops.map(op => op.name), [
+    'project', 'confirm_project_action', 'steer', 'status',
+  ])
+  assert.deepEqual(CODEX_PROJECT_APPROVAL_MANIFEST.ops.map(op => op.name), [
     'project', 'confirm_project_action', 'confirm_codex_approval', 'steer', 'status',
   ])
-  for (const manifest of [CODEX_BASE_MANIFEST, CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST]) {
+  for (const manifest of [
+    CODEX_BASE_MANIFEST,
+    CODEX_LIVE_MANIFEST,
+    CODEX_PROJECT_MANIFEST,
+    CODEX_PROJECT_APPROVAL_MANIFEST,
+  ]) {
     assert.equal(manifest.name, 'codex')
     assert.deepEqual(manifest.policy, {
       channel: 'codex',
@@ -100,8 +109,15 @@ test('the runtime package root adds adapters without exposing process authority'
   }
 })
 
-test('project mode exposes project-only public tools and the confirmation schema', () => {
-  const compiled = compileToolSchema([CODEX_PROJECT_MANIFEST])
+test('project mode exposes approval only through the approval-enabled manifest', () => {
+  const defaultCompiled = compileToolSchema([CODEX_PROJECT_MANIFEST])
+  assert.deepEqual(
+    [...defaultCompiled.bindings.keys()].filter(name => name.startsWith('codex__')),
+    ['codex__project', 'codex__confirm_project_action', 'codex__steer', 'codex__status'],
+  )
+  assert.equal(defaultCompiled.bindings.has('codex__confirm_codex_approval'), false)
+
+  const compiled = compileToolSchema([CODEX_PROJECT_APPROVAL_MANIFEST])
   const codexBindings = [...compiled.bindings.keys()].filter(name => name.startsWith('codex__'))
   assert.deepEqual(codexBindings, [
     'codex__project', 'codex__confirm_project_action', 'codex__confirm_codex_approval',
@@ -239,13 +255,13 @@ test('project mode exposes project-only public tools and the confirmation schema
   ]) {
     assert.equal(validateCodexRequest('project', 'confirm_codex_approval', invalid).ok, false)
   }
-  assert.equal(CODEX_PROJECT_MANIFEST.ops[0]?.deadline_budget, 600)
-  assert.equal(CODEX_PROJECT_MANIFEST.ops[1]?.deadline_budget, 10)
-  assert.equal(CODEX_PROJECT_MANIFEST.ops[2]?.deadline_budget, 10)
-  assert.equal(CODEX_PROJECT_MANIFEST.ops[3]?.deadline_budget, 30)
-  assert.equal(CODEX_PROJECT_MANIFEST.ops[4]?.deadline_budget, 5)
-  assert.deepEqual(CODEX_PROJECT_MANIFEST.ops[0]?.sensitive_params, ['work_order'])
-  assert.deepEqual(CODEX_PROJECT_MANIFEST.ops[3]?.sensitive_params, ['instruction'])
+  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[0]?.deadline_budget, 600)
+  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[1]?.deadline_budget, 10)
+  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[2]?.deadline_budget, 10)
+  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[3]?.deadline_budget, 30)
+  assert.equal(CODEX_PROJECT_APPROVAL_MANIFEST.ops[4]?.deadline_budget, 5)
+  assert.deepEqual(CODEX_PROJECT_APPROVAL_MANIFEST.ops[0]?.sensitive_params, ['work_order'])
+  assert.deepEqual(CODEX_PROJECT_APPROVAL_MANIFEST.ops[3]?.sensitive_params, ['instruction'])
 })
 
 test('base and live request validators use primitive strings, Python strip, and code points', () => {

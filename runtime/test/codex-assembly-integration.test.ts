@@ -187,7 +187,6 @@ test('connected realtime provider exposes only the project Codex public surface'
     assert.deepEqual(declarations.map(declaration => declaration.name), [
       'codex__project',
       'codex__confirm_project_action',
-      'codex__confirm_codex_approval',
       'codex__steer',
       'codex__status',
     ])

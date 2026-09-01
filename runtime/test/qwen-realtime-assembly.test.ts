@@ -5,7 +5,10 @@ import {join, resolve} from 'node:path'
 import { test } from 'node:test'
 import {AssemblyError, buildAssembly} from '../src/assembly.js'
 import type {CodexAssemblyResource} from '../src/codex-factory.js'
-import {CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
+import {
+  CODEX_PROJECT_APPROVAL_MANIFEST,
+  CODEX_PROJECT_MANIFEST,
+} from '../src/codex-contract.js'
 import type {
   CodexAppServerTransport,
   SafePreflightReport,
@@ -42,6 +45,7 @@ import {
 import type { CompiledTools } from '../src/tool-schema.js'
 import {CodexLiveAdapter} from '../src/executors/codex-live.js'
 import {ProjectConfirmationController} from '../src/realtime/project-confirmation.js'
+import {CodexApprovalController} from '../src/realtime/codex-approval.js'
 
 async function settleNamed<T>(
   name: string,
@@ -273,6 +277,7 @@ test('Qwen factory owns enabled graph storage while unsafe graph config stays vo
       readonly session?: {readonly instructions?: string}
     }
     assert.equal(update.session?.instructions, workspaceGraphFrontendInstructions)
+    assert.doesNotMatch(update.session?.instructions ?? '', /codex__confirm_codex_approval/u)
     await enabled.stop()
 
     const diagnostics: string[] = []
@@ -322,14 +327,19 @@ test('Qwen factory construction does not invoke an unrelated LiveKit agents load
   assert.equal(connector.calls.length, 0)
 })
 
-test('Qwen composition registers the exact project Codex resource and starts it after service', async () => {
+test('Qwen composition exposes approval only for the exact controller-bearing resource', async () => {
   const connector = recordingConnector()
+  const clock = new VirtualClock()
   const confirmationController = new ProjectConfirmationController({
-    clock: new VirtualClock(),
+    clock,
     idFactory: () => 'unused-project-confirmation-id',
   })
+  const approvalController = new CodexApprovalController({
+    clock,
+    idFactory: () => 'unused-codex-approval-id',
+  })
   const adapter = {
-    manifest: CODEX_PROJECT_MANIFEST,
+    manifest: CODEX_PROJECT_APPROVAL_MANIFEST,
     dispatch: () => Promise.resolve({
       outcome: 'ok' as const,
       trust: 'trusted_system' as const,
@@ -364,8 +374,8 @@ test('Qwen composition registers the exact project Codex resource and starts it 
     adapter,
     mode: 'project',
     projectView: null,
-    approvalPolicy: 'never',
-    approvalController: null,
+    approvalPolicy: 'on-request',
+    approvalController,
     start: () => {
       starts += 1
       return Promise.resolve()
@@ -385,9 +395,40 @@ test('Qwen composition registers the exact project Codex resource and starts it 
   await settleNamed('Qwen composition start', realtime.start())
   assert.equal(connector.calls.length, 1)
   assert.equal(starts, 1)
+  assert.equal(realtime.tools.bindings.has('codex__confirm_codex_approval'), true)
+  const update = JSON.parse(connector.sockets[0]?.sent[0] ?? '{}') as {
+    readonly session?: {readonly instructions?: string}
+  }
+  assert.match(update.session?.instructions ?? '', /codex__confirm_codex_approval/u)
+  assert.match(update.session?.instructions ?? '', /approval_id/u)
 
   await realtime.stop()
   assert.equal(closes, 1)
+
+  const neverConnector = recordingConnector()
+  const neverResource: CodexAssemblyResource = {
+    ...resource,
+    adapter: {...adapter, manifest: CODEX_PROJECT_MANIFEST},
+    approvalPolicy: 'never',
+    approvalController: null,
+  }
+  const neverRealtime = buildQwenRealtimeAssembly({
+    ...qwenOptions(settings({
+      NOVA_AUDIO_AGENT_MODEL_API_KEY: 'model-key',
+      NOVA_AUDIO_AGENT_EXECUTOR: 'codex',
+    }), neverConnector.connector),
+    codexResource: neverResource,
+  })
+  await settleNamed('Qwen never-approval composition start', neverRealtime.start())
+  assert.equal(neverRealtime.tools.bindings.has('codex__confirm_codex_approval'), false)
+  const neverUpdate = JSON.parse(neverConnector.sockets[0]?.sent[0] ?? '{}') as {
+    readonly session?: {readonly instructions?: string}
+  }
+  assert.doesNotMatch(
+    neverUpdate.session?.instructions ?? '',
+    /codex__confirm_codex_approval|approval_id/u,
+  )
+  await neverRealtime.stop()
 })
 
 test('Qwen realtime composition rejects a live Codex fallback', () => {
