@@ -32,6 +32,7 @@ jobs:
         # contracts. Windows is covered by the desktop/native suite below and
         # by the checkout-free installed NSIS smoke in unsigned-packages.yml.
         if: runner.os != 'Windows'
+      - run: npm run test:cli
       # npm may restore the Electron package without its platform binary from
       # cache. The pinned install script is idempotent and closes that gap.
       - run: node desktop/ambient-orb/node_modules/electron/install.js
