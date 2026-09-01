@@ -38,9 +38,24 @@ import {CodexHostConfigurationError} from './codex-host-config.js'
 import {ProjectCodexAdapter} from './executors/codex-project-live.js'
 import {CodexAdapter} from './executors/codex.js'
 import {ProjectConfirmationController} from './realtime/project-confirmation.js'
+import {
+  CodexApprovalController,
+  type CodexApprovalView,
+} from './realtime/codex-approval.js'
 import {basename} from 'node:path'
 
 export type CodexAssemblyMode = 'ordinary' | 'live' | 'project'
+export type CodexApprovalPolicy = 'never' | 'on-request'
+
+export function codexApprovalPolicyForTransport(input: {
+  readonly platform: NodeJS.Platform
+  readonly mode: CodexAssemblyMode
+  readonly foregroundBroker: boolean
+}): CodexApprovalPolicy {
+  return input.platform === 'win32' && input.mode === 'project' && input.foregroundBroker
+    ? 'on-request'
+    : 'never'
+}
 
 export interface CodexTransportBinding {
   readonly mode: CodexAssemblyMode
@@ -51,6 +66,8 @@ export interface CodexTransportBinding {
   readonly credential: CodexCredentialProfile
   readonly resumeThreadId: string | null
   readonly workingInterval: number
+  readonly approvalPolicy: CodexApprovalPolicy
+  readonly approvalController: CodexApprovalController | null
 }
 
 export interface CodexBackendTransportFactory {
@@ -90,6 +107,10 @@ export class OwnedCodexBackendTransportFactory implements CodexBackendTransportF
         resumeThreadId: binding.resumeThreadId,
         persistent: project,
         workingInterval: binding.workingInterval,
+        approvalPolicy: binding.approvalPolicy,
+        ...(binding.approvalController === null
+          ? {}
+          : {approvalController: binding.approvalController}),
       },
       processFactory: this.#options.processFactory,
       credentialSnapshotter: this.#options.credentialSnapshotter,
@@ -161,6 +182,8 @@ export interface CodexAssemblyResource {
   readonly adapter: ExecutorAdapter
   readonly mode: CodexAssemblyMode
   readonly projectView: PublicProjectView | null
+  readonly approvalPolicy: CodexApprovalPolicy
+  readonly approvalController: CodexApprovalController | null
   start(): Promise<void>
   close(): Promise<void>
 }
@@ -177,6 +200,10 @@ export interface CreateCodexAssemblyResourceOptions {
     readonly rootFiles: ProjectRootFileAuthority
   }
   readonly onProjectView?: (view: PublicProjectView) => void
+  readonly platform?: NodeJS.Platform
+  readonly codexApprovalBroker?: {
+    readonly publish: (view: CodexApprovalView) => void
+  }
 }
 
 export async function createCodexAssemblyResource(
@@ -199,6 +226,8 @@ export async function createCodexAssemblyResource(
     credential: options.config.credential,
     resumeThreadId: null,
     workingInterval: options.config.workingInterval,
+    approvalPolicy: 'never',
+    approvalController: null,
   })
   let transport: CodexAppServerTransport
   try {
@@ -235,6 +264,17 @@ async function createProjectResource(
   const host = options.projectHost
   const stateRoot = options.config.stateRoot
   const managedRoot = options.config.managedRoot
+  const approvalPolicy = codexApprovalPolicyForTransport({
+    platform: options.platform ?? process.platform,
+    mode: 'project',
+    foregroundBroker: options.codexApprovalBroker !== undefined,
+  })
+  const approvalController = approvalPolicy === 'on-request'
+    ? new CodexApprovalController({clock: options.clock, idFactory: options.idFactory})
+    : null
+  const unsubscribeApproval = approvalController === null
+    ? null
+    : approvalController.observe(view => { options.codexApprovalBroker?.publish(view) })
   if (host === undefined) {
     throw new CodexHostConfigurationError('codex_project_host_unsupported')
   }
@@ -250,6 +290,8 @@ async function createProjectResource(
       credential: options.config.credential,
       resumeThreadId: null,
       workingInterval: options.config.workingInterval,
+      approvalPolicy: 'never',
+      approvalController: null,
     }))
     if (!isCodexTransport(startupTransport)) {
       throw new CodexHostConfigurationError('codex_host_unavailable')
@@ -283,6 +325,8 @@ async function createProjectResource(
             credential: options.config.credential,
             resumeThreadId: binding.resumeThreadId,
             workingInterval: options.config.workingInterval,
+            approvalPolicy,
+            approvalController,
           }))
           if (!isCodexTransport(transport)) {
             throw new CodexHostConfigurationError('codex_host_unavailable')
@@ -293,8 +337,16 @@ async function createProjectResource(
       ...(options.onProjectView === undefined ? {} : {onProjectView: options.onProjectView}),
     })
     await adapter.initialize()
-    return new ProjectCodexAssemblyResource(adapter, startupTransport)
+    return new ProjectCodexAssemblyResource(
+      adapter,
+      startupTransport,
+      approvalPolicy,
+      approvalController,
+      unsubscribeApproval,
+    )
   } catch (error) {
+    approvalController?.invalidate('resource_creation_failed')
+    unsubscribeApproval?.()
     await startupTransport?.close('failure').catch(() => undefined)
     await store?.close().catch(() => undefined)
     if (error instanceof CodexHostConfigurationError) throw error
@@ -308,6 +360,8 @@ async function createProjectResource(
 class BasicCodexAssemblyResource implements CodexAssemblyResource {
   readonly mode = 'ordinary'
   readonly projectView = null
+  readonly approvalPolicy = 'never'
+  readonly approvalController = null
   readonly #rawTransport: CodexAppServerTransport
   #startOperation: Promise<void> | null = null
   #closeOperation: Promise<void> | null = null
@@ -356,14 +410,19 @@ class BasicCodexAssemblyResource implements CodexAssemblyResource {
 class ProjectCodexAssemblyResource implements CodexAssemblyResource {
   readonly mode = 'project'
   readonly #startupTransport: CodexAppServerTransport
+  readonly #unsubscribeApproval: (() => void) | null
   #startOperation: Promise<void> | null = null
   #closeOperation: Promise<void> | null = null
 
   constructor(
     readonly adapter: ProjectCodexAdapter,
     startupTransport: CodexAppServerTransport,
+    readonly approvalPolicy: CodexApprovalPolicy,
+    readonly approvalController: CodexApprovalController | null,
+    unsubscribeApproval: (() => void) | null,
   ) {
     this.#startupTransport = startupTransport
+    this.#unsubscribeApproval = unsubscribeApproval
   }
 
   get projectView(): PublicProjectView {
@@ -404,7 +463,9 @@ class ProjectCodexAssemblyResource implements CodexAssemblyResource {
   }
 
   async #close(): Promise<void> {
+    this.approvalController?.invalidate('shutdown')
     await this.#startupTransport.close('shutdown')
     await this.adapter.close()
+    this.#unsubscribeApproval?.()
   }
 }

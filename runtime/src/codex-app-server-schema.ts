@@ -100,6 +100,9 @@ export const APP_SERVER_INBOUND_SCHEMAS: readonly InboundSchemaSpec[] = deepFree
   {...method('v2/TurnStartedNotification.json', {
     threadId: 'string', turn: 'object',
   }, ['threadId', 'turn']), nested: TURN_NESTED},
+  method('v2/ItemStartedNotification.json', {
+    threadId: 'string', turnId: 'string', startedAtMs: 'integer', item: 'object',
+  }, ['threadId', 'turnId', 'startedAtMs', 'item']),
   method('v2/ItemCompletedNotification.json', {
     threadId: 'string', turnId: 'string', item: 'object',
   }, ['threadId', 'turnId', 'item']),

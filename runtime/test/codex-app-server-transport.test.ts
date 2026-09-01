@@ -12,6 +12,8 @@ import {
   type TransportObserver,
 } from '../src/codex-app-server-transport.js'
 import {MAX_STDOUT} from '../src/codex-protocol.js'
+import {RealClock} from '../src/clock.js'
+import {CodexApprovalController} from '../src/realtime/codex-approval.js'
 import {
   hostBinaryForTest,
   hostCodexHomeForTest,
@@ -2277,6 +2279,46 @@ test('the real fake app-server handles arbitrary stdout chunks and barriered ste
   }
 })
 
+test('the real fake app-server carries correlated file and bounded command approvals end to end', async () => {
+  for (const scenario of ['file-approval', 'command-approval'] as const) {
+    const factory = new FakeAppServerOwnerFactory(scenario)
+    const controller = new CodexApprovalController({
+      clock: new RealClock(),
+      idFactory: () => `nova-${scenario}`,
+    })
+    const transport = createTransport(factory, {
+      approvalPolicy: 'on-request',
+      approvalController: controller,
+    })
+    try {
+      const running = transport.run(
+        {workOrder: 'approval fixture work'},
+        {},
+        {expiresAtMs: Date.now() + 10_000},
+      )
+      await settleUntil(() => factory.owner !== null, `${scenario} fake owner spawn`)
+      await within(factory.owner!.waitForBarrier('approval_request'), 5000, `${scenario} request`)
+      assert.equal(controller.pending, true)
+      assert.equal(controller.view.kind, scenario === 'file-approval'
+        ? 'file_change'
+        : 'command_execution')
+      assert.equal(JSON.stringify(controller.view).includes('910'), false)
+      assert.equal(controller.acceptDecision({
+        approvalId: `nova-${scenario}`,
+        decision: 'accept',
+      }), true)
+      await within(factory.owner!.waitForBarrier('approval_response'), 5000, `${scenario} response`)
+      const result = await running
+      assert.equal(result.classification, 'completed')
+      assert.equal(result.code, 'completed')
+    } finally {
+      await transport.close().catch(() => undefined)
+      await factory.owner?.killTree().catch(() => undefined)
+      await factory.owner?.dispose().catch(() => undefined)
+    }
+  }
+})
+
 test('real child malformed and bounded stream failures settle with stable private codes', async () => {
   for (const [scenario, code] of [
     ['malformed-after-turn', 'unsupported_protocol'],
@@ -2704,6 +2746,8 @@ function createTransport(
     readonly developerInstructions?: string | null
     readonly prepare?: (input: {readonly apiKey: string | null}) => Promise<never>
     readonly removeEphemeralHome?: () => Promise<void>
+    readonly approvalPolicy?: 'never' | 'on-request'
+    readonly approvalController?: CodexApprovalController
   } = {},
 ): OwnedCodexAppServerTransport {
   const workspace = process.cwd()
@@ -2716,6 +2760,12 @@ function createTransport(
       developerInstructions: overrides.developerInstructions ?? null,
       resumeThreadId: null,
       persistent: false,
+      ...(overrides.approvalPolicy === undefined
+        ? {}
+        : {approvalPolicy: overrides.approvalPolicy}),
+      ...(overrides.approvalController === undefined
+        ? {}
+        : {approvalController: overrides.approvalController}),
     },
     processFactory,
     credentialSnapshotter: {

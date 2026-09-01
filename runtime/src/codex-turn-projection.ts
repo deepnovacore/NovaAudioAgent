@@ -36,6 +36,7 @@ export class AppServerTurnProjection {
   #commandsFailed = 0
   #filesChanged = 0
   #toolCalls = 0
+  readonly #fileChangeItems = new Map<string, Readonly<Record<string, unknown>> | null>()
 
   constructor(options: {
     readonly clock: Clock
@@ -59,12 +60,27 @@ export class AppServerTurnProjection {
 
   get turnWasStarted(): boolean { return this.#notificationTurnId !== null }
 
+  fileChangeItemForApproval(
+    threadId: string,
+    turnId: string,
+    itemId: string,
+  ): Readonly<Record<string, unknown>> | null {
+    if (
+      threadId !== this.#threadId
+      || turnId !== this.#activeTurnId
+      || typeof itemId !== 'string'
+      || itemId === ''
+    ) return null
+    return this.#fileChangeItems.get(itemId) ?? null
+  }
+
   bindThread(
     response: unknown,
     options: {
       readonly workspace: string
       readonly ephemeral?: boolean
       readonly expectedThreadId?: string
+      readonly approvalPolicy?: 'never' | 'on-request'
     },
   ): void {
     try {
@@ -90,7 +106,9 @@ export class AppServerTurnProjection {
           throw new TypeError('workspace roots')
         }
       }
-      if (envelope.approvalPolicy !== 'never') throw new TypeError('approval')
+      if (envelope.approvalPolicy !== (options.approvalPolicy ?? 'never')) {
+        throw new TypeError('approval')
+      }
       const profile = requireObject(envelope.activePermissionProfile)
       if (profile.id !== 'nova_audio_agent') throw new TypeError('profile')
       this.#threadId = threadId
@@ -115,7 +133,12 @@ export class AppServerTurnProjection {
   }
 
   notification(method: string, params: Readonly<Record<string, unknown>>): TurnCompletion | null {
-    if (method !== 'turn/started' && method !== 'item/completed' && method !== 'turn/completed') {
+    if (
+      method !== 'turn/started'
+      && method !== 'item/started'
+      && method !== 'item/completed'
+      && method !== 'turn/completed'
+    ) {
       return null
     }
     let snapshot: Record<string, unknown>
@@ -126,6 +149,10 @@ export class AppServerTurnProjection {
     }
     if (method === 'turn/started') {
       this.#turnStarted(snapshot)
+      return null
+    }
+    if (method === 'item/started') {
+      this.#itemStarted(snapshot)
       return null
     }
     if (method === 'item/completed') {
@@ -150,15 +177,31 @@ export class AppServerTurnProjection {
     this.#commandsFailed = 0
     this.#filesChanged = 0
     this.#toolCalls = 0
+    this.#fileChangeItems.clear()
     this.#hasEmittedProse = false
     this.#startedAt = this.#clock.now()
     this.#lastWorkingAt = this.#startedAt
     this.#emit({phase: 'started', internal_activity: 0, elapsed: 0, summary: null})
   }
 
+  #itemStarted(params: Readonly<Record<string, unknown>>): void {
+    if (!this.#matchesItem(params)) return
+    const startedItem = params.item
+    if (
+      startedItem.type !== 'fileChange'
+      || typeof startedItem.id !== 'string'
+      || startedItem.id === ''
+    ) return
+    this.#fileChangeItems.set(
+      startedItem.id,
+      this.#fileChangeItems.has(startedItem.id) ? null : startedItem,
+    )
+  }
+
   #itemCompleted(params: Readonly<Record<string, unknown>>): void {
     if (!this.#matchesItem(params) || this.#startedAt === null) return
     const completedItem = params.item
+    if (typeof completedItem.id === 'string') this.#fileChangeItems.delete(completedItem.id)
     if (completedItem.type === 'agentMessage' && typeof completedItem.text === 'string') {
       this.#completedAgentText = clipCodePoints(completedItem.text, MAX_FINAL_TEXT_INPUT)
     }
@@ -247,6 +290,7 @@ export class AppServerTurnProjection {
     if (finalText === null && turn.itemsView === 'notLoaded') finalText = this.#completedAgentText
     this.#activeTurnId = null
     this.#completedAgentText = null
+    this.#fileChangeItems.clear()
     return Object.freeze({
       status: turn.status === 'completed' ? 'completed' : 'failed',
       final_text: finalText,

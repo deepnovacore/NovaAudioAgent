@@ -695,6 +695,8 @@ test('cascaded realtime composition rejects a live Codex fallback', () => {
     adapter: modelProbeAdapter,
     mode: 'live',
     projectView: null,
+    approvalPolicy: 'never',
+    approvalController: null,
     start: () => Promise.resolve(),
     close: () => Promise.resolve(),
   }

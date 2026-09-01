@@ -4,11 +4,26 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
 
+import {codexApprovalPolicyForTransport} from '../src/codex-factory.js'
 import {
   ProjectStateError,
   hostManagedProjectRootForTest,
   hostProjectRootForTest,
 } from '../src/codex-project-store.js'
+
+test('only a Windows foreground project broker selects on-request approval', () => {
+  assert.equal(codexApprovalPolicyForTransport({
+    platform: 'win32', mode: 'project', foregroundBroker: true,
+  }), 'on-request')
+  for (const input of [
+    {platform: 'win32' as const, mode: 'project' as const, foregroundBroker: false},
+    {platform: 'win32' as const, mode: 'ordinary' as const, foregroundBroker: true},
+    {platform: 'win32' as const, mode: 'live' as const, foregroundBroker: true},
+    {platform: 'darwin' as const, mode: 'project' as const, foregroundBroker: true},
+    {platform: 'darwin' as const, mode: 'project' as const, foregroundBroker: false},
+    {platform: 'linux' as const, mode: 'project' as const, foregroundBroker: true},
+  ]) assert.equal(codexApprovalPolicyForTransport(input), 'never')
+})
 
 test('Windows root admission defers ownership and ACL authority to the native handle probe', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nova-project-windows-policy-'))

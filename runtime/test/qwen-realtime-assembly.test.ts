@@ -364,6 +364,8 @@ test('Qwen composition registers the exact project Codex resource and starts it 
     adapter,
     mode: 'project',
     projectView: null,
+    approvalPolicy: 'never',
+    approvalController: null,
     start: () => {
       starts += 1
       return Promise.resolve()
@@ -394,6 +396,8 @@ test('Qwen realtime composition rejects a live Codex fallback', () => {
     adapter,
     mode: 'live',
     projectView: null,
+    approvalPolicy: 'never',
+    approvalController: null,
     start: () => Promise.resolve(),
     close: () => adapter.close(),
   }

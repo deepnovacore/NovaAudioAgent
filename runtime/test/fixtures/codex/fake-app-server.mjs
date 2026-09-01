@@ -1,4 +1,5 @@
 import {spawn} from 'node:child_process'
+import {resolve} from 'node:path'
 import {createInterface} from 'node:readline'
 
 const scenario = process.argv[2]
@@ -11,6 +12,8 @@ const allowedScenarios = new Set([
   'duplicate-response',
   'unknown-response',
   'server-request',
+  'file-approval',
+  'command-approval',
   'clean-eof',
   'pending-eof',
   'turn-rejection-order',
@@ -20,6 +23,7 @@ const allowedScenarios = new Set([
 if (!allowedScenarios.has(scenario)) fail('invalid_scenario')
 
 let pendingTurnId = null
+let approvalTurnId = null
 let threadId = 'fixture-thread-1'
 const releases = new Set()
 
@@ -66,6 +70,19 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
     }
     if (
       plain(message)
+      && message.id === 910
+      && plain(message.result)
+      && message.result.decision === 'accept'
+      && approvalTurnId !== null
+    ) {
+      const id = approvalTurnId
+      approvalTurnId = null
+      barrier('approval_response')
+      turnCompletion(id)
+      return
+    }
+    if (
+      plain(message)
       && message.id === 909
       && plain(message.error)
       && message.error.code === -32601
@@ -86,13 +103,16 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       return
     }
     if (message.method === 'thread/start' || message.method === 'thread/resume') {
-      if (params.approvalPolicy !== 'never') fail('invalid_thread')
+      const approvalScenario = scenario === 'file-approval' || scenario === 'command-approval'
+      if (params.approvalPolicy !== (approvalScenario ? 'on-request' : 'never')) fail('invalid_thread')
       if (message.method === 'thread/resume') {
         if (typeof params.threadId !== 'string') fail('invalid_resume')
         threadId = params.threadId
       }
       const persistent = params.ephemeral === false || message.method === 'thread/resume'
-      const response = {id: message.id, result: threadResponse(process.cwd(), threadId, persistent)}
+      const response = {id: message.id, result: threadResponse(
+        process.cwd(), threadId, persistent, approvalScenario ? 'on-request' : 'never',
+      )}
       if (scenario === 'duplicate-response') {
         sendMany([response, response])
         return
@@ -115,6 +135,60 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       send({method: 'turn/started', params: {
         threadId, turn: {id: 'fixture-turn-1', items: [], status: 'inProgress'},
       }})
+      if (scenario === 'file-approval' || scenario === 'command-approval') {
+        approvalTurnId = message.id
+        if (scenario === 'file-approval') {
+          send({method: 'item/started', params: {
+            threadId,
+            turnId: 'fixture-turn-1',
+            startedAtMs: 1000,
+            item: {
+              id: 'fixture-file-item',
+              type: 'fileChange',
+              status: 'inProgress',
+              changes: [{
+                path: resolve(process.cwd(), 'fixture-change.txt'),
+                diff: '@@ -0,0 +1 @@\n+fixture\n',
+                kind: {type: 'add'},
+              }],
+            },
+          }})
+          send({
+            id: 910,
+            method: 'item/fileChange/requestApproval',
+            params: {
+              itemId: 'fixture-file-item',
+              startedAtMs: 1001,
+              threadId,
+              turnId: 'fixture-turn-1',
+              grantRoot: null,
+              reason: null,
+            },
+          })
+        } else {
+          send({
+            id: 910,
+            method: 'item/commandExecution/requestApproval',
+            params: {
+              approvalId: null,
+              command: 'node --version',
+              commandActions: null,
+              cwd: process.cwd(),
+              environmentId: null,
+              itemId: 'fixture-command-item',
+              networkApprovalContext: null,
+              proposedExecpolicyAmendment: null,
+              proposedNetworkPolicyAmendments: null,
+              reason: null,
+              startedAtMs: 1001,
+              threadId,
+              turnId: 'fixture-turn-1',
+            },
+          })
+        }
+        barrier('approval_request')
+        return
+      }
       if (scenario === 'clean-eof') {
         barrier('turn_start')
         return
@@ -238,9 +312,9 @@ function effectiveConfig(workspace) {
   }
 }
 
-function threadResponse(workspace, id, persistent) {
+function threadResponse(workspace, id, persistent, approvalPolicy = 'never') {
   return {
-    approvalPolicy: 'never', cwd: workspace, sandbox: {},
+    approvalPolicy, cwd: workspace, sandbox: {},
     activePermissionProfile: {id: 'nova_audio_agent'},
     ...(persistent ? {runtimeWorkspaceRoots: [workspace]} : {}),
     thread: {

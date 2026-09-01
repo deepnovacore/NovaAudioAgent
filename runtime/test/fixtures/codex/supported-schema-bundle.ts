@@ -48,6 +48,9 @@ const INBOUND = [
   }, ['threadId', 'turn'], ['turn', {
     id: 'string', items: 'array', status: 'string',
   }, ['id', 'items', 'status']]],
+  ['v2/ItemStartedNotification.json', {
+    threadId: 'string', turnId: 'string', startedAtMs: 'integer', item: 'object',
+  }, ['threadId', 'turnId', 'startedAtMs', 'item'], null],
   ['v2/ItemCompletedNotification.json', {
     threadId: 'string', turnId: 'string', item: 'object',
   }, ['threadId', 'turnId', 'item'], null],

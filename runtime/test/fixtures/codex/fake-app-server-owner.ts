@@ -24,6 +24,8 @@ export type FakeAppServerScenario =
   | 'duplicate-response'
   | 'unknown-response'
   | 'server-request'
+  | 'file-approval'
+  | 'command-approval'
   | 'clean-eof'
   | 'pending-eof'
   | 'turn-rejection-order'
@@ -96,7 +98,9 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
     })
   }
 
-  waitForBarrier(name: 'turn_start' | 'descendant_started'): Promise<void> {
+  waitForBarrier(
+    name: 'turn_start' | 'descendant_started' | 'approval_request' | 'approval_response',
+  ): Promise<void> {
     if (this.#seen.has(name)) return Promise.resolve()
     return new Promise(resolve => {
       const waiting = this.#barriers.get(name) ?? []

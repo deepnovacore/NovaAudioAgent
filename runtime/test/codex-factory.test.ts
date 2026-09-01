@@ -516,3 +516,40 @@ test('realtime project startup truncates an imported directory basename to the s
     await resource.close()
   }
 })
+
+test('factory exposes a brokered controller only for Windows foreground project transports', async t => {
+  for (const [index, evidence] of [
+    {platform: 'win32' as const, broker: true, policy: 'on-request' as const},
+    {platform: 'win32' as const, broker: false, policy: 'never' as const},
+    {platform: 'darwin' as const, broker: true, policy: 'never' as const},
+    {platform: 'darwin' as const, broker: false, policy: 'never' as const},
+  ].entries()) {
+    const {config, stateRoot, managedRoot} = projectHostConfig(t, `workspace-${index}`)
+    const transportFactory = new RecordingTransportFactory()
+    const published: unknown[] = []
+    const resource = await createCodexAssemblyResource({
+      config,
+      composition: 'realtime',
+      transportFactory,
+      clock: new VirtualClock(100),
+      idFactory: () => `approval-${index}`,
+      platform: evidence.platform,
+      projectHost: {
+        nativeLocks: new DescriptorLockAuthority(),
+        rootFiles: new DescriptorRootFileAuthority([stateRoot, managedRoot]),
+      },
+      ...(evidence.broker
+        ? {codexApprovalBroker: {publish: (view: unknown) => { published.push(view) }}}
+        : {}),
+    })
+    try {
+      assert.equal(resource.approvalPolicy, evidence.policy)
+      assert.equal(resource.approvalController === null, evidence.policy === 'never')
+      assert.equal(transportFactory.calls[0]?.approvalPolicy, 'never', 'startup live is never')
+      assert.equal(transportFactory.calls[0]?.approvalController, null)
+      assert.deepEqual(published, [])
+    } finally {
+      await resource.close()
+    }
+  }
+})

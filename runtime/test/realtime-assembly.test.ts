@@ -2687,6 +2687,8 @@ test('Codex resource starts after provider service and closes after service and 
     adapter,
     mode: 'live',
     projectView: null,
+    approvalPolicy: 'never',
+    approvalController: null,
     start: () => { actions.push('codex:start'); return Promise.resolve() },
     close: () => { actions.push('codex:close'); return Promise.resolve() },
   }
@@ -2730,6 +2732,8 @@ test('a failed Codex close remains physically retryable through the realtime own
     adapter,
     mode: 'live',
     projectView: null,
+    approvalPolicy: 'never',
+    approvalController: null,
     start: () => Promise.resolve(),
     close: () => {
       closeCalls += 1

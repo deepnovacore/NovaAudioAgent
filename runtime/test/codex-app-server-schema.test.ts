@@ -99,6 +99,11 @@ const INBOUND_SPECS = [
     nested: TURN_NESTED,
   },
   {
+    file: 'v2/ItemStartedNotification.json',
+    fields: {threadId: 'string', turnId: 'string', startedAtMs: 'integer', item: 'object'},
+    required: ['threadId', 'turnId', 'startedAtMs', 'item'],
+  },
+  {
     file: 'v2/ItemCompletedNotification.json',
     fields: {threadId: 'string', turnId: 'string', item: 'object'},
     required: ['threadId', 'turnId', 'item'],
