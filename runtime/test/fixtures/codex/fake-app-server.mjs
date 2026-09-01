@@ -13,6 +13,9 @@ const allowedScenarios = new Set([
   'unknown-response',
   'server-request',
   'file-approval',
+  'file-approval-decline',
+  'file-approval-turn-interrupted',
+  'file-approval-process-exit',
   'file-approval-start-mismatch',
   'command-approval',
   'clean-eof',
@@ -73,15 +76,13 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       plain(message)
       && message.id === 910
       && plain(message.result)
-      && message.result.decision === (
-        scenario === 'file-approval-start-mismatch' ? 'decline' : 'accept'
-      )
+      && message.result.decision === expectedApprovalDecision()
       && approvalTurnId !== null
     ) {
       const id = approvalTurnId
       approvalTurnId = null
-      barrier('approval_response')
-      turnCompletion(id)
+      barrier('approval_response', {decision: message.result.decision})
+      if (scenario !== 'file-approval-turn-interrupted') turnCompletion(id)
       return
     }
     if (
@@ -106,9 +107,7 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       return
     }
     if (message.method === 'thread/start' || message.method === 'thread/resume') {
-      const approvalScenario = scenario === 'file-approval'
-        || scenario === 'file-approval-start-mismatch'
-        || scenario === 'command-approval'
+      const approvalScenario = isApprovalScenario()
       if (params.approvalPolicy !== (approvalScenario ? 'on-request' : 'never')) fail('invalid_thread')
       if (message.method === 'thread/resume') {
         if (typeof params.threadId !== 'string') fail('invalid_resume')
@@ -141,12 +140,10 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
         threadId, turn: {id: 'fixture-turn-1', items: [], status: 'inProgress'},
       }})
       if (
-        scenario === 'file-approval'
-        || scenario === 'file-approval-start-mismatch'
-        || scenario === 'command-approval'
+        isApprovalScenario()
       ) {
         approvalTurnId = message.id
-        if (scenario === 'file-approval' || scenario === 'file-approval-start-mismatch') {
+        if (isFileApprovalScenario()) {
           send({method: 'item/started', params: {
             threadId,
             turnId: 'fixture-turn-1',
@@ -196,6 +193,17 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
           })
         }
         barrier('approval_request')
+        if (scenario === 'file-approval-turn-interrupted') {
+          send({id: message.id, result: {
+            turn: {id: 'fixture-turn-1', items: [], status: 'inProgress'},
+          }})
+          send({method: 'turn/completed', params: {
+            threadId,
+            turn: {
+              id: 'fixture-turn-1', status: 'interrupted', itemsView: 'notLoaded', items: [],
+            },
+          }})
+        } else if (scenario === 'file-approval-process-exit') endAndExit()
         return
       }
       if (scenario === 'clean-eof') {
@@ -283,9 +291,29 @@ function sendMany(values) {
   ))
 }
 
-function barrier(name) {
+function barrier(name, detail = {}) {
   if (typeof process.send !== 'function') fail('missing_ipc')
-  process.send({type: 'barrier', name})
+  process.send({type: 'barrier', name, ...detail})
+}
+
+function isApprovalScenario() {
+  return isFileApprovalScenario() || scenario === 'command-approval'
+}
+
+function isFileApprovalScenario() {
+  return scenario === 'file-approval'
+    || scenario === 'file-approval-decline'
+    || scenario === 'file-approval-turn-interrupted'
+    || scenario === 'file-approval-process-exit'
+    || scenario === 'file-approval-start-mismatch'
+}
+
+function expectedApprovalDecision() {
+  return scenario === 'file-approval-decline'
+    || scenario === 'file-approval-turn-interrupted'
+    || scenario === 'file-approval-start-mismatch'
+    ? 'decline'
+    : 'accept'
 }
 
 function endAndExit() {

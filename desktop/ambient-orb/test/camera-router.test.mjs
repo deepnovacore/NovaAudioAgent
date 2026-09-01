@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {RendererSocketRouter} from '../src/renderer/camera.mjs'
+import {
+  CodexApprovalDecisionController,
+  parseCodexApprovalMessage,
+} from '../src/renderer/confirmation-controls.mjs'
 
 function deferred() {
   let resolve
@@ -218,6 +222,69 @@ test('held browser PCM cannot block playback controls on the generic tail', asyn
 
     await settleWithin(controlsHandled.promise, 'controls behind held browser PCM')
     assert.deepEqual(order, ['pcm-start', 'playback.clear', 'playback.terminal'])
+  } finally {
+    pcmResume.resolve()
+    router.dispose()
+  }
+})
+
+test('suspended browser PCM cannot block a Codex approval render and exact decision', async () => {
+  const pcmResume = deferred()
+  const decisionSent = deferred()
+  const order = []
+  const socket = new FakeSocket('codex-approval-cross-path')
+  const decision = new CodexApprovalDecisionController({
+    send: frame => {
+      socket.send(JSON.stringify(frame))
+      order.push('decision-sent')
+      decisionSent.resolve()
+      return true
+    },
+  })
+  const router = new RendererSocketRouter({
+    cameraController: {enqueue() {}, closeGeneration() {}},
+    handleGeneric: async event => {
+      if (typeof event.data !== 'string') {
+        order.push('pcm-start')
+        await pcmResume.promise
+        order.push('pcm-done')
+        return
+      }
+      const approval = parseCodexApprovalMessage(JSON.parse(event.data))
+      assert.notEqual(approval, null)
+      order.push('approval-rendered')
+      decision.sync({
+        pending: approval.pending_approval,
+        approvalId: approval.pending_approval_id,
+        busy: approval.pending_approval_busy,
+      })
+      assert.equal(decision.decide(true), true)
+    },
+  })
+  const connection = router.connect(socket)
+  try {
+    connection.onMessage({data: new Uint8Array([0, 1]).buffer})
+    connection.onMessage({data: JSON.stringify({
+      type: 'codex.approval',
+      pending_approval: true,
+      pending_approval_busy: false,
+      pending_approval_id: 'approval-cross-path',
+      kind: 'file_change',
+      local_detail: {
+        kind: 'file_change',
+        changes: [{change: 'update', path: 'src/a.ts', move_path: null}],
+      },
+      operation_summary: 'Codex 请求修改 1 个工作区文件。',
+      expires_in_seconds: 60,
+    })})
+
+    await settleWithin(decisionSent.promise, 'Codex control behind suspended PCM')
+    assert.deepEqual(order, ['pcm-start', 'approval-rendered', 'decision-sent'])
+    assert.deepEqual(socket.sent, [JSON.stringify({
+      type: 'codex.approval_decision',
+      approval_id: 'approval-cross-path',
+      approved: true,
+    })])
   } finally {
     pcmResume.resolve()
     router.dispose()

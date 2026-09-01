@@ -543,10 +543,22 @@ test('factory exposes a brokered controller only for Windows foreground project 
         : {}),
     })
     try {
+      await resource.start()
       assert.equal(resource.approvalPolicy, evidence.policy)
       assert.equal(resource.approvalController === null, evidence.policy === 'never')
       assert.equal(transportFactory.calls[0]?.approvalPolicy, 'never', 'startup live is never')
       assert.equal(transportFactory.calls[0]?.approvalController, null)
+      if (evidence.platform === 'darwin') {
+        assert.equal(resource.approvalPolicy, 'never', 'macOS policy remains exact never')
+        assert.equal(resource.approvalController, null, 'macOS never creates approval authority')
+        assert.equal(
+          transportFactory.calls.every(call => (
+            call.approvalPolicy === 'never' && call.approvalController === null
+          )),
+          true,
+          'macOS lifecycle never binds an approval controller to a transport',
+        )
+      }
       assert.deepEqual(published, [])
     } finally {
       await resource.close()

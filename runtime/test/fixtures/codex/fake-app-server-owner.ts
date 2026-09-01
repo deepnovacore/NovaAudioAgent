@@ -25,6 +25,9 @@ export type FakeAppServerScenario =
   | 'unknown-response'
   | 'server-request'
   | 'file-approval'
+  | 'file-approval-decline'
+  | 'file-approval-turn-interrupted'
+  | 'file-approval-process-exit'
   | 'file-approval-start-mismatch'
   | 'command-approval'
   | 'clean-eof'
@@ -69,11 +72,13 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
   readonly stdout: Readable
   readonly stderr: Readable
   readonly exit: Promise<number | null>
+  readonly approvalDecision: Promise<'accept' | 'decline'>
   readonly pid: number
   readonly #child: ChildProcess
   readonly #barriers = new Map<string, (() => void)[]>()
   readonly #seen = new Set<string>()
   #stdinClosed = false
+  #resolveApprovalDecision!: (decision: 'accept' | 'decline') => void
 
   constructor(child: ChildProcess) {
     if (child.stdin === null || child.stdout === null || child.stderr === null || child.pid === undefined) {
@@ -84,6 +89,7 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
     this.stdout = child.stdout
     this.stderr = child.stderr
     this.pid = child.pid
+    this.approvalDecision = new Promise(resolve => { this.#resolveApprovalDecision = resolve })
     this.exit = new Promise((resolve, reject) => {
       child.once('exit', code => { resolve(code) })
       child.once('error', reject)
@@ -92,6 +98,10 @@ export class FakeAppServerOwner implements OwnedCodexProcess {
     child.on('message', message => {
       if (!plain(message)) return
       if (message.type === 'barrier' && typeof message.name === 'string') {
+        if (
+          message.name === 'approval_response'
+          && (message.decision === 'accept' || message.decision === 'decline')
+        ) this.#resolveApprovalDecision(message.decision)
         this.#seen.add(message.name)
         for (const release of this.#barriers.get(message.name) ?? []) release()
         this.#barriers.delete(message.name)
