@@ -2,9 +2,11 @@
 
 const assert = require('node:assert/strict')
 const {randomUUID} = require('node:crypto')
-const {chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync} = require('node:fs')
+const {chmodSync, mkdtempSync, realpathSync, rmSync} = require('node:fs')
+const {mkdir} = require('node:fs/promises')
 const {tmpdir} = require('node:os')
-const {isAbsolute, join, resolve, sep} = require('node:path')
+const path = require('node:path')
+const {isAbsolute, join, resolve, sep} = path
 const {pathToFileURL} = require('node:url')
 
 const SAFE_PREFLIGHT_CODES = new Set([
@@ -35,35 +37,30 @@ const runtimeRoot = resolve(
 )
 assert.ok(runtimeRoot.includes(`${sep}app.asar${sep}`), 'packaged_codex_host_invalid')
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'nova-packaged-codex-composition-')))
-const stateRoot = join(scratch, 'state')
-const managedRoot = join(scratch, 'managed')
-mkdirSync(stateRoot, {mode: 0o700})
-mkdirSync(managedRoot, {mode: 0o700})
+const projectRoot = join(scratch, '.nova-audio-agent')
+const stateRoot = join(projectRoot, 'state')
+const managedRoot = join(projectRoot, 'workspaces')
 chmodSync(scratch, 0o700)
-
-function protectScratchDirectory(host, childPath, name) {
-  let parent = null
-  let child = null
-  try {
-    parent = host.directoryHandles.open(scratch)
-    child = host.directoryHandles.open(childPath)
-    assert.equal(host.protectDirectoryAt(parent.fd, name, child.fd), true)
-  } finally {
-    try { child?.close() } finally { parent?.close() }
-  }
-}
 
 let stage = 'load_runtime'
 void (async () => {
-  const [configModule, hostConfigModule, factoryModule, productionHostModule, clockModule] = (
-    await Promise.all([
+  const [
+    configModule,
+    hostConfigModule,
+    factoryModule,
+    productionHostModule,
+    clockModule,
+    projectDirectoriesModule,
+  ] = await Promise.all([
+    ...[
       'config.js',
       'codex-host-config.js',
       'codex-factory.js',
       'codex-production-host.js',
       'clock.js',
-    ].map(name => import(pathToFileURL(resolve(runtimeRoot, name)).href)))
-  )
+    ].map(name => pathToFileURL(resolve(runtimeRoot, name)).href),
+    pathToFileURL(resolve(resourcesRoot, 'app.asar', 'src/main/project-directories.mjs')).href,
+  ].map(specifier => import(specifier)))
   stage = 'settings_project'
   const baseEnvironment = {
     ...process.env,
@@ -79,15 +76,24 @@ void (async () => {
     NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
   })
   stage = 'host_project'
-  const projectHost = productionHostModule.createProductionCodexHost(projectSettings)
+  const projectHost = productionHostModule.createProductionCodexHost(projectSettings, {
+    environment: baseEnvironment,
+    homeDirectory: scratch,
+  })
   stage = 'host_project_transport'
   assert.equal(projectHost.transportFactory.available, true, 'packaged_codex_transport_unavailable')
   stage = 'host_project_native'
   assert.notEqual(projectHost.projectHost, null, 'packaged_project_native_unavailable')
   if (process.platform === 'win32') {
-    stage = 'host_project_scratch'
-    protectScratchDirectory(projectHost.projectHost, stateRoot, 'state')
-    protectScratchDirectory(projectHost.projectHost, managedRoot, 'managed')
+    stage = 'host_project_directories'
+    await projectDirectoriesModule.ensurePrivateProjectDirectories({
+      config: {root: projectRoot, stateRoot, managedRoot, workspace},
+      home: scratch,
+      platform: process.platform,
+      nativeHost: projectHost.projectHost,
+      pathApi: path,
+      mkdir,
+    })
   }
   stage = 'host_project_config'
   const projectConfig = hostConfigModule.resolveCodexHostConfig(projectSettings, projectHost.catalog)
