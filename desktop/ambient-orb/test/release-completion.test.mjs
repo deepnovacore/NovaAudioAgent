@@ -212,6 +212,49 @@ test('promotion is manual, candidate-bound, main-bound, and publishes npm only a
   assert.doesNotMatch(workflow, /push:\s*\n\s*tags:/u)
 })
 
+test('promotion main refresh preserves candidate ancestry for split-run verification', {
+  skip: process.platform === 'win32' ? 'promotion identity job runs on Ubuntu' : false,
+}, async t => {
+  const workflow = await readFile(
+    new URL('../../../.github/workflows/release-promote.yml', import.meta.url),
+    'utf8',
+  )
+  const fetchCommand = workflow.split('\n')
+    .map(line => line.trim())
+    .find(line => line.startsWith('git fetch origin main'))
+  assert.ok(fetchCommand)
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-promote-ancestry-')))
+  t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
+  const source = join(root, 'source')
+  const origin = join(root, 'origin.git')
+  const checkout = join(root, 'checkout')
+  await mkdir(source)
+  runGit(source, 'init', '--initial-branch=main')
+  runGit(source, 'config', 'user.name', 'Release Test')
+  runGit(source, 'config', 'user.email', 'release-test@example.invalid')
+  await writeFile(join(source, 'release.txt'), 'candidate\n')
+  runGit(source, 'add', 'release.txt')
+  runGit(source, 'commit', '-m', 'candidate')
+  const candidate = runGit(source, 'rev-parse', 'HEAD').stdout.trim()
+  await writeFile(join(source, 'release.txt'), 'candidate\npromote\n')
+  runGit(source, 'commit', '-am', 'promote')
+  const expected = runGit(source, 'rev-parse', 'HEAD').stdout.trim()
+  runGit(root, 'clone', '--bare', source, origin)
+  runGit(root, 'clone', origin, checkout)
+  const refreshed = spawnSync('/bin/sh', ['-c', fetchCommand], {
+    cwd: checkout,
+    encoding: 'utf8',
+    timeout: 10_000,
+  })
+  assert.equal(refreshed.status, 0, refreshed.stderr)
+  const ancestry = spawnSync('git', ['merge-base', '--is-ancestor', candidate, expected], {
+    cwd: checkout,
+    encoding: 'utf8',
+    timeout: 10_000,
+  })
+  assert.equal(ancestry.status, 0, 'main refresh made the expected commit a shallow boundary')
+})
+
 test('release manifest binds every portable and installer byte and emits checksum sidecars', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-release-manifest-')))
   t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
@@ -289,6 +332,12 @@ function workflowStepFoldedCommand(workflow, name) {
     if (lines[index].trim() !== '') command.push(lines[index].trim())
   }
   return command.join(' ')
+}
+
+function runGit(cwd, ...args) {
+  const result = spawnSync('git', args, {cwd, encoding: 'utf8', timeout: 10_000})
+  assert.equal(result.status, 0, result.stderr)
+  return result
 }
 
 test('mac post-sign verification finds the builder app below its architecture directory', async t => {
