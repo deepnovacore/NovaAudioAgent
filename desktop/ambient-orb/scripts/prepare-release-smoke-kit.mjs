@@ -15,6 +15,8 @@ await generateReleaseSmokeCertificate({
 await Promise.all([
   cp(resolve(packageRoot, 'scripts/installed-candidate-smoke.mjs'),
     resolve(output, 'scripts/installed-candidate-smoke.mjs')),
+  cp(resolve(packageRoot, 'scripts/run-unsigned-installed-smoke.mjs'),
+    resolve(output, 'scripts/run-unsigned-installed-smoke.mjs')),
   cp(resolve(packageRoot, 'scripts/windows-smoke-home.mjs'),
     resolve(output, 'scripts/windows-smoke-home.mjs')),
   cp(resolve(repositoryRoot, 'node_modules/ws'), resolve(output, 'node_modules/ws'), {recursive: true}),

@@ -81,6 +81,7 @@ test('release smoke kit generates its TLS identity instead of copying ignored fi
     'utf8',
   )
   assert.match(source, /generateReleaseSmokeCertificate\(\{/u)
+  assert.match(source, /scripts\/run-unsigned-installed-smoke\.mjs/u)
   assert.match(source, /scripts\/windows-smoke-home\.mjs/u)
   assert.doesNotMatch(source, /resolve\(packageRoot, 'scripts\/release-smoke-(?:cert|key)\.pem'\)/u)
 })
