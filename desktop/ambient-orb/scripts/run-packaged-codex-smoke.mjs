@@ -8,10 +8,20 @@ const PREFLIGHT_FAILURES = [
   'sandbox_failed', 'spawn_failed', 'stderr_too_large', 'unsupported_protocol',
   'unsupported_version', 'workspace_invalid', 'workspace_root_mismatch',
 ]
+const DIRECTORY_FAILURE_STAGES = ['open', 'create', 'protect'].flatMap(operation => (
+  ['home', 'root', 'state', 'managed', 'workspace', 'external'].map(directory => (
+    `host_project_directories_${operation}_${directory}`
+  ))
+))
 const FAILURE_STAGES = new Set([
   'load_runtime', 'settings_project', 'host_project', 'host_project_transport',
-  'host_project_native', 'host_project_config', 'resource_project',
+  'host_project_native', 'host_project_home', 'host_project_directories',
+  'host_project_config', 'resource_project',
+  'resource_project_codex_host_unavailable',
+  'resource_project_codex_project_host_unsupported',
+  'resource_project_codex_project_state_invalid',
   'start_project', 'close_project', 'resource_without_project_host',
+  ...DIRECTORY_FAILURE_STAGES,
   ...PREFLIGHT_FAILURES.map(code => `start_project_${code}`),
 ])
 

@@ -51,8 +51,17 @@ test('packaged Codex failures expose only one closed stage code', () => {
     parsePackagedCodexFailure('packaged production Codex composition rejected stage=start_project_sandbox_failed\n'),
     'start_project_sandbox_failed',
   )
+  assert.equal(
+    parsePackagedCodexFailure('packaged production Codex composition rejected stage=resource_project_codex_project_state_invalid\n'),
+    'resource_project_codex_project_state_invalid',
+  )
+  assert.equal(
+    parsePackagedCodexFailure('packaged production Codex composition rejected stage=host_project_directories_protect_managed\n'),
+    'host_project_directories_protect_managed',
+  )
   for (const value of [
     'packaged production Codex composition rejected stage=private/path\n',
+    'packaged production Codex composition rejected stage=host_project_directories_protect_secret\n',
     'raw private detail\n',
     '',
   ]) assert.equal(parsePackagedCodexFailure(value), 'unknown')
@@ -67,6 +76,18 @@ test('packaged Codex smoke proves missing project-native authority fails closed'
   assert.doesNotMatch(source, /assert\.equal\(liveResource\.mode, 'live'/u)
 })
 
+test('packaged Codex smoke bootstraps its custom Windows home through desktop authority', async () => {
+  const source = await readFile(
+    resolve(import.meta.dirname, '../scripts/packaged-production-codex-smoke.cjs'),
+    'utf8',
+  )
+  assert.match(source, /process\.platform === 'win32'/u)
+  assert.match(source, /ensurePrivateProjectDirectories/u)
+  assert.match(source, /config: \{root: projectRoot, stateRoot, managedRoot, workspace\}/u)
+  assert.doesNotMatch(source, /homeDirectory:\s*scratch/u)
+  assert.doesNotMatch(source, /protectScratchDirectory/u)
+})
+
 test('local release Codex smoke uses the fixed repository root without caller paths', () => {
   const workspace = releaseCandidateWorkspace({})
   assert.equal(workspace, resolve(fileURLToPath(new URL('../../..', import.meta.url))))
@@ -77,6 +98,7 @@ test('release-candidate workflow makes packaged Codex composition a required tar
   const workflow = await readFile(resolve(import.meta.dirname, '../../../.github/workflows/release-candidate.yml'), 'utf8')
   assert.match(workflow, /@openai\/codex@0\.147\.0/u)
   assert.match(workflow, /smoke:packaged-codex:ci/u)
+  assert.match(workflow, /NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"/u)
   assert.doesNotMatch(workflow, /\/opt\/homebrew\/bin\/codex|\/usr\/local\/bin\/codex|C:\\nova-tools\\codex\.exe/u)
   assert.doesNotMatch(workflow, /continue-on-error|smoke:packaged-codex[^\n]*\|\|/u)
 })

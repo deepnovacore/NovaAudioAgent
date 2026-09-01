@@ -49,6 +49,8 @@ const EXPECTED_BUILD_SCRIPTS = [
   'scripts/sign-mac-with-native-manifest.cjs',
   'scripts/after-sign.cjs',
   'scripts/installed-candidate-smoke.mjs',
+  'scripts/run-unsigned-installed-smoke.mjs',
+  'scripts/windows-smoke-home.mjs',
   'scripts/collect-release-artifacts.mjs',
   'scripts/generate-pending-release-ledger.mjs',
   'scripts/generate-release-candidate-report.mjs',

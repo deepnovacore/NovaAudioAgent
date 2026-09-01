@@ -301,6 +301,7 @@ export async function ensureDesktop({
   arch = process.arch,
   home,
   fetchImpl = fetch,
+  extractImpl = extractArtifact,
   baseUrl = releaseBaseUrl(),
 } = {}) {
   const target = resolveTarget(platform, arch)
@@ -335,7 +336,7 @@ export async function ensureDesktop({
       const actual = await downloadArtifact(artifactUrl, artifact, {fetchImpl})
       if (!sameDigest(expected, actual)) throw new Error('release checksum mismatch')
       const payload = join(temporary, 'payload')
-      await extractArtifact({artifact, payload, target, platform})
+      await extractImpl({artifact, payload, target, platform})
       await writeFile(join(payload, 'novaaudio-install.json'), `${JSON.stringify({
         schema_version: 1,
         version: PRODUCT_VERSION,

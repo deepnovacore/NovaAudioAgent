@@ -119,7 +119,7 @@ jobs:
           gh release edit v0.1.0 \
             --target "$EXPECTED_COMMIT" \
             --title "Nova Audio Agent v0.1.0" \
-            --notes "Replacement for the original Windows-only v0.1.0. This release now includes macOS arm64/x64, Windows x64, and Linux x64 portable applications plus installers. These builds are unsigned; macOS Gatekeeper and Windows SmartScreen may display security warnings."
+            --notes "Replacement for the original Windows-only v0.1.0. This release now includes macOS arm64 and Windows x64 portable applications plus installers. These builds are unsigned; macOS Gatekeeper and Windows SmartScreen may display security warnings."
           gh release upload v0.1.0 release-artifacts/* --clobber
       - name: Launch the packed npm CLI against the replacement release before publish
         run: |

@@ -13,20 +13,20 @@
 
 > **An always-on voice agent with restrained proactivity and the capability of workspace management.**
 
-https://github.com/user-attachments/assets/0ca76117-f6d2-46fc-80c3-8a8cee603fc6
+https://github.com/user-attachments/assets/061697f3-fff6-47d6-924b-8a29eef4ab45
 
 ## 1. Highlights
 
 Nova Audio Agent is a **harness for an always-on, general-purpose voice agent**: Nova (小诺)
-keeps the conversation responsive while doing long-running tasks in the background, reporting
+keeps responsive while doing long-running tasks in the background, reporting
 **proper** progress at **proper** time.
 
 A concurrent work [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) answers
-*how to keep an agent talking while it works*, while we ask the mirror question — **when is talking
+*how to keep an agent talking while it works*, while we ask a step further — **when is talking
 worth it at all** (see the [design post](docs/blog/2026-08-proactive-voice-agent-design-space.md) for more details).
 
 
-- **Restrained proactivity:** Not all words are created equal, for example, *trivial events from codex not worth saying, milestones should be reported, guardians should take over*. The agent stays silent for plain coding progress, reports progress for milestones. Alerts have higher speaking rights, where the agent interrupts itself or even  user.
+- **Restrained proactivity:** Not all words are created equal, for example, *trivial events from codex not worth saying, milestones should be reported, guardians should take over*. The agent stays silent for plain coding progress and reports progress for milestones. Alerts have higher speaking rights, where the agent interrupts itself or even  user.
 - **Workspace management.** No need to manage your workspaces manually as in codex, our agent does that for you. Workspaces/sessions can be created/switched via pure voice control(proposed and confirmed).
 - **Intent clarification and save your tokens.** For under-specified requirements, the agent will first clarify your intent before proceeding to dispatch, which *saves about 31% tokens* in our internal tests.
 - **Real-time steering**. Our codex executor is built upon native codex app-server instead of ACP, which allows real-time steering.

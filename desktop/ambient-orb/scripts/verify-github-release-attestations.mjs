@@ -39,12 +39,8 @@ const RELEASE_FILE_PREFIX = `nova-audio-agent-${RELEASE_VERSION}`
 export const RELEASE_ARTIFACT_FILES = Object.freeze({
   'darwin-arm64:app': `${RELEASE_FILE_PREFIX}-macos-arm64-app.zip`,
   'darwin-arm64:dmg': `${RELEASE_FILE_PREFIX}-macos-arm64.dmg`,
-  'darwin-x64:app': `${RELEASE_FILE_PREFIX}-macos-x64-app.zip`,
-  'darwin-x64:dmg': `${RELEASE_FILE_PREFIX}-macos-x64.dmg`,
   'win32-x64:portable': `${RELEASE_FILE_PREFIX}-windows-x64-portable.zip`,
   'win32-x64:nsis': `${RELEASE_FILE_PREFIX}-windows-x64.exe`,
-  'linux-x64-gnu:appimage': `${RELEASE_FILE_PREFIX}-linux-x64.AppImage`,
-  'linux-x64-gnu:deb': `${RELEASE_FILE_PREFIX}-linux-x64.deb`,
 })
 
 export class ReleaseAttestationError extends Error {

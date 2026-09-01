@@ -29,10 +29,14 @@ const PROJECT_ADDON_ID = 'project_native_addon'
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
-  'acquire', 'createFileAt', 'lookupAt', 'lookupWorkspaceAt', 'matchesAt', 'matchesWorkspaceAt',
-  'mkdirAt', 'mkdirPrivateAt', 'openDirectory',
+  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'openDirectory',
   'probe', 'protectAt', 'removeTreeAt', 'renameAt', 'renameNoReplaceAt', 'syncDirectory', 'unlinkAt',
 ])
+const WINDOWS_MODULE_EXPORTS = Object.freeze([
+  ...MODULE_EXPORTS,
+  'lookupWorkspaceAt',
+  'matchesWorkspaceAt',
+].sort())
 
 export interface ProjectDirectoryHandle {
   readonly fd: number
@@ -191,7 +195,10 @@ function loadSupportedProjectNativeHostFromResources(
     const materialized = materializeAddonSnapshot(before)
     let addon: ProjectAddon | null
     try {
-      addon = requireAddon((options.moduleLoader ?? defaultModuleLoader)(materialized.path))
+      addon = requireAddon(
+        (options.moduleLoader ?? defaultModuleLoader)(materialized.path),
+        options.platform,
+      )
       if (addon === null || !sameSnapshot(materialized.snapshot, snapshotRegularFile(
         materialized.path,
         MAX_ADDON_BYTES,
@@ -210,11 +217,15 @@ function loadSupportedProjectNativeHostFromResources(
     const rootFiles: ProjectRootFileAuthority = Object.freeze({
       probe: (descriptor: number) => addon.probe(descriptor),
       matchesAt: (root: number, name: string, child: number) => addon.matchesAt(root, name, child),
-      matchesWorkspaceAt: (root: number, name: string, child: number) => (
-        addon.matchesWorkspaceAt(root, name, child)
-      ),
       lookupAt: (root: number, name: string) => addon.lookupAt(root, name),
-      lookupWorkspaceAt: (root: number, name: string) => addon.lookupWorkspaceAt(root, name),
+      ...(addon.matchesWorkspaceAt === undefined ? {} : {
+        matchesWorkspaceAt: (root: number, name: string, child: number) => (
+          addon.matchesWorkspaceAt!(root, name, child)
+        ),
+      }),
+      ...(addon.lookupWorkspaceAt === undefined ? {} : {
+        lookupWorkspaceAt: (root: number, name: string) => addon.lookupWorkspaceAt!(root, name),
+      }),
       createFileAt: (root: number, name: string, exclusive: boolean) => (
         addon.createFileAt(root, name, exclusive)
       ),
@@ -424,8 +435,8 @@ function validBinary(bytes: Buffer, platform: string, arch: string): boolean {
 interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {
   openDirectory(path: string): unknown
   protectAt(root: number, name: string, child: number): ProjectRootFileResult
-  matchesWorkspaceAt(root: number, name: string, child: number): ProjectRootFileResult
-  lookupWorkspaceAt(root: number, name: string): ProjectRootFileLookupResult
+  matchesWorkspaceAt?(root: number, name: string, child: number): ProjectRootFileResult
+  lookupWorkspaceAt?(root: number, name: string): ProjectRootFileLookupResult
   mkdirPrivateAt(root: number, name: string): ProjectRootFileCreateResult
   renameNoReplaceAt(
     root: number,
@@ -472,12 +483,13 @@ function isStatus(value: unknown, status: string): boolean {
   return Object.hasOwn(descriptor, 'value') && descriptor.value === status
 }
 
-function requireAddon(value: unknown): ProjectAddon | null {
+function requireAddon(value: unknown, platform: string): ProjectAddon | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
   const descriptors = Object.getOwnPropertyDescriptors(value)
-  if (Object.keys(descriptors).sort().join('\0') !== MODULE_EXPORTS.join('\0')) return null
+  const expected = platform === 'win32' ? WINDOWS_MODULE_EXPORTS : MODULE_EXPORTS
+  if (Object.keys(descriptors).sort().join('\0') !== expected.join('\0')) return null
   const methods: Partial<Record<(typeof MODULE_EXPORTS)[number], (...args: never[]) => unknown>> = {}
-  for (const name of MODULE_EXPORTS) {
+  for (const name of expected) {
     const descriptor = descriptors[name]
     if (
       descriptor === undefined

@@ -28,9 +28,7 @@ function fakeAddon(): Record<string, (...args: readonly unknown[]) => unknown> {
     probe: () => ({status: 'ok'}),
     protectAt: () => ({status: 'ok'}),
     matchesAt: () => ({status: 'ok'}),
-    matchesWorkspaceAt: () => ({status: 'ok'}),
     lookupAt: () => ({status: 'missing'}),
-    lookupWorkspaceAt: () => ({status: 'missing'}),
     createFileAt: () => ({status: 'exists'}),
     mkdirAt: () => ({status: 'exists'}),
     mkdirPrivateAt: () => ({status: 'ok', identity: {device: 1n, inode: 2n}}),
@@ -84,6 +82,8 @@ test('project native host loads only one fixed manifest-bound addon for the exac
     assert.equal(loads, 1)
     assert.deepEqual(loaded?.nativeLocks.acquire(7), {status: 'busy'})
     assert.deepEqual(loaded?.rootFiles.probe(8), {status: 'ok'})
+    assert.equal(Object.hasOwn(loaded?.rootFiles ?? {}, 'matchesWorkspaceAt'), false)
+    assert.equal(Object.hasOwn(loaded?.rootFiles ?? {}, 'lookupWorkspaceAt'), false)
     assert.deepEqual(loaded?.rootFiles.removeTreeAt(8, 'tombstone', {device: 1n, inode: 2n}), {
       status: 'ok',
     })

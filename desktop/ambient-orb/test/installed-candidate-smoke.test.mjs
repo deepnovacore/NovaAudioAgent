@@ -119,12 +119,8 @@ test('installed candidate plans use native install or mount boundaries for every
   const matrix = [
     ['darwin-arm64:app', 'nova-audio-agent-0.1.0-macos-arm64-app.zip', '/private/smoke/install/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/install'],
     ['darwin-arm64:dmg', 'nova-audio-agent-0.1.0-macos-arm64.dmg', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb'],
-    ['darwin-x64:app', 'nova-audio-agent-0.1.0-macos-x64-app.zip', '/private/smoke/install/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/install'],
-    ['darwin-x64:dmg', 'nova-audio-agent-0.1.0-macos-x64.dmg', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb', '/private/smoke/mount/Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb'],
     ['win32-x64:portable', 'nova-audio-agent-0.1.0-windows-x64-portable.zip', '/private/smoke/install/Nova Audio Agent Ambient Orb.exe', '/private/smoke/install'],
     ['win32-x64:nsis', 'nova-audio-agent-0.1.0-windows-x64.exe', '/private/smoke/install/Nova Audio Agent Ambient Orb.exe', '/private/smoke/install'],
-    ['linux-x64-gnu:appimage', 'nova-audio-agent-0.1.0-linux-x64.AppImage', '/private/smoke/install/squashfs-root/AppRun', '/private/smoke/install'],
-    ['linux-x64-gnu:deb', 'nova-audio-agent-0.1.0-linux-x64.deb', '/usr/bin/nova-ambient-orb', '/usr/bin/nova-ambient-orb'],
   ]
   for (const [target, artifactName, executable, residue] of matrix) {
     const plan = candidateInstallPlan({target, artifact: `${root}/${artifactName}`, scratch: root})
@@ -148,8 +144,8 @@ test('Windows native installer actions allow enough time for cold CI extraction'
   assert.equal(plan.uninstall[0].timeoutMs, NATIVE_INSTALLER_SETTLE_MS)
 })
 
-test('downloaded macOS release DMGs must verify before they can be mounted', () => {
-  for (const target of ['darwin-arm64:dmg', 'darwin-x64:dmg']) {
+test('downloaded macOS release DMG must verify before it can be mounted', () => {
+  for (const target of ['darwin-arm64:dmg']) {
     const artifact = `/private/candidate/${target}.dmg`
     const plan = candidateInstallPlan({target, artifact, scratch: '/private/scratch'})
     assert.deepEqual(plan.install.slice(0, 2), [
@@ -589,13 +585,13 @@ test('release workflow downloads exact candidates into checkout-free smoke jobs'
   const workflow = await readFile(new URL('../../../.github/workflows/release-candidate.yml', import.meta.url), 'utf8')
   assert.match(workflow, /installed-candidate-smoke/u)
   assert.match(workflow, /actions\/download-artifact@v4/u)
-  assert.match(workflow, /installed-candidate-smoke\.mjs/u)
-  assert.match(workflow, /attest-build-provenance@v3/u)
-  assert.match(workflow, /id-token: write/u)
+  assert.match(workflow, /run-unsigned-installed-smoke\.mjs/u)
+  assert.doesNotMatch(workflow, /attest-build-provenance|id-token:|attestations:/u)
   const smokeStart = workflow.indexOf('  installed-candidate-smoke:')
   const smokeJob = workflow.slice(smokeStart, workflow.indexOf('\n  pending-candidate-ledger:', smokeStart))
   assert.doesNotMatch(smokeJob, /actions\/checkout/u)
   assert.doesNotMatch(smokeJob, /continue-on-error|\|\| true/u)
+  assert.doesNotMatch(smokeJob, /--commit|--signer-workflow|GH_TOKEN/u)
 })
 
 test('installed candidate smoke cold-starts every packaged target through config mode', async () => {
