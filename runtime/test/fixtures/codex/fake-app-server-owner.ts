@@ -25,6 +25,7 @@ export type FakeAppServerScenario =
   | 'unknown-response'
   | 'server-request'
   | 'file-approval'
+  | 'file-approval-start-mismatch'
   | 'command-approval'
   | 'clean-eof'
   | 'pending-eof'

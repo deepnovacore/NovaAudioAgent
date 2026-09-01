@@ -2298,11 +2298,21 @@ test('the real fake app-server carries correlated file and bounded command appro
       )
       await settleUntil(() => factory.owner !== null, `${scenario} fake owner spawn`)
       await within(factory.owner!.waitForBarrier('approval_request'), 5000, `${scenario} request`)
-      assert.equal(controller.pending, true)
+      await settleUntil(() => controller.pending, `${scenario} controller pending`)
+      assert.equal(controller.pending, true, `${scenario} should be pending`)
       assert.equal(controller.view.kind, scenario === 'file-approval'
         ? 'file_change'
         : 'command_execution')
-      assert.equal(JSON.stringify(controller.view).includes('910'), false)
+      assert.deepEqual(Object.keys(controller.view).sort(), [
+        'expires_at',
+        'kind',
+        'local_detail',
+        'operation_summary',
+        'pending_approval',
+        'pending_approval_busy',
+        'pending_approval_id',
+      ])
+      assert.equal(controller.view.pending_approval_id, `nova-${scenario}`)
       assert.equal(controller.acceptDecision({
         approvalId: `nova-${scenario}`,
         decision: 'accept',
@@ -2316,6 +2326,35 @@ test('the real fake app-server carries correlated file and bounded command appro
       await factory.owner?.killTree().catch(() => undefined)
       await factory.owner?.dispose().catch(() => undefined)
     }
+  }
+})
+
+test('the real fake app-server declines a file approval with stale startedAtMs', async () => {
+  const factory = new FakeAppServerOwnerFactory('file-approval-start-mismatch')
+  const controller = new CodexApprovalController({
+    clock: new RealClock(),
+    idFactory: () => 'must-not-be-offered',
+  })
+  const transport = createTransport(factory, {
+    approvalPolicy: 'on-request',
+    approvalController: controller,
+  })
+  try {
+    const running = transport.run(
+      {workOrder: 'stale approval fixture work'},
+      {},
+      {expiresAtMs: Date.now() + 10_000},
+    )
+    await settleUntil(() => factory.owner !== null, 'stale approval fake owner spawn')
+    await within(factory.owner!.waitForBarrier('approval_response'), 5000, 'stale response')
+    assert.equal(controller.pending, false)
+    const result = await running
+    assert.equal(result.classification, 'completed')
+    assert.equal(result.code, 'completed')
+  } finally {
+    await transport.close().catch(() => undefined)
+    await factory.owner?.killTree().catch(() => undefined)
+    await factory.owner?.dispose().catch(() => undefined)
   }
 })
 

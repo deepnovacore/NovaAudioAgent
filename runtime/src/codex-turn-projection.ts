@@ -36,7 +36,10 @@ export class AppServerTurnProjection {
   #commandsFailed = 0
   #filesChanged = 0
   #toolCalls = 0
-  readonly #fileChangeItems = new Map<string, Readonly<Record<string, unknown>> | null>()
+  readonly #fileChangeItems = new Map<string, {
+    readonly item: Readonly<Record<string, unknown>>
+    readonly startedAtMs: number
+  } | null>()
 
   constructor(options: {
     readonly clock: Clock
@@ -64,14 +67,20 @@ export class AppServerTurnProjection {
     threadId: string,
     turnId: string,
     itemId: string,
+    startedAtMs: number,
   ): Readonly<Record<string, unknown>> | null {
     if (
       threadId !== this.#threadId
       || turnId !== this.#activeTurnId
       || typeof itemId !== 'string'
       || itemId === ''
+      || !Number.isSafeInteger(startedAtMs)
+      || startedAtMs < 0
     ) return null
-    return this.#fileChangeItems.get(itemId) ?? null
+    const context = this.#fileChangeItems.get(itemId)
+    return context?.startedAtMs === startedAtMs
+      ? context.item
+      : null
   }
 
   bindThread(
@@ -191,10 +200,15 @@ export class AppServerTurnProjection {
       startedItem.type !== 'fileChange'
       || typeof startedItem.id !== 'string'
       || startedItem.id === ''
+      || typeof params.startedAtMs !== 'number'
+      || !Number.isSafeInteger(params.startedAtMs)
+      || params.startedAtMs < 0
     ) return
     this.#fileChangeItems.set(
       startedItem.id,
-      this.#fileChangeItems.has(startedItem.id) ? null : startedItem,
+      this.#fileChangeItems.has(startedItem.id)
+        ? null
+        : Object.freeze({item: startedItem, startedAtMs: params.startedAtMs}),
     )
   }
 
@@ -262,6 +276,7 @@ export class AppServerTurnProjection {
     threadId: unknown
     turnId: unknown
     item: Record<string, unknown>
+    startedAtMs?: unknown
   }> {
     return this.#threadId !== null
       && this.#activeTurnId !== null

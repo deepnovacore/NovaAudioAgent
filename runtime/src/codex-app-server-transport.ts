@@ -865,10 +865,12 @@ export class OwnedCodexAppServerTransport implements CodexAppServerTransport {
             controller,
             workspace: hostWorkspacePath(this.#config.workspace),
             activePair: projection.activePair,
-            fileChangeItem: itemId => {
+            fileChangeItem: (itemId, startedAtMs) => {
               const pair = projection.activePair
               if (pair === null) return null
-              return projection.fileChangeItemForApproval(pair[0], pair[1], itemId)
+              return projection.fileChangeItemForApproval(
+                pair[0], pair[1], itemId, startedAtMs,
+              )
             },
             method,
             params,

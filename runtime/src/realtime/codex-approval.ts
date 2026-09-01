@@ -1,5 +1,5 @@
-import {existsSync, realpathSync} from 'node:fs'
-import {dirname, isAbsolute, relative, resolve, sep} from 'node:path'
+import {lstatSync, realpathSync} from 'node:fs'
+import {isAbsolute, relative, resolve, sep} from 'node:path'
 
 import type {Clock} from '../clock.js'
 import {snapshotJsonRecord} from '../codex-safe-json.js'
@@ -77,7 +77,10 @@ export interface CodexApprovalServerRequestRouteOptions {
   readonly controller: CodexApprovalController
   readonly workspace: string
   readonly activePair: readonly [string, string] | null
-  readonly fileChangeItem: (itemId: string) => Readonly<Record<string, unknown>> | null
+  readonly fileChangeItem: (
+    itemId: string,
+    startedAtMs: number,
+  ) => Readonly<Record<string, unknown>> | null
   readonly method: string
   readonly params: Readonly<Record<string, unknown>>
   readonly signal: AbortSignal
@@ -281,7 +284,7 @@ function fileChangeOffer(options: CodexApprovalServerRequestRouteOptions): Codex
     }
   }
   let rawItem: Readonly<Record<string, unknown>> | null
-  try { rawItem = options.fileChangeItem(core.itemId) } catch { return null }
+  try { rawItem = options.fileChangeItem(core.itemId, core.startedAtMs) } catch { return null }
   if (rawItem === null) return null
   const item = snapshotJsonRecord(rawItem)
   if (
@@ -364,7 +367,7 @@ function commandExecutionOffer(
 function approvalCore(
   params: Readonly<Record<string, unknown>>,
   activePair: readonly [string, string] | null,
-): {readonly itemId: string} | null {
+): {readonly itemId: string; readonly startedAtMs: number} | null {
   if (
     activePair === null
     || !boundedProtocolId(params.threadId)
@@ -376,7 +379,7 @@ function approvalCore(
     || !Number.isSafeInteger(params.startedAtMs)
     || params.startedAtMs < 0
   ) return null
-  return Object.freeze({itemId: params.itemId})
+  return Object.freeze({itemId: params.itemId, startedAtMs: params.startedAtMs})
 }
 
 function boundedProtocolId(value: unknown): value is string {
@@ -425,17 +428,29 @@ function normalizedWorkspaceRelativePath(value: unknown, workspace: string): str
   const displayed = relative(workspace, absolute)
   if (displayed === '' || displayed === '..' || displayed.startsWith(`..${sep}`)
     || isAbsolute(displayed)) throw new TypeError('path outside workspace')
-  let ancestor = absolute
-  while (!existsSync(ancestor)) {
-    const parent = dirname(ancestor)
-    if (parent === ancestor) throw new TypeError('missing workspace ancestor')
-    ancestor = parent
+  let componentPath = workspace
+  for (const component of displayed.split(sep)) {
+    componentPath = resolve(componentPath, component)
+    let isReparsePoint: boolean
+    try { isReparsePoint = lstatSync(componentPath).isSymbolicLink() }
+    catch (error) {
+      if (isNodeError(error, 'ENOENT')) return displayed
+      throw new TypeError('unreadable workspace path')
+    }
+    let canonicalComponent: string
+    try { canonicalComponent = realpathSync(componentPath) }
+    catch { throw new TypeError('unresolvable workspace path') }
+    const fromWorkspace = relative(workspace, canonicalComponent)
+    if (fromWorkspace === '..' || fromWorkspace.startsWith(`..${sep}`)
+      || isAbsolute(fromWorkspace)) {
+      throw new TypeError(isReparsePoint ? 'linked path outside workspace' : 'path outside workspace')
+    }
   }
-  const canonicalAncestor = realpathSync(ancestor)
-  const fromWorkspace = relative(workspace, canonicalAncestor)
-  if (fromWorkspace === '..' || fromWorkspace.startsWith(`..${sep}`)
-    || isAbsolute(fromWorkspace)) throw new TypeError('linked path outside workspace')
   return displayed
+}
+
+function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === code
 }
 
 function exactKeys(value: Readonly<Record<string, unknown>>, allowed: readonly string[]): boolean {

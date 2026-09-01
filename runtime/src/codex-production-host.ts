@@ -25,7 +25,11 @@ import {
   type CodexHostPreflightRunner,
   type CodexLiveSchemaProbe,
 } from './codex-app-server-transport.js'
-import {APP_SERVER_INBOUND_SCHEMAS, APP_SERVER_METHOD_SCHEMAS} from './codex-app-server-schema.js'
+import {
+  APP_SERVER_APPROVAL_SCHEMA_FILES,
+  APP_SERVER_INBOUND_SCHEMAS,
+  APP_SERVER_METHOD_SCHEMAS,
+} from './codex-app-server-schema.js'
 import {hostBinaryPath, hostWorkspacePath} from './codex-process-owner.js'
 import {
   createPlatformCodexProcessOwnerFactory,
@@ -550,6 +554,7 @@ export class NativeCodexLiveSchemaProbe implements CodexLiveSchemaProbe {
       const files = new Set<string>(['ClientRequest.json'])
       for (const spec of Object.values(APP_SERVER_METHOD_SCHEMAS)) files.add(spec.file)
       for (const spec of APP_SERVER_INBOUND_SCHEMAS) files.add(spec.file)
+      for (const file of APP_SERVER_APPROVAL_SCHEMA_FILES) files.add(file)
       const bundle: Record<string, unknown> = {}
       for (const name of files) {
         const path = resolve(directory, name)

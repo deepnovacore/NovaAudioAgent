@@ -13,6 +13,7 @@ const allowedScenarios = new Set([
   'unknown-response',
   'server-request',
   'file-approval',
+  'file-approval-start-mismatch',
   'command-approval',
   'clean-eof',
   'pending-eof',
@@ -72,7 +73,9 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       plain(message)
       && message.id === 910
       && plain(message.result)
-      && message.result.decision === 'accept'
+      && message.result.decision === (
+        scenario === 'file-approval-start-mismatch' ? 'decline' : 'accept'
+      )
       && approvalTurnId !== null
     ) {
       const id = approvalTurnId
@@ -103,7 +106,9 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       return
     }
     if (message.method === 'thread/start' || message.method === 'thread/resume') {
-      const approvalScenario = scenario === 'file-approval' || scenario === 'command-approval'
+      const approvalScenario = scenario === 'file-approval'
+        || scenario === 'file-approval-start-mismatch'
+        || scenario === 'command-approval'
       if (params.approvalPolicy !== (approvalScenario ? 'on-request' : 'never')) fail('invalid_thread')
       if (message.method === 'thread/resume') {
         if (typeof params.threadId !== 'string') fail('invalid_resume')
@@ -135,9 +140,13 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
       send({method: 'turn/started', params: {
         threadId, turn: {id: 'fixture-turn-1', items: [], status: 'inProgress'},
       }})
-      if (scenario === 'file-approval' || scenario === 'command-approval') {
+      if (
+        scenario === 'file-approval'
+        || scenario === 'file-approval-start-mismatch'
+        || scenario === 'command-approval'
+      ) {
         approvalTurnId = message.id
-        if (scenario === 'file-approval') {
+        if (scenario === 'file-approval' || scenario === 'file-approval-start-mismatch') {
           send({method: 'item/started', params: {
             threadId,
             turnId: 'fixture-turn-1',
@@ -158,7 +167,7 @@ if (scenario === 'descendant-leader-first' || scenario === 'descendant-ignore-te
             method: 'item/fileChange/requestApproval',
             params: {
               itemId: 'fixture-file-item',
-              startedAtMs: 1001,
+              startedAtMs: scenario === 'file-approval-start-mismatch' ? 1001 : 1000,
               threadId,
               turnId: 'fixture-turn-1',
               grantRoot: null,

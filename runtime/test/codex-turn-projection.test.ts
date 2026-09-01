@@ -148,10 +148,13 @@ test('only a preceding current item/started fileChange is available for approval
     threadId: 'PRIVATE-THREAD', turnId: 'PRIVATE-TURN', startedAtMs: 10, item: fileItem,
   })
   assert.deepEqual(projection.fileChangeItemForApproval(
-    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM',
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM', 10,
   ), fileItem)
   assert.equal(projection.fileChangeItemForApproval(
-    'PRIVATE-THREAD', 'PRIVATE-TURN', 'MISSING',
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM', 11,
+  ), null)
+  assert.equal(projection.fileChangeItemForApproval(
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'MISSING', 10,
   ), null)
 
   projection.notification('item/completed', {
@@ -160,7 +163,7 @@ test('only a preceding current item/started fileChange is available for approval
     },
   })
   assert.equal(projection.fileChangeItemForApproval(
-    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM',
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM', 10,
   ), null)
 
   projection.notification('turn/completed', {
@@ -168,7 +171,7 @@ test('only a preceding current item/started fileChange is available for approval
     turn: {id: 'PRIVATE-TURN', status: 'completed', items: []},
   })
   assert.equal(projection.fileChangeItemForApproval(
-    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM',
+    'PRIVATE-THREAD', 'PRIVATE-TURN', 'PRIVATE-FILE-ITEM', 10,
   ), null)
 })
 

@@ -111,6 +111,54 @@ export const APP_SERVER_INBOUND_SCHEMAS: readonly InboundSchemaSpec[] = deepFree
   }, ['threadId', 'turn']), nested: TURN_NESTED},
 ])
 
+export const APP_SERVER_APPROVAL_SCHEMA_FILES: readonly string[] = deepFreeze([
+  'ServerRequest.json',
+  'FileChangeRequestApprovalParams.json',
+  'CommandExecutionRequestApprovalParams.json',
+  'FileChangeRequestApprovalResponse.json',
+  'CommandExecutionRequestApprovalResponse.json',
+])
+
+const FILE_APPROVAL_PARAM_FIELDS = deepFreeze({
+  grantRoot: 'string',
+  itemId: 'string',
+  reason: 'string',
+  startedAtMs: 'integer',
+  threadId: 'string',
+  turnId: 'string',
+})
+const FILE_APPROVAL_PARAM_TYPES = deepFreeze({
+  grantRoot: ['string', 'null'],
+  reason: ['string', 'null'],
+})
+const COMMAND_APPROVAL_PARAM_FIELDS = deepFreeze({
+  approvalId: 'string',
+  command: 'string',
+  commandActions: 'array',
+  cwd: 'string',
+  environmentId: 'string',
+  itemId: 'string',
+  networkApprovalContext: 'object',
+  proposedExecpolicyAmendment: 'array',
+  proposedNetworkPolicyAmendments: 'array',
+  reason: 'string',
+  startedAtMs: 'integer',
+  threadId: 'string',
+  turnId: 'string',
+})
+const COMMAND_APPROVAL_PARAM_TYPES = deepFreeze({
+  approvalId: ['string', 'null'],
+  command: ['string', 'null'],
+  commandActions: ['array', 'null'],
+  cwd: ['string', 'null'],
+  environmentId: ['string', 'null'],
+  networkApprovalContext: ['object', 'null'],
+  proposedExecpolicyAmendment: ['array', 'null'],
+  proposedNetworkPolicyAmendments: ['array', 'null'],
+  reason: ['string', 'null'],
+})
+const APPROVAL_REQUIRED = deepFreeze(['itemId', 'startedAtMs', 'threadId', 'turnId'])
+
 export function validateCodexSchemaBundle(
   bundle: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, true>> {
@@ -155,9 +203,289 @@ export function validateCodexSchemaBundle(
         validateObjectSchema(target, spec.nested.fields, spec.nested.required, root)
       }
     }
+    validateApprovalSchemaSurface(bundleSnapshot)
     return deepFreeze(result)
   } catch {
     throw new CodexProtocolError('unsupported_protocol')
+  }
+}
+
+function validateApprovalSchemaSurface(bundle: Readonly<Record<string, unknown>>): void {
+  const serverRequest = requireObject(bundle['ServerRequest.json'])
+  validateApprovalServerRequest(serverRequest)
+  validateFileApprovalParams(
+    requireObject(bundle['FileChangeRequestApprovalParams.json']),
+  )
+  validateCommandApprovalParams(
+    requireObject(bundle['CommandExecutionRequestApprovalParams.json']),
+  )
+  validateFileChangeItem(requireObject(bundle['v2/ItemStartedNotification.json']))
+  validateDecisionResponse(
+    requireObject(bundle['FileChangeRequestApprovalResponse.json']),
+    'FileChangeApprovalDecision',
+    ['accept', 'acceptForSession', 'decline', 'cancel'],
+    [],
+  )
+  validateDecisionResponse(
+    requireObject(bundle['CommandExecutionRequestApprovalResponse.json']),
+    'CommandExecutionApprovalDecision',
+    ['accept', 'acceptForSession', 'decline', 'cancel'],
+    ['acceptWithExecpolicyAmendment', 'applyNetworkPolicyAmendment'],
+  )
+}
+
+function validateApprovalServerRequest(root: Record<string, unknown>): void {
+  const variants = root.oneOf
+  if (!Array.isArray(variants)) throw new TypeError('server request variants')
+  for (const [methodName, paramsName] of [
+    ['item/fileChange/requestApproval', 'FileChangeRequestApprovalParams'],
+    ['item/commandExecution/requestApproval', 'CommandExecutionRequestApprovalParams'],
+  ] as const) {
+    const matches = variants.filter(candidate => approvalMethod(candidate) === methodName)
+    if (matches.length !== 1) throw new TypeError('approval method')
+    const variant = requireObject(matches[0])
+    validateExactObjectSchema(
+      variant,
+      {id: 'integer', method: 'string', params: 'object'},
+      ['id', 'method', 'params'],
+      root,
+      {id: ['string', 'integer']},
+    )
+    const properties = requireObject(variant.properties)
+    requireReference(requireObject(properties.id), '#/definitions/RequestId')
+    requireSingleEnum(requireObject(properties.method), methodName)
+    requireReference(requireObject(properties.params), `#/definitions/${paramsName}`)
+  }
+  const definitions = requireObject(root.definitions)
+  const requestId = requireObject(definitions.RequestId)
+  requireTypes(requestId, root, ['string', 'integer'])
+  validateFileApprovalParams(requireObject(definitions.FileChangeRequestApprovalParams), root)
+  validateCommandApprovalParams(
+    requireObject(definitions.CommandExecutionRequestApprovalParams), root,
+  )
+}
+
+function validateFileApprovalParams(
+  schema: Record<string, unknown>,
+  root: Record<string, unknown> = schema,
+): void {
+  validateExactObjectSchema(
+    schema,
+    FILE_APPROVAL_PARAM_FIELDS,
+    APPROVAL_REQUIRED,
+    root,
+    FILE_APPROVAL_PARAM_TYPES,
+  )
+}
+
+function validateCommandApprovalParams(
+  schema: Record<string, unknown>,
+  root: Record<string, unknown> = schema,
+): void {
+  validateExactObjectSchema(
+    schema,
+    COMMAND_APPROVAL_PARAM_FIELDS,
+    APPROVAL_REQUIRED,
+    root,
+    COMMAND_APPROVAL_PARAM_TYPES,
+  )
+  const properties = requireObject(schema.properties)
+  requireArrayItemReference(properties.commandActions, '#/definitions/CommandAction')
+  requireNullableReference(properties.cwd, '#/definitions/LegacyAppPathString')
+  requireNullableReference(
+    properties.networkApprovalContext,
+    '#/definitions/NetworkApprovalContext',
+  )
+  requireArrayItemType(properties.proposedExecpolicyAmendment, 'string')
+  requireArrayItemReference(
+    properties.proposedNetworkPolicyAmendments,
+    '#/definitions/NetworkPolicyAmendment',
+  )
+}
+
+function validateFileChangeItem(root: Record<string, unknown>): void {
+  const properties = requireObject(root.properties)
+  requireReference(requireObject(properties.item), '#/definitions/ThreadItem')
+  const definitions = requireObject(root.definitions)
+  const threadItem = requireObject(definitions.ThreadItem)
+  const choices = threadItem.oneOf
+  if (!Array.isArray(choices)) throw new TypeError('thread item choices')
+  const matches = choices.filter(candidate => {
+    if (!isPlainObject(candidate) || !isPlainObject(candidate.properties)) return false
+    return enumValue(candidate.properties.type) === 'fileChange'
+  })
+  if (matches.length !== 1) throw new TypeError('file change item')
+  const fileChange = requireObject(matches[0])
+  validateExactObjectSchema(
+    fileChange,
+    {changes: 'array', id: 'string', status: 'string', type: 'string'},
+    ['changes', 'id', 'status', 'type'],
+    root,
+  )
+  const itemProperties = requireObject(fileChange.properties)
+  requireArrayItemReference(itemProperties.changes, '#/definitions/FileUpdateChange')
+  requireReference(requireObject(itemProperties.status), '#/definitions/PatchApplyStatus')
+  requireSingleEnum(requireObject(itemProperties.type), 'fileChange')
+
+  const update = requireObject(definitions.FileUpdateChange)
+  validateExactObjectSchema(
+    update,
+    {diff: 'string', kind: 'object', path: 'string'},
+    ['diff', 'kind', 'path'],
+    root,
+  )
+  requireReference(
+    requireObject(requireObject(update.properties).kind),
+    '#/definitions/PatchChangeKind',
+  )
+  const status = requireObject(definitions.PatchApplyStatus)
+  requireTypes(status, root, ['string'])
+  requireExactEnum(status.enum, ['inProgress', 'completed', 'failed', 'declined'])
+  validatePatchChangeKind(requireObject(definitions.PatchChangeKind), root)
+}
+
+function validatePatchChangeKind(
+  schema: Record<string, unknown>,
+  root: Record<string, unknown>,
+): void {
+  const choices = schema.oneOf
+  if (!Array.isArray(choices) || choices.length !== 3) throw new TypeError('patch choices')
+  for (const kind of ['add', 'delete', 'update'] as const) {
+    const matches = choices.filter(candidate => {
+      if (!isPlainObject(candidate) || !isPlainObject(candidate.properties)) return false
+      return enumValue(candidate.properties.type) === kind
+    })
+    if (matches.length !== 1) throw new TypeError('patch kind')
+    const choice = requireObject(matches[0])
+    validateExactObjectSchema(
+      choice,
+      kind === 'update' ? {move_path: 'string', type: 'string'} : {type: 'string'},
+      ['type'],
+      root,
+      kind === 'update' ? {move_path: ['string', 'null']} : {},
+    )
+    requireSingleEnum(requireObject(requireObject(choice.properties).type), kind)
+  }
+}
+
+function validateDecisionResponse(
+  root: Record<string, unknown>,
+  definitionName: string,
+  stringDecisions: readonly string[],
+  objectDecisions: readonly string[],
+): void {
+  validateExactObjectSchema(
+    root,
+    {decision: 'string'},
+    ['decision'],
+    root,
+    objectDecisions.length === 0 ? {} : {decision: ['string', 'object']},
+  )
+  const decisionField = requireObject(requireObject(root.properties).decision)
+  requireReference(decisionField, `#/definitions/${definitionName}`)
+  const definition = requireObject(requireObject(root.definitions)[definitionName])
+  const choices = definition.oneOf
+  if (!Array.isArray(choices)
+    || choices.length !== stringDecisions.length + objectDecisions.length) {
+    throw new TypeError('decision choices')
+  }
+  const foundStrings: string[] = []
+  const foundObjects: string[] = []
+  for (const candidate of choices) {
+    const choice = requireObject(candidate)
+    if (choice.type === 'string') {
+      const value = enumValue(choice)
+      if (value === null) throw new TypeError('decision enum')
+      foundStrings.push(value)
+      continue
+    }
+    if (choice.type !== 'object') throw new TypeError('decision type')
+    const properties = requireObject(choice.properties)
+    const keys = Object.keys(properties)
+    if (keys.length !== 1 || choice.additionalProperties !== false) {
+      throw new TypeError('object decision')
+    }
+    validateExactObjectSchema(choice, {[keys[0]!]: 'object'}, [keys[0]!], root)
+    foundObjects.push(keys[0]!)
+  }
+  requireExactEnum(foundStrings, stringDecisions)
+  requireExactEnum(foundObjects, objectDecisions)
+}
+
+function approvalMethod(candidate: unknown): string | null {
+  if (!isPlainObject(candidate) || !isPlainObject(candidate.properties)) return null
+  return enumValue(candidate.properties.method)
+}
+
+function enumValue(candidate: unknown): string | null {
+  if (!isPlainObject(candidate) || candidate.type !== 'string') return null
+  return Array.isArray(candidate.enum)
+    && candidate.enum.length === 1
+    && typeof candidate.enum[0] === 'string'
+    ? candidate.enum[0]
+    : null
+}
+
+function validateExactObjectSchema(
+  candidate: unknown,
+  fields: Readonly<Record<string, string>>,
+  required: readonly string[],
+  typeRoot?: Record<string, unknown>,
+  allowedTypes: Readonly<Record<string, readonly string[]>> = {},
+): void {
+  validateObjectSchema(candidate, fields, required, typeRoot, [], allowedTypes)
+  const schema = requireObject(candidate)
+  if (!exactKeys(requireObject(schema.properties), Object.keys(fields))) {
+    throw new TypeError('exact properties')
+  }
+  requireExactEnum(schema.required, required)
+}
+
+function requireTypes(
+  node: Record<string, unknown>,
+  root: Record<string, unknown>,
+  expected: readonly string[],
+): void {
+  const found = schemaTypes(node, root, new Set())
+  if (found.size !== expected.length || expected.some(type => !found.has(type))) {
+    throw new TypeError('exact types')
+  }
+}
+
+function requireReference(node: Record<string, unknown>, expected: string): void {
+  if (node.$ref !== expected) throw new TypeError('exact reference')
+}
+
+function requireNullableReference(candidate: unknown, reference: string): void {
+  const choices = requireObject(candidate).anyOf
+  if (!Array.isArray(choices) || choices.length !== 2) throw new TypeError('nullable reference')
+  const references = choices.filter(choice => isPlainObject(choice) && choice.$ref === reference)
+  const nulls = choices.filter(choice => isPlainObject(choice) && choice.type === 'null')
+  if (references.length !== 1 || nulls.length !== 1) throw new TypeError('nullable reference')
+}
+
+function requireArrayItemReference(candidate: unknown, reference: string): void {
+  const items = requireObject(requireObject(candidate).items)
+  requireReference(items, reference)
+}
+
+function requireArrayItemType(candidate: unknown, type: string): void {
+  const items = requireObject(requireObject(candidate).items)
+  if (items.type !== type) throw new TypeError('array item type')
+}
+
+function requireSingleEnum(node: Record<string, unknown>, expected: string): void {
+  if (node.type !== 'string') throw new TypeError('enum type')
+  requireExactEnum(node.enum, [expected])
+}
+
+function requireExactEnum(candidate: unknown, expected: readonly string[]): void {
+  if (!Array.isArray(candidate)
+    || candidate.length !== expected.length
+    || candidate.some(value => typeof value !== 'string')) throw new TypeError('exact enum')
+  const found = new Set(candidate)
+  if (found.size !== expected.length || expected.some(value => !found.has(value))) {
+    throw new TypeError('exact enum')
   }
 }
 

@@ -1,3 +1,5 @@
+import {approvalSchemaBundle} from './approval-schema-bundle.js'
+
 type Bundle = Record<string, unknown>
 
 const METHODS = {
@@ -93,6 +95,7 @@ export function supportedSchemaBundle(): Bundle {
     }
     bundle[file] = {type: 'object', properties, required: [...required], definitions}
   }
+  Object.assign(bundle, approvalSchemaBundle())
   return bundle
 }
 
