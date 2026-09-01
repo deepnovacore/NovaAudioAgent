@@ -39,7 +39,7 @@ paths and credential spans do not become observations, diagnostics, snapshots, p
 items. Agent/model prose is not user evidence. ASR aliases are low-confidence candidates and cannot
 route; their candidate observations may remain private durable evidence but never become published
 card aliases. Only an explicit user confirmation can create a durable alias. The three-state merge
-distinguishes confirmation, supplement, and conflict; confirmed user evidence outranks lower-trust
+distinguishes confirm, supplement, and conflict; confirmed user evidence outranks lower-trust
 evidence, while conflict retains evidence without overwriting confirmed user wording. Suppression
 is a separate durable relation state that prevents later recall.
 
@@ -47,8 +47,9 @@ Publication is last-good: a locked, unavailable, or failed store leaves the prio
 readable with a degraded marker. Bounded compaction retains the 512 most recent observations per
 logical workspace subject to a 4096-observation global ceiling. Observation pruning does not cascade
 into relation cards or their current state. Relation evidence has its own hard 48-reference window,
-enforced transactionally on every relation write and repaired at startup: the incoming evidence,
-user evidence, and then the newest remaining evidence are retained. This stays below the
+enforced transactionally on every relation write and repaired at startup: newest incoming user
+evidence, then remaining incoming evidence, then existing user evidence, then the newest remaining
+existing evidence are retained. This stays below the
 recall projection's independent 64-reference defensive limit, so a long-lived relation cannot make
 recall permanently degraded. Relation-card payloads and the normalized evidence table are always
 updated together.
@@ -79,8 +80,9 @@ synchronously revokes the old current scope, while a bounded FIFO preserves A→
 A→B and B→C. If an admitted event must be dropped, inference fails closed rather than bridging
 the unknown gap. The same gap fence applies when an admitted event cannot be resolved or committed:
 the next successful workspace becomes a fresh anchor and only its successor may create a new edge.
-All durable graph timestamps use Unix seconds; the causal runtime's monotonic clock is not a
-persistence clock.
+Observation and card timestamps use Unix seconds; the causal runtime's monotonic clock is not a
+persistence clock. Operation-receipt `committed_at` and schema-migration `applied_at` values are
+Unix milliseconds.
 
 Transition provenance is authenticated independently of the caller's projected result. Inside the
 atomic store transaction, Nova re-runs the pure projector against current state and requires an
@@ -89,11 +91,11 @@ confidence, status, or evidence. A weak transition may supplement an existing hi
 relation, but it cannot replace that relation's confirmed wording, confidence, or state.
 
 Schema-v3 relation receipts contain the complete gated historical result and therefore replay
-exactly even after the current relation advances. Historical schema-v2 receipts did not persist that
-payload. Migration retains those receipt rows and may reconstruct a result only while the matching
-relation revision is still current; after the relation advances, the old operation returns the
-stable `STORE_OPERATION_CONFLICT` error. Nova never fabricates a historical card or discards the
-retained receipt to claim success.
+exactly even after the current relation advances. Older receipts that omitted that payload are
+retained as legacy rows. The store may reconstruct a result only while the matching relation
+revision is still current; after the relation advances, the old operation returns the stable
+`STORE_OPERATION_CONFLICT` error. Nova never fabricates a historical card or discards the retained
+receipt to claim success.
 
 Database upgrades are explicit and transactional. Nova validates the exact STRICT table columns,
 unique keys, composite foreign key, and receipt autoincrement invariant for the recorded version,
