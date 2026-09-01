@@ -1,6 +1,7 @@
 import {
   activateCaptureMode,
   AlertTone,
+  admitBrowserPlayback,
   applyAlertCommand,
   decodeAudioFrame,
   fallbackToBrowserCapture,
@@ -13,6 +14,7 @@ import {
   OutputMuteController,
   PlaybackMeter,
   playbackTelemetryControl,
+  resumeAudioContextWithWatchdog,
 } from './audio.mjs'
 import {
   classifyMicrophoneFailure,
@@ -396,8 +398,7 @@ function scheduleFrames() {
 
 async function ensurePlaybackContext() {
   context ||= new AudioContext()
-  if (context.state !== 'running') await context.resume()
-  if (context.state !== 'running') throw new Error('Web Audio playback is unavailable')
+  await resumeAudioContextWithWatchdog(context)
 }
 
 // Both capture paths — the browser worklet and the native voice-processing tap —
@@ -813,21 +814,22 @@ async function handleSocketMessage(event, delivery) {
   alertTone.stop()
   const frame = decodeAudioFrame(new Uint8Array(event.data))
   const backend = playback.current?.backend || (nativeReady ? 'native' : 'browser')
-  try {
-    if (backend === 'browser') await ensurePlaybackContext()
-  } catch {
+  if (backend === 'native') {
+    if (playback.accept(frame, backend)) scheduleNativeFrames()
+    return
+  }
+  const admission = await admitBrowserPlayback(playback, frame, ensurePlaybackContext)
+  if (admission.status === 'stopped') {
     send({
       type: 'playback.stopped',
       utterance_id: frame.utteranceId,
       generation_epoch: frame.generationEpoch,
+      played_ms: admission.playedMs,
     })
     axes.error = 'playback'
     return render()
   }
-  if (playback.accept(frame, backend)) {
-    if (backend === 'native') scheduleNativeFrames()
-    else scheduleFrames()
-  }
+  if (admission.status === 'ready') scheduleFrames()
 }
 
 // Named, module-level, and idempotent: both doors onto a dead backend — the pushed

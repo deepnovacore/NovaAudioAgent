@@ -9,12 +9,14 @@ const {
   NativeLevelEnvelope,
   OutputMuteController,
   PlaybackMeter,
+  admitBrowserPlayback,
   applyAlertCommand,
   decodeAudioFrame,
   floatToPcm16,
   measurePcmLevel,
   observePcmOnset,
   playbackTelemetryControl,
+  resumeAudioContextWithWatchdog,
 } = audioModule
 
 // A full-scale square wave: the loudest signal PCM16 can carry, so its RMS is
@@ -56,6 +58,73 @@ test('decodes the atomic Python audio envelope', () => {
   assert.equal(decoded.generationEpoch, 4)
   assert.equal(decoded.sequence, 7)
   assert.deepEqual([...decoded.pcm], [0, 1])
+})
+
+test('browser playback is fenced when clear overtakes a suspended AudioContext', async () => {
+  let resume
+  const resumed = new Promise(resolve => { resume = resolve })
+  const playback = new GenerationPlayback()
+  const frame = decodeAudioFrame(audioFrame())
+
+  const admission = admitBrowserPlayback(playback, frame, () => resumed)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(playback.current?.utteranceId, 'u-1')
+
+  assert.deepEqual(playback.clear('u-1', 1), {playedMs: 0})
+  resume()
+
+  assert.deepEqual(await admission, {status: 'cleared'})
+  assert.equal(playback.dequeue(), null)
+})
+
+test('AudioContext resume watchdog rejects a promise that never settles', async () => {
+  let fireTimeout
+  let cancelled = null
+  const context = {
+    state: 'suspended',
+    resume: () => new Promise(() => {}),
+  }
+
+  const resumed = resumeAudioContextWithWatchdog(context, {
+    timeoutMs: 250,
+    schedule: callback => {
+      fireTimeout = callback
+      return 19
+    },
+    cancel: handle => { cancelled = handle },
+  })
+  fireTimeout()
+
+  await assert.rejects(resumed, /Web Audio playback is unavailable/)
+  assert.equal(cancelled, 19)
+})
+
+test('failed browser resume clears the queued generation and reports stopped evidence', async () => {
+  const playback = new GenerationPlayback()
+  const frame = decodeAudioFrame(audioFrame())
+
+  assert.deepEqual(await admitBrowserPlayback(
+    playback,
+    frame,
+    async () => { throw new Error('suspended') },
+  ), {status: 'stopped', playedMs: 0})
+  assert.equal(playback.current, null)
+  assert.equal(playback.dequeue(), null)
+})
+
+test('late browser resume failure cannot restore an old fence after backend replacement', async () => {
+  let rejectResume
+  const resume = new Promise((resolve, reject) => { rejectResume = reject })
+  const playback = new GenerationPlayback()
+  const oldFrame = decodeAudioFrame(audioFrame({epoch: 5}))
+
+  const admission = admitBrowserPlayback(playback, oldFrame, () => resume)
+  await new Promise(resolve => setImmediate(resolve))
+  playback.backendExited()
+  rejectResume(new Error('old backend'))
+
+  assert.deepEqual(await admission, {status: 'cleared'})
+  assert.equal(playback.accept(decodeAudioFrame(audioFrame({epoch: 1}))), true)
 })
 
 test('fences locally and rejects stale or out-of-order PCM', () => {

@@ -191,34 +191,70 @@ test('a camera throw neither poisons camera scheduling nor marks generic playbac
   router.dispose()
 })
 
-test('generic traffic stays FIFO while async playback handling is held', async () => {
-  const alertClear = deferred()
-  const pcmHandled = deferred()
+test('held browser PCM cannot block playback controls on the generic tail', async () => {
+  const pcmResume = deferred()
+  const controlsHandled = deferred()
   const order = []
   const router = new RendererSocketRouter({
     cameraController: {enqueue() {}, closeGeneration() {}},
     handleGeneric: async event => {
-      if (typeof event.data === 'string') {
-        order.push('alert-start')
-        await alertClear.promise
-        order.push('alert-done')
-      } else {
-        order.push('pcm')
-        pcmHandled.resolve()
+      if (typeof event.data !== 'string') {
+        order.push('pcm-start')
+        await pcmResume.promise
+        order.push('pcm-done')
+        return
+      }
+      order.push(JSON.parse(event.data).type)
+      if (order.includes('playback.clear') && order.includes('playback.terminal')) {
+        controlsHandled.resolve()
       }
     },
   })
-  const connection = router.connect(new FakeSocket('ordered-generic'))
+  const connection = router.connect(new FakeSocket('split-playback'))
   try {
-    connection.onMessage({data: '{"type":"playback.alert"}'})
     connection.onMessage({data: new Uint8Array([0, 1]).buffer})
-    await new Promise(resolve => setImmediate(resolve))
-    assert.deepEqual(order, ['alert-start'])
-    alertClear.resolve()
-    await settleWithin(pcmHandled.promise, 'replacement PCM after alert clear')
-    assert.deepEqual(order, ['alert-start', 'alert-done', 'pcm'])
+    connection.onMessage({data: '{"type":"playback.clear"}'})
+    connection.onMessage({data: '{"type":"playback.terminal"}'})
+
+    await settleWithin(controlsHandled.promise, 'controls behind held browser PCM')
+    assert.deepEqual(order, ['pcm-start', 'playback.clear', 'playback.terminal'])
   } finally {
-    alertClear.resolve()
+    pcmResume.resolve()
+    router.dispose()
+  }
+})
+
+test('browser PCM frames stay FIFO on their independent playback tail', async () => {
+  const firstResume = deferred()
+  const secondHandled = deferred()
+  const order = []
+  let frame = 0
+  const router = new RendererSocketRouter({
+    cameraController: {enqueue() {}, closeGeneration() {}},
+    handleGeneric: async event => {
+      assert.notEqual(typeof event.data, 'string')
+      frame += 1
+      order.push(`pcm-${frame}-start`)
+      if (frame === 1) {
+        await firstResume.promise
+        order.push('pcm-1-done')
+      } else {
+        order.push('pcm-2-done')
+        secondHandled.resolve()
+      }
+    },
+  })
+  const connection = router.connect(new FakeSocket('ordered-playback'))
+  try {
+    connection.onMessage({data: new Uint8Array([0, 1]).buffer})
+    connection.onMessage({data: new Uint8Array([2, 3]).buffer})
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(order, ['pcm-1-start'])
+    firstResume.resolve()
+    await settleWithin(secondHandled.promise, 'second ordered PCM frame')
+    assert.deepEqual(order, ['pcm-1-start', 'pcm-1-done', 'pcm-2-start', 'pcm-2-done'])
+  } finally {
+    firstResume.resolve()
     router.dispose()
   }
 })

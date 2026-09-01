@@ -1,6 +1,28 @@
 const MAX_HEADER_BYTES = 2048
 const MAX_PCM_BYTES = 64 * 1024
 const DEFAULT_MAX_QUEUED_BYTES = 256 * 1024
+const DEFAULT_AUDIO_RESUME_TIMEOUT_MS = 250
+
+export async function resumeAudioContextWithWatchdog(context, {
+  timeoutMs = DEFAULT_AUDIO_RESUME_TIMEOUT_MS,
+  schedule = (callback, delay) => setTimeout(callback, delay),
+  cancel = handle => clearTimeout(handle),
+} = {}) {
+  if (context.state === 'running') return
+  let timeoutHandle = null
+  const timeout = new Promise((resolve, reject) => {
+    timeoutHandle = schedule(
+      () => reject(new Error('Web Audio playback is unavailable')),
+      timeoutMs,
+    )
+  })
+  try {
+    await Promise.race([context.resume(), timeout])
+  } finally {
+    if (timeoutHandle !== null) cancel(timeoutHandle)
+  }
+  if (context.state !== 'running') throw new Error('Web Audio playback is unavailable')
+}
 
 export async function activateCaptureMode({
   nativeAvailable,
@@ -609,6 +631,31 @@ export class GenerationPlayback {
     this.current = null
     return acknowledgement
   }
+}
+
+export async function admitBrowserPlayback(playback, frame, ensureRunning) {
+  if (!playback.accept(frame, 'browser')) return {status: 'rejected'}
+  try {
+    await ensureRunning()
+  } catch {
+    const current = playback.current
+    if (
+      !current
+      || current.utteranceId !== frame.utteranceId
+      || current.generationEpoch !== frame.generationEpoch
+    ) return {status: 'cleared'}
+    const stopped = playback.clear(frame.utteranceId, frame.generationEpoch)
+    return stopped
+      ? {status: 'stopped', playedMs: stopped.playedMs}
+      : {status: 'cleared'}
+  }
+  const current = playback.current
+  if (
+    !current
+    || current.utteranceId !== frame.utteranceId
+    || current.generationEpoch !== frame.generationEpoch
+  ) return {status: 'cleared'}
+  return {status: 'ready'}
 }
 
 export async function applyAlertCommand(playback, message, { startTone, clearNative }) {
