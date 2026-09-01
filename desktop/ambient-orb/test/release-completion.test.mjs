@@ -139,7 +139,9 @@ test('release candidate explicitly builds unsigned bytes and keeps trust-bound s
   )
 })
 
-test('candidate ledger workflow commands resolve repository-root artifacts across npm workspace cwd', async t => {
+test('candidate ledger workflow commands resolve repository-root artifacts across npm workspace cwd', {
+  skip: process.platform === 'win32' ? 'candidate ledger job runs on Ubuntu' : false,
+}, async t => {
   const workflow = await readFile(
     new URL('../../../.github/workflows/release-candidate.yml', import.meta.url),
     'utf8',
