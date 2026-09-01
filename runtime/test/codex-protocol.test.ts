@@ -585,6 +585,69 @@ test('server requests reject ambiguous ids, params, and response-shaped extra fi
   }
 })
 
+test('a server request id too large for a fixed response is rejected before handler invocation', async t => {
+  const writes: Uint8Array[] = []
+  const unhandled: unknown[] = []
+  const onUnhandled = (error: unknown): void => { unhandled.push(error) }
+  process.on('unhandledRejection', onUnhandled)
+  t.after(() => { process.off('unhandledRejection', onUnhandled) })
+  let handlerCalls = 0
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    },
+    onServerRequest: () => {
+      handlerCalls += 1
+      return Promise.resolve({result: null})
+    },
+  })
+
+  await assert.rejects(
+    connection.feed(jsonLine({
+      id: 'x'.repeat(MAX_REQUEST),
+      method: 'approval/request',
+      params: {},
+    })),
+    error => errorCode(error) === 'malformed_jsonl',
+  )
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.equal(handlerCalls, 0)
+  assert.deepEqual(writes, [])
+  assert.deepEqual(unhandled, [])
+})
+
+test('a hostile handled disposition becomes one fixed error without leaking or retaining ownership', async t => {
+  const writes: Uint8Array[] = []
+  const unhandled: unknown[] = []
+  const onUnhandled = (error: unknown): void => { unhandled.push(error) }
+  process.on('unhandledRejection', onUnhandled)
+  t.after(() => { process.off('unhandledRejection', onUnhandled) })
+  const hostile: Record<string, unknown> = {}
+  Object.defineProperty(hostile, 'resolved', {
+    enumerable: true,
+    get: () => { throw new Error('PRIVATE DISPOSITION TRAP') },
+  })
+  const connection = new JsonRpcConnection({
+    write: bytes => {
+      writes.push(bytes)
+      return Promise.resolve()
+    },
+    onServerRequest: () => Promise.resolve(hostile as never),
+  })
+
+  await connection.feed(jsonLine({id: 912, method: 'approval/request', params: {}}))
+  await settleUntil(() => writes.length === 1, 'contained hostile disposition')
+  assert.equal(
+    decoder.decode(writes[0]),
+    '{"id":912,"error":{"code":-32603,"message":"Internal error"}}\n',
+  )
+  await new Promise<void>(resolve => { setImmediate(resolve) })
+  assert.deepEqual(unhandled, [])
+  assert.equal(decoder.decode(writes[0]).includes('PRIVATE'), false)
+  assert.equal(connection.end(), undefined)
+})
+
 test('end aborts a held server request and suppresses its late completion', async () => {
   const writes: Uint8Array[] = []
   let signal: AbortSignal | undefined

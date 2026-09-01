@@ -270,6 +270,7 @@ export class JsonRpcConnection {
         requestId = idSnapshot
         method = methodSnapshot
         params = paramsSnapshot
+        encodeMessage({id: requestId, ...METHOD_NOT_IMPLEMENTED})
       } catch {
         throw this.#poison(new CodexProtocolError('malformed_jsonl'))
       }
@@ -294,7 +295,11 @@ export class JsonRpcConnection {
         await this.#writeServerResponse(requestId, pending, METHOD_NOT_IMPLEMENTED)
         return
       }
-      void this.#completeServerRequest(requestId, pending, disposition)
+      void this.#completeServerRequest(requestId, pending, disposition).catch(() => {
+        if (this.#ownsServerRequest(requestId, pending)) {
+          this.#poison(new CodexProtocolError('stream_failure'))
+        }
+      })
       return
     }
     if (Object.hasOwn(message, 'method')) {
@@ -420,12 +425,17 @@ export class JsonRpcConnection {
       disposition = INTERNAL_SERVER_ERROR
     }
     if (!this.#ownsServerRequest(requestId, pending)) return
-    if (isResolvedServerRequest(disposition)) {
-      this.#discardServerRequest(requestId, pending)
-      return
+    let response: Exclude<JsonRpcServerRequestDisposition, {readonly resolved: true}>
+    try {
+      if (isResolvedServerRequest(disposition)) {
+        this.#discardServerRequest(requestId, pending)
+        return
+      }
+      response = isServerResponse(disposition) ? disposition : INTERNAL_SERVER_ERROR
+    } catch {
+      response = INTERNAL_SERVER_ERROR
     }
-    const response = isServerResponse(disposition) ? disposition : INTERNAL_SERVER_ERROR
-    await this.#writeServerResponse(requestId, pending, response).catch(() => undefined)
+    await this.#writeServerResponse(requestId, pending, response)
   }
 
   async #writeServerResponse(
@@ -440,7 +450,11 @@ export class JsonRpcConnection {
       try {
         bytes = encodeMessage({id: requestId, ...response})
       } catch {
-        bytes = encodeMessage({id: requestId, ...INTERNAL_SERVER_ERROR})
+        try {
+          bytes = encodeMessage({id: requestId, ...INTERNAL_SERVER_ERROR})
+        } catch {
+          throw this.#poison(new CodexProtocolError('invalid_request'))
+        }
       }
       try {
         await this.#write(bytes)
