@@ -2,8 +2,7 @@
 
 Thank you for considering a contribution. Nova Audio Agent is an experimental control plane; the
 architecture invariants matter more than any individual feature, so please read
-[Design essence](docs/essence.md) and [Glossary and invariants](docs/glossary.md) before proposing
-changes.
+[Glossary and invariants](docs/glossary.md) before proposing changes.
 
 ## Development setup
 

@@ -114,7 +114,7 @@ Measure the interface tier first. A per-step tag protocol couples the speak deci
 
 The hidden-state tier measures almost the same for us today: a sidecar is coupled to one backbone's internal geometry, and a rented API exposes no hidden state to couple to in the first place. It becomes measurable the day the backbone is ours — which is exactly when §7 picks it back up.
 
-Now the harness tier. The day the tenant arrives, the speak decision moves into the model — FastBrain and Surrogate merge into a single port. That merge was [predicted in the design docs](../essence.md) before any of this shipped; the spine — event loop, pool, Floor — doesn't move.
+Now the harness tier. The day the tenant arrives, the speak decision moves into the model — FastBrain and Surrogate merge into a single port. That merge was a design constraint before any of this shipped; the spine — event loop, pool, Floor — doesn't move.
 
 It is worth being precise about what that merge has to overcome, because it isn't the obvious thing. Multi-source plumbing is already solved: both ports compile the *same* ContextView and differ only by prompt, so a handoff from a third executor arrives as a field in a struct, not as a new voice in a transcript. What differs is wake economics. FastBrain sits on the latency path — user speech routes straight to it, deliberately bypassing Surrogate, because otherwise every utterance would pay for a second model call. Surrogate wakes on memory instead, off the critical path and priced differently. Merging them merges two opposing budgets, not two policies. By the ruler: **shrinks** — just not all at once.
 
@@ -190,4 +190,4 @@ The trigger for the merge itself is unchanged: after FastBrain's clarify-and-ask
 
 ---
 
-*Pointers: the three-minute [design essence](../essence.md); the [model-port contracts](../archs/04-ports.md) (including "why not a single three-tag enum"); [what the model actually reads](../archs/03-context-view.md) (ContextView's seven fields); and the [deferred list](../archs/08-deferred.md), where the `WatchView` split is registered as D11.*
+*Pointers: the [model-port contracts](../archs/04-ports.md) (including "why not a single three-tag enum"); [what the model actually reads](../archs/03-context-view.md) (ContextView's seven fields); and the [deferred list](../archs/08-deferred.md), where the `WatchView` split is registered as D11.*
