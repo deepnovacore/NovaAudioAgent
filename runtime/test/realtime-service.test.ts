@@ -4532,12 +4532,42 @@ test('a Codex approval prompt is a neutral host fact with no local command detai
     approval_id: approvalId,
     kind: 'command_execution',
     operation_summary: 'Codex 请求执行一条工作区命令。',
-    response_instruction: '只询问用户是否同意或拒绝；不要朗读 approval_id；表达含糊时自然追问。',
   })
   assert.doesNotMatch(prompt!, /Remove-Item|raw-command|raw-cwd|private/u)
 
   assert.equal(service.codexApprovalDecision(approvalId, false), true)
   assert.deepEqual(await waiting, {decision: 'decline'})
+})
+
+test('Codex approval questions, mixed decisions, and information requests have no authority', async t => {
+  for (const transcript of [
+    '确认？',
+    'confirm?',
+    '同意但拒绝',
+    '请先告诉我这会修改什么？',
+  ]) {
+    await t.test(transcript, async () => {
+      const {service, codexApproval} = pipelineService({
+        projectTool: true,
+        withCodexApproval: true,
+      })
+      assert.ok(codexApproval !== null)
+      await service.connect()
+      const waiting = offerCodexCommand(codexApproval)
+      const approvalId = codexApproval.view.pending_approval_id!
+      await codexApprovalTurn(service, {
+        approvalId,
+        approved: true,
+        itemId: `item-${transcript}`,
+        responseId: `response-${transcript}`,
+        transcript,
+      })
+      assert.equal(codexApproval.pending, true)
+      await finishProviderResponse(service, `response-${transcript}`)
+      assert.equal(service.codexApprovalDecision(approvalId, false), true)
+      assert.deepEqual(await waiting, {decision: 'decline'})
+    })
+  }
 })
 
 test('Codex approval voice authority requires a post-request final user item and matching decision', async () => {

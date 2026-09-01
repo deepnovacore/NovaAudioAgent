@@ -180,6 +180,8 @@ const confirmationCountdown = new ConfirmationCountdown({
 const confirmationDecision = new ConfirmationDecisionController({send})
 const codexApprovalDecision = new CodexApprovalDecisionController({send})
 const confirmationPresentation = new ConfirmationPresentationController()
+let latestProjectConfirmation = null
+let latestCodexApproval = null
 let lastReportedConfirmationMode = null
 
 let socket
@@ -308,6 +310,63 @@ function render() {
     file: '使用测试视频源',
   })[axes.camera] ?? '打开摄像头')
   visual.setState(state.name, { codexWorking: axes.codex === 'working' })
+}
+
+function confirmationDeadline(seconds) {
+  return seconds === null ? null : performance.now() + (seconds * 1_000)
+}
+
+function remainingConfirmationSeconds(deadline) {
+  return deadline === null ? null : Math.max(0, (deadline - performance.now()) / 1_000)
+}
+
+function applyConfirmationPresentation() {
+  const previousKind = axes.pendingConfirmationKind
+  const previousId = axes.pendingConfirmationId
+  const activeKind = confirmationPresentation.activeKind
+  const active = activeKind === 'project'
+    ? latestProjectConfirmation
+    : activeKind === 'codex'
+      ? latestCodexApproval
+      : null
+  if (active === null) {
+    axes.pendingConfirmation = false
+    axes.pendingConfirmationKind = null
+    axes.pendingConfirmationBusy = false
+    axes.pendingConfirmationId = null
+    axes.pendingAction = null
+    axes.pendingWorkspace = ''
+    axes.pendingSession = ''
+    axes.pendingExpiresInSeconds = null
+    axes.pendingOperation = ''
+    confirmationCountdown.stop()
+    if (previousKind !== null) {
+      setText(
+        confirmationAnnouncement,
+        previousKind === 'project' ? '项目确认已结束。' : 'Codex 授权确认已结束。',
+      )
+    }
+    return
+  }
+
+  const remaining = remainingConfirmationSeconds(active.deadline)
+  axes.pendingConfirmation = true
+  axes.pendingConfirmationKind = active.kind
+  axes.pendingConfirmationBusy = active.busy
+  axes.pendingConfirmationId = active.id
+  axes.pendingAction = active.kind === 'project' ? active.action : null
+  axes.pendingWorkspace = active.kind === 'project' ? active.workspace : ''
+  axes.pendingSession = active.kind === 'project' ? active.session : ''
+  axes.pendingExpiresInSeconds = remaining
+  axes.pendingOperation = active.kind === 'codex' ? active.operation : ''
+  if (remaining === null) confirmationCountdown.stop()
+  else confirmationCountdown.start(remaining)
+  if (previousKind !== active.kind || previousId !== active.id) {
+    const operation = active.kind === 'codex'
+      ? active.operation
+      : deriveOrbState(axes).confirmationOperation
+    setText(confirmationAnnouncement, `${operation}；尚未执行，需要你的确认。`)
+  }
 }
 
 function setText(element, value) {
@@ -776,75 +835,44 @@ async function handleControl(message) {
     if (valid) {
       axes.workspace = workspace || ''
       axes.session = session || ''
-      const admitted = confirmationPresentation.sync('project', message.pending_confirmation)
-      if (!admitted) {
-        confirmationDecision.sync({pending: false, proposalId: null})
-      } else {
-        const wasPending = axes.pendingConfirmation
-        axes.pendingConfirmation = message.pending_confirmation
-        axes.pendingConfirmationKind = message.pending_confirmation ? 'project' : null
-        axes.pendingConfirmationBusy = pendingBusy
-        axes.pendingConfirmationId = message.pending_confirmation
-          ? pendingConfirmationId ?? null
-          : null
-        axes.pendingAction = pendingAction
-        axes.pendingWorkspace = pendingWorkspace || ''
-        axes.pendingSession = pendingSession || ''
-        axes.pendingExpiresInSeconds = pendingExpires
-        axes.pendingOperation = ''
-        confirmationDecision.sync({
-          pending: message.pending_confirmation,
-          proposalId: axes.pendingConfirmationId,
-          busy: pendingBusy,
-        })
-        if (message.pending_confirmation) {
-          confirmationCountdown.start(pendingExpires)
-          const state = deriveOrbState(axes)
-          setText(
-            confirmationAnnouncement,
-            `${state.confirmationOperation}；尚未执行，需要你的确认。`,
-          )
-        } else {
-          confirmationCountdown.stop()
-          if (wasPending) setText(confirmationAnnouncement, '项目确认已结束。')
-        }
-      }
+      latestProjectConfirmation = message.pending_confirmation
+        ? {
+            kind: 'project',
+            id: pendingConfirmationId ?? null,
+            busy: pendingBusy,
+            action: pendingAction,
+            workspace: pendingWorkspace || '',
+            session: pendingSession || '',
+            deadline: confirmationDeadline(pendingExpires),
+          }
+        : null
+      confirmationDecision.sync({
+        pending: message.pending_confirmation,
+        proposalId: pendingConfirmationId ?? null,
+        busy: pendingBusy,
+      })
+      confirmationPresentation.sync('project', message.pending_confirmation)
+      applyConfirmationPresentation()
     }
   } else if (message.type === 'codex.approval') {
     const approval = parseCodexApprovalMessage(message)
     if (approval !== null) {
-      const admitted = confirmationPresentation.sync('codex', approval.pending_approval)
-      if (!admitted) {
-        codexApprovalDecision.sync({pending: false, approvalId: null})
-      } else {
-        const wasPending = axes.pendingConfirmation
-        axes.pendingConfirmation = approval.pending_approval
-        axes.pendingConfirmationKind = approval.pending_approval ? 'codex' : null
-        axes.pendingConfirmationBusy = approval.pending_approval_busy
-        axes.pendingConfirmationId = approval.pending_approval
-          ? approval.pending_approval_id
-          : null
-        axes.pendingAction = null
-        axes.pendingWorkspace = ''
-        axes.pendingSession = ''
-        axes.pendingExpiresInSeconds = approval.expires_in_seconds
-        axes.pendingOperation = approval.operation
-        codexApprovalDecision.sync({
-          pending: approval.pending_approval,
-          approvalId: axes.pendingConfirmationId,
-          busy: approval.pending_approval_busy,
-        })
-        if (approval.pending_approval) {
-          confirmationCountdown.start(approval.expires_in_seconds)
-          setText(
-            confirmationAnnouncement,
-            `${approval.operation}；尚未执行，需要你的确认。`,
-          )
-        } else {
-          confirmationCountdown.stop()
-          if (wasPending) setText(confirmationAnnouncement, 'Codex 授权确认已结束。')
-        }
-      }
+      latestCodexApproval = approval.pending_approval
+        ? {
+            kind: 'codex',
+            id: approval.pending_approval_id,
+            busy: approval.pending_approval_busy,
+            operation: approval.operation,
+            deadline: confirmationDeadline(approval.expires_in_seconds),
+          }
+        : null
+      codexApprovalDecision.sync({
+        pending: approval.pending_approval,
+        approvalId: approval.pending_approval ? approval.pending_approval_id : null,
+        busy: approval.pending_approval_busy,
+      })
+      confirmationPresentation.sync('codex', approval.pending_approval)
+      applyConfirmationPresentation()
     }
   } else if (message.type === 'error') {
     axes.error = 'backend'

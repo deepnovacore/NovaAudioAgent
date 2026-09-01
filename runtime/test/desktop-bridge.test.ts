@@ -534,6 +534,43 @@ test('a Codex approval frame and click use an independent strict bridge path', a
   ), DesktopProtocolError)
 })
 
+test('independent latest slots deliver both overlapping confirmation views before settlement', () => {
+  const {bridge, clock} = harness()
+  bridge.markAuthenticated()
+  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
+  bridge.onCodexApproval({
+    pending_approval: true,
+    pending_approval_busy: false,
+    pending_approval_id: 'approval-1',
+    kind: 'command_execution',
+    local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'},
+    operation_summary: 'Codex 请求执行一条工作区命令。',
+    expires_at: clock.now() + 60,
+  })
+  bridge.onCodexProject({
+    workspace_display_name: '研究项目',
+    session_title: null,
+    pending_confirmation: true,
+    pending_confirmation_busy: false,
+    pending_confirmation_id: 'proposal-1',
+    pending_action: 'select_workspace',
+    pending_workspace_display_name: 'beta',
+    pending_session_title: null,
+    pending_expires_in_seconds: 75,
+  })
+  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.project".*"proposal-1"/u)
+  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.approval".*"approval-1"/u)
+  bridge.onCodexApproval({
+    pending_approval: false,
+    pending_approval_busy: false,
+    kind: null,
+    local_detail: null,
+    operation_summary: null,
+    expires_at: null,
+  })
+  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.approval".*"pending_approval":false/u)
+})
+
 test('voice bridge rejects debug board requests', async () => {
   const {bridge} = harness()
   for (const raw of [

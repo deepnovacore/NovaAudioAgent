@@ -94,14 +94,52 @@ test('Codex approval controls send their independent exact one-shot frame', () =
   }])
 })
 
-test('one confirmation presentation wins and overlap never hides its authority', () => {
+test('the pending loser is promoted after the visible Codex confirmation settles', () => {
   const presentation = new ConfirmationPresentationController()
-  assert.equal(presentation.sync('project', true), true)
+  const sent = []
+  const project = new ConfirmationDecisionController({send: frame => {
+    sent.push(frame)
+    return true
+  }})
+  const codex = new CodexApprovalDecisionController({send: () => true})
+  codex.sync({pending: true, approvalId: 'approval-1'})
+  project.sync({pending: true, proposalId: 'proposal-1'})
+
+  assert.equal(presentation.sync('codex', true), true)
+  assert.equal(presentation.sync('project', true), false)
+  assert.equal(presentation.activeKind, 'codex')
+  assert.equal(presentation.sync('codex', false), true)
+  codex.sync({pending: false, approvalId: null})
   assert.equal(presentation.activeKind, 'project')
+  assert.equal(project.enabled, true)
+  assert.equal(project.decide(true), true)
+  assert.deepEqual(sent, [{
+    type: 'project.confirmation_decision', proposal_id: 'proposal-1', confirmed: true,
+  }])
+})
+
+test('the pending Codex loser is promoted after the visible project confirmation settles', () => {
+  const presentation = new ConfirmationPresentationController()
+  const sent = []
+  const project = new ConfirmationDecisionController({send: () => true})
+  const codex = new CodexApprovalDecisionController({send: frame => {
+    sent.push(frame)
+    return true
+  }})
+  project.sync({pending: true, proposalId: 'proposal-1'})
+  codex.sync({pending: true, approvalId: 'approval-1'})
+  assert.equal(presentation.sync('project', true), true)
   assert.equal(presentation.sync('codex', true), false)
-  assert.equal(presentation.sync('codex', false), false)
   assert.equal(presentation.activeKind, 'project')
   assert.equal(presentation.sync('project', false), true)
+  project.sync({pending: false, proposalId: null})
+  assert.equal(presentation.activeKind, 'codex')
+  assert.equal(codex.enabled, true)
+  assert.equal(codex.decide(false), true)
+  assert.deepEqual(sent, [{
+    type: 'codex.approval_decision', approval_id: 'approval-1', approved: false,
+  }])
+  assert.equal(presentation.sync('codex', false), true)
   assert.equal(presentation.activeKind, null)
 })
 

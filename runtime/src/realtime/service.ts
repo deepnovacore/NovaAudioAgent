@@ -166,9 +166,12 @@ function codexApprovalDecisionArguments(
 }
 
 function explicitCodexApprovalDecision(text: string): boolean | null {
+  for (const character of text) {
+    if (character === '?' || character === '？') return null
+  }
   const ignored = new Set([
-    ' ', '\t', '\r', '\n', '，', '。', '！', '？', '、', '；', '：',
-    ',', '.', '!', '?', ';', ':', '“', '”', '"', "'", '‘', '’',
+    ' ', '\t', '\r', '\n', '，', '。', '！', '、', '；', '：',
+    ',', '.', '!', ';', ':', '“', '”', '"', "'", '‘', '’',
   ])
   let normalized = ''
   for (const character of stripLikePython(text)) {
@@ -3548,7 +3551,6 @@ export class RealtimeService {
           approval_id: view.pending_approval_id,
           kind: view.kind,
           operation_summary: view.operation_summary,
-          response_instruction: '只询问用户是否同意或拒绝；不要朗读 approval_id；表达含糊时自然追问。',
         }),
       }), {priority: USER_PRIORITY - 1, preemptive: false})
       return

@@ -98,16 +98,23 @@ export class CodexApprovalDecisionController {
 /** Presentation-only arbitration. It never owns or transfers either decision authority. */
 export class ConfirmationPresentationController {
   #activeKind = null
+  #pendingProject = false
+  #pendingCodex = false
 
   sync(kind, pending) {
     if (kind !== 'project' && kind !== 'codex') return false
+    const wasActive = this.#activeKind === kind
+    if (kind === 'project') this.#pendingProject = pending === true
+    else this.#pendingCodex = pending === true
     if (pending === true) {
       if (this.#activeKind === null) this.#activeKind = kind
       return this.#activeKind === kind
     }
     if (this.#activeKind !== kind) return false
-    this.#activeKind = null
-    return true
+    this.#activeKind = kind === 'project'
+      ? (this.#pendingCodex ? 'codex' : null)
+      : (this.#pendingProject ? 'project' : null)
+    return wasActive
   }
 
   get activeKind() {
