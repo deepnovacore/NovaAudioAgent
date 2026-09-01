@@ -21,14 +21,15 @@ and speech ownership remain explicit.
 ## Reading the citations in code comments
 
 These volumes are the condensed public edition of a longer internal design series ("v3"; v1 and v2
-were internal predecessors and were never published). Module docstrings and comments cite the
-internal editions and their bookkeeping verbatim, because those citations record why each boundary
-exists:
+were internal predecessors and were never published). Module docstrings and comments still cite
+internal identifiers where they record why a boundary exists:
 
-- `R…` and `D…` are internal decision identifiers (accepted rules and deliberate decisions).
-- `Stage A/C/E`, `Phase A`, and `B1…B4` are internal development-stage and milestone names.
+- `R…` and `D…` are internal decision identifiers (accepted rules and deliberate decisions);
+  comments still cite identifiers such as `R105`.
+- `Stage A/C/E`, `Phase A`, and `B1…B4` were internal development-stage names and are not current
+  code labels.
 - Section numbers, quoted wording, and tables attributed to a volume refer to the internal edition,
   which is more detailed than the public file of the same name.
 
-The identifiers are preserved for traceability; the reasoning they point to survives in the
-docstrings themselves.
+Where those identifiers remain, they are preserved for traceability; the reasoning they point to
+survives in the docstrings themselves.

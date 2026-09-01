@@ -4,7 +4,7 @@ The deterministic suite verifies event ordering, deadlines, identity fencing, me
 tool-schema authority, untrusted evidence handling, realtime correlation, playback acknowledgement,
 and desktop isolation.
 
-Adapter consistency tests apply the same contract checks to every production executor. Live smokes
+Each production executor has its own tests, including registry-adapter contract checks. Live smokes
 are separate because they require credentials, devices, or network services and must never be
 mistaken for CI evidence.
 
