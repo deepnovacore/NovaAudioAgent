@@ -456,6 +456,7 @@ async function prepareDesktopConfiguration() {
     }),
     canonicalizeInvocation: candidate => canonicalInstalledInvocation(candidate, {
       platform: process.platform,
+      arch: process.arch,
       pathApi: path,
       realpath: realpathSync,
       stat: statSync,

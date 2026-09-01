@@ -70,7 +70,11 @@ export function codexCandidates({ platform, arch, env = {}, home, pathApi }) {
     }
   } else {
     appendNative(candidates, seen, pathApi.join(home, '.local', 'bin', 'codex'), 'common')
-    if (platform === 'darwin') appendNative(candidates, seen, '/opt/homebrew/bin/codex', 'common')
+    if (platform === 'darwin') {
+      appendNative(candidates, seen, pathApi.join(home, '.npm-global', 'bin', 'codex'), 'npm-user')
+      appendNative(candidates, seen, pathApi.join(home, '.volta', 'bin', 'codex'), 'npm-user')
+      appendNative(candidates, seen, '/opt/homebrew/bin/codex', 'common')
+    }
     appendNative(candidates, seen, '/usr/local/bin/codex', 'common')
   }
   return Object.freeze(candidates)

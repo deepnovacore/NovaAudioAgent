@@ -115,3 +115,30 @@ test('validated npm launcher becomes direct Node argv without executing the cmd 
     prefixArgs: [`${packageRoot}\\bin\\codex.js`],
   })
 })
+
+test('a macOS npm launcher resolves to its validated platform-native Codex binary', () => {
+  const packageRoot = '/prefix/lib/node_modules/@openai/codex'
+  const platformRoot = `${packageRoot}/node_modules/@openai/codex-darwin-arm64`
+  const entry = `${packageRoot}/bin/codex.js`
+  const native = `${platformRoot}/vendor/aarch64-apple-darwin/bin/codex`
+  const files = new Set([entry, `${packageRoot}/package.json`, `${platformRoot}/package.json`, native])
+  const directories = new Set([packageRoot, platformRoot])
+  const result = desktopStartup.canonicalInstalledInvocation({
+    kind: 'native', command: '/prefix/bin/codex', prefixArgs: [], source: 'common',
+  }, {
+    platform: 'darwin',
+    arch: 'arm64',
+    pathApi: posix,
+    realpath: value => value === '/prefix/bin/codex' ? entry : value,
+    stat: value => ({
+      isFile: () => files.has(value),
+      isDirectory: () => directories.has(value),
+    }),
+    access: () => {},
+    readFile: value => JSON.stringify(value === `${packageRoot}/package.json`
+      ? {name: '@openai/codex', bin: {codex: 'bin/codex.js'}}
+      : {name: '@openai/codex', os: ['darwin'], cpu: ['arm64']}),
+  })
+
+  assert.deepEqual(result, {command: native, prefixArgs: []})
+})

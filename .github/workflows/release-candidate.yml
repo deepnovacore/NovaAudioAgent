@@ -112,11 +112,6 @@ jobs:
             artifact_name: candidate-darwin-arm64
             filename: nova-audio-agent-0.1.0-macos-arm64-app.zip
             command: node
-          - os: macos-14
-            target: darwin-arm64:dmg
-            artifact_name: candidate-darwin-arm64
-            filename: nova-audio-agent-0.1.0-macos-arm64.dmg
-            command: node
           - os: windows-latest
             target: win32-x64:portable
             artifact_name: candidate-win32-x64

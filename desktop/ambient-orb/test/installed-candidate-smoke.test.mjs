@@ -589,6 +589,8 @@ test('release workflow downloads exact candidates into checkout-free smoke jobs'
   assert.doesNotMatch(workflow, /attest-build-provenance|id-token:|attestations:/u)
   const smokeStart = workflow.indexOf('  installed-candidate-smoke:')
   const smokeJob = workflow.slice(smokeStart, workflow.indexOf('\n  pending-candidate-ledger:', smokeStart))
+  assert.match(smokeJob, /target: darwin-arm64:app/u)
+  assert.doesNotMatch(smokeJob, /target: darwin-arm64:dmg/u)
   assert.doesNotMatch(smokeJob, /actions\/checkout/u)
   assert.doesNotMatch(smokeJob, /continue-on-error|\|\| true/u)
   assert.doesNotMatch(smokeJob, /--commit|--signer-workflow|GH_TOKEN/u)

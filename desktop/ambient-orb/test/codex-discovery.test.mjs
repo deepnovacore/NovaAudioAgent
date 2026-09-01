@@ -55,6 +55,71 @@ test('POSIX candidates preserve PATH order before reviewed common locations', ()
   ])
 })
 
+test('macOS candidates include the npm native binary without relying on GUI PATH', () => {
+  const candidates = codexCandidates({
+    platform: 'darwin',
+    arch: 'arm64',
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
+    home: '/Users/nova',
+    pathApi: posix,
+  })
+
+  assert.ok(candidates.some(candidate => candidate.kind === 'native'
+    && candidate.source === 'common'
+    && candidate.command === '/opt/homebrew/bin/codex'))
+  assert.ok(candidates.some(candidate => candidate.kind === 'native'
+    && candidate.source === 'npm-user'
+    && candidate.command === '/Users/nova/.npm-global/bin/codex'))
+})
+
+test('Windows candidates include the npm native binary without relying on GUI PATH', () => {
+  const candidates = codexCandidates({
+    platform: 'win32',
+    arch: 'x64',
+    env: { APPDATA: 'C:\\Users\\nova\\AppData\\Roaming', PATH: '' },
+    home: 'C:\\Users\\nova',
+    pathApi: win32,
+  })
+
+  assert.ok(candidates.some(candidate => candidate.kind === 'native'
+    && candidate.source === 'npm-user'
+    && candidate.command === 'C:\\Users\\nova\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\codex\\codex.exe'))
+})
+
+test('GUI discovery executes the direct npm native binary on macOS and Windows', async () => {
+  const cases = [
+    {
+      platform: 'darwin',
+      arch: 'arm64',
+      env: {PATH: '/usr/bin:/bin:/usr/sbin:/sbin'},
+      home: '/Users/nova',
+      pathApi: posix,
+      expected: '/opt/homebrew/bin/codex',
+    },
+    {
+      platform: 'win32',
+      arch: 'x64',
+      env: {APPDATA: 'C:\\Users\\nova\\AppData\\Roaming', PATH: 'C:\\Windows\\System32'},
+      home: 'C:\\Users\\nova',
+      pathApi: win32,
+      expected: 'C:\\Users\\nova\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\codex\\codex.exe',
+    },
+  ]
+
+  for (const fixture of cases) {
+    const status = await discoverCodex({
+      candidates: codexCandidates(fixture),
+      canonicalize: candidate => candidate.command === fixture.expected
+        ? {command: candidate.command, prefixArgs: []}
+        : null,
+      inspect: async () => ({version: 'codex-cli 0.152.0'}),
+    })
+    assert.equal(status.status, 'ready')
+    assert.equal(status.path, fixture.expected)
+    assert.deepEqual(status.prefixArgs, [])
+  }
+})
+
 test('discovery returns the first canonical executable with a bounded version', async () => {
   const inspected = []
   const status = await discoverCodex({

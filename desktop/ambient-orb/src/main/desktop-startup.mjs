@@ -50,7 +50,12 @@ export function canonicalInstalledInvocation(candidate, dependencies) {
   if (!candidate || typeof candidate !== 'object' || !Array.isArray(candidate.prefixArgs)) return null
   if (candidate.kind === 'native') {
     const command = canonicalInstalledExecutable(candidate.command, dependencies)
-    return command === null ? null : Object.freeze({command, prefixArgs: Object.freeze([])})
+    if (command === null) return null
+    if (dependencies.platform === 'darwin' && command.endsWith('.js')) {
+      const native = canonicalDarwinNpmBinary(command, dependencies)
+      if (native !== null) return Object.freeze({command: native, prefixArgs: Object.freeze([])})
+    }
+    return Object.freeze({command, prefixArgs: Object.freeze([])})
   }
   if (candidate.kind !== 'npm-launcher' || dependencies.platform !== 'win32'
     || candidate.prefixArgs.length !== 1) return null
@@ -76,6 +81,43 @@ export function canonicalInstalledInvocation(candidate, dependencies) {
   } catch {
     return null
   }
+}
+
+function canonicalDarwinNpmBinary(entry, dependencies) {
+  const {arch, pathApi, realpath, stat, readFile} = dependencies
+  if (arch !== 'arm64' && arch !== 'x64') return null
+  try {
+    const packageRoot = realpath(pathApi.resolve(pathApi.dirname(entry), '..'))
+    if (!stat(packageRoot).isDirectory()) return null
+    const manifest = realpath(pathApi.join(packageRoot, 'package.json'))
+    const parsed = JSON.parse(readFile(manifest, 'utf8'))
+    const bin = typeof parsed?.bin === 'string' ? parsed.bin : parsed?.bin?.codex
+    if (parsed?.name !== '@openai/codex' || bin !== 'bin/codex.js'
+      || entry !== realpath(pathApi.join(packageRoot, bin))) return null
+    const platformPackage = `codex-darwin-${arch}`
+    const triple = arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin'
+    for (const candidateRoot of [
+      pathApi.join(packageRoot, 'node_modules', '@openai', platformPackage),
+      pathApi.resolve(packageRoot, '..', platformPackage),
+    ]) {
+      let platformRoot
+      try { platformRoot = realpath(candidateRoot) } catch { continue }
+      if (!stat(platformRoot).isDirectory()) continue
+      const platformManifest = realpath(pathApi.join(platformRoot, 'package.json'))
+      const platformPackageJson = JSON.parse(readFile(platformManifest, 'utf8'))
+      if (platformPackageJson?.name !== '@openai/codex'
+        || !Array.isArray(platformPackageJson.os) || platformPackageJson.os.length !== 1
+        || platformPackageJson.os[0] !== 'darwin'
+        || !Array.isArray(platformPackageJson.cpu) || platformPackageJson.cpu.length !== 1
+        || platformPackageJson.cpu[0] !== arch) continue
+      const native = canonicalInstalledExecutable(
+        pathApi.join(platformRoot, 'vendor', triple, 'bin', 'codex'),
+        dependencies,
+      )
+      if (native !== null) return native
+    }
+  } catch {}
+  return null
 }
 
 export async function prepareDesktopStartup({
