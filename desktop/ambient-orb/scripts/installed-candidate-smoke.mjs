@@ -322,7 +322,14 @@ async function runInstalledCandidate({
       providerEndpoint: provider.endpoint,
       ...(cameraFile === undefined ? {} : {cameraFile: await exactCameraFile(cameraFile)}),
     })
-    const child = spawn(executable, [`--user-data-dir=${userData}`, '--open-settings'], {
+    const child = spawn(executable, [
+      `--user-data-dir=${userData}`,
+      '--open-settings',
+      // macOS safeStorage otherwise reaches the user's login Keychain even
+      // though the smoke user-data directory is isolated. Chromium's test
+      // keychain keeps the release smoke hermetic and non-interactive.
+      ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : []),
+    ], {
       cwd: workspace,
       env: environment,
       detached: process.platform !== 'win32',

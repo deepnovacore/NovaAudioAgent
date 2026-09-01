@@ -58,12 +58,15 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.mac_candidate_run_id }}
       - name: Rehash, install, exercise settings launch, quit, and remove macOS candidate
-        run: >-
-          node desktop/ambient-orb/scripts/run-unsigned-installed-smoke.mjs
-          --target ${{ matrix.target }}
-          --artifact candidate/release-artifacts/${{ matrix.filename }}
-          --sha256-file candidate/release-digests/${{ matrix.filename }}.sha256
-          --camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4
+        run: |
+          cp desktop/ambient-orb/scripts/installed-candidate-smoke.mjs candidate/release-smoke-kit/scripts/
+          cp desktop/ambient-orb/scripts/run-unsigned-installed-smoke.mjs candidate/release-smoke-kit/scripts/
+          cp desktop/ambient-orb/scripts/windows-smoke-home.mjs candidate/release-smoke-kit/scripts/
+          node candidate/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs \
+            --target ${{ matrix.target }} \
+            --artifact candidate/release-artifacts/${{ matrix.filename }} \
+            --sha256-file candidate/release-digests/${{ matrix.filename }}.sha256 \
+            --camera-file candidate/release-smoke-kit/cat-sofa-guard.mp4
 
   promote:
     needs: mac-installed-smoke
@@ -118,7 +121,7 @@ jobs:
           done
           git diff --name-only "$windows_commit" "$EXPECTED_COMMIT" | while read -r changed_path; do
             case "$changed_path" in
-              .github/workflows/release-promote.yml|desktop/ambient-orb/test/release-completion.test.mjs) ;;
+              .github/workflows/release-promote.yml|desktop/ambient-orb/scripts/installed-candidate-smoke.mjs|desktop/ambient-orb/test/installed-candidate-smoke.test.mjs|desktop/ambient-orb/test/release-completion.test.mjs) ;;
               *) exit 1 ;;
             esac
           done

@@ -151,6 +151,11 @@ test('promotion is manual, candidate-bound, main-bound, and publishes npm only a
   assert.match(workflow, /git rev-parse origin\/main/u)
   assert.match(workflow, /needs: mac-installed-smoke/u)
   assert.match(workflow, /run-id: \$\{\{ inputs\.mac_candidate_run_id \}\}/u)
+  assert.match(
+    workflow,
+    /cp desktop\/ambient-orb\/scripts\/installed-candidate-smoke\.mjs candidate\/release-smoke-kit\/scripts\//u,
+  )
+  assert.match(workflow, /node candidate\/release-smoke-kit\/scripts\/run-unsigned-installed-smoke\.mjs/u)
   assert.match(workflow, /npm whoami/u)
   assert.match(workflow, /git push --force origin refs\/tags\/v0\.1\.0/u)
   assert.match(workflow, /gh release upload v0\.1\.0 release-artifacts\/\* --clobber/u)

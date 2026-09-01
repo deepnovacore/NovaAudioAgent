@@ -601,6 +601,6 @@ test('installed candidate smoke cold-starts every packaged target through config
   )
   assert.match(
     source,
-    /spawn\(executable, \[`--user-data-dir=\$\{userData\}`, '--open-settings'\]/u,
+    /spawn\(executable, \[[\s\S]*?`--user-data-dir=\$\{userData\}`,[\s\S]*?'--open-settings',[\s\S]*?process\.platform === 'darwin' \? \['--use-mock-keychain'\] : \[\][\s\S]*?\], \{/u,
   )
 })
