@@ -28,6 +28,7 @@ const EXPECTED_BUILD_SCRIPTS = [
   'src/main/release-smoke-channel.mjs',
   'src/main/startup-diagnostics.mjs',
   'src/main/drag-controller.mjs',
+  'src/main/launch-command.mjs',
   'src/main/settings-store.mjs',
   'src/renderer/index.mjs',
   'src/renderer/camera.mjs',
@@ -51,6 +52,7 @@ const EXPECTED_BUILD_SCRIPTS = [
   'scripts/collect-release-artifacts.mjs',
   'scripts/generate-pending-release-ledger.mjs',
   'scripts/generate-release-candidate-report.mjs',
+  'scripts/generate-release-manifest.mjs',
   'scripts/finalize-mac-notarization.mjs',
   'scripts/verify-github-release-attestations.mjs',
   'scripts/require-release-signing.mjs',
@@ -449,14 +451,12 @@ test('root npm commands require only the Node toolchain', async () => {
   assert.doesNotMatch(commands, /\b(?:python|pytest|uv)\b/u)
 })
 
-test('unsigned Windows workflow publishes tag builds only after digest-bound installed smoke', async () => {
+test('unsigned Windows workflow is manual-only and never creates a release', async () => {
   const text = await readFile(UNSIGNED_WORKFLOW_PATH, 'utf8')
   const workflow = parseYaml(text)
 
-  assert.equal(workflow.name, 'Unsigned Windows package and release')
-  assert.deepEqual(Object.keys(workflow.on), ['push'])
-  assert.equal('branches' in workflow.on.push, false)
-  assert.deepEqual(workflow.on.push.tags, ['v*'])
+  assert.equal(workflow.name, 'Unsigned Windows package diagnostic')
+  assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch'])
   assert.deepEqual(workflow.permissions, {contents: 'read'})
 
   const packageJob = workflow.jobs.package
@@ -526,23 +526,8 @@ test('unsigned Windows workflow publishes tag builds only after digest-bound ins
   assert.doesNotMatch(smokeStep.run, /--commit|--signer-workflow/u)
   assert.doesNotMatch(text, /attestations:|id-token:|attest-build-provenance/u)
 
-  const releaseJob = workflow.jobs.release
-  assert.equal(releaseJob.if, "startsWith(github.ref, 'refs/tags/v')")
-  assert.equal(releaseJob.needs, 'installed-smoke')
-  assert.equal(releaseJob['runs-on'], 'windows-2022')
-  assert.deepEqual(releaseJob.permissions, {contents: 'write'})
-  assert.ok(releaseJob.steps.some(step => (
-    step.uses === 'actions/download-artifact@v4'
-    && step.with?.name === 'unsigned-win32-x64'
-  )))
-  const publishStep = releaseJob.steps.find(step => step.run?.includes('gh release create'))
-  assert.deepEqual(publishStep.env, {
-    GH_TOKEN: '${{ github.token }}',
-    GH_REPO: '${{ github.repository }}',
-  })
-  assert.match(publishStep.run, /candidate\/release-artifacts\/\*\.exe/u)
-  assert.match(publishStep.run, /candidate\/release-digests\/\*\.exe\.sha256/u)
-  assert.match(publishStep.run, /--verify-tag/u)
+  assert.equal('release' in workflow.jobs, false)
+  assert.doesNotMatch(text, /gh release create|contents: write/u)
 })
 
 function parseBooleanPlist(text) {

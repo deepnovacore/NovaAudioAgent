@@ -13,7 +13,7 @@ export async function generatePendingLedger({
   applicationVersion,
 }) {
   const releaseMatch = typeof releaseVersion === 'string'
-    ? /^(\d+\.\d+\.\d+)-rc\.\d+$/u.exec(releaseVersion)
+    ? /^(\d+\.\d+\.\d+)(?:-rc\.\d+)?$/u.exec(releaseVersion)
     : null
   if (typeof artifactRoot !== 'string' || !isAbsolute(artifactRoot)
     || releaseMatch === null

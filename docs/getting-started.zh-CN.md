@@ -60,7 +60,7 @@ realtime provider 不暴露 `codex__run`。Workspace 是文件系统/Git 项目�
 Workspace 或 Session 候选项，历史候选项不会进入每轮常驻上下文。create、switch、resume 采用
 分阶段提案：用户下一轮会成为专用 structured confirmation，携带完全匹配的 proposal ID 和 JSON
 boolean。false、错误 ID 或重放均不改变状态。切换 Workspace 后，再请求列出或恢复其中的 Session。
-持久化与恢复细节见[多项目 Workspace 交接](multi-project-workspace-handoff.md)。
+持久化与恢复始终绑定到当前选中的 Workspace 和 Session 记录。
 
 注册表每个 Workspace 最多保留 200 个 Session、全局最多 1000 个：先清理最旧的 unavailable
 Session，再清理非 active 的 ready Session；starting 和 active Session 始终受保护。若受保护记录

@@ -22,6 +22,7 @@
     "verify:release-attestations": "node scripts/verify-github-release-attestations.mjs",
     "generate:pending-release-ledger": "node scripts/generate-pending-release-ledger.mjs",
     "generate:release-candidate-report": "node scripts/generate-release-candidate-report.mjs",
+    "generate:release-manifest": "node scripts/generate-release-manifest.mjs",
     "finalize:mac-notarization": "node scripts/finalize-mac-notarization.mjs --dist-root dist",
     "prepare:release-smoke-kit": "node scripts/prepare-release-smoke-kit.mjs",
     "icons": "node scripts/make-icons.mjs",

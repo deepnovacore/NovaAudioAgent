@@ -1,0 +1,145 @@
+name: Promote release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Release candidate evidence workflow run ID
+        required: true
+        type: string
+      commit:
+        description: Exact main commit produced by the candidate run
+        required: true
+        type: string
+      release_version:
+        description: Version to replace
+        required: true
+        default: 0.1.0
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: promote-v0.1.0
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@11.6.0
+      - name: Verify version, main commit, candidate identity, and npm authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_VERSION" = "0.1.0"
+          test "$EXPECTED_COMMIT" = "$(git rev-parse HEAD)"
+          git fetch origin main --depth=1
+          test "$EXPECTED_COMMIT" = "$(git rev-parse origin/main)"
+          test "$(node -p "require('./cli/package.json').version")" = "$RELEASE_VERSION"
+          test "$(node -p "require('./desktop/ambient-orb/package.json').version")" = "$RELEASE_VERSION"
+          gh run view "$CANDIDATE_RUN_ID" --json conclusion,headSha,name > candidate-run.json
+          test "$(jq -r .conclusion candidate-run.json)" = "success"
+          test "$(jq -r .headSha candidate-run.json)" = "$EXPECTED_COMMIT"
+          test "$(jq -r .name candidate-run.json)" = "Release candidate evidence"
+          npm whoami
+      - run: npm ci
+      - run: npm test
+      - name: Download and verify the exact candidate matrix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          gh run download "$CANDIDATE_RUN_ID" --pattern 'candidate-*' --dir downloaded
+          node desktop/ambient-orb/scripts/assemble-release-artifact-root.mjs \
+            --input downloaded --output release-artifacts
+          node desktop/ambient-orb/scripts/generate-release-manifest.mjs \
+            --artifact-root release-artifacts \
+            --commit "$EXPECTED_COMMIT" \
+            --output release-artifacts/release-manifest-v1.json
+      - name: Pack and audit the public npm package
+        run: |
+          set -euo pipefail
+          mkdir npm-package
+          npm pack ./cli --pack-destination npm-package
+          tarball="$(find npm-package -maxdepth 1 -name '*.tgz' -type f)"
+          test -n "$tarball"
+          mkdir npm-smoke
+          npm install --prefix npm-smoke --ignore-scripts "$tarball"
+          npm-smoke/node_modules/.bin/novaaudio --version
+          npm-smoke/node_modules/.bin/novaaudio --help
+          npm-smoke/node_modules/.bin/novaaudio doctor
+      - name: Record the current v0.1.0 release before replacement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-audit/previous-assets
+          git rev-list -n 1 v0.1.0 > promotion-audit/previous-tag-commit.txt
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.1.0" > promotion-audit/previous-release.json
+          gh release download v0.1.0 --dir promotion-audit/previous-assets
+          find promotion-audit/previous-assets -type f -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > promotion-audit/previous-assets.sha256
+      - name: Move v0.1.0 and replace the existing release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          git tag --force v0.1.0 "$EXPECTED_COMMIT"
+          git push --force origin refs/tags/v0.1.0
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.1.0" --jq .id)"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" --jq '.[].id' \
+            | while read -r asset_id; do
+                gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+              done
+          gh release edit v0.1.0 \
+            --target "$EXPECTED_COMMIT" \
+            --title "Nova Audio Agent v0.1.0" \
+            --notes "Replacement for the original Windows-only v0.1.0. This release now includes macOS arm64/x64, Windows x64, and Linux x64 portable applications plus installers. These builds are unsigned; macOS Gatekeeper and Windows SmartScreen may display security warnings."
+          gh release upload v0.1.0 release-artifacts/* --clobber
+      - name: Publish and verify nova-audio-agent 0.1.0
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          tarball="$(find npm-package -maxdepth 1 -name '*.tgz' -type f)"
+          npm publish "$tarball" --access public
+          test "$(npm view nova-audio-agent@0.1.0 version)" = "0.1.0"
+          prefix="$(mktemp -d)"
+          npm install --global --prefix "$prefix" nova-audio-agent@0.1.0
+          "$prefix/bin/novaaudio" --version
+          "$prefix/bin/novaaudio" doctor
+          timeout 60 xvfb-run -a "$prefix/bin/novaaudio" config
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v0.1.0-replacement-audit
+          path: |
+            candidate-run.json
+            promotion-audit/**
+            release-artifacts/release-manifest-v1.json
+            release-artifacts/release-manifest-v1.json.sha256
+          if-no-files-found: warn

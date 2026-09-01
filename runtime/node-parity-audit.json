@@ -11,6 +11,7 @@
     "desktop/ambient-orb/src/main/debug-board-client.mjs",
     "desktop/ambient-orb/src/main/desktop-startup.mjs",
     "desktop/ambient-orb/src/main/drag-controller.mjs",
+    "desktop/ambient-orb/src/main/launch-command.mjs",
     "desktop/ambient-orb/src/main/lifecycle-coordinator.mjs",
     "desktop/ambient-orb/src/main/main.mjs",
     "desktop/ambient-orb/src/main/native-audio.mjs",

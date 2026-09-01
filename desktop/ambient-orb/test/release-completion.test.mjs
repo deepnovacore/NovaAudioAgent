@@ -8,6 +8,7 @@ import test from 'node:test'
 
 import {collectReleaseArtifacts} from '../scripts/collect-release-artifacts.mjs'
 import {generatePendingLedger} from '../scripts/generate-pending-release-ledger.mjs'
+import {generateReleaseManifest} from '../scripts/generate-release-manifest.mjs'
 import {releaseCandidateReport} from '../scripts/generate-release-candidate-report.mjs'
 import {macContainerNotarizationPlan} from '../scripts/finalize-mac-notarization.mjs'
 import {RELEASE_ARTIFACT_FILES} from '../scripts/verify-github-release-attestations.mjs'
@@ -41,7 +42,7 @@ test('release artifacts are normalized to the same closed filenames the attestat
   assert.equal(Object.isFrozen(records), true)
 })
 
-test('pending ledger generation binds all seven downloaded artifact bytes and no claimed evidence', async t => {
+test('pending ledger generation binds the complete downloaded artifact matrix and no claimed evidence', async t => {
   const root = await mkdtemp(join(tmpdir(), 'nova-release-ledger-'))
   t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
   for (const filename of Object.values(RELEASE_ARTIFACT_FILES)) {
@@ -53,7 +54,7 @@ test('pending ledger generation binds all seven downloaded artifact bytes and no
     commit: 'a'.repeat(40),
     applicationVersion: '0.1.0',
   })
-  assert.equal(ledger.artifacts.length, 7)
+  assert.equal(ledger.artifacts.length, Object.keys(RELEASE_ARTIFACT_FILES).length)
   assert.deepEqual(ledger.evidence, [])
   assert.equal(ledger.release_version, '0.1.0-rc.1')
   assert.equal(Object.isFrozen(ledger), true)
@@ -96,16 +97,15 @@ test('artifact assembly ignores bundled smoke dependencies and copies only the c
   assert.deepEqual((await readdir(output)).sort(), Object.values(RELEASE_ARTIFACT_FILES).sort())
 })
 
-test('release workflow fails closed on credentials and performs post-sign trust inspection', async () => {
+test('release candidate explicitly builds unsigned bytes and keeps trust-bound smoke checks', async () => {
   const [workflow, builder, packageJson] = await Promise.all([
     readFile(new URL('../../../.github/workflows/release-candidate.yml', import.meta.url), 'utf8'),
     readFile(new URL('../electron-builder.yml', import.meta.url), 'utf8'),
     readFile(new URL('../package.json', import.meta.url), 'utf8'),
   ])
   assert.match(builder, /notarize: true/u)
-  assert.match(workflow, /require-release-signing/u)
-  assert.match(workflow, /verify-signed-candidate/u)
-  assert.match(workflow, /finalize:mac-notarization/u)
+  assert.match(workflow, /Build unsigned candidate bytes/u)
+  assert.doesNotMatch(workflow, /require-release-signing|verify-signed-candidate|finalize:mac-notarization/u)
   assert.match(workflow, /inspect:release-package/u)
   assert.match(workflow, /collect:release-artifacts/u)
   assert.match(workflow, /attest-build-provenance@v3/u)
@@ -119,7 +119,7 @@ test('release workflow fails closed on credentials and performs post-sign trust 
   for (const name of [
     'smoke:installed-candidate', 'collect:release-artifacts',
     'verify:release-attestations', 'generate:pending-release-ledger',
-    'finalize:mac-notarization',
+    'generate:release-manifest',
   ]) assert.equal(typeof scripts[name], 'string')
   const packageScripts = [...workflow.matchAll(/package_script:\s*([^\s]+)/gu)]
     .map(match => match[1])
@@ -129,6 +129,67 @@ test('release workflow fails closed on credentials and performs post-sign trust 
     workflow,
     /npm run \$\{\{ matrix\.package_script \}\} --workspace @nova-audio-agent\/ambient-orb/u,
   )
+})
+
+test('promotion is manual, candidate-bound, main-bound, and publishes npm only after release replacement', async () => {
+  const workflow = await readFile(
+    new URL('../../../.github/workflows/release-promote.yml', import.meta.url),
+    'utf8',
+  )
+  assert.match(workflow, /workflow_dispatch/u)
+  assert.match(workflow, /candidate_run_id/u)
+  assert.match(workflow, /jq -r \.conclusion/u)
+  assert.match(workflow, /git rev-parse origin\/main/u)
+  assert.match(workflow, /npm whoami/u)
+  assert.match(workflow, /git push --force origin refs\/tags\/v0\.1\.0/u)
+  assert.match(workflow, /gh release upload v0\.1\.0 release-artifacts\/\* --clobber/u)
+  assert.match(workflow, /npm publish "\$tarball" --access public/u)
+  assert.ok(workflow.indexOf('gh release upload v0.1.0') < workflow.indexOf('npm publish "$tarball"'))
+  assert.doesNotMatch(workflow, /push:\s*\n\s*tags:/u)
+})
+
+test('release manifest binds every portable and installer byte and emits checksum sidecars', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-release-manifest-')))
+  t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
+  for (const filename of Object.values(RELEASE_ARTIFACT_FILES)) {
+    await writeFile(join(root, filename), `candidate:${filename}`)
+  }
+  const output = join(root, 'release-manifest-v1.json')
+  const manifest = await generateReleaseManifest({
+    artifactRoot: root,
+    commit: 'a'.repeat(40),
+    output,
+  })
+  assert.equal(manifest.version, '0.1.0')
+  assert.equal(manifest.signed, false)
+  assert.equal(manifest.assets.length, Object.keys(RELEASE_ARTIFACT_FILES).length)
+  for (const asset of manifest.assets) {
+    assert.match(await readFile(join(root, `${asset.filename}.sha256`), 'utf8'), new RegExp(asset.sha256, 'u'))
+  }
+  assert.match(await readFile(`${output}.sha256`, 'utf8'), /release-manifest-v1\.json/u)
+})
+
+test('Windows release collection creates a portable zip beside the NSIS installer', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-release-win-'))
+  t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
+  const dist = join(root, 'dist')
+  const out = join(root, 'out')
+  await mkdir(join(dist, 'win-unpacked'), {recursive: true})
+  await writeFile(join(dist, 'win-unpacked', 'Nova Audio Agent Ambient Orb.exe'), 'portable')
+  await writeFile(join(dist, 'installer.exe'), 'installer')
+  const calls = []
+  const records = await collectReleaseArtifacts({
+    targetId: 'win32-x64', distRoot: dist, outputRoot: out,
+  }, {
+    run: input => {
+      calls.push(input)
+      return {status: 0, signal: null, error: undefined}
+    },
+    archiveCreated: async destination => writeFile(destination, 'zip'),
+  })
+  assert.deepEqual(records.map(record => record.target), ['win32-x64:portable', 'win32-x64:nsis'])
+  assert.equal(calls[0].command, 'tar.exe')
+  assert.deepEqual(calls[0].args.slice(0, 3), ['-a', '-c', '-f'])
 })
 
 function workflowRunBodies(workflow) {

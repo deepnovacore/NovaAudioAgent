@@ -1,7 +1,0 @@
-Nova Audio Agent
-Copyright 2026 DeepNovaCore
-
-This product includes an adapted macOS VoiceProcessingIO helper derived from
-qwen-audio-agent. The upstream work is licensed under Apache License 2.0.
-See desktop/ambient-orb/THIRD_PARTY_NOTICES.md for attribution and a summary
-of the local modifications.

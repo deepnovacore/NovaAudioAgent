@@ -68,8 +68,8 @@ Each realtime turn receives only the active Workspace and its active Session, if
 Workspace or Session candidates only on demand and never injects historical candidates into the
 standing turn context. Create, switch, and resume are staged proposals: the next user turn becomes a
 dedicated structured confirmation carrying the exact proposal ID and a JSON boolean. False, a wrong
-ID, or a replay makes no state change. After switching Workspace, ask to list or resume Sessions there. See
-[Multi-project Workspace handoff](multi-project-workspace-handoff.md) for persistence and recovery.
+ID, or a replay makes no state change. After switching Workspace, ask to list or resume Sessions
+there. Persistence and recovery remain bound to the selected Workspace and Session records.
 
 Registry retention is bounded to 200 Sessions per Workspace and 1000 globally: oldest unavailable
 Sessions are pruned first, then inactive ready Sessions, while starting and active Sessions are
