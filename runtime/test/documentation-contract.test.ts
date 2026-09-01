@@ -14,7 +14,7 @@ const currentDocs = [
   'README.zh-CN.md',
   'docs/getting-started.md',
   'docs/getting-started.zh-CN.md',
-  'docs/status.md',
+  'docs/architecture.md',
 ] as const
 
 test('current docs state the Node release truth and do not advertise retired capabilities', async () => {
@@ -29,9 +29,9 @@ test('current docs state the Node release truth and do not advertise retired cap
     assert.doesNotMatch(text, /live (?:DashScope )?smoke[^\n]*(?:landed|pass)|runtime:smoke:qwen[^\n]*pass/iu, file)
     assert.doesNotMatch(text, /v1-mini[^\n]*(?:real|actual) executor[^\n]*(?:proven|pass)|v1-mini path runs locally/iu, file)
   }
-  const status = documents.find(item => item.file === 'docs/status.md')!.text
-  assert.match(status, /Node\.js and TypeScript[^\n]*primary/iu)
-  assert.match(status, /pending external evidence/iu)
+  const gettingStarted = documents.find(item => item.file === 'docs/getting-started.md')!.text
+  assert.match(gettingStarted, /Node\.js and TypeScript[^\n]*only product runtime/iu)
+  assert.match(gettingStarted, /pending external evidence/iu)
 })
 
 test('audio pipeline docs distinguish the selectable topology, credentials, and deferred settings effects', async () => {
@@ -122,11 +122,15 @@ function generatedBlock(document: string): string {
 }
 
 test('current Node Codex and release claims remain exact', async () => {
-  const joined = (await Promise.all(currentDocs.map(file =>
-    readFile(resolve(repositoryRoot, file), 'utf8')))).join('\n')
-  assert.match(joined, /app-server-only/iu)
-  assert.match(joined, /JSONL[^\n]*fixture-parser-only/iu)
-  assert.match(joined, /HA(?:\/| and )AutoGLM[^\n]*retired/iu)
+  const gettingStarted = await readFile(
+    resolve(repositoryRoot, 'docs/getting-started.md'),
+    'utf8',
+  )
+  assert.match(gettingStarted, /Codex is app-server-only; JSONL is\s+fixture-parser-only/iu)
+  assert.match(
+    gettingStarted,
+    /Legacy HA and AutoGLM settings produce\s+a stable, credential-safe migration error/iu,
+  )
 })
 
 test('every production environment name is classified and private names stay private', async () => {
