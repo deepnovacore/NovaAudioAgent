@@ -159,6 +159,7 @@ jobs:
           npm pack ./cli --pack-destination npm-package
           tarball="$(find npm-package -maxdepth 1 -name '*.tgz' -type f)"
           test -n "$tarball"
+          tarball="$(realpath "$tarball")"
           mkdir npm-smoke
           npm install --prefix npm-smoke --ignore-scripts "$tarball"
           npm-smoke/node_modules/.bin/novaaudio --version
@@ -198,6 +199,7 @@ jobs:
         run: |
           set -euo pipefail
           tarball="$(find npm-package -maxdepth 1 -name '*.tgz' -type f)"
+          tarball="$(realpath "$tarball")"
           npm publish "$tarball" --access public
           test "$(npm view nova-audio-agent@0.1.0 version)" = "0.1.0"
           prefix="$(mktemp -d)"

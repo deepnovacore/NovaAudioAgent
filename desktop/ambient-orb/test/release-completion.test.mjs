@@ -255,6 +255,71 @@ test('promotion main refresh preserves candidate ancestry for split-run verifica
   assert.equal(ancestry.status, 0, 'main refresh made the expected commit a shallow boundary')
 })
 
+test('promotion audits and publishes the packed CLI from a canonical local tarball path', {
+  skip: process.platform === 'win32' ? 'promotion package audit job runs on Ubuntu' : false,
+}, async t => {
+  const workflow = await readFile(
+    new URL('../../../.github/workflows/release-promote.yml', import.meta.url),
+    'utf8',
+  )
+  const auditStart = workflow.indexOf('- name: Pack and audit the public npm package')
+  const auditEnd = workflow.indexOf('\n      - name:', auditStart + 1)
+  assert.ok(auditStart >= 0 && auditEnd > auditStart)
+  const tarballAssignments = workflow.slice(auditStart, auditEnd).split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('tarball='))
+  assert.ok(tarballAssignments.length > 0)
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-promote-npm-pack-')))
+  t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
+  const packageDirectory = join(root, 'npm-package')
+  await mkdir(packageDirectory)
+  const cli = fileURLToPath(new URL('../../../cli', import.meta.url))
+  const npmEnvironment = {...process.env, npm_config_cache: join(root, 'npm-cache')}
+  const packed = spawnSync('npm', ['pack', cli, '--pack-destination', packageDirectory], {
+    cwd: root,
+    env: npmEnvironment,
+    encoding: 'utf8',
+    timeout: 10_000,
+  })
+  assert.equal(packed.status, 0, packed.stderr)
+  const installed = spawnSync('/bin/sh', ['-c', [
+    'set -e',
+    ...tarballAssignments,
+    'mkdir npm-smoke',
+    'npm install --prefix npm-smoke --ignore-scripts "$tarball"',
+  ].join('\n')], {
+    cwd: root,
+    env: {...npmEnvironment, GIT_SSH_COMMAND: '/usr/bin/false', GIT_TERMINAL_PROMPT: '0'},
+    encoding: 'utf8',
+    timeout: 10_000,
+  })
+  assert.equal(installed.status, 0, installed.stderr)
+  const installedPackage = JSON.parse(await readFile(
+    join(root, 'npm-smoke/node_modules/nova-audio-agent/package.json'),
+    'utf8',
+  ))
+  assert.equal(installedPackage.version, '0.1.0')
+  const publishStart = workflow.indexOf('- name: Publish and verify nova-audio-agent 0.1.0')
+  const publishEnd = workflow.indexOf('\n      - uses:', publishStart + 1)
+  assert.ok(publishStart >= 0 && publishEnd > publishStart)
+  const publishAssignments = workflow.slice(publishStart, publishEnd).split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('tarball='))
+  assert.ok(publishAssignments.length > 0)
+  const published = spawnSync('/bin/sh', ['-c', [
+    'set -e',
+    ...publishAssignments,
+    'mkdir publish-probe',
+    'npm pack "$tarball" --dry-run --json --pack-destination publish-probe',
+  ].join('\n')], {
+    cwd: root,
+    env: {...npmEnvironment, GIT_SSH_COMMAND: '/usr/bin/false', GIT_TERMINAL_PROMPT: '0'},
+    encoding: 'utf8',
+    timeout: 10_000,
+  })
+  assert.equal(published.status, 0, published.stderr)
+})
+
 test('release manifest binds every portable and installer byte and emits checksum sidecars', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nova-release-manifest-')))
   t.after(() => import('node:fs/promises').then(({rm}) => rm(root, {recursive: true, force: true})))
