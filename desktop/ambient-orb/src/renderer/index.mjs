@@ -31,7 +31,12 @@ import { OrbDragGesture } from './drag-gesture.mjs'
 import { createOrbVisualSafe } from './orb-visual.mjs'
 import { OrbPaletteHoverController } from './palette-hover.mjs'
 import { ConfirmationCountdown } from './confirmation-countdown.mjs'
-import { ConfirmationDecisionController } from './confirmation-controls.mjs'
+import {
+  CodexApprovalDecisionController,
+  ConfirmationDecisionController,
+  ConfirmationPresentationController,
+  parseCodexApprovalMessage,
+} from './confirmation-controls.mjs'
 import { deriveOrbState } from './state.mjs'
 import { BackendReconnectController } from './backend-reconnect.mjs'
 
@@ -135,12 +140,14 @@ const axes = {
   workspace: '',
   session: '',
   pendingConfirmation: false,
+  pendingConfirmationKind: null,
   pendingConfirmationBusy: false,
   pendingConfirmationId: null,
   pendingAction: null,
   pendingWorkspace: '',
   pendingSession: '',
   pendingExpiresInSeconds: null,
+  pendingOperation: '',
   connected: false,
   backendState: 'stopped',
   microphone: 'checking',
@@ -171,6 +178,8 @@ const confirmationCountdown = new ConfirmationCountdown({
 })
 
 const confirmationDecision = new ConfirmationDecisionController({send})
+const codexApprovalDecision = new CodexApprovalDecisionController({send})
+const confirmationPresentation = new ConfirmationPresentationController()
 let lastReportedConfirmationMode = null
 
 let socket
@@ -265,7 +274,10 @@ function render() {
     window.novaAudioAgentDesktop.windowLayout.setConfirmationMode(state.confirmationVisible)
     lastReportedConfirmationMode = state.confirmationVisible
   }
-  const decisionEnabled = confirmationDecision.enabled
+  const activeDecision = axes.pendingConfirmationKind === 'codex'
+    ? codexApprovalDecision
+    : confirmationDecision
+  const decisionEnabled = activeDecision.enabled
     && axes.connected
     && !axes.pendingConfirmationBusy
   confirmationActions.hidden = !axes.pendingConfirmation || axes.pendingConfirmationId === null
@@ -762,31 +774,76 @@ async function handleControl(message) {
           && (pendingAction !== 'resume_session' || pendingSession !== null)))
         : !pendingMetadata)
     if (valid) {
-      const wasPending = axes.pendingConfirmation
       axes.workspace = workspace || ''
       axes.session = session || ''
-      axes.pendingConfirmation = message.pending_confirmation
-      axes.pendingConfirmationBusy = pendingBusy
-      axes.pendingConfirmationId = message.pending_confirmation ? pendingConfirmationId ?? null : null
-      axes.pendingAction = pendingAction
-      axes.pendingWorkspace = pendingWorkspace || ''
-      axes.pendingSession = pendingSession || ''
-      axes.pendingExpiresInSeconds = pendingExpires
-      confirmationDecision.sync({
-        pending: message.pending_confirmation,
-        proposalId: axes.pendingConfirmationId,
-        busy: pendingBusy,
-      })
-      if (message.pending_confirmation) {
-        confirmationCountdown.start(pendingExpires)
-        const state = deriveOrbState(axes)
-        setText(
-          confirmationAnnouncement,
-          `${state.confirmationOperation}；尚未执行，需要你的确认。`,
-        )
+      const admitted = confirmationPresentation.sync('project', message.pending_confirmation)
+      if (!admitted) {
+        confirmationDecision.sync({pending: false, proposalId: null})
       } else {
-        confirmationCountdown.stop()
-        if (wasPending) setText(confirmationAnnouncement, '项目确认已结束。')
+        const wasPending = axes.pendingConfirmation
+        axes.pendingConfirmation = message.pending_confirmation
+        axes.pendingConfirmationKind = message.pending_confirmation ? 'project' : null
+        axes.pendingConfirmationBusy = pendingBusy
+        axes.pendingConfirmationId = message.pending_confirmation
+          ? pendingConfirmationId ?? null
+          : null
+        axes.pendingAction = pendingAction
+        axes.pendingWorkspace = pendingWorkspace || ''
+        axes.pendingSession = pendingSession || ''
+        axes.pendingExpiresInSeconds = pendingExpires
+        axes.pendingOperation = ''
+        confirmationDecision.sync({
+          pending: message.pending_confirmation,
+          proposalId: axes.pendingConfirmationId,
+          busy: pendingBusy,
+        })
+        if (message.pending_confirmation) {
+          confirmationCountdown.start(pendingExpires)
+          const state = deriveOrbState(axes)
+          setText(
+            confirmationAnnouncement,
+            `${state.confirmationOperation}；尚未执行，需要你的确认。`,
+          )
+        } else {
+          confirmationCountdown.stop()
+          if (wasPending) setText(confirmationAnnouncement, '项目确认已结束。')
+        }
+      }
+    }
+  } else if (message.type === 'codex.approval') {
+    const approval = parseCodexApprovalMessage(message)
+    if (approval !== null) {
+      const admitted = confirmationPresentation.sync('codex', approval.pending_approval)
+      if (!admitted) {
+        codexApprovalDecision.sync({pending: false, approvalId: null})
+      } else {
+        const wasPending = axes.pendingConfirmation
+        axes.pendingConfirmation = approval.pending_approval
+        axes.pendingConfirmationKind = approval.pending_approval ? 'codex' : null
+        axes.pendingConfirmationBusy = approval.pending_approval_busy
+        axes.pendingConfirmationId = approval.pending_approval
+          ? approval.pending_approval_id
+          : null
+        axes.pendingAction = null
+        axes.pendingWorkspace = ''
+        axes.pendingSession = ''
+        axes.pendingExpiresInSeconds = approval.expires_in_seconds
+        axes.pendingOperation = approval.operation
+        codexApprovalDecision.sync({
+          pending: approval.pending_approval,
+          approvalId: axes.pendingConfirmationId,
+          busy: approval.pending_approval_busy,
+        })
+        if (approval.pending_approval) {
+          confirmationCountdown.start(approval.expires_in_seconds)
+          setText(
+            confirmationAnnouncement,
+            `${approval.operation}；尚未执行，需要你的确认。`,
+          )
+        } else {
+          confirmationCountdown.stop()
+          if (wasPending) setText(confirmationAnnouncement, 'Codex 授权确认已结束。')
+        }
       }
     }
   } else if (message.type === 'error') {
@@ -849,6 +906,7 @@ function resetRendererConnection(processReplaced, {closeSocket = true} = {}) {
   axes.connected = false
   axes.error = ''
   confirmationDecision.deliveryLost()
+  codexApprovalDecision.deliveryLost()
   alertTone.stop()
   if (processReplaced) playback.backendExited()
   else playback.disconnect()
@@ -1052,10 +1110,16 @@ speakerToggle.addEventListener('click', () => { void toggleOutputMuted() })
 cameraToggle.addEventListener('click', () => { void cameraToggleController.toggle() })
 openSettingsButton.addEventListener('click', () => window.novaAudioAgentDesktop.orbMenu.openSettings?.())
 confirmationConfirm.addEventListener('click', () => {
-  if (confirmationDecision.decide(true)) render()
+  const decision = axes.pendingConfirmationKind === 'codex'
+    ? codexApprovalDecision
+    : confirmationDecision
+  if (decision.decide(true)) render()
 })
 confirmationCancel.addEventListener('click', () => {
-  if (confirmationDecision.decide(false)) render()
+  const decision = axes.pendingConfirmationKind === 'codex'
+    ? codexApprovalDecision
+    : confirmationDecision
+  if (decision.decide(false)) render()
 })
 window.addEventListener('beforeunload', () => {
   stopConfirmationPlacement()

@@ -67,6 +67,10 @@ function serviceHarness(): ServiceHarness {
         calls.push(`project-decision:${proposalId}:${confirmed}`)
         return Promise.resolve()
       },
+      codexApprovalDecision: (approvalId, approved) => {
+        calls.push(`codex-approval:${approvalId}:${approved}`)
+        return true
+      },
     },
   }
 }

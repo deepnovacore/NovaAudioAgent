@@ -39,6 +39,7 @@ import {
   type ConfirmedProjectOperation,
   type ProjectConfirmationView,
 } from '../src/realtime/project-confirmation.js'
+import {CodexApprovalController} from '../src/realtime/codex-approval.js'
 import { PlaybackRegistry } from '../src/playback.js'
 import { compileToolSchema } from '../src/tool-schema.js'
 
@@ -638,6 +639,7 @@ function pipelineService(options: {
   readonly parkProviderEvents?: boolean
   readonly beforeInjectConfirmation?: () => Promise<void>
   readonly beforeCancelResponse?: () => Promise<void>
+  readonly withCodexApproval?: boolean
 } = {}): {
   readonly service: RealtimeService
   readonly actions: string[]
@@ -645,6 +647,7 @@ function pipelineService(options: {
   readonly session: RealtimeSession
   readonly clock: VirtualClock
   readonly diagnostics: string[]
+  readonly codexApproval: CodexApprovalController | null
 } {
   const manifest = options.projectTool ? CODEX_PROJECT_MANIFEST : executorManifestSchema.parse({
     name: 'codex',
@@ -688,6 +691,9 @@ function pipelineService(options: {
     idSeq += 1
     return `id-${idSeq}`
   }
+  const codexApproval = options.withCodexApproval === true
+    ? new CodexApprovalController({clock, idFactory: nextId})
+    : null
   const playback = new PlaybackRegistry({
     idFactory: nextId,
     onFrame: () => undefined,
@@ -793,13 +799,14 @@ function pipelineService(options: {
       tools: compileToolSchema([manifest], {includeMemoryRecall: options.includeRecall ?? false}),
       idFactory: nextId,
     }),
+    ...(codexApproval === null ? {} : {codexApproval}),
     idFactory: nextId,
     // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent optional from
     // one explicitly set to undefined, and the service's contract is the former.
     ...(options.onCaption === undefined ? {} : {onCaption: options.onCaption}),
     onDiagnostic: line => diagnostics.push(line),
   })
-  return {service, actions, injectedContents, session, clock, diagnostics}
+  return {service, actions, injectedContents, session, clock, diagnostics, codexApproval}
 }
 
 test('a tool call is admitted against the user turn that justifies it', async () => {
@@ -4452,6 +4459,185 @@ test('a cancel rejection for a turn that already spoke is ignored', async () => 
     before,
     'a turn that already spoke is not replaced under',
   )
+})
+
+function offerCodexCommand(
+  controller: CodexApprovalController,
+  signal = new AbortController().signal,
+): Promise<{readonly decision: 'accept' | 'decline'} | null> {
+  return controller.offer({
+    kind: 'command_execution',
+    local_detail: {
+      kind: 'command_execution',
+      command: 'Remove-Item C:\\private\\raw-command.txt',
+      cwd: 'C:\\private\\raw-cwd',
+    },
+    operation_summary: 'Codex 请求执行一条工作区命令。',
+  }, signal)
+}
+
+async function codexApprovalTurn(
+  service: RealtimeService,
+  input: {
+    readonly approvalId: string
+    readonly approved: JsonValue
+    readonly itemId: string
+    readonly responseId: string
+    readonly transcript: string
+    readonly callId?: string
+  },
+): Promise<void> {
+  await reserveConfirmationTurn(service, {
+    itemId: input.itemId,
+    responseId: input.responseId,
+    transcript: input.transcript,
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    call_id: input.callId ?? `call-${input.itemId}`,
+    item_id: `function-${input.itemId}`,
+    response_id: input.responseId,
+    name: 'codex__confirm_codex_approval',
+    arguments: {approval_id: input.approvalId, approved: input.approved},
+  })
+}
+
+async function finishProviderResponse(service: RealtimeService, responseId: string): Promise<void> {
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: responseId,
+    status: 'completed',
+    reason: 'completed',
+  })
+}
+
+test('a Codex approval prompt is a neutral host fact with no local command detail', async () => {
+  const {service, codexApproval} = pipelineService({
+    projectTool: true,
+    withCodexApproval: true,
+  })
+  assert.ok(codexApproval !== null)
+  await service.connect()
+
+  const waiting = offerCodexCommand(codexApproval)
+  const approvalId = codexApproval.view.pending_approval_id
+  assert.ok(approvalId !== undefined)
+  const prompt = service.queuedHostItems().find(item => (
+    item.intent.item.event_id === `codex-approval:${approvalId}:requested`
+  ))?.intent.item.content
+  assert.notEqual(prompt, undefined)
+  assert.deepEqual(JSON.parse(prompt!), {
+    approval_id: approvalId,
+    kind: 'command_execution',
+    operation_summary: 'Codex 请求执行一条工作区命令。',
+    response_instruction: '只询问用户是否同意或拒绝；不要朗读 approval_id；表达含糊时自然追问。',
+  })
+  assert.doesNotMatch(prompt!, /Remove-Item|raw-command|raw-cwd|private/u)
+
+  assert.equal(service.codexApprovalDecision(approvalId, false), true)
+  assert.deepEqual(await waiting, {decision: 'decline'})
+})
+
+test('Codex approval voice authority requires a post-request final user item and matching decision', async () => {
+  const {service, codexApproval, injectedContents} = pipelineService({
+    projectTool: true,
+    withCodexApproval: true,
+  })
+  assert.ok(codexApproval !== null)
+  await service.connect()
+
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-no-pending', item_id: 'fn-no-pending',
+    response_id: 'response-no-pending', name: 'codex__confirm_codex_approval',
+    arguments: {approval_id: 'stale-public-id', approved: true},
+  })
+  assert.match(injectedContents.at(-1) ?? '', /"code":"approval_not_pending"/u)
+
+  await reserveConfirmationTurn(service, {
+    itemId: 'before-request', responseId: 'response-before', transcript: '确认',
+  })
+  const waiting = offerCodexCommand(codexApproval)
+  const approvalId = codexApproval.view.pending_approval_id!
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1, call_id: 'call-before', item_id: 'fn-before',
+    response_id: 'response-before', name: 'codex__confirm_codex_approval',
+    arguments: {approval_id: approvalId, approved: true},
+  })
+  assert.equal(codexApproval.pending, true, 'a user item created before the request has no authority')
+  await finishProviderResponse(service, 'response-before')
+
+  await codexApprovalTurn(service, {
+    approvalId, approved: true, itemId: 'ambiguous', responseId: 'response-ambiguous',
+    transcript: '我再想想',
+  })
+  assert.equal(codexApproval.pending, true, 'ambiguous speech cannot be promoted into approval')
+  await finishProviderResponse(service, 'response-ambiguous')
+
+  await codexApprovalTurn(service, {
+    approvalId: 'stale-public-id', approved: true, itemId: 'wrong-id',
+    responseId: 'response-wrong-id', transcript: '确认',
+  })
+  assert.equal(codexApproval.pending, true, 'a wrong public ID cannot consume the request')
+  await finishProviderResponse(service, 'response-wrong-id')
+
+  await codexApprovalTurn(service, {
+    approvalId, approved: true, itemId: 'explicit-decline',
+    responseId: 'response-mismatch', transcript: '拒绝',
+  })
+  assert.equal(codexApproval.pending, true, 'the tool boolean cannot contradict the explicit user decision')
+  await finishProviderResponse(service, 'response-mismatch')
+
+  await codexApprovalTurn(service, {
+    approvalId, approved: false, itemId: 'explicit-decline-valid',
+    responseId: 'response-valid', transcript: '拒绝。',
+  })
+  assert.deepEqual(await waiting, {decision: 'decline'})
+  assert.match(injectedContents.at(-1) ?? '', /"code":"approval_declined"/u)
+})
+
+test('Codex approval click and voice share one first-valid-decision race', async () => {
+  const {service, codexApproval} = pipelineService({projectTool: true, withCodexApproval: true})
+  assert.ok(codexApproval !== null)
+  await service.connect()
+
+  const clickWaiting = offerCodexCommand(codexApproval)
+  const clickId = codexApproval.view.pending_approval_id!
+  assert.equal(service.codexApprovalDecision(clickId, true), true)
+  const clickResolution = await clickWaiting
+  assert.deepEqual(clickResolution, {decision: 'accept'})
+  assert.equal(service.codexApprovalDecision(clickId, false), false)
+  assert.ok(clickResolution !== null)
+  assert.equal(codexApproval.consume(clickResolution), 'accept')
+
+  const voiceWaiting = offerCodexCommand(codexApproval)
+  const voiceId = codexApproval.view.pending_approval_id!
+  await codexApprovalTurn(service, {
+    approvalId: voiceId, approved: false, itemId: 'voice-wins',
+    responseId: 'response-voice-wins', transcript: '拒绝',
+  })
+  const voiceResolution = await voiceWaiting
+  assert.deepEqual(voiceResolution, {decision: 'decline'})
+  assert.equal(service.codexApprovalDecision(voiceId, true), false)
+})
+
+test('Codex approval expiry and provider reconnect revoke pending voice authority', async () => {
+  const expired = pipelineService({projectTool: true, withCodexApproval: true})
+  assert.ok(expired.codexApproval !== null)
+  await expired.service.connect()
+  const expiredWaiting = offerCodexCommand(expired.codexApproval)
+  expired.clock.advanceTo(expired.codexApproval.view.expires_at!)
+  assert.deepEqual(await expiredWaiting, {decision: 'decline'})
+  assert.equal(expired.codexApproval.pending, false)
+
+  const reconnected = pipelineService({projectTool: true, withCodexApproval: true})
+  assert.ok(reconnected.codexApproval !== null)
+  await reconnected.service.connect()
+  const reconnectWaiting = offerCodexCommand(reconnected.codexApproval)
+  assert.equal(await reconnected.service.reconnectForTest(1), true)
+  assert.deepEqual(await reconnectWaiting, {decision: 'decline'})
+  assert.equal(reconnected.codexApproval.pending, false)
 })
 
 /**

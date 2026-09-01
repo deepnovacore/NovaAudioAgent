@@ -162,6 +162,11 @@ const ordinaryDesktopControlSchema = z.discriminatedUnion('type', [
     confirmed: z.boolean(),
   }).strict(),
   z.object({
+    type: z.literal('codex.approval_decision'),
+    approval_id: identifierSchema.refine(value => codePointLengthLikePython(value) <= 128),
+    approved: z.boolean(),
+  }).strict(),
+  z.object({
     type: z.literal('clock.pong'),
     ping_id: identifierSchema,
     t_render_ms: z.number().finite().nonnegative(),

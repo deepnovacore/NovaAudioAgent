@@ -103,6 +103,10 @@ function harness(
       calls.push(`project-decision:${proposalId}:${confirmed}`)
       return Promise.resolve()
     },
+    codexApprovalDecision: (approvalId, approved) => {
+      calls.push(`codex-approval:${approvalId}:${approved}`)
+      return true
+    },
   }
   const {withoutClock, codexState, ...bridgeOverrides} = overrides
   // Consumed above as the service's initial state; not a bridge option.
@@ -499,6 +503,33 @@ test('a banner decision carries the exact proposal binding to the service', asyn
   ])
   await assert.rejects(() => bridge.receive(
     '{"type":"project.confirmation_decision","proposal_id":"proposal-1","confirmed":true,"extra":1}',
+    {authenticated: true},
+  ), DesktopProtocolError)
+})
+
+test('a Codex approval frame and click use an independent strict bridge path', async () => {
+  const {bridge, calls, clock} = harness()
+  bridge.markAuthenticated()
+  assert.equal(bridge.takeNextFrame(), '{"type":"codex.state","state":"idle"}')
+  bridge.onCodexApproval({
+    pending_approval: true,
+    pending_approval_busy: false,
+    pending_approval_id: 'approval-1',
+    kind: 'file_change',
+    local_detail: {
+      kind: 'file_change', changes: [{change: 'update', path: 'src/a.ts', move_path: null}],
+    },
+    operation_summary: 'Codex 请求修改工作区文件。',
+    expires_at: clock.now() + 60,
+  })
+  assert.match(String(bridge.takeNextFrame()), /"type":"codex\.approval".*"src\/a\.ts"/u)
+  await bridge.receive(
+    '{"type":"codex.approval_decision","approval_id":"approval-1","approved":true}',
+    {authenticated: true},
+  )
+  assert.deepEqual(calls, ['codex-approval:approval-1:true'])
+  await assert.rejects(() => bridge.receive(
+    '{"type":"codex.approval_decision","approval_id":"approval-1","approved":true,"extra":1}',
     {authenticated: true},
   ), DesktopProtocolError)
 })

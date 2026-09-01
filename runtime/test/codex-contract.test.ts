@@ -68,7 +68,7 @@ test('base, live, and project manifests pin exact immutable public operations an
   assert.deepEqual(CODEX_BASE_MANIFEST.ops.map(op => op.name), ['run', 'status'])
   assert.deepEqual(CODEX_LIVE_MANIFEST.ops.map(op => op.name), ['run', 'steer', 'status'])
   assert.deepEqual(CODEX_PROJECT_MANIFEST.ops.map(op => op.name), [
-    'project', 'confirm_project_action', 'steer', 'status',
+    'project', 'confirm_project_action', 'confirm_codex_approval', 'steer', 'status',
   ])
   for (const manifest of [CODEX_BASE_MANIFEST, CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST]) {
     assert.equal(manifest.name, 'codex')
@@ -104,7 +104,8 @@ test('project mode exposes project-only public tools and the confirmation schema
   const compiled = compileToolSchema([CODEX_PROJECT_MANIFEST])
   const codexBindings = [...compiled.bindings.keys()].filter(name => name.startsWith('codex__'))
   assert.deepEqual(codexBindings, [
-    'codex__project', 'codex__confirm_project_action', 'codex__steer', 'codex__status',
+    'codex__project', 'codex__confirm_project_action', 'codex__confirm_codex_approval',
+    'codex__steer', 'codex__status',
   ])
   assert.equal(compiled.bindings.has('codex__run'), false)
   const projectSchema = compiled.schemas.find(schema => {
@@ -208,12 +209,43 @@ test('project mode exposes project-only public tools and the confirmation schema
   assert.equal(validateCodexRequest('project', 'confirm_project_action', {
     proposal_id: 'proposal-1', confirmed: 'true',
   }).ok, false)
+  const approvalSchema = compiled.schemas.find(schema => {
+    const declaration = schema.function
+    return typeof declaration === 'object'
+      && declaration !== null
+      && !Array.isArray(declaration)
+      && declaration.name === 'codex__confirm_codex_approval'
+  })
+  const approvalDeclaration = record(approvalSchema?.function)
+  assert.deepEqual(approvalDeclaration.parameters, {
+    type: 'object',
+    properties: {
+      approval_id: {type: 'string', minLength: 1, maxLength: 128},
+      approved: {type: 'boolean'},
+    },
+    required: ['approval_id', 'approved'],
+    additionalProperties: false,
+  })
+  assert.match(String(approvalDeclaration.description), /当前待处理/u)
+  assert.match(String(approvalDeclaration.description), /明确同意或明确拒绝/u)
+  assert.deepEqual(validateCodexRequest('project', 'confirm_codex_approval', {
+    approval_id: 'approval-1', approved: false,
+  }), {ok: true, value: {approval_id: 'approval-1', approved: false}})
+  for (const invalid of [
+    {approval_id: '', approved: true},
+    {approval_id: 'x'.repeat(129), approved: true},
+    {approval_id: 'approval-1', approved: 'true'},
+    {approval_id: 'approval-1', approved: true, extra: false},
+  ]) {
+    assert.equal(validateCodexRequest('project', 'confirm_codex_approval', invalid).ok, false)
+  }
   assert.equal(CODEX_PROJECT_MANIFEST.ops[0]?.deadline_budget, 600)
   assert.equal(CODEX_PROJECT_MANIFEST.ops[1]?.deadline_budget, 10)
-  assert.equal(CODEX_PROJECT_MANIFEST.ops[2]?.deadline_budget, 30)
-  assert.equal(CODEX_PROJECT_MANIFEST.ops[3]?.deadline_budget, 5)
+  assert.equal(CODEX_PROJECT_MANIFEST.ops[2]?.deadline_budget, 10)
+  assert.equal(CODEX_PROJECT_MANIFEST.ops[3]?.deadline_budget, 30)
+  assert.equal(CODEX_PROJECT_MANIFEST.ops[4]?.deadline_budget, 5)
   assert.deepEqual(CODEX_PROJECT_MANIFEST.ops[0]?.sensitive_params, ['work_order'])
-  assert.deepEqual(CODEX_PROJECT_MANIFEST.ops[2]?.sensitive_params, ['instruction'])
+  assert.deepEqual(CODEX_PROJECT_MANIFEST.ops[3]?.sensitive_params, ['instruction'])
 })
 
 test('base and live request validators use primitive strings, Python strip, and code points', () => {

@@ -159,6 +159,9 @@ export function deriveOrbState(input) {
 }
 
 function confirmationOperation(input) {
+  if (typeof input.pendingOperation === 'string' && input.pendingOperation !== '') {
+    return input.pendingOperation
+  }
   const workspace = typeof input.pendingWorkspace === 'string' ? input.pendingWorkspace : ''
   const session = typeof input.pendingSession === 'string' ? input.pendingSession : ''
   if (input.pendingAction === 'create_workspace' && workspace) {

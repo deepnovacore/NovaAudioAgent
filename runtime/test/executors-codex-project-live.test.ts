@@ -534,13 +534,15 @@ test('project manifest and tool schema preserve exact flat operation order and s
   const adapter = new ProjectCodexAdapter({} as never)
   assert.equal(adapter.manifest, CODEX_PROJECT_MANIFEST)
   assert.deepEqual(adapter.manifest.ops.map(op => op.name), [
-    'project', 'confirm_project_action', 'steer', 'status',
+    'project', 'confirm_project_action', 'confirm_codex_approval', 'steer', 'status',
   ])
-  assert.deepEqual([...compileToolSchema([adapter.manifest]).bindings.keys()].slice(-4), [
-    'codex__project', 'codex__confirm_project_action', 'codex__steer', 'codex__status',
+  assert.deepEqual([...compileToolSchema([adapter.manifest]).bindings.keys()].slice(-5), [
+    'codex__project', 'codex__confirm_project_action', 'codex__confirm_codex_approval',
+    'codex__steer', 'codex__status',
   ])
   assert.deepEqual(adapter.manifest.ops[0]?.sensitive_params, ['work_order'])
   assert.deepEqual(adapter.manifest.ops[1]?.sensitive_params, [])
+  assert.deepEqual(adapter.manifest.ops[2]?.sensitive_params, [])
 })
 
 test('project create proposal validates without mutating state or constructing transport', async () => {

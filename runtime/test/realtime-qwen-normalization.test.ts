@@ -331,6 +331,15 @@ test('Qwen project instructions route the six actions and structured confirmatio
   assert.doesNotMatch(FRONTEND_INSTRUCTIONS, /确认语音由 host 判定/u)
 })
 
+test('Qwen Codex approval instructions require an exact explicit decision without exposing detail', () => {
+  assert.match(FRONTEND_INSTRUCTIONS, /codex__confirm_codex_approval/u)
+  assert.match(FRONTEND_INSTRUCTIONS, /approval_id.*原样复制/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /明确同意.*approved=true/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /明确拒绝.*approved=false/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /含糊.*不得调用.*自然追问/su)
+  assert.match(FRONTEND_INSTRUCTIONS, /operation_summary.*中性.*不得推断/su)
+})
+
 test('Qwen project instructions calibrate clarification before a new coding dispatch', () => {
   // Break caught: a broad coding noun phrase is treated as ready and dispatched before the
   // user has supplied the material scope or a success boundary.

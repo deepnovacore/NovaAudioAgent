@@ -20,6 +20,7 @@ import {
   type BuildProductionRealtimeAssemblyOptions,
 } from './production-realtime-assembly.js'
 import {createRealtimeTelemetry} from './realtime/telemetry.js'
+import type {CodexApprovalView} from './realtime/codex-approval.js'
 
 type UtilityProcess = NodeJS.Process & {readonly parentPort?: DesktopStopParentSource}
 
@@ -53,6 +54,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
       onDiagnostic: code => onDiagnostic(`[runtime-diagnostic] ${code}`),
     })
     const codexConfig = resolveCodexHostConfig(settings, codexHost.catalog)
+    let publishCodexApproval: (view: CodexApprovalView) => void = () => undefined
     const codexResource = codexConfig === null
       ? null
       : await createCodexAssemblyResource({
@@ -61,6 +63,9 @@ process.exitCode = await runDesktopEntryWithStopSources({
           transportFactory: codexHost.transportFactory,
           clock,
           idFactory: () => randomUUID().replaceAll('-', ''),
+          codexApprovalBroker: {
+            publish: view => { publishCodexApproval(view) },
+          },
           ...(codexHost.projectHost === null ? {} : {projectHost: codexHost.projectHost}),
         })
     if (codexResource !== null) ownership.own(() => codexResource.close())
@@ -72,6 +77,9 @@ process.exitCode = await runDesktopEntryWithStopSources({
       ...(codexResource?.projectView === null || codexResource === null
         ? {}
         : {projectView: codexResource.projectView}),
+      ...(codexResource?.approvalController === null || codexResource === null
+        ? {}
+        : {approvalView: codexResource.approvalController.view}),
       buildRealtime: (callbacks, transport) => {
         const frameSource = new ChromiumFrameSource({
           source: camera.source,
@@ -90,6 +98,7 @@ process.exitCode = await runDesktopEntryWithStopSources({
         return buildProductionRealtimeAssembly(realtimeOptions)
       },
     })
+    publishCodexApproval = view => { composition.desktop.bridge.onCodexApproval(view) }
     return {
       ...composition,
       closeAuxiliary: () => telemetry.close(),

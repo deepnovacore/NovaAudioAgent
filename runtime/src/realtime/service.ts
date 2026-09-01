@@ -39,6 +39,7 @@ import type {
   ProjectConfirmationController,
   ProjectConfirmationView,
 } from './project-confirmation.js'
+import type {CodexApprovalController, CodexApprovalView} from './codex-approval.js'
 import type {
   HostContextItem,
   HostResponseIntent,
@@ -98,6 +99,7 @@ import type { RealtimeTelemetry } from './telemetry.js'
 import {UserOriginBindingLedger} from './user-origin-binding.js'
 
 const PROJECT_CONFIRMATION_TOOL = 'codex__confirm_project_action'
+const CODEX_APPROVAL_TOOL = 'codex__confirm_codex_approval'
 const PROJECT_CONFIRMATION_CARRIER_RELEASE_TIMEOUT_S = 3
 
 interface BoundToolOrigin {
@@ -138,6 +140,53 @@ function projectConfirmationDecisionArguments(
     || typeof confirmed.value !== 'boolean'
   ) return null
   return {proposalId: proposal.value, confirmed: confirmed.value}
+}
+
+function codexApprovalDecisionArguments(
+  value: unknown,
+): {readonly approvalId: string; readonly approved: boolean} | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  if (Object.getPrototypeOf(value) !== Object.prototype) return null
+  const keys = Reflect.ownKeys(value)
+  if (keys.length !== 2 || !keys.includes('approval_id') || !keys.includes('approved')) return null
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  const approval = descriptors.approval_id
+  const approved = descriptors.approved
+  if (
+    approval === undefined
+    || approved === undefined
+    || !('value' in approval)
+    || !('value' in approved)
+    || typeof approval.value !== 'string'
+    || approval.value === ''
+    || codePointLengthLikePython(approval.value) > 128
+    || typeof approved.value !== 'boolean'
+  ) return null
+  return {approvalId: approval.value, approved: approved.value}
+}
+
+function explicitCodexApprovalDecision(text: string): boolean | null {
+  const ignored = new Set([
+    ' ', '\t', '\r', '\n', '，', '。', '！', '？', '、', '；', '：',
+    ',', '.', '!', '?', ';', ':', '“', '”', '"', "'", '‘', '’',
+  ])
+  let normalized = ''
+  for (const character of stripLikePython(text)) {
+    if (!ignored.has(character)) normalized += character
+  }
+  if (new Set([
+    '同意', '确认', '确认执行', '批准', '允许', '允许执行',
+    'yes', 'Yes', 'YES', 'approve', 'Approve', 'APPROVE', 'approved', 'Approved', 'APPROVED',
+    'confirm', 'Confirm', 'CONFIRM', 'allow', 'Allow', 'ALLOW', 'goahead', 'GoAhead', 'GOAHEAD',
+  ]).has(normalized)) return true
+  if (new Set([
+    '拒绝', '不同意', '不批准', '不允许', '取消', '不要执行', '别执行', '不执行',
+    'no', 'No', 'NO', 'decline', 'Decline', 'DECLINE', 'declined', 'Declined', 'DECLINED',
+    'reject', 'Reject', 'REJECT', 'cancel', 'Cancel', 'CANCEL',
+    'donotapprove', 'DoNotApprove', 'DONOTAPPROVE',
+    'dontapprove', 'DontApprove', 'DONTAPPROVE',
+  ]).has(normalized)) return false
+  return null
 }
 
 function suggestionSpeechView(content: Readonly<Record<string, JsonValue>>): string {
@@ -248,6 +297,8 @@ export interface RealtimeServiceOptions {
   readonly guardHistoryPairs?: number
   /** Absent means project confirmation is off, and every branch of it is inert. */
   readonly projectConfirmation?: ProjectConfirmationController
+  /** Independent one-shot Codex permission authority; absent on non-brokered transports. */
+  readonly codexApproval?: CodexApprovalController
   readonly commitProjectOperation?: (
     operation: ConfirmedProjectOperation,
   ) => Promise<{
@@ -296,6 +347,7 @@ export class RealtimeService {
   readonly #guardHistoryRecovery: GuardHistoryRecovery
   readonly #guardHistoryPairs: number
   readonly #projectConfirmation: ProjectConfirmationController | undefined
+  readonly #codexApproval: CodexApprovalController | undefined
   readonly #commitProjectOperation:
     | ((operation: ConfirmedProjectOperation) => Promise<{
       readonly accepted: boolean
@@ -415,6 +467,13 @@ export class RealtimeService {
   readonly #projectExpiryBatches: ProjectExpiryBatch[] = []
   #projectExpiryDraining: Promise<void> | null = null
   #unsubscribeProjectExpiry: (() => void) | null = null
+  #unsubscribeCodexApproval: (() => void) | null = null
+  #codexApprovalAuthority: {
+    readonly approvalId: string
+    readonly sessionEpoch: number
+    readonly createdAtUserRevision: number
+  } | null = null
+  readonly #codexApprovalUserDecisions = new Map<string, boolean | null>()
   /**
    * The last progress summary spoken for each delegate.
    *
@@ -467,6 +526,7 @@ export class RealtimeService {
     this.#guardHistoryRecovery = recovery
     this.#guardHistoryPairs = pairs
     this.#projectConfirmation = options.projectConfirmation
+    this.#codexApproval = options.codexApproval
     this.#commitProjectOperation = options.commitProjectOperation
     this.#onProjectView = options.onProjectView
     this.#projectViewProvider = options.projectViewProvider
@@ -477,6 +537,10 @@ export class RealtimeService {
     this.#unsubscribeProjectExpiry = options.projectConfirmation?.observeExpiry(() => {
       this.#projectConfirmationExpired()
     }) ?? null
+    this.#unsubscribeCodexApproval = options.codexApproval?.observe(view => {
+      this.#syncCodexApproval(view)
+    }) ?? null
+    if (options.codexApproval !== undefined) this.#syncCodexApproval(options.codexApproval.view)
   }
 
   get codexState(): CodexState {
@@ -553,9 +617,14 @@ export class RealtimeService {
   async close(): Promise<void> {
     this.#stop.abort()
     this.#invalidateProjectConfirmation('service_closed')
+    this.#invalidateCodexApproval('service_closed')
     if (this.#unsubscribeProjectExpiry !== null) {
       this.#unsubscribeProjectExpiry()
       this.#unsubscribeProjectExpiry = null
+    }
+    if (this.#unsubscribeCodexApproval !== null) {
+      this.#unsubscribeCodexApproval()
+      this.#unsubscribeCodexApproval = null
     }
     this.#projectExpiryBatches.length = 0
     // The drain is shutdown-owned work. A promise cannot be cancelled, so its continuations check the
@@ -708,6 +777,15 @@ export class RealtimeService {
       outcome: outcome.kind,
       state,
     })
+  }
+
+  /** Renderer clicks are direct local-user authority on the same one-shot controller as voice. */
+  codexApprovalDecision(approvalId: string, approved: boolean): boolean {
+    if (typeof approved !== 'boolean') return false
+    return this.#codexApproval?.acceptDecision({
+      approvalId,
+      decision: approved ? 'accept' : 'decline',
+    }) ?? false
   }
 
   async waitStopped(): Promise<void> {
@@ -1542,6 +1620,7 @@ export class RealtimeService {
       if (this.session.sessionEpoch !== requestedEpoch) return false
       const oldEpoch = this.session.sessionEpoch
       this.#invalidateProjectConfirmation('provider_replaced')
+      this.#invalidateCodexApproval('provider_replaced')
       this.#guardPreemption = null
       this.#providerReconnectSourceEpoch = oldEpoch
       await this.session.reconnect({tools: structuredClone(this.#providerSchemas)})
@@ -2272,6 +2351,7 @@ export class RealtimeService {
         this.#clearCaptions()
       } else {
         this.#providerFailed = true
+        this.#invalidateCodexApproval('provider_failed')
         this.#urgentHostResponseOwner = null
         this.#guardPreemption = null
         this.#stop.abort()
@@ -2463,6 +2543,8 @@ export class RealtimeService {
           event.provider_item_id,
         )
       }
+      const approvalId = this.#codexApprovalAuthority?.approvalId
+      if (approvalId !== undefined) this.#removeQueuedCodexApprovalPrompt(approvalId)
       this.#reserveProjectConfirmation(event)
     }
     if (
@@ -2491,6 +2573,9 @@ export class RealtimeService {
       this.#finishContinuation(event)
       this.#finishOrigin(event.response_id)
       const itemId = this.#userOrigins.itemForResponse(event.session_epoch, event.response_id)
+      if (itemId !== undefined) {
+        this.#codexApprovalUserDecisions.delete(callKey(event.session_epoch, itemId))
+      }
       if (
         itemId !== undefined
         && this.#isProjectConfirmationItem(event.session_epoch, itemId)
@@ -2570,6 +2655,7 @@ export class RealtimeService {
         this.#providerReconnectSourceEpoch = null
         const originRef = await this.#bridge.acceptUserTranscript(event.text)
         this.#rememberUserOriginRef(event.session_epoch, event.item_id, originRef)
+        this.#rememberCodexApprovalUserDecision(event)
         this.#awaitingUserOrigin = this.#userOrigins.hasUnboundRevision(
           event.session_epoch,
           this.session.userInputRevision,
@@ -2691,6 +2777,15 @@ export class RealtimeService {
       return
     }
 
+    if (event.name === CODEX_APPROVAL_TOOL) {
+      await this.#handleCodexApprovalDecision(event, {
+        observedProviderResponseId: observedResponseId,
+        originItemId: null,
+        originRef: null,
+      })
+      return
+    }
+
     if (this.#awaitingUserOrigin) {
       // Whether the response this call names is the one the in-flight user turn will answer. If it is
       // not -- a different response, a finished one, or one already fenced -- the call is not waiting
@@ -2752,6 +2847,7 @@ export class RealtimeService {
       return
     }
     this.#providerFailed = true
+    this.#invalidateCodexApproval('task_failed')
     this.#urgentHostResponseOwner = null
     this.#guardPreemption = null
     this.#stop.abort()
@@ -2896,6 +2992,10 @@ export class RealtimeService {
   async #handleBoundToolCall(event: ToolCallReady, origin: BoundToolOrigin): Promise<void> {
     if (event.name === PROJECT_CONFIRMATION_TOOL) {
       await this.#handleProjectConfirmationDecision(event, origin)
+      return
+    }
+    if (event.name === CODEX_APPROVAL_TOOL) {
+      await this.#handleCodexApprovalDecision(event, origin)
       return
     }
     await this.#handleToolCall(event, {
@@ -3411,6 +3511,147 @@ export class RealtimeService {
     if (batch?.phase !== 'collecting') return
     batch.origin_status = this.#originStatus(responseId)
     batch.phase = 'ready'
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Codex permission approval.
+  //
+  // This is deliberately smaller than project confirmation. The Codex controller already owns the
+  // one-shot decision and expiry; this layer only records which post-request final user item can
+  // authorize the dedicated provider function. Renderer clicks call the same controller directly.
+  // ---------------------------------------------------------------------------------------------
+
+  #syncCodexApproval(view: CodexApprovalView): void {
+    if (
+      view.pending_approval
+      && !view.pending_approval_busy
+      && view.pending_approval_id !== undefined
+      && view.kind !== null
+      && view.operation_summary !== null
+    ) {
+      if (this.#projectConfirmation?.pending === true || this.#projectConfirmation?.committing === true) {
+        this.#codexApproval?.invalidate('confirmation_overlap')
+        return
+      }
+      if (this.#codexApprovalAuthority?.approvalId === view.pending_approval_id) return
+      this.#codexApprovalAuthority = {
+        approvalId: view.pending_approval_id,
+        sessionEpoch: this.session.sessionEpoch,
+        createdAtUserRevision: this.session.userInputRevision,
+      }
+      this.#codexApprovalUserDecisions.clear()
+      this.queueHostItem(hostFactIntent({
+        kind: 'final',
+        host_item_id: this.#idFactory(),
+        event_id: `codex-approval:${view.pending_approval_id}:requested`,
+        content: JSON.stringify({
+          approval_id: view.pending_approval_id,
+          kind: view.kind,
+          operation_summary: view.operation_summary,
+          response_instruction: '只询问用户是否同意或拒绝；不要朗读 approval_id；表达含糊时自然追问。',
+        }),
+      }), {priority: USER_PRIORITY - 1, preemptive: false})
+      return
+    }
+    const previousApprovalId = this.#codexApprovalAuthority?.approvalId
+    if (previousApprovalId !== undefined) this.#removeQueuedCodexApprovalPrompt(previousApprovalId)
+    this.#codexApprovalAuthority = null
+    this.#codexApprovalUserDecisions.clear()
+  }
+
+  #removeQueuedCodexApprovalPrompt(approvalId: string): void {
+    const eventId = `codex-approval:${approvalId}:requested`
+    const retained = this.#hostItems.filter(queued => queued.intent.item.event_id !== eventId)
+    if (retained.length !== this.#hostItems.length) {
+      retained.sort(compareQueuedHostResponses)
+      this.#hostItems.length = 0
+      this.#hostItems.push(...retained)
+      this.#recomputePreemptPriority()
+    }
+    const owner = this.#urgentHostResponseOwner
+    if (owner?.event_id === eventId) {
+      if (owner.response_id === null) this.session.armPendingResponseFence()
+      else this.session.suppressResponse(owner.response_id)
+      this.#releaseUrgentHostResponse(owner)
+    }
+    this.#retireProviderHostEvent(eventId)
+  }
+
+  #rememberCodexApprovalUserDecision(event: {
+    readonly session_epoch: number
+    readonly item_id: string
+    readonly text: string
+  }): void {
+    const authority = this.#codexApprovalAuthority
+    const revision = this.#userOrigins.revisionForItem(event.session_epoch, event.item_id)
+    if (
+      authority === null
+      || this.#codexApproval?.pending !== true
+      || authority.sessionEpoch !== event.session_epoch
+      || revision === undefined
+      || revision <= authority.createdAtUserRevision
+    ) return
+    const key = callKey(event.session_epoch, event.item_id)
+    this.#codexApprovalUserDecisions.delete(key)
+    this.#codexApprovalUserDecisions.set(key, explicitCodexApprovalDecision(event.text))
+    while (this.#codexApprovalUserDecisions.size > MAX_TRACKED_TOOL_CALLS) {
+      const oldest = this.#codexApprovalUserDecisions.keys().next()
+      if (oldest.done) break
+      this.#codexApprovalUserDecisions.delete(oldest.value)
+    }
+  }
+
+  async #handleCodexApprovalDecision(
+    event: ToolCallReady,
+    origin: BoundToolOrigin,
+  ): Promise<void> {
+    const controller = this.#codexApproval
+    const authority = this.#codexApprovalAuthority
+    const decision = codexApprovalDecisionArguments(event.arguments)
+    let code = decision === null ? 'approval_invalid' : 'approval_not_pending'
+    let state = 'refused'
+    if (decision !== null && controller?.pending === true && authority !== null) {
+      const itemId = origin.originItemId
+      const explicitDecision = itemId === null
+        ? undefined
+        : this.#codexApprovalUserDecisions.get(callKey(event.session_epoch, itemId))
+      const revision = itemId === null
+        ? undefined
+        : this.#userOrigins.revisionForItem(event.session_epoch, itemId)
+      const authorized = authority.approvalId === decision.approvalId
+        && authority.sessionEpoch === event.session_epoch
+        && itemId !== null
+        && origin.originRef !== null
+        && origin.observedProviderResponseId !== null
+        && event.response_id === origin.observedProviderResponseId
+        && revision !== undefined
+        && revision > authority.createdAtUserRevision
+        && explicitDecision !== undefined
+        && explicitDecision !== null
+        && explicitDecision === decision.approved
+      if (!authorized) {
+        code = 'approval_not_authorized'
+      } else if (controller.acceptDecision({
+        approvalId: decision.approvalId,
+        decision: decision.approved ? 'accept' : 'decline',
+      })) {
+        code = decision.approved ? 'approval_accepted' : 'approval_declined'
+        state = decision.approved ? 'accepted' : 'refused'
+      }
+    }
+    await this.session.injectToolOutput({
+      kind: 'tool_output',
+      host_item_id: this.#idFactory(),
+      event_id: this.#idFactory(),
+      call_id: event.call_id,
+      content: JSON.stringify({code, state}),
+    })
+  }
+
+  #invalidateCodexApproval(reason: string): void {
+    this.#codexApproval?.invalidate(reason)
+    this.#codexApprovalAuthority = null
+    this.#codexApprovalUserDecisions.clear()
   }
 
   // ---------------------------------------------------------------------------------------------

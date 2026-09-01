@@ -86,6 +86,19 @@ test('hides the project row only when neither workspace nor session is known', (
   assert.equal(workspaceOnly.codexMode, 'project')
 })
 
+test('Codex approval can provide a local bounded operation without changing project semantics', () => {
+  const state = deriveOrbState({
+    ...base,
+    pendingConfirmation: true,
+    pendingConfirmationKind: 'codex',
+    pendingOperation: '执行命令：npm test',
+    pendingExpiresInSeconds: 12,
+  })
+  assert.equal(state.confirmationVisible, true)
+  assert.equal(state.confirmationOperation, '执行命令：npm test')
+  assert.match(state.confirmationStatus, /12 秒后自动取消/u)
+})
+
 test('describes workspace reuse as reuse rather than creation', () => {
   const waiting = deriveOrbState({
     ...base,

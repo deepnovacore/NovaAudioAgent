@@ -14,6 +14,7 @@ import {
   buildRealtimeAssembly,
 } from '../src/realtime-assembly.js'
 import { VirtualClock } from '../src/clock.js'
+import {CodexApprovalController} from '../src/realtime/codex-approval.js'
 import {CODEX_LIVE_MANIFEST, CODEX_PROJECT_MANIFEST} from '../src/codex-contract.js'
 import type {CodexAssemblyResource} from '../src/codex-factory.js'
 import {
@@ -2715,6 +2716,52 @@ test('Codex resource starts after provider service and closes after service and 
   assert.ok(actions.indexOf('core:stop') < actions.indexOf('codex:close'))
   await realtime.stop()
   assert.equal(actions.filter(item => item === 'codex:close').length, 1)
+})
+
+test('Codex resource approval authority is wired into the realtime service', async () => {
+  const clock = new VirtualClock()
+  const adapter: ExecutorAdapter = {
+    manifest: CODEX_LIVE_MANIFEST,
+    dispatch: (): Promise<ExecutorHandoff> => Promise.resolve({
+      outcome: 'failed', trust: 'trusted_system', content: {code: 'not_run'},
+    }),
+  }
+  const controller = new CodexApprovalController({clock, idFactory: () => 'approval-1'})
+  const resource: CodexAssemblyResource = {
+    adapter,
+    mode: 'live',
+    projectView: null,
+    approvalPolicy: 'on-request',
+    approvalController: controller,
+    start: () => Promise.resolve(),
+    close: () => Promise.resolve(),
+  }
+  const core = buildAssembly({
+    settings: settingsSchema.parse({executors: ['codex']}),
+    clock,
+    gateway: new NeverCalledGateway(),
+    searchTransport: new NeverCalledSearch(),
+    frameSource: new RecordingFrameSource(),
+    executors: [adapter],
+  })
+  const realtime = buildRealtimeAssembly({
+    core,
+    provider: new AbortAwareProvider(),
+    codexResource: resource,
+    idFactory: () => 'host-1',
+    onDiagnostic: () => undefined,
+  })
+
+  const waiting = controller.offer({
+    kind: 'command_execution',
+    local_detail: {kind: 'command_execution', command: 'npm test', cwd: 'C:\\workspace'},
+    operation_summary: 'Codex 请求执行一条工作区命令。',
+  }, new AbortController().signal)
+  assert.ok(realtime.service.queuedHostItems().some(item => (
+    item.intent.item.event_id === 'codex-approval:approval-1:requested'
+  )))
+  controller.invalidate('test_done')
+  await waiting
 })
 
 test('a failed Codex close remains physically retryable through the realtime owner', async () => {

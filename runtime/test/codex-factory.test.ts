@@ -460,7 +460,7 @@ test('realtime mode always opens one project store and exposes only project tool
 
   assert.equal(resource.mode, 'project')
   assert.deepEqual(resource.adapter.manifest.ops.map(operation => operation.name), [
-    'project', 'confirm_project_action', 'steer', 'status',
+    'project', 'confirm_project_action', 'confirm_codex_approval', 'steer', 'status',
   ])
   assert.equal(compileToolSchema([resource.adapter.manifest]).bindings.has('codex__run'), false)
   assert.deepEqual(resource.projectView, {

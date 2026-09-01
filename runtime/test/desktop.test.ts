@@ -312,6 +312,20 @@ test('desktop accepts only an exact bounded project confirmation decision', () =
   ]) assert.throws(() => parseDesktopControl(JSON.stringify(decision)), /unsupported/u)
 })
 
+test('desktop accepts only an exact bounded Codex approval decision', () => {
+  assert.deepEqual(parseDesktopControl(JSON.stringify({
+    type: 'codex.approval_decision', approval_id: 'approval-1', approved: false,
+  })), {
+    type: 'codex.approval_decision', approval_id: 'approval-1', approved: false,
+  })
+  for (const decision of [
+    {type: 'codex.approval_decision', approval_id: '', approved: true},
+    {type: 'codex.approval_decision', approval_id: 'x'.repeat(129), approved: true},
+    {type: 'codex.approval_decision', approval_id: 'approval-1', approved: 'true'},
+    {type: 'codex.approval_decision', approval_id: 'approval-1', approved: true, extra: 1},
+  ]) assert.throws(() => parseDesktopControl(JSON.stringify(decision)), /unsupported/u)
+})
+
 test('desktop accepts only a strict bounded playback telemetry frame', () => {
   const frame = {
     type: 'playback.telemetry',
