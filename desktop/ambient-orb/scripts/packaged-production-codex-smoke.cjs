@@ -43,6 +43,51 @@ const managedRoot = join(projectRoot, 'workspaces')
 chmodSync(scratch, 0o700)
 
 let stage = 'load_runtime'
+
+function directoryLabel(target) {
+  if (target === scratch) return 'home'
+  if (target === projectRoot) return 'root'
+  if (target === stateRoot) return 'state'
+  if (target === managedRoot) return 'managed'
+  if (target === join(managedRoot, 'default')) return 'workspace'
+  return 'external'
+}
+
+function childLabel(name) {
+  if (name === '.nova-audio-agent') return 'root'
+  if (name === 'state') return 'state'
+  if (name === 'workspaces') return 'managed'
+  if (name === 'default') return 'workspace'
+  return 'external'
+}
+
+function diagnosticDirectoryHost(host) {
+  return Object.freeze({
+    ...host,
+    directoryHandles: Object.freeze({
+      open(target) {
+        stage = `host_project_directories_open_${directoryLabel(target)}`
+        return host.directoryHandles.open(target)
+      },
+    }),
+    rootFiles: Object.freeze({
+      ...host.rootFiles,
+      mkdirAt(root, name) {
+        stage = `host_project_directories_create_${childLabel(name)}`
+        return host.rootFiles.mkdirAt(root, name)
+      },
+    }),
+    mkdirPrivateAt(root, name) {
+      stage = `host_project_directories_create_${childLabel(name)}`
+      return host.mkdirPrivateAt(root, name)
+    },
+    protectDirectoryAt(root, name, child) {
+      stage = `host_project_directories_protect_${childLabel(name)}`
+      return host.protectDirectoryAt(root, name, child)
+    },
+  })
+}
+
 void (async () => {
   const [
     configModule,
@@ -83,11 +128,12 @@ void (async () => {
   assert.notEqual(projectHost.projectHost, null, 'packaged_project_native_unavailable')
   if (process.platform === 'win32') {
     stage = 'host_project_directories'
+    const directoryHost = diagnosticDirectoryHost(projectHost.projectHost)
     await projectDirectoriesModule.ensurePrivateProjectDirectories({
       config: {root: projectRoot, stateRoot, managedRoot, workspace},
       home: scratch,
       platform: process.platform,
-      nativeHost: projectHost.projectHost,
+      nativeHost: directoryHost,
       pathApi: path,
       mkdir,
     })

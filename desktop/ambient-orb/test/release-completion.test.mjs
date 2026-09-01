@@ -111,7 +111,13 @@ test('release candidate explicitly builds unsigned bytes and keeps trust-bound s
   assert.doesNotMatch(workflow, /attest-build-provenance|id-token:|attestations:/u)
   assert.match(workflow, /generate:pending-release-ledger/u)
   assert.match(workflow, /node desktop\/ambient-orb\/node_modules\/electron\/install\.js/u)
-  assert.match(workflow, /npm run test:runtime\n\s+[^\n]*\n\s+[^\n]*\n\s+[^\n]*\n\s+if: runner\.os != 'Windows'/u)
+  assert.match(
+    workflow,
+    /npm run test:runtime\n\s+[^\n]*\n\s+[^\n]*\n\s+[^\n]*\n\s+if: .*runner\.os != 'Windows'/u,
+  )
+  assert.match(workflow, /candidate_scope:\n[\s\S]*- windows/u)
+  assert.match(workflow, /if: inputs\.candidate_scope == 'full' \|\| matrix\.platform == 'win32'/u)
+  assert.match(workflow, /pending-candidate-ledger:\n\s+needs:[^\n]+\n\s+if: inputs\.candidate_scope == 'full'/u)
   assert.doesNotMatch(workflow, /continue-on-error|\|\| true/u)
   assert.doesNotMatch(workflow, /macos-13/u)
   for (const run of workflowRunBodies(workflow)) {

@@ -8,6 +8,14 @@ on:
         required: true
         default: 0.1.0
         type: string
+      candidate_scope:
+        description: Full release evidence or a Windows-only repair run
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - windows
 
 permissions:
   contents: read
@@ -32,41 +40,56 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - uses: actions/setup-node@v4
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm install --global npm@11.6.0
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm ci
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run check
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run test:runtime
         # The complete runtime suite asserts POSIX uid/mode and descriptor-lock
         # contracts. Windows is covered by the desktop/native suite below and
         # by the checkout-free installed smoke for both Windows artifacts.
-        if: runner.os != 'Windows'
+        if: (inputs.candidate_scope == 'full' || matrix.platform == 'win32') && runner.os != 'Windows'
       # npm may restore the Electron package without its platform binary from
       # cache. The pinned install script is idempotent and closes that gap.
       - run: node desktop/ambient-orb/node_modules/electron/install.js
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run test:desktop
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - run: npm run test:cli
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
       - name: Build unsigned candidate bytes
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         run: npm run ${{ matrix.package_script }} --workspace @nova-audio-agent/ambient-orb
       - name: Inspect exact unsigned application and installer bytes
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         env:
           NOVA_RELEASE_INSPECTION_DIAGNOSTICS: "1"
         run: npm run inspect:release-package --workspace @nova-audio-agent/ambient-orb
       - name: Provision pinned target-native Codex
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         run: npm install --prefix desktop/ambient-orb/build/release-codex --install-strategy=nested --package-lock=false --ignore-scripts --no-save --omit=dev @openai/codex@0.147.0
       - name: Exercise packaged project authority, sandbox probe, and app-server lifecycle
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         env:
           NOVA_AUDIO_AGENT_CODEX_API_KEY: offline-platform-contract-only
         run: npm run smoke:packaged-codex:ci --workspace @nova-audio-agent/ambient-orb
       - name: Normalize closed release artifact names and final digests
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         run: npm run collect:release-artifacts --workspace @nova-audio-agent/ambient-orb -- --target-id ${{ matrix.target_id }}
       - name: Prepare checkout-free installed smoke kit
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         run: npm run prepare:release-smoke-kit --workspace @nova-audio-agent/ambient-orb
       - uses: actions/upload-artifact@v4
+        if: inputs.candidate_scope == 'full' || matrix.platform == 'win32'
         with:
           name: ${{ matrix.artifact_name }}
           path: |
@@ -107,13 +130,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/setup-node@v4
+        if: inputs.candidate_scope == 'full' || startsWith(matrix.target, 'win32-x64:')
         with:
           node-version: "22"
       - uses: actions/download-artifact@v4
+        if: inputs.candidate_scope == 'full' || startsWith(matrix.target, 'win32-x64:')
         with:
           name: ${{ matrix.artifact_name }}
           path: candidate
       - name: Rehash, install, authenticate, exercise, quit, and remove candidate
+        if: inputs.candidate_scope == 'full' || startsWith(matrix.target, 'win32-x64:')
         run: >-
           ${{ matrix.command }} candidate/release-smoke-kit/scripts/run-unsigned-installed-smoke.mjs
           --target ${{ matrix.target }}
@@ -123,6 +149,7 @@ jobs:
 
   pending-candidate-ledger:
     needs: installed-candidate-smoke
+    if: inputs.candidate_scope == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
