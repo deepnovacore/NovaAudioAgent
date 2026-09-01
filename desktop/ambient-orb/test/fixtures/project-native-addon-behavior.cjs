@@ -55,11 +55,7 @@ if (mode === 'hold') {
   setInterval(() => {}, 1_000)
 } else {
   void (async () => {
-    const homeHandle = addon.openDirectory(homedir())
-    assert.equal(homeHandle.status, 'ok', JSON.stringify(homeHandle))
-    assert.equal(Number.isInteger(homeHandle.descriptor), true)
-    assert.equal(homeHandle.descriptor >= 0, true)
-    assert.equal(typeof homeHandle.close, 'function')
+    const homeHandle = openNativeDirectory(homedir())
     assert.equal(homeHandle.close(), undefined)
     assert.equal(homeHandle.close(), undefined)
     if (process.platform === 'win32' && process.env.SystemRoot) {
