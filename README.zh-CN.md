@@ -31,7 +31,7 @@ Nova Audio Agent **常驻通用语音 agent**：小诺（Nova）负责在前台�
 
 ## 2. 设计架构
 
-[![Nova Audio Agent 运行时架构](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)](assets/ideas/v3/nova-audio-agent-runtime-chalkboard.png)
+[![Nova Audio Agent 运行时架构](assets/ideas/v3/nova-audio-agent-runtime-chalkboard-zh-CN.png)](assets/ideas/v3/nova-audio-agent-runtime-chalkboard-zh-CN.png)
 
 *一个事件循环，两个模型端口共读一份 ContextView，Memory 当公共黑板，Floor 把守唯一说话通路。*
 
