@@ -20,6 +20,7 @@ import type {
   ProjectFileIdentity,
   ProjectRootFileAuthority,
   ProjectRootFileCreateResult,
+  ProjectRootFileLookupResult,
   ProjectRootFileResult,
 } from './project-root-file.js'
 
@@ -28,7 +29,8 @@ const PROJECT_ADDON_ID = 'project_native_addon'
 const MAX_MANIFEST_BYTES = 1024 * 1024
 const MAX_ADDON_BYTES = 16 * 1024 * 1024
 const MODULE_EXPORTS = Object.freeze([
-  'acquire', 'createFileAt', 'lookupAt', 'matchesAt', 'mkdirAt', 'mkdirPrivateAt', 'openDirectory',
+  'acquire', 'createFileAt', 'lookupAt', 'lookupWorkspaceAt', 'matchesAt', 'matchesWorkspaceAt',
+  'mkdirAt', 'mkdirPrivateAt', 'openDirectory',
   'probe', 'protectAt', 'removeTreeAt', 'renameAt', 'renameNoReplaceAt', 'syncDirectory', 'unlinkAt',
 ])
 
@@ -208,7 +210,11 @@ function loadSupportedProjectNativeHostFromResources(
     const rootFiles: ProjectRootFileAuthority = Object.freeze({
       probe: (descriptor: number) => addon.probe(descriptor),
       matchesAt: (root: number, name: string, child: number) => addon.matchesAt(root, name, child),
+      matchesWorkspaceAt: (root: number, name: string, child: number) => (
+        addon.matchesWorkspaceAt(root, name, child)
+      ),
       lookupAt: (root: number, name: string) => addon.lookupAt(root, name),
+      lookupWorkspaceAt: (root: number, name: string) => addon.lookupWorkspaceAt(root, name),
       createFileAt: (root: number, name: string, exclusive: boolean) => (
         addon.createFileAt(root, name, exclusive)
       ),
@@ -418,6 +424,8 @@ function validBinary(bytes: Buffer, platform: string, arch: string): boolean {
 interface ProjectAddon extends NativeFileLockAuthority, ProjectRootFileAuthority {
   openDirectory(path: string): unknown
   protectAt(root: number, name: string, child: number): ProjectRootFileResult
+  matchesWorkspaceAt(root: number, name: string, child: number): ProjectRootFileResult
+  lookupWorkspaceAt(root: number, name: string): ProjectRootFileLookupResult
   mkdirPrivateAt(root: number, name: string): ProjectRootFileCreateResult
   renameNoReplaceAt(
     root: number,

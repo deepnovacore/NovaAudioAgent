@@ -213,7 +213,12 @@ export class ProjectCodexAdapter implements ExecutorAdapter {
         )
       }
       const result = await this.#dispatchProject(admitted.value, context)
-      await this.#refreshProjectViewTolerant()
+      try {
+        await this.#refreshProjectViewTolerant()
+      } catch (error) {
+        emitProjectRefreshDiagnostic(error)
+        return await this.#lookupFailure(projectErrorCode(error))
+      }
       return result
     }
     if (op === 'status' || op === 'steer') {
@@ -1007,6 +1012,15 @@ function projectNoActiveTurn(): ExecutorHandoff {
 
 function projectErrorCode(error: unknown): string {
   return error instanceof ProjectStateError ? error.code : 'state_corrupt'
+}
+
+function emitProjectRefreshDiagnostic(error: unknown): void {
+  const code = error instanceof ProjectStateError
+    ? `codex_project_view_refresh_${error.code}`
+    : error instanceof TypeError
+      ? 'codex_project_view_refresh_type_error'
+      : 'codex_project_view_refresh_unexpected_error'
+  try { process.stderr.write(`[runtime-diagnostic] ${code}\n`) } catch { /* advisory */ }
 }
 
 function projectCloseError(error: unknown): Error {

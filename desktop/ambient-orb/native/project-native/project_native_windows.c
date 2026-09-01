@@ -212,7 +212,7 @@ static int nova_current_user(BYTE **token_user) {
   return 1;
 }
 
-static int nova_owner_only_acl(HANDLE handle) {
+static int nova_private_acl(HANDLE handle, int principal_policy) {
   BYTE *token_user = NULL;
   PSECURITY_DESCRIPTOR security = NULL;
   PSID owner = NULL;
@@ -264,8 +264,27 @@ static int nova_owner_only_acl(HANDLE handle) {
       goto cleanup;
     if (EqualSid(sid, ((TOKEN_USER *)token_user)->User.Sid))
       owner_allow = 1;
-    else if (!EqualSid(sid, system_sid) && !EqualSid(sid, administrators_sid))
-      goto cleanup;
+    else if (!EqualSid(sid, system_sid) && !EqualSid(sid, administrators_sid)) {
+      /*
+       * Codex' Windows sandbox grants its local sandbox group read/execute
+       * access to ancestor directories so sandboxed children can traverse to
+       * their workspace and CODEX_HOME. That grant must not invalidate a
+       * retained project root, but it must never authorize state mutation.
+       * Child files and directories continue to use the strict owner-only
+       * check below.
+       */
+      const DWORD mutating =
+          FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA |
+          FILE_WRITE_ATTRIBUTES | FILE_DELETE_CHILD | DELETE | WRITE_DAC |
+          WRITE_OWNER | GENERIC_WRITE | GENERIC_ALL | MAXIMUM_ALLOWED;
+      const DWORD administrative =
+          WRITE_DAC | WRITE_OWNER | GENERIC_ALL | MAXIMUM_ALLOWED |
+          ACCESS_SYSTEM_SECURITY;
+      if (principal_policy == 0 ||
+          (principal_policy == 1 && (ace->Mask & mutating) != 0) ||
+          (principal_policy == 2 && (ace->Mask & administrative) != 0))
+        goto cleanup;
+    }
   }
   valid = owner_allow;
 
@@ -274,6 +293,18 @@ cleanup:
     LocalFree(security);
   HeapFree(GetProcessHeap(), 0, token_user);
   return valid;
+}
+
+static int nova_owner_only_acl(HANDLE handle) {
+  return nova_private_acl(handle, 0);
+}
+
+static int nova_project_root_acl(HANDLE handle) {
+  return nova_private_acl(handle, 1);
+}
+
+static int nova_workspace_acl(HANDLE handle) {
+  return nova_private_acl(handle, 2);
 }
 
 static int nova_current_user_owner(HANDLE handle) {
@@ -343,6 +374,30 @@ static int nova_validate_handle(HANDLE handle, int directory,
   int is_directory = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
   if ((directory == 1 && !is_directory) || (directory == 0 && is_directory) ||
       !nova_owner_only_acl(handle))
+    return 0;
+  if (output != NULL)
+    *output = info;
+  return 1;
+}
+
+static int nova_validate_project_root(HANDLE handle,
+                                      BY_HANDLE_FILE_INFORMATION *output) {
+  BY_HANDLE_FILE_INFORMATION info;
+  if (!nova_handle_info(handle, &info) ||
+      (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+      !nova_project_root_acl(handle))
+    return 0;
+  if (output != NULL)
+    *output = info;
+  return 1;
+}
+
+static int nova_validate_workspace(HANDLE handle,
+                                   BY_HANDLE_FILE_INFORMATION *output) {
+  BY_HANDLE_FILE_INFORMATION info;
+  if (!nova_handle_info(handle, &info) ||
+      (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+      !nova_workspace_acl(handle))
     return 0;
   if (output != NULL)
     *output = info;
@@ -818,7 +873,7 @@ static napi_value nova_probe(napi_env env, napi_callback_info info) {
   HANDLE root;
   if (!nova_args(env, info, 1, args) ||
       !nova_handle_from_value(env, args[0], &root) ||
-      !nova_validate_handle(root, 1, NULL))
+      !nova_validate_project_root(root, NULL))
     return nova_status(env, "failed");
   return nova_status(env, "ok");
 }
@@ -877,7 +932,8 @@ static napi_value nova_protect_at(napi_env env, napi_callback_info info) {
   return nova_status(env, valid ? "ok" : "failed");
 }
 
-static napi_value nova_matches_at(napi_env env, napi_callback_info info) {
+static napi_value nova_matches_at_policy(napi_env env, napi_callback_info info,
+                                         int workspace) {
   napi_value args[3];
   HANDLE root;
   HANDLE child;
@@ -887,10 +943,11 @@ static napi_value nova_matches_at(napi_env env, napi_callback_info info) {
   BY_HANDLE_FILE_INFORMATION actual;
   if (!nova_args(env, info, 3, args) ||
       !nova_handle_from_value(env, args[0], &root) ||
-      !nova_validate_handle(root, 1, NULL) ||
+      !nova_validate_project_root(root, NULL) ||
       !nova_basename(env, args[1], name, &name_bytes) ||
       !nova_handle_from_value(env, args[2], &child) ||
-      !nova_validate_handle(child, -1, &expected)) {
+      !(workspace ? nova_validate_workspace(child, &expected)
+                   : nova_validate_handle(child, -1, &expected))) {
     return nova_status(env, "failed");
   }
   HANDLE opened = INVALID_HANDLE_VALUE;
@@ -898,7 +955,8 @@ static napi_value nova_matches_at(napi_env env, napi_callback_info info) {
       nova_open_at(root, name, name_bytes, FILE_READ_ATTRIBUTES | READ_CONTROL,
                    FILE_OPEN, 0, NULL, &opened);
   if (status != NOVA_STATUS_SUCCESS ||
-      !nova_validate_handle(opened, -1, &actual)) {
+      !(workspace ? nova_validate_workspace(opened, &actual)
+                   : nova_validate_handle(opened, -1, &actual))) {
     if (opened != INVALID_HANDLE_VALUE)
       CloseHandle(opened);
     return nova_status(env, "failed");
@@ -908,14 +966,24 @@ static napi_value nova_matches_at(napi_env env, napi_callback_info info) {
                                                                  : "mismatch");
 }
 
-static napi_value nova_lookup_at(napi_env env, napi_callback_info info) {
+static napi_value nova_matches_at(napi_env env, napi_callback_info info) {
+  return nova_matches_at_policy(env, info, 0);
+}
+
+static napi_value nova_matches_workspace_at(napi_env env,
+                                             napi_callback_info info) {
+  return nova_matches_at_policy(env, info, 1);
+}
+
+static napi_value nova_lookup_at_policy(napi_env env, napi_callback_info info,
+                                        int workspace) {
   napi_value args[2];
   HANDLE root;
   WCHAR name[256];
   USHORT name_bytes;
   if (!nova_args(env, info, 2, args) ||
       !nova_handle_from_value(env, args[0], &root) ||
-      !nova_validate_handle(root, 1, NULL) ||
+      !nova_validate_project_root(root, NULL) ||
       !nova_basename(env, args[1], name, &name_bytes))
     return nova_status(env, "failed");
   HANDLE opened = INVALID_HANDLE_VALUE;
@@ -926,13 +994,23 @@ static napi_value nova_lookup_at(napi_env env, napi_callback_info info) {
     return nova_status(env, "missing");
   BY_HANDLE_FILE_INFORMATION actual;
   if (status != NOVA_STATUS_SUCCESS ||
-      !nova_validate_handle(opened, -1, &actual)) {
+      !(workspace ? nova_validate_workspace(opened, &actual)
+                   : nova_validate_handle(opened, -1, &actual))) {
     if (opened != INVALID_HANDLE_VALUE)
       CloseHandle(opened);
     return nova_status(env, "failed");
   }
   CloseHandle(opened);
   return nova_identity_result(env, "ok", &actual);
+}
+
+static napi_value nova_lookup_at(napi_env env, napi_callback_info info) {
+  return nova_lookup_at_policy(env, info, 0);
+}
+
+static napi_value nova_lookup_workspace_at(napi_env env,
+                                            napi_callback_info info) {
+  return nova_lookup_at_policy(env, info, 1);
 }
 
 static napi_value nova_create_at(napi_env env, napi_callback_info info,
@@ -945,7 +1023,7 @@ static napi_value nova_create_at(napi_env env, napi_callback_info info,
   size_t expected_args = directory ? 2U : 3U;
   if (!nova_args(env, info, expected_args, args) ||
       !nova_handle_from_value(env, args[0], &root) ||
-      !nova_validate_handle(root, 1, NULL) ||
+      !nova_validate_project_root(root, NULL) ||
       !nova_basename(env, args[1], name, &name_bytes) ||
       (!directory &&
        napi_get_value_bool(env, args[2], &exclusive) != napi_ok)) {
@@ -1034,7 +1112,7 @@ static napi_value nova_rename_at(napi_env env, napi_callback_info info) {
   USHORT to_bytes;
   if (!nova_args(env, info, 3, args) ||
       !nova_handle_from_value(env, args[0], &root) ||
-      !nova_validate_handle(root, 1, NULL) ||
+      !nova_validate_project_root(root, NULL) ||
       !nova_basename(env, args[1], from, &from_bytes) ||
       !nova_basename(env, args[2], to, &to_bytes))
     return nova_status(env, "failed");
@@ -1083,7 +1161,7 @@ static napi_value nova_rename_no_replace_at(napi_env env,
   uint64_t inode;
   if (!nova_args(env, info, 4, args) ||
       !nova_handle_from_value(env, args[0], &root) ||
-      !nova_validate_handle(root, 1, NULL) ||
+      !nova_validate_project_root(root, NULL) ||
       !nova_basename(env, args[1], from, &from_bytes) ||
       !nova_basename(env, args[2], to, &to_bytes) ||
       !nova_expected_identity(env, args[3], &device, &inode))
@@ -1135,7 +1213,7 @@ static napi_value nova_sync_directory(napi_env env, napi_callback_info info) {
   HANDLE root;
   if (!nova_args(env, info, 1, args) ||
       !nova_handle_from_value(env, args[0], &root) ||
-      !nova_validate_handle(root, 1, NULL)) return nova_status(env, "failed");
+      !nova_validate_project_root(root, NULL)) return nova_status(env, "failed");
   nova_nt_flush_buffers_file_ex_fn flush = nova_nt_flush_buffers_file_ex();
   IO_STATUS_BLOCK io;
   NTSTATUS status = flush == NULL
@@ -1155,7 +1233,7 @@ static napi_value nova_unlink_at(napi_env env, napi_callback_info info) {
   uint64_t inode;
   if (!nova_args(env, info, 4, args) ||
       !nova_handle_from_value(env, args[0], &root) ||
-      !nova_validate_handle(root, 1, NULL) ||
+      !nova_validate_project_root(root, NULL) ||
       !nova_basename(env, args[1], name, &name_bytes) ||
       !nova_expected_identity(env, args[2], &device, &inode) ||
       napi_get_value_string_utf16(env, args[3], (char16_t *)kind, 16,
@@ -1310,7 +1388,7 @@ static napi_value nova_remove_tree_at(napi_env env, napi_callback_info info) {
   uint64_t inode;
   if (!nova_args(env, info, 3, args) ||
       !nova_handle_from_value(env, args[0], &root) ||
-      !nova_validate_handle(root, 1, NULL) ||
+      !nova_validate_project_root(root, NULL) ||
       !nova_basename(env, args[1], name, &name_bytes) ||
       !nova_expected_identity(env, args[2], &device, &inode))
     return nova_status(env, "failed");
@@ -1349,7 +1427,9 @@ NAPI_MODULE_INIT() {
       !nova_export(env, exports, "openDirectory", nova_open_directory) ||
       !nova_export(env, exports, "probe", nova_probe) ||
       !nova_export(env, exports, "matchesAt", nova_matches_at) ||
+      !nova_export(env, exports, "matchesWorkspaceAt", nova_matches_workspace_at) ||
       !nova_export(env, exports, "lookupAt", nova_lookup_at) ||
+      !nova_export(env, exports, "lookupWorkspaceAt", nova_lookup_workspace_at) ||
       !nova_export(env, exports, "createFileAt", nova_create_file_at) ||
       !nova_export(env, exports, "mkdirAt", nova_mkdir_at) ||
       !nova_export(env, exports, "mkdirPrivateAt", nova_mkdir_private_at) ||

@@ -19,7 +19,15 @@ export type ProjectRootFileCreateResult =
 export interface ProjectRootFileAuthority {
   probe(rootDescriptor: number): ProjectRootFileResult
   matchesAt(rootDescriptor: number, name: string, childDescriptor: number): ProjectRootFileResult
+  /** Windows managed-workspace seam; admits sandbox write ACEs but not ACL administration. */
+  matchesWorkspaceAt?(
+    rootDescriptor: number,
+    name: string,
+    childDescriptor: number,
+  ): ProjectRootFileResult
   lookupAt(rootDescriptor: number, name: string): ProjectRootFileLookupResult
+  /** Windows managed-workspace seam; state children continue to use strict lookupAt. */
+  lookupWorkspaceAt?(rootDescriptor: number, name: string): ProjectRootFileLookupResult
   createFileAt(rootDescriptor: number, name: string, exclusive: boolean): ProjectRootFileCreateResult
   mkdirAt(rootDescriptor: number, name: string): ProjectRootFileCreateResult
   /** Windows-only private create seam; callers fail closed when it is unavailable. */

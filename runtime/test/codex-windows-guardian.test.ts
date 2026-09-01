@@ -252,7 +252,11 @@ test('packaged Windows guardian owns the fixed app-server command and rejects a 
           commandControl.write('{"type":"ready","version":1,"targetPid":4343}\n')
           commandOutput.write('bounded output')
           commandControl.write('{"type":"exit","version":1,"leaderExitCode":0,"treeEmpty":true}\n')
-          commandChild.emit('exit', 0)
+          setImmediate(() => {
+            commandError.end('Logged in using ChatGPT\n')
+            commandOutput.end()
+            commandChild.emit('exit', 0)
+          })
         })
         return commandChild
       },
@@ -267,7 +271,11 @@ test('packaged Windows guardian owns the fixed app-server command and rejects a 
       stdoutLimit: 1024,
       stderrLimit: 1024,
       shell: false,
-    }), {status: 0, stdout: Buffer.from('bounded output')})
+    }), {
+      status: 0,
+      stdout: Buffer.from('bounded output'),
+      stderr: Buffer.from('Logged in using ChatGPT\n'),
+    })
     assert.deepEqual(commandLaunches[0]?.argv, [
       '--target', process.execPath, '--cwd', workspace, '--', process.execPath, '--version',
     ])

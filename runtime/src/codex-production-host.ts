@@ -117,7 +117,15 @@ interface ProductionCodexHostOptions {
   readonly electronAbi?: string
   readonly homeDirectory?: string
   readonly temporaryDirectory?: string
+  readonly onDiagnostic?: (code: CodexHostDiagnosticCode) => void
 }
+
+export type CodexHostDiagnosticCode =
+  | import('./codex-credential-snapshot.js').CodexCredentialDiagnosticCode
+  | 'codex_login_status_nonzero'
+  | 'codex_login_status_no_output'
+  | 'codex_login_status_multiple_streams'
+  | 'codex_login_status_unrecognized'
 
 interface FileSnapshot {
   readonly bytes: Buffer
@@ -205,6 +213,7 @@ export function createProductionCodexHost(
   })
   const credentialSnapshotter = new CredentialSnapshotter({
     environment,
+    ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
     ...(typeof environment.CODEX_HOME === 'string' && environment.CODEX_HOME !== ''
       ? {sourceHome: environment.CODEX_HOME}
       : {}),
@@ -219,6 +228,7 @@ export function createProductionCodexHost(
       probe,
       environment,
       hasApiKey: settings.codex_api_key !== null,
+      ...(options.onDiagnostic === undefined ? {} : {onDiagnostic: options.onDiagnostic}),
       ...(windowsGuardianFactory === null
         ? {}
         : {commandRunner: command => windowsGuardianFactory.runCommand(command)}),
@@ -300,6 +310,7 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
   readonly #environment: Readonly<Record<string, string>>
   readonly #hasApiKey: boolean
   readonly #runCommand: BoundedCodexCommandRunner
+  readonly #onDiagnostic: (code: CodexHostDiagnosticCode) => void
 
   constructor(options: {
     readonly probe?: ManifestBoundCodexSandboxProbe
@@ -307,6 +318,7 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
     readonly environment: Readonly<Record<string, string | undefined>>
     readonly hasApiKey: boolean
     readonly commandRunner?: BoundedCodexCommandRunner
+    readonly onDiagnostic?: (code: CodexHostDiagnosticCode) => void
   }) {
     if ((options.probe === undefined) === (options.probePath === undefined)) {
       throw new CodexTransportError('sandbox_failed')
@@ -328,6 +340,7 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
     this.#environment = filteredEnvironment(options.environment)
     this.#hasApiKey = options.hasApiKey
     this.#runCommand = options.commandRunner ?? runBoundedCodexCommand
+    this.#onDiagnostic = options.onDiagnostic ?? (() => undefined)
   }
 
   async run(config: CodexAppServerLaunchConfig, timeoutMs: number): Promise<unknown> {
@@ -344,19 +357,26 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
         binary, [...prefixArgs, '--version'], workspace, deadline, 4096,
       )
       const version = parseVersion(versionResult)
-      const credential = this.#hasApiKey
-        ? Object.freeze({present: true, identity: 'api_key', policy: 'process_only'})
-        : Object.freeze({
-            present: true,
-            identity: parseLogin(await this.#command(
-              binary,
-              [...prefixArgs, 'login', 'status'],
-              workspace,
-              deadline,
-              4096,
-            )),
-            policy: 'saved_login',
-          })
+      let credential
+      if (this.#hasApiKey) {
+        credential = Object.freeze({present: true, identity: 'api_key', policy: 'process_only'})
+      } else {
+        const loginResult = await this.#command(
+          binary,
+          [...prefixArgs, 'login', 'status'],
+          workspace,
+          deadline,
+          4096,
+        )
+        let identity: 'chatgpt' | 'api_key'
+        try {
+          identity = parseLogin(loginResult)
+        } catch (error) {
+          this.#emitDiagnostic(loginDiagnostic(loginResult))
+          throw error
+        }
+        credential = Object.freeze({present: true, identity, policy: 'saved_login'})
+      }
       const limits = await this.#runSandboxProbe(binary, prefixArgs, workspace, deadline)
       return Object.freeze({
         version,
@@ -371,6 +391,10 @@ export class NativeCodexHostPreflightRunner implements CodexHostPreflightRunner 
       if (error instanceof CodexTransportError) throw new CodexTransportError(error.code)
       throw new CodexTransportError('preflight_failed')
     }
+  }
+
+  #emitDiagnostic(code: CodexHostDiagnosticCode): void {
+    try { this.#onDiagnostic(code) } catch { /* diagnostics are advisory */ }
   }
 
   async #runSandboxProbe(
@@ -717,6 +741,15 @@ function parseLogin(result: BoundedCodexCommandResult): 'chatgpt' | 'api_key' {
   })
   if (identities.length !== 1) throw new CodexTransportError('credential_missing')
   return identities[0]!
+}
+
+function loginDiagnostic(result: BoundedCodexCommandResult): CodexHostDiagnosticCode {
+  if (result.status !== 0) return 'codex_login_status_nonzero'
+  const streams = [result.stdout, result.stderr]
+    .filter((value): value is Buffer => Buffer.isBuffer(value) && value.byteLength > 0)
+  if (streams.length === 0) return 'codex_login_status_no_output'
+  if (streams.length > 1) return 'codex_login_status_multiple_streams'
+  return 'codex_login_status_unrecognized'
 }
 
 function decodeSuccessfulLogin(result: BoundedCodexCommandResult): string {

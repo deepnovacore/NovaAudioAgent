@@ -1,9 +1,8 @@
 #define _WIN32_WINNT 0x0A00
 
-// clang-format off: winsock2.h must precede windows.h and aclapi.h.
+// clang-format off: winsock2.h must precede windows.h.
 #include <winsock2.h>
 #include <windows.h>
-#include <aclapi.h>
 // clang-format on
 #include <direct.h>
 #include <io.h>
@@ -48,40 +47,7 @@ static int nova_parent(const WCHAR *path, WCHAR output[NOVA_PATH_CAPACITY]) {
   return 1;
 }
 
-static int nova_current_user_is_owner(HANDLE handle) {
-  HANDLE token = NULL;
-  DWORD required = 0;
-  BYTE *token_user = NULL;
-  PSECURITY_DESCRIPTOR security = NULL;
-  PSID owner = NULL;
-  int result = 0;
-  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
-    return 0;
-  (void)GetTokenInformation(token, TokenUser, NULL, 0, &required);
-  if (required == 0)
-    goto cleanup;
-  token_user = (BYTE *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, required);
-  if (token_user == NULL ||
-      !GetTokenInformation(token, TokenUser, token_user, required, &required))
-    goto cleanup;
-  if (GetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
-                      &owner, NULL, NULL, NULL, &security) != ERROR_SUCCESS ||
-      owner == NULL)
-    goto cleanup;
-  result = EqualSid(owner, ((TOKEN_USER *)token_user)->User.Sid) != FALSE;
-
-cleanup:
-  if (security != NULL)
-    LocalFree(security);
-  if (token_user != NULL)
-    HeapFree(GetProcessHeap(), 0, token_user);
-  if (token != NULL)
-    CloseHandle(token);
-  return result;
-}
-
 static int nova_canonical_existing(const WCHAR *path, int directory,
-                                   int require_owner,
                                    WCHAR output[NOVA_PATH_CAPACITY]) {
   DWORD flags = FILE_FLAG_OPEN_REPARSE_POINT;
   if (directory)
@@ -98,9 +64,8 @@ static int nova_canonical_existing(const WCHAR *path, int directory,
               GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &tag,
                                            (DWORD)sizeof(tag)) &&
               (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0 &&
-              (((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) ==
-               directory) &&
-              (!require_owner || nova_current_user_is_owner(handle));
+               (((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) ==
+                directory);
   DWORD length = 0;
   if (valid) {
     length = GetFinalPathNameByHandleW(handle, output, NOVA_PATH_CAPACITY,
@@ -114,15 +79,15 @@ static int nova_canonical_existing(const WCHAR *path, int directory,
   return valid;
 }
 
-static int nova_regular_owned(const WCHAR *path) {
+static int nova_regular(const WCHAR *path) {
   WCHAR canonical[NOVA_PATH_CAPACITY];
-  return nova_canonical_existing(path, 0, 1, canonical) &&
+  return nova_canonical_existing(path, 0, canonical) &&
          _wcsicmp(canonical, path) == 0;
 }
 
 static int nova_validate_canary(const WCHAR *path, const WCHAR *workspace) {
   if (_wcsicmp(nova_basename(path), L"canary") != 0 ||
-      !nova_regular_owned(path))
+      !nova_regular(path))
     return 0;
   WCHAR sibling[NOVA_PATH_CAPACITY];
   WCHAR common_parent[NOVA_PATH_CAPACITY];
@@ -137,7 +102,7 @@ static int nova_validate_canary(const WCHAR *path, const WCHAR *workspace) {
 
 static int nova_validate_child_canary(const WCHAR *path) {
   if (_wcsicmp(nova_basename(path), L"canary") != 0 ||
-      !nova_regular_owned(path))
+      !nova_regular(path))
     return 0;
   WCHAR sibling[NOVA_PATH_CAPACITY];
   return nova_parent(path, sibling) &&
@@ -354,9 +319,9 @@ static int nova_main(int argc, WCHAR **argv) {
     return 2;
   WCHAR workspace[NOVA_PATH_CAPACITY];
   WCHAR canary[NOVA_PATH_CAPACITY];
-  if (!nova_canonical_existing(argv[2], 1, 1, workspace) ||
+  if (!nova_canonical_existing(argv[2], 1, workspace) ||
       _wcsicmp(workspace, argv[2]) != 0 ||
-      !nova_canonical_existing(argv[3], 0, 1, canary) ||
+      !nova_canonical_existing(argv[3], 0, canary) ||
       _wcsicmp(canary, argv[3]) != 0 ||
       !nova_validate_canary(canary, workspace) ||
       !nova_validate_marker(argv[4], workspace))
@@ -369,7 +334,7 @@ static int nova_main(int argc, WCHAR **argv) {
   WCHAR current[NOVA_PATH_CAPACITY];
   WCHAR current_canonical[NOVA_PATH_CAPACITY];
   int cwd_matches = _wgetcwd(current, NOVA_PATH_CAPACITY) != NULL &&
-                    nova_canonical_existing(current, 1, 0, current_canonical) &&
+                    nova_canonical_existing(current, 1, current_canonical) &&
                     _wcsicmp(current_canonical, workspace) == 0;
   int inside_write =
       nova_attempt_write(argv[4], "nova-audio-agent-preflight", 1);

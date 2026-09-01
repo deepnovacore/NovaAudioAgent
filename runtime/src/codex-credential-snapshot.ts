@@ -23,6 +23,14 @@ export const MAX_CREDENTIAL_MARKER_BYTES = 4096
 export const CODEX_CREDENTIAL_MARKER = '.nova-credential-source-v1.json'
 export const CODEX_SAVED_LOGIN_FILES = Object.freeze(['auth.json', '.credentials.json'] as const)
 
+export type CodexCredentialDiagnosticCode =
+  | 'codex_credential_snapshot_private_home_failed'
+  | 'codex_credential_snapshot_api_key_failed'
+  | 'codex_credential_snapshot_saved_login_failed'
+  | 'codex_credential_snapshot_environment_failed'
+
+type CredentialPreparationPhase = 'private_home' | 'api_key' | 'saved_login' | 'environment'
+
 const credentialSnapshotBrand: unique symbol = Symbol('CredentialSnapshot')
 export interface CredentialSnapshot { readonly [credentialSnapshotBrand]: true }
 
@@ -61,35 +69,50 @@ export class CodexCredentialError extends Error {
 
 export class CredentialSnapshotter {
   readonly #environment: Readonly<Record<string, string>>
+  readonly #platform: NodeJS.Platform
   readonly #sourceHome: string
+  readonly #onDiagnostic: (code: CodexCredentialDiagnosticCode) => void
 
   constructor(options: {
     readonly environment: Readonly<Record<string, string | undefined>>
+    readonly platform?: NodeJS.Platform
     readonly sourceHome?: string
+    readonly onDiagnostic?: (code: CodexCredentialDiagnosticCode) => void
   }) {
     this.#environment = snapshotEnvironmentInput(options.environment)
+    this.#platform = options.platform ?? process.platform
     this.#sourceHome = options.sourceHome
-      ?? this.#environment.CODEX_HOME
-      ?? join(this.#environment.HOME ?? '', '.codex')
+      ?? environmentValue(this.#environment, 'CODEX_HOME', this.#platform)
+      ?? join(environmentValue(this.#environment, 'HOME', this.#platform) ?? '', '.codex')
+    this.#onDiagnostic = options.onDiagnostic ?? (() => undefined)
   }
 
   async prepare(input: {
     readonly codexHome: HostCodexHome
     readonly apiKey: string | null
   }): Promise<CredentialSnapshot> {
+    let phase: CredentialPreparationPhase = 'private_home'
     try {
       const home = hostCodexHomeValue(input.codexHome)
       if (home.ephemeral) await ensureEphemeralDirectory(input.codexHome)
       else await requirePrivateDirectory(home.path)
+      phase = 'api_key'
       const apiKey = validateApiKey(input.apiKey)
+      phase = 'saved_login'
       if (apiKey === null) await this.#syncSavedLogin(home.path)
+      phase = 'environment'
       const environment = this.#childEnvironment(home.path, apiKey)
       const snapshot = Object.freeze({[credentialSnapshotBrand]: true as const})
       snapshotValues.set(snapshot, Object.freeze({environment}))
       return snapshot
     } catch {
+      this.#emitDiagnostic(credentialDiagnosticForPhase(phase))
       throw new CodexCredentialError()
     }
+  }
+
+  #emitDiagnostic(code: CodexCredentialDiagnosticCode): void {
+    try { this.#onDiagnostic(code) } catch { /* diagnostics must not affect credential handling */ }
   }
 
   async removeEphemeralHome(home: HostCodexHome): Promise<void> {
@@ -103,7 +126,7 @@ export class CredentialSnapshotter {
   #childEnvironment(destinationHome: string, apiKey: string | null): Readonly<Record<string, string>> {
     const result: Record<string, string> = {}
     for (const name of ENVIRONMENT_ALLOWLIST) {
-      const value = this.#environment[name]
+      const value = environmentValue(this.#environment, name, this.#platform)
       if (value !== undefined) defineString(result, name, value)
     }
     if (result.PATH === undefined || result.HOME === undefined) throw new CodexCredentialError()
@@ -148,6 +171,39 @@ export class CredentialSnapshotter {
       if (raw.byteLength > MAX_CREDENTIAL_MARKER_BYTES) throw new CodexCredentialError()
       await atomicOwnerWrite(markerPath, raw)
     }
+  }
+}
+
+function environmentValue(
+  environment: Readonly<Record<string, string>>,
+  name: string,
+  platform: NodeJS.Platform,
+): string | undefined {
+  if (platform !== 'win32') return environment[name]
+  const normalizedName = name.toUpperCase()
+  let result: string | undefined
+  for (const [key, value] of Object.entries(environment)) {
+    if (key.toUpperCase() !== normalizedName) continue
+    if (result !== undefined && result !== value) throw new CodexCredentialError()
+    result = value
+  }
+  if (result !== undefined || normalizedName !== 'HOME') return result
+  for (const [key, value] of Object.entries(environment)) {
+    if (key.toUpperCase() !== 'USERPROFILE') continue
+    if (result !== undefined && result !== value) throw new CodexCredentialError()
+    result = value
+  }
+  return result
+}
+
+function credentialDiagnosticForPhase(
+  phase: CredentialPreparationPhase,
+): CodexCredentialDiagnosticCode {
+  switch (phase) {
+    case 'private_home': return 'codex_credential_snapshot_private_home_failed'
+    case 'api_key': return 'codex_credential_snapshot_api_key_failed'
+    case 'saved_login': return 'codex_credential_snapshot_saved_login_failed'
+    case 'environment': return 'codex_credential_snapshot_environment_failed'
   }
 }
 
