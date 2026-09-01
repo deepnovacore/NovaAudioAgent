@@ -41,6 +41,18 @@ mkdirSync(stateRoot, {mode: 0o700})
 mkdirSync(managedRoot, {mode: 0o700})
 chmodSync(scratch, 0o700)
 
+function protectScratchDirectory(host, childPath, name) {
+  let parent = null
+  let child = null
+  try {
+    parent = host.directoryHandles.open(scratch)
+    child = host.directoryHandles.open(childPath)
+    assert.equal(host.protectDirectoryAt(parent.fd, name, child.fd), true)
+  } finally {
+    try { child?.close() } finally { parent?.close() }
+  }
+}
+
 let stage = 'load_runtime'
 void (async () => {
   const [configModule, hostConfigModule, factoryModule, productionHostModule, clockModule] = (
@@ -72,6 +84,11 @@ void (async () => {
   assert.equal(projectHost.transportFactory.available, true, 'packaged_codex_transport_unavailable')
   stage = 'host_project_native'
   assert.notEqual(projectHost.projectHost, null, 'packaged_project_native_unavailable')
+  if (process.platform === 'win32') {
+    stage = 'host_project_scratch'
+    protectScratchDirectory(projectHost.projectHost, stateRoot, 'state')
+    protectScratchDirectory(projectHost.projectHost, managedRoot, 'managed')
+  }
   stage = 'host_project_config'
   const projectConfig = hostConfigModule.resolveCodexHostConfig(projectSettings, projectHost.catalog)
   assert.notEqual(projectConfig, null, 'packaged_codex_config_unavailable')

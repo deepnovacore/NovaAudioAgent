@@ -10,20 +10,10 @@ const DEFINITIONS = Object.freeze({
     executable: 'Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb',
     archive: 'zip',
   }),
-  'darwin-x64': Object.freeze({
-    artifact: `nova-audio-agent-${PRODUCT_VERSION}-macos-x64-app.zip`,
-    executable: 'Nova Audio Agent Ambient Orb.app/Contents/MacOS/Nova Audio Agent Ambient Orb',
-    archive: 'zip',
-  }),
   'win32-x64': Object.freeze({
     artifact: `nova-audio-agent-${PRODUCT_VERSION}-windows-x64-portable.zip`,
     executable: 'Nova Audio Agent Ambient Orb.exe',
     archive: 'zip',
-  }),
-  'linux-x64': Object.freeze({
-    artifact: `nova-audio-agent-${PRODUCT_VERSION}-linux-x64.AppImage`,
-    executable: 'NovaAudioAgent.AppImage',
-    archive: 'file',
   }),
 })
 

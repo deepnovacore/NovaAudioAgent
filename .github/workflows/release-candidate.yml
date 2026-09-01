@@ -24,21 +24,11 @@ jobs:
             target_id: darwin-arm64
             package_script: package:mac:candidate
             artifact_name: candidate-darwin-arm64
-          - os: macos-15-intel
-            platform: darwin
-            target_id: darwin-x64
-            package_script: package:mac:candidate
-            artifact_name: candidate-darwin-x64
           - os: windows-latest
             platform: win32
             target_id: win32-x64
             package_script: package:win
             artifact_name: candidate-win32-x64
-          - os: ubuntu-latest
-            platform: linux
-            target_id: linux-x64-gnu
-            package_script: package:linux
-            artifact_name: candidate-linux-x64-gnu
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -104,16 +94,6 @@ jobs:
             artifact_name: candidate-darwin-arm64
             filename: nova-audio-agent-0.1.0-macos-arm64.dmg
             command: node
-          - os: macos-15-intel
-            target: darwin-x64:app
-            artifact_name: candidate-darwin-x64
-            filename: nova-audio-agent-0.1.0-macos-x64-app.zip
-            command: node
-          - os: macos-15-intel
-            target: darwin-x64:dmg
-            artifact_name: candidate-darwin-x64
-            filename: nova-audio-agent-0.1.0-macos-x64.dmg
-            command: node
           - os: windows-latest
             target: win32-x64:portable
             artifact_name: candidate-win32-x64
@@ -124,16 +104,6 @@ jobs:
             artifact_name: candidate-win32-x64
             filename: nova-audio-agent-0.1.0-windows-x64.exe
             command: node
-          - os: ubuntu-latest
-            target: linux-x64-gnu:appimage
-            artifact_name: candidate-linux-x64-gnu
-            filename: nova-audio-agent-0.1.0-linux-x64.AppImage
-            command: xvfb-run -a node
-          - os: ubuntu-latest
-            target: linux-x64-gnu:deb
-            artifact_name: candidate-linux-x64-gnu
-            filename: nova-audio-agent-0.1.0-linux-x64.deb
-            command: xvfb-run -a node
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/setup-node@v4

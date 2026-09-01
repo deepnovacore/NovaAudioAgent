@@ -3,12 +3,20 @@ import {createHash} from 'node:crypto'
 import {EventEmitter} from 'node:events'
 import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
-import {join} from 'node:path'
+import {dirname, join} from 'node:path'
 import {test} from 'node:test'
 
 import {ensureDesktop, inspectDoctor, launchDesktop, parseChecksum} from '../src/runtime.mjs'
 
-const ARTIFACT = 'nova-audio-agent-0.1.0-linux-x64.AppImage'
+const ARTIFACT = 'nova-audio-agent-0.1.0-windows-x64-portable.zip'
+const TARGET_OPTIONS = Object.freeze({platform: 'win32', arch: 'x64'})
+
+async function extractFixture({artifact, payload, target}) {
+  const executable = join(payload, target.executable)
+  await mkdir(dirname(executable), {recursive: true})
+  await writeFile(executable, await readFile(artifact), {mode: 0o700})
+  return executable
+}
 
 test('checksum parser binds a digest to the requested asset', () => {
   const digest = 'a'.repeat(64)
@@ -28,12 +36,12 @@ test('desktop install verifies, atomically caches, and reuses a portable file', 
       ? new Response(`${digest}  ${ARTIFACT}\n`)
       : new Response(bytes)
   }
-  const first = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl})
+  const first = await ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture})
   assert.deepEqual(await readFile(first.executable), bytes)
   const receipt = JSON.parse(await readFile(join(first.root, 'novaaudio-install.json'), 'utf8'))
   assert.equal(receipt.sha256, digest)
   assert.equal(requests, 2)
-  const second = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl})
+  const second = await ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture})
   assert.equal(second.executable, first.executable)
   assert.equal(requests, 3)
 })
@@ -45,10 +53,10 @@ test('an online cache is reused only while its receipt matches the current relea
   const fetchImpl = async url => String(url).endsWith('.sha256')
     ? new Response(`${digest}  ${ARTIFACT}\n`)
     : new Response(bytes)
-  const first = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl})
+  const first = await ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture})
   bytes = Buffer.from('#!/bin/sh\nexit 0\n')
   digest = createHash('sha256').update(bytes).digest('hex')
-  const second = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl})
+  const second = await ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture})
   assert.equal(second.executable, first.executable)
   assert.deepEqual(await readFile(second.executable), bytes)
   const receipt = JSON.parse(await readFile(join(second.root, 'novaaudio-install.json'), 'utf8'))
@@ -62,9 +70,9 @@ test('a receipt-validated cache remains available when the release host is offli
   const online = async url => String(url).endsWith('.sha256')
     ? new Response(`${digest}  ${ARTIFACT}\n`)
     : new Response(bytes)
-  const installed = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl: online})
+  const installed = await ensureDesktop({...TARGET_OPTIONS, home, fetchImpl: online, extractImpl: extractFixture})
   const offline = async () => { throw new Error('offline') }
-  const reused = await ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl: offline})
+  const reused = await ensureDesktop({...TARGET_OPTIONS, home, fetchImpl: offline, extractImpl: extractFixture})
   assert.equal(reused.executable, installed.executable)
 })
 
@@ -74,23 +82,23 @@ test('checksum failure leaves no runnable installation', async () => {
     ? new Response(`${'0'.repeat(64)}  ${ARTIFACT}\n`)
     : new Response('changed')
   await assert.rejects(
-    ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl}),
+    ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture}),
     /checksum mismatch/u,
   )
-  const root = join(home, '.nova-audio-agent/cli/releases/0.1.0/linux-x64')
-  await assert.rejects(readFile(join(root, 'NovaAudioAgent.AppImage')))
+  const root = join(home, '.nova-audio-agent/cli/releases/0.1.0/win32-x64')
+  await assert.rejects(readFile(join(root, 'Nova Audio Agent Ambient Orb.exe')))
 })
 
 test('a failed replacement preserves an existing cache directory', async () => {
   const home = await mkdtemp(join(tmpdir(), 'novaaudio-cli-'))
-  const root = join(home, '.nova-audio-agent/cli/releases/0.1.0/linux-x64')
+  const root = join(home, '.nova-audio-agent/cli/releases/0.1.0/win32-x64')
   await mkdir(root, {recursive: true})
   await writeFile(join(root, 'previous-cache'), 'keep')
   const fetchImpl = async url => String(url).endsWith('.sha256')
     ? new Response(`${'0'.repeat(64)}  ${ARTIFACT}\n`)
     : new Response('changed')
   await assert.rejects(
-    ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl}),
+    ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture}),
     /checksum mismatch/u,
   )
   assert.equal(await readFile(join(root, 'previous-cache'), 'utf8'), 'keep')
@@ -108,8 +116,8 @@ test('concurrent installs serialize and reuse the first verified result', async 
     return new Response(bytes)
   }
   const [first, second] = await Promise.all([
-    ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl}),
-    ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl}),
+    ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture}),
+    ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture}),
   ])
   assert.equal(first.executable, second.executable)
   assert.equal(requests, 3)
@@ -129,19 +137,20 @@ test('an interrupted download leaves no partial executable', async () => {
     }))
   }
   await assert.rejects(
-    ensureDesktop({platform: 'linux', arch: 'x64', home, fetchImpl}),
+    ensureDesktop({...TARGET_OPTIONS, home, fetchImpl, extractImpl: extractFixture}),
     /connection lost/u,
   )
-  const executable = join(home, '.nova-audio-agent/cli/releases/0.1.0/linux-x64/NovaAudioAgent.AppImage')
+  const executable = join(home, '.nova-audio-agent/cli/releases/0.1.0/win32-x64/Nova Audio Agent Ambient Orb.exe')
   await assert.rejects(readFile(executable))
 })
 
 test('doctor exposes only configured secret key names', async () => {
   const home = await mkdtemp(join(tmpdir(), 'novaaudio-cli-'))
-  const settings = join(home, '.config/Nova Audio Agent Ambient Orb/ambient-orb-settings.json')
+  const appData = join(home, 'appdata')
+  const settings = join(appData, 'Nova Audio Agent Ambient Orb/ambient-orb-settings.json')
   await mkdir(join(settings, '..'), {recursive: true})
   await writeFile(settings, JSON.stringify({secrets: {OPENAI_API_KEY: 'secret-value'}}))
-  const report = await inspectDoctor({platform: 'linux', arch: 'x64', home, environment: {}})
+  const report = await inspectDoctor({...TARGET_OPTIONS, home, environment: {APPDATA: appData}})
   assert.deepEqual(report.configuredSecretKeys, ['OPENAI_API_KEY'])
   assert.doesNotMatch(JSON.stringify(report), /secret-value/u)
 })

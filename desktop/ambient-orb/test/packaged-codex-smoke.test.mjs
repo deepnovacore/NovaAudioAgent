@@ -71,6 +71,16 @@ test('packaged Codex smoke proves missing project-native authority fails closed'
   assert.doesNotMatch(source, /assert\.equal\(liveResource\.mode, 'live'/u)
 })
 
+test('packaged Codex smoke protects its custom Windows project roots before opening them', async () => {
+  const source = await readFile(
+    resolve(import.meta.dirname, '../scripts/packaged-production-codex-smoke.cjs'),
+    'utf8',
+  )
+  assert.match(source, /process\.platform === 'win32'/u)
+  assert.match(source, /protectScratchDirectory\(projectHost\.projectHost, stateRoot, 'state'\)/u)
+  assert.match(source, /protectScratchDirectory\(projectHost\.projectHost, managedRoot, 'managed'\)/u)
+})
+
 test('local release Codex smoke uses the fixed repository root without caller paths', () => {
   const workspace = releaseCandidateWorkspace({})
   assert.equal(workspace, resolve(fileURLToPath(new URL('../../..', import.meta.url))))

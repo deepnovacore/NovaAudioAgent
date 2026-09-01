@@ -13,7 +13,7 @@
 
 > **Agent 常驻在线、主动但是有分寸、通过语音帮你管理所有工作区 -- 干活不停，言语有度**
 
-https://github.com/user-attachments/assets/0ca76117-f6d2-46fc-80c3-8a8cee603fc6
+https://github.com/user-attachments/assets/061697f3-fff6-47d6-924b-8a29eef4ab45
 
 ## 1. 核心特性
 
