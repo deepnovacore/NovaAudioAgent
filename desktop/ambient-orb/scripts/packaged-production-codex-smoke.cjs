@@ -76,10 +76,7 @@ void (async () => {
     NOVA_AUDIO_AGENT_CODEX_MANAGED_ROOT: managedRoot,
   })
   stage = 'host_project'
-  const projectHost = productionHostModule.createProductionCodexHost(projectSettings, {
-    environment: baseEnvironment,
-    homeDirectory: scratch,
-  })
+  const projectHost = productionHostModule.createProductionCodexHost(projectSettings)
   stage = 'host_project_transport'
   assert.equal(projectHost.transportFactory.available, true, 'packaged_codex_transport_unavailable')
   stage = 'host_project_native'

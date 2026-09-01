@@ -79,7 +79,7 @@ test('packaged Codex smoke bootstraps its custom Windows home through desktop au
   assert.match(source, /process\.platform === 'win32'/u)
   assert.match(source, /ensurePrivateProjectDirectories/u)
   assert.match(source, /config: \{root: projectRoot, stateRoot, managedRoot, workspace\}/u)
-  assert.match(source, /homeDirectory: scratch/u)
+  assert.doesNotMatch(source, /homeDirectory:\s*scratch/u)
   assert.doesNotMatch(source, /protectScratchDirectory/u)
 })
 
