@@ -122,6 +122,7 @@
     "runtime/src/realtime/cascaded/ports.ts",
     "runtime/src/realtime/cascaded/provider.ts",
     "runtime/src/realtime/cascaded/qwen-llm.ts",
+    "runtime/src/realtime/codex-approval.ts",
     "runtime/src/realtime/evidence.ts",
     "runtime/src/realtime/history.ts",
     "runtime/src/realtime/memory-board.ts",
@@ -276,18 +277,7 @@
       "file": "desktop/ambient-orb/src/main/main.mjs",
       "kind": "numeric_template",
       "occurrence_index": 0,
-      "line": 651,
-      "snippet": "safeCode",
-      "snippet_sha256": "00408d87451fcbf3a62f0f6725ffbc9070c579b8144b9e2c00603e2b6fd9b5c6",
-      "disposition": "wire_json",
-      "test": "desktop/ambient-orb/test/main-security.test.mjs",
-      "behavior": "main owns single-instance lifecycle and denies renderer escape"
-    },
-    {
-      "file": "desktop/ambient-orb/src/main/main.mjs",
-      "kind": "numeric_template",
-      "occurrence_index": 1,
-      "line": 689,
+      "line": 856,
       "snippet": "process.pid",
       "snippet_sha256": "75e4e48b4273a9e0d3ca9717bde6dafb9b529915d4def9e5fca19baffc463693",
       "disposition": "wire_json",
@@ -1503,6 +1493,17 @@
       "disposition": "intentional_utf16",
       "test": "runtime/test/realtime-cascaded-qwen-llm.test.ts",
       "behavior": "Qwen joins fragmented tool calls and retains a matched tool result with its assistant call"
+    },
+    {
+      "file": "runtime/src/realtime/codex-approval.ts",
+      "kind": "string_length",
+      "occurrence_index": 0,
+      "line": 356,
+      "snippet": "JSON.stringify(params.commandActions).length",
+      "snippet_sha256": "17afad252e2e62e3f4451d2d20278f369e3710ea1d0c403dd9a6fc845120df3c",
+      "disposition": "intentional_utf16",
+      "test": "runtime/test/codex-approval-transport.test.ts",
+      "behavior": "commands require one bounded complete command at the exact canonical workspace cwd"
     },
     {
       "file": "runtime/src/realtime/evidence.ts",
