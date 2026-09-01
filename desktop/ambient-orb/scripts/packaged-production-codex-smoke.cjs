@@ -4,7 +4,6 @@ const assert = require('node:assert/strict')
 const {randomUUID} = require('node:crypto')
 const {chmodSync, mkdtempSync, realpathSync, rmSync} = require('node:fs')
 const {mkdir} = require('node:fs/promises')
-const {tmpdir} = require('node:os')
 const path = require('node:path')
 const {isAbsolute, join, resolve, sep} = path
 const {pathToFileURL} = require('node:url')
@@ -36,20 +35,15 @@ const runtimeRoot = resolve(
   'src',
 )
 assert.ok(runtimeRoot.includes(`${sep}app.asar${sep}`), 'packaged_codex_host_invalid')
-const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'nova-packaged-codex-composition-')))
-const projectRoot = join(scratch, '.nova-audio-agent')
-const stateRoot = join(projectRoot, 'state')
-const managedRoot = join(projectRoot, 'workspaces')
-chmodSync(scratch, 0o700)
-
 let stage = 'load_runtime'
+let scratch = null
 
-function directoryLabel(target) {
-  if (target === scratch) return 'home'
-  if (target === projectRoot) return 'root'
-  if (target === stateRoot) return 'state'
-  if (target === managedRoot) return 'managed'
-  if (target === join(managedRoot, 'default')) return 'workspace'
+function directoryLabel(target, directories) {
+  if (target === directories.scratch) return 'home'
+  if (target === directories.projectRoot) return 'root'
+  if (target === directories.stateRoot) return 'state'
+  if (target === directories.managedRoot) return 'managed'
+  if (target === join(directories.managedRoot, 'default')) return 'workspace'
   return 'external'
 }
 
@@ -61,12 +55,12 @@ function childLabel(name) {
   return 'external'
 }
 
-function diagnosticDirectoryHost(host) {
+function diagnosticDirectoryHost(host, directories) {
   return Object.freeze({
     ...host,
     directoryHandles: Object.freeze({
       open(target) {
-        stage = `host_project_directories_open_${directoryLabel(target)}`
+        stage = `host_project_directories_open_${directoryLabel(target, directories)}`
         return host.directoryHandles.open(target)
       },
     }),
@@ -96,6 +90,7 @@ void (async () => {
     productionHostModule,
     clockModule,
     projectDirectoriesModule,
+    smokeHomeModule,
   ] = await Promise.all([
     ...[
       'config.js',
@@ -105,7 +100,21 @@ void (async () => {
       'clock.js',
     ].map(name => pathToFileURL(resolve(runtimeRoot, name)).href),
     pathToFileURL(resolve(resourcesRoot, 'app.asar', 'src/main/project-directories.mjs')).href,
+    pathToFileURL(resolve(__dirname, 'windows-smoke-home.mjs')).href,
   ].map(specifier => import(specifier)))
+  stage = 'host_project_home'
+  scratch = realpathSync(mkdtempSync(join(
+    smokeHomeModule.candidateScratchParent(),
+    'nova-packaged-codex-composition-',
+  )))
+  chmodSync(scratch, 0o700)
+  smokeHomeModule.prepareWindowsSmokeHomeOwnership({
+    home: scratch,
+    environment: process.env,
+  })
+  const projectRoot = join(scratch, '.nova-audio-agent')
+  const stateRoot = join(projectRoot, 'state')
+  const managedRoot = join(projectRoot, 'workspaces')
   stage = 'settings_project'
   const baseEnvironment = {
     ...process.env,
@@ -128,7 +137,9 @@ void (async () => {
   assert.notEqual(projectHost.projectHost, null, 'packaged_project_native_unavailable')
   if (process.platform === 'win32') {
     stage = 'host_project_directories'
-    const directoryHost = diagnosticDirectoryHost(projectHost.projectHost)
+    const directoryHost = diagnosticDirectoryHost(projectHost.projectHost, {
+      scratch, projectRoot, stateRoot, managedRoot,
+    })
     await projectDirectoriesModule.ensurePrivateProjectDirectories({
       config: {root: projectRoot, stateRoot, managedRoot, workspace},
       home: scratch,
@@ -201,5 +212,5 @@ void (async () => {
   process.stderr.write(`packaged production Codex composition rejected stage=${stage}\n`)
   process.exitCode = 1
 }).finally(() => {
-  rmSync(scratch, {recursive: true, force: true})
+  if (scratch !== null) rmSync(scratch, {recursive: true, force: true})
 })
