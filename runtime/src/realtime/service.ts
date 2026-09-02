@@ -3598,7 +3598,11 @@ export class RealtimeService {
   }
 
   #endProjectConfirmationClose(epoch: number, itemId: string): void {
-    this.#projectConfirmationClosingItems.delete(callKey(epoch, itemId))
+    const key = callKey(epoch, itemId)
+    this.#projectConfirmationClosingItems.delete(key)
+    if (this.#projectConfirmationDecisionRetry?.item_key === key) {
+      this.#projectConfirmationDecisionRetry = null
+    }
     this.#projectConfirmationBlocking = this.#projectConfirmationItems.size > 0
       || this.#projectConfirmationClosingItems.size > 0
       || this.#projectConfirmationFencePending
@@ -3737,8 +3741,11 @@ export class RealtimeService {
         call_id: event.call_id,
         content: JSON.stringify({code, state}),
       }
-      await this.session.injectToolOutput(item)
+      const toolOutputInjected = await this.session.injectToolOutput(item)
       if (confirmationText !== null) {
+        if (toolOutputInjected && confirmationResponseId !== null) {
+          this.session.settleUserResponse(confirmationResponseId)
+        }
         const carrierNeedsCancellation = confirmationResponseId === null
           ? false
           : this.#prepareProjectConfirmationCarrier(event.session_epoch, confirmationResponseId)

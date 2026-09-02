@@ -183,6 +183,15 @@ export class RealtimeSession {
     return this.#state.providerTurnWasFenced(responseId)
   }
 
+  /** Settle the current user-response debt when this exact response answered its revision. */
+  settleUserResponse(responseId: string): boolean {
+    if (!this.#awaitingUserResponse) return false
+    const revision = this.#state.providerTurnUserInputRevision(responseId)
+    if (revision === undefined || revision !== this.userInputRevision) return false
+    this.#awaitingUserResponse = false
+    return true
+  }
+
   responseEventIds(responseId: string): readonly string[] {
     return (this.#responseItems.get(this.#turnKey(responseId)) ?? []).map(item => item.event_id)
   }

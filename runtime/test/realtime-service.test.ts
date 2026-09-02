@@ -5702,6 +5702,224 @@ test('a confirmation terminal before transcript final retries the same user turn
   assert.ok(telemetry.some(record => record.kind === 'project_confirmation.decision_retry_requested'))
 })
 
+test('a tool-first terminal confirmation delivers its host acknowledgement without another turn', async () => {
+  const {service, controller, actions, injected} = confirmationService()
+  await service.connect()
+  const proposal = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started',
+    session_epoch: 1,
+    speech_id: 'speech-tool-terminal-first',
+    provider_item_id: 'tool-terminal-first-user',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended',
+    session_epoch: 1,
+    speech_id: 'speech-tool-terminal-first',
+    provider_item_id: 'tool-terminal-first-user',
+  })
+  await service.handleEvent({
+    kind: 'response_started',
+    session_epoch: 1,
+    response_id: 'tool-terminal-first-response',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready',
+    session_epoch: 1,
+    response_id: 'tool-terminal-first-response',
+    call_id: 'tool-terminal-first-confirm',
+    item_id: 'tool-terminal-first-function',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+  assert.equal(actions.includes('commit'), false, 'the call waits for its user origin')
+
+  await service.handleEvent({
+    kind: 'response_terminal',
+    session_epoch: 1,
+    response_id: 'tool-terminal-first-response',
+    status: 'completed',
+    reason: '',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final',
+    session_epoch: 1,
+    item_id: 'tool-terminal-first-user',
+    text: '确认',
+  })
+
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+  assert.equal(actions.filter(action => action === 'ensure-response').length, 0)
+  assert.equal(
+    injected.filter(item => item.content === '已确认，已提交并正在启动。').length,
+    1,
+    'the idle floor receives exactly one acknowledgement in the same event pass',
+  )
+  assert.equal(
+    service.queuedHostItems().some(item => (
+      item.intent.item.content === '已确认，已提交并正在启动。'
+    )),
+    false,
+    'the acknowledgement does not wait for another user turn or progress event',
+  )
+})
+
+test('a settled tool-first confirmation cannot consume the next proposal retry', async () => {
+  const {service, controller, actions, injected, views} = confirmationService()
+  await service.connect()
+  const firstProposal = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-first-tool-terminal', provider_item_id: 'first-tool-terminal-user',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-first-tool-terminal', provider_item_id: 'first-tool-terminal-user',
+  })
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'first-tool-terminal-response',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    response_id: 'first-tool-terminal-response',
+    call_id: 'first-tool-terminal-confirm', item_id: 'first-tool-terminal-function',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: firstProposal.proposal_id, confirmed: true},
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1,
+    response_id: 'first-tool-terminal-response', status: 'completed', reason: '',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'first-tool-terminal-user', text: '确认',
+  })
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+  assert.equal(actions.filter(action => action === 'ensure-response').length, 0)
+  assert.equal(
+    injected.filter(item => item.content === '已确认，已提交并正在启动。').length,
+    1,
+    'the first acknowledgement was injected before its provider response starts',
+  )
+  assert.equal(actions.filter(action => action === 'create:host_fact').length, 1)
+  assert.equal(
+    service.queuedHostItems().some(item => (
+      item.intent.item.content === '已确认，已提交并正在启动。'
+    )),
+    false,
+    'the first acknowledgement is not merely waiting in the host queue',
+  )
+
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'first-ack-response',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1,
+    response_id: 'first-ack-response', status: 'completed', reason: '',
+  })
+
+  const secondProposal = propose(controller)
+  await reserveConfirmationTurn(service, {
+    itemId: 'second-confirmation-user',
+    responseId: 'second-confirmation-response',
+    transcript: '确认',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1,
+    response_id: 'second-confirmation-response', status: 'completed', reason: '',
+  })
+  assert.equal(
+    actions.filter(action => action === 'ensure-response').length,
+    1,
+    'the second proposal owns a fresh retry record',
+  )
+
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'second-retry-response',
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1,
+    response_id: 'second-retry-response', status: 'completed', reason: '',
+  })
+  assert.equal(controller.pending, true, 'the second proposal remains available in the banner')
+  assert.equal(views.at(-1)?.pending_confirmation, true, 'the banner still exposes that proposal')
+
+  await confirmationTurn(service, {
+    proposalId: secondProposal.proposal_id,
+    confirmed: false,
+    callId: 'second-proposal-cancel',
+    itemId: 'second-proposal-cancel-user',
+    responseId: 'second-proposal-cancel-response',
+    transcript: '取消',
+  })
+  assert.match(
+    injected.find(item => item.call_id === 'second-proposal-cancel')?.content ?? '',
+    /cancelled/u,
+    'a later voice turn can still settle the second proposal',
+  )
+  assert.equal(views.at(-1)?.pending_confirmation, false, 'the observable banner is cleared')
+})
+
+test('a deduplicated confirmation output does not settle the user response debt', async () => {
+  const duplicateId = 'duplicate-confirmation-output'
+  const {service, controller, actions, injected} = confirmationService({
+    idFactory: () => duplicateId,
+  })
+  await service.connect()
+  await service.session.injectToolOutput({
+    kind: 'tool_output',
+    host_item_id: 'seed-host-item',
+    event_id: duplicateId,
+    call_id: 'seed-call',
+    content: '{}',
+  })
+  const proposal = propose(controller)
+  await service.handleEvent({
+    kind: 'user_speech_started', session_epoch: 1,
+    speech_id: 'speech-deduplicated-output', provider_item_id: 'user-deduplicated-output',
+  })
+  await service.handleEvent({
+    kind: 'user_speech_ended', session_epoch: 1,
+    speech_id: 'speech-deduplicated-output', provider_item_id: 'user-deduplicated-output',
+  })
+  await service.handleEvent({
+    kind: 'response_started', session_epoch: 1, response_id: 'response-deduplicated-output',
+  })
+  await service.handleEvent({
+    kind: 'tool_call_ready', session_epoch: 1,
+    response_id: 'response-deduplicated-output',
+    call_id: 'confirm-deduplicated-output', item_id: 'function-deduplicated-output',
+    name: 'codex__confirm_project_action',
+    arguments: {proposal_id: proposal.proposal_id, confirmed: true},
+  })
+  await service.handleEvent({
+    kind: 'response_terminal', session_epoch: 1, response_id: 'response-deduplicated-output',
+    status: 'completed', reason: '',
+  })
+  await service.handleEvent({
+    kind: 'user_transcript_final', session_epoch: 1,
+    item_id: 'user-deduplicated-output', text: '确认',
+  })
+
+  assert.equal(actions.filter(action => action === 'commit').length, 1)
+  assert.equal(
+    actions.filter(action => action === `inject:${duplicateId}`).length,
+    1,
+    'only the seed output reached the provider',
+  )
+  assert.equal(
+    injected.filter(item => item.content === '已确认，已提交并正在启动。').length,
+    0,
+    'the acknowledgement cannot run ahead of a tool output the provider did not receive',
+  )
+  assert.ok(
+    service.queuedHostItems().some(item => (
+      item.intent.item.content === '已确认，已提交并正在启动。'
+    )),
+    'the unresolved user-response debt keeps the acknowledgement queued',
+  )
+})
+
 for (const status of ['cancelled', 'failed'] as const) {
   test(`a silent ${status} confirmation terminal preserves the same-turn retry`, async () => {
     const {service, controller, actions} = confirmationService()
